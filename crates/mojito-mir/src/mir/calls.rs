@@ -554,6 +554,18 @@ impl<'a> Flatten<'a> {
                     return (value, Some(MirPlace::root(var, ty)));
                 }
             }
+            Some(MirInstr::Index {
+                dest,
+                base,
+                index,
+                call: None,
+                intrinsic: Some(MirIntrinsicSubscript::Pointer),
+            }) if *dest == value => {
+                let (base, index) = (*base, *index);
+                if let Some(place) = self.pointee_place(expression, value, base, index) {
+                    return (value, Some(place));
+                }
+            }
             _ => {}
         }
         let Some(ty) = self
@@ -575,6 +587,48 @@ impl<'a> Flatten<'a> {
             self.establish_storage_loans(expression, place.root, loans);
         }
         materialized
+    }
+
+    /// The pointee place of `value`, the element the body's last
+    /// instruction just read through pointer `base` at `index` (`p[i]` over
+    /// a pointer no slot holds, `ls.unsafe_ptr()[0]`): the pointer is
+    /// re-homed in a hidden slot and the element read through it, as
+    /// upstream's pointer `__getitem__` yields a `!lit.ref` of the pointee
+    /// whatever holds the pointer. The read replaces the subscript, so
+    /// `value` stays its register.
+    fn pointee_place(
+        &mut self,
+        expression: Node<'a>,
+        value: Reg,
+        base: Reg,
+        index: Reg,
+    ) -> Option<MirPlace> {
+        let pointer = self.f.reg_types.get(&base.0).cloned()?;
+        let element = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .or_else(|| expression.ty())?;
+        if !matches!(pointer.kind(), TyKind::Pointer { .. }) {
+            return None;
+        }
+        self.f.body.instrs.pop();
+        let variable = self.var(&format!("$ptr_r{}", base.0));
+        self.var_types.insert(variable, pointer.clone());
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: base,
+            binding_ty: Some(pointer.clone()),
+            in_place: false,
+        });
+        let mut place = MirPlace::root(variable, Some(pointer));
+        place.project(Proj::Index(index), element);
+        self.emit(MirInstr::LoadPlace {
+            dest: value,
+            place: place.clone(),
+        });
+        Some(place)
     }
 
     /// Whether the body defines `value` as a fresh value of its own: a call
@@ -2006,13 +2060,24 @@ impl<'a> Flatten<'a> {
         {
             return self.lower_call_receiver(inner);
         }
-        let (value, place) = self.lower_call_receiver(receiver);
-        if place.is_some() {
-            return (value, place);
-        }
+        // A conditional expression is the result slot its arms move into,
+        // and a capturing lambda its storage's slot, which a reading
+        // receiver reads in place and an owning one takes.
+        let lowered = if matches!(
+            receiver.op(),
+            CheckedOp::IfExpr { .. } | CheckedOp::Lambda { .. }
+        ) {
+            self.operand_expr_c(receiver)
+        } else {
+            let (value, place) = self.lower_call_receiver(receiver);
+            if place.is_some() {
+                return (value, place);
+            }
+            self.call_result(receiver, value)
+        };
         let read =
             matches!(binding, Some(OperandBinding::Read { .. })) && receiver.binds_temporary();
-        match self.call_result(receiver, value) {
+        match lowered {
             CValue::Value(value) if owned || read || !receiver.is_fresh_temporary() => {
                 (value, None)
             }
@@ -2105,10 +2170,19 @@ impl<'a> Flatten<'a> {
             }
             return (value, None);
         }
-        match call.call_contract() {
-            Some(contract) => self.address_receiver(&contract, receiver, (value, place)),
-            None => (value, place),
-        }
+        let Some(contract) = call.call_contract() else {
+            return (value, place);
+        };
+        // A by-address receiver lowering returned with no place reaches the
+        // storage its value came from, as a by-address `read` argument does
+        // ([`Self::materialize_operand`]).
+        let lowered = match place {
+            None if receiver_by_address(&contract, receiver.register_passable_read()).is_some() => {
+                self.materialize_operand(receiver, value)
+            }
+            place => (value, place),
+        };
+        self.address_receiver(&contract, receiver, lowered)
     }
 
     /// Pass a `deinit` receiver, lowered to `lowered`, as upstream's call
@@ -3244,7 +3318,7 @@ fn stored_handle(place: &MirPlace, wanted: mojito_types::origin::Mutability) -> 
 /// mutability, a `read` one the check did not prove register-passable as an
 /// immutable one, as upstream's `lit.call` takes a `!lit.ref` of the
 /// receiver's storage. An owned receiver and an elided one are `None`.
-const fn receiver_by_address(
+pub(super) const fn receiver_by_address(
     contract: &mojito_checked::checked::CheckedCallContract,
     register_passable_read: bool,
 ) -> Option<mojito_types::origin::Mutability> {

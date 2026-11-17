@@ -43,10 +43,32 @@ use mojito_types::types::{DependentType, ParamDecl, Ty, TyArg, tuple_elements};
 use std::collections::{HashMap, HashSet};
 
 pub fn verify(program: &MirProgram) -> Vec<String> {
+    verify_staged(program, false)
+}
+
+/// [`verify`] for MIR lowering's own output, plus the by-address receiver
+/// rule.
+///
+/// The rule requires a reference at every receiver a resolved method call
+/// or checked subscript accessor takes by address, as upstream's `lit.call`
+/// verifier does wherever the callee's signature takes a `!lit.ref`. The
+/// later verify points do not yet apply it: the elaborator's truthiness
+/// rewrite and older MIR pass inputs still pass such receivers by value.
+pub fn verify_lowered(program: &MirProgram) -> Vec<String> {
+    verify_staged(program, true)
+}
+
+fn verify_staged(program: &MirProgram, receivers: bool) -> Vec<String> {
     let mut errors = Vec::new();
     verify_runtime_pack_abi(&program.declarations, &mut errors);
     for (name, function) in &program.functions {
-        verify_function(name, function, &program.declarations, &mut errors);
+        verify_function(
+            name,
+            function,
+            &program.declarations,
+            receivers,
+            &mut errors,
+        );
     }
     errors.extend(
         program
@@ -66,7 +88,7 @@ pub fn verify_function_in(
     declarations: &MirDeclarations,
 ) -> Vec<String> {
     let mut errors = Vec::new();
-    verify_function(name, function, declarations, &mut errors);
+    verify_function(name, function, declarations, false, &mut errors);
     errors
 }
 
@@ -201,6 +223,9 @@ struct RegionContext {
     /// Whether a `comptime assert` precedes this position, so that an
     /// instance failing it never reaches it.
     asserted: bool,
+    /// Whether a by-address receiver must be a reference
+    /// ([`verify_lowered`]).
+    receivers: bool,
 }
 
 impl RegionContext {

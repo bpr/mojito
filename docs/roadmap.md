@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2294**.
+Next free ID: **R2296**.
 
 ## Ordered Work
 
@@ -9601,24 +9601,47 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2087, since a nested callee still needs the fold.
   - Model: Fable, Not Planned.
 
-- [ ] **R2280 The verifier checks no by-address receiver**
+- [ ] **R2294 The elaborator's builtin-to-dunder rewrites pass a
+  memory-only receiver by value**
 
-  Upstream's `lit.call` verifier rejects a value wherever the callee's
-  signature takes a `!lit.ref`, the receiver included.
-  `verify_direct_call` checks only a call's positional operands, so a
-  `call.method` whose receiver the declaration takes by address may still
-  pass a value.
-  - Fix: require a reference at the receiver where
-    `mir::by_address_receiver(declaration, receiver_ty, declarations)`
-    holds, in `verify_call_instruction`'s `call.method` arm.
-  - Probes (found while landing R2251, before its chain fix): the lambda
-    storage `__call__` receivers in `assets/ok/capturing_lambda_storage.mojo`
-    and `assets/ok/conditional_expression_transfer.mojo`, `Tagged.total`
-    in `assets/ok/struct_value_param_application.mojo`, and `M.show`,
-    `S.copy`, and pointer-subscript receivers. The list is a lower bound.
-  - Stop when `scripts/smoke` and those fixtures run clean with the rule
-    on.
+  Upstream emits `x.__bool__()` for a truthiness test at IR generation,
+  and its `lit.call` takes a `!lit.ref` of a memory-only `x`. Mojito
+  lowers `Bool(x)` as an undeclared builtin (`bool_conversion`,
+  `lower_expr/ctrl.rs`), and the specializer rewrites it into
+  `dunder_method_call` over the operand's value register
+  (`specializer.rs`, the `"Bool" => Some("__bool__")` arm). Its other
+  rewrites into `dunder_method_call` (a bound-resolved `BinOp`, a prefix
+  `UnOp`, `abs`) build the same value receiver.
+  - Fix: lowering passes the operand of a `Bool(x)` the check did not
+    prove register-passable as a reference, as it does a by-address
+    `read` temporary (`Flatten::materialize_operand`,
+    `address_operand`), and the scalar instance reads it through
+    (`mir::read_addressed_operands`). The same for the operator rewrites'
+    operands.
+  - Probe: turn on the receiver rule in `verify` (`verify_staged`'s
+    `receivers`, `verify.rs`). 42 fixtures then fail at elaboration, 34
+    on `Optional.__bool__` (`assets/ok/path_operations.mojo`,
+    `simd_write_members.mojo`), plus `collection_truthiness.mojo`
+    (`List.__bool__`), `and_or_value_operands.mojo` (`String.__bool__`),
+    and the user `Flag`/`Gate`/`Tally`/`Tracked`/`Truthy`/`S.__bool__`.
+    No operator rewrite failed in that sweep, which reports only each
+    program's first finding.
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2295 The receiver rule runs only at lowering's verify**
+
+  Upstream's `lit.call` verifier requires a `!lit.ref` at a by-address
+  receiver wherever the op is verified. Mojito applies the rule only in
+  `verify::verify_lowered` (`verify_by_address_receiver`), not after drop
+  elaboration and the pre-elaboration passes, on concrete MIR, or on MIR
+  text loaded from disk.
+  - Fix: drop `verify_staged`'s `receivers` switch so `verify` applies
+    the rule, and retire `verify_lowered`.
+  - Confirm no pre-elaboration pass turns a receiver's reference into a
+    value, as R2281 found the passes do for `copy=` operands.
+  - Stop when `scripts/smoke` and the R2294 probes run clean.
+  - Depends on R2294 and R2285.
   - Model: Fable, Not Planned.
 
 - [ ] **R2281 The pre-elaboration passes turn a `copy=` operand's
@@ -9727,6 +9750,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     template passes by address whatever its instance.
   - `remove-unused-params/forwarded_argument.mir` and
     `recursive_argument.mir` (`Arr[n]`).
+  - Five more pass a memory-only receiver by value, which fails once
+    R2295 turns the receiver rule on at load:
+    `inline-parametric/read_loaded_across_region.mir` (`Res.add`),
+    `inline-parametric/struct_operator.mir` (`V.__add__`),
+    `remove-unused-params/member_call.mir` (`NBox.__neg__`),
+    `subscript_forward.mir` (`Ring.__getitem__`), and `subscript.mir`
+    (`Grid.__getitem_param__`).
   - Fix: pass each operand as a `ref.make` of the slot the value was
     loaded from, as MIR lowering forms it (`Flatten::address_operand`), or
     re-emit the input with `emit-mir`, then re-bless and check each

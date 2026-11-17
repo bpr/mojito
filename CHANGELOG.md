@@ -715,6 +715,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method call's or subscript accessor's memory-only `read self` now
+  takes a reference to its receiver's storage wherever lowering found
+  none, as upstream's `lit.call` takes a `!lit.ref`: a field of a
+  temporary (`Holder().t.total()`), a conditional or an immediately
+  invoked capturing lambda in its slot, a pointer subscript of a temporary
+  pointer (`ls.unsafe_ptr()[0].copy()`), and a chained comparison link's
+  left operand. MIR lowering's verify rejects a value at such a receiver
+  (R2280); the later verify points follow once R2294 and R2295 land.
+
 - A copy of a slot naming its constructor now passes `__copyinit__` a
   `ref.make` of the slot instead of a `place.load` of its value, as
   upstream's copy insertion passes the source's `!lit.ref` to

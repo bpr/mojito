@@ -195,6 +195,7 @@ pub(super) fn verify_call_instruction(
                     ));
                 }
                 verify_direct_call(cx, declaration, args, kwargs, true, errors);
+                verify_by_address_receiver(cx, declaration, *recv, errors);
                 let result_abi_matches =
                     match reference_result {
                         Some(reference) => {
@@ -408,6 +409,31 @@ pub(super) fn verify_direct_call(
                 declaration.lowered_name
             ));
         }
+    }
+}
+
+/// Require a reference at the receiver of a resolved method call, or of a
+/// checked subscript accessor, whose declaration takes it by address
+/// (`mir::by_address_receiver`: a `mut`/`ref` receiver, or a `read` one of
+/// a type not proven register-passable), as upstream's `lit.call` takes a
+/// `!lit.ref` wherever the callee's signature does, the receiver included.
+pub(super) fn verify_by_address_receiver(
+    cx: &InstrCx<'_>,
+    declaration: &MirFunctionDeclaration,
+    receiver: Reg,
+    errors: &mut Vec<String>,
+) {
+    if !cx.context.receivers || !declaration.has_receiver {
+        return;
+    }
+    if let Some(found) = cx.reg_ty(receiver)
+        && !matches!(found.kind(), TyKind::Ref(_))
+        && crate::mir::by_address_receiver(declaration, found, cx.declarations).is_some()
+    {
+        errors.push(format!(
+            "{}: receiver of '{}' is received by address but passes a {found} value",
+            cx.prefix, declaration.lowered_name
+        ));
     }
 }
 
@@ -744,6 +770,7 @@ pub(super) fn verify_function(
     name: &str,
     function: &MirFunction,
     declarations: &MirDeclarations,
+    receivers: bool,
     errors: &mut Vec<String>,
 ) {
     if function.var_names.len() != function.n_vars {
@@ -809,6 +836,7 @@ pub(super) fn verify_function(
         regions: vec![RegionKind::Function],
         protected: false,
         asserted: false,
+        receivers,
     };
     verify_block(
         name,

@@ -2561,9 +2561,21 @@ operand's `ref.make`. The verifier
 upstream's `lit.call` takes a `!lit.ref` wherever the signature does; an
 elaborated instance's declaration names its substituted types, so a `read`
 its instance proves register-passable takes the value
-`load_register_passable_operands` reads. Its receivers, keyword operands,
-and a `call.indirect`'s operands are not yet checked this way (R2280,
-R2281, R2282). A MIR text
+`load_register_passable_operands` reads. At lowering's own verify
+(`verify::verify_lowered`, the `verify.pre_drop` point of
+`lower_program`) it also rejects a value at the receiver of a resolved
+`call.method` or of a checked subscript accessor whose declaration takes
+it by address (`verify_by_address_receiver`, over
+`mir::by_address_receiver`): lowering gives such a receiver its storage
+wherever it has none, the place its load read, a pointee re-homed through
+a hidden pointer slot (`Flatten::pointee_place`), a conditional's result
+slot or a capturing lambda's storage slot, a temporary's hidden `$mat_r`
+slot (`Flatten::materialize_operand`), and a chained comparison's left
+operand its place (`Flatten::chain_link_address`). The later verify points
+do not yet apply the receiver rule, since the elaborator's truthiness
+rewrite and older MIR pass inputs still pass such receivers by value
+(R2294, R2295). Keyword operands and a `call.indirect`'s operands are not
+yet checked this way (R2281, R2282). A MIR text
 artifact older than 1.192 is upgraded as it loads
 (`call_addresses::upgrade_call_operands`), and one older than 1.198 has its
 operands over a place holding a reference forwarded

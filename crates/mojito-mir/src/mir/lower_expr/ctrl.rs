@@ -1003,7 +1003,7 @@ impl<'a> Flatten<'a> {
             return if is_field_chain(operand) {
                 ChainMiddle::Place(operand)
             } else {
-                ChainMiddle::Read(value)
+                ChainMiddle::Read(value, self.read_place(value))
             };
         }
         let ty = self
@@ -1013,7 +1013,7 @@ impl<'a> Flatten<'a> {
             .cloned()
             .or_else(|| operand.checked.ty.clone());
         let Some(ty) = ty.filter(crate::mir::calls::owns_droppable_storage) else {
-            return ChainMiddle::Read(value);
+            return ChainMiddle::Read(value, self.read_place(value));
         };
         let owned = if place {
             // A whole slot the first link read is read again for the copy,
@@ -1076,7 +1076,7 @@ impl<'a> Flatten<'a> {
     fn chain_link_address(
         &mut self,
         operand: Node<'a>,
-        value: Reg,
+        (value, read): (Reg, Option<MirPlace>),
         site: &SourceSpan,
     ) -> (Reg, Option<(VarId, Ty)>) {
         let ty = self
@@ -1088,16 +1088,7 @@ impl<'a> Flatten<'a> {
         let Some(ty) = ty.filter(|ty| !matches!(ty.kind(), TyKind::Ref(_))) else {
             return (value, None);
         };
-        let read = self
-            .f
-            .body
-            .instrs
-            .iter()
-            .rev()
-            .find_map(|instruction| match instruction {
-                MirInstr::LoadPlace { dest, place } if *dest == value => Some(place.clone()),
-                _ => None,
-            });
+        let read = read.or_else(|| self.read_place(value));
         // The read stays: a middle's next link reads `value` again.
         if let Some(place) = read {
             let address = if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
@@ -1138,6 +1129,19 @@ impl<'a> Flatten<'a> {
             return value;
         }
         self.apply_call_value_adjustments(adjustments, parameter_ty, value, site.clone())
+    }
+
+    /// The place the current block's read of `value` loaded it from.
+    fn read_place(&self, value: Reg) -> Option<MirPlace> {
+        self.f
+            .body
+            .instrs
+            .iter()
+            .rev()
+            .find_map(|instruction| match instruction {
+                MirInstr::LoadPlace { dest, place } if *dest == value => Some(place.clone()),
+                _ => None,
+            })
     }
 
     /// Record how link `index` of a chain binds its fresh operands, as
@@ -1192,9 +1196,13 @@ impl<'a> Flatten<'a> {
         let (op, operand) = rest[index];
         self.bind_chain_operands(links, first, rest, index);
         self.open_call_setup();
+        let mut left_place = None;
         let left = match prev {
             None => self.lower_operator_operand(chain, first),
-            Some(ChainMiddle::Read(value)) => value,
+            Some(ChainMiddle::Read(value, place)) => {
+                left_place = place;
+                value
+            }
             Some(ChainMiddle::Place(place)) => self.lower_operator_operand(chain, place),
             Some(ChainMiddle::Slot(variable, ty)) => {
                 let read = self.fresh_typed(sp.clone(), Some(variable), ty.clone());
@@ -1209,6 +1217,9 @@ impl<'a> Flatten<'a> {
         self.close_call_setup(None);
         let link = links.get(index);
         let mut materialized_middle = None;
+        let receiver = index
+            .checked_sub(1)
+            .map_or(first, |previous| rest[previous].1);
         let (left, argument) = match link {
             Some(link) => {
                 let parameter_ty = link
@@ -1216,14 +1227,31 @@ impl<'a> Flatten<'a> {
                     .as_ref()
                     .and_then(|call| call.arguments.first())
                     .map(|argument| argument.parameter_ty.clone());
+                let read = left;
                 let left = self.chain_link_operand(&link.left_adjustments, None, left, &sp);
+                // The link's dunder takes a memory-only `read self` by
+                // address, as upstream's `lit.call` takes a `!lit.ref` of
+                // the receiver; a hidden slot holding a temporary first
+                // operand dies after this link.
+                let left = match link.call.as_ref().and_then(|contract| {
+                    crate::mir::calls::receiver_by_address(
+                        contract,
+                        receiver.register_passable_read(),
+                    )
+                }) {
+                    Some(_) => {
+                        let place = left_place.filter(|_| left == read);
+                        self.chain_link_address(receiver, (left, place), &sp).0
+                    }
+                    None => left,
+                };
                 let argument =
                     self.chain_link_operand(&link.right_adjustments, parameter_ty, cur, &sp);
                 let by_address = link.call.as_ref().and_then(|contract| {
                     OperandBinding::of_argument(contract, CheckedCallArgumentSource::Positional(0))
                 }) == Some(OperandBinding::Read { by_address: true });
                 let argument = if by_address {
-                    let (address, slot) = self.chain_link_address(operand, argument, &sp);
+                    let (address, slot) = self.chain_link_address(operand, (argument, None), &sp);
                     if argument == cur {
                         materialized_middle = slot;
                     }
@@ -1238,9 +1266,6 @@ impl<'a> Flatten<'a> {
         let resolved = link.and_then(|link| link.target.clone());
         // A link records no effect of its own: a dispatched link raises
         // what the chain does.
-        let receiver = index
-            .checked_sub(1)
-            .map_or(first, |previous| rest[previous].1);
         let dispatch = OperatorDispatch {
             raises: resolved.as_ref().and_then(|_| chain.raises()),
             raise_conversion: resolved.as_ref().and_then(|_| chain.raise_conversion()),
@@ -1327,8 +1352,9 @@ impl ArmTest {
 
 /// What a chained comparison's next link reads as its left operand.
 enum ChainMiddle<'a> {
-    /// The register the previous link read.
-    Read(Reg),
+    /// The register the previous link read, with the place it read it
+    /// from, which a later link's region no longer sees the read of.
+    Read(Reg, Option<MirPlace>),
     /// A named place (`x`, `x.f`) the next link reads where it lies.
     Place(Node<'a>),
     /// The hidden slot holding the first middle's owned temporary, of its

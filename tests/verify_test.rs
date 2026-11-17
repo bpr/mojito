@@ -7,7 +7,7 @@
 //! class.
 
 use mojito::check_program;
-use mojito::mir::verify::verify;
+use mojito::mir::verify::{verify, verify_lowered};
 use mojito::types::TyKind;
 use std::path::Path;
 
@@ -861,6 +861,81 @@ fn verifier_requires_a_reference_at_a_memory_only_read_argument() {
     expect_finding(
         &mir,
         "argument 0 of 'show' is received by address but passes a",
+    );
+}
+
+/// A memory-only `read self` receiver is received by address, as
+/// upstream's `lit.call` takes a `!lit.ref` of it: lowering's verify
+/// rejects a method call or a subscript accessor passing the value read from
+/// the receiver's place, which the later verify points do not yet check.
+#[test]
+fn verifier_requires_a_reference_at_a_memory_only_read_receiver() {
+    let source = "struct M(Movable):\n    var s: String\n\n    def __init__(out self, s: String):\n        self.s = s\n\n    def show(self):\n        print(self.s)\n\n    def __getitem__(self, i: Int) -> Int:\n        return i\n\ndef main():\n    var m = M(\"a\")\n    m.show()\n    print(m[1])\n";
+    let mir = lower_linked_source(source);
+    let errors = verify_lowered(&mir);
+    assert!(
+        errors.is_empty(),
+        "the receivers through ref.make verify: {errors:?}"
+    );
+    let receiver = |mir: &mut MirProgram, method: bool| {
+        let main = function_named(mir, "main");
+        let receiver = leaf_instructions_mut(&mut main.body)
+            .into_iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::MethodCall {
+                    method: name, recv, ..
+                } if method && name == "show" => Some(*recv),
+                MirInstr::Index {
+                    base,
+                    call: Some(_),
+                    ..
+                } if !method => Some(*base),
+                _ => None,
+            })
+            .expect("main calls the receiver's method");
+        load_in_place_of_address(main, receiver);
+    };
+    for (method, needle) in [
+        (
+            true,
+            "receiver of 'M.show' is received by address but passes a",
+        ),
+        (false, "receiver of 'M.__getitem__"),
+    ] {
+        let mut mir = mir.clone();
+        receiver(&mut mir, method);
+        let errors = verify_lowered(&mir);
+        assert!(
+            errors.iter().any(|error| error.contains(needle)),
+            "expected a finding containing '{needle}', got {errors:?}"
+        );
+        assert!(
+            !verify(&mir).iter().any(|error| error.contains(needle)),
+            "the receiver rule runs at lowering's verify only"
+        );
+    }
+}
+
+/// A register-passable `read self` receiver is passed by value.
+#[test]
+fn verifier_accepts_a_value_at_a_register_passable_read_receiver() {
+    let source = "@fieldwise_init\nstruct P(Copyable, Movable, TrivialRegisterPassable):\n    var v: Int\n\n    def get(self) -> Int:\n        return self.v\n\ndef main():\n    var p = P(1)\n    print(p.get())\n";
+    let mut mir = lower_linked_source(source);
+    assert_eq!(verify_lowered(&mir), Vec::<String>::new());
+    let main = function_named(&mut mir, "main");
+    let receiver = leaf_instructions_mut(&mut main.body)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall { method, recv, .. } if method == "get" => Some(*recv),
+            _ => None,
+        })
+        .expect("main calls P.get");
+    assert!(
+        !matches!(
+            main.reg_types.get(&receiver.0).map(Ty::kind),
+            Some(TyKind::Ref(_))
+        ),
+        "a register-passable receiver is passed by value"
     );
 }
 

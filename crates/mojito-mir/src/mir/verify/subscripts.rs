@@ -49,6 +49,7 @@ pub(super) fn verify_subscript_instruction(
                     },
                     errors,
                 );
+                verify_accessor_receiver(cx, call, *base, errors);
             } else if let Some(intrinsic) = intrinsic {
                 verify_intrinsic_index(
                     prefix,
@@ -90,6 +91,7 @@ pub(super) fn verify_subscript_instruction(
                     },
                     errors,
                 );
+                verify_accessor_receiver(cx, call, *object, errors);
             } else {
                 errors.push(format!(
                     "{prefix}: multi-index operation lacks a checked call contract"
@@ -122,6 +124,7 @@ pub(super) fn verify_subscript_instruction(
                 },
                 errors,
             );
+            verify_accessor_receiver(cx, call, *receiver, errors);
         }
         _ => {}
     }
@@ -739,5 +742,18 @@ pub(super) fn verify_capture_accesses(
                 access.root
             ));
         }
+    }
+}
+
+/// A checked subscript accessor's receiver, where its declaration takes it
+/// by address, is a reference (`verify_by_address_receiver`).
+fn verify_accessor_receiver(
+    cx: &InstrCx<'_>,
+    call: &crate::mir::MirSubscriptCall,
+    receiver: Reg,
+    errors: &mut Vec<String>,
+) {
+    if let Some(declaration) = declared(cx.declarations, &call.target) {
+        verify_by_address_receiver(cx, declaration, receiver, errors);
     }
 }
