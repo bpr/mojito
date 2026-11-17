@@ -720,7 +720,8 @@ impl Checker {
         let Some(facts) = records.get_mut(&middle.source_span()) else {
             return Vec::new();
         };
-        let adjustments = super::method_calls::call_value_adjustments(facts);
+        let adjustments =
+            super::method_calls::call_value_adjustments(facts, |ty| self.memory_only(ty));
         if facts.implicit_conversion.take().is_some() {
             facts.implicit_conversion_type = None;
             facts.conversion_materialization = None;

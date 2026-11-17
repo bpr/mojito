@@ -3736,6 +3736,143 @@ def main():
     );
 }
 
+#[test]
+fn parameter_value_at_read_slot_passes_its_slot_address() {
+    // A recorded parameter value (`dtype`) at a by-address `read` slot is
+    // an rvalue materialized in a call-result slot: the call passes that
+    // slot's address and the caller destroys it, as upstream's `lit.call`
+    // takes the `!lit.ref` of the temporary; nothing forwards the slot's
+    // value into the call.
+    let source = r#"
+@no_inline
+def h[dtype: DType]() -> Bool:
+    return dtype in (DType.float32, DType.float64)
+
+def main():
+    print(h[DType.float32]())
+"#;
+    let (_, function) = checked_function(source, "h");
+    let addresses = mojito::mir::operand_addresses(&function.body, &function.reg_types);
+    let instructions = nested_instructions(&function.body);
+    let operand = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall { method, args, .. } if method == "__contains__" => {
+                args.first().copied()
+            }
+            MirInstr::Call { func, args, .. } if func.0.ends_with("__contains__") => {
+                args.get(1).copied()
+            }
+            _ => None,
+        })
+        .expect("a `__contains__` call");
+    let place = addresses
+        .made(operand)
+        .expect("`__contains__` takes its operand's address");
+    assert!(
+        function.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT),
+        "{place:?}"
+    );
+    assert!(
+        !instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::UseVar { var, mode: UseMode::Forward, .. } if *var == place.root
+        )),
+        "the slot is read, not forwarded"
+    );
+}
+
+#[test]
+fn augmented_setter_conversion_reads_getter_slot() {
+    // `c[0] += x` over a value getter and a setter whose `value: Total`
+    // converts the getter's `C` result by a `read` constructor: the
+    // conversion takes the getter result slot's address and the caller
+    // destroys the slot, as upstream's caller destroys the getter's
+    // `__call_result_tmp__`; an owned (`var`) setter value still takes it.
+    let source = r#"
+struct C(Copyable):
+    var v: Int
+
+    def __init__(out self, v: Int):
+        self.v = v
+
+    def __iadd__(mut self, rhs: Self):
+        self.v += rhs.v
+
+struct Total(Copyable):
+    var v: Int
+
+    @implicit
+    def __init__(out self, c: C):
+        self.v = c.v
+
+struct Converting(Movable):
+    var first: C
+    var last: Int
+
+    def __init__(out self, var first: C):
+        self.first = first^
+        self.last = 0
+
+    def __getitem__(self, i: Int) -> C:
+        return self.first.copy()
+
+    def __setitem__(mut self, i: Int, value: Total):
+        self.last = value.v
+
+struct Owned(Movable):
+    var first: C
+
+    def __init__(out self, var first: C):
+        self.first = first^
+
+    def __getitem__(self, i: Int) -> C:
+        return self.first.copy()
+
+    def __setitem__(mut self, i: Int, var value: C):
+        self.first = value^
+
+def main():
+    var c = Converting(C(40))
+    c[0] += C(4)
+    print(c.last)
+    var o = Owned(C(1))
+    o[0] += C(2)
+    print(o.first.v)
+"#;
+    let (_, main) = checked_main(source);
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
+    let place = first_operand_place(&main, &addresses, "Total.__init__")
+        .expect("the conversion reads the getter result's slot by address");
+    assert!(
+        main.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT),
+        "{place:?}"
+    );
+    let instructions = nested_instructions(&main.body);
+    let owned_value = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MultiSet { value, call, .. }
+                if call.target.starts_with("Owned.__setitem__") =>
+            {
+                Some(*value)
+            }
+            _ => None,
+        })
+        .expect("the `Owned` setter");
+    assert!(
+        addresses.made(owned_value).is_none(),
+        "a `var` value is taken"
+    );
+    assert!(
+        instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::UseVar { dest, mode: UseMode::Forward, .. } if *dest == owned_value
+        )),
+        "the `var` setter value forwards the getter result's slot"
+    );
+}
+
 /// The place the first call of `callee` in `function` passes its first
 /// operand's address of, `None` when that operand is a value.
 fn first_operand_place<'f>(

@@ -1220,6 +1220,7 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::CheckedCallValueAdjustment::ImplicitConversion {
                     target,
                     instantiated_args,
+                    ..
                 } => {
                     let dest = self.fresh_typed(
                         site.clone(),

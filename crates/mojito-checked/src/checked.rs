@@ -142,6 +142,12 @@ pub enum CheckedCallValueAdjustment {
     ImplicitConversion {
         target: String,
         instantiated_args: Vec<mojito_types::types::TyArg>,
+        /// Whether the constructor reads its source by address: it reads
+        /// it (`ConversionReadsSource`), and the source's type is not
+        /// proven register-passable, as
+        /// [`ConversionMaterialization::by_address`].
+        #[serde(default)]
+        source_by_address: bool,
     },
     IndexNormalization {
         target: String,

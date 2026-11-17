@@ -9585,29 +9585,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2249 A forwarded slot at a by-address `read` slot passes the
-  slot's value**
-
-  Upstream passes the `!lit.ref` of the storage a by-address `read`
-  argument lives in. An operand whose lowering ends in a `var.use …
-  forward` (a `comptime` thunk's parameter, a taken call-result slot)
-  is deferred to call setup's transfers (`Flatten::defer_to_setup`) and
-  passed as the forwarded value.
-  - Probe: `len(Self.Ts)` in the `$comptime$Tuple.__eq__$c0` thunks (and
-    `__ne__`, `__lt__`, `__hash__`, `write_to`, `__contains__`) passes a
-    `TypeList` value.
-  - Probe: the implicit `Total.__init__(out self, c: C)` conversion of an
-    augmented subscript store's getter result, before `__setitem__(…,
-    value: Total)` (`assets/ok/augmented_store_copies_nothing.mojo`),
-    passes the forwarded `C`.
-  - Fix: pass the forwarded slot's `ref.make` at a `read` binding and
-    leave the slot to the caller's destruction.
-  - Then the inliner's `loaded_place` and `loaded_slot_across_regions`
-    fallbacks for a `read` slot with no address (`argument_binding`,
-    `inline_parametric.rs`) lose these operands.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R2250 A function value at a callable-bound `read` parameter is
   judged by address**
 
@@ -9629,15 +9606,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   Upstream's `lit.call` verifier rejects a value where the callee's
   signature takes a `!lit.ref`. `verify_direct_call` still requires a
-  reference only at a `mut`/`ref` slot, because R2249's and R2250's
-  operands pass values.
+  reference only at a `mut`/`ref` slot, because R2250's operands pass
+  values.
   - Fix: require a reference wherever `by_address_parameter` takes the
     slot by address. On elaborated MIR the instance's declaration names
     its substituted types, so a `read` the instance proves
     register-passable may pass the value `load_register_passable_operands`
     reads, which needs no row rewrite.
   - Stop when std packages and `scripts/smoke` is clean with the rule on.
-  - Depends on R2187, R2248, R2249, R2250.
+  - Depends on R2187, R2248, R2250.
   - Model: Fable, Planned.
 
 - [ ] **R2253 The VM represents a place pointer by the same handle as a

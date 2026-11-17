@@ -570,8 +570,10 @@ impl<'a> Node<'a> {
     /// a place it names: anything but a binding, a field, or a subscript
     /// whose selected getter returns a reference (or that is a pointer's),
     /// and any implicitly converted operand, whose argument is the
-    /// conversion's result. A `^` transfer is neither: a read parameter
-    /// lends its place.
+    /// conversion's result. A name or member reading a recorded parameter
+    /// value is a temporary too: it lowers to a fresh constant, as
+    /// upstream's parameter reference is an rvalue. A `^` transfer is
+    /// neither: a read parameter lends its place.
     pub(super) fn binds_temporary(self) -> bool {
         let place = match self.op() {
             CheckedOp::Identifier(_) | CheckedOp::Member { .. } => true,
@@ -581,7 +583,8 @@ impl<'a> Node<'a> {
             CheckedOp::MultiIndex { .. } => self.pointer_keyword_subscript().is_some(),
             _ => false,
         };
-        self.transfer_operand().is_none() && (self.implicit_conversion().is_some() || !place)
+        self.transfer_operand().is_none()
+            && (self.implicit_conversion().is_some() || self.constant_param_value() || !place)
     }
 
     /// Whether a callable-value (indirect) or method call's argument list

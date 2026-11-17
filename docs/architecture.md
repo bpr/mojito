@@ -2492,8 +2492,18 @@ materialized: a pointer's pointee (`p[]`, `p[i]`) passes a `ref.make` of
 its place projected through the pointer, a `ref` getter's result the
 getter's handle whatever the referent, and a `__VariantStorage` payload
 (`unsafe_get[T]()`) a `ref.make` of its `Proj::Variant` place, as
-upstream passes the `!lit.ref` each yields. A forwarded slot and a
-function value still pass a value (R2249, R2250). A retained place that holds a
+upstream passes the `!lit.ref` each yields. A recorded parameter value
+(`dtype`, `Self.Ts`) is an rvalue, as upstream's parameter reference is:
+its constant materialized in a `$call_result` slot is read, not taken
+(`Node::binds_temporary`, and the checker's `designates_place`), so the
+call passes that slot's `ref.make` and the caller destroys it. An
+augmented subscript store whose setter converts the getter's result by a
+constructor that reads it by address
+(`CheckedCallValueAdjustment::ImplicitConversion::source_by_address`)
+passes the getter result slot's `ref.make` to the constructor and
+destroys the slot after the setter (`Flatten::augmented_setter_value`),
+as upstream's caller destroys the getter's `__call_result_tmp__`. A
+function value still passes a value (R2250). A retained place that holds a
 reference (a `ref` field, a `ref` binding's slot) passes the reference it
 holds, as upstream passes the `!lit.ref` the field or binding is
 (`Flatten::forward_stored_handle`, `mir::call_addresses::stored_handle`):
@@ -6315,8 +6325,9 @@ current Mojo:
   (`record_call_conventions`, `record_operand_convention` in
   `checker/places.rs`). Lowering binds each operand by it before lowering
   it (`Flatten::bind_call_operands`, `OperandBinding`), and
-  `Flatten::operand_c` reads a temporary (`Node::binds_temporary`) its
-  call binds to a `read` parameter and takes any other. A receiver returned in registers that a `ref
+  `Flatten::operand_c` reads a temporary (`Node::binds_temporary`, a
+  recorded parameter value included) its call binds to a `read`
+  parameter and takes any other. A receiver returned in registers that a `ref
   self` binds is materialized in a `$mat_r` slot, as upstream's
   `getLValueForResult` gives an rvalue storage. An implicitly copied
   memory-only `deinit self` receiver owning droppable storage is copied

@@ -197,9 +197,11 @@ impl Checker {
     /// selected getter returns by value. A subscript is its getter's call,
     /// so `b[i]` over `def __getitem__(self, i: Int) -> T` is an owned
     /// temporary, as upstream; a `ref` getter, a pointer subscript, and a
-    /// storage read stay places.
+    /// storage read stay places. A name or member reading a recorded
+    /// parameter value is a fresh value too, as upstream's parameter
+    /// reference is an rvalue.
     pub(super) fn designates_place(&self, expr: &Expr) -> bool {
-        is_place_expr(expr) && !self.is_owned_subscript(expr)
+        is_place_expr(expr) && !self.is_owned_subscript(expr) && !self.is_param_value_read(expr)
     }
 
     /// The positions `name`'s positional collector gathers and whether it
@@ -468,6 +470,19 @@ impl Checker {
     }
 
     /// Whether `expr` is a subscript whose selected getter returns by value.
+    fn is_param_value_read(&self, expr: &Expr) -> bool {
+        matches!(expr.kind, ExprKind::Identifier(_) | ExprKind::Member { .. })
+            && self.has_fact(&expr.source_span(), |facts| {
+                matches!(
+                    facts.adjustment.as_deref(),
+                    Some(mojito_checked::checked::SemanticAdjustment::ParamValue {
+                        materialized: None,
+                        ..
+                    })
+                )
+            })
+    }
+
     fn is_owned_subscript(&self, expr: &Expr) -> bool {
         matches!(
             expr.kind,

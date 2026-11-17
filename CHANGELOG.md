@@ -1045,6 +1045,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A recorded parameter value at a by-address `read` slot (`dtype in
+  (DType.float32, DType.float64)`, `len(Self.Ts)` in a `comptime` thunk)
+  is now read from its materialized call-result slot, whose address the
+  call takes and which the caller destroys, rather than forwarded into the
+  call, as upstream's parameter reference is an rvalue; the checker's
+  `designates_place` agrees. An augmented subscript store whose setter
+  converts the getter's result by a constructor reading it by address
+  (`c[0] += x` over `__setitem__(…, value: Total)`) passes the getter
+  result slot's address to the constructor and destroys the slot after
+  the setter, from the checked
+  `CheckedCallValueAdjustment::ImplicitConversion::source_by_address`
+  (`mojito-package 227`). No program output changes. (R2249)
+
 - A by-address `read` argument read through a pointer, a `ref` getter,
   or a variant payload (`len(self.src[])`, `repr(self.data[i])`,
   `text.write(digits[j])`, `self._storage.unsafe_get[T]()`) now passes the

@@ -1471,7 +1471,10 @@ impl<'a> Flatten<'a> {
     /// parameter by its convention: taken by an owned (`var`/`deinit`)
     /// parameter or one the checker adapts, and read by a `read` one,
     /// which takes its address when the setter's declared parameter does
-    /// and is otherwise passed the value, naming no storage.
+    /// and is otherwise passed the value, naming no storage. A slot whose
+    /// conversion constructor reads it by address passes that slot's
+    /// address and stays the caller's to destroy, as upstream's caller
+    /// destroys the getter's `__call_result_tmp__`.
     pub(super) fn augmented_setter_value(
         &mut self,
         target: Node<'a>,
@@ -1506,7 +1509,28 @@ impl<'a> Flatten<'a> {
             }
             return (read.0, None);
         }
-        let value = self.take_c(target, result);
+        let converts_by_address = setter
+            .boundary
+            .arguments
+            .iter()
+            .find(|argument| argument.source == value_argument)
+            .and_then(|argument| argument.adjustments.first())
+            .is_some_and(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::CheckedCallValueAdjustment::ImplicitConversion {
+                        source_by_address: true,
+                        ..
+                    }
+                )
+            });
+        let value = if converts_by_address && matches!(result, CValue::Slot(_)) {
+            let read = self.read_c(target, result);
+            self.address_operand(target, read, mojito_types::origin::Mutability::Immutable)
+                .0
+        } else {
+            self.take_c(target, result)
+        };
         let value = self.apply_checked_call_value_adjustments(
             setter,
             value_argument,

@@ -210,6 +210,7 @@ impl RewriteTypes for CheckedCallValueAdjustment {
             Self::ImplicitConversion {
                 target: _,
                 instantiated_args,
+                source_by_address: _,
             } => {
                 instantiated_args.rewrite_types(rewrite);
             }
