@@ -1496,6 +1496,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     PathLike,
     Writable,
 ):
+    comptime Immutable = StringSpan[ImmOrigin(Self.origin)]
     var _data: Pointer[Byte, Self.origin._get_owned_interior["bytes"]]
     var _size: Int
 
@@ -2008,9 +2009,11 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     # (`n == 0` yields `("", self)`, `n` past the end `(self, "")`): the
     # immutable versions of this view, keeping its provenance (upstream's
     # `Self.Immutable`).
-    def split_at_grapheme(
-        self, n: Int
-    ) -> Tuple[StringSpan[ImmOrigin(Self.origin)], StringSpan[ImmOrigin(Self.origin)]]:
+    @inline(.always)
+    def as_imm(self) -> Self.Immutable:
+        return rebind[Self.Immutable](self)
+
+    def split_at_grapheme(self, n: Int) -> Tuple[Self.Immutable, Self.Immutable]:
         if n < 0:
             _mojito_abort("grapheme split index must be non-negative")
         var at = 0
@@ -2018,7 +2021,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         while seen < n and at < self._size:
             at = self._next_grapheme_end(at)
             seen += 1
-        return (self._sub_view(0, at), self._sub_view(at, self._size))
+        return (self._sub_view(0, at).as_imm(), self._sub_view(at, self._size).as_imm())
 
     @inline(.always)
     def __getitem__(self, *, byte: ContiguousSlice) -> Self:

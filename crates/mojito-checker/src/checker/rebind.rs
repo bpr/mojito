@@ -20,7 +20,7 @@ use super::*;
 use mojito_ast::ast::ParamArg;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
 use mojito_types::types::TyKind;
-use mojito_types::types::is_symbolic;
+use mojito_types::types::{erase_origins, is_symbolic};
 
 /// The retypings `erase_rebinds` recorded.
 #[derive(Clone, Default)]
@@ -243,7 +243,8 @@ impl Checker {
     /// either side is still symbolic, the target stands in for the operand
     /// type and the elaborator asserts the equality per instance; between
     /// two closed types the check requires the two to be the same type as
-    /// LLVM translation sees them ([`Self::rebind_translated_ty`]).
+    /// LLVM translation sees them ([`Self::rebind_translated_ty`]), where
+    /// origins erase.
     fn rebound_ty(&self, target: &ParamArg, ty: &Ty, site: &SourceSpan) -> Result<Ty, TypeError> {
         let dest = self.rebind_target_ty(target)?;
         self.record_at(site.clone()).rebind_assertion =
@@ -259,7 +260,8 @@ impl Checker {
         let closed = !is_symbolic(ty) && !is_symbolic(&dest);
         if closed
             && *ty != dest
-            && self.rebind_translated_ty(ty) != self.rebind_translated_ty(&dest)
+            && erase_origins(&self.rebind_translated_ty(ty))
+                != erase_origins(&self.rebind_translated_ty(&dest))
             && !self.checking_parametric_body()
         {
             return Err(TypeError::TypeMismatch {

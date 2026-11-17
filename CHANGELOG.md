@@ -715,6 +715,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `rebind` between two instances that differ only in origin arguments
+  is accepted, as at the pin, so upstream's `as_imm()` (`return
+  rebind[Self.Immutable](self)`) checks; the bundled `StringSpan`
+  declares it, and its `split_at_grapheme` converts through it
+  (`assets/ok/rebind_across_origin_arguments.mojo`). A struct's
+  `ImmOrigin(...)` slot still converts to and from the uncast origin
+  until an implicit constructor with its own origin binder is
+  selectable (R2307, R2289).
+
 - A static method's result whose type names an argument's origin now keeps
   that argument's loans, as a free function's does: `var t =
   S.same(Pointer(to=z))` over `-> Pointer[Noisy, o2]` no longer destroys
