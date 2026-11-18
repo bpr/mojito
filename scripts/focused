@@ -35,13 +35,12 @@ import concurrent.futures
 import json
 import sys
 import time
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tierlib  # noqa: E402
-from tierlib import ROOT, first_difference, indent, mojito, native_env, tail  # noqa: E402
+from tierlib import ROOT, first_difference, indent, mojito, tail  # noqa: E402
 
 LIST = ROOT / "tests" / "focused" / "list.txt"
 PARITY = ROOT / "conformance" / "pliron-parity.tsv"
@@ -82,11 +81,11 @@ def main() -> int:
         return from_gate(args.from_gate, entries, args.no_build, args.vm_only)
     if args.filter:
         entries = [e for e in entries if args.filter in e.label]
-    env = test_env()
+    env = tierlib.test_env()
     began = time.monotonic()
     targets = sorted({CORPUS, *(e.target for e in entries if e.kind == "test")})
-    executables = (built_executables(targets) if args.no_build
-                   else build(targets, args.vm_only, env))
+    executables = (tierlib.built_test_executables(targets) if args.no_build
+                   else tierlib.build_test_targets(targets, args.vm_only, env, "focused"))
     if executables is None:
         return 2
     missing = [t for t in targets if t not in executables]
@@ -133,9 +132,9 @@ def from_gate(log: Path, listed: list[Entry], no_build: bool, vm_only: bool) -> 
         if qualified is None or words[-1] == qualified:
             continue
         failing.setdefault(qualified.removeprefix("mojito::"), set()).add(words[-1])
-    env = test_env()
-    executables = (built_executables([CORPUS]) if no_build
-                   else build([CORPUS], vm_only, env))
+    env = tierlib.test_env()
+    executables = (tierlib.built_test_executables([CORPUS]) if no_build
+                   else tierlib.build_test_targets([CORPUS], vm_only, env, "focused"))
     if not executables or CORPUS not in executables:
         return 2
     have = {(e.target, e.name) for e in listed}
@@ -155,23 +154,6 @@ def from_gate(log: Path, listed: list[Entry], no_build: bool, vm_only: bool) -> 
                   if (target, name) not in have]
     print("\n".join(lines))
     return 0
-
-
-def test_env() -> dict[str, str]:
-    """`native_env` plus the `[env]` table of `.cargo/config.toml` and the
-    root crate's `CARGO_MANIFEST_DIR`.
-
-    Cargo sets both only for the processes it launches, and the script runs
-    the test executables itself, so their trial threads would otherwise get
-    Rust's default stack, and an `expect_file!` snapshot test could not
-    resolve its path.
-    """
-    env = native_env()
-    env.setdefault("CARGO_MANIFEST_DIR", str(ROOT))
-    config = tomllib.loads((ROOT / ".cargo" / "config.toml").read_text())
-    for key, value in config.get("env", {}).items():
-        env.setdefault(key, value if isinstance(value, str) else value["value"])
-    return env
 
 
 def read_list(path: Path) -> list[Entry]:
@@ -285,43 +267,6 @@ def check_test(executable: str, name: str, env: dict[str, str]) -> str | None:
     if done.exit_code != 0:
         return f"the test exited {done.exit_code}:\n{tail(done.output, 20)}"
     return None
-
-
-def build(targets: list[str], vm_only: bool, env: dict[str, str]) -> dict[str, str] | None:
-    """Build the test targets (and with them the CLI), returning each one's executable."""
-    features = [] if vm_only else ["--features", "backend-pliron"]
-    if not vm_only and not tierlib.build(
-            [["cargo", "build", "--quiet", "-p", "mojito-runtime"]], env, "focused"):
-        return None
-    command = ["cargo", "test", "--no-run", "--quiet", "--message-format=json", *features]
-    for target in targets:
-        command += ["--test", target]
-    done = tierlib.run(command, env)
-    if done.exit_code != 0:
-        print(f"focused: `{' '.join(command)}` failed:\n{tail(done.output, 40)}")
-        return None
-    executables = {}
-    for line in done.output.splitlines():
-        if not line.startswith("{"):
-            continue
-        message = json.loads(line)
-        target = message.get("target", {})
-        if (message.get("reason") == "compiler-artifact" and target.get("kind") == ["test"]
-                and message.get("profile", {}).get("test") and message.get("executable")):
-            executables[target["name"]] = message["executable"]
-    return executables
-
-
-def built_executables(targets: list[str]) -> dict[str, str]:
-    """The newest built executable of each test target, for `--no-build`."""
-    deps = ROOT / "target" / "debug" / "deps"
-    executables = {}
-    for target in targets:
-        candidates = [p for p in deps.glob(f"{target}-*")
-                      if p.suffix == "" and p.is_file() and p.stat().st_mode & 0o111]
-        if candidates:
-            executables[target] = str(max(candidates, key=lambda p: p.stat().st_mtime))
-    return executables
 
 
 if __name__ == "__main__":

@@ -785,6 +785,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A copy of a pointer subscript (`p[0]`, `p[]` over an origin-bearing
+  pointer, `p.unsafe_write(copy=q[i])`) now passes the pointee's reference
+  to `__copyinit__`, made by `pointer.convert` as upstream's `__getitem__`
+  makes it with `lit.ref.from_pointer`, instead of a value register. This
+  covers the bundled `List`, `Array`, and `Optional` copy initializers'
+  element copies (R2296).
+
 - A memory-only truthiness operand (`if xs:`, `while opt:`, `not s`,
   `if self.flag:`, the left operand of `and`/`or`, an `and`/`or` or
   conditional result tested again, and a generic `if a:` over

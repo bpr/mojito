@@ -492,7 +492,8 @@ impl<'a> Flatten<'a> {
         }
         // `pointer.unsafe_write(value)` / `unsafe_write(copy=v)`
         // initializes the pointee at offset 0 — the same store family
-        // as `pointer[] = value`. An origin-bearing pointer writes its
+        // as `pointer[] = value`; a copied pointer subscript passes its
+        // pointee's reference to the copy. An origin-bearing pointer writes its
         // pointee (its address substituted when statically known, else
         // through the runtime handle); a heap pointer stores through a
         // synthetic binding so chained receivers stay expressible.
@@ -512,6 +513,7 @@ impl<'a> Flatten<'a> {
                 .expect("checked unsafe_write has one value");
             let src = if copy {
                 let value = self.read_operand(*value_expr);
+                self.pointee_reference_read(*value_expr, value);
                 let copied = self.fresh_typed(call.location(), None, element.clone());
                 self.emit(MirInstr::CopyValue {
                     dest: copied,

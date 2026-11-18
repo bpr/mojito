@@ -646,6 +646,81 @@ impl<'a> Flatten<'a> {
         dest
     }
 
+    /// Rewrite `read`, the pointer subscript node `e` just read by value,
+    /// to the shape upstream's `__getitem__` has: the pointee's reference
+    /// (`lit.ref.from_pointer`, MIR's `pointer.convert`) of the offset
+    /// pointer, and a `ref.read` through it, so a copy of the read takes
+    /// that reference. `false`, leaving the read alone, unless the last
+    /// instruction is the read through a pointer: a pointee read off a
+    /// place already passes its `ref.make`.
+    pub(super) fn pointee_reference_read(&mut self, e: Node<'a>, read: Reg) -> bool {
+        let (pointer, offset) = match self.f.body.instrs.last() {
+            Some(MirInstr::Index {
+                dest,
+                base,
+                index,
+                call: None,
+                intrinsic: Some(MirIntrinsicSubscript::Pointer),
+            }) if *dest == read => (*base, Some(*index)),
+            Some(MirInstr::ReadRef { dest, reference }) if *dest == read => (*reference, None),
+            _ => return false,
+        };
+        let Some(pointer_ty) = self
+            .f
+            .reg_types
+            .get(&pointer.0)
+            .filter(|ty| ty.is_pointer())
+            .cloned()
+        else {
+            return false;
+        };
+        let Some(referent) = pointer_ty.kind().pointer_element().cloned() else {
+            return false;
+        };
+        let origin = pointer_ty
+            .kind()
+            .pointer_origin()
+            .and_then(|origin| origin.as_origin())
+            .unwrap_or(mojito_types::origin::Origin::Untracked { mutable: false });
+        self.f.body.instrs.pop();
+        let pointer = match offset {
+            Some(offset) => {
+                let offset_pointer = self.fresh_typed(e.location(), None, pointer_ty);
+                self.emit(MirInstr::BinOp {
+                    op: mojito_ast::ast::InfixOp::Add,
+                    dest: offset_pointer,
+                    a: pointer,
+                    b: offset,
+                    resolved: None,
+                    raises: None,
+                    refined_bound: None,
+                    fastmath: None,
+                });
+                offset_pointer
+            }
+            None => pointer,
+        };
+        let reference = self.fresh_typed(
+            e.location(),
+            None,
+            TyKind::Ref(mojito_types::origin::RefTy {
+                referent,
+                origin,
+                mutability: mojito_types::origin::Mutability::Immutable,
+            })
+            .into(),
+        );
+        self.emit(MirInstr::PointerConvert {
+            dest: reference,
+            value: pointer,
+        });
+        self.emit(MirInstr::ReadRef {
+            dest: read,
+            reference,
+        });
+        true
+    }
+
     /// The checked value-copy boundary of place read `e`, whose borrowed
     /// value is `loaded`: a read selected for a consuming value context
     /// runs its `__copyinit__`; any other read stays the borrow.
@@ -673,9 +748,13 @@ impl<'a> Flatten<'a> {
     /// Read pointer subscript node `e`, `object[index]` or
     /// `object[unsafe_offset=index]`. Upstream's `__getitem__` returns
     /// `ref T`, so the subscript is a place: the read borrows the pointee,
-    /// and only the checked value-copy boundary copies it.
+    /// and only the checked value-copy boundary copies it, through the
+    /// pointee's reference ([`Self::pointee_reference_read`]).
     fn pointer_subscript_read(&mut self, e: Node<'a>, object: Node<'a>, index: Node<'a>) -> Reg {
         let (read, root) = self.pointee_read(e, object, index);
+        if copies_place_value(e.checked) {
+            self.pointee_reference_read(e, read);
+        }
         self.copy_boundary(e, read, root)
     }
 

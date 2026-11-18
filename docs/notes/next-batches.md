@@ -5,7 +5,11 @@ batch is one `scripts/claude_loop.py` command. `--task` runs each named entry
 after its open prerequisites, so a batch may run a few entries it does not
 name. Preview one with `--list` or `--dry-run`. `scripts/run-batches` reads
 the commands below, one batch each. After every batch it runs the entries
-the batch's sessions filed, then focused and the instantiation ratchet.
+the batch's sessions filed, round by round while each round is smaller than
+the last, then focused and the instantiation ratchet. A rule that holds
+across many sites is planned sites-first: an entry that enforces it lists
+every site, found by running the check, rather than leaving later sessions
+to find them one construct at a time.
 Delete a batch here once it has landed.
 
 The goal is structure, not features. Each batch closes one place where

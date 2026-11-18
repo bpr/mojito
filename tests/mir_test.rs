@@ -4029,6 +4029,84 @@ def main():
 }
 
 #[test]
+fn pointer_subscript_copy_passes_its_pointee_reference() {
+    // A copied pointer subscript (`p[0]` over an unsafe pointer, `p[]` over
+    // an origin-bearing one) reads through the pointee's reference
+    // `pointer.convert` makes, upstream's `lit.ref.from_pointer`, so the
+    // copy takes that reference; a stably addressed pointer's pointee
+    // stays a load of its place.
+    let source = r#"
+struct C(ImplicitlyCopyable, Movable):
+    var v: Int
+
+    def __init__(out self, v: Int):
+        self.v = v
+
+    def __init__(out self, *, copy: Self):
+        self.v = copy.v
+        print("copy C", copy.v)
+
+def returned(p: UnsafePointer[C, _]) -> C:
+    return p[0]
+
+def deref[o: ImmOrigin](p: Pointer[C, o]) -> C:
+    return p[]
+
+def placed() -> Int:
+    var a = C(1)
+    var pa = Pointer(to=a)
+    var z = pa[]
+    return z.v
+
+def main():
+    var a = C(2)
+    print(returned(UnsafePointer(to=a)).v, deref(Pointer(to=a)).v, placed())
+"#;
+    let copied_through_reference = |function: &MirFunction| {
+        let instrs = &function.body.instrs;
+        let defining = |reg: Reg| {
+            instrs.iter().find(|instr| match instr {
+                MirInstr::ReadRef { dest, .. } | MirInstr::PointerConvert { dest, .. } => {
+                    *dest == reg
+                }
+                _ => false,
+            })
+        };
+        instrs.iter().any(|instr| {
+            let MirInstr::CopyValue { value, .. } = instr else {
+                return false;
+            };
+            let Some(MirInstr::ReadRef { reference, .. }) = defining(*value) else {
+                return false;
+            };
+            matches!(defining(*reference), Some(MirInstr::PointerConvert { .. }))
+                && matches!(
+                    function.reg_types.get(&reference.0).map(Ty::kind),
+                    Some(TyKind::Ref(_))
+                )
+        })
+    };
+    for name in ["returned", "deref"] {
+        let (_, function) = checked_function(source, name);
+        assert!(
+            copied_through_reference(&function),
+            "{name}: {:#?}",
+            function.body.instrs
+        );
+    }
+    let (_, function) = checked_function(source, "placed");
+    assert!(
+        !function
+            .body
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, MirInstr::PointerConvert { .. })),
+        "a place pointer's pointee loads its place: {:#?}",
+        function.body.instrs
+    );
+}
+
+#[test]
 fn reference_result_at_pack_read_passes_its_handle() {
     // A `ref` getter's result at a by-address pack element
     // (`text.write(digits[0])`, `*args: Ts`) passes the returned reference

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2320**.
+Next free ID: **R2321**.
 
 ## Ordered Work
 
@@ -2374,6 +2374,26 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     body records no transfer, and the caller's aggregate path does not see a
     copied pointer.
   - Probe: `conformance/probes/pointer_copied_into_struct_keeps_loan.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2320 A pointer subscript passed by address loses its pointer's
+  loans**
+
+  `ls.unsafe_ptr()[0].show()`, with `show(self)` on a memory-only element
+  and that call as `ls`'s last use, destroys `ls` before the call, so the
+  VM stops with "use after Pointer deallocation"; the pin keeps `ls` alive
+  through the call.
+  - `Flatten::materialize_operand` re-homes the pointer in a hidden
+    `$ptr_r` slot (`Flatten::pointee_place`, `mir/calls.rs`) and
+    establishes none of the pointer's loans on it.
+  - Fix: in `pointee_place`, establish `aggregate_borrows` of the
+    subscript's object on the `$ptr_r` slot (`EstablishLoans`), as
+    `temporary_pointer_deref` (`mir.rs`) does on `$ptr_tmp_r`.
+  - Probe: the program above, on the VM and `--backend pliron`; the pin
+    prints the element, then its destruction, then the next line.
+  - R2208 retires `pointee_place` for the pointee reference a copied
+    subscript already reads through (`pointee_reference_read`).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9627,37 +9647,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2296 A pointer subscript in copy position is copied by value,
-  not from its pointee's place**
-
-  Upstream's `p[]` and `ptr[i]` are the pointee's `!lit.ref`, so a copy of
-  one calls `__copyinit__` with that reference. Mojito lowers the subscript
-  to an `index.get` with `intrinsic: pointer` and copies its register, so
-  `mir::lower_copies_and_moves` (`copy_calls.rs`) has no place to pass.
-  - Fix: a pointer subscript in copy position copies from the pointee
-    place (`Flatten::pointee_place`, `mir/calls.rs`; `pointee_place_read`,
-    `lower_expr/expr_access.rs`), so the copy passes its `ref.make`.
-  - Probe: the R2300 keyword check. At lowering it flags
-    `assets/ok/call_result_pointer_argument_keeps_owner.mojo` (`read`) and
-    `pointer_subscript_reads_in_place.mojo` (`returned`, `main`).
-  - Probe: at the elaborator it flags std's `List`, `Array`, `Dict` and
-    `Optional` copy initializers copying an element, in
-    `dict_methods_growth`, `self_hosted_dict`, `nested_copy_lifecycle`,
-    `list_fill_copies_once`, `raising_iter_call_edge`,
-    `reflection_list_materialized_whole`,
-    `condition_truthiness_reads_in_place`, `ctfe_dict_set_result`,
-    `ctfe_module_display_constant_requests`,
-    `nonmaterializable_converts_through_target`, and the
-    `template_method_*` fixtures failing at `List$mono$TString` or
-    `Optional$mono$TString`.
-  - Probe: once those pass, check `nested_copy_lifecycle.mojo` for a
-    `ref.read` ahead of `Optional$mono$TInt.__copyinit__(copy=<value>)`
-    in an instance. If it is there, `load_register_passable_operands`
-    (`call_addresses.rs`) and `by_address_parameter` disagree about
-    `Optional[Int]`; fix the side that departs from the pin.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2297 A field of a temporary or of a reference result is copied
   from its register, not from a place**
 
@@ -13698,8 +13687,10 @@ Every entry is written for a human reader who has not seen the code.
   semicolon, it is two bullets.
 - Code spellings appear only where the reader must go look
   (a file, a test, a diagnostic text, an example line).
-- A residue list from a finished task becomes several checkboxes, not one
-  paragraph.
+- A residue list from a finished task becomes one checkbox per cause, not
+  one paragraph and not one checkbox per site: the shapes and sites a cause
+  reaches are that checkbox's probe bullets.
+- A failure the task's own change causes is fixed in that task, never filed.
 - Exception: every change that needs an `MJRT_ABI_VERSION` bump shares
   one checkbox, so the native runtime ABI is bumped once for all of them.
 - Every entry is `- [ ] **R<n> Title**`, with `R<n>` reserved by

@@ -6274,12 +6274,18 @@ the call alone over its register, or, where its block read the register
 through a reference with nothing written since, over that reference, or,
 where its block loaded the register from a place with nothing written
 since, over a `ref.make` of that place, as upstream's `copy: Self` takes
-the source's `!lit.ref`. Ending a reference binding writes nothing: drop
+the source's `!lit.ref`. A pointer subscript in copy position (`p[0]`,
+`p[]`, `unsafe_write(copy=p[i])`) is read as upstream's `__getitem__`
+reads it, through the pointee's reference: the offset pointer's
+`pointer.convert` to an immutable `ref` (`lit.ref.from_pointer`) and a
+`ref.read` through it, so its copy passes that reference; a pointer with a
+stably known address loads the pointee's place instead, whose copy passes
+its `ref.make`. Ending a reference binding writes nothing: drop
 elaboration may end the binding a loaded place goes through at the load,
 its last use, and the call then ends it after itself instead, since the
 call's reference now reaches the referent through it. A copy of a register
 with no place, or one loaded before an instruction that may write, still
-passes the value (R2296, R2297, R2298). The constructor's declaration decides
+passes the value (R2297, R2298). The constructor's declaration decides
 whether the one parameter after `out self` passes positionally or by
 keyword (`__init__(out self, *, copy: Self)`), and the call passes the
 value type's arguments for the struct parameters the declaration

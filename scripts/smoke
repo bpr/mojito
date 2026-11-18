@@ -8,6 +8,12 @@ prints the same natively; a `vm` fixture is checked on the VM alone; a
 run takes a minute or two, so it can follow every change; the overnight gate
 remains the broad check.
 
+`--suites` adds the checks a session's own testing never reaches, about a
+minute more: every test target in the workspace must compile (`cargo check
+--tests`), and each `suite` line's root test target runs whole, one failure
+per failing test. `scripts/claude_loop.py` passes it, so a task that breaks a
+MIR pass case or a snapshot test answers for it before the next task starts.
+
 The script builds the CLI first (with the `backend-pliron` feature unless
 `--vm-only`), under the same LLVM environment `scripts/check-pliron` uses.
 It exits 0 when every fixture passes, 1 when any fails, and 2 when the build
@@ -16,6 +22,7 @@ fails. The report goes to stdout and to `target/smoke/last.log`.
 Usage:
   scripts/smoke                  # build, then run every fixture
   scripts/smoke --vm-only        # skip the native backend (no LLVM needed)
+  scripts/smoke --suites         # also compile every test target and run the suites
   scripts/smoke --filter dict    # only fixtures whose path contains `dict`
   scripts/smoke --no-build       # use the binary already built
   scripts/smoke --bless          # record the VM's output as each golden
@@ -25,8 +32,11 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import json
+import re
 import sys
 import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,7 +48,9 @@ SMOKE = ROOT / "tests" / "smoke"
 FIXTURES = SMOKE / "fixtures.txt"
 EXPECTED = SMOKE / "expected"
 LOG = ROOT / "target" / "smoke" / "last.log"
-MODES = ("run", "vm", "reject")
+MODES = ("run", "vm", "reject", "suite")
+# A libtest or libtest-mimic failure's output block opens with this line.
+FAILURE_BLOCK = re.compile(r"^---- (\S+)(?: stdout)? ----$")
 
 
 @dataclass
@@ -56,6 +68,8 @@ def main() -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--vm-only", action="store_true", help="skip the native backend")
     p.add_argument("--no-build", action="store_true", help="use the binary already built")
+    p.add_argument("--suites", action="store_true",
+                   help="also check that every test target compiles and run each `suite` line")
     p.add_argument("--bless", action="store_true",
                    help="write each run/vm fixture's VM output as its golden")
     p.add_argument("--filter", metavar="TEXT", help="only fixtures whose path contains TEXT")
@@ -63,22 +77,42 @@ def main() -> int:
     p.add_argument("--fixtures", type=Path, default=FIXTURES, help="the fixture list")
     args = p.parse_args()
 
-    fixtures = read_fixtures(args.fixtures)
+    entries = read_fixtures(args.fixtures)
     if args.filter:
-        fixtures = [f for f in fixtures if args.filter in f.path]
-    env = native_env()
+        entries = [f for f in entries if args.filter in f.path]
+    suites = [f.path for f in entries if f.mode == "suite"
+              and args.suites and not (args.vm_only and needs_native(f.path))]
+    fixtures = [f for f in entries if f.mode != "suite"]
+    env = tierlib.test_env() if suites else native_env()
     began = time.monotonic()
     if not args.no_build and not build(args.vm_only, env):
         return 2
     if args.bless:
         return bless(fixtures, env)
+    failures: list[tuple[str, str, str]] = []
+    compiled = args.suites and not args.no_build
+    if compiled:
+        failures += compile_tests(env)
+    executables = {}
+    if suites:
+        executables = (tierlib.built_test_executables(suites) if args.no_build
+                       else tierlib.build_test_targets(suites, args.vm_only, env, "smoke"))
+        if executables is None:
+            return 2
+        failures += [("suite", target, "no built executable")
+                     for target in suites if target not in executables]
 
+    # Suites run longest, so they go first in submission order.
+    jobs = [lambda t=t: run_suite(t, executables[t], env) for t in suites if t in executables]
+    jobs += [lambda f=f: [(f.mode, f.path, problem)]
+             if (problem := check(f, args.vm_only, env)) else [] for f in fixtures]
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        results = list(pool.map(lambda f: (f, check(f, args.vm_only, env)), fixtures))
-    failures = [(f, problem) for f, problem in results if problem]
-    lines = [f"FAIL {f.mode:6} {f.path}\n{indent(problem)}" for f, problem in failures]
+        failures += [failure for found in pool.map(lambda job: job(), jobs) for failure in found]
+    lines = [f"FAIL {mode:6} {name}\n{indent(problem)}" for mode, name, problem in failures]
     native = "VM only" if args.vm_only else "VM and native"
-    lines.append(f"smoke: {len(fixtures)} fixtures ({native}), {len(failures)} failed, "
+    checked = (f", {len(suites)} suites" if args.suites else "") \
+        + (", test targets compiled" if compiled else "")
+    lines.append(f"smoke: {len(fixtures)} fixtures ({native}){checked}, {len(failures)} failed, "
                  f"{time.monotonic() - began:.0f}s")
     report = "\n".join(lines)
     print(report)
@@ -97,7 +131,11 @@ def read_fixtures(path: Path) -> list[Fixture]:
         fixture = fixture.strip()
         if mode not in MODES or not fixture:
             sys.exit(f"smoke: {path}:{number}: expected `<{'|'.join(MODES)}> <path>`")
-        if not (ROOT / fixture).is_file():
+        if mode == "suite":
+            if not (ROOT / "tests" / f"{fixture}.rs").is_file() \
+                    and not (ROOT / "tests" / fixture / "main.rs").is_file():
+                sys.exit(f"smoke: {path}:{number}: no root test target {fixture}")
+        elif not (ROOT / fixture).is_file():
             sys.exit(f"smoke: {path}:{number}: no such fixture {fixture}")
         fixtures.append(Fixture(mode, fixture))
     return fixtures
@@ -125,6 +163,63 @@ def check(fixture: Fixture, vm_only: bool, env: dict[str, str]) -> str | None:
     return None
 
 
+def compile_tests(env: dict[str, str]) -> list[tuple[str, str, str]]:
+    """One failure per workspace target whose tests do not compile."""
+    command = ["cargo", "check", "--tests", "--workspace", "--exclude", "mojito-pliron",
+               "--message-format=json"]
+    done = tierlib.run(command, env)
+    errors: dict[str, list[str]] = {}
+    for line in done.output.splitlines():
+        if not line.startswith("{"):
+            continue
+        message = json.loads(line)
+        if message.get("reason") == "compiler-message" \
+                and message["message"]["level"] == "error":
+            errors.setdefault(message["target"]["name"], []).append(
+                message["message"]["rendered"])
+    if done.exit_code != 0 and not errors:
+        errors["(cargo)"] = [tail(done.output, 20)]
+    return [("tests", target, tail("".join(rendered), 20))
+            for target, rendered in sorted(errors.items())]
+
+
+def run_suite(target: str, executable: str, env: dict[str, str]) -> list[tuple[str, str, str]]:
+    """One failure per failing test of `target`, or one for the suite when it
+    fails without naming a test."""
+    done = tierlib.run([executable], env)
+    if done.exit_code == 0:
+        return []
+    failed = [line.split()[1] for line in done.output.splitlines()
+              if line.startswith("test ") and line.rstrip().endswith("FAILED")]
+    if not failed:
+        return [("suite", target, f"the suite exited {done.exit_code}:\n{tail(done.output, 20)}")]
+    blocks: dict[str, list[str]] = {}
+    current = None
+    for line in done.output.splitlines():
+        if (opened := FAILURE_BLOCK.match(line)):
+            current = blocks.setdefault(opened.group(1), [])
+        elif line.strip() == "failures:":
+            current = None
+        elif current is not None:
+            current.append(line)
+    return [("suite", f"{target}::{name}", failure_message(blocks.get(name, [])))
+            for name in failed]
+
+
+def failure_message(block: list[str]) -> str:
+    """A failed test's panic and the lines after it, or the block's first lines."""
+    lines = [line for line in block if line.strip()]
+    panic = next((i for i, line in enumerate(lines) if "panicked at" in line), 0)
+    return "\n".join(lines[panic:panic + 6]) or "failed"
+
+
+def needs_native(target: str) -> bool:
+    """Whether the root test target requires the `backend-pliron` feature."""
+    manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
+    return any(test.get("name") == target and test.get("required-features")
+               for test in manifest.get("test", []))
+
+
 def check_reject(fixture: Fixture, env: dict[str, str]) -> str | None:
     expect = [line.split("# expect:", 1)[1].strip()
               for line in (ROOT / fixture.path).read_text().splitlines()
@@ -144,7 +239,7 @@ def bless(fixtures: list[Fixture], env: dict[str, str]) -> int:
     EXPECTED.mkdir(parents=True, exist_ok=True)
     failed = 0
     for fixture in fixtures:
-        if fixture.mode == "reject":
+        if fixture.mode in ("reject", "suite"):
             continue
         vm = mojito(["run", fixture.path], env)
         if vm.exit_code != 0:

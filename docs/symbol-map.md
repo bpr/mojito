@@ -1679,7 +1679,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   constructor's call, passed like any index by `emit_slice_read`; both projection
   spellings share `variant_payload_read`, and both pointer subscript
   spellings share `pointer_subscript_read`, a borrowed pointee read
-  followed by the checked `copy_boundary`). The place builders
+  followed by the checked `copy_boundary`; a copied one first reads through
+  the pointee's `pointer.convert` reference, `pointee_reference_read`, which
+  `unsafe_write(copy=)`'s operand shares). The place builders
   (`lower_stmt.rs`), `lower_projected_reference_place`, and
   `Flatten::pointer_keyword_subscript` (`mir.rs`) decide by the op, and
   `Node::{member_object, index_operands, transfer_operand,

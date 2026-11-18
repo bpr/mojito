@@ -36,13 +36,21 @@ a cross-section of the corpus, in under a minute:
 ```sh
 scripts/smoke                 # VM and native
 scripts/smoke --vm-only       # no LLVM needed
+scripts/smoke --suites        # also compile every test target and run the suites
 scripts/smoke --filter dict   # fixtures whose path contains `dict`
 scripts/smoke --bless         # record the VM's output as each golden
 ```
 
+`--suites` adds what a session's own testing never reaches, about a minute
+more: `cargo check --tests` over the workspace, one failure per target whose
+tests do not compile, and each `suite <target>` line's root test target run
+whole, one failure per failing test (the MIR pass cases, the MIR text
+snapshots and schema, and the Pliron backend's own tests).
+
 It exits 1 when a fixture fails and 2 when the build does, and keeps the
-report in `target/smoke/last.log`. `scripts/claude_loop.py` runs it after every
-task (`--no-smoke`, `--smoke-vm-only`, `--smoke-fix N`). Add a fixture to the
+report in `target/smoke/last.log`. `scripts/claude_loop.py` runs it with
+`--suites` after every task (`--no-smoke`, `--smoke-vm-only`, `--smoke-fix
+N`), so a task that breaks a suite repairs it before the next task starts. Add a fixture to the
 list, then bless it, when a gate failure shows a feature the list misses.
 
 ### Focused check

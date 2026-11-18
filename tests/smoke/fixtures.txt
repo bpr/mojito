@@ -5,6 +5,7 @@
 #           and the native backend prints exactly what the VM does
 #   vm      the VM alone, against its golden
 #   reject  `mojito check` fails with the fixture's `# expect:` text
+#   suite   a root test target, run whole under `scripts/smoke --suites`
 #
 # Keep it to what runs in a couple of minutes on both backends. A fixture
 # whose output legitimately changes is re-blessed with `scripts/smoke --bless`.
@@ -78,3 +79,12 @@ run     conformance/fixtures/generic_anonymous_callables.mojo
 reject  assets/type_error/implicit_copy_conditional_arm.mojo
 reject  assets/type_error/implicit_copy_owned_argument.mojo
 reject  assets/type_error/implicit_copy_field_store.mojo
+
+# Suites a session never runs, whose breakage used to surface only overnight
+# (or be filed as residue): MIR pass cases, MIR text snapshots and schema, and
+# the native backend's own tests. `--suites` only.
+suite   mir_pass_test
+suite   mir_disassembler_test
+suite   mir_assembler_test
+suite   mir_text_schema_test
+suite   pliron_backend_test

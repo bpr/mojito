@@ -14,7 +14,10 @@ Each batch runs:
   2. The batch's residue: every roadmap entry its sessions filed (a "Found
      while landing" entry, a split, a refiled remainder), run the same way
      at once. An entry a residue round files is the next round's residue,
-     up to `--residue-rounds` rounds; what is left past them is reported.
+     up to `--residue-rounds` rounds, and only while each round is smaller
+     than the one before: residue that stops shrinking is a backlog being
+     uncovered, not a batch being finished, so it is reported and left on
+     the roadmap for planned batches.
   3. `scripts/focused`. Any failure stops the run.
   4. `scripts/instantiation-report --check`. A lost or failing fixture, or a
      growth over `--max-growth` percent, stops the run. Drift confined to
@@ -101,10 +104,16 @@ def main() -> int:
             unfinished += left
             summary.line(f"  claude_loop left unfinished: {' '.join(left)}; continuing")
 
+        previous = None
         for round_number in range(1, args.residue_rounds + 1):
             residue = [i for i in roadmap_open() if i not in known]
             if not residue:
                 break
+            if previous is not None and len(residue) >= previous:
+                summary.line(f"  residue not shrinking ({len(residue)} filed by a round of "
+                             f"{previous}), left on the roadmap: {' '.join(residue)}")
+                break
+            previous = len(residue)
             known.update(residue)
             attempted.update(residue)
             summary.line(f"  residue round {round_number}: {' '.join(residue)}")

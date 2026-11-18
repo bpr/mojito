@@ -179,6 +179,14 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
 - Keep `docs/roadmap.md` to work that is actually next. An item we decide
   not to do moves to `docs/non-goals.md` with its reason, rather than sitting
   unchecked forever.
+- A rule that holds across many sites (a verifier check, a pass invariant,
+  an operand or calling convention) is enforced sites-first: put the check
+  in place, find every site it reaches (`scripts/smoke --suites`,
+  `scripts/focused`, or a search for every construct that reaches it), and
+  fix or file them as one list. Never tighten it one construct per session,
+  discovering the next site each time.
+- A failure your own change causes is never residue. Fix the code, or update
+  the test, snapshot, or golden the change makes stale, in the same task.
 - Size every `docs/roadmap.md` entry so one session can land it and delete
   it: `scripts/claude_loop.py` counts a task done only when its entry is
   gone. Split multi-session work, including a plan's multi-session slices,
@@ -225,9 +233,11 @@ verification happens. In-session verification must take seconds, not hours:
   heavy lane, days later; `scripts/check-parity-manifest` now catches them in
   the default gate, so run it after hand-editing either manifest.
 - `scripts/smoke` runs a corpus cross-section on both backends in under a
-  minute (`docs/usage.md` §Smoke check). `scripts/claude_loop.py` runs it
-  after every task, so a session need not; run it when fixing a failure it
-  reported.
+  minute (`docs/usage.md` §Smoke check), and with `--suites` also compiles
+  every test target and runs the MIR pass, MIR snapshot, and Pliron backend
+  suites. `scripts/claude_loop.py` runs `--suites` after every task, so a
+  session need not; run it when fixing a failure it reported, or to find
+  every site of a rule being enforced sites-first.
 - `scripts/focused` runs the fragile-area fixtures in
   `tests/focused/list.txt` through every corpus group and natively in about
   four minutes (`docs/usage.md` §Focused check). It is the owner's

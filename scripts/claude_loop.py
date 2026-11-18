@@ -41,8 +41,10 @@ created, except new files at the repository root (plan files, prompts,
 `commit_msg.txt`), which stay untracked. The message is the session's
 `commit_msg.txt`.
 
-After each executed task the loop runs `scripts/smoke`, a run of a corpus
-cross-section on both backends that takes about a minute, against a baseline
+After each executed task the loop runs `scripts/smoke --suites`, a run of a
+corpus cross-section on both backends plus a compile of every test target and
+the MIR pass, MIR snapshot, and Pliron backend suites, which takes about two
+minutes, against a baseline
 taken before the first task, so a task answers only for the failures it adds.
 A task that adds one gets its own session resumed with the report to repair it
 (`--smoke-fix N` times, once by default), each repair committed on its own; a
@@ -123,14 +125,18 @@ OUTAGE_MAX_WAIT = 12 * 3600
 OUTAGE_RESUMES = 20
 BUILD_FAILED = "<the build>"
 SMOKE_FIX_PROMPT = (
-    "Your work on {task} is committed, and `scripts/smoke` now fails where it "
-    "passed before the task:\n\n{report}\n\nFind the cause in this task's change "
-    "and fix it, keeping what the task set out to do. Rerun `scripts/smoke` "
-    "(it takes about a minute) until it passes. Re-bless a golden with "
-    "`scripts/smoke --bless` only when the new output is intended and is what "
-    "the pinned Mojo prints, and say so. If the failure is not yours to fix, "
-    "file it as a roadmap entry instead. Overwrite commit_msg.txt with one short "
-    "paragraph describing the fix.\n"
+    "Your work on {task} is committed, and `scripts/smoke --suites` now fails "
+    "where it passed before the task:\n\n{report}\n\nFind the cause in this "
+    "task's change and fix it, keeping what the task set out to do. Rerun "
+    "`scripts/smoke --suites` (about two minutes) until it passes. A failure "
+    "this task's change caused is this task's to fix, never residue to file: "
+    "when the change is right and a test input, snapshot, or golden encodes "
+    "the old behavior, update that test the way the change requires "
+    "(`UPDATE_EXPECT=1` for an `expect_file!` snapshot; `scripts/smoke "
+    "--bless` for a golden, only when the new output is what the pinned Mojo "
+    "prints), and say so. File a roadmap entry only for a fault that "
+    "predates the change and that it merely exposed. Overwrite commit_msg.txt "
+    "with one short paragraph describing the fix.\n"
 )
 RESUME_PROMPT = (
     "Your session was cut off by a usage limit, which has now reset. Continue "
@@ -263,7 +269,12 @@ def build_prompt(task: Task, mode: str, has_plan: bool | None = None,
             "names the files and symbols it touches. Size the task so one "
             "execute session can land all of it; if it needs more, say so in "
             "the plan and name the slices that should become their own "
-            "roadmap entries. State what you verified "
+            "roadmap entries. If the task enforces a rule that holds across "
+            "many sites (a verifier check, a pass invariant, an operand or "
+            "calling convention), list every site it reaches, found by "
+            "running the check or searching the code for every construct "
+            "that reaches the rule, not only the sites the entry names, and "
+            "size the task by that list. State what you verified "
             "against the code and what the entry gets wrong, if anything. "
             "The plan must move Mojito closer to Mojo; where an option would "
             "diverge, plan the Mojo-shaped one, and file any unavoidable gap "
@@ -301,6 +312,20 @@ def build_prompt(task: Task, mode: str, has_plan: bool | None = None,
         "landed ID needs no edit. If the change also fixes another open "
         "entry, confirm it with that entry's probe and delete that entry "
         "too. Record the outcome in docs/features.md and CHANGELOG.md.\n"
+        "\nSites before fixes: when the task enforces a rule that holds across "
+        "many sites (a verifier check, a pass invariant, an operand or calling "
+        "convention), find every site it reaches before fixing any. Put the "
+        "check in place first and run `scripts/smoke --suites` and "
+        "`scripts/focused` over it (this is the one use the in-session testing "
+        "rule allows them), or search the code for every construct that "
+        "reaches the rule, and write the sites down. Then fix them. Sites "
+        "discovered one session at a time are how residue outgrows the work.\n"
+        "\nBreakage is not residue: if the change makes an existing test, MIR "
+        "pass case, snapshot, golden, or fixture fail, fix the code or update "
+        "that test as the change requires, in this task. After the task the "
+        "loop runs `scripts/smoke --suites`, which compiles every test target "
+        "and runs the MIR pass, MIR snapshot, and Pliron backend suites, and "
+        "hands any new failure back to this session.\n"
         "\nResidues: the roadmap must shrink as work lands, so file causes, "
         "not shapes. For each shape the change leaves unhandled, name the "
         "representation gap or pass rule that makes it special. If an open "
@@ -316,9 +341,12 @@ def build_prompt(task: Task, mode: str, has_plan: bool | None = None,
         "commit_msg.txt with one short paragraph. If the task turns out not "
         "to be doable, "
         "leave the code honest and say so. If only part of it lands, delete "
-        f"the {task.id} entry anyway and file what remains as new entries, "
-        "each one session's work, chained by Depends bullets: never rewrite "
-        "it as one larger entry that no session can close. If none of it can "
+        f"the {task.id} entry anyway and file what remains as one entry per "
+        "cause, each listing every remaining site of its cause as a probe "
+        "bullet: never one entry per site, construct, or operand kind. Chain "
+        "them by Depends bullets only where one must land before another. "
+        "Never rewrite the entry as one larger entry that no session can "
+        "close. If none of it can "
         "land until other work does, file that work as new entries (or find "
         "the open entries that own it) and add their IDs to the "
         f"{task.id} entry's Depends bullet: the loop runs them next and then "
@@ -583,7 +611,7 @@ def commit_task(task: Task, untracked_before: set[str], msg_before: str, finishe
 
 
 class Smoke:
-    """`scripts/smoke` around each executed task.
+    """`scripts/smoke --suites` around each executed task.
 
     A baseline run before the first task records what already fails, so a
     task answers only for the failures it adds; after each task the failing
@@ -646,7 +674,7 @@ class Smoke:
 
     def run(self) -> tuple[set[str], str, float]:
         """The failing fixtures, the report, and the seconds it took."""
-        command = [str(ROOT / "scripts" / "smoke")]
+        command = [str(ROOT / "scripts" / "smoke"), "--suites"]
         if self.args.smoke_vm_only:
             command.append("--vm-only")
         began = time.monotonic()
@@ -834,7 +862,7 @@ def main() -> int:
                                    "naming new work in its Depends bullet: land it, split it "
                                    "into entries it depends on, or rewrite it as not doable")
                 if smoke and not smoke.after(args, current, model, label, outcome, committing):
-                    reasons.append(f"`scripts/smoke` fails on {', '.join(sorted(smoke.added))}, "
+                    reasons.append(f"`scripts/smoke --suites` fails on {', '.join(sorted(smoke.added))}, "
                                    f"which passed before the task, after {args.smoke_fix} "
                                    f"repair session(s); see {smoke.log.relative_to(ROOT)}")
             if reasons:
