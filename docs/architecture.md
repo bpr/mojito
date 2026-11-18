@@ -6567,8 +6567,17 @@ current Mojo:
   does. A reference-typed field, or a base no storage holds, keeps the
   register `GetField`.
 - A scalar `LoadPlace` borrows its owner for the one instruction consuming
-  the loaded register (the register-loan dataflow's single-hop retention), and
-  how long depends on how that instruction receives the register, as the
+  the loaded register (the register-loan dataflow's single-hop retention).
+  A scalar read through a reference — a `ReadRef`, or a `LoadPlace` through
+  a reference binding — borrows the same way, both the part it reads and
+  every owner the reference lends (a reference subscript's seeded receiver,
+  a `ref` binding's loan roots), as upstream's `lit.ref.load` of a
+  register-passable value yields bits of its own: `show(mk(1)[0])` destroys
+  the temporary at call setup (`RegisterLoanStep::owns_bits`). A value
+  whose type names an origin (`Pointer[Int, origin_of(x)]`, a struct
+  parameterized on one) keeps inheriting its provenance instead, so the
+  origin's storage outlives a callee dereferencing it. How long the borrow
+  lasts depends on how that instruction receives the register, as the
   callee's declared contract says (`ArgumentPassing`, `register_loans.rs`):
   its declaration's, or for a call through a trait bound in a generic body,
   the requirement the bound trait or a parent declares, found by the call's

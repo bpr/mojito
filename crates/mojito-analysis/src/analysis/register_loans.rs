@@ -12,10 +12,14 @@ use mojito_types::types::{Ty, TyKind};
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct RegisterLoanState {
     owners: BTreeMap<u32, BTreeSet<ValueRef>>,
-    /// Parts a scalar `LoadPlace` result keeps alive through its consumers
-    /// only: reported as uses at every instruction reading the register, but
-    /// never inherited by that instruction's own results (`t.n + 1` borrows
-    /// `t` for `__add__` alone; the sum owns its bits).
+    /// Parts a scalar read's result keeps alive through its consumers only:
+    /// reported as uses at every instruction reading the register, but never
+    /// inherited by that instruction's own results (`t.n + 1` borrows `t` for
+    /// `__add__` alone; the sum owns its bits). A scalar `LoadPlace` borrows
+    /// the part it reads, and a scalar read through a reference (`ReadRef`,
+    /// or a `LoadPlace` through a reference binding) also borrows whatever
+    /// that reference lends: `show(mk(1)[0])` loads the `Int` at call setup
+    /// and the temporary dies before `show` runs.
     single_hop: BTreeMap<u32, BTreeSet<ValueRef>>,
     /// Parts an aggregate `LoadPlace` result aliases: its shallow read shares
     /// their storage, so they live through every consumer and pass to each
@@ -617,7 +621,10 @@ fn tracked_pointer_result(
 /// exact program point. Results inherit operand provenance until a terminal
 /// instruction such as `DefVar` consumes them, allowing `MakeRef -> ReadRef
 /// -> Call` to retain an owner through the outer call without extending the
-/// source reference's generation to function exit.
+/// source reference's generation to function exit. A read whose value owns
+/// its bits ([`RegisterLoanStep::owns_bits`]) is the exception: its
+/// provenance lasts one hop, so the owner outlives a call taking the read by
+/// address and dies at setup of one loading it by value.
 struct RegisterLoanStep {
     operands: Vec<Reg>,
     results: Vec<Reg>,
@@ -640,6 +647,12 @@ struct RegisterLoanStep {
     copies: bool,
     /// A scalar read's result register and the parts it borrows for one hop.
     single_hop: Option<(u32, BTreeSet<ValueRef>)>,
+    /// The result of a scalar read whose value owns its bits — a type that
+    /// aliases no owned storage and names no origin — which borrows
+    /// everything its operands and reads carry for one hop only. A value
+    /// whose type names an origin (`Pointer[Int, origin_of(x)]`) keeps the
+    /// storage live while it is, as upstream does, so it inherits instead.
+    owns_bits: Option<u32>,
     /// The slots the instruction ends by moving them, and the roots of the
     /// owned registers it takes ownership of. An ended slot's storage backs
     /// no register: a by-value scalar already holds its bits, and a handle
@@ -678,6 +691,23 @@ impl RegisterLoanStep {
             loan_roots,
         );
         let mut single_hop = None;
+        let owns_bits = |ty: Option<&Ty>| {
+            ty.is_some_and(|ty| {
+                !aliases_owned_storage(ty, declarations) && named_storage(Some(ty)).is_empty()
+            })
+        };
+        let owns_bits = match instruction {
+            MirInstr::LoadPlace { dest, place }
+                if owns_bits(place.ty.as_ref().or_else(|| register_types.get(&dest.0)))
+                    && owns_bits(register_types.get(&dest.0)) =>
+            {
+                Some(dest.0)
+            }
+            MirInstr::ReadRef { dest, .. } if owns_bits(register_types.get(&dest.0)) => {
+                Some(dest.0)
+            }
+            _ => None,
+        };
 
         // `MakeRef` creates a transient handle directly into its place root.  That
         // root is not necessarily an established reference generation itself (for
@@ -853,6 +883,7 @@ impl RegisterLoanStep {
             call_result,
             origin_operands,
             single_hop,
+            owns_bits,
             aliased,
             copies: matches!(
                 instruction,
@@ -966,7 +997,16 @@ impl RegisterLoanStep {
                 }
                 None => result_owners.clone(),
             };
-            if owners.is_empty() {
+            if self.owns_bits == Some(result.0) {
+                registers.owners.remove(&result.0);
+                if !owners.is_empty() {
+                    registers
+                        .single_hop
+                        .entry(result.0)
+                        .or_default()
+                        .extend(owners);
+                }
+            } else if owners.is_empty() {
                 registers.owners.remove(&result.0);
             } else {
                 registers.owners.insert(result.0, owners);

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2325**.
+Next free ID: **R2326**.
 
 ## Ordered Work
 
@@ -956,6 +956,24 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
+- [ ] **R2325 The native backend's contextual-rejection test has no
+  construct left that the backend rejects**
+
+  `pliron_backend_test::unsupported_constructs_produce_contextual_diagnostics`
+  fails with "the backend must reject this fixture": its one case,
+  `var d = q - 1` over a `Pointer`, now compiles natively and runs (`1`).
+  - The pointer `-` no longer reaches the raw `BinOp` rejection
+    ("operator `Sub` on Pointer operands", `lower/arith.rs`,
+    `lower/binops.rs`), so the test pins nothing.
+  - Fix: replace the case with a construct the backend still rejects
+    contextually, or delete the test and the dead rejections if none is
+    left.
+  - Probe: `scripts/smoke --suites` reports the failure on master before
+    R2321 landed.
+  - Found while landing R2321 (2026-11-17).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2054 A `for ref` target assigned in its body has no slot type,
   so Pliron rejects the loop**
 
@@ -1390,24 +1408,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R1411 (2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R2321 A temporary a borrow materializes outlives a register-passable
-  read of the reference it lends**
-
-  `show(mk(1)[0])`, over `def show(n: Int)` and a `__getitem__(ref self,
-  i)` returning a reference into a struct with a printing `__deinit__`,
-  prints `show 1`, `del V 1`, where the pin prints `del V 1`, `show 1`.
-  - The pin reads the `Int` at call setup and destroys the temporary
-    before the call, as soon as nothing borrows it.
-  - Cause: the hidden `$mat_r` slot (`Flatten::materialize_borrow_slot`)
-    a `MaterializeBorrowSource` owner lowers to is destroyed after the
-    call, so the loan of the reference result keeps it past the
-    by-value read.
-  - Probe: `show(W(mk(2)).v[0])`, the field chain R2297 materializes at
-    its root, prints `show 2`, `del V 2` the same way.
-  - Found while landing R2297 (2026-11-17).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1682 A local read through an untracked pointer after its last use
   reads `None` on the VM**

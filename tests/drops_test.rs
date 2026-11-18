@@ -105,6 +105,46 @@ fn raising_constructor_outside_a_raising_context_is_rejected() {
     assert!(compile_error(src).contains("requires a surrounding 'try' block"));
 }
 
+const REF_V: &str = "@fieldwise_init\nstruct R(TrivialRegisterPassable):\n    var n: Int\n    def show(self):\n        print(\"R.show\", self.n)\n\nstruct V(Movable):\n    var x: Int\n    var r: R\n    def __init__(out self, x: Int):\n        self.x = x\n        self.r = R(x)\n    def __deinit__(deinit self):\n        print(\"del V\", self.x)\n    def __getitem__(ref self, i: Int) -> ref[self.x] Int:\n        return self.x\n    def getr(ref self) -> ref[self.r] R:\n        return self.r\n    def name(self) -> String:\n        return String(\"s\") + String(self.x)\n\ndef mk(x: Int) -> V:\n    return V(x)\n\ndef show(n: Int):\n    print(\"show\", n)\n\ndef show2(a: Int, b: Int):\n    print(\"show2\", a, b)\n\n";
+
+#[test]
+fn reference_read_owner_dies_at_call_setup() {
+    // A register-passable read through a reference holds its own bits: the
+    // owner the reference borrows (a temporary, a named local, or the target
+    // of a `ref` binding) dies at setup of the call loading it, in parameter
+    // order, as the pin orders them.
+    let src = format!(
+        "{REF_V}def main():\n    show(mk(1)[0])\n    var v = mk(2)\n    show(v[0])\n    var w = mk(3)\n    ref r = w[0]\n    show(r)\n    show2(mk(4)[0], mk(5)[0])\n"
+    );
+    assert_eq!(
+        vm(&src),
+        "del V 1\nshow 1\ndel V 2\nshow 2\ndel V 3\nshow 3\ndel V 4\ndel V 5\nshow2 4 5\n"
+    );
+}
+
+#[test]
+fn reference_result_field_owner_dies_at_call_setup() {
+    // A field read out of a reference result, and a register-passable `read
+    // self` receiver read through one, load at call setup the same way.
+    let src = format!("{REF_V}def main():\n    show(mk(1).getr().n)\n    mk(2).getr().show()\n");
+    assert_eq!(vm(&src), "del V 1\nshow 1\ndel V 2\nR.show 2\n");
+}
+
+#[test]
+fn reference_read_owner_outlives_an_addressed_consumer() {
+    // `print` takes its pack by address and a memory-only `String` is passed
+    // by address, so the owner outlives the call; a register-passable value
+    // whose type names an origin keeps that origin's storage live through
+    // the callee dereferencing it.
+    let src = format!(
+        "{REF_V}@fieldwise_init\nstruct H[o: Origin](TrivialRegisterPassable):\n    var p: Pointer[Int, Self.o]\n\nstruct Box[o: Origin](Movable):\n    var h: H[Self.o]\n    def __init__(out self, h: H[Self.o]):\n        self.h = h\n    def get(ref self) -> ref[self.h] H[Self.o]:\n        return self.h\n\ndef shows(s: String):\n    print(\"shows\", s)\n\ndef use(h: H):\n    print(\"use\", h.p[])\n\ndef main():\n    print(mk(1)[0])\n    shows(mk(2).name())\n    var v = V(3)\n    var b = Box(H(Pointer(to=v.x)))\n    use(b.get())\n    print(\"end\")\n"
+    );
+    assert_eq!(
+        vm(&src),
+        "1\ndel V 1\ndel V 2\nshows s2\nuse 3\ndel V 3\nend\n"
+    );
+}
+
 #[test]
 fn trait_bound_call_loads_by_value_argument_before_the_call() {
     // `s.sh(b.t)` through the bound passes `b.t` by the requirement's `read`

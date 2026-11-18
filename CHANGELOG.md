@@ -785,6 +785,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A register-passable value read through a reference now lets the owner
+  the reference borrows die at setup of a call loading the value, as at the
+  pin: `show(mk(1)[0])` prints `del V 1` before `show 1`, and the same holds
+  for a named local, a `ref` binding's target, a field of a reference
+  result, and a `read self` receiver. A value whose type names an origin
+  still keeps that storage alive through the call
+  (`assets/ok/reference_read_owner_dies_at_call_setup.mojo`, R2321).
+
 - A field-less element read through collection storage (`List[E]`'s
   `es[0].me()`, `Optional(E()).value().me()`) no longer traps natively as
   a dangling pointer: a zero-size pointee's dereference touches no memory,
