@@ -1212,10 +1212,20 @@ pub fn is_closure_storage_name(name: &str) -> bool {
 /// The name digests the signature's spelling with its own binders
 /// alpha-normalized, so a generic signature names one type whichever
 /// declaration owns (and spells) its binders, as upstream's positional
-/// binders make it.
+/// binders make it. Each enclosing binder the signature names is digested
+/// by identity, as upstream's attribute references its parameter, so `Ts[i]`
+/// over two declarations' packs names two types.
 pub fn inflated_function_name(signature: &Ty) -> String {
     let canonical = mojito_types::types::canonical_generic_callable(signature);
-    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    let spelling = std::iter::once(canonical.to_string())
+        .chain(
+            mojito_types::types::referenced_binders(&canonical)
+                .into_iter()
+                .map(|binder| format!("{}#{}", binder.owner, binder.slot)),
+        )
+        .collect::<Vec<_>>()
+        .join("|");
+    let digest = Sha256::digest(spelling.as_bytes());
     format!("{INFLATED_PREFIX}{}", hex_digest(&digest[..8]))
 }
 

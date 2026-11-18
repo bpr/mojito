@@ -3906,29 +3906,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2317 A generic callable contract naming a pack element by its own
-  binder rejects an alpha-equivalent function over the caller's pack**
-
-  A contract whose result is the callee's pack indexed by the contract's
-  own binder (`F: def[idx: Int]() -> Us[idx]`), once the call binds `Us`
-  to the caller's pack `Ts`, rejects `lambda [i: Int]() -> Ts[i]` ("declared
-  callable contract ... is incompatible"), where the pin accepts it.
-  - The same lambda conforms where contract and lambda name one pack
-    (`Tuple`'s own default initializer, over `Self.Ts`), so the gap is the
-    substituted pack inside the dependent result, as
-    `callable_bound_accepts` (`mojito-types/src/types.rs`) compares it
-    after `erase_generic_callable_binders`.
-  - Probe: `first[*Ts](lambda [i: Int]() -> Ts[i]: Ts[i]())` over `def
-    first[*Us: Movable & Defaultable & Deinitable, F: def[idx: Int]() ->
-    Us[idx]](f: F) -> Int` inside `outer3[*Ts: ...]`, called as
-    `outer3[Int, Bool]()`, prints `1` at the pin.
-  - Probe: `Tuple[*Ts](init_with=lambda [i: Int]() -> Ts[i]: Ts[i]())` in
-    `outer2[*Ts: Movable & Defaultable & Deinitable]`, with `len` of the
-    result returned, prints `2` at the pin.
-  - Found while landing R2315 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1515 A bracket followed by a call is fused into the call's
   parameter list**
 

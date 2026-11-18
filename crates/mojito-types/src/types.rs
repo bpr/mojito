@@ -6628,6 +6628,65 @@ pub fn referenced_parameters<S: std::hash::BuildHasher>(
     );
 }
 
+/// The declared parameters referenced free anywhere in `ty`, by identity,
+/// in first-occurrence order.
+///
+/// Two binders one spelling names (`Ts` of two declarations) stay apart,
+/// as [`referenced_parameters`]' names do not keep them. A generic
+/// callable's own binders are bound, not free.
+pub fn referenced_binders(ty: &Ty) -> Vec<ParamId> {
+    struct Collector {
+        output: Vec<ParamId>,
+        bound: Vec<ParamId>,
+        marks: Vec<usize>,
+    }
+    impl Collector {
+        fn note(&mut self, id: &ParamId) {
+            if !self.bound.contains(id) && !self.output.contains(id) {
+                self.output.push(id.clone());
+            }
+        }
+    }
+    impl TyRewrite for Collector {
+        fn param(&mut self, binder: &ParamRef) -> Option<Ty> {
+            self.note(&binder.id);
+            None
+        }
+
+        fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+            for reference in expr.free_parameters() {
+                self.note(&reference.id);
+            }
+            let mut nested = Vec::new();
+            expr.visit(&mut |node| nested.extend(node.embedded_types().into_iter().cloned()));
+            for ty in &nested {
+                rewrite_ty(ty, self)?;
+            }
+            Ok(expr.clone())
+        }
+
+        fn enter_signature(&mut self, decls: &[ParamDecl]) {
+            self.marks.push(self.bound.len());
+            self.bound
+                .extend(decls.iter().map(|decl| decl.id().clone()));
+        }
+
+        fn exit_signature(&mut self) {
+            if let Some(mark) = self.marks.pop() {
+                self.bound.truncate(mark);
+            }
+        }
+    }
+    let mut collector = Collector {
+        output: Vec::new(),
+        bound: Vec::new(),
+        marks: Vec::new(),
+    };
+    // The collector never fails; the rebuilt type is discarded.
+    let _ = rewrite_ty(ty, &mut collector);
+    collector.output
+}
+
 /// Whether a deferred slot ([`CtValue::Deferred`]) occurs in a value
 /// argument anywhere in `ty`.
 pub fn mentions_deferred_value(ty: &Ty) -> bool {
@@ -7701,9 +7760,23 @@ fn expand_packs<S: std::hash::BuildHasher>(
 }
 
 /// `subst` as the bindings [`replace_parameters`] takes.
+///
+/// A type pack's list binder bound to a caller's pack still open (`Us =
+/// *Ts`) is bound to that pack's own list as well, so a dependent type
+/// computed from the list (`Us[idx]`) names the caller's pack (`Ts[idx]`),
+/// as upstream substitutes the list parameter.
 fn type_bindings(subst: &TySubst) -> ParamBindings {
+    let context = ParamContext::detached();
     let mut bindings = ParamBindings::new();
     for (id, ty) in subst {
+        if let Some(TyKind::Param { binder, .. }) =
+            pack_spread(std::slice::from_ref(ty)).map(Ty::kind)
+        {
+            bindings.bind(
+                id.clone(),
+                context.decl_ref(binder.id.clone(), &binder.name, MetaTy::type_list()),
+            );
+        }
         bindings.bind_type(id.clone(), ty.clone());
     }
     bindings
@@ -8821,6 +8894,39 @@ mod parameter_replacement_tests {
             )
             .expect("bound"),
             queries(ConstraintOperand::Value(list))
+        );
+    }
+
+    #[test]
+    fn a_forwarded_pack_substitutes_its_list_inside_a_dependent_type() {
+        let context = ParamContext::detached();
+        let list =
+            |owner: &str| context.decl_ref(ParamId::new(owner, 0), "Ts", MetaTy::type_list());
+        let element = |owner: &str| -> Ty {
+            let index = context.decl_ref(ParamId::new("$k", 0), "i", MetaTy::int());
+            TyKind::Dependent(DependentType::Parameter(
+                context.list_get(&list(owner), &index).expect("an element"),
+            ))
+            .into()
+        };
+        let pack: Ty = TyKind::Param {
+            binder: ParamRef {
+                id: ParamId::new("caller", 0),
+                name: Arc::from("*Ts"),
+            },
+            bounds: Vec::new(),
+            callable_bound: None,
+        }
+        .into();
+        let subst: TySubst = [(ParamId::new("callee", 0), pack)].into_iter().collect();
+        assert_eq!(substitute(&element("callee"), &subst), element("caller"));
+        assert_eq!(
+            referenced_binders(&element("callee"))[0],
+            ParamId::new("callee", 0)
+        );
+        assert_ne!(
+            referenced_binders(&element("callee")),
+            referenced_binders(&element("caller"))
         );
     }
 }

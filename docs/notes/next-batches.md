@@ -86,12 +86,15 @@ scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
   --task R2272 --task R2273 --task R2274 --task R2275
 ```
 
-## 2. Origin parameters are ordinary declared parameters (6 entries)
+## 2. Origin parameters are ordinary declared parameters (7 entries)
 
 Upstream's origin parameter is a value parameter whose type is the library
 `Origin` struct, declared in place in the parameter list. Mojito classifies
 one by its bound's spelling, leaves it out of function and method parameter
 lists, and keeps a struct's origin arguments in a tail after the others.
+- R2045 goes first, though it is not about origins. It re-emits seven MIR
+  pass test inputs that the verifier now rejects, so `scripts/smoke
+  --suites` checks every pass case again before the batch starts.
 - R2139 plans the classification change and files its slices. It
   repoints R2209 at them, so batch 4 runs them.
 - R2126 and R2127 declare origin binders in place in the check and in
@@ -104,7 +107,7 @@ lists, and keeps a struct's origin arguments in a tail after the others.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
-  --task R2139 --task R2126 --task R2127 --task R2128 --task R762 \
+  --task R2045 --task R2139 --task R2126 --task R2127 --task R2128 --task R762 \
   --task R763
 ```
 

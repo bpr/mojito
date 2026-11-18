@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic callable contract naming a pack element by its own binder
+  (`F: def[idx: Int]() -> Us[idx]`) now accepts an alpha-equivalent function
+  over the caller's pack once the call forwards it (`first[*Ts](lambda [i:
+  Int]() -> Ts[i]: Ts[i]())`, `Tuple[*Ts](init_with=...)`), as at the pin.
+  A forwarded pack now substitutes the list binder inside dependent types,
+  and an inflated function type no longer conflates two declarations'
+  same-spelled binders
+  (`assets/ok/callable_contract_forwarded_pack_element.mojo`, R2317).
+
 - A struct declaring no `def(...)` conformance passed at a `def(...)`
   bound is now rejected with the pin's wording, "value passed to 'f' cannot
   be converted from 'S' to 'F', argument type 'S' does not conform to trait

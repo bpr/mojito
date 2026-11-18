@@ -119,6 +119,7 @@ assets/ok/callable_binder_parameter_inference.mojo	main	exe-differential	sanitiz
 assets/ok/callable_bound_function_value_address.mojo	main	exe-differential	sanitized
 assets/ok/callable_bound_inflated_function.mojo	main	exe-differential	sanitized
 assets/ok/callable_bound_overload_pair.mojo	main	exe-differential	sanitized
+assets/ok/callable_contract_forwarded_pack_element.mojo	main	exe-differential	sanitized
 assets/ok/callable_contract_names_other_parameters.mojo	main	exe-differential	sanitized
 assets/ok/callable_element_call_dispatch.mojo	main	exe-differential	sanitized
 assets/ok/callable_pack_cases.mojo	main	exe-differential	sanitized

@@ -118,6 +118,7 @@ assets/ok/callable_binder_parameter_inference.mojo	-	ineligible	no-scalar-entry-
 assets/ok/callable_bound_function_value_address.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_bound_inflated_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_bound_overload_pair.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/callable_contract_forwarded_pack_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_contract_names_other_parameters.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_element_call_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_pack_cases.mojo	-	ineligible	no-scalar-entry-shape
