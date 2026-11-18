@@ -785,6 +785,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `def[...]` bound's call inlined from one generic body into another
+  (`Tuple.deinit_with` inlining `consume_elements`) now carries the
+  caller's bound's compile-time parameters, as upstream's substitution of
+  the binder's type respells the call's parameter list. Every
+  `pliron_backend_test` compile used to fail MIR verification there
+  (R2304).
+
 - A walrus over a subscript through its getter's reference, a pointer
   dereference, or a call returning a mutable reference now yields its
   destination borrowed after the store, as upstream's `emitWalrus` does,

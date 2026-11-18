@@ -4422,33 +4422,49 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
 }
 
 /// Give each indirect call of `block` whose callee the substitution made a
-/// generic callable the callee's own compile-time parameter declarations:
-/// a call through a callable binder named the contract's, which the
-/// call's arguments bind by position as they bind the callee's, so each
-/// argument takes the name of the callee's declaration at its position.
+/// generic callable, and each `def[...]` bound's `__call__` whose receiver
+/// it made another generic bound, the callee's own compile-time parameter
+/// declarations: a call through a callable binder named the contract's,
+/// which the call's arguments bind by position as they bind the callee's,
+/// so each argument takes the name of the callee's declaration at its
+/// position, as upstream's substitution of the binder's type respells the
+/// call's parameter list.
 fn adopt_callee_binders(block: &mut MirBlock, function: &MirFunction) {
     for instruction in &mut block.instrs {
         for region in instruction_regions_mut(instruction) {
             adopt_callee_binders(region, function);
         }
-        if let MirInstr::CallIndirect {
-            callee,
+        let callee = match &*instruction {
+            MirInstr::CallIndirect { callee, .. } => function
+                .reg_types
+                .get(&callee.0)
+                .filter(|ty| matches!(ty.kind(), TyKind::GenericFunc(_))),
+            MirInstr::MethodCall { recv, .. } => {
+                mojito_mir::mir::bound_call_contract(instruction, &function.reg_types)
+                    .and_then(|_| function.reg_types.get(&recv.0))
+                    .map(mojito_mir::mir::operand_value_ty)
+                    .and_then(mojito_types::types::callable_contract_ty)
+            }
+            _ => None,
+        };
+        let Some(TyKind::GenericFunc(generic)) = callee.map(Ty::kind) else {
+            continue;
+        };
+        let (MirInstr::CallIndirect {
             param_decls,
             param_arg_regs,
             ..
-        } = instruction
-            && let Some(TyKind::GenericFunc(generic)) =
-                function.reg_types.get(&callee.0).map(Ty::kind)
-            && generic.decls.len() == param_decls.len()
-        {
-            for argument in param_arg_regs.iter_mut() {
-                if let Some(position) = argument.declaration_index(param_decls) {
-                    argument.name = Some(
-                        mojito_ast::call::CompileTimeParam::keyword(&generic.decls[position])
-                            .to_string(),
-                    );
-                }
-            }
+        }
+        | MirInstr::MethodCall {
+            param_decls,
+            param_arg_regs,
+            ..
+        }) = instruction
+        else {
+            continue;
+        };
+        if generic.decls.len() == param_decls.len() {
+            mojito_mir::mir::witness_arguments(param_decls, &generic.decls, param_arg_regs);
             param_decls.clone_from(&generic.decls);
         }
     }

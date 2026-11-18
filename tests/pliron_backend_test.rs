@@ -427,8 +427,10 @@ struct R(TrivialRegisterPassable, G):
         return x + 2
 
 struct D(RegisterPassable, Movable):
+    @no_inline
     def __init__(out self):
         pass
+    @no_inline
     def __deinit__(deinit self):
         print(1)
 

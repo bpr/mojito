@@ -956,29 +956,6 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R2304 Every `pliron_backend_test` compile fails MIR verification
-  in `Tuple.deinit_with`**
-
-  `native_compile` in `tests/pliron_backend_test.rs` panics for every
-  source, `held_struct_lowers_as_its_field` included, with "after
-  pre-elaboration pass `inline-parametric`: MIR function
-  'Tuple.deinit_with': a generic `def[...]` bound's call does not carry
-  the bound's compile-time parameters".
-  - The test hands `compiled.drop_elaborated_mir()` to
-    `native::compile_mir`, which runs the pre-elaboration pipeline over
-    every library body; the CLI's `run --backend pliron` never reaches
-    this body and compiles the same sources.
-  - `deinit_with[F: def[idx: Int](var elt: Self.Ts[idx])]` inlines
-    `consume_elements`, whose `deinit_func[idx](...)` call reaches the
-    verifier's `generic_callable_decls` check without the bound's
-    `param_decls`.
-  - Probe: `cargo nextest run --features backend-pliron
-    held_struct_lowers_as_its_field`, and R2293's
-    `zero_sized_register_passable_argument_has_no_slot`.
-  - Found while landing R2293 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2054 A `for ref` target assigned in its body has no slot type,
   so Pliron rejects the loop**
 
