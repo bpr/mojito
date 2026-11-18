@@ -1363,6 +1363,7 @@ impl Checker {
                 },
             ));
         }
+        super::type_resolution::reject_trait_callable_call(&ty)?;
         let (ret, _, error, bool_bindings, _, attributes) =
             self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
         self.record_declared_attributes(span.clone(), &forwarded.declared(attributes.clone()));

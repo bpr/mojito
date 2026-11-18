@@ -379,7 +379,7 @@ which names the upstream pass each one follows. Each is measured by the
     fold of a call through a closure of reference captures is reached
     only by a compile-time callable binder.
   - Probe: `run_thin(double, 2)` over `@always_inline("nodebug") def
-    run_thin(f: def(Int) -> Int, x: Int) -> Int` keeps its call in
+    run_thin(f: def(Int) thin -> Int, x: Int) -> Int` keeps its call in
     concrete MIR, even with `f` unused.
   - Probe: `apply(double, 5)` over `@always_inline def apply[F: def(Int)
     -> Int](f: F, x: Int) -> Int: return f(x)` keeps its call (`mojito opt
@@ -9263,25 +9263,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     variants.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R2305 A run-time parameter of a non-`thin` `def(...)` type is
-  accepted**
-
-  `def via(f: def(R, Int) -> Int, r: R) -> Int: return f(r, 5)`, called
-  as `via(plus, r)`, runs, where the pin rejects the call ("parameter
-  '_Self' has 'def(R, Int) -> Int' type, but value has type
-  'AnyTrait[def(R, Int) -> Int]'", and "value passed to 'f' cannot be
-  converted from 'def plus(r: R, x: Int) thin -> Int'").
-  - At the pin a non-`thin` `def(...)` names a trait, so a run-time
-    parameter typed by one has no value type; only `def(...) thin` or a
-    binder `F: def(...)` with `f: F` is a value.
-  - `reject_stored_callable_type` (`checker/type_resolution.rs`) already
-    rejects the same type at a struct field; the parameter position
-    has no such check.
-  - Probe: the shape above over any thin `plus`.
-  - Found while landing R2293 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 

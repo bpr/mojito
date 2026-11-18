@@ -5141,8 +5141,9 @@ pub fn splats_to(ty: &TyKind, dtype: &SimdDtype) -> bool {
 
 /// The value-coercion policy for callable environments.
 ///
-/// A capturing callable does not bind to an unqualified `def(...)` value
-/// position, while a thin function value still binds.
+/// An unqualified `def(...)` names a trait (upstream's
+/// `AnyTrait[def(...)]`), so no thin or capturing value converts to it;
+/// only a value already of that type binds.
 ///
 /// Comptime callable *bounds* stay on the permissive
 /// `callable_environment_coerces` below.
@@ -5152,7 +5153,7 @@ pub fn callable_environment_value_coerces(
 ) -> bool {
     use crate::origin::CallableEnvironment;
     match (from, to) {
-        (CallableEnvironment::Capturing(_), CallableEnvironment::Default) => false,
+        (_, CallableEnvironment::Default) => from == to,
         _ => callable_environment_coerces(from, to),
     }
 }

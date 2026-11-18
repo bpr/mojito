@@ -24,6 +24,22 @@ pub(super) fn reject_stored_callable_type(ty: &Ty, position: &str) -> Result<(),
     Ok(())
 }
 
+/// Reject invoking a value whose type is a non-`thin` `def(...)`: that
+/// spelling names a trait, so the value has upstream's
+/// `AnyTrait[def(...)]` type, which its `__call__` requirement's `Self`
+/// cannot take.
+pub(super) fn reject_trait_callable_call(ty: &Ty) -> Result<(), TypeError> {
+    match ty.as_func() {
+        Some(func) if func.environment == CallableEnvironment::Default => Err(TypeError::BadCall {
+            func: "__call__".to_string(),
+            reason: format!(
+                "parameter '_Self' has '{ty}' type, but value has type 'AnyTrait[{ty}]'"
+            ),
+        }),
+        _ => Ok(()),
+    }
+}
+
 /// What each bracket argument of one application bound to, in source
 /// order: `Some` for an argument with no run-time form (a type, an origin,
 /// or a compile-time value), as upstream's op carries each argument as the

@@ -182,7 +182,7 @@ fn overloaded_function_value_uses_its_contextual_signature() {
 #[test]
 fn raising_callable_value_is_caught() {
     let actual = output(
-        "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() raises -> Int) raises -> Int:\n    return callback()\n\ndef main():\n    try:\n        var ignored = invoke(boom)\n    except error:\n        print(\"caught callable\")\n",
+        "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() raises thin -> Int) raises -> Int:\n    return callback()\n\ndef main():\n    try:\n        var ignored = invoke(boom)\n    except error:\n        print(\"caught callable\")\n",
     );
     assert_eq!(actual, "caught callable\n");
 }
@@ -1071,7 +1071,7 @@ fn typed_error_value_is_preserved_and_bound_by_except() {
 #[test]
 fn parametric_error_effect_erases_to_never_for_nonraising_callback() {
     let actual = output(
-        "def run_action[E: AnyType](action: def() raises E -> Int) raises E -> Int:\n    return action()\n\ndef safe() -> Int:\n    return 9\n\ndef main():\n    print(run_action(safe))\n",
+        "def run_action[E: AnyType](action: def() raises E thin -> Int) raises E -> Int:\n    return action()\n\ndef safe() -> Int:\n    return 9\n\ndef main():\n    print(run_action(safe))\n",
     );
     assert_eq!(actual, "9\n");
 }

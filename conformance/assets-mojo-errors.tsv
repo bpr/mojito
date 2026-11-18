@@ -322,7 +322,7 @@ assets/type_error/callable_param_binder_application_type_mismatch.mojo	compile-r
 assets/type_error/callable_struct_def_typed_argument.mojo	compile-reject	agree	error: invalid call to 'keep': value passed to 'callback' cannot be converted from 'Scale' to 'def(Int) -> Int'
 assets/type_error/call_result_pointer_field_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/captured_origin_specialization_rejected.mojo	compile-reject	agree	error: member method closures are not supported; add '()' to call '__call__'
-assets/type_error/capturing_closure_plain_def_param.mojo	compile-reject	agree	error: invalid call to '__call__': parameter '_Self' has 'def(Int) -> None' type, but value has type 'AnyTrait[def(Int) -> None]'
+assets/type_error/capturing_closure_plain_def_param.mojo	compile-reject	agree	error: invalid call to 'apply_twice': value passed to 'callback' cannot be converted from 'def(value: Int) -> None' to 'def(Int) -> None'
 assets/type_error/capturing_lambda_array_reassignment.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/capturing_lambda_binding_transferred_uncopyable.mojo	compile-reject	agree	error: value of type 'def() -> Int' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/capturing_lambda_display_distinct_types.mojo	compile-reject	agree	error: value of type 'def(x: Int) -> Int' is not compatible with value of type 'def(x: Int) -> Int'
@@ -455,6 +455,8 @@ assets/type_error/def_callable_parameter_dynamic_value.mojo	compile-reject	agree
 assets/type_error/def_typed_element_rejected.mojo	compile-reject	agree	error: 'List' parameter 'T' has 'AnyType' type, but value has type 'AnyTrait[def(Int) -> Int]'
 assets/type_error/def_typed_field_rejected.mojo	compile-reject	agree	error: struct fields do not support trait types; 'def(Int) -> Int' is a trait, use a concrete type or compile-time generic
 assets/type_error/def_typed_local_annotation_rejected.mojo	compile-reject	agree	error: cannot implicitly convert 'def increment(x: Int) thin -> Int' value to 'def(Int) -> Int'
+assets/type_error/def_typed_parameter_call.mojo	compile-reject	agree	error: invalid call to '__call__': parameter '_Self' has 'def(Int) -> Int' type, but value has type 'AnyTrait[def(Int) -> Int]'
+assets/type_error/def_typed_parameter_thin_argument.mojo	compile-reject	agree	error: invalid call to 'via': value passed to 'f' cannot be converted from 'def plus(x: Int) thin -> Int' to 'def(Int) -> Int'
 assets/type_error/destructure_arity_mismatch.mojo	compile-reject	agree	error: cannot declare 'b' without a contextual type from its initializer
 assets/type_error/destructure_literal_target.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/destructure_sequence_literal_target.mojo	compile-reject	agree	error: expression must be mutable in collection literal
@@ -655,7 +657,7 @@ assets/type_error/kgen_string_no_concatenation.mojo	compile-reject	agree	error: 
 assets/type_error/kgen_string_no_equality.mojo	compile-reject	agree	error: '__mlir_type.`!kgen.string`' does not implement the '__eq__' method
 assets/type_error/kgen_string_parameter_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Tag["Some"]' value to 'Tag["None"]'
 assets/type_error/kgen_type_type_binder_not_any_type.mojo	compile-reject	agree	error: 'List' parameter 'T' has 'AnyType' type, but value has type '__TypeOfAllTypes'
-assets/type_error/lambda_capturing_thin_contract.mojo	compile-reject	agree	error: invalid call to '__call__': parameter '_Self' has 'def(x: Int) -> Int' type, but value has type 'AnyTrait[def(x: Int) -> Int]'
+assets/type_error/lambda_capturing_thin_contract.mojo	compile-reject	agree	error: invalid call to 'transform': value passed to 'f' cannot be converted from 'def(x: Int) -> Int' to 'def(x: Int) -> Int'
 assets/type_error/lambda_empty_capture_list.mojo	compile-reject	agree	error: Could not infer capture convention of the captured value z
 assets/type_error/lambda_fixed_none.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[2]' value to 'None' in return value
 assets/type_error/lambda_mut_immutable_capture.mojo	compile-reject	agree	error: register passible value 'seed' can not be captured by 'mut'. Do you mean 'imm'?

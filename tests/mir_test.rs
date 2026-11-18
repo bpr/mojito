@@ -5404,7 +5404,7 @@ fn indirect_and_callable_bound_calls_pass_by_address_operands() {
     // operands' conventions off the function type: a memory-only `read`
     // or `mut` argument passes as a reference to the caller's storage,
     // while a register-passable one and the callee itself are loaded.
-    let src = "struct Big(Copyable):\n    var a: Int\n    var s: String\n    def __init__(out self, a: Int):\n        self.a = a\n        self.s = \"x\"\n\ndef apply(f: def(Big, Int) -> Int, b: Big, n: Int) -> Int:\n    return f(b, n)\n\ndef apply_mut(f: def(mut Big) -> Int, mut b: Big) -> Int:\n    return f(b)\n\ndef apply_bound[F: def(Big) -> Int](f: F, b: Big) -> Int:\n    return f(b)\n";
+    let src = "struct Big(Copyable):\n    var a: Int\n    var s: String\n    def __init__(out self, a: Int):\n        self.a = a\n        self.s = \"x\"\n\ndef apply(f: def(Big, Int) thin -> Int, b: Big, n: Int) -> Int:\n    return f(b, n)\n\ndef apply_mut(f: def(mut Big) thin -> Int, mut b: Big) -> Int:\n    return f(b)\n\ndef apply_bound[F: def(Big) -> Int](f: F, b: Big) -> Int:\n    return f(b)\n";
     let linked = mojito::link_source(src, Path::new("mir_test.mojo")).expect("link");
     let checked =
         mojito::check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
@@ -6719,7 +6719,7 @@ fn nominal_indirect_call_mir_retains_and_verifies_the_selected_overload() {
             .expect("indirect call lowered")
     }
 
-    let src = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int) -> Int:\n    return callback(41)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(Choose()(41))\n    print(invoke(increment))\n";
+    let src = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(41)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(Choose()(41))\n    print(invoke(increment))\n";
     let mut mir = lower_program(&linked(src)).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),
@@ -7014,7 +7014,7 @@ fn generic_function_value_does_not_convert_to_a_concrete_callable() {
     let error = Compiler::default()
         .with_snippet_module_scope()
         .compile_source(
-            "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    print(apply(ident, 41))\n",
+            "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef apply(cb: def(Int) thin -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    print(apply(ident, 41))\n",
             Path::new("mir_test.mojo"),
         )
         .expect_err("a generic function value is not a concrete callable");

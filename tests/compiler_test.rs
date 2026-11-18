@@ -4024,7 +4024,7 @@ fn the_bundled_library_is_imported_from_its_compiled_package() {
 fn a_package_function_is_a_value_in_an_importer() {
     // An importer's check keeps the package's overload sets, so a package
     // function read as a value lowers to that function.
-    let source = "from std.algorithms import next_pow2\n\ndef apply(f: def(Int) -> Int, x: Int) -> Int:\n    return f(x)\n\ndef main():\n    var g = next_pow2\n    print(g(9))\n    print(apply(next_pow2, 5))\n";
+    let source = "from std.algorithms import next_pow2\n\ndef apply(f: def(Int) thin -> Int, x: Int) -> Int:\n    return f(x)\n\ndef main():\n    var g = next_pow2\n    print(g(9))\n    print(apply(next_pow2, 5))\n";
     let entry = std::path::Path::new("package_function_value.mojo");
     let importing = Compiler::default().with_std_package(true);
     let imported = importing.compile_source(source, entry).expect("compile");

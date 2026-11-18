@@ -1122,7 +1122,7 @@ fn verifier_requires_a_reference_at_an_indirect_mut_argument() {
 fn verifier_requires_a_reference_at_an_indirect_memory_only_read_argument() {
     // `Big` holds a `String`, so it is memory-only and `f`'s `read` slot
     // takes a reference, positionally and by keyword alike.
-    let source = "struct Big(Movable):\n    var s: String\n    def __init__(out self):\n        self.s = String(\"x\")\n\ndef size(b: Big) -> Int:\n    return b.s.byte_length()\n\ndef apply(f: def(Big) -> Int, b: Big) -> Int:\n    return f(b)\n\ndef named(b: Big) -> Int:\n    var f = size\n    return f(b=b)\n\ndef main():\n    var b = Big()\n    print(apply(size, b) + named(b))\n";
+    let source = "struct Big(Movable):\n    var s: String\n    def __init__(out self):\n        self.s = String(\"x\")\n\ndef size(b: Big) -> Int:\n    return b.s.byte_length()\n\ndef apply(f: def(Big) thin -> Int, b: Big) -> Int:\n    return f(b)\n\ndef named(b: Big) -> Int:\n    var f = size\n    return f(b=b)\n\ndef main():\n    var b = Big()\n    print(apply(size, b) + named(b))\n";
     for (caller, operand) in [("apply", 0usize), ("named", 0)] {
         let mut mir = lower_linked_source(source);
         let errors = verify(&mir);

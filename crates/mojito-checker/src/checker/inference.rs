@@ -1090,6 +1090,7 @@ impl Checker {
                         kwargs,
                     );
                 }
+                super::type_resolution::reject_trait_callable_call(&callable)?;
                 let target = self.indirect_callable_target(&callable);
                 let (ret, _, error, _, _, attributes) = self.infer_callable_ty(
                     &expr.source_span(),

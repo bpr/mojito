@@ -326,7 +326,7 @@ fn nominal_callable_rejects_a_value_result_for_a_reference_result_contract() {
 
 #[test]
 fn nominal_callable_selects_the_contract_matching_same_arity_overload() {
-    let source = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke(callback: def(Int) -> Int) -> Int:\n    return callback(41)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(Choose()(41))\n    print(invoke(increment))\n";
+    let source = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(41)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(Choose()(41))\n    print(invoke(increment))\n";
     let checked = checked_with_std(source).expect("check overloaded nominal callable");
     assert!(
         checked
@@ -355,7 +355,7 @@ fn nominal_callable_rejects_when_no_same_arity_overload_matches_the_contract() {
 #[test]
 fn nominal_callable_struct_is_not_a_def_typed_value() {
     let error = err_std(
-        "@fieldwise_init\nstruct Scale(def(Int) -> Int):\n    var factor: Int\n    def __call__(self, value: Int) -> Int:\n        return value * self.factor\n\ndef apply(callback: def(Int) -> Int, value: Int) -> Int:\n    return callback(value)\n\ndef main():\n    print(apply(Scale(3), 14))\n",
+        "@fieldwise_init\nstruct Scale(def(Int) -> Int):\n    var factor: Int\n    def __call__(self, value: Int) -> Int:\n        return value * self.factor\n\ndef apply(callback: def(Int) -> Int, value: Int) -> Int:\n    return value\n\ndef main():\n    print(apply(Scale(3), 14))\n",
     );
     assert!(
         error
@@ -3019,11 +3019,11 @@ fn enforces_effects_after_free_overload_and_callable_selection() {
         TypeError::UnhandledRaise(_)
     ));
 
-    let callable = "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() raises -> Int) raises -> Int:\n    return callback()\n";
+    let callable = "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() raises thin -> Int) raises -> Int:\n    return callback()\n";
     ok_std(callable);
     assert!(matches!(
         err_std(
-            "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() -> Int) -> Int:\n    return callback()\n\ndef main():\n    print(invoke(boom))\n"
+            "def boom() raises -> Int:\n    raise \"boom\"\n    return 0\n\ndef invoke(callback: def() thin -> Int) -> Int:\n    return callback()\n\ndef main():\n    print(invoke(boom))\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
@@ -3075,7 +3075,7 @@ fn a_never_value_does_not_convert_to_a_value_type() {
 #[test]
 fn infers_parametric_error_types_from_callable_arguments() {
     ok_std(
-        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ndef run_action[E: AnyType](action: def() raises E -> Int) raises E -> Int:\n    return action()\n\ndef safe() -> Int:\n    return 7\n\ndef fail() raises ValidationError -> Int:\n    raise ValidationError(\"failed\")\n\ndef safe_caller() -> Int:\n    return run_action(safe)\n\ndef typed_caller() raises ValidationError -> Int:\n    return run_action(fail)\n",
+        "@fieldwise_init\nstruct ValidationError:\n    var reason: String\n\ndef run_action[E: AnyType](action: def() raises E thin -> Int) raises E -> Int:\n    return action()\n\ndef safe() -> Int:\n    return 7\n\ndef fail() raises ValidationError -> Int:\n    raise ValidationError(\"failed\")\n\ndef safe_caller() -> Int:\n    return run_action(safe)\n\ndef typed_caller() raises ValidationError -> Int:\n    return run_action(fail)\n",
     );
 }
 
@@ -5042,11 +5042,11 @@ fn trait_refinement_inherits_requirements_and_capabilities() {
 #[test]
 fn checks_callable_parameters_and_indirect_invocation() {
     ok_std(
-        "def increment(x: Int) -> Int:\n    return x + 1\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    var callback: def(Int) thin -> Int = increment\n    print(apply(callback, 41))\n",
+        "def increment(x: Int) -> Int:\n    return x + 1\n\ndef apply(cb: def(Int) thin -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    var callback: def(Int) thin -> Int = increment\n    print(apply(callback, 41))\n",
     );
     assert!(matches!(
         err_std(
-            "def wrong(x: StringLiteral) -> Int:\n    return 0\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    print(apply(wrong, 41))\n"
+            "def wrong(x: StringLiteral) -> Int:\n    return 0\n\ndef apply(cb: def(Int) thin -> Int, x: Int) -> Int:\n    return cb(x)\n\ndef main():\n    print(apply(wrong, 41))\n"
         ),
         TypeError::BadCall { func, .. } if func == "apply"
     ));
@@ -7735,7 +7735,7 @@ fn rejects_a_capturing_closure_bound_to_an_unqualified_def_parameter() {
     // The closure's storage does not convert to a run-time `def(...)`
     // value, as the pin's "cannot be converted" verdict.
     let error = err_std(
-        "def apply_twice(callback: def(Int) -> None):\n    callback(2)\n    callback(3)\n\ndef total() -> Int:\n    var sum: Int = 0\n    def add(value: Int) {mut sum}:\n        sum += value\n    apply_twice(add)\n    return sum\n",
+        "def apply_twice(callback: def(Int) -> None):\n    pass\n\ndef total() -> Int:\n    var sum: Int = 0\n    def add(value: Int) {mut sum}:\n        sum += value\n    apply_twice(add)\n    return sum\n",
     );
     assert!(
         matches!(&error, TypeError::TypeMismatch { context, .. }

@@ -794,6 +794,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A run-time parameter of a non-`thin` `def(...)` type no longer takes a
+  thin function or answers a call: that spelling names a trait at the pin,
+  so passing a value to it and calling through it are both rejected
+  (`assets/type_error/def_typed_parameter_thin_argument.mojo`,
+  `assets/type_error/def_typed_parameter_call.mojo`, R2305). Spell the
+  parameter `def(...) thin`, or bind an `F: def(...)` binder.
+
 - Two same-spelled nested `def`s with an identical signature in sibling
   blocks of one body (both arms of a `comptime if`, two loop bodies) are now
   rejected as a redefinition, as at the pin, which scopes a nested
