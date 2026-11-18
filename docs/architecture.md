@@ -6292,8 +6292,10 @@ its `ref.make`. Ending a reference binding writes nothing: drop
 elaboration may end the binding a loaded place goes through at the load,
 its last use, and the call then ends it after itself instead, since the
 call's reference now reaches the referent through it. A copy of a register
-loaded before an instruction that may write still passes the value
-(R2298). The constructor's declaration decides
+loaded before an instruction that may write passes the value, so lowering
+reads a copy's source where the copy runs: a chained comparison's first
+middle is loaded again from its place after the first link's call, as
+upstream copies it through its `!lit.ref` there. The constructor's declaration decides
 whether the one parameter after `out self` passes positionally or by
 keyword (`__init__(out self, *, copy: Self)`), and the call passes the
 value type's arguments for the struct parameters the declaration

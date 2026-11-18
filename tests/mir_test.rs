@@ -4297,10 +4297,11 @@ def main():
 }
 
 #[test]
-fn copy_of_value_loaded_before_a_call_passes_the_value() {
-    // A chained comparison's middle operand (`k < holder.s < l`) is loaded
-    // before the first link's call and copied after it, which may write
-    // the place, so its copy passes the loaded value (R2298).
+fn chained_comparison_middle_copy_reads_its_place() {
+    // A chained comparison's first middle operand (`k < holder.s < l`) is
+    // copied after the first link's call, which may write the place, from
+    // its place where the copy runs, as upstream copies it through its
+    // `!lit.ref`: the copy initializer takes the place's reference.
     let source = r#"
 struct S(ImplicitlyCopyable, Movable):
     var v: Int
@@ -4329,7 +4330,11 @@ def main():
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let copies = copy_sources_are_references(&compiled, "main");
-    assert_eq!(copies, [false], "the middle's copy passes its value");
+    assert_eq!(
+        copies,
+        [true],
+        "the middle's copy passes its place's reference"
+    );
 }
 
 #[test]

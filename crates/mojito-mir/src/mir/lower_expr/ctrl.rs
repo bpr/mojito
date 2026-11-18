@@ -1002,7 +1002,8 @@ impl<'a> Flatten<'a> {
 
     /// What a chain's next link reads for middle operand `operand`, whose
     /// link just read it as `value`. The first middle becomes an owned
-    /// temporary (a place copied, a temporary or `^` taken as is); a later
+    /// temporary (a place copied from where it lies after the link, a
+    /// temporary or `^` taken as is); a later
     /// middle place stays where it lies, and a named one is read there again
     /// at the next link, so its owner lives through that link. An owned
     /// temporary of a type with a destructor lives in a hidden slot, so it
@@ -1029,25 +1030,11 @@ impl<'a> Flatten<'a> {
             return ChainMiddle::Read(value, self.read_place(value));
         };
         let owned = if place {
-            // A whole slot the first link read is read again for the copy,
-            // so the copy reads its source's memory as upstream's does, and
-            // copy elision sees the source's death right after it.
-            let source =
-                self.f
-                    .body
-                    .instrs
-                    .iter()
-                    .rev()
-                    .find_map(|instruction| match instruction {
-                        MirInstr::LoadPlace { dest, place }
-                            if *dest == value
-                                && place.proj.is_empty()
-                                && place.through.is_none() =>
-                        {
-                            Some(place.clone())
-                        }
-                        _ => None,
-                    });
+            // The place the first link read is read again for the copy,
+            // where the copy runs, as upstream copies the middle through its
+            // `!lit.ref` after the link's call; for a whole slot, copy
+            // elision also sees the source's death right after it.
+            let source = self.read_place(value);
             let copied_from = match source {
                 Some(place) => {
                     let reread = self.fresh_typed(operand.location(), Some(place.root), ty.clone());

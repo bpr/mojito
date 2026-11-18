@@ -785,6 +785,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A chained comparison's first middle operand (`k < holder.s < l`,
+  `xs[0] < xs[1] < xs[2]`) is now copied from its place where the copy
+  runs, after the first link's call, as upstream copies it through its
+  `!lit.ref`, so its copy initializer takes the place's reference and a
+  write the first link makes through an alias is seen. It used to copy
+  the value loaded before that call (R2298).
+
 - A field of a temporary lent to a borrow (`print(V(1).xs[0])`,
   `(a + b).xs[0]`, `mk().name.codepoints()`, `items(W(mk()).v)[1]`) now
   borrows a projection of the materialized temporary, as upstream's

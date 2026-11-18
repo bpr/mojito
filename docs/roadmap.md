@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2322**.
+Next free ID: **R2323**.
 
 ## Ordered Work
 
@@ -9665,21 +9665,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2298 A chained comparison copies its middle operand after the
-  first link's call, from a register loaded before it**
+- [ ] **R2322 A chained comparison's link does not bind a `mut` operand
+  as upstream's call binding does**
 
-  Upstream copies `holder.s` in `k < holder.s < l` from its place where
-  the copy runs. Mojito's `chain_link` (`lower_expr/ctrl.rs`) loads the
-  middle before the first link's `call.method` and copies the register
-  after it. The call may write the place, so `lower_copies_and_moves`
-  passes the stale value instead of a reference.
-  - Fix: the copy re-reads its place where it runs, a `place.load`
-    right before the `value.copy`.
-  - Probe: the R2300 keyword check flags
-    `assets/ok/chained_comparison_link_drop_order.mojo` and
-    `struct_operator_subscript_operand_in_place.mojo`.
-  - Probe: `copy_of_value_loaded_before_a_call_passes_the_value`
-    (`tests/mir_test.rs`) pins the value today and flips once this lands.
+  Upstream binds each link of `a < b < c` as its own `__lt__` call: a
+  `mut` parameter takes the operand's place mutably, and the second
+  link's receiver, the copied middle, is an rvalue a `mut self` cannot
+  take. `chain_link` (`lower_expr/ctrl.rs`) handles only
+  `OperandBinding::Read`, and the checker does not judge a link's
+  operands' mutability per link.
+  - Probe: `def __lt__(self, mut o: Self)` with `o.v += 10`, in
+    `k < holder.s < l`: Mojito fails MIR verification ("argument 0 of
+    'S.__lt__' is received by address but passes a S value"); the pin
+    prints `lt 1 2 / copy 12 / lt 12 30 / True / 12`.
+  - Probe: `def __lt__(mut self, o: Self)` in `holder.s < k < l`:
+    Mojito accepts it; the pin rejects the second link with "value
+    passed to mutable argument 'self' must be mutable".
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -9721,7 +9722,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     an `__init__(out self, *, copy: Self)` with a value `copy=` operand,
     and accepting the `ref.make` form.
   - Stop when `scripts/smoke` runs clean with the rule on.
-  - Depends on R2296, R2297, R2298, R2299, and R1506.
+  - Depends on R2296, R2297, R2299, and R1506.
   - Model: Fable, Not Planned.
 
 - [ ] **R2302 The verifier checks no checked-subscript argument at a
