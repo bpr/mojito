@@ -366,82 +366,6 @@ pub(super) fn function_types(function: &MirFunction) -> impl Iterator<Item = &Ty
         .chain(function.reg_types.values())
 }
 
-/// Dependent callable values are compile-time carriers once every indirect use
-/// has become a direct specialized call. Their storage and the parameters
-/// that receive them become an `Int` placeholder: a value is the constant `0`,
-/// which a call still passes to an instance that folded the callable into its
-/// identity, so neither verification nor backend lowering sees a fictitious
-/// runtime ABI.
-pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunction) {
-    pub(super) fn erase(
-        block: &mut MirBlock,
-        generic_regs: &HashSet<u32>,
-        generic_vars: &HashSet<u32>,
-    ) {
-        block.instrs.retain_mut(|instruction| {
-            let regions = mojito_mir::mir::instruction_regions_mut(instruction);
-            if !regions.is_empty() {
-                for region in regions {
-                    erase(region, generic_regs, generic_vars);
-                }
-                return true;
-            }
-            match instruction {
-                MirInstr::MakeClosure { dest, .. }
-                | MirInstr::Const { dest, .. }
-                | MirInstr::CopyValue { dest, .. }
-                | MirInstr::UseVar { dest, .. }
-                | MirInstr::LoadPlace { dest, .. }
-                | MirInstr::MakeRef { dest, .. }
-                | MirInstr::ReadRef { dest, .. }
-                    if generic_regs.contains(&dest.0) =>
-                {
-                    *instruction = MirInstr::Const {
-                        dest: *dest,
-                        k: Const::Int(0),
-                    };
-                    true
-                }
-                // The erased slot holds nothing, so nothing ends there.
-                MirInstr::DefVar { var, .. }
-                | MirInstr::DropVar { var, .. }
-                | MirInstr::ConsumeVar { var } => !generic_vars.contains(var),
-                _ => true,
-            }
-        });
-    }
-
-    let generic_regs = function
-        .reg_types
-        .iter()
-        .filter_map(|(reg, ty)| generic_callable_storage(ty).then_some(*reg))
-        .collect::<HashSet<_>>();
-    let generic_vars = function
-        .var_tys
-        .iter()
-        .filter_map(|(var, ty)| matches!(ty.kind(), TyKind::GenericFunc(_)).then_some(*var))
-        .collect::<HashSet<_>>();
-    erase(&mut function.body, &generic_regs, &generic_vars);
-    for reg in generic_regs {
-        function.reg_types.insert(reg, Ty::int());
-    }
-    for var in generic_vars {
-        function.var_tys.insert(var, Ty::int());
-    }
-    erase_generic_callable_parameters(&mut function.param_types);
-}
-
-/// A parameter typed by a generic callable receives the `Int` placeholder its
-/// caller's erased storage passes
-/// ([`erase_specialized_generic_callable_storage`]).
-pub(super) fn erase_generic_callable_parameters(types: &mut [Ty]) {
-    for ty in types {
-        if matches!(ty.kind(), TyKind::GenericFunc(_)) {
-            *ty = Ty::int();
-        }
-    }
-}
-
 /// Collect already-substituted types named only by instructions, recursing
 /// into every region. These types need layouts or lifecycle declarations even
 /// when no register or variable carries them.
@@ -693,14 +617,4 @@ fn layout_answer(
         return Ok(None);
     }
     oracle.answer(query, &ty, target).map(Some)
-}
-
-/// Whether a value of type `ty` is a generic callable or a reference to one,
-/// as a `def(...)` bound's call addresses its callee.
-fn generic_callable_storage(ty: &Ty) -> bool {
-    match ty.kind() {
-        TyKind::GenericFunc(_) => true,
-        TyKind::Ref(reference) => matches!(reference.referent.kind(), TyKind::GenericFunc(_)),
-        _ => false,
-    }
 }

@@ -78,8 +78,7 @@ pub(super) fn default_construct_parameters(
     mojito_mir::mir::construct_type_parameters(block, bindings, declarations, registers)
 }
 
-/// Substitute `bindings` through `function`. Each read of a retained
-/// callable runtime parameter is the function its argument names, and each
+/// Substitute `bindings` through `function`. Each
 /// `conforms_to` query in a call's bracket argument is the `Bool`
 /// `conforms` answers for it, as upstream's elaborator folds
 /// `#kgen.type_conforms_to_trait` over a concrete type.
@@ -88,11 +87,6 @@ pub(super) fn substitute_function(
     bindings: &Bindings,
     conforms: &ConformsAnswer<'_>,
 ) -> Result<(), MonoError> {
-    substitute_callable_parameter_reads(
-        &mut function.body,
-        &function.var_names,
-        &bindings.callables,
-    );
     walk_function_mut(
         &mut Substitution {
             bindings,
@@ -162,70 +156,6 @@ pub(super) fn copy_builtin_receivers(block: &mut MirBlock, reg_types: &HashMap<u
             }
         }
     }
-}
-
-/// Rewrite each read of a retained callable runtime parameter's slot in
-/// `blocks`, its regions included, into the function its argument names. A
-/// read is a `UseVar` of the slot or a whole-slot `LoadPlace` (a `read`
-/// parameter passed on to another call); a projected or `through` load is
-/// not a read of the parameter's value. A callable binder's read is its
-/// parameter constant, which the instance closes like any other.
-pub(super) fn substitute_callable_parameter_reads(
-    block: &mut MirBlock,
-    var_names: &[String],
-    callables: &HashMap<String, String>,
-) {
-    for instruction in &mut block.instrs {
-        let read = match instruction {
-            MirInstr::UseVar { dest, var, .. } => Some((*dest, *var)),
-            MirInstr::LoadPlace { dest, place }
-                if place.through.is_none() && place.proj.is_empty() =>
-            {
-                Some((*dest, place.root))
-            }
-            _ => None,
-        };
-        if let Some((dest, var)) = read
-            && let Some(callable) = var_names
-                .get(var as usize)
-                .and_then(|name| callables.get(name))
-        {
-            *instruction = MirInstr::Const {
-                dest,
-                k: Const::Function(callable.clone()),
-            };
-        } else {
-            for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                substitute_callable_parameter_reads(region, var_names, callables);
-            }
-        }
-    }
-}
-
-/// The function each register of `block`, its regions included, holds a
-/// reference to: a `ref.make` of a retained callable runtime parameter's
-/// whole slot, as a `def(...)` bound's call passes its callee, addresses
-/// the function its argument names ([`substitute_callable_parameter_reads`]
-/// reads the slot's value as it).
-pub(super) fn callable_parameter_addresses(
-    block: &MirBlock,
-    var_names: &[String],
-    callables: &HashMap<String, String>,
-) -> HashMap<u32, (String, bool)> {
-    mojito_mir::mir::nested_instructions(block)
-        .into_iter()
-        .filter_map(|instruction| match instruction {
-            MirInstr::MakeRef { dest, place }
-                if place.through.is_none() && place.proj.is_empty() =>
-            {
-                var_names
-                    .get(place.root as usize)
-                    .and_then(|name| callables.get(name))
-                    .map(|callable| (dest.0, (callable.clone(), true)))
-            }
-            _ => None,
-        })
-        .collect()
 }
 
 pub(super) fn substitute_declaration(

@@ -198,8 +198,7 @@ impl Specializer<'_> {
                 args: &op.args,
                 indexed: &indexed,
             };
-            let clone =
-                self.clone_body(&looped, frame, tables, (&iteration, bindings), &operands)?;
+            let clone = self.clone_body(&looped, frame, tables, &iteration, &operands)?;
             let results: Vec<Reg> = op
                 .results
                 .iter()
@@ -301,7 +300,7 @@ impl Specializer<'_> {
         looped: &LoopBody<'_>,
         frame: &LoopFrame<'_>,
         tables: &mut FrameTables<'_>,
-        (iteration, bindings): (&Bindings, &Bindings),
+        iteration: &Bindings,
         operands: &[Reg],
     ) -> Result<MirBlock, MonoError> {
         let LoopBody {
@@ -388,7 +387,6 @@ impl Specializer<'_> {
         // bodies are over this iteration's binding and their own, which
         // nothing else of the clone may be substituted without.
         self.elaborate_in(blocks, frame, iteration, tables)?;
-        substitute_callable_parameter_reads(blocks, tables.var_names, &bindings.callables);
         default_construct_parameters(
             blocks,
             iteration,

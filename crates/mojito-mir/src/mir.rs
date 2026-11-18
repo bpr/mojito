@@ -58,7 +58,6 @@ pub mod visit;
 mod bound_calls;
 pub use bound_calls::{
     bound_call_contract, callable_bound_requirement, direct_from_inflated_bound_call,
-    indirect_from_bound_call,
 };
 mod call_addresses;
 pub use call_addresses::{

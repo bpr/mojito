@@ -344,7 +344,6 @@ impl Specializer<'_> {
                 format!("binding call to `{target}` during monomorphization: {e:?}"),
             )
         })?;
-        let mut callable_arguments = Vec::new();
         for (index, slot) in slots.slots.iter().enumerate() {
             let actual_reg = match slot {
                 ArgSlot::Positional(i) => Some(args[*i]),
@@ -388,28 +387,6 @@ impl Specializer<'_> {
                     unify(&pattern, actual, &mut bindings).map_err(|e| {
                         self.error(Some(owner), format!("monomorphizing `{target}`: {e}"))
                     })?;
-                }
-                // Ordinary `Func` parameters carry their closure environment
-                // at runtime. Only retained generic-callable parameters are
-                // compile-time inputs to instance selection; treating every
-                // statically traceable closure as such would discard captures.
-                if matches!(
-                    peel_refs(&declaration.param_types[index]).kind(),
-                    TyKind::GenericFunc(_)
-                        | TyKind::Param {
-                            callable_bound: Some(_),
-                            ..
-                        }
-                ) && let Some((callable, captures_are_empty)) =
-                    self.callable_targets.get(&actual_reg.0)
-                    && *captures_are_empty
-                {
-                    bindings
-                        .callables
-                        .insert(declaration.param_names[index].clone(), callable.clone());
-                    callable_arguments.push(InstanceArg::Value(CtValue::FuncSymbol(
-                        mojito_types::ct::FuncSymbolRef::bare(callable.clone()),
-                    )));
                 }
             }
         }
@@ -560,7 +537,6 @@ impl Specializer<'_> {
             target,
             owner_covered,
         )?);
-        arguments.extend(callable_arguments);
         push_sugar_arguments(declaration, &bindings, &mut arguments);
         Ok((target.to_string(), bindings, arguments))
     }
@@ -934,9 +910,6 @@ fn inherit_bindings(bindings: &mut Bindings, inherited: Bindings) {
     }
     for (binder, value) in inherited.values {
         bindings.values.entry(binder).or_insert(value);
-    }
-    for (name, callee) in inherited.callables {
-        bindings.callables.entry(name).or_insert(callee);
     }
     if bindings.self_instance.is_none() {
         bindings.self_instance = inherited.self_instance;

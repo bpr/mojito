@@ -4934,9 +4934,11 @@ struct, closure storage included, to the member its `def(...)` conformance
 records (`MirDeclarations::callable_witness` when the bound spells its
 signature over the callee's binders), on a function's inflated type to its
 callee's direct call (`mir::direct_from_inflated_bound_call`, the bound's
-compile-time arguments renamed to the callee's by `mir::witness_arguments`),
-and on a function value, which has no witness table, to the value's own
-`CallIndirect` (`mir::indirect_from_bound_call`). A module function's
+compile-time arguments renamed to the callee's by `mir::witness_arguments`).
+A function value conforms to no bound, so no such call reaches one: a
+run-time function value or a struct declaring no `def(...)` conformance
+at a bound is the pin's conversion error
+(`Checker::callable_bound_argument`). A module function's
 compile-time reference at a `def(...)` bound binds it to that inflated type,
 as upstream binds `F` in `apply(dbl)` to `inflated$<signature>` with
 `#__CALL__#=dbl`: the checker inflates the argument where it solves the
@@ -8490,6 +8492,12 @@ concrete verifier rejects a reference slot read as its handle.
   the constant the slot's register was read into once nothing else reads
   it (`erase_dropped_argument_reads` in `native/mono/specializer.rs`,
   R991), so callers apart only by that read merge with their callees.
+  A generic callee is the same: a generic function has no run-time value,
+  and upstream's `kgen.call` names it, or the `#kgen.param.decl.ref` of
+  the binder holding it, as an attribute, so once the call through its
+  register folds to the callee's direct call the elaborator erases the
+  register's definition (`erase_folded_generic_callees`), and a
+  `GenericFunc` register still read fails the concrete check.
 
 - **CSE.** `cse` (`analysis::CSE`, `analysis/cse.rs`, R845) is MLIR's
   `CSE`: it walks each region's dominator tree, which for a region's one

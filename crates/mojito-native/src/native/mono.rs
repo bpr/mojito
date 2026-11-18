@@ -454,10 +454,6 @@ struct Bindings {
     types: HashMap<ParamRef, Ty>,
     /// Each value binder's solution, keyed by identity as `types` is.
     values: HashMap<ParamRef, CtValue>,
-    /// The callee a retained callable runtime parameter's argument names,
-    /// keyed by the parameter: a runtime parameter is a local of the
-    /// signature, not a binder.
-    callables: HashMap<String, String>,
     associated: HashMap<String, Ty>,
     /// When materializing a generic struct's method: the owner's template name
     /// and its concrete instance type. Substitution rewrites the bare in-body

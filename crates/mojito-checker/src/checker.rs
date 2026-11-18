@@ -1796,12 +1796,24 @@ impl Checker {
         callable_contract_target(callable)
     }
 
-    /// Resolve the callable contract an actual type is *declared* to provide.
-    /// Structs participate only through nominal `struct S(def(...))`
-    /// conformance; merely defining a shape-compatible `__call__` is not enough.
+    /// The signature a call of a value of type `actual` binds: a function
+    /// value's own type, generic or not, or the contract a callable type
+    /// declares ([`Self::declared_callable_contract`]).
+    fn callable_value_contract(&self, actual: &Ty) -> Option<Ty> {
+        match actual.kind() {
+            TyKind::Func(_) | TyKind::GenericFunc(_) => Some(actual.clone()),
+            _ => self.declared_callable_contract(actual),
+        }
+    }
+
+    /// The `def(...)` contract a type conforms to, as upstream reads a
+    /// `def(...)` bound as a trait: only a type that declares it does, a
+    /// struct through nominal `struct S(def(...))` conformance (a closure's
+    /// storage and an inflated function type among them) and a type
+    /// parameter through its bound. Defining a shape-compatible `__call__`
+    /// is not enough, and a function value's own type conforms to none.
     fn declared_callable_contract(&self, actual: &Ty) -> Option<Ty> {
         match actual.kind() {
-            TyKind::Func(_) => Some(actual.clone()),
             TyKind::Param {
                 callable_bound: Some(bound),
                 ..
@@ -1814,12 +1826,6 @@ impl Checker {
                     &struct_subst(&info.decls(), arguments),
                 ))
             }
-            // A generic function has a callable identity only for a matching
-            // generic anonymous contract. `callable_bound_accepts` rejects it
-            // when the required contract is monomorphic.
-            TyKind::GenericFunc(_) => Some(actual.clone()),
-            // An overload set has no unique callable identity.
-            TyKind::Overload(_) => None,
             _ => None,
         }
     }

@@ -3102,11 +3102,12 @@ impl Checker {
     /// The type `argument`, solved as `found`, binds the parameter
     /// `expected` at.
     ///
-    /// A `def(...)` bound binds from a function's own compile-time
-    /// reference ([`Self::names_function_constant`]), a module function's
+    /// A `def(...)` bound binds from a function's compile-time reference,
     /// inflated to its type ([`Self::inflate_function_argument`]), or from
-    /// a closure: a run-time value of a thin function type (`var f = dbl`,
-    /// a parameter) does not conform to the bound, as at the pin.
+    /// a type that declares the bound: a run-time value of a function type
+    /// (`var f = dbl`, a parameter) or a struct declaring no callable
+    /// conformance does not conform, and converts to no type that does, as
+    /// at the pin.
     pub(super) fn callable_bound_argument(
         &self,
         func: &str,
@@ -3118,20 +3119,24 @@ impl Checker {
         if let Some(inflated) = self.inflate_function_argument(argument, &found, expected) {
             return Ok(inflated);
         }
+        let TyKind::Param {
+            callable_bound: Some(contract),
+            ..
+        } = expected.kind()
+        else {
+            return Ok(found);
+        };
         if matches!(
-            expected.kind(),
-            TyKind::Param {
-                callable_bound: Some(_),
-                ..
-            }
-        ) && matches!(found.kind(), TyKind::Func(_))
-            && !self.names_function_constant(argument)
+            found.kind(),
+            TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Struct(..)
+        ) && self.declared_callable_contract(&found).is_none()
         {
             return Err(TypeError::BadCall {
                 func: func.to_string(),
                 reason: format!(
                     "value passed to '{parameter}' cannot be converted from '{found}' to \
-                     '{expected}'"
+                     '{expected}', argument type '{found}' does not conform to trait \
+                     '{contract}'"
                 ),
             });
         }
@@ -3182,34 +3187,6 @@ impl Checker {
         }
         self.register_inflated_function(&signature);
         Some(inflated)
-    }
-
-    /// Whether `value` is a compile-time reference to a function: a module
-    /// function, a nested `def`, a `comptime` binding, a member path rooted
-    /// outside the run-time locals, a bracket specializing any of those, or
-    /// a lambda. A run-time local or parameter, a field of one, or any
-    /// computed value is not.
-    pub(super) fn names_function_constant(&self, value: &Expr) -> bool {
-        if let Some((name, _)) = value.bracket_application() {
-            return self.names_function_constant_binding(name);
-        }
-        match &value.kind {
-            ExprKind::Identifier(name) => self.names_function_constant_binding(name),
-            ExprKind::Member { object, .. } => self.names_function_constant(object),
-            ExprKind::Lambda { .. } => true,
-            _ => false,
-        }
-    }
-
-    /// Whether the binding `name` holds a function at compile time: no
-    /// run-time local, or a `comptime` binding or nested `def` among them.
-    pub(super) fn names_function_constant_binding(&self, name: &str) -> bool {
-        !self.is_local_binding(name)
-            || self.local_comptime_value(name).is_some()
-            || self.lookup_owner(name).is_some_and(|owner| {
-                self.is_comptime_binding_owner(owner)
-                    || self.nested_function_owners.contains(&owner)
-            })
     }
 
     /// The module function `name` read as a compile-time value: its symbol,

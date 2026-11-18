@@ -5,15 +5,12 @@
 //! generic: the call carries the bound's compile-time parameter
 //! declarations and the arguments it applies, as a generic method's call
 //! does. Where the bound closes, the call folds as a witness lookup does: a
-//! struct's to the member its `def(...)` conformance records, a function's
-//! inflated type to its callee's direct call, and a function value, which
-//! has no witness table, to its own [`MirInstr::CallIndirect`].
+//! struct's to the member its `def(...)` conformance records, and a
+//! function's inflated type to its callee's direct call.
 
 use super::legacy_places::{LegacyCursor, LegacyOperandTables};
 use super::{MirFunction, MirInstr};
-use mojito_symbol::symbol::{
-    callable_contract_target, callable_requirement_target, is_callable_contract_dispatch,
-};
+use mojito_symbol::symbol::{callable_requirement_target, is_callable_contract_dispatch};
 use mojito_types::origin::{Mutability, RefTy};
 use mojito_types::types::{FuncTy, Ty, TyKind};
 use std::collections::HashMap;
@@ -57,77 +54,6 @@ pub fn bound_call_contract<'t, S: BuildHasher>(
     (method == "__call__")
         .then(|| callable_bound_requirement(reg_types.get(&recv.0)?, target))
         .flatten()
-}
-
-/// Rewrite a `__call__` requirement call through a `def(...)` bound whose
-/// receiver substitution made a function value into that value's own
-/// indirect call; returns the loads to splice ahead of the call.
-///
-/// A function value has no witness table, so upstream's call of the
-/// requirement on it is the call of the value. The requirement call passed
-/// the callee's address; a function value is register-passable, so the
-/// rewritten call reads it through that reference (a `ref.read` among the
-/// returned loads), as upstream's `LowerArgConventions` loads a
-/// register-passable `read` operand. The rewritten call names
-/// the receiver's own contract and keeps every argument, argument place,
-/// and capture access; its callee is the operand alone, naming no place. A generic bound's call keeps the bound's compile-time parameter
-/// declarations, which its parameter arguments name, so the bound's
-/// binders and defaults, not the value's own, bind them.
-pub fn indirect_from_bound_call(
-    instruction: &mut MirInstr,
-    function: &mut MirFunction,
-) -> Vec<MirInstr> {
-    let MirInstr::MethodCall {
-        dest,
-        recv,
-        method,
-        resolved: Some(target),
-        raises,
-        args,
-        kwargs,
-        capture_accesses,
-        param_arg_regs,
-        param_decls,
-        instantiated_args,
-        spread,
-        ..
-    } = instruction
-    else {
-        return Vec::new();
-    };
-    let Some(receiver) = function.reg_types.get(&recv.0).map(peel_refs).cloned() else {
-        return Vec::new();
-    };
-    if method != "__call__"
-        || !is_callable_contract_dispatch(target)
-        || !matches!(receiver.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
-    {
-        return Vec::new();
-    }
-    let mut callee = *recv;
-    let loads = super::read_addressed_operands(function, [&mut callee]);
-    *instruction = MirInstr::CallIndirect {
-        dest: *dest,
-        callee,
-        resolved: callable_contract_target(&receiver),
-        raises: raises.take(),
-        args: std::mem::take(args),
-        kwargs: std::mem::take(kwargs),
-        capture_accesses: std::mem::take(capture_accesses),
-        param_arg_regs: std::mem::take(param_arg_regs),
-        param_decls: std::mem::take(param_decls),
-        // A generic value applied to solved arguments names the signature
-        // they instantiate, as the call of the value by its own type does.
-        instantiated_contract: (!instantiated_args.is_empty())
-            .then(|| {
-                super::verify::instantiate_generic_callable_contract(&receiver, instantiated_args)
-                    .ok()
-            })
-            .flatten(),
-        instantiated_args: std::mem::take(instantiated_args),
-        spread: spread.take(),
-    };
-    loads
 }
 
 /// Rewrite a `__call__` requirement call on an inflated function type

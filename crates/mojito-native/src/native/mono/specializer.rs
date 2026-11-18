@@ -1114,14 +1114,6 @@ impl<'a> Specializer<'a> {
                     CtValue::FuncSymbol(FuncSymbolRef::bare(target.clone())),
                 )
             }));
-        // A bound call's reference to a callable parameter's slot, which
-        // its fold reads through to the function the argument names.
-        self.callable_targets
-            .extend(super::substitute::callable_parameter_addresses(
-                &function.body,
-                &function.var_names,
-                &bindings.callables,
-            ));
         // Take the blocks out so call rewriting can read the function's
         // substituted register-type table without aliasing its body.
         let mut blocks = std::mem::take(&mut function.body);
@@ -1133,7 +1125,7 @@ impl<'a> Specializer<'a> {
             shed_dropped_operand_types(&mut function, &operands);
         }
         retire_forwarded_packs(&mut function);
-        erase_specialized_generic_callable_storage(&mut function);
+        erase_folded_generic_callees(&mut function);
 
         let mut owned_pack = None;
         if let Some(declaration) = reduced
@@ -1142,7 +1134,6 @@ impl<'a> Specializer<'a> {
         {
             let mut declaration = declaration;
             substitute_declaration(&mut declaration, bindings)?;
-            erase_generic_callable_parameters(&mut declaration.param_types);
             declaration.lowered_name.clone_from(&name);
             declaration.param_decls.clear();
             declaration.availability.clear();
@@ -3184,20 +3175,6 @@ impl<'a> Specializer<'a> {
                     self.apply_nested_generator(owner, &mut func.0, instantiated_args)?;
                 }
             }
-            // A `def(...)` bound's `__call__` requirement called on a
-            // function value is the value's own indirect call: a
-            // function type has no witness table.
-            let loads = mojito_mir::mir::indirect_from_bound_call(instruction, function);
-            for load in &loads {
-                if let MirInstr::ReadRef { dest, reference } = load
-                    && let Some(target) = self.callable_targets.get(&reference.0).cloned()
-                {
-                    self.callable_targets.insert(dest.0, target);
-                }
-            }
-            if !loads.is_empty() {
-                preludes.push((index, loads));
-            }
             // `abs` on a nominal receiver is a checker-typed dunder
             // dispatch the VM performs by name (`call_dunder`); rewrite
             // it into an ordinary method call so the shared resolver and
@@ -4802,6 +4779,37 @@ fn erase_dropped_argument_reads(function: &mut MirFunction, arguments: &HashSet<
     }
 }
 
+/// Erase the definition of each generic callable value no instruction
+/// reads once its calls have folded to their callee's direct call: a
+/// generic function has no run-time value, and upstream's `kgen.call`
+/// names such a callee as an attribute, its symbol or the
+/// `#kgen.param.decl.ref` of the binder holding it, so the instance holds
+/// no register for one. A generic callable register still read is left for
+/// the concrete check to reject.
+fn erase_folded_generic_callees(function: &mut MirFunction) {
+    let generic: HashSet<u32> = function
+        .reg_types
+        .iter()
+        .filter(|(_, ty)| matches!(ty.kind(), TyKind::GenericFunc(_)))
+        .map(|(reg, _)| *reg)
+        .collect();
+    if generic.is_empty() {
+        return;
+    }
+    let mut reads = vec![0; function.n_regs as usize];
+    mojito_mir::mir::count_register_reads(&mut function.body, &mut reads);
+    let dead: HashSet<u32> = generic
+        .into_iter()
+        .filter(|reg| reads.get(*reg as usize) == Some(&0))
+        .collect();
+    let mut erased = HashSet::new();
+    erase_callee_definitions(&mut function.body, &dead, &mut erased);
+    for reg in erased {
+        function.reg_types.remove(&reg);
+        function.spans.0.remove(&reg);
+    }
+}
+
 /// Drop the types of `operands`, the registers a call passed for a
 /// removed argument whose definitions the instance erased
 /// ([`mojito_mir::mir::with_removed_argument_forwards_erased`]), once no
@@ -4831,6 +4839,30 @@ fn erase_constants(block: &mut MirBlock, dead: &HashSet<u32>, erased: &mut HashS
     for instruction in &mut block.instrs {
         for region in mojito_mir::mir::instruction_regions_mut(instruction) {
             erase_constants(region, dead, erased);
+        }
+    }
+}
+
+/// Remove each definition in `blocks`, their regions included, of one of
+/// `dead`, a generic callee's constant or its capture-free closure, recording
+/// its register in `erased`.
+fn erase_callee_definitions(block: &mut MirBlock, dead: &HashSet<u32>, erased: &mut HashSet<u32>) {
+    block.instrs.retain(|instruction| match instruction {
+        MirInstr::Const { dest, .. } if dead.contains(&dest.0) => {
+            erased.insert(dest.0);
+            false
+        }
+        MirInstr::MakeClosure { dest, captures, .. }
+            if captures.is_empty() && dead.contains(&dest.0) =>
+        {
+            erased.insert(dest.0);
+            false
+        }
+        _ => true,
+    });
+    for instruction in &mut block.instrs {
+        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+            erase_callee_definitions(region, dead, erased);
         }
     }
 }

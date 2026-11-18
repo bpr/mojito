@@ -1595,7 +1595,7 @@ impl Checker {
                     "element-call subscript selection recorded no contract".to_string(),
                 )
             })?;
-        let Some(callable) = self.declared_callable_contract(&element_ty) else {
+        let Some(callable) = self.callable_value_contract(&element_ty) else {
             return Err(TypeError::NotCallable {
                 name: format!("{label}[…]"),
                 ty: element_ty.to_string(),

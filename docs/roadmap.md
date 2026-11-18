@@ -384,8 +384,8 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: `apply(double, 5)` over `@always_inline def apply[F: def(Int)
     -> Int](f: F, x: Int) -> Int: return f(x)` keeps its call (`mojito opt
     --pass inline-parametric` over pipeline-off `emit-mir`); once inlined,
-    `fold_bound_calls` turns the bound's `__call__` requirement call into
-    the function value's `call.indirect`. `apply(Counter(10), 5)` keeps
+    the bound's `__call__` requirement call on `double`'s inflated type
+    folds to `double`'s direct call (`direct_from_inflated_bound_call`). `apply(Counter(10), 5)` keeps
     its call too, `Inliner::inlined_blocks` declining it, where
     `witness_of` would fold the call to `Counter.__call__`.
   - Probe: `run_it(get, 1)` over `@always_inline("nodebug") def
@@ -9567,7 +9567,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`register_constant`, `native/mono/equiv.rs`).
   - Lever: carry the bracket arguments as the call's instantiated
     arguments, as a direct call's `InstantiatedArguments` does.
-  - The callee operand `F` itself is R2292's, not this entry's.
+  - The callee is the same gap: a call through a `def[...] thin` value
+    binder or a generic lambda passes its generic callee as a
+    `GenericFunc`-typed register (`const param(func)`, `closure.make`),
+    which the elaborator erases once the call folds
+    (`erase_folded_generic_callees`), where upstream's `kgen.call` names
+    it as an attribute, a symbol or a `#kgen.param.decl.ref`.
+  - Probe: `func(a, a)` in `apply_value`
+    (`assets/ok/callable_binder_parameter_inference.mojo`) and
+    `(lambda [N: Int](x: Int) {} -> Int: x + N)[5](3)`
+    (`assets/ok/lambda_generic_comptime.mojo`) carry no callee register
+    in `emit-mir`, output unchanged on both backends.
   - Probe: `def ap2[F: def[n: Int]() thin -> Int, k: Int]() -> Int:
     return F[3]() + F[k]()` with `ap2[twice, 4]()` prints `14` on both
     backends, with `value: absent` on both `call.indirect` operands.
@@ -9576,48 +9586,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R2310 (2026-11-17).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R2292 The elaborator still folds a `def(...)` bound's callee from
-  register dataflow**
-
-  Once every function constant inflates, no thin function value reaches a
-  `def(...)` bound, yet the elaborator still keys an instance by a callee
-  it traces through registers, and erases a generic callable's slot to an
-  `Int` placeholder.
-  - No longer load-bearing (2026-11-17): the `Bindings::callables` insert
-    fires for no fixture in `assets/ok` or `assets/ownership_ok`.
-  - Retire `Bindings::callables` and its readers
-    (`native/mono/infer.rs`, `substitute.rs`, `unroll.rs`, the `ref.make`
-    seeding in `specializer.rs`), the `callable_arguments` instance-key
-    push beside it, `callable_parameter_addresses`, and
-    `substitute_callable_parameter_reads`.
-  - Retire `erase_specialized_generic_callable_storage` and
-    `erase_generic_callable_parameters` (`mono/symbolic.rs`).
-  - Retire `indirect_from_bound_call` and both callers: the specializer's
-    bound-call fold and `fold_bound_calls`
-    (`analysis/inline_parametric.rs`).
-  - In the checker, split `declared_callable_contract`: bound
-    conformance keeps only the callable-bound `Param` and nominal-struct
-    arms, while calling a value (`fns[0](5)` in
-    `function_value_array_display.mojo`) keeps `Func`/`GenericFunc`.
-  - Fold the run-time function value rejection in
-    `callable_bound_argument` into plain non-conformance, with the pin's
-    wording (`assets/type_error/callable_bound_run_time_function_value.mojo`).
-  - Probe: `conformance/probes/callable_bound_nonconforming_struct.mojo`
-    takes the pin's conversion wording.
-  - Probe: `assets/ok/nested_callable_parameter_symbol.mojo` and every
-    callable-parameter fixture, unchanged on both backends.
-  - A call through a `def[...] thin` value binder already takes the
-    generator's symbol, yet `apply_value`'s callee is still a dead
-    `GenericFunc`-typed `const = param(func)` register the erase pass
-    rewrites to `Int` 0: lower such a call with the binder as its callee,
-    as upstream's `kgen.call` of a `#kgen.param.decl.ref`.
-  - Done when no `GenericFunc`-typed register or slot is left in any
-    instance (`assets/ok/callable_binder_parameter_inference.mojo`,
-    `generic_function_value_binder.mojo`).
-  - Depends on R2313, R2314, R2315, since each leaves a thin function
-    value at a bound.
-  - Model: Fable, Planned.
 
 - [ ] **R2294 The elaborator's builtin-to-dunder rewrites pass a
   memory-only receiver by value**

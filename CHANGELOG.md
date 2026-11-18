@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct declaring no `def(...)` conformance passed at a `def(...)`
+  bound is now rejected with the pin's wording, "value passed to 'f' cannot
+  be converted from 'S' to 'F', argument type 'S' does not conform to trait
+  ...", as is a run-time function value there. The elaborator no longer
+  traces a bound's callee through registers or erases a generic function
+  value to an `Int` placeholder: a call through a generic callee folds to
+  its direct call and the callee's register is erased
+  (`assets/type_error/callable_bound_nonconforming_struct.mojo`, R2292).
+
 - A function at an applied generic struct's initializer `def(...)` bound
   (`Optional[Int](init_with=make)`, `Tuple`'s default initializer's generic
   `init_with` lambda) now binds as its inflated type, as at the pin, instead

@@ -592,8 +592,7 @@ struct BoundCall<'i> {
 /// applies compile-time arguments, and a `def(...)` bound's `__call__` the
 /// bound's ([`callable_bound_requirement`]). Neither reports its callee:
 /// a function value's is passed by value, and a bound's is already its
-/// place's address, formed by lowering and read through where the bound
-/// closes to a function value ([`super::indirect_from_bound_call`]).
+/// place's address, formed by lowering.
 fn bound_call<'i>(
     instruction: &'i MirInstr,
     callees: &Callees<'i>,
