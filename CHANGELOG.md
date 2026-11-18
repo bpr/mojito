@@ -785,6 +785,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A memory-only truthiness operand (`if xs:`, `while opt:`, `not s`,
+  `if self.flag:`, the left operand of `and`/`or`, an `and`/`or` or
+  conditional result tested again, and a generic `if a:` over
+  `T: Boolable`) is now passed to its `__bool__` by address, as the pin's
+  `x.__bool__()` takes `read self`, instead of riding a value register
+  into the call. A scalar instance of a generic test reads the reference
+  through before its `Bool` cast
+  (`assets/ok/truthiness_operand_by_address.mojo`, R2294).
+
 - A literal passed to a `ref` parameter (`look(3)` over `def look(ref
   other: Int)`) is now materialized in a hidden slot the parameter binds,
   as at the pin, instead of stopping at run time with "reference binding

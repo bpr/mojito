@@ -2655,7 +2655,8 @@ impl Checker {
                     };
                     let by_value = (facts.borrowed_read_call_place
                         || facts.read_temporary_argument
-                        || facts.read_place_receiver)
+                        || facts.read_place_receiver
+                        || facts.truthiness_condition)
                         && !facts.pack_borrowed_temporary
                         && passed.is_some_and(|ty| !memory_only(ty));
                     let result = facts

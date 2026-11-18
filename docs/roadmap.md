@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2318**.
+Next free ID: **R2319**.
 
 ## Ordered Work
 
@@ -9587,33 +9587,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2294 The elaborator's builtin-to-dunder rewrites pass a
-  memory-only receiver by value**
+- [ ] **R2318 A truthiness test is a builtin `Bool(x)` the elaborator
+  rewrites, not `x.__bool__()` at IR generation**
 
-  Upstream emits `x.__bool__()` for a truthiness test at IR generation,
-  and its `lit.call` takes a `!lit.ref` of a memory-only `x`. Mojito
-  lowers `Bool(x)` as an undeclared builtin (`bool_conversion`,
-  `lower_expr/ctrl.rs`), and the specializer rewrites it into
-  `dunder_method_call` over the operand's value register
-  (`specializer.rs`, the `"Bool" => Some("__bool__")` arm). Its other
-  rewrites into `dunder_method_call` (a bound-resolved `BinOp`, a prefix
-  `UnOp`, `abs`) build the same value receiver.
-  - Fix: lowering passes the operand of a `Bool(x)` the check did not
-    prove register-passable as a reference, as it does a by-address
-    `read` temporary (`Flatten::materialize_operand`,
-    `address_operand`), and the scalar instance reads it through
-    (`mir::read_addressed_operands`). The same for the operator rewrites'
-    operands.
-  - Probe: turn on the receiver rule in `verify` (`verify_staged`'s
-    `receivers`, `verify.rs`). 42 fixtures then fail at elaboration, 34
-    on `Optional.__bool__` (`assets/ok/path_operations.mojo`,
-    `simd_write_members.mojo`), plus `collection_truthiness.mojo`
-    (`List.__bool__`), `and_or_value_operands.mojo` (`String.__bool__`),
-    and the user `Flag`/`Gate`/`Tally`/`Tracked`/`Truthy`/`S.__bool__`.
-    No operator rewrite failed in that sweep, which reports only each
-    program's first finding.
+  Upstream emits `x.__bool__()` for `if x:`, `not x`, and an `and`/`or`
+  left operand, checked as an ordinary `read self` method call. Mojito
+  lowers an undeclared builtin `Bool(x)` (`bool_conversion`,
+  `lower_expr/ctrl.rs`) and the specializer rewrites it per instance
+  (`specializer.rs`, the `"Bool" => Some("__bool__")` arm and the
+  `ScalarCast` interception).
+  - The operand is already the `!lit.ref` upstream's call takes
+    (`Flatten::truthiness_operand`), so only the callee is unlike Mojo.
+  - Fix: the checker records a `__bool__` call contract on every
+    `Truthiness` node, and lowering emits that method call.
+  - A scalar, `SIMD`, or `Param` instance needs the builtin answered as a
+    requirement, as the trait-dispatch arm answers other requirements.
+  - Then the specializer's `Bool` arm and its `ScalarCast` interception
+    go away.
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Fable, Planned.
 
 - [ ] **R2295 The receiver rule runs only at lowering's verify**
 
@@ -9679,6 +9671,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `ctfe_projection_of_temporary_in_body.mojo`,
     `template_method_reference_receiver.mojo`, and
     `template_method_subscript_store.mojo`.
+  - Probe: `print(V(1).xs[0])`, where `V` holds a `List[Int]` field `xs`,
+    stops the VM with "ReadRef … use after Pointer deallocation": the
+    temporary is destroyed before the element its field's getter returns
+    is read. So does `print((a + b).xs[0])`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

@@ -407,7 +407,7 @@ impl<'a> Flatten<'a> {
             let value = self.expr(condition);
             return self.field_referent(condition, value);
         }
-        let value = self.read_operand(condition);
+        let value = self.truthiness_operand(condition);
         self.bool_conversion(condition.location(), value, condition.ty().as_ref())
     }
 

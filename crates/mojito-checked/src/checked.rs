@@ -1011,7 +1011,8 @@ pub enum SemanticAdjustment {
     /// stored into a result slot by each arm.
     RegisterPassableResult,
     /// A [`Self::BorrowReadArgument`], a temporary bound to a `read`
-    /// parameter, or a place receiver of a `read self`, whose type is proven
+    /// parameter, a place receiver of a `read self`, or a
+    /// [`Self::Truthiness`] operand (the receiver of its `__bool__`), whose type is proven
     /// register-passable, which upstream passes to a `read` parameter by
     /// value. Any other read argument is memory-only and passed by address:
     /// lowering retains its place, or a temporary's storage, so the callee

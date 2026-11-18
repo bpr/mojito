@@ -1600,6 +1600,7 @@ assets/ok/transferred_view_loan_stays_shared.mojo	main	exe-differential	sanitize
 assets/ok/trivial_register_passable_copy_forwarded.mojo	main	exe-differential	sanitized
 assets/ok/trivial_register_passable_self_alias.mojo	main	exe-differential	sanitized
 assets/ok/trivial_register_transfer_copies.mojo	main	exe-differential	sanitized
+assets/ok/truthiness_operand_by_address.mojo	main	exe-differential	sanitized
 assets/ok/try_break_continue.mojo	main	exe-differential	sanitized
 assets/ok/try_else_raise_crosses_finally.mojo	main	exe-differential	sanitized
 assets/ok/try_finally_break_carries_value.mojo	main	exe-differential	sanitized

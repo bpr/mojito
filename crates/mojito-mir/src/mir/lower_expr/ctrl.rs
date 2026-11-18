@@ -341,7 +341,9 @@ impl<'a> Flatten<'a> {
     /// Hold `value`, the owned value of `a`'s operand of type `ty`, in a
     /// slot of its own and read it there for its `Bool(a)` test, as
     /// upstream decays a non-trivial left operand of `and`/`or` to memory
-    /// so the test borrows it. Returns the slot and the test's `Bool`.
+    /// so the test borrows it: a type the check did not prove
+    /// register-passable is passed as the slot's immutable address, the
+    /// receiver of its `__bool__`. Returns the slot and the test's `Bool`.
     fn hold_tested_operand(&mut self, a: Node<'a>, value: Reg, ty: Option<&Ty>) -> (VarId, Reg) {
         let held = self.fresh_var();
         if let Some(ty) = ty {
@@ -358,10 +360,21 @@ impl<'a> Flatten<'a> {
             Some(held),
             ty.cloned().unwrap_or_else(Ty::error),
         );
+        let place = MirPlace::root(held, ty.cloned());
         self.emit(MirInstr::LoadPlace {
             dest: read,
-            place: MirPlace::root(held, ty.cloned()),
+            place: place.clone(),
         });
+        let read = if a.register_passable_read() {
+            read
+        } else {
+            self.address_lowered_operand(
+                a.location(),
+                (read, Some(place)),
+                mojito_types::origin::Mutability::Immutable,
+            )
+            .0
+        };
         (held, self.bool_conversion(a.location(), read, ty))
     }
 

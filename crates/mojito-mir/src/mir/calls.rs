@@ -124,6 +124,64 @@ impl<'a> Flatten<'a> {
         self.lower_call_argument_with(expression, CheckedCallArgumentSource::Positional(0))
     }
 
+    /// The operand of truthiness test `operand`'s `Bool(x)`, the receiver
+    /// of its `__bool__`, which takes `read self`: a type the check proved
+    /// register-passable (`RegisterPassableRead`) is read as a value, and
+    /// any other is the immutable address of its place, or of the storage
+    /// a temporary is materialized in, as upstream's `lit.call` takes the
+    /// `!lit.ref` of a memory-only `x`. A result slot an `and`/`or` or a
+    /// ternary forwards is read where it lies: the test borrows the
+    /// temporary rather than taking it. An operand its consumer already
+    /// bound (`not x`'s) keeps that binding.
+    pub(super) fn truthiness_operand(&mut self, operand: Node<'a>) -> Reg {
+        use mojito_types::origin::Mutability;
+        if self.operand_binding(operand).is_none() {
+            let by_address = !operand.register_passable_read();
+            self.bind_operand(operand, Some(OperandBinding::Read { by_address }));
+        }
+        if !self.read_by_address_binding(operand) {
+            return self.read_operand(operand);
+        }
+        let (value, place) = self.lower_call_operand(operand, None);
+        if place.is_some() {
+            return value;
+        }
+        let Some(&MirInstr::UseVar {
+            dest,
+            var,
+            mode: UseMode::Forward,
+            ..
+        }) = self.f.body.instrs.last()
+        else {
+            return value;
+        };
+        if dest != value {
+            return value;
+        }
+        let Some(ty) = self
+            .var_types
+            .get(&var)
+            .or_else(|| self.f.reg_types.get(&value.0))
+            .cloned()
+            .or_else(|| operand.ty())
+        else {
+            return value;
+        };
+        self.f.body.instrs.pop();
+        self.var_types.entry(var).or_insert_with(|| ty.clone());
+        let place = MirPlace::root(var, Some(ty));
+        self.emit(MirInstr::LoadPlace {
+            dest: value,
+            place: place.clone(),
+        });
+        self.address_lowered_operand(
+            operand.location(),
+            (value, Some(place)),
+            Mutability::Immutable,
+        )
+        .0
+    }
+
     /// Lower one operand of a struct operator, prefix or infix: a place the checker
     /// marked `BorrowReadArgument` (the dunder reads it) is read where it
     /// lies, as a read-convention call argument is; a temporary returned
@@ -3164,7 +3222,7 @@ impl<'a> Flatten<'a> {
     /// ([`OperandBinding::Read`]), a template's `read x: T` included, as
     /// upstream's `lit.call` takes a `!lit.ref` of every such argument
     /// whatever the actual's own type.
-    fn read_by_address_binding(&self, expression: Node<'a>) -> bool {
+    pub(super) fn read_by_address_binding(&self, expression: Node<'a>) -> bool {
         self.operand_binding(expression) == Some(OperandBinding::Read { by_address: true })
     }
 

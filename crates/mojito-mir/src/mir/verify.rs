@@ -53,8 +53,8 @@ pub fn verify(program: &MirProgram) -> Vec<String> {
 /// The rule requires a reference at every receiver a resolved method call
 /// or checked subscript accessor takes by address, as upstream's `lit.call`
 /// verifier does wherever the callee's signature takes a `!lit.ref`. The
-/// later verify points do not yet apply it: the elaborator's truthiness
-/// rewrite and older MIR pass inputs still pass such receivers by value.
+/// later verify points do not yet apply it: older MIR pass inputs still
+/// pass such receivers by value.
 pub fn verify_lowered(program: &MirProgram) -> Vec<String> {
     verify_staged(program, true)
 }

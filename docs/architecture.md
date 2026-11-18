@@ -2574,10 +2574,13 @@ wherever it has none, the place its load read, a pointee re-homed through
 a hidden pointer slot (`Flatten::pointee_place`), a conditional's result
 slot or a capturing lambda's storage slot, a temporary's hidden `$mat_r`
 slot (`Flatten::materialize_operand`), and a chained comparison's left
-operand its place (`Flatten::chain_link_address`). The later verify points
-do not yet apply the receiver rule, since the elaborator's truthiness
-rewrite and older MIR pass inputs still pass such receivers by value
-(R2294, R2295). Keyword operands of a `call` or `call.method` are not yet
+operand its place (`Flatten::chain_link_address`), and a truthiness
+test's operand, the receiver of the `__bool__` the elaborator resolves
+`Bool(x)` to, the address of its place, its temporary's storage, its
+held `and`/`or` slot, or the result slot a conditional forwards
+(`Flatten::truthiness_operand`, `hold_tested_operand`). The later verify
+points do not yet apply the receiver rule, since older MIR pass inputs
+still pass such receivers by value (R2295). Keyword operands of a `call` or `call.method` are not yet
 checked this way (R2300). A `call.indirect`, and a `def(...)` bound's
 `__call__` call, bind their operands by a function type, so
 `verify_callable_contract_call` rejects a value at every slot
@@ -6424,9 +6427,13 @@ current Mojo:
   field transfer (`mk().s^`) moves out of its projection
   (`temporary_field_place`), leaving a hole the slot's destruction reports
   as upstream's `(expression temporary)`, a
-  condition reads it for `Bool(x)` (`condition_value`, which reads a named
-  place `Checker::expect_bool` marked `BorrowReadArgument` where it lies,
-  as an explicit `Bool(x)` argument is read), and a discarded
+  condition reads it for `Bool(x)` (`condition_value` over
+  `truthiness_operand`, which passes an operand the check did not prove
+  register-passable, `SemanticAdjustment::RegisterPassableRead` on the
+  `Truthiness` node, as the address of its place or storage, the
+  `!lit.ref` upstream's `x.__bool__()` takes, and reads a register-passable
+  named place `Checker::expect_bool` marked `BorrowReadArgument` where it
+  lies), and a discarded
   statement leaves it dead at its definition (`discard_result`). The call
   is the slot's last use, so its `DropVar` follows the call, before the
   enclosing expression continues. A call operand's convention is its

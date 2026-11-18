@@ -3232,25 +3232,33 @@ impl<'a> Specializer<'a> {
                         raises.take(),
                         args[1..].to_vec(),
                     );
-                } else if builtin
-                    && raises.is_none()
-                    && kwargs.is_empty()
-                    && func.0 == bool_cast.name()
-                    && let [value] = args.as_slice()
-                    && function
-                        .reg_types
-                        .get(&value.0)
-                        .is_some_and(|ty| bool_cast.casts_from(ty))
-                {
-                    // A truthiness `Bool(x)` a template tests over a
-                    // type parameter is, at a scalar instance, the cast
-                    // MIR emits where the operand is spelled scalar.
-                    casts.insert(dest.0);
-                    *instruction = MirInstr::ScalarCast {
-                        dest: *dest,
-                        value: *value,
-                        target: bool_cast,
-                    };
+                } else if builtin && kwargs.is_empty() && func.0 == bool_cast.name() {
+                    // A template passes a `Boolable` operand by address;
+                    // at an instance the builtin answers itself, it is
+                    // read through, as `LowerArgConventions` loads a
+                    // `!lit.ref` at a by-value slot.
+                    let loads = mojito_mir::mir::read_addressed_operands(function, args.iter_mut());
+                    if !loads.is_empty() {
+                        preludes.push((index, loads));
+                    }
+                    if raises.is_none()
+                        && let [value] = args.as_slice()
+                        && function
+                            .reg_types
+                            .get(&value.0)
+                            .is_some_and(|ty| bool_cast.casts_from(ty))
+                    {
+                        // A truthiness `Bool(x)` a template tests over a
+                        // type parameter is, at a scalar instance, the
+                        // cast MIR emits where the operand is spelled
+                        // scalar.
+                        casts.insert(dest.0);
+                        *instruction = MirInstr::ScalarCast {
+                            dest: *dest,
+                            value: *value,
+                            target: bool_cast,
+                        };
+                    }
                 }
             }
             if let Some(folded) = folded_literal_operator(instruction, &function.reg_types) {
@@ -3259,7 +3267,10 @@ impl<'a> Specializer<'a> {
             }
             // A prefix `-`/`~` on a struct operand, a `SIMD` among them,
             // calls its dunder (`__neg__`/`__invert__`); `not` arrives
-            // already converted through `Bool(x)` by MIR.
+            // already converted through `Bool(x)` by MIR. Only a
+            // register-passable operand reaches here: MIR lowers an
+            // operator its check contracted as its method's call, whose
+            // receiver is addressed where the method takes it so.
             if let MirInstr::UnOp {
                 op,
                 dest,
@@ -3301,7 +3312,9 @@ impl<'a> Specializer<'a> {
             // monomorphizes the compiled instance (`String.__add__`,
             // `SIMD.__lt__`, user `__eq__`, …).
             // `in`/`not in` dispatch on the right operand and stay
-            // untouched (they keep their contextual rejection).
+            // untouched (they keep their contextual rejection). As with
+            // the prefix arm, a contracted operator never reaches here, so
+            // the left operand is register-passable.
             if let MirInstr::BinOp {
                 op,
                 dest,

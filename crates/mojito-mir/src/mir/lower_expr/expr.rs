@@ -880,21 +880,27 @@ impl<'a> Flatten<'a> {
             return self.ordinary_method_call(node, value, op.dunder(), &[], &[]);
         }
         self.bind_call_operands(node, 0, &[value], &[]);
-        let ra = self.lower_operator_operand(node, value);
-        let ra = self.field_referent(value, ra);
         // `not x` on a struct, a string literal, a numeric scalar, a
         // vector, or a `Boolable` type parameter is `not x.__bool__()`:
-        // convert through the explicit `Bool(x)` call so the negation is
-        // scalar on both backends.
+        // convert through the explicit `Bool(x)` call, its operand
+        // `__bool__`'s receiver ([`Self::truthiness_operand`]), so the
+        // negation is scalar on both backends.
         let ra = if op == PrefixOp::Not
             && value.ty().is_some_and(|ty| {
                 ty.is_simd()
                     || matches!(ty.kind(), TyKind::Struct(..) | TyKind::Param { .. })
                     || mojito_types::conformance::is_numeric(&ty)
             }) {
+            let ra = if self.read_by_address_binding(value) {
+                self.truthiness_operand(value)
+            } else {
+                let ra = self.lower_operator_operand(node, value);
+                self.field_referent(value, ra)
+            };
             self.bool_conversion(value.location(), ra, value.ty().as_ref())
         } else {
-            ra
+            let ra = self.lower_operator_operand(node, value);
+            self.field_referent(value, ra)
         };
         let d = self.fresh(node.location(), None);
         let raises = self.call_raises(node, node.raises());
