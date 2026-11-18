@@ -1,7 +1,8 @@
-# A walrus stores through any lvalue an assignment takes, and yields the
-# stored value: a field, a list element, a nominal subscript through its
-# setter (the target's indices evaluated before the value), a call with
-# explicit parameters returning a mutable reference, and a nested walrus.
+# A walrus stores through any lvalue an assignment takes: a field, a list
+# element, a nominal subscript through its setter (the target's indices
+# evaluated before the value), a call with explicit parameters returning a
+# mutable reference, and a nested walrus. It yields its destination, or a
+# setter-stored subscript's right-hand side.
 struct Box(Movable):
     var v: List[Int]
 

@@ -165,7 +165,7 @@ impl Checker {
         use mojito_types::origin::{Mutability, Origin, RefTy};
 
         // A walrus yields its destination borrowed.
-        if let Some(target) = crate::checker::places::walrus_destination(expr) {
+        if let Some(target) = self.walrus_place(expr) {
             let mut reference = self.reference_actual(target)?;
             reference.mutability = Mutability::Immutable;
             return Ok(reference);

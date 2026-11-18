@@ -282,19 +282,25 @@ impl Checker {
         if let ExprKind::Named { target, value } = &expression.kind {
             // A target other than a name is stored as `target = value` is,
             // its subexpressions first; the walrus yields its destination
-            // ([`super::places::walrus_destination`]) or else a copy of the
-            // stored value, at the type the store records.
+            // ([`Self::walrus_place`]) at the type the store records. A
+            // subscript stored through its `__setitem__` is no memory lvalue:
+            // the walrus yields an implicit copy of its right-hand side, as
+            // upstream's `emitWalrus` does.
             let ExprKind::Identifier(name) = &target.kind else {
                 self.register_named_bindings(target)?;
                 self.register_named_bindings(value)?;
                 let ty = self.check_set_place(target, value)?;
-                if super::places::walrus_destination(expression).is_none() && !self.is_copyable(&ty)
+                if self.walrus_stores_through_setter(expression)
+                    && !self.is_implicitly_copyable(&ty)
                 {
-                    return Err(TypeError::Unsupported(format!(
-                        "a walrus over a subscript or reference place of non-Copyable \
-                         '{ty}': its result is an owned copy of the stored value, not \
-                         the destination (R2323)"
-                    )));
+                    return Err(TypeError::ImplicitCopy {
+                        ty: ty.to_string(),
+                        context: "a walrus over a subscript its '__setitem__' stores yields \
+                                  its right-hand side"
+                            .to_string(),
+                        transferable: true,
+                        copyable: self.is_copyable(&ty),
+                    });
                 }
                 self.record_at(expression.source_span()).ty = Some(ty);
                 return Ok(());

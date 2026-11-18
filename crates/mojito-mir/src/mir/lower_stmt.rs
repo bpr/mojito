@@ -10,6 +10,13 @@ use mojito_checked::checked::{
 };
 use mojito_types::types::TyKind;
 
+/// The destination a store wrote ([`Flatten::lower_set_place`]): a place,
+/// or the reference or pointer handle written through.
+pub(in crate::mir) enum StoredDestination {
+    Place(MirPlace),
+    Reference(Reg),
+}
+
 /// The state one destructuring assignment's leaves share: its place leaves
 /// in order (and the stores lowered for the non-name ones), the value's
 /// loans, and the source place a `ref` leaf borrows.
@@ -727,22 +734,18 @@ impl<'a> Flatten<'a> {
     /// `receiver[index] = value` through a mutable-reference `__getitem__`
     /// when no `__setitem__` exists (the checker recorded an augmented
     /// reference write with no operator): the getter's handle is written
-    /// directly, with no read-back or operator step.
+    /// directly, with no read-back or operator step. The handle written
+    /// through, or `None` when `target` stores through no such getter.
     pub(super) fn lower_subscript_reference_set(
         &mut self,
         target: Node<'a>,
         rhs_expression: Node<'a>,
-    ) -> bool {
-        let Some(plan) = target.augmented_subscript() else {
-            return false;
-        };
-        let Some((object, index)) = target
+    ) -> Option<Reg> {
+        let plan = target.augmented_subscript()?;
+        let (object, index) = target
             .index_operands()
             .map(|(object, _)| object)
-            .zip(target.index())
-        else {
-            return false;
-        };
+            .zip(target.index())?;
         let (receiver, receiver_place) = self.lower_call_receiver(object);
         let (receiver, _) = self.address_receiver(&plan.getter, object, (receiver, receiver_place));
         let index_source = mojito_checked::checked::CheckedCallArgumentSource::Positional(0);
@@ -784,7 +787,7 @@ impl<'a> Flatten<'a> {
             reference: handle,
             value: rhs,
         });
-        true
+        Some(handle)
     }
 
     /// Lower `receiver[arguments] OP= rhs` from the complete checked accessor
@@ -1595,13 +1598,19 @@ impl<'a> Flatten<'a> {
 
     /// Lower the store `place = value`, a statement's or a walrus's: a
     /// nominal subscript through its getter's reference or its setter, a
-    /// pointer through its address, any other place by a store.
-    pub(in crate::mir) fn lower_set_place(&mut self, place: Node<'a>, value: Node<'a>) {
-        if self.lower_subscript_reference_set(place, value) {
-            return;
+    /// pointer through its address, any other place by a store. The
+    /// destination stored, or `None` for a store through a setter, which
+    /// leaves no memory lvalue.
+    pub(in crate::mir) fn lower_set_place(
+        &mut self,
+        place: Node<'a>,
+        value: Node<'a>,
+    ) -> Option<StoredDestination> {
+        if let Some(handle) = self.lower_subscript_reference_set(place, value) {
+            return Some(StoredDestination::Reference(handle));
         }
         if self.lower_subscript_set(place, value) {
-            return;
+            return None;
         }
         let (src, _) = self.lower_assignment_value(place, value);
         self.flush_argument_anchors();
@@ -1615,8 +1624,11 @@ impl<'a> Flatten<'a> {
         if let Some((object, _)) = place.pointer_offset_subscript() {
             if let Some(target) = self.pointer_deref_place(object) {
                 self.emit_interior_invalidations(place, None);
-                self.emit(MirInstr::Store { place: target, src });
-                return;
+                self.emit(MirInstr::Store {
+                    place: target.clone(),
+                    src,
+                });
+                return Some(StoredDestination::Place(target));
             }
             if object.is_origin_bearing_pointer() {
                 let reference = self.expr(object);
@@ -1628,7 +1640,7 @@ impl<'a> Flatten<'a> {
                     reference,
                     value: src,
                 });
-                return;
+                return Some(StoredDestination::Reference(reference));
             }
         }
         self.emit_interior_invalidations(place, None);
@@ -1648,7 +1660,7 @@ impl<'a> Flatten<'a> {
             });
         if stores_reference {
             self.emit(MirInstr::StoreRef {
-                place: p,
+                place: p.clone(),
                 reference: src,
             });
         } else {
@@ -1674,11 +1686,15 @@ impl<'a> Flatten<'a> {
             };
             let pointee_root =
                 (!p.is_whole_root() && self.pointer_valued_slot(p.root)).then_some(p.root);
-            self.emit(MirInstr::Store { place: p, src });
+            self.emit(MirInstr::Store {
+                place: p.clone(),
+                src,
+            });
             if let Some(pointer) = pointee_root {
                 self.retain_pointee_loans(pointer, value);
             }
         }
+        Some(StoredDestination::Place(p))
     }
 
     /// Lower a nominal subscript assignment through the checker-selected
@@ -1773,29 +1789,83 @@ impl<'a> Flatten<'a> {
     }
 
     /// The destination walrus `node` yields borrowed after its store, as
-    /// upstream's `emitWalrus` yields a memory lvalue's: its target, a name
-    /// or a field chain over one. The store lowers once, at the walrus's
-    /// first lowering in its statement, where it is written; every later
-    /// place or read of the walrus is the destination. `None` for any other
-    /// node, and for a walrus over another place (R2323).
+    /// upstream's `emitWalrus` yields a memory lvalue's: its target — a
+    /// name, a field, a subscript through its getter's reference, a pointer
+    /// dereference, or a call's reference result. The store lowers once, at
+    /// the walrus's first lowering in its statement, where it is written;
+    /// every later place or read of the walrus is the destination, a
+    /// reference handle read through its materialized slot. `None` for any
+    /// other node, and for a subscript its setter stores, which is no
+    /// memory lvalue.
     pub(in crate::mir) fn walrus_destination(&mut self, node: Node<'a>) -> Option<MirPlace> {
         let CheckedOp::Named { target, value } = node.op() else {
             return None;
         };
         let (target, value) = (node.operand_of(*target)?, node.operand_of(*value)?);
-        if !is_field_chain(target) {
+        if stores_through_setter(target) {
             return None;
         }
         if let Some(place) = self.walrus_destinations.get(&node.id()) {
             return Some(place.clone());
         }
-        self.outside_call_setup(|this| match target.op() {
-            CheckedOp::Identifier(name) => this.walrus_name_store(value, target.checked, name),
-            _ => this.lower_set_place(target, value),
+        let place = if let CheckedOp::Identifier(name) = target.op() {
+            self.outside_call_setup(|this| this.walrus_name_store(value, target.checked, name));
+            self.pure_field_place(target)
+        } else {
+            match self.outside_call_setup(|this| this.lower_set_place(target, value)) {
+                Some(StoredDestination::Place(place)) => Some(place),
+                Some(StoredDestination::Reference(handle)) => {
+                    self.materialize_stored_reference(target, handle)
+                }
+                None => None,
+            }
+        }
+        .unwrap_or_else(|| {
+            self.emit(MirInstr::Unsupported(
+                "a walrus whose store lowers no destination".to_string(),
+            ));
+            MirPlace::root(self.var("$invalid_place"), None)
         });
-        let place = self.pure_field_place(target)?;
         self.walrus_destinations.insert(node.id(), place.clone());
         Some(place)
+    }
+
+    /// The place walrus target `target` designates through `handle`, the
+    /// getter's reference or the pointer its store wrote through: the
+    /// handle, a pointer converted to its pointee's reference as upstream's
+    /// `lit.ref.from_pointer` makes it, materialized in a hidden slot.
+    fn materialize_stored_reference(&mut self, target: Node<'a>, handle: Reg) -> Option<MirPlace> {
+        let ty = self.f.reg_types.get(&handle.0).cloned()?;
+        let (handle, reference) = match ty.kind() {
+            TyKind::Ref(reference) => (handle, reference.clone()),
+            kind => {
+                let reference = mojito_types::origin::RefTy {
+                    referent: kind.pointer_element()?.clone(),
+                    origin: kind
+                        .pointer_origin()
+                        .and_then(|origin| origin.as_origin())
+                        .unwrap_or(mojito_types::origin::Origin::Untracked { mutable: true }),
+                    mutability: mojito_types::origin::Mutability::Mutable,
+                };
+                let converted = self.fresh_typed(
+                    target.location(),
+                    None,
+                    TyKind::Ref(reference.clone()).into(),
+                );
+                self.emit(MirInstr::PointerConvert {
+                    dest: converted,
+                    value: handle,
+                });
+                (converted, reference)
+            }
+        };
+        Some(self.materialize_call_reference_place(
+            target,
+            handle,
+            &reference,
+            None,
+            (false, false),
+        ))
     }
 
     /// Lower the walrus `target := value` over a place: the store
@@ -2888,7 +2958,9 @@ impl<'a> Flatten<'a> {
                 self.aggregate_loans.insert(reference, loans);
             }
             // --- Writes through a place (any nesting) --------------------------
-            (CheckedStmtOp::SetPlace { .. }, &[place, value]) => self.lower_set_place(place, value),
+            (CheckedStmtOp::SetPlace { .. }, &[place, value]) => {
+                self.lower_set_place(place, value);
+            }
             (CheckedStmtOp::AugAssign { op, .. }, &[place, value]) => {
                 if self.lower_augmented_subscript(place, *op, value) {
                     return;
@@ -4271,14 +4343,20 @@ enum SetArguments<'a> {
 /// lowering facts a borrower built from the binding copies (`aggregate_loans`,
 /// `aliases`) keep the exclusive form, so a view of the binding borrows the
 /// owner as a view of the owner does.
-/// Whether `node` is a name or a field chain over one, the target whose
-/// walrus yields its destination ([`Flatten::walrus_destination`]).
-fn is_field_chain(node: Node<'_>) -> bool {
-    match node.op() {
-        CheckedOp::Identifier(_) => true,
-        CheckedOp::Member { .. } => node.object().is_some_and(is_field_chain),
-        _ => false,
-    }
+/// Whether walrus target `node` stores through a subscript's
+/// `__setitem__` (upstream's `SubscriptDLValue`), which leaves no memory
+/// lvalue for the walrus to yield ([`Flatten::walrus_destination`]).
+fn stores_through_setter(node: Node<'_>) -> bool {
+    node.augmented_subscript().is_none()
+        && node.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::SliceDescriptors {
+                    set_value_keyword: Some(_),
+                    ..
+                }
+            )
+        })
 }
 
 fn reference_binding_loans(loans: &[MirLoan]) -> Vec<MirLoan> {

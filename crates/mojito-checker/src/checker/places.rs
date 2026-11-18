@@ -216,7 +216,30 @@ impl Checker {
     /// parameter value is a fresh value too, as upstream's parameter
     /// reference is an rvalue.
     pub(super) fn designates_place(&self, expr: &Expr) -> bool {
-        is_place_expr(expr) && !self.is_owned_subscript(expr) && !self.is_param_value_read(expr)
+        is_place_expr(expr)
+            && !self.is_owned_subscript(expr)
+            && !self.is_param_value_read(expr)
+            && !self.walrus_stores_through_setter(expr)
+    }
+
+    /// The destination the walrus `e` yields borrowed after its store
+    /// ([`walrus_destination`]), unless its target stores through a
+    /// subscript's `__setitem__`: upstream's `SubscriptDLValue` is no memory
+    /// lvalue, so `emitWalrus` yields that walrus's right-hand side.
+    pub(super) fn walrus_place<'e>(&self, e: &'e Expr) -> Option<&'e Expr> {
+        walrus_destination(e).filter(|_| !self.walrus_stores_through_setter(e))
+    }
+
+    /// Whether `e` is a walrus whose target stores through a subscript's
+    /// `__setitem__` (upstream's `SubscriptDLValue`).
+    pub(super) fn walrus_stores_through_setter(&self, e: &Expr) -> bool {
+        matches!(&e.kind, ExprKind::Named { target, .. }
+        if self.has_fact(&target.source_span(), |facts| {
+            facts
+                .subscript_descriptor
+                .as_ref()
+                .is_some_and(|(_, set_value_keyword)| set_value_keyword.is_some())
+        }))
     }
 
     /// The positions `name`'s positional collector gathers and whether it
@@ -483,7 +506,7 @@ impl Checker {
         match &source.kind {
             ExprKind::Identifier(name) => Ok(TransferRoot::Binding(name)),
             ExprKind::Member { object, .. } => self.transfer_root(object),
-            _ if let Some(target) = walrus_destination(source) => self.transfer_root(target),
+            _ if let Some(target) = self.walrus_place(source) => self.transfer_root(target),
             _ if self.designates_place(source) && !self.is_variant_projection(source) => {
                 Err(TypeError::UntrackedTransfer)
             }
@@ -576,13 +599,23 @@ pub(super) fn is_place_expr(e: &Expr) -> bool {
 }
 
 /// The destination the walrus `e` yields borrowed after its store, as
-/// upstream's `emitWalrus` yields a memory lvalue's: its target, a name or
-/// a field chain over one. `None` for any other expression, and for a walrus
-/// over a subscript or another place, which yields a copy of the stored
-/// value (R2323).
+/// upstream's `emitWalrus` yields a memory lvalue's: its target, when that
+/// is a place — a name, a field, a subscript, a pointer dereference, or a
+/// call's mutable reference result. A
+/// subscript stored through its `__setitem__` is the target's getter read
+/// here; [`Checker::walrus_place`] leaves it out. `None` for any other
+/// expression.
 pub(super) fn walrus_destination(e: &Expr) -> Option<&Expr> {
     match &e.kind {
-        ExprKind::Named { target, .. } if field_chain_root(target).is_some() => Some(target),
+        ExprKind::Named { target, .. }
+            if is_place_expr(target)
+                || matches!(
+                    target.kind,
+                    ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+                ) =>
+        {
+            Some(target)
+        }
         _ => None,
     }
 }

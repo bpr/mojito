@@ -785,6 +785,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A walrus over a subscript through its getter's reference, a pointer
+  dereference, or a call returning a mutable reference now yields its
+  destination borrowed after the store, as upstream's `emitWalrus` does,
+  instead of a copy of the stored value: `print((xs[0] := C(3)).v)` runs no
+  copy initializer, `(ns[0] := N(5)).v` over a `Movable` `N` runs instead of
+  being rejected, and such walruses over a pointer or a reference call no
+  longer fail MIR verification. A walrus over a subscript its `__setitem__`
+  stores yields an implicit copy of its right-hand side, so a
+  non-`ImplicitlyCopyable` one is rejected, as at the pin (R2323).
+
 - A walrus over a name or a field chain now yields its destination borrowed
   after the store, as upstream's `emitWalrus` does, instead of an owned
   value: `print(s := String("b"))` runs instead of failing MIR

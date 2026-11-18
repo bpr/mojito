@@ -1759,6 +1759,7 @@ assets/ok/vm_backed_ctfe_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_ternary.mojo	main	exe-differential	sanitized
 assets/ok/walrus_destination_borrowed.mojo	main	exe-differential	sanitized
 assets/ok/walrus_place_targets.mojo	main	exe-differential	sanitized
+assets/ok/walrus_reference_destination.mojo	main	exe-differential	sanitized
 assets/ok/waypoints.mojo	main	exe-differential	sanitized
 assets/ok/where_applied_alias_clause.mojo	main	exe-differential	sanitized
 assets/ok/where_applied_field_type_clause.mojo	main	exe-differential	sanitized

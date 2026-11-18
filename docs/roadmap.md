@@ -2848,33 +2848,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2323 A walrus over a subscript or a reference-returning call
-  yields a copy of the stored value, not its destination**
-
-  Upstream's `emitWalrus` yields every memory lvalue's destination
-  borrowed after the store, and a setter-stored subscript's right-hand
-  side. `Flatten::walrus_destination` (`mir/lower_stmt.rs`) and the
-  checker's `places::walrus_destination` cover only a name or a field
-  chain. Every other target lowers through `lower_walrus_store`, which
-  yields a `CopyValue` of the stored value taken before the store.
-  - The gap: `lower_set_place` keeps no destination for a store through a
-    reference getter's handle (`lower_subscript_reference_set`), a
-    pointer, or a reference-returning call. The fix materializes that
-    handle as the walrus's place (`materialize_call_reference_place`) and
-    yields a setter-stored subscript's right-hand side as upstream does.
-  - Probe: `print((xs[0] := C(3)).v)` over a `List[C]` whose copy
-    initializer prints runs it once; the pin runs none.
-  - Probe: `(xs[0] := N(5)).v` over a `Movable` `N` is rejected
-    ("a walrus over a subscript or reference place of non-Copyable"),
-    which the pin runs.
-  - Probe: the R2300 keyword check flags
-    `assets/ok/walrus_place_targets.mojo` (`main`, the `names[0] :=
-    String("zz")` walrus), whose copy of the stored value passes a value,
-    not the target's reference.
-  - Found while landing R1506 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2140 An augmented assignment through a struct's `Pointer` field
   fails at run time on the VM**
 
