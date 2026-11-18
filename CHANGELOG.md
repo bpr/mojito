@@ -785,6 +785,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A field-less element read through collection storage (`List[E]`'s
+  `es[0].me()`, `Optional(E()).value().me()`) no longer traps natively as
+  a dangling pointer: a zero-size pointee's dereference touches no memory,
+  so the native backend no longer guards it, as the VM elides it and the
+  pin emits no load (`assets/ok/zero_sized_element_read.mojo`, R2303).
+
 - A `def[...]` bound's call inlined from one generic body into another
   (`Tuple.deinit_with` inlining `consume_elements`) now carries the
   caller's bound's compile-time parameters, as upstream's substitution of

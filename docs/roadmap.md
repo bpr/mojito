@@ -1356,25 +1356,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2303 A field-less element read through a collection traps
-  natively as a dangling pointer**
-
-  `List[E]` with one `append(E())` and `rs[0].me()`, and
-  `Optional(E()).value().me()`, over a field-less struct, stop natively
-  with "vm: dereference of dangling Pointer" (trap 8), where the VM and
-  the pin print `1`.
-  - The element storage is a zero-size allocation, and the pointer the
-    runtime returns for it fails `mjrt_pointer_status`'s liveness check
-    at the dereference guard.
-  - It traps for a memory-only `E(Copyable)` and for a
-    `TrivialRegisterPassable` one alike, so it predates R2293's
-    zero-sized classification.
-  - Probe: the two reads above, over `struct E(Copyable)` and over
-    `struct R(TrivialRegisterPassable)`, each with `def me(self) -> Int`.
-  - Found while landing R2293 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Catch Up To Current Mojo: Ownership, Origins, And Destruction
 
 Track: `ownership`.

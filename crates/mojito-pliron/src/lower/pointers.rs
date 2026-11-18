@@ -52,10 +52,16 @@ impl FnLowering<'_> {
         element: &Ty,
         dest: Reg,
     ) -> Result<Value, PlironError> {
-        self.guard_pointer_dereference(ctx, pointer, dest)?;
         let element_layout = self.layout.layout_of(element).map_err(|error| {
             self.unsupported_reg(format!("pointer element layout ({error})"), dest)
         })?;
+        // A zero-size element access touches no memory, so it is never a
+        // dangling or freed dereference — as the VM elides a field-less
+        // read and upstream emits no load. The aligned sentinel a
+        // zero-size `mjrt_alloc` returns is therefore never checked.
+        if element_layout.size != 0 {
+            self.guard_pointer_dereference(ctx, pointer, dest)?;
+        }
         let size = self.uint_constant(ctx, element_layout.size);
         let bytes = MulOp::new_with_overflow_flag(ctx, index_value, size, no_overflow_flags());
         self.append(ctx, bytes.get_operation(), Some(dest));
