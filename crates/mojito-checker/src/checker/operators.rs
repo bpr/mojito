@@ -605,6 +605,11 @@ impl Checker {
     /// copied, which demands `ImplicitlyCopyable` of it; a temporary or a
     /// `^` is already owned. Later middles are read in place by both of
     /// their links. Every middle is the chain's, not a link's temporary.
+    /// That first middle's temporary is an rvalue, so the second link's
+    /// `mut self` cannot bind it, as upstream's call binding rejects any
+    /// temporary at a mutable argument. Each link keeps the interior
+    /// invalidations its own call makes, as upstream's call carries its
+    /// effects.
     pub(super) fn infer_compare_chain(
         &self,
         span: SourceSpan,
@@ -640,6 +645,23 @@ impl Checker {
                 .map(|instantiation| instantiation.arguments)
                 .unwrap_or_default();
             self.call_parameters.borrow_mut().remove(&span);
+            let interior_invalidations = self
+                .clear_fact(&span, |facts| facts.interior_invalidations.take())
+                .unwrap_or_default();
+            if index == 1
+                && let Some(dunder) = op.dunder()
+                && call
+                    .as_ref()
+                    .is_some_and(|call| call.receiver_convention == Some(ArgConvention::Mut))
+            {
+                return Err(TypeError::BadCall {
+                    func: dunder.to_string(),
+                    reason: "value passed to a mutable argument must be mutable; a chained \
+                             comparison's first middle operand is a temporary for its second \
+                             link"
+                        .to_string(),
+                });
+            }
             // The method call reads its receiver where it lies through its
             // retained place; a link reads it as an operator operand.
             if call
@@ -654,6 +676,7 @@ impl Checker {
                 instantiated_args,
                 left_adjustments,
                 right_adjustments,
+                interior_invalidations,
             });
             left = right;
         }

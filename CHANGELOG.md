@@ -794,6 +794,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Each link of a chained comparison now binds its operands as its
+  dunder's call does: a `mut` or `ref` receiver or argument takes the
+  operand's place, so `k < holder.s < l` over `__lt__(self, mut o: Self)`
+  writes `holder.s` and prints `lt 1 2 / copy 12 / lt 12 30` as at the
+  pin, where it failed MIR verification, and a first-link `mut self` writes
+  the first operand rather than a copy of it. The first middle is an rvalue
+  for the second link, so a `mut self` there is rejected as at the pin. A
+  link carries its own interior invalidations; the package format moves to
+  `mojito-package 230` (`assets/ok/chained_comparison_mut_operand.mojo`,
+  `assets/type_error/chained_comparison_mut_self_middle.mojo`). (R2322)
+
 - The MIR verifier now checks a `call.method` or subscript through a trait
   bound against the requirement it binds, as upstream verifies a
   `lit.call` of `@Trait::method` against the requirement's signature: a

@@ -1587,7 +1587,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `not`'s operand, the receiver of its `__bool__` call: a memory-only one
   bound `OperandBinding::Read { by_address: true }` and lowered as a
   by-address `read` call operand, a `mut self` one as its place's mutable
-  address, a result slot an `and`/`or` or ternary forwards read in place),
+  address through `mutable_receiver_operand`, which a chain link's first
+  `mut`/`ref` receiver uses too, a result slot an `and`/`or` or ternary
+  forwards read in place),
   and
   `read_conversion_source`, the source of an implicit conversion the
   checker marked `ConversionReadsSource` (`read_in_place` for a named
@@ -1656,7 +1658,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   condition's recorded value (`Flatten::comptime_condition_value_of`) instead, its arms
   ended by `ComptimeYield`. `Flatten::region` builds an expression
   region op's one-block region, and `Flatten::chain_link` nests a
-  comparison chain's links as upstream's `emitNextCmp` does.
+  comparison chain's links as upstream's `emitNextCmp` does, holding each
+  middle for the next link as a `ChainMiddle` (`Lent`: the place a link's
+  `mut`/`ref` parameter lent, read again by the next link).
   `setup_reference` decides which reference-result operands defer their
   read: `defer_to_setup` marks the operand in `Flatten::setup_reference`
   (`SetupReference`), `materialize_reference_result_place` gives its handle

@@ -659,7 +659,10 @@ impl std::fmt::Display for ComptimeSequence {
 /// compile-time arguments a generic dunder's call solved. A middle
 /// operand, evaluated once and unconverted, is adapted per link: its
 /// `left_adjustments` where the link reads it as its left operand, its
-/// `right_adjustments` where the link binds it as its argument.
+/// `right_adjustments` where the link binds it as its argument. The
+/// interior references the link's own call invalidates, through a `mut`
+/// receiver or argument, are its `interior_invalidations`, which the link
+/// carries as upstream's call carries its own effects.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCompareLink {
     pub target: Option<String>,
@@ -667,6 +670,7 @@ pub struct CheckedCompareLink {
     pub instantiated_args: Vec<mojito_types::types::TyArg>,
     pub left_adjustments: Vec<CheckedCallValueAdjustment>,
     pub right_adjustments: Vec<CheckedCallValueAdjustment>,
+    pub interior_invalidations: Vec<InteriorInvalidation>,
 }
 
 /// The `__bool__` call a truthiness test makes of its operand.

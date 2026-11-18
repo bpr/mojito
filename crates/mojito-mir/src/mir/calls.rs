@@ -149,11 +149,7 @@ impl<'a> Flatten<'a> {
             },
         );
         if by_address == Some(Mutability::Mutable) {
-            self.bind_operand(operand, None);
-            let lowered = self.lower_call_receiver(operand);
-            return self
-                .address_lowered_operand(operand.location(), lowered, Mutability::Mutable)
-                .0;
+            return self.mutable_receiver_operand(operand).0;
         }
         let binding = match call.and_then(OperandBinding::of_receiver) {
             Some(OperandBinding::Owned) => OperandBinding::Owned,
@@ -203,6 +199,22 @@ impl<'a> Flatten<'a> {
             Mutability::Immutable,
         )
         .0
+    }
+
+    /// The mutable address of `operand`'s place, the receiver of a call
+    /// whose `mut` or `ref self` takes it where it lies, as upstream's
+    /// `lit.call` takes its `!lit.ref`, with the place it addresses.
+    pub(super) fn mutable_receiver_operand(
+        &mut self,
+        operand: Node<'a>,
+    ) -> (Reg, Option<MirPlace>) {
+        self.bind_operand(operand, None);
+        let lowered = self.lower_call_receiver(operand);
+        self.address_lowered_operand(
+            operand.location(),
+            lowered,
+            mojito_types::origin::Mutability::Mutable,
+        )
     }
 
     /// Lower one operand of a struct operator, prefix or infix: a place the checker

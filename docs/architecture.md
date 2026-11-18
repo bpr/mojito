@@ -3326,7 +3326,17 @@ as upstream's call binding converts an argument per call. Right after the first 
 operand becomes an owned temporary in a hidden `$chain_middle` slot (a
 place copied, a temporary or `^` moved), which drop elaboration destroys
 after the second link or on the first link's false edge; a later middle
-place is read where it lies by both of its links.
+place is read where it lies by both of its links. That temporary is an
+rvalue, so the check rejects a second link whose dunder takes `mut self`
+(`infer_compare_chain`). A link whose dunder takes a `mut` or `ref`
+receiver or argument lends that operand's place by its mutable address,
+as any call does (`Flatten::mutable_receiver_operand`,
+`lower_call_argument`), and records the link's argument conventions,
+receiver write, and its own interior invalidations
+(`CheckedCompareLink::interior_invalidations`), which the check moves
+off the chain's occurrence per link. A middle a link lent is read again
+from its place by the next link (`ChainMiddle::Lent`), and the first
+middle's copy reads what the link wrote.
 
 Augmented assignment (`place OP= rhs`) on a user-defined value dispatches to the
 dedicated in-place dunder rather than the binary operator: the checker selects

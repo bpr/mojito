@@ -466,7 +466,10 @@ impl<'a> Flatten<'a> {
     /// owned temporary for the second link (a place is copied, a temporary
     /// or `^` is moved), which dies after that link or on the first link's
     /// false arm. A later middle is read in place by both of its links; a
-    /// temporary there is held in a slot likewise.
+    /// temporary there is held in a slot likewise. An operand a link's
+    /// `mut` or `ref` parameter or receiver binds is lent by its place's
+    /// mutable address, as any call lends it, and a middle a link lent is
+    /// read again from its place by the next link, after the write.
     pub(in crate::mir) fn compare_chain(
         &mut self,
         chain: Node<'a>,
@@ -1049,8 +1052,19 @@ impl<'a> Flatten<'a> {
     /// middle place stays where it lies, and a named one is read there again
     /// at the next link, so its owner lives through that link. An owned
     /// temporary of a type with a destructor lives in a hidden slot, so it
-    /// is destroyed after its last link or on a false edge.
-    fn chain_middle(&mut self, operand: Node<'a>, value: Reg, first: bool) -> ChainMiddle<'a> {
+    /// is destroyed after its last link or on a false edge. A middle the
+    /// link lent at `lent`, its place, is read from there again: the first
+    /// one's copy reads what the link wrote, and a later one stays lent.
+    fn chain_middle(
+        &mut self,
+        operand: Node<'a>,
+        value: Reg,
+        first: bool,
+        lent: Option<MirPlace>,
+    ) -> ChainMiddle<'a> {
+        if let Some(place) = lent {
+            return self.lent_chain_middle(operand, place, first);
+        }
         let place = matches!(
             operand.op(),
             CheckedOp::Identifier(_) | CheckedOp::Member { .. } | CheckedOp::Index { .. }
@@ -1109,17 +1123,65 @@ impl<'a> Flatten<'a> {
         ChainMiddle::Slot(variable, ty)
     }
 
+    /// What the next link reads for middle `operand`, which its link lent
+    /// at `place`: a later middle stays lent, re-evaluated where it is a
+    /// field chain; the first is read from `place` after the link's write
+    /// and, when it owns droppable storage, copied into a hidden slot, as
+    /// [`Self::chain_middle`] copies a middle read in place.
+    fn lent_chain_middle(
+        &mut self,
+        operand: Node<'a>,
+        place: MirPlace,
+        first: bool,
+    ) -> ChainMiddle<'a> {
+        if !first {
+            return if is_field_chain(operand) {
+                ChainMiddle::Place(operand)
+            } else {
+                ChainMiddle::Lent(place)
+            };
+        }
+        let Some(ty) = place.ty.clone() else {
+            return ChainMiddle::Lent(place);
+        };
+        let reread = self.fresh_typed(operand.location(), Some(place.root), ty.clone());
+        self.emit(MirInstr::LoadPlace {
+            dest: reread,
+            place: place.clone(),
+        });
+        if !crate::mir::calls::owns_droppable_storage(&ty) {
+            return ChainMiddle::Read(reread, Some(place));
+        }
+        let copied = self.fresh_typed(operand.location(), None, ty.clone());
+        self.emit(MirInstr::CopyValue {
+            dest: copied,
+            value: reread,
+            constructor: None,
+        });
+        let variable = self.var(&format!("$chain_middle_r{}", copied.0));
+        self.var_types.insert(variable, ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: copied,
+            binding_ty: Some(ty.clone()),
+            in_place: false,
+        });
+        ChainMiddle::Slot(variable, ty)
+    }
+
     /// The address link argument `value`, of chain operand `operand`, passes
     /// at a slot the link's dunder takes by address, as upstream's `lit.call`
     /// takes a `!lit.ref` of each comparison's operand: the place `value`
     /// was read from where it lies, else a hidden slot holding the
     /// temporary, which is returned with its type so a middle operand's next
-    /// link reads it there.
+    /// link reads it there. The address is `mutability`, mutable for a
+    /// `mut` or `ref` receiver.
     fn chain_link_address(
         &mut self,
         operand: Node<'a>,
         (value, read): (Reg, Option<MirPlace>),
         site: &SourceSpan,
+        mutability: Mutability,
     ) -> (Reg, Option<(VarId, Ty)>) {
         let ty = self
             .f
@@ -1134,14 +1196,10 @@ impl<'a> Flatten<'a> {
         // The read stays: a middle's next link reads `value` again.
         if let Some(place) = read {
             let address = if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
-                self.address_lowered_operand(
-                    site.clone(),
-                    (value, Some(place)),
-                    Mutability::Immutable,
-                )
-                .0
+                self.address_lowered_operand(site.clone(), (value, Some(place)), mutability)
+                    .0
             } else {
-                self.place_address(site.clone(), &place, Mutability::Immutable)
+                self.place_address(site.clone(), &place, mutability)
             };
             return (address, None);
         }
@@ -1153,8 +1211,7 @@ impl<'a> Flatten<'a> {
             return (read, None);
         };
         let root = place.root;
-        let address =
-            self.address_lowered_operand(site.clone(), (read, Some(place)), Mutability::Immutable);
+        let address = self.address_lowered_operand(site.clone(), (read, Some(place)), mutability);
         (address.0, Some((root, ty)))
     }
 
@@ -1171,6 +1228,14 @@ impl<'a> Flatten<'a> {
             return value;
         }
         self.apply_call_value_adjustments(adjustments, parameter_ty, value, site.clone())
+    }
+
+    /// A read of chain middle `place` at the next link's setup.
+    fn load_chain_middle(&mut self, site: &SourceSpan, place: MirPlace) -> Reg {
+        let ty = place.ty.clone().unwrap_or_else(Ty::error);
+        let read = self.fresh_typed(site.clone(), Some(place.root), ty);
+        self.emit(MirInstr::LoadPlace { dest: read, place });
+        read
     }
 
     /// The place the current block's read of `value` loaded it from.
@@ -1191,7 +1256,8 @@ impl<'a> Flatten<'a> {
     /// the first link's receiver, and the last as the last link's argument.
     /// A middle operand, held for the next link, is never read in its
     /// call-result slot; one an owned parameter or receiver of either of
-    /// its links takes is taken.
+    /// its links takes is taken. An operand a `mut` or `ref` parameter or
+    /// receiver lends takes no binding: it is lowered as its place.
     fn bind_chain_operands(
         &mut self,
         links: &[mojito_checked::checked::CheckedCompareLink],
@@ -1209,7 +1275,8 @@ impl<'a> Flatten<'a> {
             let binding = call(0).and_then(|contract| OperandBinding::of_receiver(contract));
             self.bind_operand(first, binding);
         }
-        let binding = if index + 1 == rest.len() {
+        let lent = call(index).is_some_and(|contract| lends_argument(contract));
+        let binding = if index + 1 == rest.len() || lent {
             argument(index)
         } else {
             let receiver =
@@ -1236,10 +1303,24 @@ impl<'a> Flatten<'a> {
     ) -> Reg {
         let sp = chain.location();
         let (op, operand) = rest[index];
+        let link = links.get(index);
+        let contract = link.and_then(|link| link.call.as_deref());
+        let receiver_lent = contract.is_some_and(|contract| {
+            matches!(
+                contract.receiver_convention,
+                Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
+            )
+        });
+        let argument_lent = contract.is_some_and(lends_argument);
         self.bind_chain_operands(links, first, rest, index);
         self.open_call_setup();
         let mut left_place = None;
+        let mut left_lent = false;
         let left = match prev {
+            None if receiver_lent => {
+                left_lent = true;
+                self.mutable_receiver_operand(first).0
+            }
             None => self.lower_operator_operand(chain, first),
             Some(ChainMiddle::Read(value, place)) => {
                 left_place = place;
@@ -1247,17 +1328,19 @@ impl<'a> Flatten<'a> {
             }
             Some(ChainMiddle::Place(place)) => self.lower_operator_operand(chain, place),
             Some(ChainMiddle::Slot(variable, ty)) => {
-                let read = self.fresh_typed(sp.clone(), Some(variable), ty.clone());
-                self.emit(MirInstr::LoadPlace {
-                    dest: read,
-                    place: MirPlace::root(variable, Some(ty)),
-                });
-                read
+                self.load_chain_middle(&sp, MirPlace::root(variable, Some(ty)))
+            }
+            Some(ChainMiddle::Lent(place)) => {
+                left_place = Some(place.clone());
+                self.load_chain_middle(&sp, place)
             }
         };
-        let cur = self.lower_operator_operand(chain, operand);
+        let (cur, cur_place) = if argument_lent {
+            self.lower_call_argument(operand)
+        } else {
+            (self.lower_operator_operand(chain, operand), None)
+        };
         self.close_call_setup(None);
-        let link = links.get(index);
         let mut materialized_middle = None;
         let receiver = index
             .checked_sub(1)
@@ -1275,25 +1358,43 @@ impl<'a> Flatten<'a> {
                 // address, as upstream's `lit.call` takes a `!lit.ref` of
                 // the receiver; a hidden slot holding a temporary first
                 // operand dies after this link.
-                let left = match link.call.as_ref().and_then(|contract| {
-                    crate::mir::calls::receiver_by_address(
-                        contract,
-                        receiver.register_passable_read(),
-                    )
-                }) {
-                    Some(_) => {
+                let by_address = if receiver_lent {
+                    Some(Mutability::Mutable)
+                } else {
+                    contract.and_then(|contract| {
+                        crate::mir::calls::receiver_by_address(
+                            contract,
+                            receiver.register_passable_read(),
+                        )
+                    })
+                };
+                let left = match by_address.filter(|_| !left_lent) {
+                    Some(mutability) => {
                         let place = left_place.filter(|_| left == read);
-                        self.chain_link_address(receiver, (left, place), &sp).0
+                        self.chain_link_address(receiver, (left, place), &sp, mutability)
+                            .0
                     }
                     None => left,
                 };
-                let argument =
-                    self.chain_link_operand(&link.right_adjustments, parameter_ty, cur, &sp);
-                let by_address = link.call.as_ref().and_then(|contract| {
-                    OperandBinding::of_argument(contract, CheckedCallArgumentSource::Positional(0))
-                }) == Some(OperandBinding::Read { by_address: true });
+                let argument = if argument_lent {
+                    cur
+                } else {
+                    self.chain_link_operand(&link.right_adjustments, parameter_ty, cur, &sp)
+                };
+                let by_address = !argument_lent
+                    && contract.and_then(|contract| {
+                        OperandBinding::of_argument(
+                            contract,
+                            CheckedCallArgumentSource::Positional(0),
+                        )
+                    }) == Some(OperandBinding::Read { by_address: true });
                 let argument = if by_address {
-                    let (address, slot) = self.chain_link_address(operand, (argument, None), &sp);
+                    let (address, slot) = self.chain_link_address(
+                        operand,
+                        (argument, None),
+                        &sp,
+                        Mutability::Immutable,
+                    );
                     if argument == cur {
                         materialized_middle = slot;
                     }
@@ -1305,9 +1406,15 @@ impl<'a> Flatten<'a> {
             }
             None => (left, cur),
         };
+        if let Some(link) = link {
+            self.emit_interior_invalidation_facts(&link.interior_invalidations, &sp, None);
+        }
+        if argument_lent {
+            self.emit_interior_invalidations(operand, None);
+        }
         let resolved = link.and_then(|link| link.target.clone());
-        // A link records no effect of its own: a dispatched link raises
-        // what the chain does.
+        // A link raises what the chain does; its own effects are its
+        // operands' bindings and its interior invalidations.
         let dispatch = OperatorDispatch {
             raises: resolved.as_ref().and_then(|_| chain.raises()),
             raise_conversion: resolved.as_ref().and_then(|_| chain.raise_conversion()),
@@ -1316,6 +1423,16 @@ impl<'a> Flatten<'a> {
             contract: link.and_then(|link| {
                 let call = link.call.as_ref()?;
                 Some(super::expr::OperatorContract {
+                    conventions: crate::mir::MirArgConventions::of_arguments(&call.arguments),
+                    recv_writes: matches!(
+                        call.receiver_convention,
+                        Some(
+                            mojito_ast::ast::ArgConvention::Mut
+                                | mojito_ast::ast::ArgConvention::Ref
+                                | mojito_ast::ast::ArgConvention::Var
+                                | mojito_ast::ast::ArgConvention::Deinit
+                        )
+                    ),
                     receiver_convention: call.receiver_convention,
                     param_decls: call.param_decls.clone(),
                     instantiated_args: link.instantiated_args.clone(),
@@ -1329,7 +1446,7 @@ impl<'a> Flatten<'a> {
         }
         let middle = match materialized_middle {
             Some((variable, ty)) => ChainMiddle::Slot(variable, ty),
-            None => self.chain_middle(operand, cur, index == 0),
+            None => self.chain_middle(operand, cur, index == 0, cur_place),
         };
         let then = self.region(|this| {
             MirTerm::Yield(vec![this.chain_link(
@@ -1402,6 +1519,21 @@ enum ChainMiddle<'a> {
     /// The hidden slot holding the first middle's owned temporary, of its
     /// type, read at the next link's setup.
     Slot(VarId, Ty),
+    /// The place a later middle lies at, which its link lent by address
+    /// and the next link reads again at its setup.
+    Lent(MirPlace),
+}
+
+/// Whether the dunder `contract` selected lends its argument a `mut` or
+/// `ref` parameter's place.
+fn lends_argument(contract: &mojito_checked::checked::CheckedCallContract) -> bool {
+    contract.arguments.iter().any(|argument| {
+        argument.source == CheckedCallArgumentSource::Positional(0)
+            && matches!(
+                argument.convention,
+                Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
+            )
+    })
 }
 
 /// The checked adjustments of a collection display. A local `comptime`

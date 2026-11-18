@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2331**.
+Next free ID: **R2335**.
 
 ## Ordered Work
 
@@ -2374,6 +2374,25 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2332 A read receiver aliasing a `mut` argument of the same call
+  is accepted**
+
+  Upstream's argument exclusivity judges the receiver with the
+  arguments, so a place passed immutably as `self` and mutably as an
+  argument is rejected. Mojito's `check_call_aliasing`
+  (`checker/places.rs`) judges a method call's arguments, and an
+  operator's operands, without its receiver.
+  - Probe: `c.m(c)` over `def m(self, mut o: Self)`: Mojito runs it; the
+    pin rejects it ("aliasing values passed immutably to 'self' argument
+    and passed mutably to 'o' argument in 'm' call").
+  - Probe: `c < c` over `__lt__(self, mut o: Self)`: accepted likewise;
+    the pin rejects it in the same words, naming `'__lt__'`.
+  - Probe: the chain `a < b <= c < c` over the same `__lt__` and a read
+    `__le__`: Mojito runs it; the pin rejects the last link.
+  - Found while landing R2322 (2026-11-18).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R125 `len` of a list reached through a pointer field does not run**
 
   Problem: `print(len(c.item[]))` with `c.item` a
@@ -3036,7 +3055,34 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     String) -> Int` fails the verifier in the lifted thunk ("write-back
     parameter 0 of 'bc' has no caller place"), where the pin rejects it
     the same way. No compile-time application takes a `mut` parameter.
+  - Probe: `a < b < S(3)` and the lone `a < S(3)` over `__lt__(self, mut
+    o: Self)` fail MIR verification ("argument 0 of 'S.__lt__' is
+    received by address but passes a S value"); the pin rejects both
+    ("value passed to mutable argument 'o' must be mutable").
   - Found while landing R1503 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2331 An immutable place passed to a `mut` parameter is
+  accepted**
+
+  Upstream's call binding requires a mutable place of every `mut`
+  argument, so a read parameter or a field of one cannot be lent
+  mutably. Mojito's checks beside `reject_transfer_into_mutable`
+  (`checker/places.rs`) judge a `^` transfer and a walrus, never the
+  place's mutability.
+  - Probe: `g(b)` over `def g(mut o: S)`, inside `def f(b: S)`: Mojito
+    runs it; the pin rejects it ("value passed to mutable argument 'o'
+    must be mutable").
+  - Probe: `a.m(b)` over `def m(self, mut o: Self)`, and `g(b.v)` over
+    `def g(mut o: Int)`, with `b` a read parameter: accepted likewise.
+  - Probe: the lone `a < b` and the chain `a < b < c`, with `b` a read
+    parameter, over `__lt__(self, mut o: Self)`: Mojito runs both and
+    writes through `b`; the pin rejects both.
+  - R1628 is the same rule for a temporary; both belong beside
+    `reject_transfer_into_mutable`, enforced sites-first across every call
+    form.
+  - Found while landing R2322 (2026-11-18).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9555,24 +9601,41 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2328, R2329, R1496.
   - Model: Fable, Not Planned.
 
-- [ ] **R2322 A chained comparison's link does not bind a `mut` operand
-  as upstream's call binding does**
+- [ ] **R2333 A membership link inside a chained comparison does not
+  call `__contains__`**
 
-  Upstream binds each link of `a < b < c` as its own `__lt__` call: a
-  `mut` parameter takes the operand's place mutably, and the second
-  link's receiver, the copied middle, is an rvalue a `mut self` cannot
-  take. `chain_link` (`lower_expr/ctrl.rs`) handles only
-  `OperandBinding::Read`, and the checker does not judge a link's
-  operands' mutability per link.
-  - Probe: `def __lt__(self, mut o: Self)` with `o.v += 10`, in
-    `k < holder.s < l`: Mojito fails MIR verification ("argument 0 of
-    'S.__lt__' is received by address but passes a S value"); the pin
-    prints `lt 1 2 / copy 12 / lt 12 30 / True / 12`.
-  - Probe: `def __lt__(mut self, o: Self)` in `holder.s < k < l`:
-    Mojito accepts it; the pin rejects the second link with "value
-    passed to mutable argument 'self' must be mutable".
+  Upstream spells a chain's `j in s` link as `s.__contains__(j)`, whose
+  receiver is the right operand, as a lone `in` is. `chain_link`
+  (`lower_expr/ctrl.rs`) emits the link as a `binary In` instead, and
+  `infer_compare_chain` checks it with no call site of its own.
+  - Probe: `0 < k < j in s` over a struct with `__contains__(self, o:
+    Int)`: the VM fails with "struct 'S' has no method '__contains__'";
+    the pin prints `False`.
+  - Probe: `0 < 1 in l` over `l: InlineArray[Int, 2]` fails MIR
+    verification ("operator In takes a numeric literal beside Array[Int,
+    2]"); the pin runs it.
+  - Found while landing R2322 (2026-11-18).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2334 A chain's first middle that a link's `var` parameter takes
+  fails verification**
+
+  Upstream copies the middle into the first link's `var` parameter, since
+  the second link reads it again, and moves it into the second link's
+  temporary. `bind_chain_operands` (`lower_expr/ctrl.rs`) binds the
+  middle `Owned` for both links, and the copy it lowers to reaches
+  `canonicalize` as a `__copyinit__` call passing a value where `copy:
+  Self` is taken by address.
+  - Probe: `a < b <= c` over `__lt__(self, var o: Self)` and a read
+    `__le__`, with a printing copy initializer: Mojito fails verification
+    ("keyword argument 'copy' of 'S.__copyinit__' is received by address
+    but passes a S value"); the pin prints `copy 2 / lt 1 2 / le 2 3 /
+    True`.
+  - The lone `a < b` over the same `var o` runs as at the pin.
+  - Found while landing R2322 (2026-11-18).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2324 The verifier compares no keyword operand's type against
   its parameter**

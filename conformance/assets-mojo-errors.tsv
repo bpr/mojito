@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1228
+# swept-count	1229
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/mut_origin_binder_generic_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(anonymous*)]' to 'Pointer[T, o]'
@@ -330,6 +330,7 @@ assets/type_error/capturing_lambda_display_transferred_uncopyable.mojo	compile-r
 assets/type_error/capturing_lambda_parameter_argument.mojo	compile-reject	agree	error: cannot use a capturing lambda in type parameter
 assets/type_error/chained_comparison_middle_not_deinitable.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Comparable'
 assets/type_error/chained_comparison_middle_not_implicitly_copyable.mojo	compile-reject	agree	error: value of type 'P' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
+assets/type_error/chained_comparison_mut_self_middle.mojo	compile-reject	agree	error: invalid call to '__lt__': value passed to mutable argument 'self' must be mutable
 assets/type_error/closure_capture_aliases_mut_argument.mojo	compile-reject	agree	error: aliasing values passed mutably to 'x' argument and passed immutably to 'f' argument in 'g' call
 assets/type_error/closure_capturing_loop_ref_escapes.mojo	compile-reject	agree	error: cannot implicitly convert 'def() -> Int' value to 'Int'
 assets/type_error/closure_storage_not_trivially_register_passable.mojo	compile-reject	agree	error: invalid call to 'call': value passed to 'f' cannot be converted from 'def(a: Int) -> Int' to 'F', argument type 'def(a: Int) -> Int' does not conform to trait 'def(Int) -> Int & TrivialRegisterPassable'

@@ -1229,6 +1229,11 @@ requirement through (`IterationProtocol::prepare_refined_bound`,
 `CheckedIteratorCall::refined_bound`), which lowering writes as the
 calls' existing `refined_bound`; the MIR text schema is unchanged (R2319).
 
+The package format moves to `mojito-package 230` when a chained
+comparison's link carries the interior invalidations its own call makes
+(`CheckedCompareLink::interior_invalidations`); the MIR text schema is
+unchanged (R2322).
+
 Schema 1.203 adds an optional `writes: true` to the
 `argument_convention` and `call_argument` records: the slot's declared
 contract writes through the caller's place — a `mut`, `var`, or `deinit`

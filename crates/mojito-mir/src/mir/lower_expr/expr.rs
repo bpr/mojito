@@ -29,6 +29,10 @@ pub(in crate::mir) struct OperatorDispatch {
 
 /// What a chained comparison's link records of its dunder's method call.
 pub(in crate::mir) struct OperatorContract {
+    /// The conventions the link's call binds its argument by.
+    pub(in crate::mir) conventions: crate::mir::MirArgConventions,
+    /// Whether the link's receiver convention writes its place.
+    pub(in crate::mir) recv_writes: bool,
     pub(in crate::mir) receiver_convention: Option<mojito_ast::ast::ArgConvention>,
     pub(in crate::mir) param_decls: Vec<ParamDecl>,
     pub(in crate::mir) instantiated_args: Vec<TyArg>,
@@ -427,12 +431,16 @@ impl<'a> Flatten<'a> {
                     crate::mir::dunder_method_call(d, a, method, Some(resolved), raises, vec![b]);
                 if let Some(contract) = contract
                     && let MirInstr::MethodCall {
+                        conventions,
+                        recv_writes,
                         receiver_convention,
                         param_decls,
                         instantiated_args,
                         ..
                     } = &mut call
                 {
+                    *conventions = contract.conventions;
+                    *recv_writes = contract.recv_writes;
                     *receiver_convention = contract.receiver_convention;
                     *param_decls = contract.param_decls;
                     *instantiated_args = contract.instantiated_args;

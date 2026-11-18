@@ -451,6 +451,7 @@ impl RewriteTypes for CheckedCompareLink {
             instantiated_args,
             left_adjustments,
             right_adjustments,
+            interior_invalidations: _,
         } = self;
         call.rewrite_types(rewrite);
         instantiated_args.rewrite_types(rewrite);
