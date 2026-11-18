@@ -9676,27 +9676,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2302 The verifier checks no checked-subscript argument at a
-  by-address parameter**
-
-  Upstream's subscript accessor is a `lit.call`, whose verifier requires
-  a `!lit.ref` at every argument the accessor takes by address. MIR
-  lowering passes one (`call_argument`'s `by_address`), but
-  `mir/verify/subscripts.rs` checks only the receiver and `mut`/`ref`
-  arguments, so a memory-only `read` argument passed as a value loads.
-  - Fix: require a reference at every `index.get`, `index.set`, and
-    `index.multi` argument whose accessor parameter `by_address_parameter`
-    takes by address, as `verify_direct_call` does for a direct call.
-  - Probe: before R2285 landed,
-    `tests/mir_passes/remove-unused-params/subscript_forward.mir` passed
-    `Arr[n]` by value to `Grid.__getitem__`, `Pair.__getitem__`, and
-    `Ring.__getitem__`, and loaded. With the rule on, run `mojito opt` on
-    every `tests/mir_passes/*/*.mir` input and fix each one it flags as
-    R2285 did.
-  - Stop when `scripts/smoke` runs clean with the rule on.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2045 Seven MIR pass test inputs destroy a memory-only value
   through a `deinit` receiver register and fail at load**
 

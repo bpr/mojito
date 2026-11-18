@@ -82,6 +82,57 @@ pub fn method_operand_parameters(
     operand_parameters(&CallShape::declared(declaration), positional, &keywords)
 }
 
+/// One operand of a call as its callee's declaration binds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundOperand<'i> {
+    pub register: Reg,
+    /// The keyword it is passed under, `None` for a positional operand.
+    pub keyword: Option<&'i str>,
+    /// The regular parameter it binds, `None` for a collector's.
+    pub parameter: Option<usize>,
+}
+
+/// The operands of a checked subscript (`index.get`, `index.multi`,
+/// `index.multi_set`) as a call of its accessor `declaration` binds them,
+/// its receiver excluded.
+///
+/// One entry per positional operand, then one per keyword operand (a
+/// store's value under the setter's keyword). `None` overall when the instruction is no checked subscript or
+/// its operands do not bind.
+#[must_use]
+pub fn subscript_operand_parameters<'i>(
+    instruction: &'i MirInstr,
+    declaration: &MirFunctionDeclaration,
+) -> Option<Vec<BoundOperand<'i>>> {
+    let subscript = SubscriptOperands::of(instruction)?;
+    let names: Vec<&str> = subscript.keywords.iter().map(|(name, _)| *name).collect();
+    let parameters = operand_parameters(
+        &CallShape::declared(declaration),
+        subscript.positional.len(),
+        &names,
+    )?;
+    let operands = subscript
+        .positional
+        .into_iter()
+        .map(|register| (register, None))
+        .chain(
+            subscript
+                .keywords
+                .into_iter()
+                .map(|(name, register)| (register, Some(name))),
+        );
+    Some(
+        operands
+            .zip(parameters)
+            .map(|((register, keyword), parameter)| BoundOperand {
+                register,
+                keyword,
+                parameter,
+            })
+            .collect(),
+    )
+}
+
 /// How a callee receives its regular parameter `parameter` by address.
 ///
 /// The answer is the mutability of the reference its operand is, `None`
@@ -710,20 +761,14 @@ fn bound_call<'i>(
         _ => {
             let subscript = SubscriptOperands::of(instruction)?;
             let declaration = callees.get(subscript.callee)?;
-            let names: Vec<&str> = subscript.keywords.iter().map(|(name, _)| *name).collect();
-            let parameters = operand_parameters(
-                &CallShape::declared(declaration),
-                subscript.positional.len(),
-                &names,
-            )?;
-            let registers = subscript
-                .positional
-                .into_iter()
-                .chain(subscript.keywords.into_iter().map(|(_, register)| register));
+            let operands = subscript_operand_parameters(instruction, declaration)?;
             Some(BoundCall {
                 contract: Contract::Declared(declaration),
                 receiver: Some(subscript.receiver),
-                operands: registers.zip(parameters).collect(),
+                operands: operands
+                    .into_iter()
+                    .map(|operand| (operand.register, operand.parameter))
+                    .collect(),
             })
         }
     }

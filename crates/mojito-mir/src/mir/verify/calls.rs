@@ -372,30 +372,25 @@ pub(super) fn verify_direct_call(
     errors: &mut Vec<String>,
 ) {
     let (prefix, function) = (cx.prefix, cx.function);
-    let operands = args
-        .iter()
-        .chain(kwargs.iter().map(|(_, argument)| argument));
-    for (index, (argument, parameter)) in operands.zip(parameters.into_iter().flatten()).enumerate()
-    {
-        if let Some(parameter) = *parameter
-            && crate::mir::by_address_parameter(declaration, cx.declarations, parameter).is_some()
-            && declaration
-                .param_types
-                .get(parameter)
-                .is_some_and(|expected| !matches!(expected.kind(), TyKind::Ref(_)))
-            && let Some(found) = function.reg_types.get(&argument.0)
-            && !matches!(found.kind(), TyKind::Ref(_))
-        {
-            let keyword = index.checked_sub(args.len()).and_then(|k| kwargs.get(k));
-            let operand = keyword.map_or_else(
-                || format!("argument {index}"),
-                |(name, _)| format!("keyword argument '{name}'"),
-            );
-            errors.push(format!(
-                "{prefix}: {operand} of '{}' is received by address but passes a {found} value",
-                declaration.lowered_name
-            ));
-        }
+    if let Some(parameters) = parameters {
+        let operands: Vec<_> = args
+            .iter()
+            .map(|argument| (*argument, None))
+            .chain(
+                kwargs
+                    .iter()
+                    .map(|(name, argument)| (*argument, Some(name.as_str()))),
+            )
+            .zip(parameters)
+            .map(
+                |((register, keyword), parameter)| crate::mir::BoundOperand {
+                    register,
+                    keyword,
+                    parameter: *parameter,
+                },
+            )
+            .collect();
+        verify_by_address_operands(cx, declaration, &operands, errors);
     }
     let plain = kwargs.is_empty()
         && declaration.variadic.is_none()
@@ -429,6 +424,38 @@ pub(super) fn verify_direct_call(
             errors.push(format!(
                 "{prefix}: argument {index} of '{}' has type {found}, declared {expected}",
                 declaration.lowered_name
+            ));
+        }
+    }
+}
+
+/// Require a reference at every operand of a call of `declaration` whose
+/// parameter `by_address_parameter` takes by address (`verify_direct_call`).
+///
+/// `operands` lists each operand, positional then keyword. A parameter declared as a reference type takes its operand as a value.
+pub(super) fn verify_by_address_operands(
+    cx: &InstrCx<'_>,
+    declaration: &MirFunctionDeclaration,
+    operands: &[crate::mir::BoundOperand<'_>],
+    errors: &mut Vec<String>,
+) {
+    for (index, operand) in operands.iter().enumerate() {
+        if let Some(parameter) = operand.parameter
+            && crate::mir::by_address_parameter(declaration, cx.declarations, parameter).is_some()
+            && declaration
+                .param_types
+                .get(parameter)
+                .is_some_and(|expected| !matches!(expected.kind(), TyKind::Ref(_)))
+            && let Some(found) = cx.reg_ty(operand.register)
+            && !matches!(found.kind(), TyKind::Ref(_))
+        {
+            let operand = operand.keyword.map_or_else(
+                || format!("argument {index}"),
+                |name| format!("keyword argument '{name}'"),
+            );
+            errors.push(format!(
+                "{}: {operand} of '{}' is received by address but passes a {found} value",
+                cx.prefix, declaration.lowered_name
             ));
         }
     }

@@ -1310,6 +1310,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier now requires a reference at every argument of a checked
+  subscript (`index.get`, `index.multi`, `index.multi_set`) that its
+  accessor takes by address, a memory-only `read` index included, as
+  upstream's accessor `lit.call` verifier does; it checked only the
+  receiver and `mut`/`ref` arguments before (R2302).
+
 - The MIR verifier now requires a reference at every operand of a direct
   call or resolved method call that its callee takes by address, keyword
   operands and the operands of defaulted and variadic calls included, as

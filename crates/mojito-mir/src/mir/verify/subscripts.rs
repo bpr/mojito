@@ -49,7 +49,7 @@ pub(super) fn verify_subscript_instruction(
                     },
                     errors,
                 );
-                verify_accessor_receiver(cx, call, *base, errors);
+                verify_accessor_operands(cx, instruction, call, *base, errors);
             } else if let Some(intrinsic) = intrinsic {
                 verify_intrinsic_index(
                     prefix,
@@ -91,7 +91,7 @@ pub(super) fn verify_subscript_instruction(
                     },
                     errors,
                 );
-                verify_accessor_receiver(cx, call, *object, errors);
+                verify_accessor_operands(cx, instruction, call, *object, errors);
             } else {
                 errors.push(format!(
                     "{prefix}: multi-index operation lacks a checked call contract"
@@ -124,7 +124,7 @@ pub(super) fn verify_subscript_instruction(
                 },
                 errors,
             );
-            verify_accessor_receiver(cx, call, *receiver, errors);
+            verify_accessor_operands(cx, instruction, call, *receiver, errors);
         }
         _ => {}
     }
@@ -745,15 +745,22 @@ pub(super) fn verify_capture_accesses(
     }
 }
 
-/// A checked subscript accessor's receiver, where its declaration takes it
-/// by address, is a reference (`verify_by_address_receiver`).
-fn verify_accessor_receiver(
+/// A checked subscript accessor's receiver and arguments, where its
+/// declaration takes them by address, are references
+/// (`verify_by_address_receiver`, `verify_by_address_operands`), as
+/// upstream's accessor `lit.call` takes a `!lit.ref` wherever the
+/// accessor's signature does.
+fn verify_accessor_operands(
     cx: &InstrCx<'_>,
+    instruction: &MirInstr,
     call: &crate::mir::MirSubscriptCall,
     receiver: Reg,
     errors: &mut Vec<String>,
 ) {
     if let Some(declaration) = declared(cx.declarations, &call.target) {
         verify_by_address_receiver(cx, declaration, receiver, errors);
+        if let Some(operands) = crate::mir::subscript_operand_parameters(instruction, declaration) {
+            verify_by_address_operands(cx, declaration, &operands, errors);
+        }
     }
 }

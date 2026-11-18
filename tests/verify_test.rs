@@ -24,8 +24,9 @@ fn parse(source: &str) -> Result<Vec<mojito::ast::Stmt>, String> {
 
 use mojito::mir::{
     Const, FuncRef, LoopLabel, MirBlock, MirCase, MirDeclarations, MirFunction, MirInstr,
-    MirInteriorOrigin, MirIntrinsicSubscript, MirLoan, MirParamArg, MirPlace, MirProgram, MirTerm,
-    Proj, Raises, Reg, SpanTable, TraitDeclaration, TraitRequirement, TryLabel, UseMode,
+    MirInteriorOrigin, MirIntrinsicSubscript, MirLoan, MirParamArg, MirPlace, MirProgram,
+    MirSubscriptArg, MirTerm, Proj, Raises, Reg, SpanTable, TraitDeclaration, TraitRequirement,
+    TryLabel, UseMode,
 };
 use mojito::param_expr::{MetaTy, ParamContext, ParamId, ParamRef};
 use mojito::types::DependentType;
@@ -961,6 +962,51 @@ fn verifier_requires_a_reference_at_a_memory_only_read_receiver() {
             errors.iter().any(|error| error.contains(needle)),
             "a loaded function's verify applies the receiver rule: {errors:?}"
         );
+    }
+}
+
+/// A memory-only `read` index of a subscript accessor is its place's
+/// address, as upstream's accessor `lit.call` takes a `!lit.ref` wherever
+/// the accessor's signature does: the verifier rejects the value read from
+/// the place at a getter (`index.get`), a multi-index getter
+/// (`index.multi`), and a setter (`index.multi_set`) alike.
+#[test]
+fn verifier_requires_a_reference_at_a_memory_only_read_subscript_argument() {
+    let source = "struct M(Movable):\n    var n: Int\n\n    def __init__(out self):\n        self.n = 0\n\n    def __getitem__(self, k: String) -> Int:\n        return k.byte_length()\n\n    def __getitem__(self, a: String, b: String) -> Int:\n        return a.byte_length() + b.byte_length()\n\n    def __setitem__(mut self, k: String, value: Int):\n        self.n = value\n\ndef main():\n    var m = M()\n    var k = String(\"a\")\n    print(m[k])\n    print(m[k, k])\n    m[k] = 2\n";
+    let mir = lower_linked_source(source);
+    let errors = verify(&mir);
+    assert!(
+        errors.is_empty(),
+        "the subscript arguments through ref.make verify: {errors:?}"
+    );
+    for (shape, needle) in [
+        ("get", "argument 0 of 'M.__getitem__"),
+        ("multi", "argument 1 of 'M.__getitem__"),
+        ("set", "argument 0 of 'M.__setitem__"),
+    ] {
+        let mut mir = mir.clone();
+        let main = function_named(&mut mir, "main");
+        let argument = leaf_instructions_mut(&mut main.body)
+            .into_iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Index {
+                    index,
+                    call: Some(_),
+                    ..
+                } if shape == "get" => Some(*index),
+                MirInstr::MultiIndex { args, .. } if shape == "multi" => match args.as_slice() {
+                    [_, MirSubscriptArg::Index(second)] => Some(*second),
+                    _ => None,
+                },
+                MirInstr::MultiSet { args, .. } if shape == "set" => match args.as_slice() {
+                    [MirSubscriptArg::Index(key)] => Some(*key),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("main indexes m");
+        load_in_place_of_address(main, argument);
+        expect_finding(&mir, needle);
     }
 }
 
