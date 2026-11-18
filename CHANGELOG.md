@@ -794,6 +794,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Two same-spelled nested `def`s with an identical signature in sibling
+  blocks of one body (both arms of a `comptime if`, two loop bodies) are now
+  rejected as a redefinition, as at the pin, which scopes a nested
+  function's identity to its enclosing function
+  (`assets/type_error/nested_def_identical_signature_sibling_blocks.mojo`,
+  R2311).
+
 - A pointer subscript passed by address over a pointer no slot holds
   (`ls.unsafe_ptr()[0].show()` as `ls`'s last use) no longer destroys the
   pointer's owner before the call: the hidden slot the pointer is re-homed

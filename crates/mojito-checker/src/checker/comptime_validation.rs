@@ -616,6 +616,10 @@ pub(in crate::checker) struct NestedScope {
     binders: Vec<ParamDecl>,
     /// How many times the body spells each nested `def`'s name.
     spellings: HashMap<String, usize>,
+    /// The signatures of the nested `def`s bound so far in any block of
+    /// the body, by name: a nested `def`'s identity is scoped to its
+    /// enclosing function, though its name is looked up in its block.
+    signatures: HashMap<String, Vec<Ty>>,
     /// The index binders of the body's own `comptime for` loops around
     /// the statement being checked, outermost first.
     loops: Vec<ParamDecl>,
@@ -649,9 +653,39 @@ impl Checker {
             applicable,
             binders,
             spellings: nested_def_spellings(body),
+            signatures: HashMap::new(),
             loops: Vec::new(),
             depth: self.function_bases.len() + 1,
         });
+    }
+
+    /// Record the signature `ty` of the nested `def` `name` bound in the
+    /// body being checked, rejecting one an earlier `def` of that name in
+    /// any block of the same body already declares, as the pin's
+    /// "redefinition of function with identical signature" does: the
+    /// nested functions of one body share its function scope.
+    pub(super) fn declare_nested_signature(
+        &mut self,
+        name: &str,
+        ty: &Ty,
+    ) -> Result<(), TypeError> {
+        let depth = self.function_bases.len();
+        let Some(scope) = self
+            .nested_scopes
+            .last_mut()
+            .filter(|scope| scope.depth == depth)
+        else {
+            return Ok(());
+        };
+        let declared = scope.signatures.entry(name.to_string()).or_default();
+        if declared
+            .iter()
+            .any(|earlier| same_callable_signature(earlier, ty))
+        {
+            return Err(TypeError::Redeclaration(name.to_string()));
+        }
+        declared.push(ty.clone());
+        Ok(())
     }
 
     /// Close the body [`Self::enter_nested_scope`] opened last.

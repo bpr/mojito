@@ -4286,6 +4286,9 @@ impl Checker {
         // forwarding call reads; its signature carries no origin a call
         // would bind, as `unforwardable` rejects every one that does.
         let trait_member = self.binds_trait_member(lambda);
+        if !lambda && !trait_member && !self.function_bases.is_empty() {
+            self.declare_nested_signature(name, &signature.fn_ty)?;
+        }
         // A function's name is not a variable: assigning it is rejected.
         if !trait_member {
             self.declare_immutable(name, signature.fn_ty.clone())?;

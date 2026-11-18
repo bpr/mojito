@@ -7216,25 +7216,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2311 Same-spelled nested `def`s with one signature in sibling
-  blocks are accepted, where the pin rejects them**
-
-  A nested `def`'s identity is scoped to its enclosing function at the pin,
-  though its name is looked up in its block, so a second `def h() -> Int`
-  in another block of the same body is "redefinition of function 'h' with
-  identical signature". Mojito's check compares only the open block scope
-  (`declare_with_mutability`, `checker/scopes.rs`) and lifts the two as
-  `run$h$decl0` and `run$h$decl1`.
-  - Probe: `def h() -> Int` in both arms of a `comptime if flag:` inside
-    `run[flag: Bool]()`, each followed by `g[h]()`; Mojito prints `1 2`.
-  - Probe: the same pair in two `for i in range(1):` bodies.
-  - Overloads by signature in sibling blocks stay accepted, as at the pin
-    (`assets/ok/nested_callable_symbol_scopes.mojo`).
-  - Add a `type_error` fixture with its `conformance/assets-mojo-errors.tsv`
-    row.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2230 `reflect[T].name()` spells a struct-valued parameter as its
   construction, where the pin prints the value**
 
