@@ -63,6 +63,21 @@ pub fn call_operand_parameters(
     if declaration.has_receiver && !is_initializer_symbol(callee) {
         return None;
     }
+    method_operand_parameters(declaration, positional, kwargs)
+}
+
+/// The regular parameter each operand of a resolved `call.method` of
+/// `declaration` binds, its receiver excluded.
+///
+/// One entry per positional operand, then one per keyword operand, `None`
+/// for an operand a collector takes. `None` overall when the operands do
+/// not bind.
+#[must_use]
+pub fn method_operand_parameters(
+    declaration: &MirFunctionDeclaration,
+    positional: usize,
+    kwargs: &[(String, Reg)],
+) -> Option<Vec<Option<usize>>> {
     let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
     operand_parameters(&CallShape::declared(declaration), positional, &keywords)
 }

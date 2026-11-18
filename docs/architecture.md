@@ -2571,14 +2571,18 @@ whose types name its origin (`RegisterLoanStep`'s `origin_operands`,
 `types::named_origins`), as upstream keeps an origin's memory live while a
 value whose type names it is, and copy elision's `lend` re-roots the
 operand's `ref.make`. The verifier
-(`verify_direct_call`) rejects a value at every slot of a `call` or
-`call.method` binding by its callee's declaration that
-`mir::by_address_parameter` takes by address, a `mut`/`ref` one and a
+(`verify_direct_call`) rejects a value at every operand of a `call` or
+resolved `call.method` that binds a parameter by its callee's declaration
+(`mir::call_operand_parameters`, `mir::method_operand_parameters`),
+keyword operands and the operands of defaulted and variadic calls
+included, a call spreading a pack excepted, wherever
+`mir::by_address_parameter` takes the parameter by address, a `mut`/`ref` one and a
 `read` one whose declared type is not proven register-passable, as
 upstream's `lit.call` takes a `!lit.ref` wherever the signature does; an
 elaborated instance's declaration names its substituted types, so a `read`
 its instance proves register-passable takes the value
-`load_register_passable_operands` reads. At every verify point it also
+`load_register_passable_operands` reads. Only a plain positional call's
+operand types are compared against the declaration. At every verify point it also
 rejects a value at the receiver of a resolved
 `call.method` or of a checked subscript accessor whose declaration takes
 it by address (`verify_by_address_receiver`, over
@@ -2591,8 +2595,7 @@ operand its place (`Flatten::chain_link_address`), and a truthiness
 test's operand, the receiver of the `__bool__` the elaborator resolves
 `Bool(x)` to, the address of its place, its temporary's storage, its
 held `and`/`or` slot, or the result slot a conditional forwards
-(`Flatten::truthiness_operand`, `hold_tested_operand`). Keyword operands of a `call` or `call.method` are not yet
-checked this way (R2300). A `call.indirect`, and a `def(...)` bound's
+(`Flatten::truthiness_operand`, `hold_tested_operand`). A `call.indirect`, and a `def(...)` bound's
 `__call__` call, bind their operands by a function type, so
 `verify_callable_contract_call` rejects a value at every slot
 `mir::signature_by_address_operands` takes by address, keyword operands

@@ -1310,6 +1310,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier now requires a reference at every operand of a direct
+  call or resolved method call that its callee takes by address, keyword
+  operands and the operands of defaulted and variadic calls included, as
+  upstream's `lit.call` verifier does; it checked only plain positional
+  calls before. A keyword operand's finding names its keyword (R2300).
+
 - The by-address receiver rule (a reference at a resolved method call's or
   checked subscript accessor's by-address receiver, as upstream's
   `lit.call` verifier requires) is now part of `mir::verify::verify`, so

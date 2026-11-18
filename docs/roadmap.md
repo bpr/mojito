@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2324**.
+Next free ID: **R2325**.
 
 ## Ordered Work
 
@@ -9656,27 +9656,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2300 The verifier checks no keyword operand at a by-address
-  parameter**
+- [ ] **R2324 The verifier compares no keyword operand's type against
+  its parameter**
 
-  Upstream's `lit.call` verifier requires a `!lit.ref` at every operand
-  its callee takes by address. `verify_direct_call`
-  (`mir/verify/calls.rs`) checks by-address operands only for a "plain"
-  positional call, so keyword operands, and operands of defaulted,
-  variadic, and `call.method` calls, go unchecked.
-  - Fix: keep the "plain" gate for the type comparison only. Map a
-    `call`'s operands by `mir::call_operand_parameters`, and a resolved
-    `call.method`'s by `operand_parameters(&CallShape::declared(..))`
-    through a new `pub` sibling in `call_addresses.rs`. Require a
-    reference at every operand `by_address_parameter` takes by address.
-  - Docs: drop "Keyword operands … are not yet checked this way" from
-    `docs/architecture.md` and update `docs/symbol-map.md`'s
-    by-address row.
-  - Tests: a `tests/verify_test.rs` case rejecting a MIR text `call` of
-    an `__init__(out self, *, copy: Self)` with a value `copy=` operand,
-    and accepting the `ref.make` form.
+  Upstream's `lit.call` verifier type-checks every operand against the
+  callee's signature. `verify_direct_call` (`mir/verify/calls.rs`)
+  compares operand types only for a plain positional call, so keyword
+  operands, and the operands of defaulted and variadic calls, go
+  unchecked.
+  - Fix: compare each operand the `parameters` mapping
+    (`mir::call_operand_parameters`, `mir::method_operand_parameters`)
+    binds against `param_types[parameter]`, reading a borrowed slot's
+    referent as the plain loop does, and delete the plain gate.
+  - Probe: swap a keyword operand's register type in a lowered
+    `Big(copy=b)` (`tests/verify_test.rs`'s
+    `verifier_requires_a_reference_at_a_keyword_by_address_argument`)
+    for a `ref` to `String`: the verifier accepts it today.
   - Stop when `scripts/smoke` runs clean with the rule on.
-  - Depends on R2296, R2297, R1506, and R2323.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2302 The verifier checks no checked-subscript argument at a
@@ -9689,7 +9686,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   arguments, so a memory-only `read` argument passed as a value loads.
   - Fix: require a reference at every `index.get`, `index.set`, and
     `index.multi` argument whose accessor parameter `by_address_parameter`
-    takes by address, as `verify_direct_call` does for a plain call.
+    takes by address, as `verify_direct_call` does for a direct call.
   - Probe: before R2285 landed,
     `tests/mir_passes/remove-unused-params/subscript_forward.mir` passed
     `Arr[n]` by value to `Grid.__getitem__`, `Pair.__getitem__`, and

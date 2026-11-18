@@ -62,8 +62,8 @@ pub use bound_calls::{
 mod call_addresses;
 pub use call_addresses::{
     by_address_parameter, by_address_receiver, call_operand_parameters,
-    load_register_passable_operands, operand_value_ty, read_addressed_operands,
-    signature_by_address_operands,
+    load_register_passable_operands, method_operand_parameters, operand_value_ty,
+    read_addressed_operands, signature_by_address_operands,
 };
 mod call_operands;
 pub use call_operands::{

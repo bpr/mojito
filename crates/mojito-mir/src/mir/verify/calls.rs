@@ -71,10 +71,13 @@ pub(super) fn verify_call_instruction(
             }
             if let Some(declaration) = declared(cx.declarations, callee) {
                 verify_collector_passed(prefix, declaration, *spread, kwargs, errors);
-                let binds =
-                    crate::mir::call_operand_parameters(callee, declaration, args.len(), kwargs)
-                        .is_some();
-                verify_direct_call(cx, declaration, args, kwargs, binds, errors);
+                let parameters = spread
+                    .is_none()
+                    .then(|| {
+                        crate::mir::call_operand_parameters(callee, declaration, args.len(), kwargs)
+                    })
+                    .flatten();
+                verify_direct_call(cx, declaration, args, kwargs, parameters.as_deref(), errors);
                 let owner = receiver
                     .as_ref()
                     .and_then(|receiver| owner_arguments(cx.declarations, receiver));
@@ -194,7 +197,11 @@ pub(super) fn verify_call_instruction(
                         declaration.lowered_name
                     ));
                 }
-                verify_direct_call(cx, declaration, args, kwargs, true, errors);
+                let parameters = spread
+                    .is_none()
+                    .then(|| crate::mir::method_operand_parameters(declaration, args.len(), kwargs))
+                    .flatten();
+                verify_direct_call(cx, declaration, args, kwargs, parameters.as_deref(), errors);
                 verify_by_address_receiver(cx, declaration, *recv, errors);
                 let result_abi_matches =
                     match reference_result {
@@ -342,28 +349,54 @@ fn verify_collector_passed(
     }
 }
 
-/// Arity, argument-type, and by-address checks against a declaration. Only
-/// the plain positional shape is compared — defaulted, keyword, and
-/// variadic calls are bound by the runtime matcher, whose slotting the
-/// verifier does not replicate.
+/// Argument-type and by-address checks against a declaration.
 ///
-/// `addressed` says whether the call binds its operands by `declaration`
-/// (a direct `call` or a resolved `call.method`): each operand of a slot
-/// `by_address_parameter` takes by address, a `mut`/`ref` one or a `read`
-/// one of a type not proven register-passable, must then be a reference,
-/// as upstream's `lit.call` takes a `!lit.ref` wherever the signature does,
-/// the reference a place holding one stores included. An elaborated
-/// instance's declaration names its substituted types, so a `read` its
-/// instance proves register-passable takes the value.
+/// `parameters` maps each operand, positional then keyword, to the regular
+/// parameter it binds by `declaration` (a direct `call` or a resolved
+/// `call.method` without a spread pack), `None` when the operands do not
+/// bind by it. Every operand of a parameter `by_address_parameter` takes
+/// by address, a `mut`/`ref` one or a `read` one of a type not proven
+/// register-passable, must be a reference, as upstream's `lit.call` takes
+/// a `!lit.ref` wherever the signature does, however the operand was
+/// spelled at the call site. An elaborated instance's declaration names
+/// its substituted types, so a `read` its instance proves
+/// register-passable takes the value.
+///
+/// Operand types are compared only for the plain positional shape.
 pub(super) fn verify_direct_call(
     cx: &InstrCx<'_>,
     declaration: &MirFunctionDeclaration,
     args: &[Reg],
     kwargs: &[(String, Reg)],
-    addressed: bool,
+    parameters: Option<&[Option<usize>]>,
     errors: &mut Vec<String>,
 ) {
     let (prefix, function) = (cx.prefix, cx.function);
+    let operands = args
+        .iter()
+        .chain(kwargs.iter().map(|(_, argument)| argument));
+    for (index, (argument, parameter)) in operands.zip(parameters.into_iter().flatten()).enumerate()
+    {
+        if let Some(parameter) = *parameter
+            && crate::mir::by_address_parameter(declaration, cx.declarations, parameter).is_some()
+            && declaration
+                .param_types
+                .get(parameter)
+                .is_some_and(|expected| !matches!(expected.kind(), TyKind::Ref(_)))
+            && let Some(found) = function.reg_types.get(&argument.0)
+            && !matches!(found.kind(), TyKind::Ref(_))
+        {
+            let keyword = index.checked_sub(args.len()).and_then(|k| kwargs.get(k));
+            let operand = keyword.map_or_else(
+                || format!("argument {index}"),
+                |(name, _)| format!("keyword argument '{name}'"),
+            );
+            errors.push(format!(
+                "{prefix}: {operand} of '{}' is received by address but passes a {found} value",
+                declaration.lowered_name
+            ));
+        }
+    }
     let plain = kwargs.is_empty()
         && declaration.variadic.is_none()
         && declaration.kw_variadic.is_none()
@@ -395,17 +428,6 @@ pub(super) fn verify_direct_call(
         {
             errors.push(format!(
                 "{prefix}: argument {index} of '{}' has type {found}, declared {expected}",
-                declaration.lowered_name
-            ));
-        }
-        if addressed
-            && crate::mir::by_address_parameter(declaration, cx.declarations, index).is_some()
-            && !matches!(expected.kind(), TyKind::Ref(_))
-            && let Some(found) = function.reg_types.get(&argument.0)
-            && !matches!(found.kind(), TyKind::Ref(_))
-        {
-            errors.push(format!(
-                "{prefix}: argument {index} of '{}' is received by address but passes a {found} value",
                 declaration.lowered_name
             ));
         }
@@ -1203,7 +1225,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             ));
         }
         if let Some(declaration) = declared(cx.declarations, target) {
-            verify_direct_call(cx, declaration, args, kwargs, false, errors);
+            verify_direct_call(cx, declaration, args, kwargs, None, errors);
         }
     }
 }

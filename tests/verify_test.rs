@@ -864,6 +864,52 @@ fn verifier_requires_a_reference_at_a_memory_only_read_argument() {
     );
 }
 
+/// A keyword operand at a by-address parameter must be a reference too, as
+/// upstream's `lit.call` takes a `!lit.ref` wherever the signature does,
+/// however the call site spelled the operand: the copy initializer's
+/// `copy=` and a method's keyword-only memory-only `read` argument alike.
+#[test]
+fn verifier_requires_a_reference_at_a_keyword_by_address_argument() {
+    let source = "struct Big(Copyable):\n    var a: String\n\n    def __init__(out self, a: String):\n        self.a = a\n\n    def __init__(out self, *, copy: Self):\n        self.a = copy.a\n\n    def take(self, *, other: Big) -> Int:\n        return other.a.byte_length()\n\ndef main():\n    var b = Big(\"q\")\n    var c = Big(copy=b)\n    print(b.take(other=c))\n";
+    let mir = lower_linked_source(source);
+    let errors = verify(&mir);
+    assert!(
+        errors.is_empty(),
+        "the keyword operands through ref.make verify: {errors:?}"
+    );
+    for (method, needle) in [
+        (
+            false,
+            "keyword argument 'copy' of 'Big.__copyinit__' is received by address but passes a Big value",
+        ),
+        (
+            true,
+            "keyword argument 'other' of 'Big.take' is received by address but passes a Big value",
+        ),
+    ] {
+        let mut mir = mir.clone();
+        let main = function_named(&mut mir, "main");
+        let argument = leaf_instructions_mut(&mut main.body)
+            .into_iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Call { func, kwargs, .. }
+                    if !method && func.0.contains("__copyinit__") =>
+                {
+                    Some(kwargs[0].1)
+                }
+                MirInstr::MethodCall {
+                    method: name,
+                    kwargs,
+                    ..
+                } if method && name == "take" => Some(kwargs[0].1),
+                _ => None,
+            })
+            .expect("main passes the keyword operand");
+        load_in_place_of_address(main, argument);
+        expect_finding(&mir, needle);
+    }
+}
+
 /// A memory-only `read self` receiver is received by address, as
 /// upstream's `lit.call` takes a `!lit.ref` of it: every verify point, the
 /// whole program's and one loaded function's alike, rejects a method call or
