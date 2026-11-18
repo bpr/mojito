@@ -2798,31 +2798,82 @@ impl Checker {
     }
 
     /// Require `expr` to be usable as a condition (`if`/`while`/ternary/
-    /// comprehension filter), recording a truthiness mark for MIR to convert
-    /// where [`Self::condition_truthiness`] asks for one. The conversion
-    /// reads its operand as upstream's `Bool.__init__[T: Boolable](value: T)`
-    /// does: a named struct, parameter, or pack-element value, or an element an accessor
-    /// returns by reference, is borrowed where it lies and a temporary is
-    /// read in its call-result slot, so nothing is copied.
+    /// comprehension filter/case guard), recording its truthiness test
+    /// where [`Self::condition_truthiness`] asks for one
+    /// ([`Self::record_truthiness`]).
     fn expect_bool(&self, expr: &Expr, context: &str) -> Result<(), TypeError> {
         let ty = self.infer(expr)?;
         if self.condition_truthiness(&ty, context)? {
-            self.record_at(expr.source_span()).truthiness_condition = true;
-            if !is_numeric(&ty) && !is_scalar_simd(&ty) {
-                let element = matches!(expr.kind, ExprKind::Index { .. })
-                    && self.infer_reference_value(expr).is_some();
-                if element {
-                    self.record_at(expr.source_span()).borrowed_read_call_place = true;
-                }
-                self.borrow_nominal_place_argument(expr, &ty);
-                self.borrow_parameter_place_argument(expr, &ty);
-                self.record_read_temporary_argument(expr);
-            }
+            self.record_truthiness(expr, &ty)?;
         }
         Ok(())
     }
 
-    /// Whether a condition of type `ty` converts through `Bool(x)`: `false`
+    /// Record truthiness test `operand`, of type `ty` other than `Bool`, as
+    /// upstream's IR generation emits it: the method call
+    /// `operand.__bool__()`, checked as any method call is, so it requires
+    /// a raising context where `__bool__` raises. Its contract is carried
+    /// on the operand ([`CheckedTruthinessCall`]), since the call has no
+    /// node of its own. A numeric scalar's or literal's test records no
+    /// call: it is that `@always_inline("builtin")` method's folded
+    /// `scalar.cast`. A receiver `__bool__` reads is read where it lies: a
+    /// named struct, parameter, or pack-element value, or an element an
+    /// accessor returns by reference, is borrowed in place and a temporary
+    /// is read in its call-result slot, so nothing is copied.
+    fn record_truthiness(&self, operand: &Expr, ty: &Ty) -> Result<(), TypeError> {
+        self.record_at(operand.source_span()).truthiness_condition = true;
+        if mojito_types::ct::ScalarConversion::Bool.casts_from(ty) {
+            return Ok(());
+        }
+        let receiver_ty = self.opaque_element(ty).unwrap_or_else(|| ty.clone());
+        let call_span = SourceSpan::syntax(
+            operand.source.clone(),
+            operand.span,
+            SyntaxId::derived(operand.syntax_id, TRUTHINESS_CALL_ORDINAL),
+        );
+        let result =
+            self.infer_operator_method_call(&call_span, operand, &receiver_ty, "__bool__", &[]);
+        let facts = self.node_facts.borrow_mut().remove(&call_span);
+        self.call_parameters.borrow_mut().remove(&call_span);
+        let Some(result) = result? else {
+            return Err(TypeError::MatchPattern(format!(
+                "'{ty}' does not implement the '__bool__' method"
+            )));
+        };
+        require_dunder_ret(result, &Ty::bool(), "__bool__")?;
+        let facts = facts.unwrap_or_default();
+        let call = facts.selected_call.ok_or_else(|| {
+            TypeError::Unsupported(format!(
+                "a truthiness test of '{ty}' whose '__bool__' selected no method"
+            ))
+        })?;
+        if matches!(
+            call.receiver_convention,
+            None | Some(mojito_ast::ast::ArgConvention::Imm)
+        ) {
+            let element = matches!(operand.kind, ExprKind::Index { .. })
+                && self.infer_reference_value(operand).is_some();
+            if element {
+                self.record_at(operand.source_span())
+                    .borrowed_read_call_place = true;
+            }
+            self.borrow_nominal_place_argument(operand, ty);
+            self.borrow_parameter_place_argument(operand, ty);
+            self.record_read_temporary_argument(operand);
+        }
+        self.record_at(operand.source_span()).truthiness_call =
+            Some(Box::new(mojito_checked::checked::CheckedTruthinessCall {
+                call,
+                instantiated_args: facts
+                    .method_instantiation
+                    .map(|instantiation| instantiation.arguments)
+                    .unwrap_or_default(),
+                raise_conversion: facts.raise_conversion,
+            }));
+        Ok(())
+    }
+
+    /// Whether a condition of type `ty` is tested through `x.__bool__()`: `false`
     /// for a `Bool`, `true` for a numeric scalar (`if n:` over an `Int`, a
     /// `Float64`, or a width-1 lane such as `if a == b` over `UInt64`s), a
     /// `Boolable` type parameter or pack element, or a struct whose
@@ -2853,6 +2904,11 @@ impl Checker {
         }
     }
 }
+
+/// The ordinal of a truthiness test's `__bool__` call among the
+/// occurrences derived from its operand, past every ordinal a desugar
+/// derives, so the call's facts never meet the operand's own.
+const TRUTHINESS_CALL_ORDINAL: u32 = u32::MAX - 64;
 
 impl Default for Checker {
     fn default() -> Self {

@@ -394,21 +394,17 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// A condition's `Bool`: its value, or, for a `Boolable` struct the
-    /// checker marked `Truthiness`, the `Bool(x)` conversion of it, which
-    /// reads a place the checker marked `BorrowReadArgument` where it lies
-    /// and a temporary in its call-result slot.
+    /// A condition's `Bool`: its value, or, for an operand the checker
+    /// marked a truthiness test, its `__bool__` test
+    /// ([`Self::truthiness_test`]), which reads a place where it lies and a
+    /// temporary in its call-result slot.
     pub(super) fn condition_value(&mut self, condition: Node<'a>) -> Reg {
-        let boolable = condition
-            .adjustments()
-            .iter()
-            .any(|adjustment| matches!(adjustment, SemanticAdjustment::Truthiness));
-        if !boolable {
+        if !condition.is_truthiness_test() {
             let value = self.expr(condition);
             return self.field_referent(condition, value);
         }
         let value = self.truthiness_operand(condition);
-        self.bool_conversion(condition.location(), value, condition.ty().as_ref())
+        self.truthiness_test(condition, value)
     }
 
     /// `e` read by a consumer with a read convention: a place the checker

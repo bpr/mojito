@@ -1604,6 +1604,7 @@ assets/ok/trivial_register_passable_copy_forwarded.mojo	-	ineligible	no-scalar-e
 assets/ok/trivial_register_passable_self_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trivial_register_transfer_copies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/truthiness_operand_by_address.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/truthiness_raising_bool.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_break_continue.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_else_raise_crosses_finally.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_finally_break_carries_value.mojo	-	ineligible	no-scalar-entry-shape

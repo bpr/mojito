@@ -39,7 +39,7 @@ impl CommonType {
 impl Checker {
     pub(super) fn infer_prefix(
         &self,
-        span: SourceSpan,
+        span: &SourceSpan,
         op: PrefixOp,
         operand: &Expr,
     ) -> Result<Ty, TypeError> {
@@ -50,7 +50,7 @@ impl Checker {
         if op != PrefixOp::Not
             && self.declared_receiver_member(&t, op.dunder()).is_some()
             && let Some(ty) =
-                self.infer_operator_method_call(&span, operand, &t, op.dunder(), &[])?
+                self.infer_operator_method_call(span, operand, &t, op.dunder(), &[])?
         {
             return Ok(ty);
         }
@@ -62,6 +62,7 @@ impl Checker {
             // A numeric scalar is `Boolable`: `not n` over an `Int`, or
             // `not (a == b)` over `UInt64`s.
             (PrefixOp::Not, _) if is_numeric(&t) || is_scalar_simd(&t) => {
+                self.record_truthiness(operand, &t)?;
                 return Ok(Ty::bool());
             }
             _ => {}
@@ -72,24 +73,9 @@ impl Checker {
         if op != PrefixOp::Not
             && is_bound_archetype(&t)
             && let Some(ty) =
-                self.infer_operator_method_call(&span, operand, &t, op.dunder(), &[])?
+                self.infer_operator_method_call(span, operand, &t, op.dunder(), &[])?
         {
             return Ok(ty);
-        }
-        // `not x` over a type parameter bounded by `Boolable` is
-        // `not Bool(x)`, its `__bool__` requirement's conversion, which
-        // reads a place where it lies: the initializer's declared
-        // `read value: T` (`T: Boolable`) takes it by address.
-        if op == PrefixOp::Not && self.param_has_bound(&t, "Boolable") {
-            self.borrow_operator_operand(operand, &t);
-            self.record_read_temporary_argument(operand);
-            self.record_operand_convention(
-                &span,
-                mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
-                None,
-                true,
-            );
-            return Ok(Ty::bool());
         }
         // A user struct's `-x`, `~x`, and `+x` are its dunder calls
         // `x.__neg__()`, `x.__invert__()`, and `x.__pos__()`, as upstream's
@@ -97,39 +83,18 @@ impl Checker {
         if op != PrefixOp::Not
             && self.is_checked_struct(&t)
             && let Some(ty) =
-                self.infer_operator_method_call(&span, operand, &t, op.dunder(), &[])?
+                self.infer_operator_method_call(span, operand, &t, op.dunder(), &[])?
         {
             return Ok(ty);
         }
-        // `not x` is `not x.__bool__()`, raising what `__bool__` raises.
+        // `not x` is `not x.__bool__()`, its operand's truthiness test,
+        // raising what `__bool__` raises.
         if op == PrefixOp::Not
-            && let Some(result) = self.struct_dunder(&t, op.dunder(), &[])
+            && (self.param_has_bound(&t, "Boolable")
+                || self.struct_dunder(&t, op.dunder(), &[]).is_some())
         {
-            let ret = result?;
-            let signature = self
-                .struct_dunder_signature_for(&t, op.dunder(), &[])
-                .map(|(_, sig, _)| sig);
-            let convention = signature.map(|sig| sig.self_convention);
-            if convention.is_some_and(reads) {
-                self.borrow_operator_operand(operand, &t);
-                self.record_read_temporary_argument(operand);
-            }
-            if let Some(convention) = convention {
-                self.record_operand_convention(
-                    &span,
-                    mojito_checked::checked::CheckedCallArgumentSource::Positional(0),
-                    convention,
-                    self.declared_by_address(convention, &t),
-                );
-            }
-            if let Some(error) = signature.and_then(dunder_error) {
-                self.require_call_error(
-                    span,
-                    format!("raising operator '{}'", op.symbol()),
-                    error,
-                )?;
-            }
-            return require_dunder_ret(ret, &Ty::bool(), "__bool__");
+            self.record_truthiness(operand, &t)?;
+            return Ok(Ty::bool());
         }
         Err(TypeError::BadOperator {
             op: op.symbol().to_string(),
@@ -524,7 +489,7 @@ impl Checker {
     }
 
     /// Type `left and right` or `left or right` as upstream's `emitAndOr`
-    /// does: the left operand is tested through its `Bool(x)` truthiness,
+    /// does: the left operand is tested through its `__bool__` call,
     /// a `Truthiness` mark on it where it is not a `Bool`, and the result is
     /// the operand the test selects. Operands with a common type
     /// ([`Self::coerce_to_each_other`]) yield that type (`n or 2` is an
@@ -555,7 +520,7 @@ impl Checker {
             return Ok(Ty::bool());
         };
         if self.condition_truthiness(&lt, &context)? {
-            self.record_at(left.source_span()).truthiness_condition = true;
+            self.record_truthiness(left, &lt)?;
         }
         for (operand, operand_ty) in [(left, &lt), (right, &rt)] {
             if self.designates_place(operand) && self.is_copyable(operand_ty) {
@@ -1575,12 +1540,6 @@ fn bad_infix_operator(op: InfixOp, lt: &Ty, rt: &Ty) -> TypeError {
         op: op.symbol().to_string(),
         operands: format!("{lt} and {rt}"),
     }
-}
-
-/// The error a selected dunder raises, if it raises.
-fn dunder_error(sig: &MethodSig) -> Option<Ty> {
-    sig.raises
-        .then(|| sig.error.clone().unwrap_or_else(Ty::error))
 }
 
 /// Whether a dunder's convention for one operand reads it.

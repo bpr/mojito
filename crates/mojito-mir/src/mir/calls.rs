@@ -124,21 +124,44 @@ impl<'a> Flatten<'a> {
         self.lower_call_argument_with(expression, CheckedCallArgumentSource::Positional(0))
     }
 
-    /// The operand of truthiness test `operand`'s `Bool(x)`, the receiver
-    /// of its `__bool__`, which takes `read self`: a type the check proved
+    /// The operand of truthiness test `operand`, the receiver of its
+    /// `__bool__` call: a `read self` of a type the check proved
     /// register-passable (`RegisterPassableRead`) is read as a value, and
     /// any other is the immutable address of its place, or of the storage
     /// a temporary is materialized in, as upstream's `lit.call` takes the
-    /// `!lit.ref` of a memory-only `x`. A result slot an `and`/`or` or a
-    /// ternary forwards is read where it lies: the test borrows the
-    /// temporary rather than taking it. An operand its consumer already
-    /// bound (`not x`'s) keeps that binding.
+    /// `!lit.ref` of a memory-only `x`; a `mut self` receiver is its
+    /// place's mutable address. A result slot an `and`/`or` or a ternary
+    /// forwards is read where it lies: the test borrows the temporary
+    /// rather than taking it.
     pub(super) fn truthiness_operand(&mut self, operand: Node<'a>) -> Reg {
         use mojito_types::origin::Mutability;
-        if self.operand_binding(operand).is_none() {
-            let by_address = !operand.register_passable_read();
-            self.bind_operand(operand, Some(OperandBinding::Read { by_address }));
+        let call = operand
+            .truthiness_call()
+            .map(|truthiness| &*truthiness.call);
+        let register_passable = operand.register_passable_read();
+        let by_address = call.map_or_else(
+            || (!register_passable).then_some(Mutability::Immutable),
+            |call| match call.receiver_convention {
+                Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref) => {
+                    Some(Mutability::Mutable)
+                }
+                _ => receiver_by_address(call, register_passable),
+            },
+        );
+        if by_address == Some(Mutability::Mutable) {
+            self.bind_operand(operand, None);
+            let lowered = self.lower_call_receiver(operand);
+            return self
+                .address_lowered_operand(operand.location(), lowered, Mutability::Mutable)
+                .0;
         }
+        let binding = match call.and_then(OperandBinding::of_receiver) {
+            Some(OperandBinding::Owned) => OperandBinding::Owned,
+            _ => OperandBinding::Read {
+                by_address: by_address.is_some(),
+            },
+        };
+        self.bind_operand(operand, Some(binding));
         if !self.read_by_address_binding(operand) {
             return self.read_operand(operand);
         }

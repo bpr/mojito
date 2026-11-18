@@ -3093,9 +3093,6 @@ impl<'a> Specializer<'a> {
         // Argument loads a devirtualized capturing call needs, spliced in
         // ahead of the call once the walk over this block is done.
         let mut preludes: Vec<(usize, Vec<MirInstr>)> = Vec::new();
-        // The results of calls rewritten to a cast, whose binding is no
-        // longer a call's result storage.
-        let mut casts = HashSet::new();
         for (index, instruction) in block.instrs.iter_mut().enumerate() {
             let regions = mojito_mir::mir::instruction_regions_mut(instruction);
             if !regions.is_empty() {
@@ -3103,11 +3100,6 @@ impl<'a> Specializer<'a> {
                     self.rewrite_blocks(owner, function, region)?;
                 }
                 continue;
-            }
-            if let MirInstr::DefVar { src, in_place, .. } = instruction
-                && casts.contains(&src.0)
-            {
-                *in_place = false;
             }
             // A `def(...)` bound's `__call__` requirement called on an
             // inflated function type is its callee's direct call.
@@ -3138,10 +3130,6 @@ impl<'a> Specializer<'a> {
             // it into an ordinary method call so the shared resolver and
             // the `MethodCall` arm below monomorphize the dunder instance
             // like any other method.
-            // MIR's truthiness conversion `Bool(x)` (a spelled `Bool(x)`
-            // calls its declared initializer) over a scalar operand is its
-            // `scalar.cast`; other non-struct operands pass through for
-            // the backend's scalar interception.
             if let MirInstr::Call {
                 dest,
                 func,
@@ -3150,74 +3138,24 @@ impl<'a> Specializer<'a> {
                 raises,
                 ..
             } = instruction
-            {
-                let dunder = match func.0.as_str() {
-                    "abs" => Some("__abs__"),
-                    // A truthiness `Bool(x)` over a nominal receiver
-                    // is the dunder's call.
-                    "Bool" => Some("__bool__"),
-                    _ => None,
-                };
-                let builtin = !self.functions.contains_key(func.0.as_str());
-                let operand = args
+                && func.0 == "abs"
+                && !self.functions.contains_key(func.0.as_str())
+                && kwargs.is_empty()
+                && args.len() == 1
+                && args
                     .first()
                     .and_then(|arg| function.reg_types.get(&arg.0))
-                    .map(peel_refs);
-                // A vector is no scalar cast's source: its `Bool(x)` is
-                // `SIMD`'s declared `__bool__`, whose instance asserts. A
-                // string literal's is `StringLiteral`'s.
-                let bool_cast = mojito_types::ct::ScalarConversion::Bool;
-                let vector = |operand: &Ty| {
-                    operand.is_simd()
-                        && func.0 == bool_cast.name()
-                        && !bool_cast.casts_from(operand)
-                };
-                if let Some(method) = dunder
-                    && builtin
-                    && kwargs.is_empty()
-                    && args.len() == 1
-                    && operand.is_some_and(|operand| {
-                        operand.is_non_simd_struct()
-                            || operand.kind().string_literal_value().is_some()
-                            || vector(operand)
-                    })
-                {
-                    *instruction = dunder_method_call(
-                        *dest,
-                        args[0],
-                        method,
-                        None,
-                        raises.take(),
-                        args[1..].to_vec(),
-                    );
-                } else if builtin && kwargs.is_empty() && func.0 == bool_cast.name() {
-                    // A template passes a `Boolable` operand by address;
-                    // at an instance the builtin answers itself, it is
-                    // read through, as `LowerArgConventions` loads a
-                    // `!lit.ref` at a by-value slot.
-                    let loads = mojito_mir::mir::read_addressed_operands(function, args.iter_mut());
-                    if !loads.is_empty() {
-                        preludes.push((index, loads));
-                    }
-                    if raises.is_none()
-                        && let [value] = args.as_slice()
-                        && function
-                            .reg_types
-                            .get(&value.0)
-                            .is_some_and(|ty| bool_cast.casts_from(ty))
-                    {
-                        // A truthiness `Bool(x)` a template tests over a
-                        // type parameter is, at a scalar instance, the
-                        // cast MIR emits where the operand is spelled
-                        // scalar.
-                        casts.insert(dest.0);
-                        *instruction = MirInstr::ScalarCast {
-                            dest: *dest,
-                            value: *value,
-                            target: bool_cast,
-                        };
-                    }
-                }
+                    .map(peel_refs)
+                    .is_some_and(|operand| operand.is_non_simd_struct())
+            {
+                *instruction = dunder_method_call(
+                    *dest,
+                    args[0],
+                    "__abs__",
+                    None,
+                    raises.take(),
+                    args[1..].to_vec(),
+                );
             }
             if let Some(folded) = folded_literal_operator(instruction, &function.reg_types) {
                 *instruction = folded;
@@ -3225,7 +3163,7 @@ impl<'a> Specializer<'a> {
             }
             // A prefix `-`/`~` on a struct operand, a `SIMD` among them,
             // calls its dunder (`__neg__`/`__invert__`); `not` arrives
-            // already converted through `Bool(x)` by MIR. Only a
+            // over the `Bool` its operand's `__bool__` returned. Only a
             // register-passable operand reaches here: MIR lowers an
             // operator its check contracted as its method's call, whose
             // receiver is addressed where the method takes it so.

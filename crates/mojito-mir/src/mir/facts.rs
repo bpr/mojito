@@ -730,6 +730,30 @@ impl<'a> Node<'a> {
         callable_target(self.adjustments())
     }
 
+    /// Whether the check marked this operand a truthiness test
+    /// ([`mojito_checked::checked::SemanticAdjustment::Truthiness`]).
+    pub(super) fn is_truthiness_test(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::Truthiness(_)
+            )
+        })
+    }
+
+    /// The `__bool__` call this truthiness test makes of its operand;
+    /// `None` for a scalar's test, which is a `scalar.cast`.
+    pub(super) fn truthiness_call(
+        self,
+    ) -> Option<&'a mojito_checked::checked::CheckedTruthinessCall> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::Truthiness(call) => call.as_deref(),
+                _ => None,
+            })
+    }
+
     /// What each link of this chained comparison dispatched, in link order;
     /// empty when the check recorded none.
     pub(super) fn compare_links(self) -> &'a [mojito_checked::checked::CheckedCompareLink] {

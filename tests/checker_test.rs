@@ -6566,6 +6566,40 @@ fn raising_iter_normalization_obeys_the_enclosing_effect_context() {
     ));
 }
 
+/// A truthiness test is its operand's `x.__bool__()` call, as upstream's
+/// IR generation emits it: a raising `__bool__` needs a raising context in
+/// a condition and under `not` alike, and its contract rides on the
+/// operand's `Truthiness` record.
+#[test]
+fn truthiness_test_is_a_bool_call_in_the_enclosing_effect_context() {
+    let declarations = "struct R(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __bool__(self) raises -> Bool:\n        return self.v != 0\n\n";
+    let raising = |error: TypeError| matches!(error, TypeError::UnhandledRaise(operation) if operation.contains("__bool__"));
+    assert!(raising(
+        check_with_std(&format!(
+            "{declarations}def t(r: R) -> Int:\n    if r:\n        return 1\n    return 0\n"
+        ))
+        .expect_err("a raising `__bool__` in a non-raising condition")
+    ));
+    assert!(raising(
+        check_with_std(&format!(
+            "{declarations}def t(r: R) -> Bool:\n    return not r\n"
+        ))
+        .expect_err("a raising `__bool__` under a non-raising `not`")
+    ));
+    let checked = checked_with_std(&format!(
+        "{declarations}def t(r: R) raises -> Int:\n    if r:\n        return 1\n    return 0\n"
+    ))
+    .expect("a raising `__bool__` in a raising condition checks");
+    let calls: Vec<_> = own_expressions(&checked)
+        .flat_map(|expression| expression.adjustments.iter())
+        .filter_map(|adjustment| match adjustment {
+            SemanticAdjustment::Truthiness(Some(call)) => Some(call.call.target.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls, vec!["R.__bool__".to_string()]);
+}
+
 #[test]
 fn unsafe_pointer_typing() {
     // alloc + index read/write + free type-check.

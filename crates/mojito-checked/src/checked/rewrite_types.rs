@@ -20,10 +20,10 @@ use super::{
     CheckedIterationBinding, CheckedIteratorCall, CheckedMethod, CheckedOp, CheckedParamArg,
     CheckedParameter, CheckedProgram, CheckedSequenceTarget, CheckedSignature, CheckedSliceLiteral,
     CheckedStmt, CheckedStmtOp, CheckedStorageField, CheckedStruct, CheckedSubscriptWriteBack,
-    CheckedTables, CheckedTarget, CheckedTargetKind, CheckedTupleUnpackElement, ComptimeIteration,
-    ConformanceFacts, ConversionMaterialization, DeclarationEffect, EffectFacts,
-    GenericInstantiation, IterationProtocol, MethodInstantiation, OmittedSliceOperand,
-    ReflectedFieldStep, SemanticAdjustment, StructInstantiation,
+    CheckedTables, CheckedTarget, CheckedTargetKind, CheckedTruthinessCall,
+    CheckedTupleUnpackElement, ComptimeIteration, ConformanceFacts, ConversionMaterialization,
+    DeclarationEffect, EffectFacts, GenericInstantiation, IterationProtocol, MethodInstantiation,
+    OmittedSliceOperand, ReflectedFieldStep, SemanticAdjustment, StructInstantiation,
 };
 use crate::declaration::{
     ParameterizedAssociatedType, ParameterizedAssociatedValue, TraitDeclaration, TraitRequirement,
@@ -457,6 +457,19 @@ impl RewriteTypes for CheckedCompareLink {
     }
 }
 
+impl RewriteTypes for CheckedTruthinessCall {
+    fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
+        let Self {
+            call,
+            instantiated_args,
+            raise_conversion,
+        } = self;
+        call.rewrite_types(rewrite);
+        instantiated_args.rewrite_types(rewrite);
+        raise_conversion.rewrite_types(rewrite);
+    }
+}
+
 impl RewriteTypes for ReflectedFieldStep {
     fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
         match self {
@@ -507,6 +520,9 @@ impl RewriteTypes for SemanticAdjustment {
                 arguments.rewrite_types(rewrite);
             }
             Self::ConversionResultType(f0) => {
+                f0.rewrite_types(rewrite);
+            }
+            Self::Truthiness(f0) => {
                 f0.rewrite_types(rewrite);
             }
             Self::ConversionRaises(f0) => {
@@ -731,7 +747,6 @@ impl RewriteTypes for SemanticAdjustment {
             | Self::ImplicitlyCopyConsumingReceiver
             | Self::ReflectedOperator
             | Self::ReceiverFromFirstArgument { inner: _ }
-            | Self::Truthiness
             | Self::RegisterPassableResult
             | Self::RegisterPassableRead
             | Self::RegisterPassableConsume

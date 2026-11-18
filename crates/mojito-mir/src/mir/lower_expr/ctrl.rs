@@ -71,37 +71,82 @@ pub(super) fn array_literal_plan(node: &CheckedExpr) -> Option<(Ty, String)> {
 }
 
 impl<'a> Flatten<'a> {
-    /// `Bool(x)` of `value`, of the checked type `operand`: the `scalar.cast`
-    /// of a scalar, and otherwise the `Bool` call the elaborator resolves to
-    /// its type's `__bool__`.
-    pub(in crate::mir) fn bool_conversion(
-        &mut self,
-        span: SourceSpan,
-        value: Reg,
-        operand: Option<&Ty>,
-    ) -> Reg {
+    /// The `Bool` of scalar `value` (a numeric scalar, a numeric literal, a
+    /// `Bool`): its `scalar.cast`, the folded body of the
+    /// `@always_inline("builtin")` `__bool__` upstream calls.
+    pub(in crate::mir) fn scalar_truth(&mut self, span: SourceSpan, value: Reg) -> Reg {
         let dest = self.fresh_typed(span, None, Ty::bool());
-        if operand.is_some_and(|ty| ScalarConversion::Bool.casts_from(ty)) {
-            self.emit(MirInstr::ScalarCast {
-                dest,
-                value,
-                target: ScalarConversion::Bool,
-            });
-            return dest;
-        }
-        self.emit(MirInstr::Call {
+        self.emit(MirInstr::ScalarCast {
+            dest,
+            value,
+            target: ScalarConversion::Bool,
+        });
+        dest
+    }
+
+    /// The truth of `value`, the receiver [`Self::truthiness_operand`]
+    /// lowered for truthiness test `operand`: the `x.__bool__()` call the
+    /// check recorded for it, as upstream's IR generation emits for every
+    /// truthiness test, raising what that `__bool__` raises, or a scalar's
+    /// [`Self::scalar_truth`].
+    pub(in crate::mir) fn truthiness_test(&mut self, operand: Node<'a>, value: Reg) -> Reg {
+        let span = operand.location();
+        let Some(truthiness) = operand.truthiness_call() else {
+            if operand
+                .ty()
+                .is_some_and(|ty| !ScalarConversion::Bool.casts_from(&ty))
+            {
+                return self.unsupported_value(
+                    span,
+                    "a truthiness test of a non-scalar operand recorded no `__bool__` call",
+                );
+            }
+            return self.scalar_truth(span, value);
+        };
+        let call = &truthiness.call;
+        let dest = self.fresh_typed(span.clone(), None, Ty::bool());
+        let mut raises = self.raises(call.raises.clone(), span.clone());
+        self.convert_raised(
+            raises.as_mut(),
+            truthiness.raise_conversion.as_deref().cloned(),
+            span,
+        );
+        self.emit_call(MirInstr::MethodCall {
             conventions: crate::mir::MirArgConventions::default(),
             dest,
-            func: FuncRef::named("Bool"),
-            raises: None,
-            args: vec![value],
+            recv: value,
+            method: "__bool__".to_string(),
+            resolved: Some(call.target.clone()),
+            raises: raises.clone(),
+            reference_result: None,
+            result_adapter: None,
+            args: Vec::new(),
             kwargs: Vec::new(),
+            recv_writes: matches!(
+                call.receiver_convention,
+                Some(
+                    mojito_ast::ast::ArgConvention::Mut
+                        | mojito_ast::ast::ArgConvention::Ref
+                        | mojito_ast::ast::ArgConvention::Var
+                        | mojito_ast::ast::ArgConvention::Deinit
+                )
+            ),
+            receiver_convention: call.receiver_convention,
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
-            receiver: None,
-            instantiated_args: Vec::new(),
+            param_decls: call.param_decls.clone(),
+            instantiated_args: if call.param_decls.is_empty() {
+                Vec::new()
+            } else {
+                truthiness.instantiated_args.clone()
+            },
             spread: None,
+            refined_bound: call
+                .refined_bound
+                .clone()
+                .map(crate::mir::MirRefinedBound::boxed),
         });
+        self.error_region(raises);
         dest
     }
 
@@ -111,7 +156,7 @@ impl<'a> Flatten<'a> {
     /// when needed, which matters for observable side effects and for
     /// ownership, where a moved operand on the not-taken side must not
     /// count as moved. A left operand the checker marked `Truthiness` is
-    /// tested through `Bool(a)`: when the result is `Bool` that conversion
+    /// tested through `a.__bool__()`: when the result is `Bool` that test
     /// is what its arm yields, and the right arm converts `b` likewise.
     /// Otherwise the arm yields `a`'s own value: a scalar's directly, and
     /// any other's from the slot it is held in for its `__bool__` to read
@@ -124,11 +169,7 @@ impl<'a> Flatten<'a> {
         a: Node<'a>,
         b: Node<'a>,
     ) -> Reg {
-        let value_result = (a
-            .adjustments()
-            .iter()
-            .any(|adjustment| matches!(adjustment, SemanticAdjustment::Truthiness))
-            || converts_left_operand(a))
+        let value_result = (a.is_truthiness_test() || converts_left_operand(a))
             && !node.ty().is_some_and(|ty| ty.is_bool());
         if value_result && !node.register_passable_result() {
             return self.short_circuit_into_slot(node, op, a, b);
@@ -140,7 +181,7 @@ impl<'a> Flatten<'a> {
                 .as_ref()
                 .is_some_and(|ty| ScalarConversion::Bool.casts_from(ty))
             {
-                let cond = self.bool_conversion(a.location(), ra, ty.as_ref());
+                let cond = self.scalar_truth(a.location(), ra);
                 let lhs = self.region(|this| MirTerm::Yield(vec![this.convert_tested(a, ra)]));
                 (cond, lhs)
             } else {
@@ -255,7 +296,7 @@ impl<'a> Flatten<'a> {
 
     /// Lower `a and b` / `a or b` whose result is `a`'s type and not
     /// register-passable, as upstream emits a memory-only result: `a` is
-    /// held for its `Bool(a)` test ([`Self::hold_tested_operand`]), and
+    /// held for its `a.__bool__()` test ([`Self::hold_tested_operand`]), and
     /// each arm moves its operand into the result slot, which the consumer
     /// receives as a forward.
     fn short_circuit_into_slot(
@@ -339,7 +380,7 @@ impl<'a> Flatten<'a> {
     }
 
     /// Hold `value`, the owned value of `a`'s operand of type `ty`, in a
-    /// slot of its own and read it there for its `Bool(a)` test, as
+    /// slot of its own and read it there for its `a.__bool__()` test, as
     /// upstream decays a non-trivial left operand of `and`/`or` to memory
     /// so the test borrows it: a type the check did not prove
     /// register-passable is passed as the slot's immutable address, the
@@ -375,7 +416,7 @@ impl<'a> Flatten<'a> {
             )
             .0
         };
-        (held, self.bool_conversion(a.location(), read, ty))
+        (held, self.truthiness_test(a, read))
     }
 
     /// Move `a`'s value out of `held`, the slot holding it, of type `ty`.

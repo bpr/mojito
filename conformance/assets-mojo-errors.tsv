@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1223
+# swept-count	1228
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/mut_origin_binder_generic_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(anonymous*)]' to 'Pointer[T, o]'
@@ -1163,6 +1163,8 @@ assets/type_error/trait_result_origin_read_self.mojo	compile-reject	agree	error:
 assets/type_error/trait_value_member_not_required.mojo	compile-reject	agree	error: 'HasK' value has no attribute 'Z'
 assets/type_error/transfer_into_mut_parameter.mojo	compile-reject	agree	error: invalid call to 'poke': value passed to mutable argument 't' must be mutable
 assets/type_error/trivial_register_passable_bound_undeclared.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'S' to 'T', argument type 'S' does not conform to trait 'TrivialRegisterPassable'
+assets/type_error/truthiness_not_raising_bool_nonraising_context.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
+assets/type_error/truthiness_raising_bool_nonraising_context.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
 assets/type_error/tstring_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'TString[origin_of(anonymous*), origin_of(__call_result_tmp__)]' value to 'String'
 assets/type_error/tstring_concat.mojo	compile-reject	agree	error: 'TString[ImmUntrackedOrigin, origin_of(__call_result_tmp__)]' does not implement the '__add__' method
 assets/type_error/tstring.mojo	compile-reject	agree	error: no matching function in initialization

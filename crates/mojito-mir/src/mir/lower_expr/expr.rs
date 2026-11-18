@@ -335,14 +335,11 @@ impl<'a> Flatten<'a> {
         self.emit_nested_closure_argument_keepalives(&[value], &[]);
         self.error_region(raises);
         if matches!(op, InfixOp::NotIn) {
-            // `not` negates the scalar the declared `Bool` converts to, as
-            // `prefix_op` negates any `not x` over a struct.
-            let scalar = self.bool_conversion(node.location(), contains, Some(&Ty::bool()));
             let dest = self.fresh_typed(node.location(), None, Ty::bool());
             self.emit(MirInstr::UnOp {
                 op: PrefixOp::Not,
                 dest,
-                a: scalar,
+                a: contains,
                 raises: None,
             });
             dest
@@ -899,29 +896,24 @@ impl<'a> Flatten<'a> {
         if op != PrefixOp::Not && node.call_contract().is_some() {
             return self.ordinary_method_call(node, value, op.dunder(), &[], &[]);
         }
+        // `not x` over anything but a `Bool` is `not x.__bool__()`, as
+        // upstream's IR generation emits it: the check marked its operand a
+        // truthiness test, so the negation is scalar on both backends.
+        if op == PrefixOp::Not && value.is_truthiness_test() {
+            let receiver = self.truthiness_operand(value);
+            let truth = self.truthiness_test(value, receiver);
+            let d = self.fresh_typed(node.location(), None, Ty::bool());
+            self.emit(MirInstr::UnOp {
+                op,
+                dest: d,
+                a: truth,
+                raises: None,
+            });
+            return d;
+        }
         self.bind_call_operands(node, 0, &[value], &[]);
-        // `not x` on a struct, a string literal, a numeric scalar, a
-        // vector, or a `Boolable` type parameter is `not x.__bool__()`:
-        // convert through the explicit `Bool(x)` call, its operand
-        // `__bool__`'s receiver ([`Self::truthiness_operand`]), so the
-        // negation is scalar on both backends.
-        let ra = if op == PrefixOp::Not
-            && value.ty().is_some_and(|ty| {
-                ty.is_simd()
-                    || matches!(ty.kind(), TyKind::Struct(..) | TyKind::Param { .. })
-                    || mojito_types::conformance::is_numeric(&ty)
-            }) {
-            let ra = if self.read_by_address_binding(value) {
-                self.truthiness_operand(value)
-            } else {
-                let ra = self.lower_operator_operand(node, value);
-                self.field_referent(value, ra)
-            };
-            self.bool_conversion(value.location(), ra, value.ty().as_ref())
-        } else {
-            let ra = self.lower_operator_operand(node, value);
-            self.field_referent(value, ra)
-        };
+        let ra = self.lower_operator_operand(node, value);
+        let ra = self.field_referent(value, ra);
         let d = self.fresh(node.location(), None);
         let raises = self.call_raises(node, node.raises());
         self.emit(MirInstr::UnOp {

@@ -658,6 +658,20 @@ pub struct CheckedCompareLink {
     pub right_adjustments: Vec<CheckedCallValueAdjustment>,
 }
 
+/// The `__bool__` call a truthiness test makes of its operand.
+///
+/// It is the method call upstream's IR generation emits for `if x:`,
+/// `not x`, and an `and`/`or` left operand, `x.__bool__()`, which has no
+/// node of its own: the selected method's contract, the compile-time
+/// arguments a generic `__bool__`'s call solved, and the conversion its
+/// raised error takes to the error type the context propagates.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CheckedTruthinessCall {
+    pub call: Box<CheckedCallContract>,
+    pub instantiated_args: Vec<mojito_types::types::TyArg>,
+    pub raise_conversion: Option<Box<ConversionMaterialization>>,
+}
+
 /// The field a `reflect[T].field_ref[idx](s)` reference selects: named
 /// once its subject and index are closed, or still the index while either
 /// is a parameter, which the elaborator closes per instance.
@@ -955,8 +969,7 @@ pub enum SemanticAdjustment {
     /// call's run-time arguments by, one per argument, the elements its
     /// `*args` collector gathers included, for a call that records no
     /// [`CheckedCallContract`] (whose [`CheckedCallContract::arguments`]
-    /// carry them): a free function's, a construction's, a builtin's, or
-    /// the operand of a `not` the operand's `__bool__` or `Bool(x)` takes.
+    /// carry them): a free function's, a construction's, or a builtin's.
     /// Lowering reads or takes each operand by it, as upstream's call
     /// emission reads each argument's convention off the callee's signature.
     CallConventions(Vec<CheckedArgumentConvention>),
@@ -1001,10 +1014,13 @@ pub enum SemanticAdjustment {
     ReceiverFromFirstArgument {
         inner: Option<Box<Self>>,
     },
-    /// A condition (`if`/`while`/ternary/comprehension filter) whose value
-    /// is a `Boolable` struct: MIR converts it through `Bool(x)`, i.e. the
-    /// struct's `__bool__`.
-    Truthiness,
+    /// A truthiness test (`if`/`while`/ternary/comprehension filter/case
+    /// guard condition, `not`'s operand, an `and`/`or` left operand) of a
+    /// value that is not a `Bool`: MIR tests it through `x.__bool__()`,
+    /// the call the record carries, as upstream's IR generation emits it.
+    /// A numeric scalar's or literal's test carries none: it is that
+    /// `@always_inline("builtin")` method's folded `scalar.cast`.
+    Truthiness(Option<Box<CheckedTruthinessCall>>),
     /// A conditional expression whose result type is proven
     /// register-passable: lowering yields it from its `if` as a value, as
     /// upstream's `mergeCValuesAcrossIfLikeOp` does. Any other result is
@@ -6234,7 +6250,7 @@ impl<'a> ArenaBuilder<'a> {
             .collect();
         let truthiness = facts
             .truthiness_condition
-            .then_some(SemanticAdjustment::Truthiness);
+            .then(|| SemanticAdjustment::Truthiness(facts.truthiness_call.clone()));
         let loops: Vec<SemanticAdjustment> = facts
             .iteration_protocol
             .iter()
@@ -7330,7 +7346,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
         adjustments.push(SemanticAdjustment::ReflectedOperator);
     }
     if facts.truthiness_condition {
-        adjustments.push(SemanticAdjustment::Truthiness);
+        adjustments.push(SemanticAdjustment::Truthiness(
+            facts.truthiness_call.clone(),
+        ));
     }
     if facts.register_passable_result {
         adjustments.push(SemanticAdjustment::RegisterPassableResult);
@@ -7685,6 +7703,9 @@ node_facts! {
         declared_result: Ty,
         /// How a `^` takes its source ([`SemanticAdjustment::Transfer`]).
         transfer_verdict: TransferVerdict,
+        /// The `__bool__` call a truthiness test of this operand makes
+        /// ([`SemanticAdjustment::Truthiness`]).
+        truthiness_call: Box<CheckedTruthinessCall>,
     }
     flags {
         explicit_destroy_call,

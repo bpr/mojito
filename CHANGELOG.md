@@ -794,6 +794,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A truthiness test is now its operand's `x.__bool__()` call, as upstream's
+  IR generation emits it, rather than a builtin `Bool(x)` the elaborator
+  rewrote. A raising `__bool__` now raises from an `if`/`while`/ternary
+  condition, `not x`, and an `and`/`or` operand, where Mojito reported it
+  unhandled or the native backend rejected it, and it requires a raising
+  context, which Mojito did not ask
+  (`assets/ok/truthiness_raising_bool.mojo`, R2318).
+
 - A run-time parameter of a non-`thin` `def(...)` type no longer takes a
   thin function or answers a call: that spelling names a trait at the pin,
   so passing a value to it and calling through it are both rejected

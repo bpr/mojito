@@ -2592,8 +2592,8 @@ a hidden pointer slot (`Flatten::pointee_place`), a conditional's result
 slot or a capturing lambda's storage slot, a temporary's hidden `$mat_r`
 slot (`Flatten::materialize_operand`), and a chained comparison's left
 operand its place (`Flatten::chain_link_address`), and a truthiness
-test's operand, the receiver of the `__bool__` the elaborator resolves
-`Bool(x)` to, the address of its place, its temporary's storage, its
+test's operand, the receiver of its `__bool__` call, the address of
+its place, its temporary's storage, its
 held `and`/`or` slot, or the result slot a conditional forwards
 (`Flatten::truthiness_operand`, `hold_tested_operand`). A `call.indirect`, and a `def(...)` bound's
 `__call__` call, bind their operands by a function type, so
@@ -6451,13 +6451,16 @@ current Mojo:
   field transfer (`mk().s^`) moves out of its projection
   (`temporary_field_place`), leaving a hole the slot's destruction reports
   as upstream's `(expression temporary)`, a
-  condition reads it for `Bool(x)` (`condition_value` over
+  condition reads it for its `x.__bool__()` test (`condition_value` over
   `truthiness_operand`, which passes an operand the check did not prove
   register-passable, `SemanticAdjustment::RegisterPassableRead` on the
   `Truthiness` node, as the address of its place or storage, the
   `!lit.ref` upstream's `x.__bool__()` takes, and reads a register-passable
-  named place `Checker::expect_bool` marked `BorrowReadArgument` where it
-  lies), and a discarded
+  named place `Checker::record_truthiness` marked `BorrowReadArgument`
+  where it lies; the check types the test as that method call and carries
+  its contract on the operand, `checked::CheckedTruthinessCall`, so a
+  raising `__bool__` raises from a condition, a `not`, or an `and`/`or`
+  operand as upstream's does), and a discarded
   statement leaves it dead at its definition (`discard_result`). The call
   is the slot's last use, so its `DropVar` follows the call, before the
   enclosing expression continues. A call operand's convention is its

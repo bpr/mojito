@@ -9499,26 +9499,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2318 A truthiness test is a builtin `Bool(x)` the elaborator
-  rewrites, not `x.__bool__()` at IR generation**
-
-  Upstream emits `x.__bool__()` for `if x:`, `not x`, and an `and`/`or`
-  left operand, checked as an ordinary `read self` method call. Mojito
-  lowers an undeclared builtin `Bool(x)` (`bool_conversion`,
-  `lower_expr/ctrl.rs`) and the specializer rewrites it per instance
-  (`specializer.rs`, the `"Bool" => Some("__bool__")` arm and the
-  `ScalarCast` interception).
-  - The operand is already the `!lit.ref` upstream's call takes
-    (`Flatten::truthiness_operand`), so only the callee is unlike Mojo.
-  - Fix: the checker records a `__bool__` call contract on every
-    `Truthiness` node, and lowering emits that method call.
-  - A scalar, `SIMD`, or `Param` instance needs the builtin answered as a
-    requirement, as the trait-dispatch arm answers other requirements.
-  - Then the specializer's `Bool` arm and its `ScalarCast` interception
-    go away.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2319 The verifier binds no declaration for a call through a
   trait bound**
 
