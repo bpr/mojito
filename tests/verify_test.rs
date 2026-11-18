@@ -7,7 +7,7 @@
 //! class.
 
 use mojito::check_program;
-use mojito::mir::verify::{verify, verify_lowered};
+use mojito::mir::verify::{verify, verify_function_in};
 use mojito::types::TyKind;
 use std::path::Path;
 
@@ -865,14 +865,14 @@ fn verifier_requires_a_reference_at_a_memory_only_read_argument() {
 }
 
 /// A memory-only `read self` receiver is received by address, as
-/// upstream's `lit.call` takes a `!lit.ref` of it: lowering's verify
-/// rejects a method call or a subscript accessor passing the value read from
-/// the receiver's place, which the later verify points do not yet check.
+/// upstream's `lit.call` takes a `!lit.ref` of it: every verify point, the
+/// whole program's and one loaded function's alike, rejects a method call or
+/// a subscript accessor passing the value read from the receiver's place.
 #[test]
 fn verifier_requires_a_reference_at_a_memory_only_read_receiver() {
     let source = "struct M(Movable):\n    var s: String\n\n    def __init__(out self, s: String):\n        self.s = s\n\n    def show(self):\n        print(self.s)\n\n    def __getitem__(self, i: Int) -> Int:\n        return i\n\ndef main():\n    var m = M(\"a\")\n    m.show()\n    print(m[1])\n";
     let mir = lower_linked_source(source);
-    let errors = verify_lowered(&mir);
+    let errors = verify(&mir);
     assert!(
         errors.is_empty(),
         "the receivers through ref.make verify: {errors:?}"
@@ -904,14 +904,16 @@ fn verifier_requires_a_reference_at_a_memory_only_read_receiver() {
     ] {
         let mut mir = mir.clone();
         receiver(&mut mir, method);
-        let errors = verify_lowered(&mir);
+        let errors = verify(&mir);
         assert!(
             errors.iter().any(|error| error.contains(needle)),
             "expected a finding containing '{needle}', got {errors:?}"
         );
+        let main = function_named(&mut mir, "main").clone();
+        let errors = verify_function_in("main", &main, &mir.declarations);
         assert!(
-            !verify(&mir).iter().any(|error| error.contains(needle)),
-            "the receiver rule runs at lowering's verify only"
+            errors.iter().any(|error| error.contains(needle)),
+            "a loaded function's verify applies the receiver rule: {errors:?}"
         );
     }
 }
@@ -921,7 +923,7 @@ fn verifier_requires_a_reference_at_a_memory_only_read_receiver() {
 fn verifier_accepts_a_value_at_a_register_passable_read_receiver() {
     let source = "@fieldwise_init\nstruct P(Copyable, Movable, TrivialRegisterPassable):\n    var v: Int\n\n    def get(self) -> Int:\n        return self.v\n\ndef main():\n    var p = P(1)\n    print(p.get())\n";
     let mut mir = lower_linked_source(source);
-    assert_eq!(verify_lowered(&mir), Vec::<String>::new());
+    assert_eq!(verify(&mir), Vec::<String>::new());
     let main = function_named(&mut mir, "main");
     let receiver = leaf_instructions_mut(&mut main.body)
         .into_iter()

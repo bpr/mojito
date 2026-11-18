@@ -365,7 +365,6 @@ fn verify_region(
         regions,
         protected,
         asserted: cx.context.asserted,
-        receivers: cx.context.receivers,
     };
     verify_block(
         cx.name,

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2319**.
+Next free ID: **R2320**.
 
 ## Ordered Work
 
@@ -9607,21 +9607,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2295 The receiver rule runs only at lowering's verify**
+- [ ] **R2319 The verifier binds no declaration for a call through a
+  trait bound**
 
-  Upstream's `lit.call` verifier requires a `!lit.ref` at a by-address
-  receiver wherever the op is verified. Mojito applies the rule only in
-  `verify::verify_lowered` (`verify_by_address_receiver`), not after drop
-  elaboration and the pre-elaboration passes, on concrete MIR, or on MIR
-  text loaded from disk.
-  - Fix: drop `verify_staged`'s `receivers` switch so `verify` applies
-    the rule, and retire `verify_lowered`.
-  - Confirm no pre-elaboration pass turns a receiver's reference into a
-    value. The `copy=` values once blamed on the passes came from
-    `lower_copies_and_moves`, but R2299 shows one pass does it to a
-    setter's `value=` operand.
-  - Stop when `scripts/smoke` and the R2294 probes run clean.
-  - Depends on R2294 and R2285.
+  Upstream's `lit.call` to a trait requirement is verified against the
+  requirement's signature, so a by-address `self` (or argument) there must
+  be a `!lit.ref`. Mojito's verifier finds a callee only by
+  `MirDeclarations::function` (`verify::types::declared`), so a
+  `call.method` resolved to a `__trait_dispatch.…` symbol has no
+  declaration, and neither `verify_direct_call` nor
+  `verify_by_address_receiver` checks its operands.
+  - Fix: bind such a call's requirement as lowering does
+    (`MirDeclarations::bound_requirement`, from the receiver's bounds) and
+    check its operands and receiver against it.
+  - Probe: `tests/mir_passes/inline-parametric/bound_iteration_own_origin.mir`
+    as of 87133b9c9 passed `count`'s `__iter__$ov$SelfRef` and
+    `__next__$ov$` receivers as `place.load` values and still loaded
+    clean; only the inliner's resolution to `Bag.__iter__` exposed them.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2296 A pointer subscript in copy position is copied by value,

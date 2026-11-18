@@ -1473,9 +1473,7 @@ fn lower_program(
             .sum(),
     );
     let _verify = timing::span("verify.pre_drop");
-    result
-        .invariant_errors
-        .extend(verify::verify_lowered(&result));
+    result.invariant_errors.extend(verify::verify(&result));
     (result, ranges)
 }
 

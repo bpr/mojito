@@ -25,9 +25,10 @@
 //! - effects: a raising site (a `Raise`, or a call carrying a checked error
 //!   type) inside a nonraising function must be protected by a handler;
 //! - reference invariants: `StoreRef` initializes reference storage, and a
-//!   by-address argument of a call bound by its callee's declaration, and
-//!   every by-address operand of a call through a function type, is a
-//!   reference to the caller's storage.
+//!   by-address argument of a call bound by its callee's declaration, the
+//!   by-address receiver of a resolved method call or checked subscript
+//!   accessor, and every by-address operand of a call through a function
+//!   type, is a reference to the caller's storage.
 //! - slot ends: a `drop.var` or `var.consume` of a slot every path reaching
 //!   it already dropped, consumed, or moved, and a destroy of a value a
 //!   field or tuple element of which some path reaching it has ended;
@@ -44,32 +45,10 @@ use mojito_types::types::{DependentType, ParamDecl, Ty, TyArg, tuple_elements};
 use std::collections::{HashMap, HashSet};
 
 pub fn verify(program: &MirProgram) -> Vec<String> {
-    verify_staged(program, false)
-}
-
-/// [`verify`] for MIR lowering's own output, plus the by-address receiver
-/// rule.
-///
-/// The rule requires a reference at every receiver a resolved method call
-/// or checked subscript accessor takes by address, as upstream's `lit.call`
-/// verifier does wherever the callee's signature takes a `!lit.ref`. The
-/// later verify points do not yet apply it: older MIR pass inputs still
-/// pass such receivers by value.
-pub fn verify_lowered(program: &MirProgram) -> Vec<String> {
-    verify_staged(program, true)
-}
-
-fn verify_staged(program: &MirProgram, receivers: bool) -> Vec<String> {
     let mut errors = Vec::new();
     verify_runtime_pack_abi(&program.declarations, &mut errors);
     for (name, function) in &program.functions {
-        verify_function(
-            name,
-            function,
-            &program.declarations,
-            receivers,
-            &mut errors,
-        );
+        verify_function(name, function, &program.declarations, &mut errors);
     }
     errors.extend(
         program
@@ -89,7 +68,7 @@ pub fn verify_function_in(
     declarations: &MirDeclarations,
 ) -> Vec<String> {
     let mut errors = Vec::new();
-    verify_function(name, function, declarations, false, &mut errors);
+    verify_function(name, function, declarations, &mut errors);
     errors
 }
 
@@ -224,9 +203,6 @@ struct RegionContext {
     /// Whether a `comptime assert` precedes this position, so that an
     /// instance failing it never reaches it.
     asserted: bool,
-    /// Whether a by-address receiver must be a reference
-    /// ([`verify_lowered`]).
-    receivers: bool,
 }
 
 impl RegionContext {

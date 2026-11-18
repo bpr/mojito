@@ -1261,6 +1261,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The by-address receiver rule (a reference at a resolved method call's or
+  checked subscript accessor's by-address receiver, as upstream's
+  `lit.call` verifier requires) is now part of `mir::verify::verify`, so
+  it holds after drop elaboration and every pre-elaboration pass, on
+  concrete MIR, and on loaded MIR text and package bodies, not only at
+  lowering's verify. `verify::verify_lowered` is gone (R2295).
+
 - Retiring the elaborator's register fold of a `def(...)` bound's callee
   (R2292) is deferred: the pin settles that an empty-capture-list lambda is
   capture-free and that a non-conforming struct takes the conversion

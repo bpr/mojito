@@ -423,7 +423,7 @@ pub(super) fn verify_by_address_receiver(
     receiver: Reg,
     errors: &mut Vec<String>,
 ) {
-    if !cx.context.receivers || !declaration.has_receiver {
+    if !declaration.has_receiver {
         return;
     }
     if let Some(found) = cx.reg_ty(receiver)
@@ -770,7 +770,6 @@ pub(super) fn verify_function(
     name: &str,
     function: &MirFunction,
     declarations: &MirDeclarations,
-    receivers: bool,
     errors: &mut Vec<String>,
 ) {
     if function.var_names.len() != function.n_vars {
@@ -836,7 +835,6 @@ pub(super) fn verify_function(
         regions: vec![RegionKind::Function],
         protected: false,
         asserted: false,
-        receivers,
     };
     verify_block(
         name,

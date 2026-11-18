@@ -2564,9 +2564,8 @@ operand's `ref.make`. The verifier
 upstream's `lit.call` takes a `!lit.ref` wherever the signature does; an
 elaborated instance's declaration names its substituted types, so a `read`
 its instance proves register-passable takes the value
-`load_register_passable_operands` reads. At lowering's own verify
-(`verify::verify_lowered`, the `verify.pre_drop` point of
-`lower_program`) it also rejects a value at the receiver of a resolved
+`load_register_passable_operands` reads. At every verify point it also
+rejects a value at the receiver of a resolved
 `call.method` or of a checked subscript accessor whose declaration takes
 it by address (`verify_by_address_receiver`, over
 `mir::by_address_receiver`): lowering gives such a receiver its storage
@@ -2578,9 +2577,7 @@ operand its place (`Flatten::chain_link_address`), and a truthiness
 test's operand, the receiver of the `__bool__` the elaborator resolves
 `Bool(x)` to, the address of its place, its temporary's storage, its
 held `and`/`or` slot, or the result slot a conditional forwards
-(`Flatten::truthiness_operand`, `hold_tested_operand`). The later verify
-points do not yet apply the receiver rule, since older MIR pass inputs
-still pass such receivers by value (R2295). Keyword operands of a `call` or `call.method` are not yet
+(`Flatten::truthiness_operand`, `hold_tested_operand`). Keyword operands of a `call` or `call.method` are not yet
 checked this way (R2300). A `call.indirect`, and a `def(...)` bound's
 `__call__` call, bind their operands by a function type, so
 `verify_callable_contract_call` rejects a value at every slot
