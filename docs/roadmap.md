@@ -2353,26 +2353,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2320 A pointer subscript passed by address loses its pointer's
-  loans**
-
-  `ls.unsafe_ptr()[0].show()`, with `show(self)` on a memory-only element
-  and that call as `ls`'s last use, destroys `ls` before the call, so the
-  VM stops with "use after Pointer deallocation"; the pin keeps `ls` alive
-  through the call.
-  - `Flatten::materialize_operand` re-homes the pointer in a hidden
-    `$ptr_r` slot (`Flatten::pointee_place`, `mir/calls.rs`) and
-    establishes none of the pointer's loans on it.
-  - Fix: in `pointee_place`, establish `aggregate_borrows` of the
-    subscript's object on the `$ptr_r` slot (`EstablishLoans`), as
-    `temporary_pointer_deref` (`mir.rs`) does on `$ptr_tmp_r`.
-  - Probe: the program above, on the VM and `--backend pliron`; the pin
-    prints the element, then its destruction, then the next line.
-  - R2208 retires `pointee_place` for the pointee reference a copied
-    subscript already reads through (`pointee_reference_read`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1156 An argument bound to an unbound-origin parameter carries no
   origin into argument exclusivity**
 

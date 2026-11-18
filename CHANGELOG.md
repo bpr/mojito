@@ -785,6 +785,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A pointer subscript passed by address over a pointer no slot holds
+  (`ls.unsafe_ptr()[0].show()` as `ls`'s last use) no longer destroys the
+  pointer's owner before the call: the hidden slot the pointer is re-homed
+  in now holds the pointer's loans, as at the pin
+  (`assets/ok/pointer_subscript_operand_keeps_owner.mojo`, R2320).
+
 - A register-passable value read through a reference now lets the owner
   the reference borrows die at setup of a call loading the value, as at the
   pin: `show(mk(1)[0])` prints `del V 1` before `show 1`, and the same holds

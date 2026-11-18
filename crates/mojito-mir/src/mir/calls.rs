@@ -650,9 +650,10 @@ impl<'a> Flatten<'a> {
     /// The pointee place of `value`, the element the body's last
     /// instruction just read through pointer `base` at `index` (`p[i]` over
     /// a pointer no slot holds, `ls.unsafe_ptr()[0]`): the pointer is
-    /// re-homed in a hidden slot and the element read through it, as
-    /// upstream's pointer `__getitem__` yields a `!lit.ref` of the pointee
-    /// whatever holds the pointer. The read replaces the subscript, so
+    /// re-homed in a hidden slot holding the pointer's loans, and the
+    /// element read through it, as upstream's pointer `__getitem__` yields
+    /// a `!lit.ref` of the pointee whatever holds the pointer, its origin
+    /// keeping the pointer's owners alive through the use. The read replaces the subscript, so
     /// `value` stays its register.
     fn pointee_place(
         &mut self,
@@ -680,6 +681,10 @@ impl<'a> Flatten<'a> {
             binding_ty: Some(pointer.clone()),
             in_place: false,
         });
+        if let Some(object) = expression.object() {
+            let loans = self.aggregate_borrows(object);
+            self.establish_storage_loans(object, variable, loans);
+        }
         let mut place = MirPlace::root(variable, Some(pointer));
         place.project(Proj::Index(index), element);
         self.emit(MirInstr::LoadPlace {
