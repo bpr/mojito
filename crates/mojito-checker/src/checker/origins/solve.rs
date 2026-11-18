@@ -337,11 +337,9 @@ impl Checker {
                         if message.contains("reference binding to a non-place expression")
                             && self.infer_reference_value(expression).is_none() =>
                     {
-                        let owner = self.materialize_borrow_owner(expression, false)?;
-                        origins[index] = Some(Origin::Place(mojito_types::origin::OriginPlace {
-                            root: owner,
-                            path: Vec::new(),
-                        }));
+                        origins[index] = Some(Origin::Place(
+                            self.materialize_borrow_place(expression, false)?,
+                        ));
                     }
                     Err(_) => {}
                 }
@@ -537,7 +535,7 @@ impl Checker {
         overflow: &[usize],
         args: &[Expr],
     ) -> Result<mojito_types::origin::SigOrigin, TypeError> {
-        use mojito_types::origin::{Origin, OriginPlace};
+        use mojito_types::origin::Origin;
         if !sig_mentions_pack_binder(signature) {
             return Ok(signature.clone());
         }
@@ -548,13 +546,10 @@ impl Checker {
                 if !crate::checker::places::is_place_expr(expression)
                     && self.infer_reference_value(expression).is_none()
                 {
-                    let root = self.materialize_borrow_owner(expression, false)?;
+                    let place = self.materialize_borrow_place(expression, false)?;
                     self.record_at(expression.source_span())
                         .pack_borrowed_temporary = true;
-                    return Ok(Some(Origin::Place(OriginPlace {
-                        root,
-                        path: Vec::new(),
-                    })));
+                    return Ok(Some(Origin::Place(place)));
                 }
                 Ok(self
                     .reference_actual(expression)

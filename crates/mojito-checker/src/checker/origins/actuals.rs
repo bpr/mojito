@@ -135,11 +135,12 @@ impl Checker {
             {
                 Ok(place.clone())
             }
-            // A call result already materialized as the holder of a
-            // dereferenced pointer field (`make(xs).src[]`) is its hidden
+            // A temporary already materialized (as the holder of a
+            // dereferenced pointer field, `make(xs).src[]`, or the root of a
+            // borrowed field chain, `V(1).xs`) is its hidden
             // owned slot, exactly like a materialized reference actual.
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-                if let Some(owner) = self.materialized_temporary_owner(expr) =>
+            _ if is_fresh_temporary(expr)
+                && let Some(owner) = self.materialized_temporary_owner(expr) =>
             {
                 Ok(OriginPlace {
                     root: owner,
@@ -254,18 +255,70 @@ impl Checker {
                 if message.contains("reference binding to a non-place expression") =>
             {
                 let referent = self.infer(expr)?;
-                let owner = self.materialize_borrow_owner(expr, true)?;
                 Ok(RefTy {
                     referent,
-                    origin: Origin::Place(OriginPlace {
-                        root: owner,
-                        path: Vec::new(),
-                    }),
+                    origin: Origin::Place(self.materialize_borrow_place(expr, true)?),
                     mutability: Mutability::Mutable,
                 })
             }
             other => other,
         }
+    }
+
+    /// The place a borrow of a non-place expression lends, as upstream's
+    /// `!lit.ref` into an rvalue's storage: a field chain over a fresh owned
+    /// temporary (`V(1).xs`, `(a + b).xs`) materializes the chain's root and
+    /// lends the field's projection inside it, so the temporary lives as
+    /// long as the borrower. A chain stops at a `ref` field, whose referent
+    /// is not the temporary's storage; any other expression materializes
+    /// itself.
+    pub(in crate::checker) fn materialize_borrow_place(
+        &self,
+        expr: &Expr,
+        mutable: bool,
+    ) -> Result<mojito_types::origin::OriginPlace, TypeError> {
+        use mojito_types::origin::OriginPlace;
+        match self.temporary_field_chain(expr) {
+            Some((root, path)) => Ok(OriginPlace {
+                root: self.materialize_borrow_owner(root, mutable)?,
+                path,
+            }),
+            None => Ok(OriginPlace {
+                root: self.materialize_borrow_owner(expr, mutable)?,
+                path: Vec::new(),
+            }),
+        }
+    }
+
+    /// The fresh owned temporary a field chain (`V(1).xs`, `(a + b).v.xs`)
+    /// reads, and the fields it projects inside it: `None` when `expr` is no
+    /// field chain, or roots at anything but an owned temporary (a
+    /// reference result is not one), or reaches a `ref` field, whose
+    /// referent is not the temporary's storage.
+    pub(in crate::checker) fn temporary_field_chain<'e>(
+        &self,
+        expr: &'e Expr,
+    ) -> Option<(&'e Expr, Vec<mojito_types::origin::OriginSeg>)> {
+        let mut path = Vec::new();
+        let mut root = expr;
+        while let ExprKind::Member { object, field } = &root.kind {
+            if matches!(
+                self.place_storage_ty(root).as_ref().map(Ty::kind),
+                Some(TyKind::Ref(_))
+            ) {
+                return None;
+            }
+            path.push(mojito_types::origin::OriginSeg::Field(field.clone()));
+            root = object;
+        }
+        // A reference-returning call is a place of its own, not storage.
+        let owns_storage =
+            self.origin_place(root).is_err() || self.materialized_temporary_owner(root).is_some();
+        if path.is_empty() || !is_fresh_temporary(root) || !owns_storage {
+            return None;
+        }
+        path.reverse();
+        Some((root, path))
     }
 
     /// A run-time read of a compile-time binding (a value parameter, a
@@ -1058,4 +1111,18 @@ fn sig_origin_self_rooted(origin: &mojito_types::origin::SigOrigin) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether `expression` evaluates to a fresh owned value of its own, the
+/// root a borrow of its field materializes: the checker-side mirror of
+/// MIR's `Node::is_fresh_temporary` for the roots a field chain can have.
+const fn is_fresh_temporary(expression: &Expr) -> bool {
+    matches!(
+        expression.kind,
+        ExprKind::Call { .. }
+            | ExprKind::MethodCall { .. }
+            | ExprKind::Invoke { .. }
+            | ExprKind::Infix(..)
+            | ExprKind::Prefix(..)
+    )
 }

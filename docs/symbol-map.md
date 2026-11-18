@@ -470,6 +470,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `record_call_result_origins` resolves a callee's `ViewReturnOrigin`
   contract, `materialize_temporary_holder` gives a call-result holder —
   a struct, or a pointer formed in place — its hidden slot,
+  `materialize_borrow_place` gives a borrowed non-place its owner (a field
+  chain over an owned temporary, `temporary_field_chain`, materializes the
+  chain's root and lends the field's projection inside it; every borrow
+  site that materializes a non-place goes through it),
   `record_pointer_adjustment` keeps a pointer adjustment's `materialized`
   owner, and `returned_pointer_dereference_origin` names a returned
   pointer dereference's own origin), the positional
@@ -1589,7 +1593,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lower_method_receiver` (with `materialize_receiver` for a `ref self`
   over a register result), `load_temporary_field` (a field read, a chain
   included, over the slot `temporary_root_place` lowers the temporary
-  into), `temporary_field_place`
+  into; `Flatten::member_expr` projects a field of a reference result or
+  of a materialized temporary through `lower_projected_reference_place`
+  instead), `temporary_field_place`
   (a transfer's field chain over a temporary, `mk().s^`, which
   `Flatten::transfer` moves out of the slot, so the move analysis sees the
   hole), and `discard_result`

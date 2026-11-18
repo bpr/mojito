@@ -2383,7 +2383,7 @@ impl Checker {
             if self.origin_place(expression).is_err()
                 && self.infer_reference_value(expression).is_none()
             {
-                self.materialize_borrow_owner(expression, mutable)?;
+                self.materialize_borrow_place(expression, mutable)?;
             }
         }
         // A constructor restates its struct's parameters, so the conversion

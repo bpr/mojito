@@ -96,8 +96,9 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// Whether this field/dereference chain roots at a call result the
-    /// checker materialized as a pointer-field holder.
+    /// Whether this field/dereference chain roots at a fresh temporary the
+    /// checker materialized (a pointer-field holder, or the root of a
+    /// borrowed field chain).
     pub(super) fn rooted_at_materialized_temporary(self) -> bool {
         let mut root = self;
         while let Some(object) = root
@@ -107,7 +108,7 @@ impl<'a> Node<'a> {
         {
             root = object;
         }
-        root.is_call()
+        root.is_fresh_temporary()
             && mojito_checked::checked::materialized_borrow_owner(root.adjustments()).is_some()
     }
 

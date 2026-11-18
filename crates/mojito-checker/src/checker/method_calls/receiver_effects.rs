@@ -567,12 +567,8 @@ impl Checker {
                             && reads_slot(resolved, index)
                             && sig_origin_mentions_param(&signature.origin, index) =>
                     {
-                        let owner = self.materialize_borrow_owner(expression, false)?;
                         Ok(Some(mojito_types::origin::Origin::Place(
-                            mojito_types::origin::OriginPlace {
-                                root: owner,
-                                path: Vec::new(),
-                            },
+                            self.materialize_borrow_place(expression, false)?,
                         )))
                     }
                     Err(_) => Ok(None),

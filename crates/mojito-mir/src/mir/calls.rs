@@ -2458,8 +2458,9 @@ impl<'a> Flatten<'a> {
     /// A chain (`W(R(1)).r.x`) projects the temporary's storage through
     /// each field ([`Self::temporary_field_place`]). `None`, leaving the
     /// base to the caller, when the chain's root is not a fresh temporary,
-    /// is a reference result, or a materialized borrow source, or when the
-    /// field is a reference.
+    /// is a reference result, or a materialized borrow source (which the
+    /// caller projects through [`Self::lower_projected_reference_place`]),
+    /// or when the field is a reference.
     pub(super) fn load_temporary_field(
         &mut self,
         expression: Node<'a>,
@@ -2873,7 +2874,7 @@ impl<'a> Flatten<'a> {
     /// storage alive while the projection chain reads or writes through it.
     /// Any other call result is a value, not a place.
     pub(super) fn materialized_temporary_base_place(&mut self, base: Node<'a>) -> Option<MirPlace> {
-        if !base.is_call() {
+        if !base.is_fresh_temporary() {
             return None;
         }
         let owner = mojito_checked::checked::materialized_borrow_owner(base.adjustments())?;

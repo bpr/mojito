@@ -176,7 +176,8 @@ impl<'a> Flatten<'a> {
         // a `LoadPlace` (a place read) so the ownership analysis sees *which*
         // field is read — enabling field-sensitive partial-move checking
         // (reading `p.b` after `p.a^` stays legal). A member of a temporary
-        // or an indexed base keeps the register-based `GetField`.
+        // or of a reference result projects that storage below; only a base
+        // no storage holds keeps the register-based `GetField`.
         if let Some(place) = self.pure_field_place(e) {
             let place_root = place.root;
             let place_ty = place.ty.clone();
@@ -240,6 +241,24 @@ impl<'a> Flatten<'a> {
             }
         } else {
             let d = if let Some(loaded) = self.load_temporary_field(e, object, field) {
+                loaded
+            } else if !matches!(node.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+                && let Some(place) = self.lower_projected_reference_place(e)
+            {
+                // A field of a reference result, or of a materialized
+                // temporary, is a projection of that reference, as
+                // upstream's `!lit.ref` field of one is: the load and any
+                // copy of it read from the place.
+                let ty = place
+                    .ty
+                    .clone()
+                    .or_else(|| node.ty.clone())
+                    .unwrap_or_else(Ty::error);
+                let loaded = self.fresh_typed(e.location(), Some(place.root), ty);
+                self.emit(MirInstr::LoadPlace {
+                    dest: loaded,
+                    place,
+                });
                 loaded
             } else {
                 let base = if object.reference_result().is_some() {

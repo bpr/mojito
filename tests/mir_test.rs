@@ -4107,6 +4107,59 @@ def main():
 }
 
 #[test]
+fn reference_result_field_copy_passes_its_place() {
+    // A copied field of a returned reference (`first(h).key`), or of a
+    // subscript's reference (`xs[0].key`), is a projection of that
+    // reference, as upstream's `!lit.ref` field is: the copy reads the
+    // field's place, never a `GetField` of the loaded referent.
+    let source = r#"
+@fieldwise_init
+struct Pair(Copyable, Movable):
+    var key: String
+    var value: Int
+
+@fieldwise_init
+struct Holder(Copyable, Movable):
+    var pair: Pair
+
+def first(ref h: Holder) -> ref[h.pair] Pair:
+    return h.pair
+
+def returned(h: Holder) -> String:
+    var k = first(h).key
+    return k
+
+def indexed(xs: List[Pair]) -> String:
+    var k = xs[0].key
+    return k
+
+def main():
+    print(returned(Holder(Pair("a", 1))), indexed([Pair("b", 2)]))
+"#;
+    for name in ["returned", "indexed"] {
+        let (_, function) = checked_function(source, name);
+        let instrs = &function.body.instrs;
+        let copies_field_place = instrs.iter().any(|instr| {
+            let MirInstr::CopyValue { value, .. } = instr else {
+                return false;
+            };
+            instrs.iter().any(|defining| {
+                matches!(defining, MirInstr::LoadPlace { dest, place }
+                    if dest == value
+                        && matches!(place.proj.last(), Some(Proj::Field(field)) if field == "key"))
+            })
+        });
+        assert!(copies_field_place, "{name}: {instrs:#?}");
+        assert!(
+            !instrs
+                .iter()
+                .any(|instr| matches!(instr, MirInstr::GetField { field, .. } if field == "key")),
+            "{name}: {instrs:#?}"
+        );
+    }
+}
+
+#[test]
 fn reference_result_at_pack_read_passes_its_handle() {
     // A `ref` getter's result at a by-address pack element
     // (`text.write(digits[0])`, `*args: Ts`) passes the returned reference

@@ -2060,7 +2060,15 @@ borrow that forced the materialization needs, which
 `MaterializeBorrowSource` records and `materialized_borrow_mutability` reads:
 materializing changes where the storage lives, never what the loan permits,
 so a read receiver's two views coexist exactly as they would over a named
-local. A subscript view temporary
+local. A borrow of a field chain over an owned temporary (`V(1).xs` at
+`__getitem__`'s `ref self`, `mk().name.codepoints()`, `items(W(mk()).v)`)
+materializes the chain's root, never the field, and lends the field's
+projection inside it (`Checker::materialize_borrow_place` over
+`temporary_field_chain`), as upstream's `!lit.ref` field projection of an
+rvalue: MIR's `lower_projected_reference_place` projects the field off
+`materialized_temporary_base_place`, so the temporary lives as long as the
+borrower. A chain stops at a `ref` field, whose referent is not the
+temporary's storage. A subscript view temporary
 (`MultiIndex`/`Slice`/`Index` with a `BorrowViewResult`) in any argument
 list or operator operand anchors in `$arg_loan_r` like a loan-carrying call
 temporary in a plain call — no consumer channel retains it, so the anchor
@@ -6284,8 +6292,8 @@ its `ref.make`. Ending a reference binding writes nothing: drop
 elaboration may end the binding a loaded place goes through at the load,
 its last use, and the call then ends it after itself instead, since the
 call's reference now reaches the referent through it. A copy of a register
-with no place, or one loaded before an instruction that may write, still
-passes the value (R2297, R2298). The constructor's declaration decides
+loaded before an instruction that may write still passes the value
+(R2298). The constructor's declaration decides
 whether the one parameter after `out self` passes positionally or by
 keyword (`__init__(out self, *, copy: Self)`), and the call passes the
 value type's arguments for the struct parameters the declaration
@@ -6541,7 +6549,12 @@ current Mojo:
   call that lends the field, and not into one whose register-passable
   `read` parameter loads it at call setup — and a consuming context's
   `CopyPlaceValue` copies an owning field out before the slot dies. A
-  reference-typed field keeps the register `GetField`.
+  field of a reference result or of a materialized temporary, which
+  `load_temporary_field` leaves alone, projects that reference's place
+  (`lower_projected_reference_place`, from `Flatten::member_expr`), so its
+  copy passes the field's place as upstream's copy of a `!lit.ref` field
+  does. A reference-typed field, or a base no storage holds, keeps the
+  register `GetField`.
 - A scalar `LoadPlace` borrows its owner for the one instruction consuming
   the loaded register (the register-loan dataflow's single-hop retention), and
   how long depends on how that instruction receives the register, as the

@@ -9768,6 +9768,39 @@ fn value_parameter_field_read_is_a_parameter_value() {
 }
 
 #[test]
+fn temporary_field_borrow_materializes_the_temporary() {
+    // A borrow of a temporary's field (`V([1]).xs` at `__getitem__`'s
+    // `ref self`) materializes the temporary and lends the field inside it,
+    // as upstream's `!lit.ref` field projection does; a field of a
+    // reference result (`first(h).xs`) is already a place.
+    let source = "@fieldwise_init\nstruct V(Copyable, Movable):\n    var xs: List[Int]\n\n@fieldwise_init\nstruct H(Copyable, Movable):\n    var v: V\n\ndef first(ref h: H) -> ref[h.v] V:\n    return h.v\n\n";
+    let materialized = |body: &str| {
+        let checked = checked_with_std(&format!("{source}def main():\n{body}")).expect("check");
+        own_expressions(&checked)
+            .filter(|expression| {
+                expression.adjustments.iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        SemanticAdjustment::MaterializeBorrowSource { .. }
+                    )
+                })
+            })
+            .map(|expression| expression.op.clone())
+            .collect::<Vec<_>>()
+    };
+    let temporary = materialized("    print(V([1]).xs[0])\n");
+    assert!(
+        matches!(
+            temporary.as_slice(),
+            [mojito::checked::CheckedOp::Call { name, .. }] if name == "V"
+        ),
+        "{temporary:#?}"
+    );
+    let reference = materialized("    var h = H(V([1]))\n    print(first(h).xs[0])\n");
+    assert!(reference.is_empty(), "{reference:#?}");
+}
+
+#[test]
 fn value_parameter_field_transfer_is_rejected() {
     let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n    var s: String\n\ndef f[q: Q]():\n    var t = q.s^\n    print(t)\n\ndef main():\n    f[Q(8, \"x\")]()\n";
     assert!(matches!(err_std(source), TypeError::ParameterTransfer));

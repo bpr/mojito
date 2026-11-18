@@ -214,11 +214,15 @@ impl Checker {
         // and the temporary its borrower's lifetime, exactly as a
         // temporary bound to a `ref [origin]` parameter gets one. A
         // borrowing temporary receiver (`StringSpan(s).split(",")`)
-        // already anchors on its own loans. A rejection leaves the
+        // already anchors on its own loans. A field of an owning
+        // temporary (`mk().name.codepoints()`) lends that field inside
+        // the materialized temporary. A rejection leaves the
         // receiver alone: another adjustment owns its lowering
         // contract.
-        if !self.designates_place(object) && !self.type_carries_loans(obj_ty) {
-            let _ = self.materialize_borrow_owner(object, resolved.mutates_receiver);
+        if (!self.designates_place(object) || self.temporary_field_chain(object).is_some())
+            && !self.type_carries_loans(obj_ty)
+        {
+            let _ = self.materialize_borrow_place(object, resolved.mutates_receiver);
         }
         self.record_call_result_origins(
             span,

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2321**.
+Next free ID: **R2322**.
 
 ## Ordered Work
 
@@ -1432,6 +1432,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R1411 (2026-11-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R2321 A temporary a borrow materializes outlives a register-passable
+  read of the reference it lends**
+
+  `show(mk(1)[0])`, over `def show(n: Int)` and a `__getitem__(ref self,
+  i)` returning a reference into a struct with a printing `__deinit__`,
+  prints `show 1`, `del V 1`, where the pin prints `del V 1`, `show 1`.
+  - The pin reads the `Int` at call setup and destroys the temporary
+    before the call, as soon as nothing borrows it.
+  - Cause: the hidden `$mat_r` slot (`Flatten::materialize_borrow_slot`)
+    a `MaterializeBorrowSource` owner lowers to is destroyed after the
+    call, so the loan of the reference result keeps it past the
+    by-value read.
+  - Probe: `show(W(mk(2)).v[0])`, the field chain R2297 materializes at
+    its root, prints `show 2`, `del V 2` the same way.
+  - Found while landing R2297 (2026-11-17).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1682 A local read through an untracked pointer after its last use
   reads `None` on the VM**
@@ -9644,29 +9662,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     as of 87133b9c9 passed `count`'s `__iter__$ov$SelfRef` and
     `__next__$ov$` receivers as `place.load` values and still loaded
     clean; only the inliner's resolution to `Bag.__iter__` exposed them.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R2297 A field of a temporary or of a reference result is copied
-  from its register, not from a place**
-
-  Upstream's field of a temporary or of a returned reference is a
-  `!lit.ref` into that storage, and a copy of it takes that reference.
-  Mojito lowers such a field as `GetField` over the base's register
-  (`load_temporary_field`, `lower_expr/expr_access.rs`) plus `value.copy`,
-  so the copy has no place to pass.
-  - Fix: project the field through the reference result's place, or
-    through the temporary's materialized slot
-    (`Flatten::materialize_operand`), and copy from that place.
-  - Probe: the R2300 keyword check flags
-    `assets/ok/ref_result_field_value_copy.mojo`,
-    `ctfe_projection_of_temporary_in_body.mojo`,
-    `template_method_reference_receiver.mojo`, and
-    `template_method_subscript_store.mojo`.
-  - Probe: `print(V(1).xs[0])`, where `V` holds a `List[Int]` field `xs`,
-    stops the VM with "ReadRef … use after Pointer deallocation": the
-    temporary is destroyed before the element its field's getter returns
-    is read. So does `print((a + b).xs[0])`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

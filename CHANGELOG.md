@@ -785,6 +785,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A field of a temporary lent to a borrow (`print(V(1).xs[0])`,
+  `(a + b).xs[0]`, `mk().name.codepoints()`, `items(W(mk()).v)[1]`) now
+  borrows a projection of the materialized temporary, as upstream's
+  `!lit.ref` field projection does, so the temporary lives as long as the
+  borrower instead of being destroyed before the reference is read ("use
+  after Pointer deallocation"). A copied field of a reference result
+  (`it.__next__().key`) or of a materialized temporary now copies from the
+  field's place rather than a register
+  (`assets/ok/temporary_field_receiver_borrows_temporary.mojo`, R2297).
+
 - A copy of a pointer subscript (`p[0]`, `p[]` over an origin-bearing
   pointer, `p.unsafe_write(copy=q[i])`) now passes the pointee's reference
   to `__copyinit__`, made by `pointer.convert` as upstream's `__getitem__`
