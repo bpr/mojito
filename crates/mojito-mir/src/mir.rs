@@ -133,9 +133,10 @@ pub use type_construction::{
 mod unused_args;
 mod write_back;
 pub use unused_args::{
-    CallOperands, erase_removed_operands, removed_argument_operands, shed_subscript_contract,
-    shed_subscript_operands, unused_arguments, used_slots, with_removed_argument_forwards_erased,
-    without_removed_argument_forwards, without_removed_arguments,
+    CallOperands, direct_call_target, erase_removed_operands, removed_argument_operands,
+    shed_subscript_contract, shed_subscript_operands, unused_arguments, used_slots,
+    with_removed_argument_forwards_erased, without_removed_argument_forwards,
+    without_removed_arguments,
 };
 pub mod variadics;
 

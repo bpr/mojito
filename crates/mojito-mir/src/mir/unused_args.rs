@@ -12,8 +12,8 @@ use crate::mir::call_defaults::erase_unpassed_defaults;
 use crate::mir::param_uses::{erase_forward_chains, register_reads};
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirSubscriptArg,
-    MirSubscriptCall, Reg, SlotParameter, dunder_method_call, instruction_regions,
+    MirArgConventions, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
+    MirSubscriptArg, MirSubscriptCall, Reg, SlotParameter, dunder_method_call, instruction_regions,
     instruction_regions_mut, instruction_slots, instruction_subscript_call,
     instruction_subscript_call_mut, operator_method, retire_parameters, subscript_store_call,
     table_member,
@@ -228,6 +228,20 @@ pub fn removed_argument_operands(
     Ok((positionals, keyword_operands))
 }
 
+/// The callee `instruction` calls directly, whose removed arguments its
+/// operands bind: a call's, a resolved method call's, a resolved
+/// operator's dunder, or a subscript read's accessor or store's setter.
+pub fn direct_call_target(instruction: &MirInstr) -> Option<&str> {
+    match instruction {
+        MirInstr::Call { func, .. } => Some(func.0.as_str()),
+        MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
+        MirInstr::BinOp { op, resolved, .. } if operator_method(*op).is_some() => {
+            resolved.as_deref()
+        }
+        _ => instruction_subscript_call(instruction).map(|call| call.target.as_str()),
+    }
+}
+
 /// `function` with its direct calls passing no operand for their callees'
 /// removed arguments, `removed(callee)`; `None` when no call drops one.
 ///
@@ -330,21 +344,19 @@ impl CallOperands<'_> {
 
     /// Drop the operands that bind the removed `slots` of the function
     /// `declaration` declares or, by `operands`, keep them, adding their
-    /// registers to `dropped`; returns whether it dropped one. A call
-    /// whose arguments do not bind is left whole.
+    /// registers to `dropped`; returns the positional and keyword indexes
+    /// of those operands when there is one. A call whose arguments do not
+    /// bind is left whole.
     fn drop(
         mut self,
         declaration: &MirFunctionDeclaration,
         slots: &[VarId],
         operands: Operands,
         dropped: &mut BTreeSet<u32>,
-    ) -> bool {
+    ) -> Option<(BTreeSet<usize>, BTreeSet<usize>)> {
         let keywords: Vec<&str> = self.kwargs.iter().map(|(name, _)| name.as_str()).collect();
-        let Ok((positional, keyword)) =
-            removed_argument_operands(declaration, slots, self.args.len(), &keywords)
-        else {
-            return false;
-        };
+        let (positional, keyword) =
+            removed_argument_operands(declaration, slots, self.args.len(), &keywords).ok()?;
         match operands {
             Operands::Drop => dropped.extend(
                 self.remove(&positional, &keyword)
@@ -356,7 +368,7 @@ impl CallOperands<'_> {
                 dropped.extend(keyword.iter().map(|&index| self.kwargs[index].1.0));
             }
         }
-        !positional.is_empty() || !keyword.is_empty()
+        (!positional.is_empty() || !keyword.is_empty()).then_some((positional, keyword))
     }
 }
 
@@ -621,15 +633,7 @@ fn argument_forwards_view<'a>(
 /// `removed` names arguments of.
 fn calls_removing<'a>(block: &MirBlock, removed: &dyn Fn(&str) -> Option<&'a [VarId]>) -> bool {
     block.instrs.iter().any(|instruction| {
-        let target = match instruction {
-            MirInstr::Call { func, .. } => Some(func.0.as_str()),
-            MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
-            MirInstr::BinOp { op, resolved, .. } if operator_method(*op).is_some() => {
-                resolved.as_deref()
-            }
-            _ => instruction_subscript_call(instruction).map(|call| call.target.as_str()),
-        };
-        target
+        direct_call_target(instruction)
             .and_then(removed)
             .is_some_and(|slots| !slots.is_empty())
             || instruction_regions(instruction)
@@ -816,6 +820,7 @@ fn drop_removed_operands<'a>(
                 args,
                 kwargs,
                 spread,
+                conventions,
                 ..
             } => {
                 let call = CallOperands {
@@ -824,8 +829,9 @@ fn drop_removed_operands<'a>(
                     spread,
                 };
                 if let Some((slots, declaration)) = callee(&func.0)
-                    && call.drop(declaration, slots, operands, dropped)
+                    && let Some(shed) = call.drop(declaration, slots, operands, dropped)
                 {
+                    shed_conventions(conventions, operands, &shed);
                     discounted.insert(func.0.clone());
                 }
             }
@@ -835,6 +841,7 @@ fn drop_removed_operands<'a>(
                 args,
                 kwargs,
                 spread,
+                conventions,
                 ..
             } => {
                 let Some((slots, declaration)) = callee(target) else {
@@ -848,7 +855,11 @@ fn drop_removed_operands<'a>(
                     kwargs,
                     spread,
                 };
-                let mut changed = call.drop(declaration, slots, operands, dropped);
+                let shed = call.drop(declaration, slots, operands, dropped);
+                if let Some(shed) = &shed {
+                    shed_conventions(conventions, operands, shed);
+                }
+                let mut changed = shed.is_some();
                 if declaration.has_receiver && slots.contains(&0) {
                     changed = true;
                     // The rewritten call passes no receiver, but still
@@ -864,6 +875,19 @@ fn drop_removed_operands<'a>(
             }
             _ => {}
         }
+    }
+}
+
+/// Drop from a call's `conventions` the sources of the operands `shed`
+/// names, as positional and keyword indexes, when the view drops those
+/// operands.
+fn shed_conventions(
+    conventions: &mut MirArgConventions,
+    operands: Operands,
+    (positional, keyword): &(BTreeSet<usize>, BTreeSet<usize>),
+) {
+    if operands == Operands::Drop {
+        *conventions = std::mem::take(conventions).without_operands(positional, keyword);
     }
 }
 

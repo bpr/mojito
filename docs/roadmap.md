@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2338**.
+Next free ID: **R2339**.
 
 ## Ordered Work
 
@@ -12384,20 +12384,22 @@ follow-ups the landed producer stages filed come last.
   - Depends on R2136.
   - Model: Fable, Not Planned.
 
-- [ ] **R2306 An instance's argument its body stops reading after
-  inlining stays in its signature**
+- [ ] **R2338 `dead-argument-elimination` keeps a method's dead receiver**
 
-  At the default level the pin's `take[E]` instance, over `@no_inline def
-  take[T: G](e: T) -> Int: return e.tag()` at a field-less memory-only
-  `E`, takes no parameter once `E.tag` is inlined, and keeps its name
-  without `_REMOVED_ARG`. Mojito defines `take[E]` with its `ptr`.
-  - Mojito's `remove-unused-params` runs only before elaboration, over
-    the template, where `e` is read; upstream's `RemoveUnusedParams` also
-    runs on instances after inlining.
-  - At `-O0` the pin keeps the `ptr`, as Mojito does, so this is an
-    optimization gap, not an ABI one.
-  - Probe: the shape above under `--emit ll`.
-  - Found while planning R2293 (2026-11-17).
+  The pin's `DeadArgumentElimination` drops a concrete method's receiver
+  once its inlined body stops reading it, as any other argument; Mojito's
+  pass keeps it.
+  - A method call, a resolved operator, and a subscript read or store pass
+    the receiver as their own operand, not an argument, so dropping it
+    means rewriting each such call of the method to a plain `call`, as the
+    elaborator's `reduce_method_call` and `receiverless_subscript_call` do
+    for a `_REMOVED_ARG` generator.
+  - Probe: `struct W[T: G & Movable & Deinitable]` holding `var t: Self.T`
+    with `@no_inline def get(self) -> Int: return self.t.tag()`, at a
+    field-less memory-only `E` whose `tag` returns 7: the pin defines
+    `W::get` at `E` with no parameter under `--emit llvm`, Mojito with its
+    `ptr`.
+  - Found while landing R2306 (2026-11-18).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

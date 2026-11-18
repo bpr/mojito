@@ -25,6 +25,7 @@ pub use automatic_inline::{
 pub use canonicalize::{CANONICALIZE, canonicalize};
 use copy_elision::elide_dying_copies;
 pub use cse::{CSE, cse};
+pub use dead_arguments::{DEAD_ARGUMENT_ELIMINATION, eliminate_dead_arguments};
 pub use dead_symbols::{
     ELIMINATE_DEAD_CONCRETE_SYMBOLS, ELIMINATE_DEAD_SYMBOLS, eliminate_dead_concrete_symbols,
     eliminate_dead_symbols,
@@ -58,8 +59,9 @@ use mojito_mir::mir::{
 use moves::*;
 pub use opt::{OptError, opt};
 pub use post_elaboration::{
-    ELABORATED_SYMBOL_PASSES, MANDATORY_PIPELINE, POST_ELABORATION_PIPELINE,
-    eliminate_elaborated_symbols, lower_mandatory_program, post_elaborate_program,
+    ELABORATED_SYMBOL_PASSES, FINAL_SYMBOL_PASSES, MANDATORY_PIPELINE, POST_ELABORATION_PIPELINE,
+    eliminate_elaborated_symbols, eliminate_final_symbols, lower_mandatory_program,
+    post_elaborate_program,
 };
 pub use pre_elaboration::{
     BodyPass, CallGraphPass, Callees, Cycles, ELABORATE_DROPS, PIPELINE, Pass, ProgramPass,
@@ -300,6 +302,7 @@ mod automatic_inline;
 mod canonicalize;
 mod copy_elision;
 mod cse;
+mod dead_arguments;
 mod dead_symbols;
 mod destructor_calls;
 mod drop_values;

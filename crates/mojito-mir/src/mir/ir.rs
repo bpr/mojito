@@ -1920,6 +1920,36 @@ impl MirArgConventions {
         }))
     }
 
+    /// The record without the sources of the operands at the `positional`
+    /// and `keyword` indexes, each later source moved down past them, for a
+    /// call that passes none of those operands.
+    #[must_use]
+    pub fn without_operands(
+        self,
+        positional: &std::collections::BTreeSet<usize>,
+        keyword: &std::collections::BTreeSet<usize>,
+    ) -> Self {
+        use mojito_checked::checked::CheckedCallArgumentSource;
+        Self::new(self.iter().filter_map(|argument| {
+            let mut argument = *argument;
+            argument.source = match argument.source {
+                CheckedCallArgumentSource::Positional(index) => (!positional.contains(&index))
+                    .then(|| {
+                        CheckedCallArgumentSource::Positional(
+                            index - positional.range(..index).count(),
+                        )
+                    })?,
+                CheckedCallArgumentSource::Keyword(index) => {
+                    (!keyword.contains(&index)).then(|| {
+                        CheckedCallArgumentSource::Keyword(index - keyword.range(..index).count())
+                    })?
+                }
+                CheckedCallArgumentSource::Default => CheckedCallArgumentSource::Default,
+            };
+            Some(argument)
+        }))
+    }
+
     /// The record with each positional source moved `offset` operands
     /// later, for a call whose leading operands no source names.
     #[must_use]

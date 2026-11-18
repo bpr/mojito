@@ -8363,6 +8363,27 @@ last two runs are not ported. Every pass reads the structured instance the
 elaborator emits; the VM runs it as it stands, and Pliron lowers it at its
 entry.
 
+After the pipeline, `analysis::FINAL_SYMBOL_PASSES`
+(`eliminate_final_symbols`) runs `dead-argument-elimination` and then
+`eliminate-dead-symbols` over the concrete program, as upstream's
+optimizing pipeline ends with `DeadArgumentElimination` and
+`EliminateDeadSymbols` (R2306); upstream's `ArgPromotion`, its later
+function pipelines, and its closure and loop lowering between them are not
+ported. `dead-argument-elimination` (`analysis::DEAD_ARGUMENT_ELIMINATION`,
+`analysis/dead_arguments.rs`) takes each function no root names and that
+nothing but its direct calls names (`mir::direct_call_target`, counted
+against `SymbolTable` uses in bodies and declarations, the module
+initializer's calls counting as other uses), removes the arguments its body
+no longer uses (`mir::unused_arguments`, through `without_removed_arguments`)
+and keeps its name, and rewrites every call to pass no operand for them
+(`without_removed_argument_forwards`, which sheds the call's convention
+record too), repeating until none goes. So `take[E]` over `@no_inline def
+take[T: G](e: T) -> Int: return e.tag()` at a field-less memory-only `E`
+takes no pointer once `E.tag` inlines, where `remove-unused-params` over the
+template still saw `e` read. A method keeps its receiver, which a method
+call passes as its own operand (R2338). The pin runs neither pass at `-O0`;
+Mojito's switch for the pre-elaboration pipeline turns both off.
+
 After the pipeline and the last `eliminate-dead-symbols`, the driver
 refuses what upstream's LLVM translation refuses in the folded program
 (`SpecializedProgram::translated`, `mir::verify::llvm_translation_findings`,

@@ -14,6 +14,7 @@
 use super::automatic_inline::{ALWAYS_INLINE, AUTOMATIC_INLINE};
 use super::canonicalize::CANONICALIZE;
 use super::cse::CSE;
+use super::dead_arguments::DEAD_ARGUMENT_ELIMINATION;
 use super::dead_symbols::ELIMINATE_DEAD_CONCRETE_SYMBOLS;
 use super::duplicate_functions::ELIMINATE_DUPLICATE_FUNCTIONS;
 use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
@@ -69,11 +70,30 @@ pub const ELABORATED_SYMBOL_PASSES: &[ProgramPass] = &[
     ELIMINATE_DEAD_CONCRETE_SYMBOLS,
 ];
 
+/// The symbol passes upstream's optimizing pipeline ends with, in order.
+///
+/// They run over the concrete program after [`POST_ELABORATION_PIPELINE`]:
+/// `DeadArgumentElimination`, then `EliminateDeadSymbols`. The passes
+/// upstream runs between the two (`ArgPromotion`, its later function
+/// pipelines, and its closure and loop lowering) are not ported.
+pub const FINAL_SYMBOL_PASSES: &[ProgramPass] =
+    &[DEAD_ARGUMENT_ELIMINATION, ELIMINATE_DEAD_CONCRETE_SYMBOLS];
+
 /// Run [`ELABORATED_SYMBOL_PASSES`] over the concrete program `program`,
 /// which exports `exports` beside its entry roots, each pass under its own
 /// timing span.
 pub fn eliminate_elaborated_symbols(program: &mut MirProgram, exports: &[String]) {
     for pass in ELABORATED_SYMBOL_PASSES {
+        let _pass = timing::span(pass.name);
+        (pass.run)(program, exports);
+    }
+}
+
+/// Run [`FINAL_SYMBOL_PASSES`] over the concrete program `program`, which
+/// exports `exports` beside its entry roots, each pass under its own
+/// timing span.
+pub fn eliminate_final_symbols(program: &mut MirProgram, exports: &[String]) {
+    for pass in FINAL_SYMBOL_PASSES {
         let _pass = timing::span(pass.name);
         (pass.run)(program, exports);
     }

@@ -401,8 +401,11 @@ def main():
 
 /// An empty register-passable value passed by value is no physical
 /// parameter, and returned is `void`, as upstream lowers an empty
-/// register-passable `!kgen.struct` to a type holding no bits; a memory-only
-/// empty struct and a `mut` slot keep their pointer.
+/// register-passable `!kgen.struct` to a type holding no bits. A memory-only
+/// empty struct's slot and a `mut` one are pointers, which the pin keeps at
+/// `-O0`; once each callee's inlined body stops reading them,
+/// `dead-argument-elimination` removes them, as the pin's
+/// `DeadArgumentElimination` does at its default level.
 #[test]
 fn zero_sized_register_passable_argument_has_no_slot() {
     const EMPTY: &str = r"
@@ -471,6 +474,7 @@ def main():
     };
     for name in [
         "take_24mono_24TR(",
+        "take_24mono_24TE(",
         "apply_24mono_24T_24inflated",
         "D_2e_u_udeinit_u_u(",
         "D_2e_u_uinit_u_u(",
@@ -486,15 +490,11 @@ def main():
         ret.starts_with("define void @") && !ret.contains("ptr"),
         "an empty register-passable result is not `void`: {ret}"
     );
-    for (name, params) in [
-        ("take_24mono_24TE(", "(ptr %0)"),
-        ("mg_24mono_24TR(", "(ptr %0, i64 %1)"),
-        ("mg_24mono_24TE(", "(ptr %0, i64 %1)"),
-    ] {
+    for name in ["mg_24mono_24TR(", "mg_24mono_24TE("] {
         let line = define(name);
         assert!(
-            line.contains(params),
-            "`{name}` lost its by-address slot: {line}"
+            line.ends_with("(i64 %0) #0 {"),
+            "`{name}` still takes its dead `mut` slot: {line}"
         );
     }
 }
@@ -1137,12 +1137,12 @@ fn native_error(src: &str, entries: &[&str]) -> String {
 fn unsupported_constructs_produce_contextual_diagnostics() {
     // (source, entries, phrases the diagnostic must contain)
     let cases: &[(&str, &[&str], &[&str])] = &[
-        // Pointer element arithmetic lowers `+` only (the `unsafe_offset`
-        // form); `-` keeps a contextual rejection.
+        // Pointer element arithmetic lowers; a pointer comparison keeps a
+        // contextual rejection. It is read, so no pass erases it as dead.
         (
-            "from std.memory.alloc import unsafe_alloc\n\ndef compute() -> Int:\n    var p = unsafe_alloc[Int](2)\n    var q = p + 1\n    var d = q - 1\n    p.unsafe_free()\n    return 1\n",
+            "from std.memory.alloc import unsafe_alloc\n\ndef compute() -> Int:\n    var p = unsafe_alloc[Int](2)\n    var q = p + 1\n    var d = q - 1\n    print(d == p)\n    p.unsafe_free()\n    return 1\n",
             &["compute"],
-            &["operator `Sub` on Pointer operands"],
+            &["operator `Eq` on Pointer operands"],
         ),
     ];
     for (src, entries, phrases) in cases {

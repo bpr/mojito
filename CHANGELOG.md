@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A concrete function whose inlined body stops reading an argument now
+  takes none, as the pin's `DeadArgumentElimination` does at its default
+  level: `dead-argument-elimination` runs before the last
+  `eliminate-dead-symbols`, removing each unused argument of a function only
+  direct calls name and its operand from every call, so `take[E]` over
+  `@no_inline def take[T: G](e: T) -> Int: return e.tag()` at a field-less
+  memory-only `E` defines no parameter. A method keeps a dead receiver
+  (R2338) (R2306).
+
 - A generic callable contract naming a pack element by its own binder
   (`F: def[idx: Int]() -> Us[idx]`) now accepts an alpha-equivalent function
   over the caller's pack once the call forwards it (`first[*Ts](lambda [i:
