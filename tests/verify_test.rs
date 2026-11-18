@@ -911,6 +911,79 @@ fn verifier_requires_a_reference_at_a_keyword_by_address_argument() {
     }
 }
 
+/// Every operand a call binds is compared against its parameter's type,
+/// a keyword one as a positional one, as upstream's `lit.call` verifier
+/// checks every operand against its callee's signature.
+#[test]
+fn verifier_compares_a_keyword_operand_type_against_its_parameter() {
+    let source = "struct Big(Copyable):\n    var a: String\n\n    def __init__(out self, a: String):\n        self.a = a\n\n    def __init__(out self, *, copy: Self):\n        self.a = copy.a\n\ndef main():\n    var b = Big(\"q\")\n    var c = Big(copy=b)\n    print(c.a)\n";
+    let mut mir = lower_linked_source(source);
+    let errors = verify(&mir);
+    assert!(
+        errors.is_empty(),
+        "the keyword operand verifies: {errors:?}"
+    );
+    let main = function_named(&mut mir, "main");
+    let instructions = leaf_instructions_mut(&mut main.body);
+    let string = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } if func.0.starts_with("Big.__init__") => {
+                Some(args[0])
+            }
+            _ => None,
+        })
+        .expect("main constructs Big from a String");
+    instructions
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call { func, kwargs, .. } if func.0.contains("__copyinit__") => Some(kwargs),
+            _ => None,
+        })
+        .expect("main copies Big")[0]
+        .1 = string;
+    expect_finding(
+        &mir,
+        "keyword argument 'copy' of 'Big.__copyinit__' has type String, declared Big",
+    );
+}
+
+/// A call of a variadic callee passes its pack as one spread operand,
+/// which binds the collector, so the keyword operands after it bind their
+/// parameters and are compared against them.
+#[test]
+fn verifier_compares_a_variadic_call_keyword_operand_type() {
+    let source = "def g(*xs: Int, tag: Int) -> Int:\n    return tag\n\ndef main():\n    var s = String(\"q\")\n    print(g(1, 2, tag=3))\n    print(s)\n";
+    let mut mir = lower_linked_source(source);
+    let errors = verify(&mir);
+    assert!(errors.is_empty(), "the variadic call verifies: {errors:?}");
+    let main = function_named(&mut mir, "main");
+    let string = main
+        .reg_types
+        .iter()
+        .filter(|(_, ty)| ty.to_string() == "String")
+        .map(|(register, _)| Reg(*register))
+        .min_by_key(|register| register.0)
+        .expect("main holds a String register");
+    leaf_instructions_mut(&mut main.body)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                kwargs,
+                spread: Some(_),
+                ..
+            } if func.0 == "g" => Some(kwargs),
+            _ => None,
+        })
+        .expect("main calls g with its pack spread")[0]
+        .1 = string;
+    expect_finding(
+        &mir,
+        "keyword argument 'tag' of 'g' has type String, declared Int",
+    );
+}
+
 /// A memory-only `read self` receiver is received by address, as
 /// upstream's `lit.call` takes a `!lit.ref` of it: every verify point, the
 /// whole program's and one loaded function's alike, rejects a method call or

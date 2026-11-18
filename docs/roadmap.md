@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2335**.
+Next free ID: **R2338**.
 
 ## Ordered Work
 
@@ -9637,25 +9637,60 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2324 The verifier compares no keyword operand's type against
-  its parameter**
+- [ ] **R2335 The verifier compares no operand type of a call through a
+  trait bound**
 
-  Upstream's `lit.call` verifier type-checks every operand against the
-  callee's signature. `verify_direct_call` (`mir/verify/calls.rs`)
-  compares operand types only for a plain positional call, so keyword
-  operands, and the operands of defaulted and variadic calls, go
-  unchecked.
-  - Fix: compare each operand the `parameters` mapping
-    (`mir::call_operand_parameters`, `mir::method_operand_parameters`)
-    binds against `param_types[parameter]`, reading a borrowed slot's
-    referent as the plain loop does, and delete the plain gate.
-  - Probe: swap a keyword operand's register type in a lowered
-    `Big(copy=b)` (`tests/verify_test.rs`'s
-    `verifier_requires_a_reference_at_a_keyword_by_address_argument`)
-    for a `ref` to `String`: the verifier accepts it today.
-  - Stop when `scripts/smoke` runs clean with the rule on.
+  Upstream verifies a `lit.call` of `@Trait::method` against the
+  requirement's signature, operand types included. `verify_requirement_call`
+  (`mir/verify/calls.rs`) checks only the by-address half, since a
+  requirement's parameter types are spelled over `Self` and need the
+  receiver's substitution before they compare.
+  - Fix: substitute the receiver for `Self` in the requirement's
+    `param_types` and run `verify_operand_types` over the operands
+    `requirement_operand_parameters` binds, as `verify_direct_call` does.
+  - Probe: swap a keyword operand of a `__trait_dispatch.…` call for a
+    register of another type in a lowered generic call: the verifier
+    accepts it.
+  - Found while landing R2324 (2026-11-18).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2336 The verifier does not compare a spread pack against its
+  collector's element type**
+
+  Upstream's `lit.call` passes the pack it builds as one operand of the
+  collector's type. `verify_pack_spread` (`mir/verify/calls.rs`) checks
+  only that a spread operand is some pack kind (`VariadicPack`, `Tuple`,
+  `RuntimePack`, a variadic list), and no check compares a `**` operand
+  against `kw_variadic`.
+  - Fix: compare the spread operand's element types against
+    `declaration.variadic`, and the `**` operand against the keyword
+    collector's type, at the direct, method, and indirect call sites.
+  - Probe: swap the spread operand of `g(1, 2)` over `def g(*xs: Int)`
+    for a `VariadicList[String]` register: the verifier accepts it.
+  - Found while landing R2324 (2026-11-18).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2337 A sized-integer index into a `Some[Indexer]` accessor
+  passes a value where the template takes an address**
+
+  `assets/ok/indexer_collection_subscript.mojo` fails verification:
+  "argument 0 of 'List.__getitem__$ov$Some[Indexer]…' is received by
+  address but passes a Int32 value", and the same for `Array` with `Int8`.
+  Upstream passes a `read` of a type its template does not prove
+  register-passable as a `!lit.ref` until `LowerArgConventions` reads it
+  through in the instance.
+  - Cause: the subscript lowers the index by value at the template
+    accessor, whose `idx: Some[Indexer]` `by_address_parameter` takes by
+    address.
+  - Fix: address the index operand by the accessor's declared verdict, as
+    `Flatten::address_subscript_argument` addresses a slice literal.
+  - Probe: `mojito check assets/ok/indexer_collection_subscript.mojo`.
+  - Found while landing R2324 (2026-11-18); it fails with R2324's rule
+    off too.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2045 Seven MIR pass test inputs destroy a memory-only value
   through a `deinit` receiver register and fail at load**

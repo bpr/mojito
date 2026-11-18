@@ -43,7 +43,12 @@ impl Checker {
             ExprKind::ListLit(values) if self.list_literal_constructs(expected) => {
                 let marker = KwArg {
                     name: "__list_literal__".to_string(),
-                    value: Expr::new(ExprKind::None, expression.span),
+                    value: spelled_node(
+                        expression,
+                        LIST_LITERAL_MARKER_ORDINAL,
+                        ExprKind::None,
+                        expression.span,
+                    ),
                 };
                 (values.clone(), vec![marker])
             }
@@ -1268,6 +1273,12 @@ pub(super) fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
     }
     construction
 }
+
+/// The ordinal of a list display's `__list_literal__=None` marker among the
+/// occurrences derived from the display, past the construction's own (0)
+/// and its synthesized parameter arguments (1...), so every check of the
+/// display names the same marker and its `NoneType` conversion.
+const LIST_LITERAL_MARKER_ORDINAL: u32 = u32::MAX - 65;
 
 /// `expression` (a static call, a member read, or an applied member) over
 /// the receiver `receiver` gives for its own: the same read, spelled under

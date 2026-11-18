@@ -2575,14 +2575,19 @@ operand's `ref.make`. The verifier
 resolved `call.method` that binds a parameter by its callee's declaration
 (`mir::call_operand_parameters`, `mir::method_operand_parameters`),
 keyword operands and the operands of defaulted and variadic calls
-included, a call spreading a pack excepted, wherever
+included (a spread pack binds the positional collector), wherever
 `mir::by_address_parameter` takes the parameter by address, a `mut`/`ref` one and a
 `read` one whose declared type is not proven register-passable, as
 upstream's `lit.call` takes a `!lit.ref` wherever the signature does; an
 elaborated instance's declaration names its substituted types, so a `read`
 its instance proves register-passable takes the value
-`load_register_passable_operands` reads. Only a plain positional call's
-operand types are compared against the declaration. At every verify point it also
+`load_register_passable_operands` reads. It compares every bound
+operand's type against its parameter's, a borrowed one by its referent,
+and rejects a call whose operands do not bind its declaration, as
+upstream's `lit.call` verifier checks every operand against its callee's
+signature; `verify_callable_contract_call` applies the same rule to a
+`call.indirect` and a `def(...)` bound's `__call__` over
+`mir::signature_operand_parameters`. At every verify point it also
 rejects a value at the receiver of a resolved
 `call.method` or of a checked subscript accessor whose declaration takes
 it by address (`verify_by_address_receiver`, over

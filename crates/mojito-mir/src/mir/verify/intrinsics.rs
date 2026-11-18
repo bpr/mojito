@@ -267,8 +267,6 @@ pub(super) fn verify_callable_contract_call(
             params,
             ret,
             required,
-            variadic,
-            kw_variadic,
             conventions,
             ref_return,
             raises,
@@ -290,75 +288,60 @@ pub(super) fn verify_callable_contract_call(
             "{prefix}: indirect-call error type {found} does not match callable contract {expected}"
         ));
     }
-    if kwargs.is_empty() && variadic.is_none() && kw_variadic.is_none() {
-        let omitted_required = required
-            .iter()
-            .skip(args.len())
-            .copied()
-            .any(|is_required| is_required);
-        if args.len() > params.len() || omitted_required {
-            errors.push(format!(
-                "{prefix}: indirect call has {} positional arguments, callable contract requires {}",
+    if required.len() != params.len() {
+        errors.push(format!(
+            "{prefix}: callable contract required-mask length does not match its parameters"
+        ));
+    }
+    match crate::mir::signature_operand_parameters(signature, args.len(), spread, kwargs) {
+        Some(parameters) => {
+            let operands: Vec<_> = args
+                .iter()
+                .map(|argument| (*argument, None))
+                .chain(
+                    kwargs
+                        .iter()
+                        .map(|(name, argument)| (*argument, Some(name.as_str()))),
+                )
+                .zip(parameters)
+                .map(
+                    |((register, keyword), parameter)| crate::mir::BoundOperand {
+                        register,
+                        keyword,
+                        parameter,
+                    },
+                )
+                .collect();
+            super::calls::verify_operand_types(
+                cx,
+                "indirect callable",
+                params,
+                conventions,
+                &operands,
+                errors,
+            );
+            let addressed = crate::mir::signature_by_address_operands(
+                signature,
                 args.len(),
-                required.iter().filter(|required| **required).count()
-            ));
-        } else {
-            for (index, (argument, expected)) in args.iter().zip(params).enumerate() {
-                // A parameter received by address takes a reference to the
-                // caller's storage (`Flatten::address_operand`); an
-                // owned or `deinit` one takes the value itself.
-                let borrowed = !matches!(
-                    conventions.get(index).copied().flatten(),
-                    Some(
-                        mojito_ast::ast::ArgConvention::Var
-                            | mojito_ast::ast::ArgConvention::Deinit
-                            | mojito_ast::ast::ArgConvention::Out
-                    )
-                );
-                let found = function.reg_types.get(&argument.0).map(|found| {
-                    if borrowed && !matches!(expected.kind(), TyKind::Ref(_)) {
-                        crate::mir::operand_value_ty(found)
-                    } else {
-                        found
-                    }
-                });
-                if let Some(found) = found
-                    && !types_compatible(found, expected)
+                spread,
+                kwargs,
+                cx.declarations,
+            )
+            .unwrap_or_default();
+            for (index, (operand, by_address)) in operands.iter().zip(addressed).enumerate() {
+                if by_address.is_some()
+                    && let Some(found) = function.reg_types.get(&operand.register.0)
+                    && !matches!(found.kind(), TyKind::Ref(_))
                 {
                     errors.push(format!(
-                        "{prefix}: argument {index} of indirect callable has type {found}, contract declares {expected}"
+                        "{prefix}: argument {index} of indirect callable is received by address but passes a {found} value"
                     ));
                 }
             }
         }
-        if required.len() != params.len() {
-            errors.push(format!(
-                "{prefix}: callable contract required-mask length does not match its parameters"
-            ));
-        }
-    }
-    // A spread operand's slots are its pack's, which the elaborator expands.
-    if spread.is_none()
-        && let Some(addressed) = crate::mir::signature_by_address_operands(
-            signature,
-            args.len(),
-            kwargs,
-            cx.declarations,
-        )
-    {
-        let operands = args
-            .iter()
-            .chain(kwargs.iter().map(|(_, register)| register));
-        for (index, (argument, by_address)) in operands.zip(addressed).enumerate() {
-            if by_address.is_some()
-                && let Some(found) = function.reg_types.get(&argument.0)
-                && !matches!(found.kind(), TyKind::Ref(_))
-            {
-                errors.push(format!(
-                    "{prefix}: argument {index} of indirect callable is received by address but passes a {found} value"
-                ));
-            }
-        }
+        None => errors.push(format!(
+            "{prefix}: indirect call does not bind its callable contract"
+        )),
     }
     if let Some(found) = function.reg_types.get(&dest.0) {
         let found_value = match (ref_return.is_some(), found.kind()) {

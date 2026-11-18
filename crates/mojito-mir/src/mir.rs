@@ -64,8 +64,8 @@ pub use call_addresses::{
     BoundOperand, by_address_parameter, by_address_receiver, call_operand_parameters,
     load_register_passable_operands, method_operand_parameters, operand_value_ty,
     read_addressed_operands, requirement_by_address_parameter, requirement_by_address_receiver,
-    requirement_operand_parameters, signature_by_address_operands, subscript_operand_parameters,
-    subscript_requirement_operand_parameters,
+    requirement_operand_parameters, signature_by_address_operands, signature_operand_parameters,
+    subscript_operand_parameters, subscript_requirement_operand_parameters,
 };
 mod call_operands;
 pub use call_operands::{

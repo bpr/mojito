@@ -47,7 +47,8 @@ use std::collections::HashMap;
 /// binds.
 ///
 /// One entry per positional operand, then one per keyword operand,
-/// `None` for an operand a collector takes. `None` overall when the call
+/// `None` for an operand a collector takes; the `spread` operand, the
+/// positional pack the call passes, binds the positional collector. `None` overall when the call
 /// does not bind, or when the callee takes a receiver the call passes
 /// among its operands, whose slots the declaration's parameter lists do
 /// not count: a method named by its symbol (`Pt.method(p)`) lowers to a
@@ -58,28 +59,61 @@ pub fn call_operand_parameters(
     callee: &str,
     declaration: &MirFunctionDeclaration,
     positional: usize,
+    spread: Option<usize>,
     kwargs: &[(String, Reg)],
 ) -> Option<Vec<Option<usize>>> {
     if declaration.has_receiver && !is_initializer_symbol(callee) {
         return None;
     }
-    method_operand_parameters(declaration, positional, kwargs)
+    method_operand_parameters(declaration, positional, spread, kwargs)
 }
 
 /// The regular parameter each operand of a resolved `call.method` of
 /// `declaration` binds, its receiver excluded.
 ///
 /// One entry per positional operand, then one per keyword operand, `None`
-/// for an operand a collector takes. `None` overall when the operands do
-/// not bind.
+/// for an operand a collector takes, the `spread` pack among them. `None`
+/// overall when the operands do not bind.
 #[must_use]
 pub fn method_operand_parameters(
     declaration: &MirFunctionDeclaration,
     positional: usize,
+    spread: Option<usize>,
     kwargs: &[(String, Reg)],
 ) -> Option<Vec<Option<usize>>> {
     let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
-    operand_parameters(&CallShape::declared(declaration), positional, &keywords)
+    operand_parameters(
+        &CallShape::declared(declaration),
+        positional,
+        spread,
+        &keywords,
+    )
+}
+
+/// The regular parameter each operand of a call of function type
+/// `signature` binds.
+///
+/// The call is through a function value or a `def(...)` bound's
+/// `__call__`, as upstream's indirect `lit.call` binds the callee's
+/// `!lit.fn` signature.
+///
+/// One entry per positional operand, then one per keyword operand, `None`
+/// for an operand a collector takes, the `spread` pack among them. `None`
+/// overall when the operands do not bind.
+#[must_use]
+pub fn signature_operand_parameters(
+    signature: &FuncTy,
+    positional: usize,
+    spread: Option<usize>,
+    kwargs: &[(String, Reg)],
+) -> Option<Vec<Option<usize>>> {
+    let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+    operand_parameters(
+        &Contract::Signature(signature).shape()?,
+        positional,
+        spread,
+        &keywords,
+    )
 }
 
 /// One operand of a call as its callee's declaration binds it.
@@ -114,7 +148,7 @@ fn subscript_operands<'i>(
 ) -> Option<Vec<BoundOperand<'i>>> {
     let subscript = SubscriptOperands::of(instruction)?;
     let names: Vec<&str> = subscript.keywords.iter().map(|(name, _)| *name).collect();
-    let parameters = operand_parameters(shape, subscript.positional.len(), &names)?;
+    let parameters = operand_parameters(shape, subscript.positional.len(), None, &names)?;
     let operands = subscript
         .positional
         .into_iter()
@@ -184,12 +218,12 @@ pub fn by_address_receiver(
 pub fn signature_by_address_operands(
     signature: &FuncTy,
     positional: usize,
+    spread: Option<usize>,
     kwargs: &[(String, Reg)],
     declarations: &MirDeclarations,
 ) -> Option<Vec<Option<Mutability>>> {
     let contract = Contract::Signature(signature);
-    let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
-    let parameters = operand_parameters(&contract.shape()?, positional, &keywords)?;
+    let parameters = signature_operand_parameters(signature, positional, spread, kwargs)?;
     Some(
         parameters
             .into_iter()
@@ -213,7 +247,12 @@ pub fn requirement_operand_parameters(
     positional: usize,
     keywords: &[&str],
 ) -> Option<Vec<Option<usize>>> {
-    operand_parameters(&CallShape::required(requirement), positional, keywords)
+    operand_parameters(
+        &CallShape::required(requirement),
+        positional,
+        None,
+        keywords,
+    )
 }
 
 /// How a call through a trait bound receives a receiver of type
@@ -668,7 +707,30 @@ fn by_address(
 
 /// The regular parameter each of a call's operands binds, the receiver
 /// excluded ([`call_operand_parameters`]).
+///
+/// A `spread` operand is the positional pack the call passes whole, as
+/// upstream's call passes the pack it builds: it is the last positional
+/// operand, and binds the callee's positional collector.
 fn operand_parameters(
+    shape: &CallShape<'_>,
+    positional: usize,
+    spread: Option<usize>,
+    keywords: &[&str],
+) -> Option<Vec<Option<usize>>> {
+    let Some(spread) = spread else {
+        return slot_parameters(shape, positional, keywords);
+    };
+    if !shape.variadics.positional || spread + 1 != positional {
+        return None;
+    }
+    let mut parameters = slot_parameters(shape, spread, keywords)?;
+    parameters.insert(spread, None);
+    Some(parameters)
+}
+
+/// The regular parameter each of `positional` positional operands and the
+/// `keywords` operands binds by `shape`, with no pack spread.
+fn slot_parameters(
     shape: &CallShape<'_>,
     positional: usize,
     keywords: &[&str],
@@ -733,7 +795,8 @@ fn bound_call<'i>(
             ..
         } => {
             let declaration = callees.get(&func.0)?;
-            let parameters = call_operand_parameters(&func.0, declaration, args.len(), kwargs)?;
+            let parameters =
+                call_operand_parameters(&func.0, declaration, args.len(), None, kwargs)?;
             Some(BoundCall {
                 contract: Contract::Declared(declaration),
                 receiver: None,
@@ -755,7 +818,7 @@ fn bound_call<'i>(
             )?;
             let contract = Contract::Signature(signature);
             let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
-            let parameters = operand_parameters(&contract.shape()?, args.len(), &keywords)?;
+            let parameters = operand_parameters(&contract.shape()?, args.len(), None, &keywords)?;
             Some(BoundCall {
                 contract,
                 receiver: None,
@@ -793,7 +856,7 @@ fn bound_call<'i>(
                     })
                 })?;
             let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
-            let parameters = operand_parameters(&contract.shape()?, args.len(), &keywords)?;
+            let parameters = operand_parameters(&contract.shape()?, args.len(), None, &keywords)?;
             // A requirement call whose receiver convention went unrecorded
             // but which writes its receiver is left to its place, and a
             // `def(...)` bound's callee is the address lowering formed.

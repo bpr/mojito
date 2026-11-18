@@ -794,6 +794,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The MIR verifier now compares every operand a call binds against its
+  parameter's type, keyword operands and the operands of defaulted and
+  variadic calls included, as upstream's `lit.call` verifier checks every
+  operand against its callee's signature, and rejects a call whose
+  operands do not bind its declaration; a spread pack binds the callee's
+  positional collector. A list display in argument position
+  (`size([7, 8])`) now passes its `__list_literal__` marker converted to
+  `NoneType`, where it passed a raw `None`. (R2324)
+
 - Each link of a chained comparison now binds its operands as its
   dunder's call does: a `mut` or `ref` receiver or argument takes the
   operand's place, so `k < holder.s < l` over `__lt__(self, mut o: Self)`

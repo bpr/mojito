@@ -71,12 +71,13 @@ pub(super) fn verify_call_instruction(
             }
             if let Some(declaration) = declared(cx.declarations, callee) {
                 verify_collector_passed(prefix, declaration, *spread, kwargs, errors);
-                let parameters = spread
-                    .is_none()
-                    .then(|| {
-                        crate::mir::call_operand_parameters(callee, declaration, args.len(), kwargs)
-                    })
-                    .flatten();
+                let parameters = crate::mir::call_operand_parameters(
+                    callee,
+                    declaration,
+                    args.len(),
+                    *spread,
+                    kwargs,
+                );
                 verify_direct_call(cx, declaration, args, kwargs, parameters.as_deref(), errors);
                 let owner = receiver
                     .as_ref()
@@ -200,10 +201,8 @@ pub(super) fn verify_call_instruction(
                         declaration.lowered_name
                     ));
                 }
-                let parameters = spread
-                    .is_none()
-                    .then(|| crate::mir::method_operand_parameters(declaration, args.len(), kwargs))
-                    .flatten();
+                let parameters =
+                    crate::mir::method_operand_parameters(declaration, args.len(), *spread, kwargs);
                 verify_direct_call(cx, declaration, args, kwargs, parameters.as_deref(), errors);
                 verify_by_address_receiver(cx, declaration, *recv, errors);
                 let result_abi_matches =
@@ -386,20 +385,23 @@ fn verify_collector_passed(
     }
 }
 
-/// Argument-type and by-address checks against a declaration.
+/// Argument-type and by-address checks against a declaration, as
+/// upstream's `lit.call` verifier checks every operand against its
+/// callee's signature.
 ///
 /// `parameters` maps each operand, positional then keyword, to the regular
-/// parameter it binds by `declaration` (a direct `call` or a resolved
-/// `call.method` without a spread pack), `None` when the operands do not
-/// bind by it. Every operand of a parameter `by_address_parameter` takes
-/// by address, a `mut`/`ref` one or a `read` one of a type not proven
-/// register-passable, must be a reference, as upstream's `lit.call` takes
-/// a `!lit.ref` wherever the signature does, however the operand was
-/// spelled at the call site. An elaborated instance's declaration names
-/// its substituted types, so a `read` its instance proves
-/// register-passable takes the value.
-///
-/// Operand types are compared only for the plain positional shape.
+/// parameter it binds by `declaration` (a direct `call`, a resolved
+/// `call.method`, or a resolved indirect `__call__` target), the spread
+/// pack binding the positional collector; `None` when the operands do not
+/// bind by it, which is an error. Every operand that binds a regular
+/// parameter has that parameter's type, a borrowed one (any convention but
+/// `var`, `deinit`, or `out`) compared by its referent. Every operand of a
+/// parameter `by_address_parameter` takes by address, a `mut`/`ref` one or
+/// a `read` one of a type not proven register-passable, must be a
+/// reference, as upstream's `lit.call` takes a `!lit.ref` wherever the
+/// signature does, however the operand was spelled at the call site. An
+/// elaborated instance's declaration names its substituted types, so a
+/// `read` its instance proves register-passable takes the value.
 pub(super) fn verify_direct_call(
     cx: &InstrCx<'_>,
     declaration: &MirFunctionDeclaration,
@@ -408,47 +410,73 @@ pub(super) fn verify_direct_call(
     parameters: Option<&[Option<usize>]>,
     errors: &mut Vec<String>,
 ) {
-    let (prefix, function) = (cx.prefix, cx.function);
-    if let Some(parameters) = parameters {
-        let operands: Vec<_> = args
-            .iter()
-            .map(|argument| (*argument, None))
-            .chain(
-                kwargs
-                    .iter()
-                    .map(|(name, argument)| (*argument, Some(name.as_str()))),
-            )
-            .zip(parameters)
-            .map(
-                |((register, keyword), parameter)| crate::mir::BoundOperand {
-                    register,
-                    keyword,
-                    parameter: *parameter,
-                },
-            )
-            .collect();
-        verify_by_address_operands(cx, declaration, &operands, errors);
-    }
-    let plain = kwargs.is_empty()
-        && declaration.variadic.is_none()
-        && declaration.kw_variadic.is_none()
-        && args.len() == declaration.param_types.len();
-    if !plain {
+    let Some(parameters) = parameters else {
+        errors.push(format!(
+            "{}: the operands of '{}' do not bind its declaration",
+            cx.prefix, declaration.lowered_name
+        ));
         return;
-    }
-    for (index, (argument, expected)) in args.iter().zip(&declaration.param_types).enumerate() {
-        // A parameter received by address takes a reference to the
-        // caller's storage (`Flatten::address_operand`); an owned
-        // or `deinit` one takes the value itself.
+    };
+    let operands: Vec<_> = args
+        .iter()
+        .map(|argument| (*argument, None))
+        .chain(
+            kwargs
+                .iter()
+                .map(|(name, argument)| (*argument, Some(name.as_str()))),
+        )
+        .zip(parameters)
+        .map(
+            |((register, keyword), parameter)| crate::mir::BoundOperand {
+                register,
+                keyword,
+                parameter: *parameter,
+            },
+        )
+        .collect();
+    verify_by_address_operands(cx, declaration, &operands, errors);
+    verify_operand_types(
+        cx,
+        &declaration.lowered_name,
+        &declaration.param_types,
+        &declaration.param_conventions,
+        &operands,
+        errors,
+    );
+}
+
+/// Require every operand that binds a regular parameter to have that
+/// parameter's type in `param_types`, a borrowed one (any convention in
+/// `conventions` but `var`, `deinit`, or `out`, at a non-reference type)
+/// compared by its referent, since a parameter received by address takes
+/// a reference to the caller's storage (`Flatten::address_operand`).
+///
+/// `callee` names the callee in the message, `operands` lists each
+/// operand, positional then keyword.
+pub(super) fn verify_operand_types(
+    cx: &InstrCx<'_>,
+    callee: &str,
+    param_types: &[Ty],
+    conventions: &[Option<mojito_ast::ast::ArgConvention>],
+    operands: &[crate::mir::BoundOperand<'_>],
+    errors: &mut Vec<String>,
+) {
+    for (index, operand) in operands.iter().enumerate() {
+        let Some((parameter, expected)) = operand
+            .parameter
+            .and_then(|parameter| Some((parameter, param_types.get(parameter)?)))
+        else {
+            continue;
+        };
         let borrowed = !matches!(
-            declaration.param_conventions.get(index).copied().flatten(),
+            conventions.get(parameter).copied().flatten(),
             Some(
                 mojito_ast::ast::ArgConvention::Var
                     | mojito_ast::ast::ArgConvention::Deinit
                     | mojito_ast::ast::ArgConvention::Out
             )
         );
-        let found = function.reg_types.get(&argument.0).map(|found| {
+        let found = cx.reg_ty(operand.register).map(|found| {
             if borrowed && !matches!(expected.kind(), TyKind::Ref(_)) {
                 crate::mir::operand_value_ty(found)
             } else {
@@ -458,9 +486,13 @@ pub(super) fn verify_direct_call(
         if let Some(found) = found
             && !types_compatible(found, expected)
         {
+            let operand = operand.keyword.map_or_else(
+                || format!("argument {index}"),
+                |name| format!("keyword argument '{name}'"),
+            );
             errors.push(format!(
-                "{prefix}: argument {index} of '{}' has type {found}, declared {expected}",
-                declaration.lowered_name
+                "{}: {operand} of '{callee}' has type {found}, declared {expected}",
+                cx.prefix
             ));
         }
     }
@@ -1339,7 +1371,9 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             ));
         }
         if let Some(declaration) = declared(cx.declarations, target) {
-            verify_direct_call(cx, declaration, args, kwargs, None, errors);
+            let parameters =
+                crate::mir::method_operand_parameters(declaration, args.len(), *spread, kwargs);
+            verify_direct_call(cx, declaration, args, kwargs, parameters.as_deref(), errors);
         }
     }
 }
