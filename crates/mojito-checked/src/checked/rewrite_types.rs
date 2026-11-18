@@ -357,6 +357,7 @@ impl RewriteTypes for CheckedIteratorCall {
             reference_result,
             raises,
             result_adapter: _,
+            refined_bound: _,
         } = self;
         result_ty.rewrite_types(rewrite);
         reference_result.rewrite_types(rewrite);
@@ -413,6 +414,7 @@ impl RewriteTypes for IterationProtocol {
             prepare: _,
             prepare_raises,
             prepare_receiver: _,
+            prepare_refined_bound: _,
             iterator_ty,
             next,
             exhaustion,

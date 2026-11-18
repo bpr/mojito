@@ -794,6 +794,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The MIR verifier now checks a `call.method` or subscript through a trait
+  bound against the requirement it binds, as upstream verifies a
+  `lit.call` of `@Trait::method` against the requirement's signature: a
+  value where the requirement takes the receiver or an argument by address
+  is rejected at every verify point, where such a call had no declaration
+  and went unchecked. A generic `for` loop's `__iter__` and `__next__` now
+  record the bound they select through, so a projection iterator's
+  `__next__` binds too; the package format moves to `mojito-package 229`
+  (`tests/mir_passes/inline-parametric/bound_iteration_value_receiver.mir`).
+  (R2319)
+
 - A truthiness test is now its operand's `x.__bool__()` call, as upstream's
   IR generation emits it, rather than a builtin `Bool(x)` the elaborator
   rewrote. A raising `__bool__` now raises from an `if`/`while`/ternary

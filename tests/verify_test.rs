@@ -965,6 +965,60 @@ fn verifier_requires_a_reference_at_a_memory_only_read_receiver() {
     }
 }
 
+/// A call through a trait bound binds the requirement the bound declares,
+/// as upstream's `lit.call` of `@Trait::method` is verified against the
+/// requirement's signature: the verifier rejects a value where the
+/// requirement takes the receiver (`mut self`, or a `read self` of a
+/// memory-only type parameter) or an argument (`mut n`) by address, at a
+/// method call and a subscript alike.
+#[test]
+fn verifier_requires_a_reference_at_a_requirement_operand() {
+    let source = "trait Shape:\n    def area(self) -> Int: ...\n    def grow(mut self, by: Int): ...\n    def bump(self, mut n: Int): ...\n    def __getitem__(self, i: Int) -> Int: ...\n\ndef use_it[T: Shape](mut t: T) -> Int:\n    t.grow(2)\n    var n = 1\n    t.bump(n)\n    return t.area() + n + t[3]\n";
+    let mir = lower_linked_source(source);
+    let errors = verify(&mir);
+    assert!(
+        errors.is_empty(),
+        "the requirement calls through ref.make verify: {errors:?}"
+    );
+    let operand = |mir: &mut MirProgram, target: &str| {
+        let use_it = function_named(mir, "use_it");
+        let operand = leaf_instructions_mut(&mut use_it.body)
+            .into_iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::MethodCall {
+                    method, recv, args, ..
+                } if method == target => Some(if target == "bump" { args[0] } else { *recv }),
+                MirInstr::Index {
+                    base,
+                    call: Some(_),
+                    ..
+                } if target == "__getitem__" => Some(*base),
+                _ => None,
+            })
+            .expect("use_it calls the requirement");
+        load_in_place_of_address(use_it, operand);
+    };
+    for (target, needle) in [
+        (
+            "grow",
+            "receiver of '__trait_dispatch.grow$ov$Int' is received by address but passes a",
+        ),
+        ("area", "receiver of '__trait_dispatch.area"),
+        ("bump", "argument 0 of '__trait_dispatch.bump"),
+        ("__getitem__", "receiver of '__trait_dispatch.__getitem__"),
+    ] {
+        let mut mir = mir.clone();
+        operand(&mut mir, target);
+        expect_finding(&mir, needle);
+        let use_it = function_named(&mut mir, "use_it").clone();
+        let errors = verify_function_in("use_it", &use_it, &mir.declarations);
+        assert!(
+            errors.iter().any(|error| error.contains(needle)),
+            "a loaded function's verify applies the requirement rule: {errors:?}"
+        );
+    }
+}
+
 /// A memory-only `read` index of a subscript accessor is its place's
 /// address, as upstream's accessor `lit.call` takes a `!lit.ref` wherever
 /// the accessor's signature does: the verifier rejects the value read from

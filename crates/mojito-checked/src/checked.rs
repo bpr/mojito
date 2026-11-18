@@ -392,6 +392,12 @@ pub struct CheckedIteratorCall {
     pub reference_result: Option<mojito_types::origin::RefTy>,
     pub raises: Option<Ty>,
     pub result_adapter: Option<CheckedResultAdapter>,
+    /// The bound a call through a trait bound selects its requirement
+    /// through, when it differs from what the iterator type spells
+    /// ([`CheckedCallContract::refined_bound`]): an associated projection's
+    /// declaring trait, or the standard `Iterator` a loop falls back to.
+    #[serde(default)]
+    pub refined_bound: Option<Vec<String>>,
 }
 
 /// One resolved generic free-function application at a call site: the source
@@ -513,6 +519,11 @@ pub struct IterationProtocol {
     /// source and a register-passable `read` one.
     #[serde(default)]
     pub prepare_receiver: Option<mojito_types::origin::Mutability>,
+    /// The bound a `prepare` through a trait bound selects its `__iter__`
+    /// requirement through, when it differs from what the source type
+    /// spells ([`CheckedCallContract::refined_bound`]).
+    #[serde(default)]
+    pub prepare_refined_bound: Option<Vec<String>>,
     /// The type of the iterator `prepare` produces: its `__iter__`
     /// result, resolved at the loop site (`_ListIter[Int,
     /// origin_of(xs)]`, or `C.IteratorType[origin_of(self)]` over a generic

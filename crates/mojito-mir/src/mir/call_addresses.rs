@@ -38,7 +38,7 @@ use crate::mir::{
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
-use mojito_symbol::symbol::{is_initializer_symbol, is_trait_dispatch_symbol};
+use mojito_symbol::symbol::is_initializer_symbol;
 use mojito_types::origin::{Mutability, OriginParamId};
 use mojito_types::types::{FuncTy, Ty, TyKind};
 use std::collections::HashMap;
@@ -104,13 +104,17 @@ pub fn subscript_operand_parameters<'i>(
     instruction: &'i MirInstr,
     declaration: &MirFunctionDeclaration,
 ) -> Option<Vec<BoundOperand<'i>>> {
+    subscript_operands(instruction, &CallShape::declared(declaration))
+}
+
+/// A checked subscript's operands as a call of shape `shape` binds them.
+fn subscript_operands<'i>(
+    instruction: &'i MirInstr,
+    shape: &CallShape<'_>,
+) -> Option<Vec<BoundOperand<'i>>> {
     let subscript = SubscriptOperands::of(instruction)?;
     let names: Vec<&str> = subscript.keywords.iter().map(|(name, _)| *name).collect();
-    let parameters = operand_parameters(
-        &CallShape::declared(declaration),
-        subscript.positional.len(),
-        &names,
-    )?;
+    let parameters = operand_parameters(shape, subscript.positional.len(), &names)?;
     let operands = subscript
         .positional
         .into_iter()
@@ -195,6 +199,71 @@ pub fn signature_by_address_operands(
             })
             .collect(),
     )
+}
+
+/// The regular parameter each operand of a call through a trait bound
+/// binds in `requirement`, its receiver excluded.
+///
+/// One entry per positional operand, then one per keyword operand, `None`
+/// for an operand a collector takes. `None` overall when the operands do
+/// not bind.
+#[must_use]
+pub fn requirement_operand_parameters(
+    requirement: &TraitRequirement,
+    positional: usize,
+    keywords: &[&str],
+) -> Option<Vec<Option<usize>>> {
+    operand_parameters(&CallShape::required(requirement), positional, keywords)
+}
+
+/// How a call through a trait bound receives a receiver of type
+/// `receiver_ty` by address, under the receiver convention the call
+/// records (a requirement records none).
+#[must_use]
+pub fn requirement_by_address_receiver(
+    convention: Option<ArgConvention>,
+    receiver_ty: &Ty,
+    declarations: &MirDeclarations,
+) -> Option<Mutability> {
+    by_address(
+        convention,
+        is_reference(convention),
+        receiver_ty,
+        declarations,
+    )
+}
+
+/// How a call through a trait bound receives `requirement`'s regular
+/// parameter `parameter` by address.
+///
+/// The operand passes a value of type `operand_ty`: a requirement spells
+/// its parameters over `Self`, so the operand's type is the parameter's at
+/// the call.
+#[must_use]
+pub fn requirement_by_address_parameter(
+    requirement: &TraitRequirement,
+    parameter: usize,
+    operand_ty: &Ty,
+    declarations: &MirDeclarations,
+) -> Option<Mutability> {
+    let convention = requirement.param_conventions.get(parameter).copied()?;
+    by_address(
+        convention,
+        is_reference(convention),
+        operand_ty,
+        declarations,
+    )
+}
+
+/// The operands of a checked subscript through a trait bound as a call of
+/// its accessor's `requirement` binds them, its receiver excluded
+/// ([`subscript_operand_parameters`]).
+#[must_use]
+pub fn subscript_requirement_operand_parameters<'i>(
+    instruction: &'i MirInstr,
+    requirement: &TraitRequirement,
+) -> Option<Vec<BoundOperand<'i>>> {
+    subscript_operands(instruction, &CallShape::required(requirement))
 }
 
 /// The value an operand of `ty` passes: the referent of a reference.
@@ -410,23 +479,16 @@ impl<'a> Callees<'a> {
     }
 
     /// The requirement a method call of the trait-dispatch symbol
-    /// `dispatch` binds over a receiver of type `receiver`: the one the
-    /// bound it was selected through declares (`refined_bound`), else the
-    /// receiver type parameter's own bounds.
+    /// `dispatch` binds over a receiver of type `receiver`
+    /// ([`MirDeclarations::call_requirement`]).
     fn requirement(
         &self,
         dispatch: &str,
         receiver: Option<&Ty>,
         refined_bound: Option<&[String]>,
     ) -> Option<&'a TraitRequirement> {
-        if !is_trait_dispatch_symbol(dispatch) {
-            return None;
-        }
-        let bounds = refined_bound.or_else(|| match receiver.map(Ty::kind) {
-            Some(TyKind::Param { bounds, .. }) => Some(bounds.as_slice()),
-            _ => None,
-        })?;
-        self.declarations.bound_requirement(bounds, dispatch)
+        self.declarations
+            .call_requirement(dispatch, receiver, refined_bound)
     }
 }
 
@@ -455,16 +517,7 @@ impl<'a> Contract<'a> {
         Some(match self {
             Self::Declared(declaration) => CallShape::declared(declaration),
             Self::Copy => return None,
-            Self::Required { requirement, .. } => CallShape {
-                names: &requirement.param_names,
-                required: &requirement.required,
-                positional_only: requirement.positional_only,
-                keyword_only: requirement.keyword_only,
-                variadics: CallVariadics {
-                    positional: requirement.variadic.is_some(),
-                    keyword: requirement.kw_variadic.is_some(),
-                },
-            },
+            Self::Required { requirement, .. } => CallShape::required(requirement),
             Self::Signature(signature) => CallShape {
                 names: &signature.names,
                 required: &signature.required,
@@ -483,7 +536,7 @@ impl<'a> Contract<'a> {
         match self {
             Self::Declared(declaration) => by_address_receiver(declaration, ty, declarations),
             Self::Required { receiver, .. } => {
-                by_address(receiver, is_reference(receiver), ty, declarations)
+                requirement_by_address_receiver(receiver, ty, declarations)
             }
             Self::Signature(_) | Self::Copy => None,
         }
@@ -504,13 +557,7 @@ impl<'a> Contract<'a> {
                 by_address_parameter(declaration, declarations, parameter)
             }
             Self::Required { requirement, .. } => {
-                let convention = requirement.param_conventions.get(parameter).copied()?;
-                by_address(
-                    convention,
-                    is_reference(convention),
-                    operand_ty,
-                    declarations,
-                )
+                requirement_by_address_parameter(requirement, parameter, operand_ty, declarations)
             }
             Self::Copy => by_address(None, false, operand_ty, declarations),
             Self::Signature(signature) => {
@@ -577,6 +624,19 @@ impl<'a> CallShape<'a> {
             variadics: CallVariadics {
                 positional: declaration.variadic.is_some(),
                 keyword: declaration.kw_variadic.is_some(),
+            },
+        }
+    }
+
+    fn required(requirement: &'a TraitRequirement) -> Self {
+        Self {
+            names: &requirement.param_names,
+            required: &requirement.required,
+            positional_only: requirement.positional_only,
+            keyword_only: requirement.keyword_only,
+            variadics: CallVariadics {
+                positional: requirement.variadic.is_some(),
+                keyword: requirement.kw_variadic.is_some(),
             },
         }
     }

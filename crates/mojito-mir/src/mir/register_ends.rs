@@ -19,7 +19,6 @@ use super::{
     TraitRequirement, instruction_regions, operand_value_ty,
 };
 use mojito_ast::ast::ArgConvention;
-use mojito_symbol::symbol::is_trait_dispatch_symbol;
 use mojito_types::types::{FuncTy, Ty, TyKind};
 use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
@@ -424,13 +423,8 @@ impl<'a> Callee<'a> {
             .function(target)
             .map(Self::Declared)
             .or_else(|| {
-                let bounds = refined_bound.or_else(|| match receiver.map(Ty::kind) {
-                    Some(TyKind::Param { bounds, .. }) => Some(bounds.as_slice()),
-                    _ => None,
-                })?;
-                is_trait_dispatch_symbol(target)
-                    .then(|| declarations.bound_requirement(bounds, target))
-                    .flatten()
+                declarations
+                    .call_requirement(target, receiver, refined_bound)
                     .map(Self::Required)
             })
             .or_else(|| super::callable_bound_requirement(receiver?, target).map(Self::Contract))

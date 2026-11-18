@@ -341,6 +341,7 @@ impl Checker {
                     prepare: None,
                     prepare_raises: None,
                     prepare_receiver: None,
+                    prepare_refined_bound: None,
                     iterator_ty: ty.clone(),
                     next: None,
                     exhaustion: None,
@@ -419,9 +420,9 @@ impl Checker {
                     args: Vec::new(),
                 });
                 let exhaustion = self.generic_iterator_exhaustion(bounds, required)?;
-                let iter = self.generic_iter_requirement(ty, bounds, mode)?;
+                let (iter, iter_bound) = self.generic_iter_requirement(ty, bounds, mode)?;
                 let iterator_ty = self.generic_iterator_ty(ty, &iter);
-                let next = self.generic_next_requirement(&iterator_ty)?;
+                let (next, next_bound) = self.generic_next_requirement(&iterator_ty)?;
                 Ok((
                     element.clone(),
                     IterationProtocol {
@@ -434,7 +435,7 @@ impl Checker {
                         prepare_raises: None,
                         prepare_receiver: (!owned && self.memory_only(ty))
                             .then_some(mojito_types::origin::Mutability::Immutable),
-                        iterator_ty,
+                        prepare_refined_bound: recorded_selecting_bound(ty, iter_bound),
                         next: Some(Box::new(mojito_checked::checked::CheckedIteratorCall {
                             target: method_lowered_name(TRAIT_DISPATCH, "__next__", &next, None),
                             result_ty: element,
@@ -443,7 +444,9 @@ impl Checker {
                             result_adapter: Some(
                                 mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference,
                             ),
+                            refined_bound: recorded_selecting_bound(&iterator_ty, next_bound),
                         })),
+                        iterator_ty,
                         exhaustion: Some(exhaustion),
                     },
                 ))
@@ -609,6 +612,7 @@ impl Checker {
             reference_result: reference_result.clone(),
             raises: next_error.clone(),
             result_adapter: None,
+            refined_bound: None,
         };
         // The declared interior projection of the yielded reference. It is
         // retained only while the instantiated origin is still the abstract
@@ -658,6 +662,7 @@ impl Checker {
                     }
                     _ => None,
                 },
+                prepare_refined_bound: None,
                 iterator_ty: it_ty.clone(),
                 next: Some(Box::new(checked_next)),
                 exhaustion: Some(exhaustion),
@@ -907,15 +912,16 @@ impl Checker {
         self.resolve_assoc_ty(&substitute_self(&iter.ret, ty))
     }
 
-    /// The `__iter__` requirement a loop over a generic iterable calls: the
-    /// one its bounds declare at the loop's receiver convention, else the
-    /// standard trait's (Mojito's `Element`-only iteration, R178).
+    /// The `__iter__` requirement a loop over a generic iterable calls, with
+    /// the bounds it was found through: the one its bounds declare at the
+    /// loop's receiver convention, else the standard trait's (Mojito's
+    /// `Element`-only iteration, R178).
     fn generic_iter_requirement(
         &self,
         ty: &Ty,
         bounds: &[String],
         mode: mojito_checked::checked::IterationMode,
-    ) -> Result<MethodSig, TypeError> {
+    ) -> Result<(MethodSig, Vec<String>), TypeError> {
         use mojito_ast::ast::ArgConvention;
         use mojito_checked::checked::IterationMode;
 
@@ -938,9 +944,12 @@ impl Checker {
     }
 
     /// The `__next__` requirement a loop over a generic iterable advances
-    /// its iterator through: the one the iterator type's bounds declare,
-    /// else the standard `Iterator`'s.
-    fn generic_next_requirement(&self, iterator_ty: &Ty) -> Result<MethodSig, TypeError> {
+    /// its iterator through, with the bounds it was found through: the one
+    /// the iterator type's bounds declare, else the standard `Iterator`'s.
+    fn generic_next_requirement(
+        &self,
+        iterator_ty: &Ty,
+    ) -> Result<(MethodSig, Vec<String>), TypeError> {
         let bounds = self.refined_bound(iterator_ty).unwrap_or_default();
         self.unique_requirement(&bounds, STD_ITERATOR_TRAIT, "__next__", |_| true)
             .ok_or_else(|| TypeError::TypeMismatch {
@@ -951,23 +960,35 @@ impl Checker {
     }
 
     /// The one nullary `method` requirement `bounds` declare that `accept`
-    /// takes, else the `standard` trait's.
+    /// takes, else the `standard` trait's, beside the bounds it was found
+    /// through.
     fn unique_requirement(
         &self,
         bounds: &[String],
         standard: &str,
         method: &str,
         accept: impl Fn(&MethodSig) -> bool,
-    ) -> Option<MethodSig> {
-        let unique = |bounds: &[String]| {
+    ) -> Option<(MethodSig, Vec<String>)> {
+        let unique = |bounds: Vec<String>| {
             let mut found = self
-                .lookup_trait_methods(bounds, method, 0)
+                .lookup_trait_methods(&bounds, method, 0)
                 .into_iter()
                 .filter(|sig| accept(sig));
             let first = found.next()?;
-            found.next().is_none().then_some(first)
+            found.next().is_none().then_some((first, bounds))
         };
-        unique(bounds).or_else(|| unique(&[standard.to_string()]))
+        unique(bounds.to_vec()).or_else(|| unique(vec![standard.to_string()]))
+    }
+}
+
+/// The bound an iteration-protocol call through a trait bound records it
+/// selected its requirement through, `bound`: none when it is what the
+/// receiver type parameter `receiver` spells, as
+/// `Checker::recorded_refined_bound` records a call's downcast receiver.
+fn recorded_selecting_bound(receiver: &Ty, bound: Vec<String>) -> Option<Vec<String>> {
+    match receiver.kind() {
+        TyKind::Param { bounds, .. } if *bounds == bound => None,
+        _ => Some(bound),
     }
 }
 

@@ -1223,6 +1223,12 @@ unchanged. The reader reads and drops an older artifact's
 `callee_place`, so its `call.indirect` loads with the field cleared. The package format moves to
 `mojito-package 226` with it (R2269).
 
+The package format moves to `mojito-package 229` when a checked generic
+`for` loop's `__iter__` and `__next__` record the bound they select their
+requirement through (`IterationProtocol::prepare_refined_bound`,
+`CheckedIteratorCall::refined_bound`), which lowering writes as the
+calls' existing `refined_bound`; the MIR text schema is unchanged (R2319).
+
 Schema 1.203 adds an optional `writes: true` to the
 `argument_convention` and `call_argument` records: the slot's declared
 contract writes through the caller's place — a `mut`, `var`, or `deinit`

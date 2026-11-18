@@ -110,6 +110,7 @@ pub(super) fn verify_call_instruction(
             instantiated_args,
             spread,
             recv_writes,
+            refined_bound,
             ..
         } => {
             verify_capture_accesses(prefix, cx.function, capture_accesses, errors);
@@ -119,7 +120,9 @@ pub(super) fn verify_call_instruction(
             // by address is an immutable reference, as upstream's
             // `lit.call` takes a `!lit.ref` of a `read self`; a
             // register-passable one is passed by value.
-            if super::super::bound_call_contract(instruction, &cx.function.reg_types).is_some()
+            let callable_bound =
+                super::super::bound_call_contract(instruction, &cx.function.reg_types).is_some();
+            if callable_bound
                 && let Some(contract) = cx
                     .reg_ty(*recv)
                     .map(super::super::operand_value_ty)
@@ -242,6 +245,40 @@ pub(super) fn verify_call_instruction(
                         .map(|(decls, arguments)| (*decls, arguments.as_ref())),
                     errors,
                 );
+            } else if !callable_bound
+                && spread.is_none()
+                && let Some(requirement) = cx.declarations.call_requirement(
+                    callee,
+                    cx.reg_ty(*recv),
+                    refined_bound.as_ref().map(|bound| bound.traits.as_slice()),
+                )
+            {
+                let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+                let operands =
+                    crate::mir::requirement_operand_parameters(requirement, args.len(), &keywords)
+                        .map(|parameters| {
+                            args.iter()
+                                .map(|argument| (*argument, None))
+                                .chain(
+                                    kwargs
+                                        .iter()
+                                        .map(|(name, argument)| (*argument, Some(name.as_str()))),
+                                )
+                                .zip(parameters)
+                                .map(
+                                    |((register, keyword), parameter)| crate::mir::BoundOperand {
+                                        register,
+                                        keyword,
+                                        parameter,
+                                    },
+                                )
+                                .collect::<Vec<_>>()
+                        });
+                // A call that writes its receiver but records no convention
+                // for it leaves the receiver to its place, as lowering does.
+                let receiver = (!(*recv_writes && receiver_convention.is_none()))
+                    .then_some((*recv, *receiver_convention));
+                verify_requirement_call(cx, requirement, receiver, operands.as_deref(), errors);
             }
         }
         // A spread names the collector of the method the checker selected;
@@ -456,6 +493,69 @@ pub(super) fn verify_by_address_operands(
             errors.push(format!(
                 "{}: {operand} of '{}' is received by address but passes a {found} value",
                 cx.prefix, declaration.lowered_name
+            ));
+        }
+    }
+}
+
+/// Require a reference wherever a call through a trait bound binds its
+/// receiver or a regular operand by address, as upstream's `lit.call` of
+/// `@Trait::method` is verified against the requirement's signature.
+///
+/// `requirement` is the one the call binds
+/// ([`MirDeclarations::call_requirement`]). `receiver` is the receiver
+/// beside the convention the call records for it (a requirement records
+/// none), `None` when the call leaves it to its place. `operands` lists
+/// each regular operand, positional then keyword, with the parameter it
+/// binds, `None` when they do not bind the requirement's shape.
+pub(super) fn verify_requirement_call(
+    cx: &InstrCx<'_>,
+    requirement: &crate::mir::TraitRequirement,
+    receiver: Option<(Reg, Option<mojito_ast::ast::ArgConvention>)>,
+    operands: Option<&[crate::mir::BoundOperand<'_>]>,
+    errors: &mut Vec<String>,
+) {
+    let dispatch = &requirement.dispatch;
+    if let Some((receiver, convention)) = receiver
+        && let Some(found) = cx.reg_ty(receiver)
+        && !matches!(found.kind(), TyKind::Ref(_))
+        && crate::mir::requirement_by_address_receiver(convention, found, cx.declarations).is_some()
+    {
+        errors.push(format!(
+            "{}: receiver of '{dispatch}' is received by address but passes a {found} value",
+            cx.prefix
+        ));
+    }
+    let Some(operands) = operands else {
+        errors.push(format!(
+            "{}: the operands of '{dispatch}' do not bind its requirement",
+            cx.prefix
+        ));
+        return;
+    };
+    for (index, operand) in operands.iter().enumerate() {
+        if let Some(parameter) = operand.parameter
+            && requirement
+                .param_types
+                .get(parameter)
+                .is_some_and(|expected| !matches!(expected.kind(), TyKind::Ref(_)))
+            && let Some(found) = cx.reg_ty(operand.register)
+            && !matches!(found.kind(), TyKind::Ref(_))
+            && crate::mir::requirement_by_address_parameter(
+                requirement,
+                parameter,
+                found,
+                cx.declarations,
+            )
+            .is_some()
+        {
+            let operand = operand.keyword.map_or_else(
+                || format!("argument {index}"),
+                |name| format!("keyword argument '{name}'"),
+            );
+            errors.push(format!(
+                "{}: {operand} of '{dispatch}' is received by address but passes a {found} value",
+                cx.prefix
             ));
         }
     }

@@ -770,6 +770,7 @@ impl<'a> Flatten<'a> {
                         prepare: None,
                         prepare_raises: None,
                         prepare_receiver: None,
+                        prepare_refined_bound: None,
                         iterator_ty: iterator_ty.clone().unwrap_or_else(Ty::error),
                         next: None,
                         exhaustion: None,

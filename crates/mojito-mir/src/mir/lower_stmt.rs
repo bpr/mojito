@@ -4264,7 +4264,10 @@ impl<'a> Flatten<'a> {
             param_decls: Vec::new(),
             instantiated_args: Vec::new(),
             spread: None,
-            refined_bound: None,
+            refined_bound: protocol
+                .prepare_refined_bound
+                .clone()
+                .map(MirRefinedBound::boxed),
         });
         self.error_region(raises);
         self.emit(MirInstr::DefVar {
@@ -4315,7 +4318,7 @@ impl<'a> Flatten<'a> {
             param_decls: Vec::new(),
             instantiated_args: Vec::new(),
             spread: None,
-            refined_bound: None,
+            refined_bound: call.refined_bound.clone().map(MirRefinedBound::boxed),
         });
         self.error_region(raises);
         self.emit(MirInstr::DefVar {

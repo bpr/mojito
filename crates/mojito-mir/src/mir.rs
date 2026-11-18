@@ -63,7 +63,9 @@ mod call_addresses;
 pub use call_addresses::{
     BoundOperand, by_address_parameter, by_address_receiver, call_operand_parameters,
     load_register_passable_operands, method_operand_parameters, operand_value_ty,
-    read_addressed_operands, signature_by_address_operands, subscript_operand_parameters,
+    read_addressed_operands, requirement_by_address_parameter, requirement_by_address_receiver,
+    requirement_operand_parameters, signature_by_address_operands, subscript_operand_parameters,
+    subscript_requirement_operand_parameters,
 };
 mod call_operands;
 pub use call_operands::{
@@ -873,6 +875,30 @@ impl MirDeclarations {
             pending.extend(declaration.refines.iter().map(String::as_str));
         }
         None
+    }
+
+    /// The requirement a method or subscript call of the trait-dispatch
+    /// symbol `target` binds over a receiver of type `receiver`, as
+    /// upstream's `lit.call` names `@Trait::method`: the one the bound it
+    /// was selected through declares (`refined_bound`, upstream's downcast
+    /// receiver), else the one the receiver type parameter's own bounds
+    /// declare, through any reference to it.
+    pub fn call_requirement(
+        &self,
+        target: &str,
+        receiver: Option<&Ty>,
+        refined_bound: Option<&[String]>,
+    ) -> Option<&TraitRequirement> {
+        if !mojito_symbol::symbol::is_trait_dispatch_symbol(target) {
+            return None;
+        }
+        let bounds = refined_bound.or_else(|| {
+            match receiver.map(|receiver| operand_value_ty(receiver).kind()) {
+                Some(TyKind::Param { bounds, .. }) => Some(bounds.as_slice()),
+                _ => None,
+            }
+        })?;
+        self.bound_requirement(bounds, target)
     }
 
     /// Whether the struct `owner`'s method `method` (its symbol's part after

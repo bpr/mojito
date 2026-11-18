@@ -1,0 +1,3 @@
+2 artifact error(s) in inline-parametric/bound_iteration_value_receiver.mir
+  MIR function 'count': receiver of '__trait_dispatch.__iter__$ov$SelfRef' is received by address but passes a T value
+  MIR function 'count': receiver of '__trait_dispatch.__next__$ov$' is received by address but passes a T.IteratorType[origin_of(#301)] value

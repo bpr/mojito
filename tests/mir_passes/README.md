@@ -43,8 +43,11 @@ below. Labels are `<pass>/<case>.mir`, so the reports hold no machine path.
    case needs the markers, so emit it with a binary from before the pass or
    from pre-drop text, as for `elaborate-drops`.
 2. Trim the artifact by hand to the case's own functions, their `decls`
-   rows, and the `structs` rows they name; empty `traits`. Rename the
-   program's own `files` path to a bare file name.
+   rows, the `structs` rows they name, and the `traits` rows their calls
+   through a trait bound (`__trait_dispatch.…`) bind, with the traits those
+   refine; the verifier checks such a call against its requirement, as it
+   checks a direct call against its declaration. Rename the program's own
+   `files` path to a bare file name.
 3. Make it canonical: `mojito opt case.pre.mir > <pass>/<case>.mir`.
 4. Bless the expectation:
    `UPDATE_EXPECT=1 cargo nextest run --test mir_pass_test`, then read the

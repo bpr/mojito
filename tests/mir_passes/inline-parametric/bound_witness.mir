@@ -1,10 +1,10 @@
-mojito-mir 1.202
+mojito-mir 1.203
 artifact {
   features: [],
   files: [
     file { id: file0, path: present("bw.mojo"), module: absent }
   ],
-  traits: [],
+  traits: [trait { name: MySized, refines: [], requirements: [requirement { name: __len__, arity: 0, dispatch: "__trait_dispatch.__len__$ov$SelfRead", param_names: [], param_types: [], param_conventions: [], variadic_index: absent, required: [], positional_only: absent, keyword_only: absent, variadic: absent, kw_variadic: absent, variadic_convention: absent }] }],
   structs: [
     struct { name: NBox, fields: [field { name: x, type: Int }], fieldwise_init: true, param_decls: [value_param { owner: "NBox", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: MySized, conditions: [constraint_bool(true)] }, conformance { trait: Copyable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], witness_tables: [witness_table { trait: MySized, witnesses: [witness { requirement: "__trait_dispatch.__len__$ov$SelfRead", member: "NBox.__len__" }] }] }
   ],

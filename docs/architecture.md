@@ -2599,7 +2599,25 @@ held `and`/`or` slot, or the result slot a conditional forwards
 `__call__` call, bind their operands by a function type, so
 `verify_callable_contract_call` rejects a value at every slot
 `mir::signature_by_address_operands` takes by address, keyword operands
-included, at every verify point. A MIR text
+included, at every verify point. A `call.method` or checked subscript
+accessor through a trait bound (`__trait_dispatch.…`) binds the requirement
+`MirDeclarations::call_requirement` finds over its recorded `refined_bound`,
+else the receiver type parameter's bounds, the one resolver lowering's
+`Callees::requirement` and `register_ends::Callee::resolve` also use, as
+upstream's `lit.call` of `@Trait::method` is verified against the
+requirement's signature: `verify_requirement_call` rejects a value at the
+receiver (`mir::requirement_by_address_receiver`, under the call's recorded
+receiver convention until R758, a receiver-writing call recording none
+left to its place) and at every operand
+`mir::requirement_operand_parameters` binds to a parameter
+`mir::requirement_by_address_parameter` takes by address, and operands that
+do not bind the requirement's shape. A generic `for` loop's `__iter__` and
+`__next__` record the bound they select through
+(`IterationProtocol::prepare_refined_bound`,
+`CheckedIteratorCall::refined_bound`), so a projection iterator binds. A
+dispatch call whose receiver names no bound (a pack element, a receiver
+substitution made concrete) binds nothing and is not yet checked
+(R2328, R2329, R2330). A MIR text
 artifact older than 1.192 is upgraded as it loads
 (`call_addresses::upgrade_call_operands`), and one older than 1.198 has its
 operands over a place holding a reference forwarded

@@ -746,8 +746,10 @@ pub(super) fn verify_capture_accesses(
 }
 
 /// A checked subscript accessor's receiver and arguments, where its
-/// declaration takes them by address, are references
-/// (`verify_by_address_receiver`, `verify_by_address_operands`), as
+/// declaration, or the requirement a subscript through a trait bound
+/// binds, takes them by address, are references
+/// (`verify_by_address_receiver`, `verify_by_address_operands`,
+/// `verify_requirement_call`), as
 /// upstream's accessor `lit.call` takes a `!lit.ref` wherever the
 /// accessor's signature does.
 fn verify_accessor_operands(
@@ -762,5 +764,19 @@ fn verify_accessor_operands(
         if let Some(operands) = crate::mir::subscript_operand_parameters(instruction, declaration) {
             verify_by_address_operands(cx, declaration, &operands, errors);
         }
+    } else if let Some(requirement) = cx.declarations.call_requirement(
+        &call.target,
+        cx.reg_ty(receiver),
+        call.refined_bound.as_deref(),
+    ) {
+        let operands =
+            crate::mir::subscript_requirement_operand_parameters(instruction, requirement);
+        verify_requirement_call(
+            cx,
+            requirement,
+            Some((receiver, call.receiver_convention)),
+            operands.as_deref(),
+            errors,
+        );
     }
 }

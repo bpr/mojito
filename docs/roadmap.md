@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2328**.
+Next free ID: **R2331**.
 
 ## Ordered Work
 
@@ -9499,24 +9499,60 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2319 The verifier binds no declaration for a call through a
-  trait bound**
+- [ ] **R2328 A call through a trait bound over a pack element binds no
+  requirement**
 
-  Upstream's `lit.call` to a trait requirement is verified against the
-  requirement's signature, so a by-address `self` (or argument) there must
-  be a `!lit.ref`. Mojito's verifier finds a callee only by
-  `MirDeclarations::function` (`verify::types::declared`), so a
-  `call.method` resolved to a `__trait_dispatch.…` symbol has no
-  declaration, and neither `verify_direct_call` nor
-  `verify_by_address_receiver` checks its operands.
-  - Fix: bind such a call's requirement as lowering does
-    (`MirDeclarations::bound_requirement`, from the receiver's bounds) and
-    check its operands and receiver against it.
-  - Probe: `tests/mir_passes/inline-parametric/bound_iteration_own_origin.mir`
-    as of 87133b9c9 passed `count`'s `__iter__$ov$SelfRef` and
-    `__next__$ov$` receivers as `place.load` values and still loaded
-    clean; only the inliner's resolution to `Bag.__iter__` exposed them.
+  Upstream's `lit.call` names `@Trait::method`, so a requirement call on
+  a pack element `Ts[i]` is verified against the pack's element trait.
+  Mojito's `__trait_dispatch.…` call records no bound for such a
+  receiver, and `MirDeclarations::call_requirement` finds bounds only on
+  a `TyKind::Param` receiver or a recorded `refined_bound`, so neither
+  lowering nor `verify_requirement_call` checks its operands.
+  - Fix: record the pack's declared element bound on the call, as
+    `refined_bound` records a downcast receiver (or read it off the
+    element type once R1496 lands).
+  - Probe: the `write_to` calls on `ref Ts[paramfor_next_value…]` in
+    `print`, `Writer.write`, and `VariadicPack._write_to`.
+  - Probe: `__eq__`/`__ne__`/`__lt__` on the same receiver in
+    `Tuple.__eq__`…`__ge__` and `Variant.__eq__`.
+  - Probe: `copy` on `ref Ts[index]` in `PackTuple.__getitem__`, and on
+    `ref Ts[i]` in `Tuple.__copyinit__`'s storage lambda.
+  - To list them: log each dispatch `call.method` that `call_requirement`
+    leaves unbound in `verify_call_instruction`, and run any program that
+    prints.
+  - Found while landing R2319 (2026-11-18).
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2329 A call through a trait bound on a concrete receiver binds no
+  requirement**
+
+  A builtin body or a substitution leaves a `__trait_dispatch.…` call
+  whose receiver is a concrete type, which names no bound, so
+  `MirDeclarations::call_requirement` binds nothing and the verifier
+  cannot check its operands. Upstream's call keeps naming
+  `@Trait::method` until the witness resolves it.
+  - Fix: record the selecting trait on the call, or resolve the witness
+    where the receiver becomes concrete, as `inline-parametric` resolves
+    `Bag.__iter__`, so no dispatch call outlives its bound.
+  - Probe: `SIMD.__mod__`'s `__trunc__` on `ref SIMD[dtype, length]`.
+  - Probe: `_write_int`'s `__abs__`/`__trunc__` on `ref Scalar[dtype]`.
+  - Probe: `$comptime$…` `__eq__` on `Int`, `$inflated$…` receivers, and
+    `copy` on `Int` in `tests/mir_passes/sroa/generic_instance.mir`.
+  - Found while landing R2319 (2026-11-18).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2330 The verifier accepts a trait-dispatch call that binds no
+  requirement**
+
+  Upstream's symbol verifier rejects a `lit.call` to an unknown callee.
+  `verify_requirement_call` checks only a `__trait_dispatch.…`
+  `call.method` or subscript whose requirement
+  `MirDeclarations::call_requirement` finds, and accepts one it cannot.
+  - Fix: once every dispatch call binds, report one that does not.
+  - Found while landing R2319 (2026-11-18).
+  - Depends on R2328, R2329, R1496.
   - Model: Fable, Not Planned.
 
 - [ ] **R2322 A chained comparison's link does not bind a `mut` operand
@@ -10302,6 +10338,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The lever: record a requirement's checked signature where
     `checker/traits.rs` builds its `MethodSig`, and have the trait op hold
     a `CheckedSignature`, as `CheckedMethod` does.
+  - Then `verify_requirement_call` and lowering's `Contract::Required`
+    read the requirement's receiver convention instead of the call's
+    recorded one, and the exception for a receiver-writing call that
+    records none goes.
   - Found while landing R630 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
