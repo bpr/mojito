@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2326**.
+Next free ID: **R2328**.
 
 ## Ordered Work
 
@@ -9439,38 +9439,63 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2312 A call through a generic callable binder passes its
-  bracket arguments as registers**
+- [ ] **R2326 A call through a generic callable value names its callee
+  by a register**
 
-  `F[3]()`, `F[k]()`, and `F[f]()` inside `ap[F: def[n: Int]() thin ->
-  Int, ...]` each pass a register per bracket argument, even a closed
-  `3`, where the pin applies `#kgen.bind_params(F, ...)` and carries no
-  operand.
-  - Where: `Flatten::indirect_param_arg_regs` (`mojito-mir/src/mir.rs`)
-    has no instantiated arguments to fold into when the
-    `call.indirect` lacks an `InstantiatedCallableContract`, so every
-    argument gets a register.
-  - The elaborator reads those registers back as constants
-    (`register_constant`, `native/mono/equiv.rs`).
-  - Lever: carry the bracket arguments as the call's instantiated
-    arguments, as a direct call's `InstantiatedArguments` does.
-  - The callee is the same gap: a call through a `def[...] thin` value
-    binder or a generic lambda passes its generic callee as a
-    `GenericFunc`-typed register (`const param(func)`, `closure.make`),
-    which the elaborator erases once the call folds
-    (`erase_folded_generic_callees`), where upstream's `kgen.call` names
-    it as an attribute, a symbol or a `#kgen.param.decl.ref`.
+  A call through a `def[...]` binder, a generic lambda, an expression
+  callee, or a generic nested `def`'s closure passes its callee as a
+  `GenericFunc`-typed register (`const param(F)`, `closure.make`), where
+  upstream's `kgen.call` names it as an attribute: a symbol, a
+  `#kgen.param.decl.ref`, or a `#kgen.bind_params`.
+  - The call already carries its instantiation
+    (`Flatten::indirect_instantiation`, `mir/lower_expr/calls.rs`); only
+    the callee is still a run-time operand.
+  - The elaborator erases the register once the call folds
+    (`erase_folded_generic_callees`, `native/mono/specializer.rs`).
+  - Lever: a call whose callee is a compile-time attribute (a `ParamExpr`
+    the elaborator closes to a symbol per instance), so no `GenericFunc`
+    register exists.
+  - Size: every `CallIndirect { callee, .. }` reader in `mojito-mir`,
+    `mojito-analysis`, and `mojito-native` (about 30 files). Split it by
+    reader group on planning if one session cannot land it.
   - Probe: `func(a, a)` in `apply_value`
-    (`assets/ok/callable_binder_parameter_inference.mojo`) and
-    `(lambda [N: Int](x: Int) {} -> Int: x + N)[5](3)`
-    (`assets/ok/lambda_generic_comptime.mojo`) carry no callee register
-    in `emit-mir`, output unchanged on both backends.
-  - Probe: `def ap2[F: def[n: Int]() thin -> Int, k: Int]() -> Int:
-    return F[3]() + F[k]()` with `ap2[twice, 4]()` prints `14` on both
-    backends, with `value: absent` on both `call.indirect` operands.
-  - Probe: `F[f]()` in `assets/ok/callable_binder_forwarded_attribute.mojo`
-    passes `value: absent`, output unchanged.
-  - Found while landing R2310 (2026-11-17).
+    (`assets/ok/callable_binder_parameter_inference.mojo`), `F[3]()` in
+    `def ap2[F: def[n: Int]() thin -> Int, k: Int]()`, std's
+    `(hook.value())(x)` in `simd._pow`, and `(lambda [N: Int](x: Int) {}
+    -> Int: x + N)[5](3)` (`assets/ok/lambda_generic_comptime.mojo`) show
+    no `generic_func`-typed register in `emit-mir`, output unchanged on
+    both backends.
+  - Probe: `pre_elaboration::lambda_generic_comptime` (`scripts/focused
+    --filter lambda_generic_comptime`) fails with the pipeline off: the
+    immediately invoked generic lambda's slot and registers "keep symbolic
+    type `def[N: Int](Int) capturing[] -> Int`", since without mem2reg the
+    callee stays a slot read the erasure does not reach.
+  - Found while landing R2312 (2026-11-17).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2327 A bracket argument over the caller's binders, or converted
+  by `@implicit`, keeps a run-time register beside its instantiated
+  argument**
+
+  `twice[k]()` in `def d[k: Int]()` passes `value: present(%r)` with its
+  `expr` beside `instantiated_args: [k]`, where the pin carries the
+  `#kgen.param.decl.ref`, or the converted value, as an attribute with no
+  operand.
+  - Where: `Flatten::param_arg_has_no_runtime_form` (`mir.rs`) folds only
+    `CtValue::is_parameter_attribute` values; `MirParamArg::expr` and
+    `Flatten::forwarded_value` keep the register for the VM, which now runs
+    only elaborated MIR.
+  - Direct calls and calls through a generic callable share it.
+  - Related to R1471 (where the register's value comes from), distinct
+    from it (whether the register exists).
+  - Probe: `twice[k]()`, `twice[k + 1]()`, `dbl[4](x)` over `w:
+    SIMDLength`, and `F[k]()` through `F: def[n: Int]() thin -> Int` show
+    `value: absent` in `emit-mir`, output unchanged on both backends.
+  - Probe: the converted arguments in
+    `assets/ok/callable_binder_parameter_conversion.mojo` (`apply`,
+    `apply_n`, `apply_kw`, `combine`, `apply_count`) carry no register.
+  - Found while landing R2312 (2026-11-17).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

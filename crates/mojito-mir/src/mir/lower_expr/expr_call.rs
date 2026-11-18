@@ -523,11 +523,7 @@ impl<'a> Flatten<'a> {
             });
             callee_place = place.is_typed().then_some(place);
         }
-        let param_decls = callable_ty
-            .as_ref()
-            .map(generic_callable_param_decls)
-            .unwrap_or_default();
-        let param_arg_regs = self.indirect_param_arg_regs(call, &param_decls);
+        let param_arg_regs = self.param_arg_regs(call);
         let resolved = callable_target(&node.adjustments);
         let raises = call.raises();
         self.emit_indirect_invocation(
@@ -563,7 +559,7 @@ impl<'a> Flatten<'a> {
             .as_ref()
             .map(generic_callable_param_decls)
             .unwrap_or_default();
-        let param_arg_regs = self.indirect_param_arg_regs(call, &param_decls);
+        let param_arg_regs = self.param_arg_regs(call);
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
         self.open_call_setup();
@@ -578,11 +574,11 @@ impl<'a> Flatten<'a> {
         let dest = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
         let capture_accesses = self.call_capture_accesses(call);
-        let (instantiated_contract, instantiated_args) = call
-            .instantiated_callable_contract()
-            .map_or((None, Vec::new()), |(contract, arguments)| {
-                (Some(contract), arguments)
-            });
+        let (instantiated_contract, instantiated_args) =
+            Self::indirect_instantiation(call, callable_ty.as_ref())
+                .map_or((None, Vec::new()), |(contract, arguments)| {
+                    (Some(contract), arguments)
+                });
         // A callable-struct value is the receiver of its own
         // `__call__` transfer effects; its place is the callee's.
         self.record_call(dest, callable_target(&node.adjustments), 0);

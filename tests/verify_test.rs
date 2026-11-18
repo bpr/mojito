@@ -2108,6 +2108,10 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
     );
     let mut prog = program(f);
     expect_finding(&prog, "register type StringLiteral[\"s\"], declared Int");
+    expect_finding(
+        &prog,
+        "a call through a generic callable carries no instantiation",
+    );
 
     let MirInstr::CallIndirect {
         param_arg_regs,
@@ -2123,6 +2127,44 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
         &prog,
         "compile-time parameter metadata does not match its callable contract",
     );
+}
+
+#[test]
+fn verifier_accepts_an_indirect_call_carrying_its_instantiation() {
+    // `F[3]()` through `F: def[n: Int]() thin -> Int` binds `n` as Mojo's
+    // `#kgen.bind_params(F, 3)`: the closed argument has no register.
+    let declarations = vec![value_parameter("n", Ty::int())];
+    let callable = generic_callable(declarations.clone());
+    let TyKind::GenericFunc(generic) = callable.kind() else {
+        unreachable!()
+    };
+    let instantiated: Ty = TyKind::Func(Box::new(generic.func.clone())).into();
+    let f = function(
+        block(
+            vec![MirInstr::CallIndirect {
+                dest: Reg(1),
+                callee: Reg(0),
+                resolved: None,
+                raises: None,
+                args: Vec::new(),
+                kwargs: Vec::new(),
+                capture_accesses: Vec::new(),
+                param_arg_regs: vec![MirParamArg {
+                    name: Some("n".to_string()),
+                    value: None,
+                    expr: None,
+                }],
+                param_decls: declarations,
+                instantiated_contract: Some(instantiated),
+                instantiated_args: vec![TyArg::Val(CtValue::Int(3))],
+                spread: None,
+            }],
+            MirTerm::Return(None),
+        ),
+        2,
+        &[(0, callable), (1, Ty::int())],
+    );
+    assert_eq!(verify(&program(f)), Vec::<String>::new());
 }
 
 #[test]
@@ -2218,6 +2260,10 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
     expect_finding(
         &prog,
         "dependent index references unbound parameter(s): escaped",
+    );
+    expect_finding(
+        &prog,
+        "a call through a generic callable carries no instantiation",
     );
 }
 
@@ -3735,6 +3781,25 @@ fn verifier_checks_a_generic_def_bound_requirement_call() {
             .any(|error| error.contains("the bound's compile-time parameters")),
         "{:?}",
         apply_findings(&unparameterized)
+    );
+
+    let mut uninstantiated = program.clone();
+    if let MirInstr::MethodCall {
+        instantiated_args, ..
+    } = bound_call(&mut uninstantiated)
+    {
+        assert!(
+            !instantiated_args.is_empty(),
+            "a generic bound's requirement call carries its instantiation"
+        );
+        instantiated_args.clear();
+    }
+    assert!(
+        apply_findings(&uninstantiated)
+            .iter()
+            .any(|error| error.contains("bound carries no instantiation")),
+        "{:?}",
+        apply_findings(&uninstantiated)
     );
 
     let mut indirect = program;

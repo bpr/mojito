@@ -113,11 +113,11 @@ impl<'a> Flatten<'a> {
             }
         }
         let capture_accesses = self.call_capture_accesses(call);
-        let (instantiated_contract, instantiated_args) = call
-            .instantiated_callable_contract()
-            .map_or((None, Vec::new()), |(contract, arguments)| {
-                (Some(contract), arguments)
-            });
+        let (instantiated_contract, instantiated_args) =
+            Self::indirect_instantiation(call, callable_ty)
+                .map_or((None, Vec::new()), |(contract, arguments)| {
+                    (Some(contract), arguments)
+                });
         self.record_call(dest, resolved.clone(), 0);
         let raises = self.call_raises(call, raises);
         let callee_ty = self.f.reg_types.get(&callee.0).or(callable_ty).cloned();
@@ -293,24 +293,11 @@ impl<'a> Flatten<'a> {
         // A generic nested `def` called by name binds its own parameters
         // from the call's solved arguments, as a module `def` does: the call
         // carries them with the contract they instantiate.
-        let (instantiated_contract, instantiated_args) = call
-            .instantiated_callable_contract()
-            .or_else(|| {
-                let arguments = call.instantiated_args();
-                let contract = callable_ty.as_ref()?;
-                (!arguments.is_empty() && matches!(contract.kind(), TyKind::GenericFunc(_)))
-                    .then(|| {
-                        crate::mir::verify::instantiate_generic_callable_contract(
-                            contract, &arguments,
-                        )
-                        .ok()
-                    })
-                    .flatten()
-                    .map(|contract| (contract, arguments))
-            })
-            .map_or((None, Vec::new()), |(contract, arguments)| {
-                (Some(contract), arguments)
-            });
+        let (instantiated_contract, instantiated_args) =
+            Self::indirect_instantiation(call, callable_ty.as_ref())
+                .map_or((None, Vec::new()), |(contract, arguments)| {
+                    (Some(contract), arguments)
+                });
         self.record_call(d, Some(info.mangled.clone()), info.captures.len());
         let raises = self.call_raises(call, call.raises());
         self.emit_call(MirInstr::CallIndirect {
@@ -336,6 +323,29 @@ impl<'a> Flatten<'a> {
         self.emit_capture_keepalives(info);
         self.error_region(raises);
         d
+    }
+
+    /// The instantiation a call through the generic callable `callable_ty`
+    /// carries, as Mojo's `#kgen.bind_params` does: the contract the
+    /// check's solved arguments instantiate, with those arguments in
+    /// declaration order. A `def[...]` binder, a generic lambda or nested
+    /// `def`, an expression callee, and a value of a `def[...]` bound all
+    /// carry one; `None` for a callee that is not generic, or a call the
+    /// check left unsolved.
+    pub(in crate::mir) fn indirect_instantiation(
+        call: Node<'a>,
+        callable_ty: Option<&Ty>,
+    ) -> Option<(Ty, Vec<TyArg>)> {
+        call.instantiated_callable_contract().or_else(|| {
+            let contract = generic_callable_contract(callable_ty?)?;
+            let arguments = call.instantiated_args();
+            if arguments.is_empty() {
+                return None;
+            }
+            crate::mir::verify::instantiate_generic_callable_contract(contract, &arguments)
+                .ok()
+                .map(|contract| (contract, arguments))
+        })
     }
 
     /// Whether a call of `info` by name is a direct call of its lifted
@@ -940,5 +950,19 @@ impl<'a> Flatten<'a> {
             self.emit(instruction);
         }
         dest
+    }
+}
+
+/// The generic contract a callee of type `ty` is called through: its own
+/// `def[...]` type, behind any reference, or its `def[...]` bound's.
+fn generic_callable_contract(ty: &Ty) -> Option<&Ty> {
+    match ty.kind() {
+        TyKind::GenericFunc(_) => Some(ty),
+        TyKind::Ref(reference) => generic_callable_contract(&reference.referent),
+        TyKind::Param {
+            callable_bound: Some(bound),
+            ..
+        } => generic_callable_contract(bound),
+        _ => None,
     }
 }

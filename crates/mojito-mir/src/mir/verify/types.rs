@@ -776,6 +776,10 @@ mod tests {
     use mojito_types::param_expr::{MetaTy, ParamExpr, ParamId};
     use mojito_types::types::TyArg;
 
+    fn validate_unscoped(ty: &Ty) -> Result<(), String> {
+        super::super::calls::validate_dependent_bindings_in(ty, &HashSet::new())
+    }
+
     fn sized(size: ParamExpr) -> Ty {
         TyKind::Struct("Buf".into(), vec![TyArg::Val(size.into_value())]).into()
     }
@@ -832,12 +836,12 @@ mod tests {
         let context = ParamContext::new();
         let dangling = sized(context.index_ref(0, 0, MetaTy::int()));
         assert!(
-            super::super::calls::validate_dependent_bindings(&dangling)
+            validate_unscoped(&dangling)
                 .is_err_and(|finding| finding.contains("names no enclosing binder"))
         );
         let hole = sized(context.hole(mojito_types::param_expr::HoleKind::Unbound, MetaTy::int()));
         assert!(
-            super::super::calls::validate_dependent_bindings(&hole)
+            validate_unscoped(&hole)
                 .is_err_and(|finding| finding.contains("cannot cross into MIR"))
         );
         // A symbolic lane width crosses as a parameter expression; a hole
@@ -856,7 +860,7 @@ mod tests {
             )
         };
         assert!(
-            super::super::calls::validate_dependent_bindings(&symbolic(context.decl_ref(
+            validate_unscoped(&symbolic(context.decl_ref(
                 mojito_types::param_expr::ParamId::new("f", 0),
                 "width",
                 MetaTy::int(),
@@ -864,7 +868,7 @@ mod tests {
             .is_ok()
         );
         assert!(
-            super::super::calls::validate_dependent_bindings(&symbolic(
+            validate_unscoped(&symbolic(
                 context.hole(mojito_types::param_expr::HoleKind::Unbound, MetaTy::int())
             ))
             .is_err_and(|finding| finding.contains("cannot cross into MIR"))

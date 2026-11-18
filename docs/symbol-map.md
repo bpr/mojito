@@ -1532,8 +1532,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lower_stmt.rs`, `name_place_root` in `mir.rs`), `reference_handle`, the
   compile-time argument slots (`param_arg_regs` over the op's declared
   `CheckedParameter`s, each `MirParamArg` named by its parameter's
-  declaration; `indirect_param_arg_regs` for a `CallIndirect`, with
-  `inferred_param_args` appending the value parameters the check inferred), and `mir/calls.rs`'s argument, receiver, anchor, and
+  declaration; a `CallIndirect` through a generic callable carries the
+  check's solution and the contract it instantiates,
+  `Flatten::indirect_instantiation` in `lower_expr/calls.rs`), and `mir/calls.rs`'s argument, receiver, anchor, and
   invalidation lowering take a `Node`, and so do statement lowering
   (`lower_stmt`, the subscript-store and augmented-subscript family,
   `lower_bind`, `bind_comptime_value`) and `mir/calls.rs`'s
@@ -2254,9 +2255,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `external_call`'s callee and fixed count), so the checked call carries it
   as `CheckedParamArg::Attribute`; `Flatten::param_arg_regs`
   (`Flatten::param_arg_has_no_runtime_form`, `mir.rs`) lowers no code for
-  such an attribute at a call carrying `InstantiatedArguments`, and an
-  indirect call without an instantiated contract gives it a constant
-  register the elaborator reads (`register_constant`, `mono/equiv.rs`), a
+  such an attribute at a call carrying `InstantiatedArguments` (an
+  indirect call through a generic callable always carries them), a
   forwarded callable binder's through
   `Flatten::enclosing_value_binder_read` over
   `EnclosingBinders::callable_binder`; `verify_param_arguments` (`verify/subscripts.rs`) accepts the absent
@@ -2367,8 +2367,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   it no runtime form, lifting the
   display under the name and over the binders the check's sequence spells,
   and an alias of the binding is found by `Flatten::display`. A bracket argument that reads a
-  display is lowered by `Flatten::param_arg_reg` through `display_read`, and an inferred
-  one by `Flatten::inferred_param_args` through `attribute_value_reg`. An `Int` or a `Bool` such an
+  display is lowered by `Flatten::param_arg_reg` through `display_read`. An `Int` or a `Bool` such an
   argument, or a local `comptime` value, computes some way the parameter
   domain does not express (`h(L[0])`, `n > 2`) is lifted by
   `Checker::lifted_application` (`checker/comptime_validation.rs`), reached

@@ -533,13 +533,8 @@ pub(super) fn generic_callable_decls(ty: &Ty) -> Option<&[mojito_types::types::P
 /// may cross into MIR at all. This permits generic MIR to remain symbolic
 /// while rejecting a misspelled or escaped index name, an out-of-range or
 /// mistyped signature slot, and an unknown or unbound parameter before
-/// wildcard compatibility could hide it.
-pub(super) fn validate_dependent_bindings(ty: &Ty) -> Result<(), String> {
-    validate_dependent_bindings_in(ty, &HashSet::new())
-}
-
-/// [`validate_dependent_bindings`] for a type a body names: the binders in
-/// `enclosing`, which the declaration owning the body declares, bind too.
+/// wildcard compatibility could hide it. The binders in `enclosing`, which
+/// the declaration owning the body declares, bind too.
 pub(super) fn validate_dependent_bindings_in(
     ty: &Ty,
     enclosing: &HashSet<String>,
@@ -1050,14 +1045,9 @@ fn verify_bound_call(
                 errors,
             );
             if instantiated_args.is_empty() {
-                if let Err(reason) = validate_dependent_bindings_in(
-                    contract,
-                    &enclosing_binders(cx.name, cx.declarations),
-                ) {
-                    errors.push(format!(
-                        "{prefix}: invalid symbolic generic callable contract: {reason}"
-                    ));
-                }
+                errors.push(format!(
+                    "{prefix}: a call through a generic `def[...]` bound carries no instantiation"
+                ));
             } else {
                 match instantiate_generic_callable_contract(contract, instantiated_args) {
                     Ok(signature) => instantiated = Some(signature),
@@ -1148,11 +1138,12 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
                 }
                 verified_instantiation.as_ref()
             } else {
-                if !instantiated_args.is_empty() {
-                    errors.push(format!(
-                                "{prefix}: symbolic generic indirect call carries an orphaned instantiation witness"
-                            ));
-                }
+                // A call through a generic callable binds its parameters
+                // as Mojo's `#kgen.bind_params` does: the call carries
+                // its instantiation.
+                errors.push(format!(
+                    "{prefix}: a call through a generic callable carries no instantiation"
+                ));
                 if let Err(reason) = validate_dependent_bindings_in(
                     symbolic,
                     &enclosing_binders(cx.name, cx.declarations),
@@ -1161,10 +1152,6 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
                         "{prefix}: invalid symbolic generic callable contract: {reason}"
                     ));
                 }
-                // Calls in an unspecialized generic body remain under
-                // the callable contract's own explicit binders. Their
-                // dependent references are scope-validated below; no
-                // concrete substitution witness exists at this layer.
                 Some(symbolic)
             }
         }

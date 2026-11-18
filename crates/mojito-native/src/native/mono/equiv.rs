@@ -418,8 +418,8 @@ fn register_constant(
                 // A reified type argument names its struct as a string.
                 Const::Str(text) => Some(CtValue::Str(text.clone())),
                 Const::Value(value) if k.is_folded_scalar() => Some(value.clone()),
-                // A closed parameter attribute's register (`h[DType.float32]`
-                // through a callable binder) is its value.
+                // A closed parameter attribute's register, at a call that
+                // carries no instantiated arguments, is its value.
                 Const::Value(value @ CtValue::Struct { .. })
                     if value.is_folded_parameter_argument() =>
                 {

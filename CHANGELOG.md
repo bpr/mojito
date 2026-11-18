@@ -1360,6 +1360,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a generic callable (a `def[...]` binder such as `F[3]()`, a
+  generic lambda, an expression callee, or a value of a `def[...]` bound)
+  now carries the check's solution, spelled or inferred, as its
+  instantiated arguments with the contract they instantiate, as Mojo's
+  `#kgen.bind_params` does, so a closed bracket argument passes no register
+  and the elaborator no longer reads arguments back from registers. The MIR
+  verifier rejects such a call that carries none (R2312).
+
 - The MIR verifier now requires a reference at every argument of a checked
   subscript (`index.get`, `index.multi`, `index.multi_set`) that its
   accessor takes by address, a memory-only `read` index included, as

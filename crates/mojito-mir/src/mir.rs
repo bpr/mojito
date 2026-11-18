@@ -4723,23 +4723,6 @@ impl<'a> Flatten<'a> {
         self.param_arg_regs_folding(call, folds)
     }
 
-    /// The compile-time argument slots of an indirect call over the
-    /// callee's declarations `decls`. A folded argument's value travels in
-    /// the instantiated arguments, which only an instantiated callable
-    /// contract carries: without one, the slot keeps its register, and
-    /// each value parameter the check inferred from the call's arguments
-    /// follows the bracket arguments, as Mojo's call carries every
-    /// parameter whether spelled or inferred.
-    fn indirect_param_arg_regs(&mut self, call: Node<'a>, decls: &[ParamDecl]) -> Vec<MirParamArg> {
-        if call.instantiated_callable_contract().is_some() {
-            return self.param_arg_regs(call);
-        }
-        let mut registers = self.param_arg_regs_folding(call, false);
-        let inferred = self.inferred_param_args(call, decls, &registers);
-        registers.extend(inferred);
-        registers
-    }
-
     /// The compile-time arguments of `call`, each named by the declared
     /// parameter the check bound it to
     /// ([`mojito_checked::checked::CheckedParameter::declaration`]).
@@ -4774,66 +4757,6 @@ impl<'a> Flatten<'a> {
             }
         }
         registers
-    }
-
-    /// The named operands of the value parameters of `decls` the brackets
-    /// (`explicit`) left unoccupied, from the solution the check recorded
-    /// on the call (`func(a, b)` through a callable binder). A closed value
-    /// carries its constant as the expression the elaborator binds; a type
-    /// parameter needs no operand, the elaborator binding it from the
-    /// instance's argument types, and a function symbol (a callable
-    /// default) none either, being a parameter attribute alone.
-    fn inferred_param_args(
-        &mut self,
-        call: Node<'a>,
-        decls: &[ParamDecl],
-        explicit: &[MirParamArg],
-    ) -> Vec<MirParamArg> {
-        let solved = call.instantiated_args();
-        if decls.is_empty() || solved.len() != decls.len() {
-            return Vec::new();
-        }
-        let occupied: Vec<&str> = supplied_parameter_arguments(decls, explicit)
-            .into_iter()
-            .map(|(declaration, _)| declaration.name())
-            .collect();
-        let site = call.location();
-        decls
-            .iter()
-            .zip(solved)
-            .filter_map(|(declaration, argument)| match (declaration, argument) {
-                (
-                    ParamDecl::Value {
-                        name,
-                        variadic: false,
-                        ..
-                    },
-                    TyArg::Val(value),
-                ) if !occupied.contains(&name.as_str())
-                    && !matches!(value, CtValue::Deferred(_) | CtValue::FuncSymbol(_)) =>
-                {
-                    Some((name.clone(), value))
-                }
-                _ => None,
-            })
-            .map(|(name, value)| {
-                let register = self.attribute_value_reg(&value, &site);
-                let expr = register.and_then(|_| match &value {
-                    CtValue::Expr(expr) => match expr.kind() {
-                        mojito_types::param_expr::ParamKind::DeclRef(_) => {
-                            self.enclosing_binders.binder_value(expr)
-                        }
-                        _ => Some(expr.clone()),
-                    },
-                    closed => ParamContext::detached().constant(closed.clone()).ok(),
-                });
-                MirParamArg {
-                    name: Some(name),
-                    value: register,
-                    expr,
-                }
-            })
-            .collect()
     }
 
     /// The register of a symbolic `DType` slot (`v.dtype`) as upstream's

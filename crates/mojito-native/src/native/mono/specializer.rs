@@ -894,48 +894,6 @@ impl<'a> Specializer<'a> {
         self.instances[index].1.as_str()
     }
 
-    /// The values a call through a callable contract gives each of the
-    /// contract's compile-time parameters, in order: a supplied argument, or
-    /// the contract's default, which overrides the implementation's own. A
-    /// parameter neither fills stays deferred, for the implementation's
-    /// default.
-    pub(super) fn contract_values(
-        &self,
-        target: &str,
-        contract: &[ParamDecl],
-        param_args: &[mojito_mir::mir::MirParamArg],
-    ) -> Result<Vec<TyArg>, MonoError> {
-        if contract.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut bindings = self.base_bindings();
-        bind_explicit_value_arguments(
-            contract,
-            &[],
-            param_args,
-            &self.constant_values,
-            &mut bindings,
-            target,
-            &self.enclosing,
-        )?;
-        apply_defaults(contract, &[], &mut bindings)?;
-        // A default is evaluated as a literal; it binds at the parameter's
-        // declared type, as the VM materializes it.
-        Ok(contract
-            .iter()
-            .map(|decl| {
-                let value = bindings.values.get(&decl.binder()).cloned();
-                match (decl, value) {
-                    (ParamDecl::Value { ty, .. }, Some(value)) => {
-                        TyArg::Val(value.clone().materialize_as(ty).unwrap_or(value))
-                    }
-                    (_, Some(value)) => TyArg::Val(value),
-                    (_, None) => TyArg::Val(CtValue::Deferred(decl.binder())),
-                }
-            })
-            .collect())
-    }
-
     pub(super) fn materialize(
         &mut self,
         key: &InstanceKey,
@@ -3670,16 +3628,10 @@ impl<'a> Specializer<'a> {
                         // A closure over folded value parameters already
                         // names its lifted body's instance.
                         let concrete = if self.functions.contains_key(target.as_str()) {
-                            // The call names the contract's parameters:
-                            // its supplied and defaulted values bind the
-                            // implementation's binders by position.
-                            // A spelled application of a generic nested
-                            // `def` carries its solved arguments.
-                            let contract_values = if instantiated_args.is_empty() {
-                                self.contract_values(&target, contract, param_arg_regs)?
-                            } else {
-                                instantiated_args.clone()
-                            };
+                            // The call carries the contract's solved
+                            // arguments, as `#kgen.bind_params` does: they
+                            // bind the implementation's binders by position.
+                            let contract_values = instantiated_args.clone();
                             if let Some(declaration) = self.declarations.get(target.as_str()) {
                                 mojito_mir::mir::witness_arguments(
                                     contract,

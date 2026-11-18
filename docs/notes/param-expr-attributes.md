@@ -310,7 +310,7 @@ test `param_expr_residual_is_not_false` pin this.
   *SIMD slots* and *Register types*).
 - MIR keeps scoped references and pure expressions that instance binding
   supports. `verify/scope.rs` checks every binder a body names and the kind
-  of every expression (*Register types*); `validate_dependent_bindings`
+  of every expression (*Register types*); `validate_dependent_bindings_in`
   rejects a hole and an out-of-range or mistyped signature slot in a
   callable contract. `types_compatible` refuses two distinct residuals over
   the same parameters (`residual_arguments_conflict`) instead of treating a

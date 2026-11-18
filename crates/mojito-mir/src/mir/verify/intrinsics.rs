@@ -109,7 +109,11 @@ pub(super) fn indexed_place_element_types(base: &Ty) -> Option<Vec<Ty>> {
 /// Rebuild the executable callable shape from the symbolic generic contract.
 /// The full dependent/type substitution is performed here rather than by
 /// inspecting parameter-materialization instructions; `arguments` is the
-/// checker-retained declaration-order witness.
+/// checker-retained declaration-order witness. The caller's binders the
+/// contract or its arguments name (`T._union_case_types[id]`, a `comptime
+/// for`'s `$iter`, an enclosing pack `Ts`) stay bound in the result, as
+/// `#kgen.bind_params` keeps them; only the contract's own binders must be
+/// substituted.
 pub(in crate::mir) fn instantiate_generic_callable_contract(
     contract: &Ty,
     arguments: &[TyArg],
@@ -147,7 +151,7 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
     }
     let argument_maps = generic_argument_maps(decls, arguments)?;
     let packs = solved_packs(decls, arguments);
-    let bound = HashSet::new();
+    let bound = caller_binders(contract, arguments);
     let mut instantiate = |ty: &Ty| {
         // A collector typed by a solved pack (`*args: *Ts`) collects its
         // elements; a spread of it elsewhere (`Tuple[*Ts]`) lists them.
@@ -190,7 +194,7 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
         ref_return: ref_return.clone(),
         transfers: transfers.clone(),
     })));
-    validate_dependent_bindings(&instantiated)?;
+    validate_dependent_bindings_in(&instantiated, &bound)?;
     Ok(instantiated)
 }
 
@@ -442,4 +446,21 @@ fn solved_packs<'a>(declarations: &'a [ParamDecl], arguments: &[TyArg]) -> Vec<(
             _ => None,
         })
         .collect()
+}
+
+/// The caller's binders a call through `contract` with `arguments` names:
+/// those free in the symbolic contract and those its arguments reference.
+fn caller_binders(contract: &Ty, arguments: &[TyArg]) -> HashSet<String> {
+    let mut binders = HashSet::new();
+    mojito_types::types::referenced_parameters(contract, &mut binders);
+    for argument in arguments {
+        match argument {
+            TyArg::Ty(ty) | TyArg::Val(CtValue::Type(ty)) => {
+                mojito_types::types::referenced_parameters(ty, &mut binders);
+            }
+            TyArg::Val(CtValue::Expr(expr)) => expr.referenced_parameters(&mut binders),
+            _ => {}
+        }
+    }
+    binders
 }
