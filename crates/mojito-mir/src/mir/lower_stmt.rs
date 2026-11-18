@@ -1486,7 +1486,11 @@ impl<'a> Flatten<'a> {
     /// and is otherwise passed the value, naming no storage. A slot whose
     /// conversion constructor reads it by address passes that slot's
     /// address and stays the caller's to destroy, as upstream's caller
-    /// destroys the getter's `__call_result_tmp__`.
+    /// destroys the getter's `__call_result_tmp__`. An adapted value a
+    /// `read` parameter takes by address is bound to its conversion's
+    /// call-result slot and passed as that slot's `ref.make`, the caller
+    /// destroying it after the setter, as upstream passes the conversion's
+    /// `__call_result_tmp__`.
     pub(super) fn augmented_setter_value(
         &mut self,
         target: Node<'a>,
@@ -1549,7 +1553,18 @@ impl<'a> Flatten<'a> {
             value,
             target.location(),
         );
-        (value, None)
+        if owned
+            || OperandBinding::of_argument(setter, value_argument)
+                != Some(OperandBinding::Read { by_address: true })
+        {
+            return (value, None);
+        }
+        let Some(ty) = self.f.reg_types.get(&value.0).cloned() else {
+            return (value, None);
+        };
+        let slot = self.call_result_slot(value, ty, true);
+        let read = self.read_c(target, CValue::Slot(slot));
+        self.address_operand(target, read, mojito_types::origin::Mutability::Immutable)
     }
 
     /// The augmented store's receiver as its `setter` sees it
@@ -1676,12 +1691,23 @@ impl<'a> Flatten<'a> {
             return false;
         }
         // A value of the element type is the setter's `value` argument
-        // itself; a converted one is not, its setter argument keyed at the
-        // store's own site.
-        if value_expression.implicit_conversion().is_none() {
-            let binding = target.argument_binding(
-                mojito_checked::checked::CheckedCallArgumentSource::Keyword(0),
-            );
+        // itself, and so is a converted one the setter takes by address
+        // unadapted: upstream's `SubscriptDLValue` store passes the
+        // `!lit.ref` of the converted temporary. A converted value the
+        // setter adapts further is its argument keyed at the store's own
+        // site ([`Self::converted_store_value`]).
+        let source = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
+        let binding = target.argument_binding(source);
+        let adapted = target.call_contract().is_some_and(|setter| {
+            setter
+                .boundary
+                .arguments
+                .iter()
+                .any(|argument| argument.source == source && !argument.adjustments.is_empty())
+        });
+        if value_expression.implicit_conversion().is_none()
+            || (binding == Some(OperandBinding::Read { by_address: true }) && !adapted)
+        {
             self.bind_operand(value_expression, binding);
         }
         let Some((setter, (value, _))) = self.lower_subscript_setter(target, |this| {

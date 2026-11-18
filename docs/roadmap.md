@@ -9684,24 +9684,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2299 A setter's `value=` operand reaches a memory-only `read`
-  parameter as a value after the pre-elaboration passes**
-
-  Upstream's `__setitem__(mut self, i: Int, value: W)` takes a memory-only
-  `value` by `!lit.ref`. With the pre-elaboration pipeline on, the
-  instance verify finds the `value=` keyword of a
-  `__setitem__$...$REMOVED$ARG` call passing a value; with it off
-  (`MOJITO_PRE_ELABORATION=0`) the operand is a reference.
-  - So a pass, `remove-unused-params` or one before it, drops the
-    operand's `ref.make`. Find which one and keep the reference.
-  - Probe: the R2300 check over `call.method` keyword operands flags
-    `assets/ok/augmented_store_copies_nothing.mojo`
-    (`Converting.__setitem__$REMOVED$ARG`) and
-    `subscript_store_setter_by_element_type.mojo`
-    (`S.__setitem__$ov$Int$W$REMOVED$ARG`).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2300 The verifier checks no keyword operand at a by-address
   parameter**
 
@@ -9722,7 +9704,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     an `__init__(out self, *, copy: Self)` with a value `copy=` operand,
     and accepting the `ref.make` form.
   - Stop when `scripts/smoke` runs clean with the rule on.
-  - Depends on R2296, R2297, R2299, and R1506.
+  - Depends on R2296, R2297, and R1506.
   - Model: Fable, Not Planned.
 
 - [ ] **R2302 The verifier checks no checked-subscript argument at a

@@ -2514,6 +2514,12 @@ constructor that reads it by address
 passes the getter result slot's `ref.make` to the constructor and
 destroys the slot after the setter (`Flatten::augmented_setter_value`),
 as upstream's caller destroys the getter's `__call_result_tmp__`. A
+setter's converted value its memory-only `read` parameter takes, in an
+augmented store and a plain one (`s[0] = k` into `value: W`), is bound to
+the conversion's call-result slot and passed as that slot's `ref.make`,
+the caller destroying the slot after the setter, as upstream passes the
+`!lit.ref` of the conversion's `__call_result_tmp__`
+(`Flatten::augmented_setter_value`, `Flatten::lower_subscript_set`). A
 function constant or capture-free closure at a by-address `read` slot (a
 `def(...)` bound, which does not refine `RegisterPassable` at the pin) is
 materialized in a hidden `$mat_r` slot and passed by address like any

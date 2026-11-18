@@ -3948,6 +3948,107 @@ def main():
         )),
         "the `var` setter value forwards the getter result's slot"
     );
+    let converted_value = setter_value(&instructions, "Converting.__setitem__");
+    let place = addresses
+        .made(converted_value)
+        .expect("the `read` setter value is its conversion slot's address");
+    assert!(
+        main.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT),
+        "{place:?}"
+    );
+}
+
+#[test]
+fn subscript_store_converted_value_passes_its_slot_by_address() {
+    // `s[0] = k` converting `k` to the memory-only `W` the setter's
+    // `read value` takes passes the `ref.make` of the conversion's
+    // call-result slot, as upstream's `SubscriptDLValue` store passes the
+    // converted temporary's `!lit.ref`; a register-passable converted
+    // value (`R` from `Int`) stays a value.
+    let source = r#"
+struct W(Copyable, Movable):
+    var x: Int
+
+    @implicit
+    def __init__(out self, x: Int):
+        self.x = x
+
+struct S:
+    var n: Int
+
+    def __init__(out self):
+        self.n = 0
+
+    def __getitem__(self, i: Int) -> W:
+        return W(self.n)
+
+    def __setitem__(mut self, i: Int, value: W):
+        self.n = value.x
+
+struct R(ImplicitlyCopyable, TrivialRegisterPassable):
+    var x: Int
+
+    @implicit
+    def __init__(out self, x: Int):
+        self.x = x
+
+struct F:
+    var n: Int
+
+    def __init__(out self):
+        self.n = 0
+
+    def __getitem__(self, i: Int) -> R:
+        return R(self.n)
+
+    def __setitem__(mut self, i: Int, value: R):
+        self.n = value.x
+
+def main():
+    var s = S()
+    var k: Int = 3
+    s[0] = k
+    var f = F()
+    f[0] = k
+    print(s.n, f.n)
+"#;
+    let (_, main) = checked_main(source);
+    let addresses = mojito::mir::operand_addresses(&main.body, &main.reg_types);
+    let instructions = nested_instructions(&main.body);
+    let value = setter_value(&instructions, "S.__setitem__");
+    let place = addresses
+        .made(value)
+        .expect("the converted `W` is passed by address");
+    assert!(
+        main.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT),
+        "{place:?}"
+    );
+    assert!(
+        !instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::UseVar { var, mode: UseMode::Forward, .. } if *var == place.root
+        )),
+        "the conversion slot is read, not forwarded"
+    );
+    let scalar = setter_value(&instructions, "F.__setitem__");
+    assert!(
+        addresses.made(scalar).is_none(),
+        "a register-passable converted value is a value"
+    );
+}
+
+/// The value operand of the first store through the setter `target`
+/// names a prefix of.
+fn setter_value(instructions: &[&MirInstr], target: &str) -> Reg {
+    instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MultiSet { value, call, .. } if call.target.starts_with(target) => {
+                Some(*value)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("a store through `{target}`"))
 }
 
 /// The place the first call of `callee` in `function` passes its first

@@ -792,6 +792,13 @@ to evolve under the `0.x` compatibility rules.
   write the first link makes through an alias is seen. It used to copy
   the value loaded before that call (R2298).
 
+- A subscript setter's converted `value=` operand at a memory-only `read`
+  parameter (`s[0] = k` into `value: W`, `c[0] += x` into
+  `value: Total`) is now passed as the `ref.make` of the conversion's
+  call-result slot, which the caller destroys after the setter, as
+  upstream passes the converted temporary's `!lit.ref`. It used to reach
+  the setter as a value (R2299).
+
 - A field of a temporary lent to a borrow (`print(V(1).xs[0])`,
   `(a + b).xs[0]`, `mk().name.codepoints()`, `items(W(mk()).v)[1]`) now
   borrows a projection of the materialized temporary, as upstream's
