@@ -201,6 +201,26 @@ impl<'a> Flatten<'a> {
         if e.transfer_verdict() == Some(mojito_checked::checked::TransferVerdict::TrivialCopy) {
             return self.expr(inner);
         }
+        // A walrus's transfer takes its stored destination.
+        if let Some(place) = self.walrus_destination(inner) {
+            let ty = place
+                .ty
+                .clone()
+                .or_else(|| inner.ty())
+                .unwrap_or_else(Ty::error);
+            let d = self.fresh_typed(e.location(), Some(place.root), ty);
+            if place.is_whole_root() {
+                self.emit(MirInstr::UseVar {
+                    dest: d,
+                    var: place.root,
+                    mode: UseMode::Move,
+                    constructor: None,
+                });
+            } else {
+                self.emit(MirInstr::MovePlace { dest: d, place });
+            }
+            return d;
+        }
         if let Some(name) = self.name_spelled(inner) {
             let var = self.expression_var(&name, inner);
             // A `mut` parameter's slot, or a capture's reference slot,
@@ -653,9 +673,9 @@ impl<'a> Flatten<'a> {
             CheckedOp::Identifier(name) => self.identifier_read(node, name),
             CheckedOp::Named { target, value } => {
                 let (target, value) = (node.operand_of(*target)?, node.operand_of(*value)?);
-                match target.op() {
-                    CheckedOp::Identifier(name) => self.walrus(value, target.checked, name),
-                    _ => self.lower_walrus_store(node, target, value),
+                match self.walrus_destination(node) {
+                    Some(place) => self.walrus_read(node, place),
+                    None => self.lower_walrus_store(node, target, value),
                 }
             }
             _ => return None,
@@ -942,14 +962,18 @@ impl<'a> Flatten<'a> {
         self.call_expr(node, name)
     }
 
-    /// Walrus `name := value`, its name node `target`: bind the name's slot
-    /// and yield the value.
-    fn walrus(&mut self, value: Node<'a>, target: &CheckedExpr, name: &str) -> Reg {
+    /// The store of walrus `name := value`, its name node `target`: bind
+    /// the name's slot to the value at the variable's type, as an
+    /// assignment does.
+    pub(in crate::mir) fn walrus_name_store(
+        &mut self,
+        value: Node<'a>,
+        target: &CheckedExpr,
+        name: &str,
+    ) {
         let location = value.location();
         let value = self.expr(value);
         let var = self.var(&self.spelling(target, name));
-        // The stored value takes the variable's type, as an assignment's
-        // does; the walrus still yields its right-hand side.
         let stored = match self.var_types.get(&var).cloned() {
             Some(var_ty) => self.materialize_register(value, &var_ty, location),
             None => value,
@@ -960,7 +984,38 @@ impl<'a> Flatten<'a> {
             binding_ty: None,
             in_place: false,
         });
-        value
+    }
+
+    /// The value read of walrus `node`'s destination `place`: the place's
+    /// load, copied where the checker recorded a value copy of it, as a
+    /// field chain's read is.
+    fn walrus_read(&mut self, node: Node<'a>, place: MirPlace) -> Reg {
+        let ty = place
+            .ty
+            .clone()
+            .or_else(|| node.ty())
+            .unwrap_or_else(Ty::error);
+        let root = place.root;
+        let loaded = self.fresh_typed(node.location(), Some(root), ty.clone());
+        self.emit(MirInstr::LoadPlace {
+            dest: loaded,
+            place,
+        });
+        if !node.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
+            )
+        }) {
+            return loaded;
+        }
+        let copied = self.fresh_typed(node.location(), Some(root), ty);
+        self.emit(MirInstr::CopyValue {
+            dest: copied,
+            value: loaded,
+            constructor: None,
+        });
+        copied
     }
 
     /// Read name node `node`, written `name`.

@@ -785,6 +785,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A walrus over a name or a field chain now yields its destination borrowed
+  after the store, as upstream's `emitWalrus` does, instead of an owned
+  value: `print(s := String("b"))` runs instead of failing MIR
+  verification, a `read` consumer borrows the destination with no copy, a
+  walrus over a non-`Copyable` field runs, and an implicit copy of a
+  non-`ImplicitlyCopyable` result or a `mut` argument binding one is
+  rejected (R1506).
+
 - A chained comparison's first middle operand (`k < holder.s < l`,
   `xs[0] < xs[1] < xs[2]`) is now copied from its place where the copy
   runs, after the first link's call, as upstream copies it through its

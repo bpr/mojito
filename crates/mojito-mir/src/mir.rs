@@ -3427,6 +3427,9 @@ struct Flatten<'a> {
     returns_reference: bool,
     /// The walrus over a place whose stored value is being lowered.
     walrus_yield: Option<WalrusYield>,
+    /// The destination each walrus of the statement being lowered yields,
+    /// its store lowered ([`Self::walrus_destination`]).
+    walrus_destinations: HashMap<mojito_checked::checked::CheckedNodeId, MirPlace>,
     /// The number of the next `try` this function lowers, its label:
     /// `LowerSemanticCF`'s `tryCounter`.
     next_try: u32,
@@ -5121,6 +5124,7 @@ fn lower_cfg_nested(
             reassigned_names: reassigned_names(cfg, nested),
             returns_reference,
             walrus_yield: None,
+            walrus_destinations: HashMap::new(),
             next_try: 0,
             raise_target: None,
         };

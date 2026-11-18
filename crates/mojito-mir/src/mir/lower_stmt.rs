@@ -584,6 +584,9 @@ impl<'a> Flatten<'a> {
     }
 
     fn place_unrebound(&mut self, e: Node<'a>) -> MirPlace {
+        if let Some(place) = self.walrus_destination(e) {
+            return place;
+        }
         // A materialized borrow-source temporary's place is its hidden slot,
         // registered under the checker-minted owner when the argument lowered.
         if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(e.adjustments())
@@ -1769,6 +1772,32 @@ impl<'a> Flatten<'a> {
         (value, value_place)
     }
 
+    /// The destination walrus `node` yields borrowed after its store, as
+    /// upstream's `emitWalrus` yields a memory lvalue's: its target, a name
+    /// or a field chain over one. The store lowers once, at the walrus's
+    /// first lowering in its statement, where it is written; every later
+    /// place or read of the walrus is the destination. `None` for any other
+    /// node, and for a walrus over another place (R2323).
+    pub(in crate::mir) fn walrus_destination(&mut self, node: Node<'a>) -> Option<MirPlace> {
+        let CheckedOp::Named { target, value } = node.op() else {
+            return None;
+        };
+        let (target, value) = (node.operand_of(*target)?, node.operand_of(*value)?);
+        if !is_field_chain(target) {
+            return None;
+        }
+        if let Some(place) = self.walrus_destinations.get(&node.id()) {
+            return Some(place.clone());
+        }
+        self.outside_call_setup(|this| match target.op() {
+            CheckedOp::Identifier(name) => this.walrus_name_store(value, target.checked, name),
+            _ => this.lower_set_place(target, value),
+        });
+        let place = self.pure_field_place(target)?;
+        self.walrus_destinations.insert(node.id(), place.clone());
+        Some(place)
+    }
+
     /// Lower the walrus `target := value` over a place: the store
     /// `target = value`, yielding a copy of the stored value taken before
     /// the store consumes it, as upstream's `emitWalrus` yields its
@@ -2215,6 +2244,9 @@ impl<'a> Flatten<'a> {
     }
 
     fn simple_place_unrebound(&mut self, e: Node<'a>) -> Option<MirPlace> {
+        if let Some(place) = self.walrus_destination(e) {
+            return Some(place);
+        }
         if let Some(name) = self.name_spelled(e) {
             // A module constant read is the parameter value the check
             // recorded: a value, never a place.
@@ -2265,6 +2297,9 @@ impl<'a> Flatten<'a> {
     }
 
     fn pure_field_place_unrebound(&mut self, e: Node<'a>) -> Option<MirPlace> {
+        if let Some(place) = self.walrus_destination(e) {
+            return Some(place);
+        }
         if let Some(name) = self.name_spelled(e) {
             // `Self.<name>` (a reified value-parameter read, e.g. `Self.size`)
             // resolves off the receiver `self`: `Self` in expression position is
@@ -2298,6 +2333,9 @@ impl<'a> Flatten<'a> {
     }
 
     fn try_place_unrebound(&mut self, e: Node<'a>) -> Option<MirPlace> {
+        if let Some(place) = self.walrus_destination(e) {
+            return Some(place);
+        }
         if let Some(name) = self.name_spelled(e) {
             return Some(self.name_place_root(&name, e));
         }
@@ -2391,6 +2429,7 @@ impl<'a> Flatten<'a> {
         self.with_write_backs(|this| this.lower_stmt_dispatch(node, hir));
         self.flush_argument_anchors();
         self.pending_argument_anchors = saved;
+        self.walrus_destinations.clear();
     }
 
     /// Emit the trailing `KeepAlive` use of every hidden `$arg_loan_r` slot
@@ -4232,6 +4271,16 @@ enum SetArguments<'a> {
 /// lowering facts a borrower built from the binding copies (`aggregate_loans`,
 /// `aliases`) keep the exclusive form, so a view of the binding borrows the
 /// owner as a view of the owner does.
+/// Whether `node` is a name or a field chain over one, the target whose
+/// walrus yields its destination ([`Flatten::walrus_destination`]).
+fn is_field_chain(node: Node<'_>) -> bool {
+    match node.op() {
+        CheckedOp::Identifier(_) => true,
+        CheckedOp::Member { .. } => node.object().is_some_and(is_field_chain),
+        _ => false,
+    }
+}
+
 fn reference_binding_loans(loans: &[MirLoan]) -> Vec<MirLoan> {
     loans
         .iter()

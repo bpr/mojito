@@ -281,16 +281,19 @@ impl Checker {
         }
         if let ExprKind::Named { target, value } = &expression.kind {
             // A target other than a name is stored as `target = value` is,
-            // its subexpressions first; the walrus yields the stored value at
-            // the type the store records.
+            // its subexpressions first; the walrus yields its destination
+            // ([`super::places::walrus_destination`]) or else a copy of the
+            // stored value, at the type the store records.
             let ExprKind::Identifier(name) = &target.kind else {
                 self.register_named_bindings(target)?;
                 self.register_named_bindings(value)?;
                 let ty = self.check_set_place(target, value)?;
-                if !self.is_copyable(&ty) {
+                if super::places::walrus_destination(expression).is_none() && !self.is_copyable(&ty)
+                {
                     return Err(TypeError::Unsupported(format!(
-                        "a walrus over a place of non-Copyable '{ty}': its result is an \
-                         owned copy of the stored value, not the destination (R1506)"
+                        "a walrus over a subscript or reference place of non-Copyable \
+                         '{ty}': its result is an owned copy of the stored value, not \
+                         the destination (R2323)"
                     )));
                 }
                 self.record_at(expression.source_span()).ty = Some(ty);
@@ -334,6 +337,12 @@ impl Checker {
                     context: format!("walrus assignment to '{name}'"),
                 });
             }
+            // The walrus yields its destination, read at the variable's type.
+            let destination = match existing.kind() {
+                TyKind::Ref(reference) => reference.referent.clone(),
+                _ => existing,
+            };
+            self.record_at(expression.source_span()).ty = Some(destination);
             return Ok(());
         }
         match &expression.kind {
@@ -1545,8 +1554,8 @@ impl Checker {
                 self.record_display_construction(expr, &result, true)?;
                 Ok(result)
             }
-            // A walrus over a place types as the store `register_named_bindings`
-            // checked; over a name, as its value.
+            // A walrus types as the destination or the store
+            // `register_named_bindings` checked.
             ExprKind::Named { value, .. } => self
                 .fact(&expr.source_span(), |facts| facts.ty.as_ref())
                 .map_or_else(|| self.infer(value), Ok),

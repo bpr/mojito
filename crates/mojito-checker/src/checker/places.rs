@@ -483,6 +483,7 @@ impl Checker {
         match &source.kind {
             ExprKind::Identifier(name) => Ok(TransferRoot::Binding(name)),
             ExprKind::Member { object, .. } => self.transfer_root(object),
+            _ if let Some(target) = walrus_destination(source) => self.transfer_root(target),
             _ if self.designates_place(source) && !self.is_variant_projection(source) => {
                 Err(TypeError::UntrackedTransfer)
             }
@@ -571,6 +572,19 @@ pub(super) fn is_place_expr(e: &Expr) -> bool {
         e.kind,
         ExprKind::Identifier(_) | ExprKind::Member { .. } | ExprKind::Index { .. }
     ) || pointer_offset_keyword_subscript(e).is_some()
+        || walrus_destination(e).is_some()
+}
+
+/// The destination the walrus `e` yields borrowed after its store, as
+/// upstream's `emitWalrus` yields a memory lvalue's: its target, a name or
+/// a field chain over one. `None` for any other expression, and for a walrus
+/// over a subscript or another place, which yields a copy of the stored
+/// value (R2323).
+pub(super) fn walrus_destination(e: &Expr) -> Option<&Expr> {
+    match &e.kind {
+        ExprKind::Named { target, .. } if field_chain_root(target).is_some() => Some(target),
+        _ => None,
+    }
 }
 
 /// The pointer keyword subscript (`p[unsafe_offset=i]`, current Mojo's
@@ -889,8 +903,9 @@ pub(super) fn borrowable_read_arguments(
     borrowable
 }
 
-/// A `^` transfer produces a value, not a place, so it cannot bind a `mut` or
-/// `ref` parameter.
+/// A `^` transfer produces a value, not a place, so it binds no `mut` or
+/// `ref` parameter, and a walrus yields its destination borrowed,
+/// immutably, so it binds no `mut` one.
 pub(super) fn reject_transfer_into_mutable(
     func: &str,
     slots: &[ArgSlot],
@@ -904,19 +919,19 @@ pub(super) fn reject_transfer_into_mutable(
             ArgSlot::Keyword(position) => &kwargs[*position].value,
             ArgSlot::Default => continue,
         };
-        if matches!(argument.kind, ExprKind::Transfer(_))
-            && matches!(
-                conventions.get(index),
-                Some(Some(ArgConvention::Mut | ArgConvention::Ref))
-            )
-        {
-            return Err(TypeError::BadCall {
-                func: func.to_string(),
-                reason: "value passed to a mutable argument must be mutable; a transferred \
-                         ('^') value is not a place"
-                    .to_string(),
-            });
-        }
+        let reason = match (&argument.kind, conventions.get(index)) {
+            (ExprKind::Transfer(_), Some(Some(ArgConvention::Mut | ArgConvention::Ref))) => {
+                "a transferred ('^') value is not a place"
+            }
+            (ExprKind::Named { .. }, Some(Some(ArgConvention::Mut))) => {
+                "a walrus yields its destination borrowed"
+            }
+            _ => continue,
+        };
+        return Err(TypeError::BadCall {
+            func: func.to_string(),
+            reason: format!("value passed to a mutable argument must be mutable; {reason}"),
+        });
     }
     Ok(())
 }
@@ -932,6 +947,9 @@ pub(super) enum PlaceSeg {
 /// if it isn't rooted at a variable.
 pub(super) fn place_path(e: &Expr) -> Option<(&str, Vec<PlaceSeg>)> {
     fn go<'a>(e: &'a Expr, path: &mut Vec<PlaceSeg>) -> Option<&'a str> {
+        if let Some(target) = walrus_destination(e) {
+            return go(target, path);
+        }
         match &e.kind {
             ExprKind::Identifier(n) => Some(n),
             ExprKind::Member { object, field } => {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2323**.
+Next free ID: **R2324**.
 
 ## Ordered Work
 
@@ -2848,31 +2848,30 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1506 A walrus yields an owned value where upstream yields its
-  destination borrowed**
+- [ ] **R2323 A walrus over a subscript or a reference-returning call
+  yields a copy of the stored value, not its destination**
 
-  Upstream's `BinOpNode::emitWalrus` yields a memory lvalue's destination as
-  a borrowed value after the store, and a setter-stored target's right-hand
-  side. Mojito's checker types every walrus result as an owned value, and
-  MIR yields a register.
-  - Over a name, the walrus binds the value's register to the slot and
-    yields the same register. `print(s := String("b"))` over a `String`
-    fails MIR verification ("call reads owned register … which some path
-    reaching it has ended"), where the pin prints `b`.
-  - Over a place, MIR yields a copy of the stored value taken before the
-    store (`Flatten::lower_walrus_store`). A copy constructor runs once more
-    than at the pin.
-  - So the check rejects a walrus over a place of a non-`Copyable` type
-    (`(h.n := N(5)).v` over a `Movable` `N`), which the pin runs.
-  - `var d = (h.c := C(6))` over a `Copyable`, non-`ImplicitlyCopyable` `C`
-    runs, where the pin rejects the implicit copy of the borrowed result.
-  - The lever: the walrus result is read as its target is, a place the
-    consumer copies or borrows, rather than a fresh temporary.
+  Upstream's `emitWalrus` yields every memory lvalue's destination
+  borrowed after the store, and a setter-stored subscript's right-hand
+  side. `Flatten::walrus_destination` (`mir/lower_stmt.rs`) and the
+  checker's `places::walrus_destination` cover only a name or a field
+  chain. Every other target lowers through `lower_walrus_store`, which
+  yields a `CopyValue` of the stored value taken before the store.
+  - The gap: `lower_set_place` keeps no destination for a store through a
+    reference getter's handle (`lower_subscript_reference_set`), a
+    pointer, or a reference-returning call. The fix materializes that
+    handle as the walrus's place (`materialize_call_reference_place`) and
+    yields a setter-stored subscript's right-hand side as upstream does.
+  - Probe: `print((xs[0] := C(3)).v)` over a `List[C]` whose copy
+    initializer prints runs it once; the pin runs none.
+  - Probe: `(xs[0] := N(5)).v` over a `Movable` `N` is rejected
+    ("a walrus over a subscript or reference place of non-Copyable"),
+    which the pin runs.
   - Probe: the R2300 keyword check flags
-    `assets/ok/walrus_place_targets.mojo` (`main`, a `String` walrus),
-    whose copy of the stored call result passes a value, not the
-    target's reference.
-  - Found while landing R1375 (2026-10-27).
+    `assets/ok/walrus_place_targets.mojo` (`main`, the `names[0] :=
+    String("zz")` walrus), whose copy of the stored value passes a value,
+    not the target's reference.
+  - Found while landing R1506 (2026-11-17).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9704,7 +9703,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     an `__init__(out self, *, copy: Self)` with a value `copy=` operand,
     and accepting the `ref.make` form.
   - Stop when `scripts/smoke` runs clean with the rule on.
-  - Depends on R2296, R2297, and R1506.
+  - Depends on R2296, R2297, R1506, and R2323.
   - Model: Fable, Not Planned.
 
 - [ ] **R2302 The verifier checks no checked-subscript argument at a

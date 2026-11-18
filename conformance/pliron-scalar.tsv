@@ -1756,6 +1756,7 @@ assets/ok/view_temporaries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/view_temporary_origins.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/vm_backed_ctfe_recursive_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/vm_backed_ctfe_ternary.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/walrus_destination_borrowed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/walrus_place_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/waypoints.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_applied_alias_clause.mojo	-	ineligible	no-scalar-entry-shape

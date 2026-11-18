@@ -164,6 +164,12 @@ impl Checker {
     ) -> Result<mojito_types::origin::RefTy, TypeError> {
         use mojito_types::origin::{Mutability, Origin, RefTy};
 
+        // A walrus yields its destination borrowed.
+        if let Some(target) = crate::checker::places::walrus_destination(expr) {
+            let mut reference = self.reference_actual(target)?;
+            reference.mutability = Mutability::Immutable;
+            return Ok(reference);
+        }
         if let Some(spelled) = self.spelled_construction(expr) {
             return self.reference_actual(&spelled);
         }

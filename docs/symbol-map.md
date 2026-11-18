@@ -196,10 +196,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - A walrus (`CheckedOp::Named { target, value }`) takes any expression as
   its target, as an assignment does. The checker's `register_named_bindings`
   (`checker/inference.rs`) updates a name in scope or checks a place target
-  through `check_set_place`, caching the store's type at the walrus. MIR's
-  `lower_walrus_store` (`mir/lower_stmt.rs`) lowers the same store as the
+  through `check_set_place`, caching the destination's or the store's type
+  at the walrus. A walrus over a name or a field chain yields its
+  destination borrowed, as upstream's `emitWalrus` yields a memory lvalue:
+  the checker's `places::walrus_destination` makes it a place
+  (`is_place_expr`, `place_path`, `reference_actual`), which consumers copy
+  or borrow, and MIR's `Flatten::walrus_destination` (`mir/lower_stmt.rs`)
+  lowers the store once per statement and returns the destination to
+  every place query (`place`, `try_place`, `simple_place`,
+  `pure_field_place`), while `walrus_read` loads it. A walrus over any other
+  place lowers through `lower_walrus_store`: the same store as the
   `SetPlace` statement (`lower_set_place`), yielding a copy of the stored
-  value that `yield_stored_value` takes once the store lowers it.
+  value that `yield_stored_value` takes once the store lowers it (R2323).
 - `mir/write_back.rs` owns subscript write-back: `materialize_write_back_place`
   lowers a node carrying `SemanticAdjustment::SubscriptWriteBack` to a place
   (from `place`, `try_place`, `lower_projected_reference_place`,
