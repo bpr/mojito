@@ -121,8 +121,8 @@ pub enum CheckedCallArgumentSource {
 /// op holds one attribute per declared parameter: the bracket arguments the
 /// call's binder bound to it, none for an omitted or inferred parameter and
 /// one per element for a pack. A contract's list is in the order of its
-/// callee's argument view; a bracket argument bound to no declaration
-/// follows those parameters.
+/// callee's whole declared list, an origin argument in its binder's slot;
+/// a bracket argument bound to no declaration follows those parameters.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallParameter {
     pub arguments: Vec<CheckedCallParameterArgument>,

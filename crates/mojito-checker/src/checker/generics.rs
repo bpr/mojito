@@ -708,6 +708,19 @@ pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
     substitute_values(&substitute(&bound, &bindings.types), &values)
 }
 
+/// `ty` with every struct origin tail naming an explicitly bound origin
+/// binder rebound to that origin, and every pointer nested in it too.
+pub(super) fn bind_origin_tails(
+    ty: &Ty,
+    tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+) -> Ty {
+    super::origins::bind_pointer_origin_tails(
+        &super::origins::substitute_struct_origin_tails(ty, tails),
+        tails,
+        None,
+    )
+}
+
 fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings) -> Ty {
     let recur = |t: &Ty| substitute_values(t, bindings);
     let context = ParamContext::detached();
@@ -1533,24 +1546,42 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
         own_binders: u32,
     ) -> Result<MethodInstantiation, TypeError> {
-        // The method's own origin binders bind from the arguments before its
-        // type parameters solve, as a free call's do.
+        // The bracket binds the method's whole declared list first, as a
+        // free call's does, and the origins it bound are substituted into
+        // the signature; then the method's remaining origin binders bind
+        // from the arguments before its type parameters solve.
+        let explicit = self.explicit_type_args(name, &signature.declared, param_args)?;
+        let bracket_origins: HashMap<_, _> = explicit
+            .origins()
+            .iter()
+            .map(|bound| (bound.id, bound.origin.clone()))
+            .collect();
+        let bracket_params: Vec<Ty> = params
+            .iter()
+            .map(|ty| bind_origin_tails(ty, &bracket_origins))
+            .collect();
+        let bracket_variadic = variadic.map(|ty| bind_origin_tails(ty, &bracket_origins));
+        let kw_variadic = kw_variadic.map(|ty| bind_origin_tails(ty, &bracket_origins));
         let (params, _, bound_variadic, origin_bindings) = self.bind_method_origins(
             name,
             signature,
-            params,
-            (variadic, kw_variadic.is_some()),
+            &bracket_params,
+            (bracket_variadic.as_ref(), kw_variadic.is_some()),
             (args, kwargs),
             own_binders,
         )?;
         let params = params.as_slice();
-        let variadic = bound_variadic.as_ref().or(variadic);
+        let variadic = bound_variadic.as_ref().or(bracket_variadic.as_ref());
+        let kw_variadic = kw_variadic.as_ref();
         if signature.decls().is_empty() {
-            if !param_args.is_empty() {
+            let ordinary = explicit
+                .bracket()
+                .map_or(param_args, |bracket| bracket.ordinary.as_slice());
+            if !ordinary.is_empty() {
                 return Err(TypeError::WrongTypeArgCount {
                     name: name.to_string(),
                     expected: 0,
-                    got: param_args.len(),
+                    got: ordinary.len(),
                 });
             }
             return Ok(MethodInstantiation {
@@ -1559,8 +1590,13 @@ impl Checker {
                 kw_variadic: kw_variadic.cloned(),
                 subst: HashMap::new(),
                 arguments: Vec::new(),
-                attributes: DeclaredAttributes::default(),
+                attributes: explicit
+                    .bracket()
+                    .map_or_else(DeclaredAttributes::default, |bracket| {
+                        bracket.declared(DeclaredAttributes::default(), &signature.declared)
+                    }),
                 origin_bindings,
+                bracket_origins,
             });
         }
         let forwarded_element = self.forwarded_kwargs_element(name, kwargs)?;
@@ -1595,7 +1631,6 @@ impl Checker {
             mojito_ast::call::bind_spread(&matched, *position)
                 .map_err(|error| error.into_type_error(name))?;
         }
-        let explicit = self.explicit_type_args(name, &signature.decls(), param_args)?;
         let mut patterns = Vec::new();
         let mut actuals = Vec::new();
         for (index, slot) in matched.slots.iter().enumerate() {
@@ -1661,7 +1696,7 @@ impl Checker {
             ..
         } = self.resolve_explicit_use_params(
             name,
-            &signature.decls(),
+            &signature.declared,
             (param_args, &explicit),
             &patterns,
             &actuals,
@@ -1713,6 +1748,7 @@ impl Checker {
             arguments: tyargs,
             attributes,
             origin_bindings,
+            bracket_origins,
         })
     }
 
@@ -2351,13 +2387,7 @@ fn bind_callable_origin_tails(
         else {
             return;
         };
-        let bind = |ty: &mut Ty| {
-            *ty = super::origins::bind_pointer_origin_tails(
-                &super::origins::substitute_struct_origin_tails(ty, tails),
-                tails,
-                None,
-            );
-        };
+        let bind = |ty: &mut Ty| *ty = bind_origin_tails(ty, tails);
         params.iter_mut().for_each(bind);
         variadic
             .iter_mut()

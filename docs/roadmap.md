@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2357**.
+Next free ID: **R2358**.
 
 ## Ordered Work
 
@@ -3001,6 +3001,27 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Planned in R2139 (2026-11-18).
   - Depends on R2343.
   - Model: Fable, Planned.
+
+- [ ] **R2357 A call bracket's origin argument is not checked against its
+  binder's mutability**
+
+  `put[ImmOrigin(origin_of(a))](Pointer(to=a))` over `def put[o:
+  MutOrigin](p: Pointer[Int, o])` runs, where the pin rejects it ("value
+  passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'").
+  - `explicit_origin_argument` (`checker/origins/binders.rs`) erases an
+    `ImmOrigin(o)` cast to `o`, so `bind_origin_arguments`
+    (`checker/generics.rs`) binds a `MutOrigin` binder without the
+    capability check `accept_origin_argument`
+    (`checker/type_resolution.rs`) gives a struct application.
+  - Probe: the free call above, and the method call `s.put[ImmOrigin(
+    origin_of(a))](Pointer(to=a))` over `def put[o: MutOrigin](self, p:
+    Pointer[Int, o])`, which binds through the same binder.
+  - The lever: have `bind_origin_arguments` convert the argument to the
+    binder's declared `Origin[mut=…]` type, rejecting an immutable origin
+    for a `mut=True` binder as upstream's conversion does.
+  - Found while landing R2353 (2026-11-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
@@ -10666,30 +10687,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     origins, and delete `CallableOriginSignature::origins`.
   - Found while landing R2352 (2026-11-19).
   - Depends on R2346.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2353 A method call's bracket cannot take an origin argument**
-
-  `s.get[origin_of(a)](Pointer(to=a))` over `def get[o: ImmOrigin](self,
-  p: Pointer[Int, o]) -> Int` is rejected ("no overload matches the
-  supplied arguments"), where upstream binds `o` from the bracket.
-  - `instantiate_method_generics` (`checker/generics.rs`) binds the
-    bracket against `MethodSig::decls`, the argument view, and has no
-    split, so an origin argument lands in no binder.
-  - Probe: `checked_parameter_arguments`
-    (`method_calls/call_contract.rs`) drops an origin argument, so a
-    method or subscript call's lowered call names no origin binder's
-    slot, where a free call's does.
-  - Probe: a capturing nested `def cap[o: ImmOrigin](p: Pointer[Int, o])
-    {imm} -> Int` called as `cap[origin_of(x)](Pointer(to=x))` dispatches
-    its storage's method, so the origin argument binds no slot and MIR
-    verification fails ("register r15 has no checked type"), where the
-    pin prints `13`.
-  - The lever: bind a method bracket against `MethodSig::declared`
-    through `bind_origin_arguments` (`checker/generics.rs`), the free
-    call's whole-list binder, and record the origin argument in its
-    binder's slot.
-  - Depends on R2352.
   - Model: Opus, Not Planned.
 
 - [ ] **R2354 A construction the check synthesizes records no bracket

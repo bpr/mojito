@@ -1262,7 +1262,11 @@ origin argument in their binders' slots of the callee's whole declared list
 (`OriginBracket::declared`, from `bind_origin_arguments`, which
 `resolve_explicit_use_params` runs over that list and whose bound origins
 `BoundParameters::origins` returns for the call or value to substitute into
-its signature through `bind_bracket_origins`); a compiler builtin's binder
+its signature through `bind_bracket_origins`; a method call's bracket binds
+its method's whole declared list (`MethodSig::declared`) the same way in
+`instantiate_method_generics`, which substitutes the bound origins into the
+method's parameters and result through `bind_origin_tails` before the
+remaining origin binders bind from the arguments); a compiler builtin's binder
 (`applied_type`'s collection, pointer, `SIMD`, and storage types,
 `external_call`, `reflect`, the `Variant` storage methods, the
 one-type-argument trait tests) keys its arguments the same way, by the
@@ -1298,8 +1302,9 @@ value list), which `resolve_param_arg` answers beside the value it bound
 does: the checker's own readers (`runtime_param_arg_expressions`, which
 types the bracket arguments still evaluated at run time, and the method call
 contract's `checked_parameter_arguments`, which lists them per declared
-parameter as the checked call does and names a run-time operand by its
-source occurrence) read the call's attributes, never
+parameter of the callee's whole declared list as the checked call does, an
+origin argument an erased argument of its binder's slot, and names a
+run-time operand by its source occurrence) read the call's attributes, never
 a fact at the argument; a type in value position records its
 `Ty` (`NodeFacts::type_operand`, `Checker::type_value`); the op holds them,
 and MIR reads them instead of the spelling. A closed one in a plain `def`

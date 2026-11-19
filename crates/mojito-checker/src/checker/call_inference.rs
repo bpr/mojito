@@ -29,6 +29,23 @@ type InferredCall = (
 );
 
 impl Checker {
+    /// [`folded_parameter_attributes`] of a method call's bracket
+    /// `param_args` over its method's whole declared list `decls`, each in
+    /// its declared slot, as a free call's ([`folded_bracket_attributes`]).
+    pub(super) fn folded_declared_attributes(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        param_args: &[mojito_ast::ast::ParamArg],
+        arguments: &[TyArg],
+    ) -> DeclaredAttributes {
+        let mut explicit = ExplicitTypes::default();
+        if let Ok(bracket) = self.bind_origin_arguments(name, decls, param_args) {
+            explicit.set_bracket(bracket);
+        }
+        folded_bracket_attributes(&explicit, decls, param_args, arguments)
+    }
+
     /// Reject a reference to the module function `name` as a value when
     /// it is `@unavailable`, as a call selecting it is.
     pub(super) fn reject_unavailable_reference(&self, name: &str) -> Result<(), TypeError> {

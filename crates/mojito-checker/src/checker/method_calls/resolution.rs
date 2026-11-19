@@ -3,7 +3,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::checker::call_inference::folded_parameter_attributes;
 use mojito_types::types::TyKind;
 
 impl Checker {
@@ -164,8 +163,9 @@ impl Checker {
                 });
             self.record_folded_bracket_attributes(
                 span,
-                &folded_parameter_attributes(
-                    &ParamDecl::argument_view(&resolved.param_decls),
+                &self.folded_declared_attributes(
+                    method,
+                    &resolved.param_decls,
                     param_args,
                     arguments,
                 ),
@@ -267,8 +267,8 @@ impl Checker {
                 .ref_return
                 .as_ref()
                 .map(|reference| instantiated.bound_ref_return(self, reference));
-            let declared_ret =
-                instantiated.bound_result(self, self.substitute_at_instance(&sig.ret, info, targs));
+            let declared_ret = instantiated
+                .bound_result(self, &self.substitute_at_instance(&sig.ret, info, targs));
             let MethodInstantiation {
                 params,
                 variadic,
@@ -483,7 +483,7 @@ impl Checker {
                 .as_ref()
                 .map(|reference| instantiated.bound_ref_return(self, reference));
             let declared_ret =
-                instantiated.bound_result(self, self.substitute_self_members(&sig.ret, obj_ty));
+                instantiated.bound_result(self, &self.substitute_self_members(&sig.ret, obj_ty));
             let MethodInstantiation {
                 params,
                 variadic,

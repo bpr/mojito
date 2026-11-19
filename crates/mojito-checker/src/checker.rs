@@ -4060,12 +4060,15 @@ struct MethodInstantiation {
     attributes: DeclaredAttributes,
     /// The method's own origin binders, bound from the arguments' types.
     origin_bindings: Option<origins::ConstructorOriginBindings>,
+    /// The method's own origin binders its bracket bound, by binder.
+    bracket_origins: HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 }
 
 impl MethodInstantiation {
     /// The declared result with the method's bound origin binders
-    /// substituted.
-    fn bound_result(&self, checker: &Checker, ty: Ty) -> Ty {
+    /// substituted, those its bracket bound first.
+    fn bound_result(&self, checker: &Checker, ty: &Ty) -> Ty {
+        let ty = generics::bind_origin_tails(ty, &self.bracket_origins);
         match &self.origin_bindings {
             Some(bindings) => bindings
                 .substitute_result(&ty, &|_, origin| checker.bound_origin_mutability(origin)),

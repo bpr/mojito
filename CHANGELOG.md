@@ -803,6 +803,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method call's bracket now binds an explicit origin argument
+  (`s.get[origin_of(a)](Pointer(to=a))` over `def get[o: ImmOrigin](self,
+  p: Pointer[Int, o])`) in its binder's slot of the method's whole declared
+  list, as a free call's does, where it was rejected ("no overload matches
+  the supplied arguments"); the lowered call names that slot. A `MutOrigin`
+  binder still accepts an `ImmOrigin(...)` argument (R2357) (R2353).
+
 - A function whose only compile-time parameters are origins now has a
   generic type over its whole declared list, as upstream's function with
   any parameter is a generator over it, so its bracketed calls bind through

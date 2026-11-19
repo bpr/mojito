@@ -2,7 +2,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::checker::call_inference::folded_parameter_attributes;
 use mojito_types::types::TyKind;
 
 /// What a static call bound its struct application to: the instance's
@@ -418,8 +417,10 @@ impl Checker {
                 .ref_return
                 .as_ref()
                 .map(|reference| instantiated.bound_ref_return(self, reference));
-            let declared_ret = instantiated
-                .bound_result(self, self.substitute_at_instance(&sig.ret, info, &instance));
+            let declared_ret = instantiated.bound_result(
+                self,
+                &self.substitute_at_instance(&sig.ret, info, &instance),
+            );
             let MethodInstantiation {
                 params,
                 variadic,
@@ -584,8 +585,9 @@ impl Checker {
                 });
             self.record_folded_bracket_attributes(
                 &span,
-                &folded_parameter_attributes(
-                    &ParamDecl::argument_view(&selected.param_decls),
+                &self.folded_declared_attributes(
+                    source_method,
+                    &selected.param_decls,
                     param_args,
                     arguments,
                 ),

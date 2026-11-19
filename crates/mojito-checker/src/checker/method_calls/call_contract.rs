@@ -314,10 +314,10 @@ fn checked_call_arguments(
 
 /// The call's explicit compile-time arguments, one parameter per declared
 /// slot of `binding` (the binding its binder recorded, keyed by
-/// declaration), then one per argument bound to none. A value argument
-/// bound to no attribute names its run-time operand by its source; one
-/// bound to an origin is left out: it fills the callee's origin binder,
-/// which the call's argument view does not list.
+/// declaration over the callee's whole declared list), then one per
+/// argument bound to none. A value argument bound to no attribute names
+/// its run-time operand by its source; one bound to an origin is an erased
+/// argument of its origin binder's slot.
 fn checked_parameter_arguments(
     param_args: &[mojito_ast::ast::ParamArg],
     binding: &mojito_checked::checked::BracketBinding,
@@ -329,11 +329,10 @@ fn checked_parameter_arguments(
             argument => argument,
         };
         let operand = match (argument, attribute) {
-            (_, Some(TyArg::Origin(_))) => return None,
             (mojito_ast::ast::ParamArg::Value(value), None) => Some(value.source_span()),
             _ => None,
         };
-        Some(CheckedCallParameterArgument { operand })
+        CheckedCallParameterArgument { operand }
     };
     let mut placed = vec![false; param_args.len()];
     let mut parameters = binding
@@ -346,7 +345,7 @@ fn checked_parameter_arguments(
                     bound.position < placed.len()
                         && !std::mem::replace(&mut placed[bound.position], true)
                 })
-                .filter_map(|bound| argument(&param_args[bound.position], bound.attribute.as_ref()))
+                .map(|bound| argument(&param_args[bound.position], bound.attribute.as_ref()))
                 .collect(),
         })
         .collect::<Vec<_>>();
@@ -355,9 +354,8 @@ fn checked_parameter_arguments(
             .iter()
             .zip(placed)
             .filter(|(_, placed)| !placed)
-            .filter_map(|(param_arg, _)| argument(param_arg, None))
-            .map(|argument| CheckedCallParameter {
-                arguments: vec![argument],
+            .map(|(param_arg, _)| CheckedCallParameter {
+                arguments: vec![argument(param_arg, None)],
             }),
     );
     parameters
