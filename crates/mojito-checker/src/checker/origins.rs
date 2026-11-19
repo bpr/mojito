@@ -49,5 +49,6 @@ pub(in crate::checker) use construct::{
 pub(in crate::checker) use exclusivity::{
     CollectedArguments, ExclusivityCallee, ExclusivityReceiver, NestedOrigins,
 };
+pub(in crate::checker) use interior::validate_origin_signature;
 pub(in crate::checker) use sig::*;
 pub(in crate::checker) use subst::*;

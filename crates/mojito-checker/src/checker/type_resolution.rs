@@ -593,12 +593,13 @@ impl Checker {
     }
 
     /// The function type `callable` spells, its signature resolved in the
-    /// scopes already open; `type_params` is the list its origin reference
-    /// signatures (`ref[o] T`) index, its own followed by any context.
+    /// scopes already open; `decls` is the classified list its origin
+    /// reference signatures (`ref[o] T`) read, its own followed by any
+    /// context.
     pub(super) fn function_signature_type(
         &self,
         callable: &SourceType,
-        type_params: &[mojito_ast::ast::TypeParam],
+        decls: &[ParamDecl],
     ) -> Result<Ty, TypeError> {
         let SourceType::Func {
             params,
@@ -658,7 +659,7 @@ impl Checker {
                     origin.as_ref().ok_or_else(|| {
                         TypeError::Unsupported("reference return requires an origin".to_string())
                     })?,
-                    type_params,
+                    decls,
                     &regular,
                 )?)),
             ),
@@ -692,7 +693,7 @@ impl Checker {
                 .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
                 .map(|parameter| parameter.convention)
                 .collect(),
-            ref_params: self.lower_callable_ref_param_sigs(type_params, &regular)?,
+            ref_params: self.lower_callable_ref_param_sigs(decls, &regular)?,
             ref_return,
             transfers: TransferSet::default(),
         }))

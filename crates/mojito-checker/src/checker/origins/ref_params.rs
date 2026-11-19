@@ -102,10 +102,8 @@ impl Checker {
             return None;
         };
         let name = origin_binder_name(expression)?;
-        let index = self.enclosing_type_params.iter().position(|parameter| {
-            parameter.name == name && parameter.bounds.as_slice() == ["Origin"]
-        })?;
-        if index >= self.enclosing_struct_type_params.get() {
+        let (_, id) = origin_decl(&self.enclosing_param_decls, name)?;
+        if id.0 as usize >= self.enclosing_struct_type_params.get() {
             return None;
         }
         self.enclosing_origin_param(name).ok()

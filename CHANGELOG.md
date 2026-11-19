@@ -861,6 +861,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An origin binder whose `mut` is left unbound (`def f[o: Origin[mut=_]](ref[o]
+  x: Int)`) is now accepted, as at the pin, where it was rejected ("origin
+  mutability for 'o' must be Bool or a Bool parameter"). A callable's
+  origin signature and its `ref [o]` contracts now read their binders from
+  the classified parameter list rather than recounting the `Origin` bound's
+  spelling, and a `mut` argument that is not a `Bool` (`[n: Int, o:
+  Origin[mut=n]]`) is rejected where the list is classified, as upstream's
+  binding of `Origin`'s `mut` rejects it (R2341).
+
 - A binder typed by a parameterized alias of `Origin` (`comptime O[m:
   Bool] = Origin[mut=m]` with `def f[o: O[True]](ref[o] x: Int)`, `[mm:
   Bool, //, o: O[mm]]`, or a struct's `[o: O[False]]`) is now an origin

@@ -860,6 +860,7 @@ assets/ok/origin_parameterized_alias_binder.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_initialized_local.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/origin_result_keeps_owner_through_call.mojo	main	exe-differential	sanitized
+assets/ok/origin_unbound_mutability_binder.mojo	main	exe-differential	sanitized
 assets/ok/os_dir_operations.mojo	main	exe-differential	sanitized
 assets/ok/os_path_functions.mojo	main	exe-differential	sanitized
 assets/ok/overload_key_scalar_alias_origin.mojo	main	exe-differential	sanitized

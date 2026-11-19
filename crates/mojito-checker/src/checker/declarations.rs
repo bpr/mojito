@@ -717,7 +717,7 @@ impl Checker {
             self_convention: method.self_convention,
             refined_self: self.refined_receiver(method)?,
             ref_params: lower_ref_param_sigs(
-                &self.enclosing_type_params,
+                &self.enclosing_param_decls,
                 &regular_params,
                 self.enclosing_struct_type_params.get(),
             )?,
@@ -726,7 +726,7 @@ impl Checker {
                     origin.as_ref().ok_or_else(|| {
                         TypeError::Unsupported("reference return requires an origin".to_string())
                     })?,
-                    &self.enclosing_type_params,
+                    &self.enclosing_param_decls,
                     &regular_params,
                     self.enclosing_struct_type_params.get(),
                     super::origins::pack_collector(&method.params),
@@ -736,7 +736,7 @@ impl Checker {
             view_return_interior: view_return_interior_tags(method.ret.as_ref()),
             view_return: self.view_return_origins(
                 method.ret.as_ref(),
-                &self.enclosing_type_params,
+                &self.enclosing_param_decls,
                 &regular_params,
                 self.enclosing_struct_type_params.get(),
                 method.self_convention,
@@ -919,7 +919,7 @@ impl Checker {
             // Instances and calls infer both from places rather than binding
             // them by position ([`ParamDecl::is_argument_binder`]).
             if let Some(origin) =
-                self.origin_binder_decl(tp, enclosing + index, binder_id(decls.len()))
+                self.origin_binder_decl(tp, enclosing + index, binder_id(decls.len()))?
             {
                 decls.push(origin);
                 continue;
@@ -1211,65 +1211,88 @@ impl Checker {
     /// binder whose annotation resolves to `std.origin`'s `Origin` (`o:
     /// Origin[mut=m]`, `o: ImmOrigin`, `o: O[True]`), with the mutability
     /// its `mut` argument fixes or names, or an `OriginSet` one. `None` for
-    /// any other parameter, a trait-bounded one included.
+    /// any other parameter, a trait-bounded one included. A `mut` argument
+    /// whose value is not a `Bool` (`n: Int, o: Origin[mut=n]`) is an
+    /// error, as upstream's binding of `Origin`'s `mut` parameter rejects
+    /// it.
     pub(super) fn origin_binder_decl(
         &self,
         tp: &mojito_ast::ast::TypeParam,
         index: usize,
         id: ParamId,
-    ) -> Option<ParamDecl> {
+    ) -> Result<Option<ParamDecl>, TypeError> {
         if tp.callable_bound.is_some() || tp.name.starts_with('*') {
-            return None;
+            return Ok(None);
         }
         let mutability = match tp.bounds.as_slice() {
             // A builtin identity until it is declared as upstream's
             // `!lit.origin.set` type (R2343).
             [only] if only == "OriginSet" => OriginMutability::Set,
             [only] if tp.value_type.is_none() && self.check_trait_name(only).is_ok() => {
-                return None;
+                return Ok(None);
             }
-            _ => self.origin_annotation_mutability(&tp.annotation()?)?,
+            _ => {
+                let Some(annotation) = tp.annotation() else {
+                    return Ok(None);
+                };
+                let Some(mutability) = self.origin_annotation_mutability(&annotation)? else {
+                    return Ok(None);
+                };
+                mutability
+            }
         };
-        Some(ParamDecl::Origin {
+        Ok(Some(ParamDecl::Origin {
             id,
             name: tp.name.clone(),
             origin: mojito_types::origin::OriginParamId(u32::try_from(index).unwrap_or(u32::MAX)),
             mutability,
             infer_only: tp.infer_only,
-        })
+        }))
     }
 
     /// The mutability of the library `Origin` type `annotation` resolves
     /// to, its `mut` argument fixed, naming a binder, or left unbound
     /// (`o: Origin`, `o: Origin[mut=_]`), as upstream's partial
     /// `#kgen.bind_params` leaves it; `None` when it resolves to another
-    /// type or to none.
-    fn origin_annotation_mutability(&self, annotation: &SourceType) -> Option<OriginMutability> {
+    /// type or to none. A `mut` argument of another type than `Bool` is
+    /// the binding's type mismatch.
+    fn origin_annotation_mutability(
+        &self,
+        annotation: &SourceType,
+    ) -> Result<Option<OriginMutability>, TypeError> {
         let mutability = if let Ok(ty) = self.ty_from_anno(annotation) {
             let TyKind::Struct(name, args) = ty.kind() else {
-                return None;
+                return Ok(None);
             };
             if !self.is_library_origin(name) {
-                return None;
+                return Ok(None);
             }
             args.first().cloned()
         } else {
             let SourceType::Named(name, args) = annotation else {
-                return None;
+                return Ok(None);
             };
-            if !self.is_library_origin(name) {
-                return None;
-            }
+            let Some(info) = self
+                .structs
+                .get(name)
+                .filter(|_| self.is_library_origin(name))
+            else {
+                return Ok(None);
+            };
             // A `mut` argument naming a binder this scope does not hold
             // (an enclosing declaration's, read after it closed) leaves the
             // mutability symbolic: the type is still `Origin`.
-            let decls = &self.structs.get(name)?.params;
-            (!args.is_empty())
-                .then(|| self.resolve_partial_use_params(name, decls, args).ok())
-                .flatten()
-                .and_then(|(bound, _)| bound.into_iter().next().flatten())
+            if args.is_empty() {
+                None
+            } else {
+                match self.resolve_partial_use_params(name, &info.params, args) {
+                    Ok((bound, _)) => bound.into_iter().next().flatten(),
+                    Err(error @ TypeError::TypeMismatch { .. }) => return Err(error),
+                    Err(_) => None,
+                }
+            }
         };
-        Some(match &mutability {
+        Ok(Some(match &mutability {
             Some(TyArg::Val(CtValue::Bool(fixed))) => OriginMutability::Fixed(*fixed),
             Some(TyArg::Val(CtValue::Expr(mutability)))
                 if let Some(binder) = mutability.as_decl_ref() =>
@@ -1279,7 +1302,7 @@ impl Checker {
             // A mutability left to inference, spelled as upstream spells an
             // unbound parameter.
             _ => OriginMutability::Binder(ParamRef::unbound("_")),
-        })
+        }))
     }
 
     /// Whether the struct `name` names is `std.origin`'s `Origin`.
@@ -1474,11 +1497,20 @@ impl Checker {
         self.push_param_scope(&ParamDecl::argument_view(&decls));
         // Own declarations come first so any own Origin/OriginSet indexes
         // have the same source-relative positions they do on a named generic
-        // def. The appended outer declarations are only a lookup context.
-        let context: Vec<_> = type_params
+        // def. The appended outer origin binders, numbered past them, are
+        // only a lookup context.
+        let context: Vec<ParamDecl> = decls
             .iter()
-            .chain(outer_type_params)
             .cloned()
+            .chain((0..outer_type_params.len()).filter_map(|index| {
+                let mut decl = self.origin_binder_at(outer_type_params, index)?;
+                if let ParamDecl::Origin { origin, .. } = &mut decl {
+                    *origin = mojito_types::origin::OriginParamId(
+                        u32::try_from(type_params.len() + index).unwrap_or(u32::MAX),
+                    );
+                }
+                Some(decl)
+            }))
             .collect();
         self.callable_type_params
             .borrow_mut()
@@ -1823,14 +1855,21 @@ impl Checker {
         // The body reads every value binder the method declares, an
         // origin's `mut=` binder included.
         let declared = self.classify_param_list(&owner, &m.type_params)?;
+        let enclosed = self.classify_param_list_after(
+            &owner,
+            &m.type_params,
+            self.enclosing_type_params.len(),
+        )?;
         let decls = ParamDecl::argument_decls(&declared);
         let saved_site = self
             .method_site
             .replace((module.cloned(), declaration.to_string()));
         self.push_param_scope(&declared);
         let saved = self.enclosing_type_params.clone();
+        let saved_decls = self.enclosing_param_decls.clone();
         let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
         self.enclosing_type_params.extend(m.type_params.clone());
+        self.enclosing_param_decls.extend(enclosed);
         let availability = self
             .structs
             .get(declaration)
@@ -1878,6 +1917,7 @@ impl Checker {
         })();
         self.pop_assumptions();
         self.enclosing_type_params = saved;
+        self.enclosing_param_decls = saved_decls;
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.pop_param_scope();
         self.method_site = saved_site;
@@ -1961,8 +2001,8 @@ impl Checker {
                     .to_string(),
             ));
         }
-        self.validate_origin_signature(
-            &self.enclosing_type_params,
+        super::origins::validate_origin_signature(
+            &self.enclosing_param_decls,
             &m.params,
             m.self_origin.as_ref(),
         )?;
@@ -2040,7 +2080,7 @@ impl Checker {
                 origin.as_ref().ok_or_else(|| {
                     TypeError::Unsupported("reference return requires an origin".to_string())
                 })?,
-                &self.enclosing_type_params,
+                &self.enclosing_param_decls,
                 &regular,
                 self.enclosing_struct_type_params.get(),
                 super::origins::pack_collector(&m.params),
@@ -2152,12 +2192,10 @@ impl Checker {
         let declared = self.classify_param_list(owner, &m.type_params)?;
         self.declare_value_parameters(&declared)?;
         let method_decls = ParamDecl::argument_decls(&declared);
-        let mut reference_type_params = self.enclosing_type_params.clone();
-        reference_type_params.extend(m.type_params.iter().cloned());
         let self_writable = ref_binding_is_writable(
             m.self_convention,
             m.self_origin.as_deref(),
-            &reference_type_params,
+            &self.enclosing_param_decls,
         );
         // An initializer's `out self` follows the arguments its refined
         // annotation may read (`origin_of(iterable)`).
@@ -2202,7 +2240,7 @@ impl Checker {
                 mojito_ast::ast::ParamKind::Regular => pty,
             };
             param_tys.push(pty.clone());
-            let writable = ref_parameter_is_writable(p, &reference_type_params);
+            let writable = ref_parameter_is_writable(p, &self.enclosing_param_decls);
             let binder = matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Ref))
                 .then(|| self.reference_parameter_struct_binder(p.origin.as_deref()))
                 .flatten();

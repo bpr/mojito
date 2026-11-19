@@ -1,4 +1,4 @@
-# expect: origin mutability for 'o' must be Bool
+# expect: expected Bool, found IntLiteral
 # A parameterized alias of `Origin` applied to a non-`Bool` mutability is
 # rejected, as `Origin[mut=3]` is.
 comptime O[m: Bool] = Origin[mut=m]

@@ -818,6 +818,11 @@ pub struct Checker {
     /// freely there and crosses nowhere else.
     comptime_positions: std::rc::Rc<std::cell::Cell<usize>>,
     enclosing_type_params: Vec<mojito_ast::ast::TypeParam>,
+    /// `enclosing_type_params` classified, list by list, in the same
+    /// [`OriginParamId`](mojito_types::origin::OriginParamId) domain: each
+    /// origin binder numbered by its position in the concatenation. Origin
+    /// signatures read their binders from it, never from the spelling.
+    enclosing_param_decls: Vec<ParamDecl>,
     /// The `Ty` denoted by a bare `Self` while checking a struct's members (the
     /// struct type) or a trait's requirements (`TyKind::SelfType`). `None` elsewhere.
     self_ty: Option<Ty>,
@@ -1254,6 +1259,7 @@ impl Checker {
             compile_time_bindings: vec![HashSet::new()],
             comptime_positions: std::rc::Rc::default(),
             enclosing_type_params: Vec::new(),
+            enclosing_param_decls: Vec::new(),
             self_ty: None,
             trait_self_comptime: Vec::new(),
             comptimes: declaration_table::DeclarationTable::default(),
@@ -1610,12 +1616,12 @@ impl Checker {
     fn lower_callable_ref_sig(
         &self,
         spec: &mojito_ast::ast::OriginSpec,
-        type_params: &[mojito_ast::ast::TypeParam],
+        decls: &[ParamDecl],
         params: &[&FnParam],
     ) -> Result<mojito_types::origin::RefSig, TypeError> {
         use mojito_types::origin::{Mutability, RefSig, SigMutability, SigOrigin};
 
-        if let Ok(signature) = lower_ref_sig(spec, type_params, params, 0) {
+        if let Ok(signature) = lower_ref_sig(spec, decls, params, 0) {
             return Ok(signature);
         }
         let mut members = Vec::new();
@@ -1650,12 +1656,7 @@ impl Checker {
                         }
                     }
                 }
-                _ => members.push(lower_sig_origin_expression(
-                    expression,
-                    type_params,
-                    params,
-                    0,
-                )?),
+                _ => members.push(lower_sig_origin_expression(expression, decls, params, 0)?),
             }
         }
         let origin = match members.as_slice() {
@@ -1678,7 +1679,7 @@ impl Checker {
 
     fn lower_callable_ref_param_sigs(
         &self,
-        type_params: &[mojito_ast::ast::TypeParam],
+        decls: &[ParamDecl],
         params: &[&FnParam],
     ) -> Result<Vec<Option<mojito_types::origin::RefSig>>, TypeError> {
         params
@@ -1688,9 +1689,7 @@ impl Checker {
                     return Ok(None);
                 }
                 match &parameter.origin {
-                    Some(spec) => self
-                        .lower_callable_ref_sig(spec, type_params, params)
-                        .map(Some),
+                    Some(spec) => self.lower_callable_ref_sig(spec, decls, params).map(Some),
                     None => Ok(Some(mojito_types::origin::RefSig {
                         origin: mojito_types::origin::SigOrigin::Infer,
                         mutability: mojito_types::origin::SigMutability::Infer,

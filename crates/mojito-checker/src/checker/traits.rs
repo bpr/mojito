@@ -427,7 +427,6 @@ impl Checker {
                     },
                     &m.decorators,
                 )?;
-                self.validate_origin_signature(&m.type_params, &m.params, m.self_origin.as_ref())?;
                 if ct_members.contains_key(&m.name) {
                     return Err(TypeError::Redeclaration(m.name.clone()));
                 }
@@ -509,6 +508,7 @@ impl Checker {
         owner: &str,
     ) -> Result<MethodSig, TypeError> {
         let declared = self.classify_param_list(owner, &m.type_params)?;
+        super::origins::validate_origin_signature(&declared, &m.params, m.self_origin.as_ref())?;
         let decls = ParamDecl::argument_decls(&declared);
         self.push_param_scope(&decls);
         let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
@@ -573,12 +573,13 @@ impl Checker {
                 origin.as_ref().ok_or_else(|| {
                     TypeError::Unsupported("reference return requires an origin".to_string())
                 })?,
-                &m.type_params,
+                &declared,
                 &regular_params,
                 0,
             )?),
             _ => None,
         };
+        let ref_params = lower_ref_param_sigs(&declared, &regular_params, 0)?;
         let sig = MethodSig {
             declared,
             availability: Vec::new(),
@@ -610,7 +611,7 @@ impl Checker {
             error,
             self_convention: m.self_convention,
             refined_self: None,
-            ref_params: lower_ref_param_sigs(&m.type_params, &regular_params, 0)?,
+            ref_params,
             ref_return,
             view_return_interior: view_return_interior_tags(m.ret.as_ref()),
             view_return: Vec::new(),
@@ -876,12 +877,14 @@ impl Checker {
             ))
         })?;
         let decls = info.decls().into_owned();
+        let param_decls = info.params.clone();
         let self_ty = Self::struct_instance_type(name, info.self_arguments());
         let saved = SavedStructScope {
             type_params: std::mem::replace(
                 &mut self.enclosing_type_params,
                 declaration.type_params.to_vec(),
             ),
+            param_decls: std::mem::replace(&mut self.enclosing_param_decls, param_decls),
             self_decls: std::mem::replace(&mut self.self_decls, decls),
             self_ty: self.self_ty.replace(self_ty.clone()),
             bundled_stdlib: std::mem::replace(
@@ -902,6 +905,7 @@ impl Checker {
     pub(super) fn exit_struct_scope(&mut self, saved: SavedStructScope) {
         self.self_decls = saved.self_decls;
         self.enclosing_type_params = saved.type_params;
+        self.enclosing_param_decls = saved.param_decls;
         self.self_ty = saved.self_ty;
         self.bundled_stdlib_declaration = saved.bundled_stdlib;
         self.enum_declaration = saved.enum_declaration;
@@ -1552,10 +1556,13 @@ impl Checker {
         )?;
         self.push_param_scope(&ParamDecl::argument_view(&method_decls));
         let saved_method_type_params = self.enclosing_type_params.clone();
+        let saved_method_decls = self.enclosing_param_decls.clone();
         let saved_struct_count = self
             .enclosing_struct_type_params
             .replace(saved_method_type_params.len());
         self.enclosing_type_params.extend(m.type_params.clone());
+        self.enclosing_param_decls
+            .extend(method_decls.iter().cloned());
         // The method's own `where` clause refines its signature exactly as
         // it refines its body: a conditionally available method may name
         // types its receiver's bare bounds do not admit.
@@ -1580,6 +1587,7 @@ impl Checker {
             None => self.compiled_method_signature(name, m, method_decls),
         };
         self.enclosing_type_params = saved_method_type_params;
+        self.enclosing_param_decls = saved_method_decls;
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.pop_param_scope();
         signature
@@ -4716,6 +4724,7 @@ fn parametric_origin_writes_in_body(
 /// struct's own type parameters; restored by `Checker::exit_struct_scope`.
 pub(super) struct SavedStructScope {
     type_params: Vec<mojito_ast::ast::TypeParam>,
+    param_decls: Vec<ParamDecl>,
     self_decls: Vec<ParamDecl>,
     self_ty: Option<Ty>,
     bundled_stdlib: bool,

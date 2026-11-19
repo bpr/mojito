@@ -54,7 +54,7 @@ impl Checker {
     pub(super) fn delegated_call_ref_sig(
         &self,
         member: &Expr,
-        type_params: &[mojito_ast::ast::TypeParam],
+        decls: &[ParamDecl],
         params: &[&FnParam],
     ) -> Result<Option<mojito_types::origin::RefSig>, TypeError> {
         use mojito_types::origin::{OriginSeg, RefSig, SigMutability, SigOrigin};
@@ -170,15 +170,13 @@ impl Checker {
             .origin_decls()
             .filter(|(_, decl)| !is_origin_set(decl))
             .count();
-        let mut caller_binders = type_params
-            .iter()
-            .enumerate()
-            .filter(|(_, param)| param.bounds.as_slice() == ["Origin"]);
+        let mut caller_binders = decls.iter().filter_map(|decl| match decl {
+            ParamDecl::Origin { origin, .. } if !is_origin_set(decl) => Some(*origin),
+            _ => None,
+        });
         let caller_binder = match (caller_binders.next(), caller_binders.next()) {
-            (Some((index, _)), None) if callee_origin_binders == 1 => {
-                Some(mojito_types::origin::Origin::Param(
-                    mojito_types::origin::OriginParamId(index as u32),
-                ))
+            (Some(origin), None) if callee_origin_binders == 1 => {
+                Some(mojito_types::origin::Origin::Param(origin))
             }
             _ => None,
         };
@@ -528,7 +526,6 @@ impl Checker {
         out: &mut Vec<(u32, String)>,
     ) -> Option<()> {
         use mojito_ast::ast::{ParamArg, SourceType};
-        let is_origin = |parameter: &mojito_ast::ast::TypeParam| matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet");
         let applied_binder = |argument: &ParamArg| -> Option<String> {
             let binder = match argument {
                 ParamArg::Type(mojito_ast::ast::Type::Named(name, targs)) if targs.is_empty() => {
@@ -583,17 +580,20 @@ impl Checker {
                     ExprKind::TupleLit(items) => items.iter().collect(),
                     _ => vec![index.as_ref()],
                 };
-                let explicit: Vec<&mojito_ast::ast::TypeParam> = member
+                // An associated alias's own list is classified where it is
+                // read; none is stored for its members.
+                let explicit: Vec<(usize, &mojito_ast::ast::TypeParam)> = member
                     .params
                     .iter()
-                    .filter(|parameter| !parameter.infer_only)
+                    .enumerate()
+                    .filter(|(_, parameter)| !parameter.infer_only)
                     .collect();
                 if explicit.len() != supplied.len() {
                     return None;
                 }
                 let mut inner = HashMap::new();
-                for (parameter, argument) in explicit.iter().zip(supplied) {
-                    if !is_origin(parameter) {
+                for ((index, parameter), argument) in explicit.iter().zip(supplied) {
+                    if self.origin_binder_at(&member.params, *index).is_none() {
                         continue;
                     }
                     if let Some(binder) = applied_binder(&ParamArg::Value(argument.clone())) {

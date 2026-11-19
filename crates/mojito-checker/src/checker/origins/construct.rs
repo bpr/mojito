@@ -628,11 +628,18 @@ impl Checker {
     /// declares as its mutability (`o: Origin[mut=mut]`), when that binder
     /// is a value parameter in scope.
     fn origin_mutability_binder_read(&self, id: OriginParamId) -> Option<ParamExpr> {
-        let binder = self.enclosing_type_params.get(id.0 as usize)?;
-        match &binder.origin_mutability.as_ref()?.kind {
-            ExprKind::Identifier(name) => self.value_parameter_in_scope(name),
-            _ => None,
-        }
+        self.enclosing_param_decls
+            .iter()
+            .find_map(|decl| match decl {
+                ParamDecl::Origin {
+                    origin,
+                    mutability: mojito_types::types::OriginMutability::Binder(binder),
+                    ..
+                } if *origin == id && &*binder.name != "_" => {
+                    self.value_parameter_in_scope(&binder.name)
+                }
+                _ => None,
+            })
     }
 
     /// The origin an argument lends to a `ref [o]` parameter or reference

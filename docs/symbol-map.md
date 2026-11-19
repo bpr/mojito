@@ -3384,7 +3384,25 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   callable type's own list over its signature through
   `Checker::callable_type_params`, read first by
   `enclosing_origin_type_param`, `origins/binders.rs`). A function whose
-  only binders are origins stays a `Func`. A checker site holding a
+  only binders are origins stays a `Func`. `origin_binder_decl` also
+  rejects a `mut` argument that is not a `Bool`. The checker's
+  `enclosing_param_decls` (`checker.rs`) mirrors `enclosing_type_params`
+  classified, list by list, in the same `OriginParamId` domain; it is set
+  wherever that list is (`enter_struct_scope`/`exit_struct_scope`,
+  `method_signature_owned_by`, `traits.rs`; `check_method`,
+  `declarations.rs`; `in_def_context`, `statements.rs`;
+  `lower_parameterized_member`, `constraints.rs`). Origin signatures
+  read their binders from a classified list only, through
+  `origins::origin_decl` and `origin_decl_mutability` (`origins/sig.rs`):
+  `callable_origin_signature`, `lower_ref_param_sigs`, `lower_ref_sig`,
+  `view_return_origins`, `sig_origin_for_binder`,
+  `lower_sig_origin_expression` and `ref_binding_is_writable`
+  (`origins/subst.rs`), `lower_ref_sig_resolved` and
+  `delegated_call_ref_sig`, the free function
+  `validate_origin_signature` (`origins/interior.rs`, run on the list
+  once it is classified), and `function_signature_type`
+  (`type_resolution.rs`), whose context `lower_anonymous_callable_type`
+  builds. A checker site holding a
   declared AST list (`enclosing_type_params`, a parameterized member's or
   generic alias's `params`) looks an origin binder up through
   `Checker::origin_binder`/`origin_binder_at` (`generics.rs`), which

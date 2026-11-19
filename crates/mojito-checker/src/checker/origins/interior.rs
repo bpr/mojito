@@ -5,67 +5,46 @@
 use super::*;
 use mojito_types::types::TyKind;
 
-impl Checker {
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
-    pub(in crate::checker) fn validate_origin_signature(
-        &self,
-        type_params: &[mojito_ast::ast::TypeParam],
-        params: &[mojito_ast::ast::FnParam],
-        self_origin: Option<&mojito_ast::ast::OriginSpec>,
-    ) -> Result<(), TypeError> {
-        let origin_params: HashSet<&str> = type_params
-            .iter()
-            .filter(|param| param.bounds.as_slice() == ["Origin"])
-            .map(|param| param.name.as_str())
-            .collect();
-        let value_params: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
-        let bool_params: HashSet<&str> = type_params
-            .iter()
-            .filter(|param| param.bounds.as_slice() == ["Bool"])
-            .map(|param| param.name.as_str())
-            .collect();
-
-        for origin in type_params
-            .iter()
-            .filter(|param| param.bounds.as_slice() == ["Origin"])
-        {
-            if let Some(expr) = &origin.origin_mutability
-                && !matches!(expr.kind, ExprKind::Bool(_))
-                && !matches!(&expr.kind, ExprKind::Identifier(name) if bool_params.contains(name.as_str()))
-            {
-                return Err(TypeError::Unsupported(format!(
-                    "origin mutability for '{}' must be Bool or a Bool parameter",
-                    origin.name
-                )));
-            }
+/// Validate a callable's origin clauses against its declared binders: the
+/// classified list `decls` (any enclosing struct's binders first) names the
+/// origin binders a clause may name, and `params` the value parameters.
+/// Each binder's own `mut` argument was checked when `decls` was
+/// classified.
+pub(in crate::checker) fn validate_origin_signature(
+    decls: &[ParamDecl],
+    params: &[mojito_ast::ast::FnParam],
+    self_origin: Option<&mojito_ast::ast::OriginSpec>,
+) -> Result<(), TypeError> {
+    let origin_params: HashSet<&str> = decls
+        .iter()
+        .filter(|decl| decl.is_origin() && !is_origin_set(decl))
+        .map(ParamDecl::name)
+        .collect();
+    let value_params: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
+    let validate = |spec: &mojito_ast::ast::OriginSpec| {
+        for expr in spec {
+            validate_origin_expr(expr, &origin_params, &value_params)?;
         }
-
-        let validate = |spec: &mojito_ast::ast::OriginSpec| {
-            for expr in spec {
-                validate_origin_expr(expr, &origin_params, &value_params)?;
-            }
-            Ok::<(), TypeError>(())
-        };
-        if let Some(spec) = self_origin {
+        Ok::<(), TypeError>(())
+    };
+    if let Some(spec) = self_origin {
+        validate(spec)?;
+    }
+    for param in params {
+        if param.convention != Some(ArgConvention::Ref) && param.origin.is_some() {
+            return Err(TypeError::Unsupported(format!(
+                "origin clause on non-ref parameter '{}'",
+                param.name
+            )));
+        }
+        if let Some(spec) = &param.origin {
             validate(spec)?;
         }
-        for param in params {
-            if param.convention != Some(ArgConvention::Ref) && param.origin.is_some() {
-                return Err(TypeError::Unsupported(format!(
-                    "origin clause on non-ref parameter '{}'",
-                    param.name
-                )));
-            }
-            if let Some(spec) = &param.origin {
-                validate(spec)?;
-            }
-        }
-        Ok(())
     }
+    Ok(())
+}
 
+impl Checker {
     /// Record that evaluating `expression` as a reference produces a fresh
     /// generation in the named interior region owned by `base`.
     pub(in crate::checker) fn record_interior_reference(

@@ -3104,6 +3104,7 @@ impl Checker {
     /// decides whether it is writable.
     fn in_def_context<R>(&mut self, stmt: &Stmt, check: impl FnOnce(&mut Self) -> R) -> R {
         let StmtKind::Def {
+            name,
             type_params,
             params,
             ..
@@ -3112,8 +3113,14 @@ impl Checker {
             return check(self);
         };
         let enclosing = self.enclosing_type_params.len();
+        let enclosing_decls = self.enclosing_param_decls.len();
+        // A list that fails to classify is rejected by the signature check.
+        let classified = self
+            .classify_param_list_after(name, type_params, enclosing)
+            .unwrap_or_default();
         self.enclosing_type_params
             .extend(type_params.iter().cloned());
+        self.enclosing_param_decls.extend(classified);
         let saved_self_mutable = self.self_mutable;
         if params.iter().any(|param| param.name == "self") {
             self.self_mutable = true;
@@ -3121,6 +3128,7 @@ impl Checker {
         let result = check(self);
         self.self_mutable = saved_self_mutable;
         self.enclosing_type_params.truncate(enclosing);
+        self.enclosing_param_decls.truncate(enclosing_decls);
         result
     }
 
@@ -3469,7 +3477,7 @@ impl Checker {
                                 param.convention,
                                 Some(mojito_ast::ast::ArgConvention::Out)
                             )
-                            || ref_parameter_is_writable(param, type_params),
+                            || ref_parameter_is_writable(param, &self.enclosing_param_decls),
                     );
                     if result.is_ok() {
                         self.record_owned_pack(&param.name, param.kind, param.convention);
@@ -3482,7 +3490,7 @@ impl Checker {
                         self.register_reference_parameter(
                             &param.name,
                             bind_ty.clone(),
-                            ref_parameter_is_writable(param, type_params),
+                            ref_parameter_is_writable(param, &self.enclosing_param_decls),
                             binder,
                         );
                         self.register_reference_binder(
@@ -3887,7 +3895,6 @@ impl Checker {
     fn def_signature(&mut self, stmt: &Stmt, lambda: bool) -> Result<DefSignature, TypeError> {
         let StmtKind::Def {
             name,
-            type_params,
             params,
             ret: ret_anno,
             keyword_only,
@@ -3962,7 +3969,6 @@ impl Checker {
             &shape.caller_regular,
             effective_keyword_only_index(params, *keyword_only, shape.variadic_idx),
         )?;
-        self.validate_origin_signature(type_params, params, None)?;
         // Two overloads of one name are two declarations, so each owns its
         // binders under its own declaration-relative owner; the symbol a
         // call to it spells is spelled once from its typed signature.
@@ -4075,6 +4081,7 @@ impl Checker {
             named_result,
             ..
         } = shape;
+        super::origins::validate_origin_signature(&decls, params, None)?;
         let pos_only = regular_marker_index(params, *positional_only);
         let kw_only = effective_keyword_only_index(params, *keyword_only, *variadic_idx);
         // The clauses a compile-time application already emitted are the
@@ -4151,13 +4158,13 @@ impl Checker {
             },
             decls.clone(),
         );
-        let ref_params = lower_ref_param_sigs(type_params, caller_regular, 0)?;
+        let ref_params = lower_ref_param_sigs(&decls, caller_regular, 0)?;
         let ref_return = match ret_anno {
             Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                 origin.as_ref().ok_or_else(|| {
                     TypeError::Unsupported("reference return requires an origin".to_string())
                 })?,
-                type_params,
+                &decls,
                 regular,
                 0,
                 super::origins::pack_collector(params),
@@ -4241,6 +4248,17 @@ impl Checker {
         };
         // Upstream's function with any declared parameter, origins
         // included, is a generator over its whole declared list.
+        // A call binds no erased origin-mutability binder, so a clause
+        // reading one is no application's.
+        let clauses_apply = erased_origin_constraints.is_empty();
+        let mut origin_signature = callable_origin_signature(
+            type_params,
+            &decls,
+            caller_regular,
+            erased_origin_constraints,
+        );
+        origin_signature.view_return =
+            self.view_return_origins(ret_anno.as_ref(), &decls, regular, 0, None);
         let fn_ty = Ty::new(if decls.is_empty() {
             TyKind::Func(Box::new(func))
         } else {
@@ -4254,13 +4272,7 @@ impl Checker {
             },
             fn_ty.clone(),
         );
-        // A call binds no erased origin-mutability binder, so a clause
-        // reading one is no application's.
-        let clauses = erased_origin_constraints.is_empty().then_some(clauses);
-        let mut origin_signature =
-            callable_origin_signature(type_params, caller_regular, erased_origin_constraints);
-        origin_signature.view_return =
-            self.view_return_origins(ret_anno.as_ref(), type_params, regular, 0, None);
+        let clauses = clauses_apply.then_some(clauses);
         origin_signature.unavailable.clone_from(&unavailable);
         Ok(DefSignature {
             symbol: name.clone(),

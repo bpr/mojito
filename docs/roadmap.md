@@ -2821,48 +2821,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2341 An origin signature counts the callee's origin binders by
-  their AST bound**
-
-  `callable_origin_signature` (`checker/origins/sig.rs`) and its readers
-  number a callee's origin binders by recounting `bounds == ["Origin"]`
-  in its raw `type_params`, not from its classified `ParamDecl::Origin`.
-  - Sites: `origins/sig.rs` (about twelve), `origins/binders.rs` (six),
-    `origins/actuals.rs` (three), `origins/interior.rs` (three),
-    `origins/subst.rs`, `origins/ref_params.rs`,
-    `origins/exclusivity.rs`, `origins/construct.rs`, and
-    `method_calls/receiver_effects.rs`.
-  - Lever: pass the callee's classified list beside `type_params`, and
-    take `OriginParamId` from `ParamDecl::Origin::origin`.
-  - The classifying callers already hold it: `statements.rs`,
-    `declarations.rs` (four), `traits.rs` (two), and
-    `comptime_validation.rs`.
-  - Unverified: whether a reader runs before the callee's list is
-    classified (shell registration). If so, classify earlier rather than
-    re-read the bound.
-  - Stop: the R2340 `rg` finds only R2339's resolution and the builtin
-    origin-name reads R2343 owns.
-  - Stop, moved from R2339: with `fold_origin_alias_bounds` disabled
-    locally, `assets/ok/origin_comptime_alias.mojo`,
-    `assets/ok/imm_origin_binders.mojo`,
-    `assets/ok/origin_parameterized_alias_binder.mojo`, and
-    `assets/type_error/origin_alias_binder_rejects_immutable_pointer.mojo`
-    keep their verdicts. Restore the fold afterwards.
-    - Today the fold-off build fails packaging std ("'Self.o' is not a
-      type parameter of the enclosing struct", R2340's
-      `enclosing_origin_type_param`), then at
-      `validate_origin_signature` (`origins/interior.rs`).
-    - If pre-check readers still misclassify then, this check moves to
-      R2342.
-  - Probe: `def f[o: Origin[mut=_]](ref[o] x: Int) -> Int: return x` /
-    `def main(): var a = 1; print(f(a))` prints `1` at the pin; Mojito
-    rejects it ("origin mutability for 'o' must be Bool or a Bool
-    parameter", `validate_origin_signature` reading the spelled `_`),
-    though the check classifies the binder as unbound.
-  - Planned in R2139 (2026-11-18).
-  - Depends on R2340.
-  - Model: Fable, Planned.
-
 - [ ] **R2343 `std.origin` lacks upstream's origin values, `OriginSet`,
   and the struct's members**
 
@@ -10624,6 +10582,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     arguments check. With a `GenericFunc` type the call binds them in
     `resolve_call_params`'s one solve, as a named `def`'s does, and the
     pass goes.
+  - Probe: `assets/ok/function_bracket_unbound_origin_marker.mojo`
+    (`comptime plus_six = first[_, 6]`, then `plus_six(Pointer(to=y))`)
+    fails MIR verification at `c3e002184` ("the call's 1 solved
+    argument(s) do not bind its callee's 2 declared parameter(s)",
+    "required compile-time value parameter 'n' is missing"), while the
+    direct `first[_, 6](Pointer(to=y))` runs. Seen while landing R2341
+    (2026-11-19).
   - Found while landing R2351 (2026-11-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.

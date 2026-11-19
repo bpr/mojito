@@ -863,16 +863,19 @@ impl Checker {
                         .origin_decls()
                         .filter(|(_, decl)| !is_origin_set(decl))
                         .count();
-                    let mut enclosing = self
-                        .enclosing_type_params
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, param)| param.bounds.as_slice() == ["Origin"]);
-                    if let (Some((index, _)), None, 1) =
+                    let mut enclosing =
+                        self.enclosing_param_decls
+                            .iter()
+                            .filter_map(|decl| match decl {
+                                ParamDecl::Origin { origin, .. } if !is_origin_set(decl) => {
+                                    Some(*origin)
+                                }
+                                _ => None,
+                            });
+                    if let (Some(id), None, 1) =
                         (enclosing.next(), enclosing.next(), callee_binders)
                     {
-                        let binder =
-                            Origin::Param(mojito_types::origin::OriginParamId(index as u32));
+                        let binder = Origin::Param(id);
                         origin = super::origins::substitute_origin_params(origin, &|_| {
                             Some(binder.clone())
                         });
@@ -1033,7 +1036,7 @@ impl Checker {
     pub(in crate::checker) fn lower_ref_sig_resolved(
         &self,
         spec: &mojito_ast::ast::OriginSpec,
-        type_params: &[mojito_ast::ast::TypeParam],
+        decls: &[ParamDecl],
         params: &[&FnParam],
         struct_params: usize,
         collector: Option<&str>,
@@ -1052,7 +1055,7 @@ impl Checker {
                 let rest: mojito_ast::ast::OriginSpec = rest.into_iter().cloned().collect();
                 SigOrigin::union(vec![
                     pack,
-                    self.lower_ref_sig_resolved(&rest, type_params, params, struct_params, None)?
+                    self.lower_ref_sig_resolved(&rest, decls, params, struct_params, None)?
                         .origin,
                 ])
             };
@@ -1062,11 +1065,11 @@ impl Checker {
             });
         }
         if let [member] = spec.as_slice()
-            && let Some(resolved) = self.delegated_call_ref_sig(member, type_params, params)?
+            && let Some(resolved) = self.delegated_call_ref_sig(member, decls, params)?
         {
             return Ok(resolved);
         }
-        lower_ref_sig(spec, type_params, params, struct_params)
+        lower_ref_sig(spec, decls, params, struct_params)
     }
 
     /// Whether `expr` names a local `comptime` binding of a requested

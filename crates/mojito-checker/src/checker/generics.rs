@@ -1046,7 +1046,10 @@ impl Checker {
                 );
             }
         }
-        let decl = self.origin_binder_decl(param, index, ParamId::new("$origin_binder", index));
+        let decl = self
+            .origin_binder_decl(param, index, ParamId::new("$origin_binder", index))
+            .ok()
+            .flatten();
         self.pop_param_scope();
         // Leave no dead value level behind: a caller writing into the
         // innermost value scope writes into its own.

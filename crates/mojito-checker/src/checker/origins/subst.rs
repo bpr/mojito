@@ -16,7 +16,7 @@ pub(in crate::checker) type BinderMutability<'a> =
 
 pub(in crate::checker) fn lower_sig_origin_expression(
     expression: &Expr,
-    type_params: &[mojito_ast::ast::TypeParam],
+    decls: &[ParamDecl],
     params: &[&FnParam],
     struct_params: usize,
 ) -> Result<mojito_types::origin::SigOrigin, TypeError> {
@@ -28,7 +28,7 @@ pub(in crate::checker) fn lower_sig_origin_expression(
         return Ok(SigOrigin::Projected(
             Box::new(lower_sig_origin_expression(
                 base,
-                type_params,
+                decls,
                 params,
                 struct_params,
             )?),
@@ -41,11 +41,10 @@ pub(in crate::checker) fn lower_sig_origin_expression(
             if let Some(index) = params.iter().position(|parameter| parameter.name == *name) {
                 return Ok(SigOrigin::Param(index));
             }
-            if let Some(origin) = sig_origin_for_binder(name, type_params, params) {
+            if let Some(origin) = sig_origin_for_binder(name, decls, params) {
                 if !name.starts_with("__")
-                    && type_params[..struct_params.min(type_params.len())]
-                        .iter()
-                        .any(|parameter| parameter.name == *name)
+                    && origin_decl(decls, name)
+                        .is_some_and(|(_, id)| (id.0 as usize) < struct_params)
                 {
                     return Err(unqualified_struct_binder(name));
                 }
@@ -58,9 +57,9 @@ pub(in crate::checker) fn lower_sig_origin_expression(
         // `Self.o._get_owned_interior["element"]`.
         ExprKind::Member { object, field }
             if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
-                && sig_origin_for_binder(field, type_params, params).is_some() =>
+                && let Some(origin) = sig_origin_for_binder(field, decls, params) =>
         {
-            Ok(sig_origin_for_binder(field, type_params, params).expect("guarded above"))
+            Ok(origin)
         }
         ExprKind::Call {
             name,
@@ -769,24 +768,22 @@ pub(in crate::checker) fn origin_is_declared(
 
 pub(in crate::checker) fn ref_parameter_is_writable(
     parameter: &FnParam,
-    type_params: &[mojito_ast::ast::TypeParam],
+    decls: &[ParamDecl],
 ) -> bool {
-    ref_binding_is_writable(
-        parameter.convention,
-        parameter.origin.as_deref(),
-        type_params,
-    )
+    ref_binding_is_writable(parameter.convention, parameter.origin.as_deref(), decls)
 }
 
 /// Whether a parameter/receiver may be mutated while its generic body is
 /// checked. A bare `ref` has parametric mutability: it propagates the caller's
 /// capability to returned references, but its body cannot assume that the
 /// caller supplied mutable storage. Only an explicitly mutable origin grants
-/// unconditional write access.
+/// unconditional write access: one through a builtin mutable origin, or
+/// through an origin binder of the classified list `decls` declared
+/// `mut=True`.
 pub(in crate::checker) fn ref_binding_is_writable(
     convention: Option<ArgConvention>,
     origin: Option<&[Expr]>,
-    type_params: &[mojito_ast::ast::TypeParam],
+    decls: &[ParamDecl],
 ) -> bool {
     if convention != Some(ArgConvention::Ref) {
         return parameter_is_writable(&convention);
@@ -800,15 +797,9 @@ pub(in crate::checker) fn ref_binding_is_writable(
     if origin_name == "MutUnsafeAnyOrigin" || origin_name == "MutUntrackedOrigin" {
         return true;
     }
-    let Some(origin) = type_params.iter().find(|candidate| {
-        candidate.name == *origin_name && candidate.bounds.as_slice() == ["Origin"]
-    }) else {
-        return false;
-    };
-    matches!(
-        origin.origin_mutability.as_ref().map(|expr| &expr.kind),
-        Some(ExprKind::Bool(true))
-    )
+    origin_decl(decls, origin_name).is_some_and(|(decl, _)| {
+        origin_decl_mutability(decl, decls) == mojito_types::origin::SigMutability::Mutable
+    })
 }
 
 /// Translate a concrete callable's effects through a recorded call-through

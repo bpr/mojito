@@ -793,9 +793,15 @@ impl Checker {
         // resolve to `Origin::Param` via `enclosing_type_params`; value
         // parameters resolve to a symbolic `CtValue::Expr` through the value
         // scope `decls` open.
-        self.push_param_scope_as(decls, scope);
         let saved = self.enclosing_type_params.len();
+        let saved_decls = self.enclosing_param_decls.len();
+        // A list that fails to classify was rejected where it is declared.
+        let classified = self
+            .classify_param_list_after(owner, params, saved)
+            .unwrap_or_default();
+        self.push_param_scope_as(decls, scope);
         self.enclosing_type_params.extend(params.iter().cloned());
+        self.enclosing_param_decls.extend(classified);
         // The body's own occurrence records what it resolved to, under the
         // member's parameters.
         let template = match (&body.kind, source_ty) {
@@ -817,6 +823,7 @@ impl Checker {
             self.record_at(body.source_span()).type_operand = Some(template.clone());
         }
         self.enclosing_type_params.truncate(saved);
+        self.enclosing_param_decls.truncate(saved_decls);
         self.pop_param_scope();
         template
     }

@@ -285,7 +285,7 @@ pub(in crate::checker) fn origin_binder_name(expression: &Expr) -> Option<&str> 
 }
 
 pub(in crate::checker) fn lower_ref_param_sigs(
-    type_params: &[mojito_ast::ast::TypeParam],
+    decls: &[ParamDecl],
     params: &[&FnParam],
     struct_params: usize,
 ) -> Result<Vec<Option<mojito_types::origin::RefSig>>, TypeError> {
@@ -296,7 +296,7 @@ pub(in crate::checker) fn lower_ref_param_sigs(
                 return Ok(None);
             }
             match &param.origin {
-                Some(spec) => lower_ref_sig(spec, type_params, params, struct_params).map(Some),
+                Some(spec) => lower_ref_sig(spec, decls, params, struct_params).map(Some),
                 None => Ok(Some(mojito_types::origin::RefSig {
                     origin: mojito_types::origin::SigOrigin::Infer,
                     mutability: mojito_types::origin::SigMutability::Infer,
@@ -306,16 +306,20 @@ pub(in crate::checker) fn lower_ref_param_sigs(
         .collect()
 }
 
+/// The origin signature of a callable declaring `type_params`, classified
+/// as `decls`: one [`CallableOriginParam`] per `Origin` binder of `decls`,
+/// in declared order, with the value parameters whose clause names it.
 pub(in crate::checker) fn callable_origin_signature(
     type_params: &[mojito_ast::ast::TypeParam],
+    decls: &[ParamDecl],
     params: &[&FnParam],
     availability: Vec<GenericConstraint>,
 ) -> CallableOriginSignature {
-    let origins = type_params
+    let origins = decls
         .iter()
-        .filter(|parameter| parameter.bounds.as_slice() == ["Origin"])
+        .filter(|decl| decl.is_origin() && !is_origin_set(decl))
         .map(|parameter| CallableOriginParam {
-            name: parameter.name.clone(),
+            name: parameter.name().to_string(),
             slots: params
                 .iter()
                 .enumerate()
@@ -325,7 +329,7 @@ pub(in crate::checker) fn callable_origin_signature(
                         .as_ref()
                         .is_some_and(|origin| {
                             origin.iter().any(|expression| {
-                                origin_binder_name(expression) == Some(parameter.name.as_str())
+                                origin_binder_name(expression) == Some(parameter.name())
                             })
                         })
                         .then_some(index)
@@ -423,7 +427,7 @@ impl Checker {
     pub(in crate::checker) fn view_return_origins(
         &self,
         ret: Option<&SourceType>,
-        type_params: &[mojito_ast::ast::TypeParam],
+        decls: &[ParamDecl],
         params: &[&FnParam],
         struct_params: usize,
         self_convention: Option<ArgConvention>,
@@ -497,7 +501,7 @@ impl Checker {
                 continue;
             }
             let spec: mojito_ast::ast::OriginSpec = vec![expression.clone()];
-            let Ok(mut sig) = lower_ref_sig(&spec, type_params, params, struct_params) else {
+            let Ok(mut sig) = lower_ref_sig(&spec, decls, params, struct_params) else {
                 continue;
             };
             if sig.mutability == SigMutability::Infer
@@ -550,9 +554,12 @@ pub(in crate::checker) fn names_pack_origin(member: &Expr, collector: &str) -> b
         }
 }
 
+/// The [`RefSig`](mojito_types::origin::RefSig) a `ref [spec]` clause
+/// declares, its binders read from the classified list `decls` (the
+/// enclosing struct's first `struct_params` origin ids, then the callable's).
 pub(in crate::checker) fn lower_ref_sig(
     spec: &mojito_ast::ast::OriginSpec,
-    type_params: &[mojito_ast::ast::TypeParam],
+    decls: &[ParamDecl],
     params: &[&FnParam],
     struct_params: usize,
 ) -> Result<mojito_types::origin::RefSig, TypeError> {
@@ -574,17 +581,14 @@ pub(in crate::checker) fn lower_ref_sig(
             return Err(reject_subtree_origin_here("a reference origin clause"));
         }
         if let Some((base_expression, name)) = interior_origin_syntax(expression) {
-            let base =
-                lower_sig_origin_expression(base_expression, type_params, params, struct_params)?;
+            let base = lower_sig_origin_expression(base_expression, decls, params, struct_params)?;
             // A projection off a named origin parameter carries that
             // parameter's declared mutability, exactly like the bare binder
             // (either spelling: `o` or `Self.o`).
             if let Some(base_name) = origin_binder_name(base_expression)
-                && let Some(origin_param) = type_params.iter().find(|parameter| {
-                    parameter.name == base_name && parameter.bounds.as_slice() == ["Origin"]
-                })
+                && let Some((decl, _)) = origin_decl(decls, base_name)
             {
-                mutability = origin_param_mutability(origin_param, type_params);
+                mutability = origin_decl_mutability(decl, decls);
             }
             members.push(SigOrigin::Projected(
                 Box::new(base),
@@ -622,21 +626,12 @@ pub(in crate::checker) fn lower_ref_sig(
                 }
                 // The pin requires the qualified spelling for struct origin
                 // parameters referenced from member clauses.
-                if !name.starts_with("__")
-                    && type_params[..struct_params.min(type_params.len())]
-                        .iter()
-                        .any(|parameter| {
-                            parameter.name == *name && parameter.bounds.as_slice() == ["Origin"]
-                        })
-                {
+                let (decl, origin_id) = origin_decl(decls, name)
+                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
+                if !name.starts_with("__") && (origin_id.0 as usize) < struct_params {
                     return Err(unqualified_struct_binder(name));
                 }
-                let (origin_param_index, origin_param) = type_params
-                    .iter()
-                    .enumerate()
-                    .find(|(_, param)| param.name == *name && param.bounds.as_slice() == ["Origin"])
-                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
-                mutability = origin_param_mutability(origin_param, type_params);
+                mutability = origin_decl_mutability(decl, decls);
                 let first_member = members.len();
                 for (index, param) in params.iter().enumerate() {
                     if param.origin.as_ref().is_some_and(|origin| {
@@ -651,7 +646,7 @@ pub(in crate::checker) fn lower_ref_sig(
                 // instead of collapsing it to an empty inferred union.
                 if members.len() == first_member {
                     members.push(SigOrigin::Bound(mojito_types::origin::Origin::Param(
-                        mojito_types::origin::OriginParamId(origin_param_index as u32),
+                        origin_id,
                     )));
                 }
             }
@@ -676,18 +671,9 @@ pub(in crate::checker) fn lower_ref_sig(
             // the enclosing origin parameter exactly like the bare binder.
             ExprKind::Member { object, field }
                 if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
-                    && type_params.iter().any(|param| {
-                        param.name == *field && param.bounds.as_slice() == ["Origin"]
-                    }) =>
+                    && let Some((decl, origin_id)) = origin_decl(decls, field) =>
             {
-                let (origin_param_index, origin_param) = type_params
-                    .iter()
-                    .enumerate()
-                    .find(|(_, param)| {
-                        param.name == *field && param.bounds.as_slice() == ["Origin"]
-                    })
-                    .expect("guarded above");
-                mutability = origin_param_mutability(origin_param, type_params);
+                mutability = origin_decl_mutability(decl, decls);
                 let first_member = members.len();
                 for (index, param) in params.iter().enumerate() {
                     if param.origin.as_ref().is_some_and(|origin| {
@@ -698,7 +684,7 @@ pub(in crate::checker) fn lower_ref_sig(
                 }
                 if members.len() == first_member {
                     members.push(SigOrigin::Bound(mojito_types::origin::Origin::Param(
-                        mojito_types::origin::OriginParamId(origin_param_index as u32),
+                        origin_id,
                     )));
                 }
             }
@@ -740,27 +726,20 @@ pub(in crate::checker) fn lower_ref_sig(
     Ok(RefSig { origin, mutability })
 }
 
-/// The declared mutability of a named `Origin[mut=...]` type parameter:
-/// literal `True`/`False`, a sibling `Bool` parameter (`SigMutability::
-/// BoolParam` by its index among the raw type parameters), or `Infer`.
-pub(in crate::checker) fn origin_param_mutability(
-    origin_param: &mojito_ast::ast::TypeParam,
-    type_params: &[mojito_ast::ast::TypeParam],
-) -> mojito_types::origin::SigMutability {
-    use mojito_types::origin::SigMutability;
-    match origin_param.origin_mutability.as_ref().map(|e| &e.kind) {
-        Some(ExprKind::Bool(true)) => SigMutability::Mutable,
-        Some(ExprKind::Bool(false)) => SigMutability::Immutable,
-        Some(ExprKind::Identifier(value)) => SigMutability::BoolParam(
-            type_params
-                .iter()
-                .position(|parameter| {
-                    parameter.name == *value && parameter.bounds.as_slice() == ["Bool"]
-                })
-                .expect("validated Origin mutability names a Bool parameter"),
-        ),
-        _ => SigMutability::Infer,
-    }
+/// The `Origin` binder `name` declares in the classified list `decls`
+/// (never an `OriginSet` one), with the
+/// [`OriginParamId`](mojito_types::origin::OriginParamId) it was classified
+/// at.
+pub(in crate::checker) fn origin_decl<'a>(
+    decls: &'a [ParamDecl],
+    name: &str,
+) -> Option<(&'a ParamDecl, mojito_types::origin::OriginParamId)> {
+    decls.iter().find_map(|decl| match decl {
+        ParamDecl::Origin { origin, .. } if decl.name() == name && !is_origin_set(decl) => {
+            Some((decl, *origin))
+        }
+        _ => None,
+    })
 }
 
 /// The declared mutability of `decl`, an origin binder of `decls`, as a
@@ -800,13 +779,11 @@ pub(in crate::checker) fn origin_decl_mutability(
 /// itself (an enclosing struct origin bound only by reference-valued fields).
 pub(in crate::checker) fn sig_origin_for_binder(
     name: &str,
-    type_params: &[mojito_ast::ast::TypeParam],
+    decls: &[ParamDecl],
     params: &[&FnParam],
 ) -> Option<mojito_types::origin::SigOrigin> {
     use mojito_types::origin::SigOrigin;
-    let (origin_param_index, _) = type_params.iter().enumerate().find(|(_, parameter)| {
-        parameter.name == *name && parameter.bounds.as_slice() == ["Origin"]
-    })?;
+    let (_, origin_id) = origin_decl(decls, name)?;
     let members = params
         .iter()
         .enumerate()
@@ -821,9 +798,7 @@ pub(in crate::checker) fn sig_origin_for_binder(
         })
         .collect::<Vec<_>>();
     Some(match members.as_slice() {
-        [] => SigOrigin::Bound(mojito_types::origin::Origin::Param(
-            mojito_types::origin::OriginParamId(origin_param_index as u32),
-        )),
+        [] => SigOrigin::Bound(mojito_types::origin::Origin::Param(origin_id)),
         [single] => single.clone(),
         _ => SigOrigin::union(members),
     })
