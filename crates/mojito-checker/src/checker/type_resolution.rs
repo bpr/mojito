@@ -2397,7 +2397,12 @@ impl Checker {
                     continue;
                 }
                 match self.resolve_origin_param_arg(argument) {
-                    Ok(origin) => resolved.push((position, *param, argument, origin)),
+                    Ok(origin) => resolved.push((
+                        position,
+                        *param,
+                        argument,
+                        immutable_slot_origin(param, origin),
+                    )),
                     Err(error) => {
                         // A signature annotation may name places only the body
                         // can resolve (`origin_of(self.entries)`): accept an
@@ -2477,7 +2482,10 @@ impl Checker {
                     supplied_origins.push(&param.name);
                     continue;
                 }
-                match self.resolve_origin_param_arg(argument) {
+                match self
+                    .resolve_origin_param_arg(argument)
+                    .map(|origin| immutable_slot_origin(param, origin))
+                {
                     Ok((origin, mutability)) => {
                         let attribute = self.accept_origin_argument(
                             name,
@@ -5874,6 +5882,35 @@ fn origin_placeholder(argument: &mojito_ast::ast::ParamArg) -> bool {
             ..
         }) if name == "_" || name == "..."
     )
+}
+
+/// The origin a struct's origin slot `param` binds for the resolved
+/// argument `(origin, mutability)`: an `ImmOrigin` (`Origin[mut=False]`)
+/// slot given an origin not already immutable binds its `ImmOrigin(o)`
+/// cast, as upstream's implicit conversion of the argument to the slot's
+/// type makes it, and as an explicit `ImmOrigin(o)` resolves.
+fn immutable_slot_origin(
+    param: &mojito_ast::ast::TypeParam,
+    (origin, mutability): (
+        mojito_types::origin::Origin,
+        Option<mojito_types::origin::Mutability>,
+    ),
+) -> (
+    mojito_types::origin::Origin,
+    Option<mojito_types::origin::Mutability>,
+) {
+    use mojito_types::origin::{Mutability, Origin};
+    let immutable_slot = matches!(
+        param.origin_mutability.as_ref().map(|e| &e.kind),
+        Some(ExprKind::Bool(false))
+    );
+    if !immutable_slot
+        || mutability == Some(Mutability::Immutable)
+        || matches!(origin, Origin::Unbound | Origin::Immutable(_))
+    {
+        return (origin, mutability);
+    }
+    (Origin::immutable(origin), Some(Mutability::Immutable))
 }
 
 /// Whether an application argument is syntactically origin-shaped — an

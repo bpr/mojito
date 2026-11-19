@@ -803,6 +803,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A store or augmented store through a reference-returning `__getitem__`
+  whose index parameter is taken by address (`a[Int8(2)] = 6`,
+  `l[Int32(0)] += 1` over `Some[Indexer]`) now passes the index's
+  `ref.make`, of its place or of a hidden slot, to the getter and the
+  setter, as a read already did. R2302's verifier had rejected the bare
+  value.
+
+- An explicit origin argument at a struct's `ImmOrigin` slot
+  (`CodepointsIter[origin_of(s)]` over a `var s`) now binds the argument's
+  `ImmOrigin(o)` cast, as upstream's implicit conversion to
+  `Origin[mut=False]` does, so the annotation names the type
+  `s.codepoints()` returns. R2289's strict cast comparison had rejected
+  it.
+
 - A generic lambda called with its bracket at once
   (`(lambda [N: Int](x: Int) {} -> Int: x + N)[5](3)`) elaborates again
   with the pre-elaboration pipeline off: once its call folds, the elaborator

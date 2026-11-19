@@ -750,12 +750,21 @@ impl<'a> Flatten<'a> {
         let (receiver, _) = self.address_receiver(&plan.getter, object, (receiver, receiver_place));
         let index_source = mojito_checked::checked::CheckedCallArgumentSource::Positional(0);
         let retain_index = Self::checked_call_source_requires_place(&plan.getter, index_source);
-        let (raw_index, _) = self.lower_augmented_argument_source(index, retain_index);
-        let getter_index = self.apply_checked_call_value_adjustments(
+        let (raw_index, index_place) = self.lower_augmented_argument_source(index, retain_index);
+        let adjusted = self.apply_checked_call_value_adjustments(
             &plan.getter,
             index_source,
             raw_index,
             index.location(),
+        );
+        let getter_index = self.address_index_operand(
+            index.location(),
+            &plan.getter,
+            index_source,
+            (
+                adjusted,
+                index_place.as_ref().filter(|_| adjusted == raw_index),
+            ),
         );
         let mut getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
@@ -886,11 +895,20 @@ impl<'a> Flatten<'a> {
         let (raw_index, index_place) = self.lower_augmented_argument_source(index, retain_index);
 
         if plan.setter.is_none() {
-            let getter_index = self.apply_checked_call_value_adjustments(
+            let adjusted = self.apply_checked_call_value_adjustments(
                 &plan.getter,
                 index_source,
                 raw_index,
                 index.location(),
+            );
+            let getter_index = self.address_index_operand(
+                index.location(),
+                &plan.getter,
+                index_source,
+                (
+                    adjusted,
+                    index_place.as_ref().filter(|_| adjusted == raw_index),
+                ),
             );
             let mut getter_call = self.mir_subscript_call_contract(
                 plan.getter.clone(),
@@ -920,11 +938,20 @@ impl<'a> Flatten<'a> {
         // Value-getter ordering is raw receiver/index, RHS, accessor
         // adaptation/getter, operator, setter adaptation/setter.
         let rhs = self.lower_augmented_rhs(rhs_expression, plan.inplace.as_ref());
-        let getter_index = self.apply_checked_call_value_adjustments(
+        let adjusted = self.apply_checked_call_value_adjustments(
             &plan.getter,
             index_source,
             raw_index,
             index.location(),
+        );
+        let getter_index = self.address_index_operand(
+            index.location(),
+            &plan.getter,
+            index_source,
+            (
+                adjusted,
+                index_place.as_ref().filter(|_| adjusted == raw_index),
+            ),
         );
         let mut getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
@@ -965,11 +992,22 @@ impl<'a> Flatten<'a> {
             Self::checked_call_source_mutates(&plan.getter, index_source),
             index.location(),
         );
-        let setter_index = self.apply_checked_call_value_adjustments(
+        let adjusted = self.apply_checked_call_value_adjustments(
             setter,
             index_source,
             setter_raw_index,
             index.location(),
+        );
+        let setter_index = self.address_index_operand(
+            index.location(),
+            setter,
+            index_source,
+            (
+                adjusted,
+                index_place
+                    .as_ref()
+                    .filter(|_| adjusted == setter_raw_index),
+            ),
         );
         let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
         let (value, _) = self.augmented_setter_value(target, setter, value_argument, result);
@@ -2159,6 +2197,41 @@ impl<'a> Flatten<'a> {
             mojito_types::origin::Mutability::Immutable,
         );
         (MirSubscriptArg::Index(register), place)
+    }
+
+    /// The index operand `index` an accessor bound by `contract` passes at
+    /// `source`: the address of its place, or of the hidden slot a
+    /// temporary is bound to, when the call takes it by address, as
+    /// upstream's accessor `lit.call` takes the index's `!lit.ref`.
+    /// `place` is the storage `index` was read from, if any.
+    fn address_index_operand(
+        &mut self,
+        location: SourceSpan,
+        contract: &mojito_checked::checked::CheckedCallContract,
+        source: mojito_checked::checked::CheckedCallArgumentSource,
+        (index, place): (Reg, Option<&MirPlace>),
+    ) -> Reg {
+        if OperandBinding::of_argument(contract, source)
+            != Some(OperandBinding::Read { by_address: true })
+        {
+            return index;
+        }
+        let Some(ty) = self.f.reg_types.get(&index.0).cloned() else {
+            return index;
+        };
+        if matches!(ty.kind(), TyKind::Ref(_)) {
+            return index;
+        }
+        let lowered = match place {
+            Some(place) => (index, Some(place.clone())),
+            None => self.materialize_in_slot(location.clone(), index, ty),
+        };
+        self.address_lowered_operand(
+            location,
+            lowered,
+            mojito_types::origin::Mutability::Immutable,
+        )
+        .0
     }
 
     /// The operand an augmented store's getter or setter, bound by
