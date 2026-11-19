@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2348**.
+Next free ID: **R2350**.
 
 ## Ordered Work
 
@@ -10627,41 +10627,47 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2345 A call's bracket binds its callee's argument view, where
-  upstream binds the whole declared list, origin parameters in place**
+- [ ] **R2348 A call's bracket binder sees its callee's argument view,
+  where upstream's binds the whole declared list, origin parameters in
+  place**
 
-  A function's, method's, and callable type's checked list declares its
-  origin binders (R2126), but `resolve_explicit_use_params`
-  (`checker/declarations.rs`) and the checker functions that take a
-  `decls` beside its arguments align the bracket with
-  `ParamDecl::argument_binders`.
-  - Probe: an explicit specialization's origin arguments
-    (`borrow[Int, origin_of(x)]`, `f[ImmStaticOrigin, 3]()`) have no
-    declared slot, so `CallableSpecialization::declared`
-    (`checker/type_resolution.rs`) appends their attributes after the
-    declared ones.
+  `resolve_explicit_use_params` (`checker/declarations.rs`) aligns a
+  bracket with `ParamDecl::argument_binders`, so an origin argument is
+  split out before it binds and re-keyed by its binder afterwards.
+  - Probe: `split_callable_specialization` (`checker/generics.rs`) takes
+    a free call's origin arguments out of the bracket, and
+    `CallableSpecialization::declared` (`checker/type_resolution.rs`)
+    puts them back in their binders' declared slots.
   - Probe: `GenericFuncTy::argument_view`, `MethodSig::decls`, and
-    `Ty::generator_params` are the views each call path reads.
-  - Probe: a lowered call's `param_decls` (`MirInstr::Call`,
-    `MethodCall`, `CallIndirect`, a subscript call) is the callee's
-    argument view, which the verifier (`verify/{calls,subscripts}.rs`),
-    `param_uses.rs`, `call_defaults.rs`, and the elaborator
-    (`native/mono/{infer,specializer}.rs`) align with
-    `FunctionDeclaration::argument_view`, not with the declared list MIR
-    now lowers.
+    `Ty::generator_params` are the views each call path, a method's and a
+    `#kgen.bind_params` included, binds against.
   - Probe: a construction the check synthesizes at struct level over
     `struct EntryIter[m: Bool, //, o: Origin[mut=m]]`
     (`assets/ok/pointer_field_wrapper_iterator_protocol.mojo`) holds its
     `m=` and origin arguments in parameters naming no declaration
-    (`CheckedParameter::declaration` is `None`), so a bracket bound against
-    the whole list would bind them nothing.
-  - The lever: bind a bracket against the whole list, an origin argument
-    in its binder's slot, recorded by its declaration as other arguments
-    are.
-  - Probe: `def call_it[f: def[o: ImmOrigin](Pointer[Int, o]) -> Int]()`
-    is rejected ("Undefined variable 'o'"), where the pin accepts it: the
-    origin signature (`checker/origins/sig.rs`) finds a callable type's
-    own origin binder among the enclosing declaration's parameters only.
+    (`CheckedParameter::declaration` is `None`), so a binder over the
+    whole list would bind them nothing.
+  - The lever: bind the bracket against the whole declared list, an
+    origin argument in its binder's slot, and delete the split.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2349 A lowered call's parameter declarations are its callee's
+  argument view, where the declaration MIR lowers is the whole list**
+
+  `MirInstr::Call`, `MethodCall`, `CallIndirect`, and a subscript call
+  carry `param_decls` without the callee's origin binders, and their
+  `param_args` skip the origin arguments the check records by declaration.
+  - Probe: the verifier (`verify/{calls,subscripts}.rs`) compares
+    `param_decls` with `FunctionDeclaration::argument_view`.
+  - Probe: `param_uses.rs`, `call_defaults.rs`, and the elaborator
+    (`native/mono/{infer,specializer}.rs`) bind a call's arguments by
+    position against the argument view.
+  - Probe: `param_arg_regs_folding` (`mir.rs`) drops an origin
+    attribute, though its `CheckedParameter` names the origin binder.
+  - The lever: lower a call's `param_decls` as the callee's declared list,
+    an origin binder's slot erased like any folded argument, and align
+    each reader with the declared list.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10675,7 +10681,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The lever: have the one solver bind the declared list's origin
     binders from places beside its type and value binders, and delete the
     pre-pass and `CalleeOriginArguments::own_binders`.
-  - Depends on R2345.
+  - Depends on R2348.
   - Model: Opus, Not Planned.
 
 - [ ] **R2128 A function's origin mutability binder has no value in its
@@ -10692,12 +10698,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`scopes.rs`) alone changes nothing.
   - A lowered call's `param_decls`, the verifier, and the elaborator's
     specializer align with the argument view, so the call has no slot to
-    carry the attribute until R2345 binds the whole declared list.
-  - The lever: once R2345 lands, the call records the inferred origin's
+    carry the attribute until R2349 lowers the whole declared list.
+  - The lever: once R2349 lands, the call records the inferred origin's
     mutability (the value a `where` clause already reads) as the binder's
     attribute, by its declaration, and the body declares the binder like
     any value binder.
-  - Depends on R2124, R2126, R2345.
+  - Depends on R2124, R2126, R2349.
   - Model: Opus, Not Planned.
 
 - [ ] **R762 A struct instance's origin arguments are a tail after its

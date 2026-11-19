@@ -803,6 +803,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A callable type's own origin binder now scopes over its own signature,
+  so `def call_it[f: def[o: ImmOrigin](Pointer[Int, o]) thin -> Int]()`
+  and `comptime F = def[T: AnyType, o: ImmOrigin](Pointer[T, o]) thin ->
+  Int` check and call as at the pin, where `o` was an undefined variable
+  (R2345).
+
 - Seven MIR pass test inputs (`inline-parametric/destructor_drop`,
   `destructor_arm_entry_inlined`, `field_destructor_place`,
   `owned_param_dropped`, `read_through_reference_register`,
@@ -1436,6 +1442,14 @@ to evolve under the `0.x` compatibility rules.
   (`assets/ok/literal_dunder_instances.mojo`).
 
 ### Changed
+
+- A free call's explicit origin argument is now recorded by its origin
+  binder's declaration, in that binder's slot of the callee's whole
+  declared list, as upstream's binder fills the op's list
+  (`f[ImmStaticOrigin, 3]()` binds `o` then `n`), where it was appended
+  after the declared arguments under no declaration. The binder itself
+  still sees the argument view (R2348), and a lowered call's parameter
+  declarations are that view (R2349) (R2345).
 
 - The parameter lists MIR lowers now hold every binder the check declares,
   origin binders in place, as upstream's lists do: a struct row, an

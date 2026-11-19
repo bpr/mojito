@@ -454,13 +454,13 @@ pub(super) const VALUE_PACK_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("*valu
 
 /// An explicit callable specialization's bracket with its origin
 /// arguments taken out: where each argument the generic binder sees sits
-/// in the source bracket, and each origin argument's attribute.
+/// in the source bracket, and each origin argument's binder and attribute.
 #[derive(Clone, Default)]
 pub(super) struct CallableSpecialization {
     /// The source position of each argument the binder sees.
     positions: Vec<usize>,
     /// The origin arguments, each at its source position.
-    origins: Vec<BoundAttribute>,
+    origins: Vec<OriginArgument>,
 }
 
 impl CallableSpecialization {
@@ -477,25 +477,76 @@ impl CallableSpecialization {
         self.positions.push(position);
     }
 
-    /// The argument at source `position` is an origin, bound to
-    /// `attribute`.
-    pub(super) fn bind_origin(&mut self, position: usize, attribute: Option<TyArg>) {
-        self.origins.push(BoundAttribute {
-            position,
-            attribute,
+    /// The argument at source `position` binds the origin binder `binder`,
+    /// the `source`th parameter of the source list, to `attribute`.
+    pub(super) fn bind_origin(
+        &mut self,
+        binder: &str,
+        source: usize,
+        position: usize,
+        attribute: Option<TyArg>,
+    ) {
+        self.origins.push(OriginArgument {
+            binder: binder.to_string(),
+            source,
+            bound: BoundAttribute {
+                position,
+                attribute,
+            },
         });
     }
 
-    /// The specialization's attributes: `bound`, the generic binder's,
-    /// then one slot per origin argument after the declared ones, since a
-    /// function's list declares no origin binder to key it by.
-    pub(super) fn declared(&self, bound: DeclaredAttributes) -> DeclaredAttributes {
-        let mut declared = bound.relocated(&self.positions);
-        declared
-            .slots
-            .extend(self.origins.iter().map(|origin| vec![origin.clone()]));
+    /// The specialization's attributes over the callee's whole declared
+    /// list `decls`, as upstream's binder fills it: `bound`, the generic
+    /// binder's over the argument view ([`ParamDecl::argument_binders`]),
+    /// each in its binder's declared slot, beside each origin argument in
+    /// its origin binder's. A callee declaring only origin binders has a
+    /// non-generic type and no `decls`; its source list is its declared one.
+    pub(super) fn declared(
+        &self,
+        bound: DeclaredAttributes,
+        decls: &[ParamDecl],
+    ) -> DeclaredAttributes {
+        let bound = bound.relocated(&self.positions);
+        if decls.is_empty() && self.origins.is_empty() {
+            return bound;
+        }
+        let binders: Vec<usize> = decls
+            .iter()
+            .enumerate()
+            .filter(|(_, decl)| decl.is_argument_binder(decls))
+            .map(|(index, _)| index)
+            .collect();
+        let mut declared = DeclaredAttributes::new(decls);
+        for (index, slot) in bound.slots.into_iter().enumerate() {
+            let slot_index = binders.get(index).copied().unwrap_or(decls.len() + index);
+            if let Some(Some(name)) = bound.declarations.get(index) {
+                declared.declare(slot_index, name);
+            }
+            for attribute in slot {
+                declared.bind(slot_index, attribute.position, attribute.attribute);
+            }
+        }
+        for origin in &self.origins {
+            let index = decls
+                .iter()
+                .position(|decl| decl.is_origin() && decl.name() == origin.binder)
+                .unwrap_or(origin.source);
+            declared.declare(index, &origin.binder);
+            declared.bind(index, origin.bound.position, origin.bound.attribute.clone());
+        }
         declared
     }
+}
+
+/// One origin argument of an explicit callable specialization: the origin
+/// binder it binds, that binder's slot in the source list, and the
+/// argument's attribute at its source position.
+#[derive(Clone)]
+struct OriginArgument {
+    binder: String,
+    source: usize,
+    bound: BoundAttribute,
 }
 
 /// One explicit origin argument a struct application supplied, resolved
@@ -4491,14 +4542,9 @@ impl Checker {
         use mojito_types::origin::{Mutability, OriginParamId, PointerOrigin};
 
         let (index, parameter) = self
-            .enclosing_type_params
-            .iter()
-            .enumerate()
-            .find(|(_, parameter)| {
-                parameter.name == *name && parameter.bounds.as_slice() == ["Origin"]
-            })
+            .enclosing_origin_type_param(name)
             .ok_or_else(|| TypeError::UnknownSelfParam(name.to_string()))?;
-        let id = OriginParamId(index as u32);
+        let id = OriginParamId(index);
         let mutability = match parameter.origin_mutability.as_ref().map(|e| &e.kind) {
             Some(ExprKind::Bool(true)) => Mutability::Mutable,
             Some(ExprKind::Bool(false)) => Mutability::Immutable,

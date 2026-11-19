@@ -620,16 +620,28 @@ impl Checker {
         }
     }
 
+    /// The in-scope `Origin`-bounded binder `name` with its index in the
+    /// list that declares it, the `OriginParamId` domain of `ref[o]`
+    /// annotations: the innermost function type being lowered declares its
+    /// own binders over its own signature, before the enclosing
+    /// declaration's ([`Checker::callable_type_params`]).
     pub(in crate::checker) fn enclosing_origin_type_param(
         &self,
         name: &str,
-    ) -> Option<(u32, &mojito_ast::ast::TypeParam)> {
-        self.enclosing_type_params
-            .iter()
-            .enumerate()
-            .find(|(_, parameter)| {
-                parameter.name == name && parameter.bounds.as_slice() == ["Origin"]
-            })
-            .map(|(index, parameter)| (index as u32, parameter))
+    ) -> Option<(u32, mojito_ast::ast::TypeParam)> {
+        let find = |params: &[mojito_ast::ast::TypeParam]| {
+            params
+                .iter()
+                .enumerate()
+                .find(|(_, parameter)| {
+                    parameter.name == name && parameter.bounds.as_slice() == ["Origin"]
+                })
+                .map(|(index, parameter)| (index as u32, parameter.clone()))
+        };
+        self.callable_type_params
+            .borrow()
+            .last()
+            .and_then(|own| find(own))
+            .or_else(|| find(&self.enclosing_type_params))
     }
 }

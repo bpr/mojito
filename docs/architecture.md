@@ -1257,7 +1257,8 @@ binder answers its attributes keyed by declaration (`DeclaredAttributes` on
 struct application placing each origin argument the partition kept back in
 its declared slot of the struct's checked list, which also declares a pack's
 implicit list binder (`PartitionedStructArgs::declared`), and an explicit
-specialization appending its origin arguments after the declared slots
+specialization placing the generic binder's argument-view slots and each
+origin argument in their binders' slots of the callee's whole declared list
 (`CallableSpecialization::declared`); a compiler builtin's binder
 (`applied_type`'s collection, pointer, `SIMD`, and storage types,
 `external_call`, `reflect`, the `Variant` storage methods, the

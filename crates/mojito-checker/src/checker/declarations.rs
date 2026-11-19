@@ -1383,7 +1383,11 @@ impl Checker {
             .chain(outer_type_params)
             .cloned()
             .collect();
+        self.callable_type_params
+            .borrow_mut()
+            .push(type_params.clone());
         let checked = self.function_signature_type(callable, &context);
+        self.callable_type_params.borrow_mut().pop();
         // Compile the clauses inside the pushed scope so the contract's own
         // binders resolve, exactly like a named def's trailing clauses.
         let compiled: Result<Vec<_>, TypeError> = where_clauses

@@ -930,6 +930,12 @@ pub struct Checker {
     /// around the annotation being resolved: the owner of an inline
     /// spelling's own binders ([`Self::inline_callable_type`]).
     inline_callable_depth: std::cell::Cell<u32>,
+    /// The own `def[...]` lists of the function types being lowered around
+    /// the annotation being resolved, innermost last: an origin binder one
+    /// declares scopes over its own signature, so `Pointer[Int, o]` in
+    /// `def[o: ImmOrigin](Pointer[Int, o])` names it
+    /// ([`Self::enclosing_origin_type_param`]).
+    callable_type_params: RefCell<Vec<Vec<mojito_ast::ast::TypeParam>>>,
     /// Whether the annotation being resolved belongs to a compiler-generated
     /// (`$`-mangled) declaration, whose spellings rebind already-checked types
     /// and so keep their position's leniency at every nesting depth.
@@ -1270,6 +1276,7 @@ impl Checker {
             strict_storage_annotation: std::cell::Cell::new(StorageStrictness::Off),
             annotation_depth: std::cell::Cell::new(0),
             inline_callable_depth: std::cell::Cell::new(0),
+            callable_type_params: RefCell::new(Vec::new()),
             generated_declaration: std::cell::Cell::new(false),
             storage_origin_demands: RefCell::new(None),
             comprehension_iterables: RefCell::new(FactMap::default()),

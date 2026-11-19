@@ -1055,6 +1055,8 @@ impl Checker {
             if let Some(origin_index) = parameter.origin {
                 let origin = self.explicit_origin_argument(&value)?;
                 forwarded.bind_origin(
+                    &parameter.name,
+                    index,
                     position,
                     bracket_attribute(&value, &TyArg::Origin(origin.clone())),
                 );

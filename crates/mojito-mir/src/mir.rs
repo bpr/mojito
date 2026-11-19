@@ -4757,8 +4757,9 @@ impl<'a> Flatten<'a> {
         let mut registers = Vec::new();
         for parameter in call.parameters() {
             for argument in &parameter.arguments {
-                // An origin argument binds the callee's origin slot, which
-                // the lowered parameter declarations do not list
+                // An origin argument binds the callee's origin binder,
+                // which a lowered call's parameter declarations, the
+                // callee's argument view, do not list
                 // (`f[ImmStaticOrigin, 3]()`).
                 if matches!(
                     argument,

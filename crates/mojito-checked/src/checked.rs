@@ -2241,9 +2241,8 @@ pub fn bracket_arguments(
 #[derive(Debug, Clone, Default)]
 pub struct BracketBinding {
     pub slots: Vec<Vec<BracketBound>>,
-    /// The name of each slot's declared parameter, `None` past the
-    /// declarations (a function's origin argument, which its list declares
-    /// no binder for).
+    /// The name of each slot's declared parameter, `None` for a slot the
+    /// binder keyed by no declaration.
     pub declarations: Vec<Option<String>>,
 }
 

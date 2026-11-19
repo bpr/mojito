@@ -1206,7 +1206,7 @@ impl Checker {
                             )?;
                             self.record_declared_attributes(
                                 span.clone(),
-                                &forwarded.declared(attributes.clone()),
+                                &forwarded.declared(attributes.clone(), declared_list(&prepared)),
                             );
                             self.record_call_environment_effects(
                                 span.clone(),
@@ -1366,7 +1366,10 @@ impl Checker {
         super::type_resolution::reject_trait_callable_call(&ty)?;
         let (ret, _, error, bool_bindings, _, attributes) =
             self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
-        self.record_declared_attributes(span.clone(), &forwarded.declared(attributes.clone()));
+        self.record_declared_attributes(
+            span.clone(),
+            &forwarded.declared(attributes.clone(), declared_list(&ty)),
+        );
         if let Some(signature) = origin_signatures.first() {
             self.validate_erased_origin_constraint(name, signature, &bool_bindings)?;
         }
@@ -2993,4 +2996,12 @@ fn argument_mismatch(callee: &str, param: &str, expected: &Ty, found: &Ty) -> Ty
         found: found.to_string(),
         context: format!("argument '{param}' to '{callee}'"),
     }
+}
+
+/// The whole declared parameter list of callable type `callee`, origin
+/// binders in place; empty for a non-generic one.
+fn declared_list(callee: &Ty) -> &[ParamDecl] {
+    callee
+        .as_generic_func()
+        .map_or(&[], |generic| generic.decls.as_slice())
 }

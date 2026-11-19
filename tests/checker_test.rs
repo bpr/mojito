@@ -3978,6 +3978,76 @@ fn checked_call_holds_one_parameter_per_declaration() {
     );
 }
 
+#[test]
+fn explicit_origin_argument_binds_its_binders_declared_slot() {
+    // A function's checked list declares its origin binders in place, so a
+    // bracket's origin argument is recorded by its binder's declaration,
+    // in declared order, whatever slot the bracket spells it in; an
+    // inferred origin binder is an empty slot.
+    let source = "def f[o: ImmOrigin, n: Int]() -> Int:\n    return n\n\ndef g[o: ImmOrigin, //, k: Int](p: Pointer[Int, o]) -> Int:\n    return p[] + k\n\ndef main():\n    var x = 4\n    print(f[ImmStaticOrigin, 3]())\n    print(f[n=5, o=ImmStaticOrigin]())\n    print(g[2](Pointer(to=x)))\n";
+    let checked = checked_with_std(source).expect("check");
+    let declarations = |parameters: &[mojito::checked::CheckedParameter]| {
+        parameters
+            .iter()
+            .map(|parameter| {
+                (
+                    parameter.declaration.clone(),
+                    parameter
+                        .arguments
+                        .iter()
+                        .map(|argument| {
+                            let argument = match argument {
+                                mojito::checked::CheckedParamArg::Named { value, .. } => &**value,
+                                argument => argument,
+                            };
+                            matches!(
+                                argument,
+                                mojito::checked::CheckedParamArg::Attribute {
+                                    value: Some(mojito::types::TyArg::Origin(_)),
+                                    ..
+                                }
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let f = declared_parameters(&checked, "f");
+    assert_eq!(f.len(), 2, "{f:#?}");
+    for call in &f {
+        assert_eq!(
+            declarations(call),
+            [
+                (Some("o".to_string()), vec![true]),
+                (Some("n".to_string()), vec![false])
+            ],
+            "{call:#?}"
+        );
+    }
+    let g = declared_parameters(&checked, "g");
+    let [g] = g.as_slice() else {
+        panic!("{g:#?}");
+    };
+    assert_eq!(
+        declarations(g),
+        [
+            (Some("o".to_string()), vec![]),
+            (Some("k".to_string()), vec![false])
+        ],
+        "{g:#?}"
+    );
+}
+
+#[test]
+fn callable_type_origin_binder_scopes_over_its_own_signature() {
+    // `o` is the callable type's own binder: a struct argument in its
+    // signature names it, as upstream scopes a `def[...]` list over the
+    // signature it declares.
+    let source = "def read[o: ImmOrigin](p: Pointer[Int, o]) -> Int:\n    return p[]\n\ndef call_it[f: def[o: ImmOrigin](Pointer[Int, o]) thin -> Int]() -> Int:\n    var x = 7\n    return f(Pointer(to=x))\n\ncomptime Reader = def[T: AnyType, o: ImmOrigin](Pointer[T, o]) thin -> Int\n\ndef main():\n    print(call_it[read]())\n";
+    checked_with_std(source).expect("check");
+}
+
 /// The declared compile-time parameters of every checked call of `callee`.
 fn declared_parameters(
     checked: &mojito::checked::CheckedProgram,

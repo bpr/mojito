@@ -316,8 +316,8 @@ fn checked_call_arguments(
 /// slot of `binding` (the binding its binder recorded, keyed by
 /// declaration), then one per argument bound to none. A value argument
 /// bound to no attribute names its run-time operand by its source; one
-/// bound to an origin is left out: it fills the callee's origin slot,
-/// which no function declaration lists.
+/// bound to an origin is left out: it fills the callee's origin binder,
+/// which the call's argument view does not list.
 fn checked_parameter_arguments(
     param_args: &[mojito_ast::ast::ParamArg],
     binding: &mojito_checked::checked::BracketBinding,
