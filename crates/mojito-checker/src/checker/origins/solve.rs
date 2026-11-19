@@ -149,7 +149,7 @@ impl Checker {
                 })
             }
             Origin::SelfParam => Some(SigOrigin::Self_),
-            Origin::Immutable(inner) => self.abstract_body_origin(inner, param_owners, self_owner),
+            Origin::MutCast(inner, _) => self.abstract_body_origin(inner, param_owners, self_owner),
             Origin::Union(origins) => {
                 let members: Vec<_> = origins
                     .iter()
@@ -196,7 +196,7 @@ impl Checker {
             Origin::Union(origins) => origins
                 .iter()
                 .any(|origin| self.aggregate_origin_escapes(origin)),
-            Origin::Immutable(inner) => self.aggregate_origin_escapes(inner),
+            Origin::MutCast(inner, _) => self.aggregate_origin_escapes(inner),
             Origin::Param(_)
             | Origin::SelfParam
             | Origin::Projected(..)
@@ -825,7 +825,7 @@ fn body_place_origin(origin: &mojito_types::origin::Origin) -> bool {
     match origin {
         Origin::Place(_) => true,
         Origin::Union(members) => members.iter().all(body_place_origin),
-        Origin::Immutable(inner) => body_place_origin(inner),
+        Origin::MutCast(inner, _) => body_place_origin(inner),
         _ => false,
     }
 }
@@ -868,7 +868,7 @@ fn mentions_pack_binder(origin: &mojito_types::origin::Origin) -> bool {
     match origin {
         Origin::Param(id) => id.is_pack_binder(),
         Origin::Union(members) => members.iter().any(mentions_pack_binder),
-        Origin::Immutable(inner) | Origin::Projected(inner, _) => mentions_pack_binder(inner),
+        Origin::MutCast(inner, _) | Origin::Projected(inner, _) => mentions_pack_binder(inner),
         _ => false,
     }
 }

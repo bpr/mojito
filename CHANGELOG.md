@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Origin` declares upstream's `unsafe_mut_cast[dest_mut]()`, whose
+  `#lit.origin.mutcast` is one origin-lattice node (`Origin::MutCast`)
+  that `ImmOrigin(o)` is at `False`, as the pin compares them. The cast
+  reads through its declaration in struct origin slots, `Pointer` origins,
+  `ref[...]` result clauses (a `Bool` binder destination such as
+  `Self.mut` included), and module `comptime` values; a cast to the
+  origin's own mutability is the origin, and `S[o]` does not convert to
+  `S[o.unsafe_mut_cast[False]()]`. MIR text moves to schema 1.211
+  (`origin_mut_cast`) and the package format to `mojito-package 240`
+  (R2380).
 - `std.origin` declares upstream's named origins as `Origin` values built
   from a raw `!lit.origin` attribute (`ImmStaticOrigin`,
   `UntrackedOrigin[*, mut]`, `AnyOrigin[*, mut]`, `UnsafeAnyOrigin[*,

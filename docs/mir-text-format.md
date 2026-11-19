@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.210
+mojito-mir 1.211
 ```
 
-The writer emits 1.210. The reader accepts 1.0 through 1.210; *Schema 1.0*
+The writer emits 1.211. The reader accepts 1.0 through 1.211; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1255,6 +1255,14 @@ the type of `std.origin`'s `OriginSet`. The package format moves to
 `mojito-package 239`, whose checker interface carries the module
 `comptime` declarations whose value is an origin (R2343).
 
+Schema 1.211 adds `origin_mut_cast { base, mutable }`, upstream's
+`#lit.origin.mutcast<base> : !lit.origin<mutable>`, the origin
+`base.unsafe_mut_cast[mutable]()` builds: `mutable` is a boolean, or
+`ct_expr(<param-expr>)` for a `Bool` a template's parameter spells. A cast
+to `False` keeps its `origin_immutable(origin)` spelling, which is
+`ImmOrigin(origin)`. The package format moves to `mojito-package 240`
+(R2380).
+
 Schema 1.207 adds two origin spellings a struct's origin argument can
 hold, as upstream's `_mlir_origin` attribute can: `origin_projected { base,
 path }`, an interior or subtree projection over an origin binder or the
@@ -2445,7 +2453,9 @@ in a 1.0 reference chooses between them, and the reader does not guess.
 Origin path segments are `field(symbol)`, `any_index`, `interior(symbol)`, and
 `subtree`. Origins are `origin_param(id)`, `origin_self`,
 `origin_place { root: $vN, path }`, `origin_union`, `origin_static`,
-`origin_untracked { mutable }`, `origin_unbound`, `origin_immutable(origin)`,
+`origin_untracked { mutable }`, `origin_unbound`, `origin_immutable(origin)`
+(a cast to `False`), `origin_mut_cast { base, mutable }` (schema 1.211: any
+other mutability cast, `mutable` a boolean or `ct_expr`),
 `origin_projected { base, path }` (schema 1.207: an interior or subtree
 projection over an `origin_param` or `origin_self` base, upstream's
 `_get_owned_interior`/`_subtree` over a binder), and

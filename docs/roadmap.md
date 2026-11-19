@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2386**.
+Next free ID: **R2388**.
 
 ## Ordered Work
 
@@ -2596,12 +2596,14 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1299 A result origin built from an origin union and
-  `unsafe_mut_cast` is rejected**
+- [ ] **R1299 `origin_of` over origin values is rejected**
 
   Problem: `-> ref[origin_of(Self.origin, self_origin).unsafe_mut_cast[
-  Self.mut]()] Int` stops with "unsupported origin contract"
-  (`checker/origins/sig.rs`), where the pin prints the element.
+  Self.mut]()] Int` stops with "Undefined variable 'Self'", where the pin
+  prints the element.
+  - `origin_of` reads its arguments as places. Upstream's also takes
+    origin values and unions them, and the clause's `unsafe_mut_cast`
+    already lowers (`assets/ok/origin_unsafe_mut_cast.mojo`).
   - It is upstream's `VariadicList.__getitem__` result, so the bundled one
     returns `ref[origin_of(self)]`.
   - Probe: `conformance/probes/variadic_list_getitem_origin.mojo`.
@@ -2627,6 +2629,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     The bundled `OwnedPointer.ptr` and `unsafe_ptr` therefore take `ref
     self` with their own bodies, where upstream's take `ref[origin] self`
     and `unsafe_ptr` forwards to `ptr()`.
+  - Probe: the same for a non-receiver parameter: `def get[o:
+    MutOrigin](ref[o] x: Int) -> Pointer[Int, o]: return Pointer(to=x)`
+    is "expected Pointer[Int, origin#0], found Pointer[Int, origin@N]",
+    and so is the `-> Pointer[Int, ImmOrigin(o)]` result. The pin runs
+    both.
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2838,28 +2845,43 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2380 `Origin` declares no `@implicit` immutable conversion and
-  no `unsafe_mut_cast`**
+- [ ] **R2386 `Origin`'s `@implicit __init__` is not declared, so
+  `ImmOrigin(o)` is matched by name**
 
-  `std.origin`'s `Origin` declares only upstream's builtin `__init__`, so
-  `var b: S[o.unsafe_mut_cast[False]()] = S[o]()` over `struct S[o:
-  Origin]` is rejected as "type 'S' expects 0 type argument(s), got 1",
-  where the pin rejects the conversion ("cannot implicitly convert 'S[o]'
-  value to 'S[origin_of(o)]'").
-  - Upstream's conversion is `@implicit def __init__(v: Origin) ->
-    ImmOrigin[_mlir_origin=v._mlir_origin]`. No bundled constructor uses
-    the `-> T` result form yet, and its result reads an argument's binder.
-  - `unsafe_mut_cast[dest_mut]()` builds `#lit.origin.mutcast<…>`, which
-    needs its own origin-lattice node, distinct from `Origin::Immutable`,
-    threaded through `SigOrigin`, solve, subst, MIR text, and mono.
-  - `ImmOrigin(o)` and `MutOrigin(o)` are matched by name today
-    (`origins/sig.rs::immutable_origin_cast`); the declared conversion
-    replaces that match.
-  - Probe: the line above.
-  - Probe: `conformance/probes/variadic_list_getitem_origin.mojo` (R1299)
-    is "unsupported origin contract"; the pin prints `3`.
-  - Depends on nothing.
+  `std.origin`'s `Origin` lacks upstream's `@implicit def __init__(v:
+  Origin) -> ImmOrigin[_mlir_origin=v._mlir_origin]`, so `ImmOrigin(o)`
+  and `Origin[mut=False](o)` are recognized by spelling
+  (`origins/sig.rs::immutable_origin_cast` and its callers), not through a
+  declaration.
+  - The declaration's result-form constructor (`-> T`, no `out self`) is
+    R1784's.
+  - The declared result stored into a `LITImmOrigin` slot is
+    `Origin::mut_cast(v, Known(false))`, the origin
+    `v.unsafe_mut_cast[False]()` already builds.
+  - Landing it deletes `immutable_origin_cast`'s name match and makes
+    `MutOrigin(o)` "no matching function in initialization", as at the
+    pin, where Mojito says "an origin cast cannot upgrade capability".
+  - Probe: `comptime c = ImmOrigin(o); print(c.mut)` in a generic `def`
+    is "invalid call to 'Origin'" (R2344 needs this too).
+  - Probe: `var a: S[MutOrigin(o)] = S[o]()` over `o: MutOrigin`.
+  - Depends on R1784.
   - Model: Fable, Not Planned.
+
+- [ ] **R2387 A returned reference's mutability is not checked against
+  the `ref` result's**
+
+  `def h[o: ImmOrigin](ref[o] x: Int) -> ref[o.unsafe_mut_cast[True]()]
+  Int: return x` is accepted, where the pin rejects it: "cannot return
+  reference with incompatible origin mutability: 'False' vs 'True'".
+  - The same holds without a cast: `def k(x: Int) -> ref[MutAnyOrigin]
+    Int: return x` checks, and its call then fails in the VM ("stale
+    reference to frame").
+  - The return check compares the returned place against the declared
+    origin, never the declared mutability (`RefSig::mutability`).
+  - Probe: both functions above, each printing `h(x)` or `k(x)` from
+    `main`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2381 `Origin` declares no `equals` or `contains` predicate**
 
@@ -2921,8 +2943,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     value of type `Origin`.
   - Probe: `comptime c = ImmOrigin(o); print(c.mut)` in
     `def f[o: MutOrigin](ref[o] x: Int)` is rejected ("struct 'Origin'
-    has no constructor"); the pin prints `False`. It needs R2380's
+    has no constructor"); the pin prints `False`. It needs R2386's
     `@implicit __init__` too.
+  - Probe: `comptime c = o.unsafe_mut_cast[False]()` in `def f[o:
+    MutOrigin]()` is "Undefined variable 'o'"; the pin accepts it.
   - Probe: a body's binder scope below the check still takes the argument
     view: `EnclosingBinders` (`mir.rs`), the lifted thunks' lists it
     yields, `binder_scope`, and `closure_uses`' `BinderScope` read
@@ -2934,7 +2958,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     the same in-scope value node, so `Origin[_mlir_origin=r]` can then
     read it back.
   - Planned in R2139 (2026-11-18).
-  - Depends on R2343 and R2380.
+  - Depends on R2343, R2380, and R2386.
   - Model: Fable, Planned.
 
 - [ ] **R2357 A call bracket's origin argument is not checked against its

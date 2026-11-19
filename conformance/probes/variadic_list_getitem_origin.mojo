@@ -1,8 +1,9 @@
 # PROBE: upstream's `VariadicList.__getitem__` result origin, the union of
 # the elements' origin and the list's, cast to the elements' mutability.
 #
-# **Differs.** The pin prints `3`. Mojito rejects the signature with
-# "unsupported origin contract" (`checker/origins/sig.rs`), so the bundled
+# **Differs.** The pin prints `3`. Mojito rejects `origin_of` over origin
+# values rather than places ("Undefined variable 'Self'"); the cast itself
+# checks (`assets/ok/origin_unsafe_mut_cast.mojo`). So the bundled
 # `VariadicList.__getitem__` returns `ref[origin_of(self)]` (R1299).
 struct Box[mut: Bool, //, origin: Origin[mut=mut]]:
     var p: Pointer[Int, Self.origin]

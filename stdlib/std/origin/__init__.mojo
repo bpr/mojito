@@ -7,7 +7,8 @@ value `_mlir_origin: _lit_origin_type_of_mut[mut]`. The named origins
 (`ImmStaticOrigin`, `UntrackedOrigin`, `AnyOrigin`, `UnsafeAnyOrigin`, and
 their `Imm`/`Mut` aliases) are `Origin` values built from a raw
 `!lit.origin` attribute, and `OriginSet` is the raw `!lit.origin.set` type,
-as upstream declares them.
+as upstream declares them. `Origin.unsafe_mut_cast` builds the
+`#lit.origin.mutcast` of an origin, the same storage at another mutability.
 """
 
 comptime ImmOrigin = Origin[mut=False]
@@ -103,3 +104,27 @@ struct Origin[mut: Bool, _mlir_origin: _lit_origin_type_of_mut[mut], //](
     def __init__(out self):
         """Construct an Origin."""
         pass
+
+    @always_inline("builtin")
+    @staticmethod
+    def unsafe_mut_cast[
+        dest_mut: Bool
+    ]() -> Origin[
+        _mlir_origin=__mlir_attr[
+            `#lit.origin.mutcast<`,
+            Self._mlir_origin,
+            `> : !lit.origin<`,
+            dest_mut._mlir_value,
+            `>`,
+        ]
+    ]:
+        """Cast this origin to a different mutability, potentially introducing
+        more mutability, which is an unsafe operation.
+
+        Parameters:
+            dest_mut: The desired mutability of the resulting origin.
+
+        Returns:
+            The same origin but with a new specified mutability.
+        """
+        return {}

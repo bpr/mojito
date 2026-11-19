@@ -167,7 +167,7 @@ impl Checker {
                     self.record_aggregate_origin_invalidation_except(site.clone(), member, except);
                 }
             }
-            mojito_types::origin::Origin::Immutable(inner) => {
+            mojito_types::origin::Origin::MutCast(inner, _) => {
                 self.record_aggregate_origin_invalidation_except(site, *inner, except);
             }
             mojito_types::origin::Origin::Param(_)

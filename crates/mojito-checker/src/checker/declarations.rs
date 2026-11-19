@@ -1366,7 +1366,7 @@ impl Checker {
     }
 
     /// Whether the struct `name` names is `std.origin`'s `Origin`.
-    fn is_library_origin(&self, name: &str) -> bool {
+    pub(in crate::checker) fn is_library_origin(&self, name: &str) -> bool {
         name == "Origin"
             && self
                 .structs
@@ -6068,7 +6068,7 @@ fn names_own_origin_binder(
     use mojito_types::origin::Origin;
     match origin {
         Origin::Param(id) => own.contains(id),
-        Origin::Immutable(inner) | Origin::Projected(inner, _) => {
+        Origin::MutCast(inner, _) | Origin::Projected(inner, _) => {
             names_own_origin_binder(inner, own)
         }
         Origin::Union(members) => members

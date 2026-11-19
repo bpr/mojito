@@ -3110,7 +3110,16 @@ fn origin(value: &Origin) -> String {
             record("origin_untracked", &[("mutable", mutable.to_string())])
         }
         Origin::Unbound => "origin_unbound".into(),
-        Origin::Immutable(inner) => positional("origin_immutable", &origin(inner)),
+        Origin::MutCast(inner, mojito_types::types::LitOriginMut::Known(false)) => {
+            positional("origin_immutable", &origin(inner))
+        }
+        Origin::MutCast(base, mutability) => record(
+            "origin_mut_cast",
+            &[
+                ("base", origin(base)),
+                ("mutable", lit_origin_mut_slot(mutability)),
+            ],
+        ),
         Origin::Projected(base, path) => record(
             "origin_projected",
             &[

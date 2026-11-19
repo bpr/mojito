@@ -1362,7 +1362,7 @@ fn named_storage(ty: Option<&Ty>) -> Vec<NamedStorage> {
             Origin::Param(id) => out.push(NamedStorage::Param(*id)),
             Origin::SelfParam => out.push(NamedStorage::SelfParam),
             Origin::Union(members) => members.iter().for_each(|member| flatten(member, out)),
-            Origin::Immutable(inner) | Origin::Projected(inner, _) => flatten(inner, out),
+            Origin::MutCast(inner, _) | Origin::Projected(inner, _) => flatten(inner, out),
             Origin::Static
             | Origin::Untracked { .. }
             | Origin::UnsafeAny { .. }

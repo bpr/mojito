@@ -1122,7 +1122,7 @@ impl Checker {
     ) -> Option<mojito_types::origin::Mutability> {
         use mojito_types::origin::{Mutability, Origin};
         match origin {
-            Origin::Immutable(_) => Some(Mutability::Immutable),
+            Origin::MutCast(..) => origin.static_mutability().map(Mutability::of),
             Origin::Place(place) => Some(self.owner_reference_mutability(place.root)),
             // A collector's pack origin is `Origin[mut=elt_is_mutable]`, which
             // a `read` collector, the only `VariadicPack` one, binds `False`.
@@ -1135,12 +1135,12 @@ impl Checker {
         }
     }
 
-    /// `ty` with each `ImmOrigin(o)` origin argument whose `o` is already
-    /// immutable folded to `o`, as upstream's cast of an `Origin[mut=False]`
-    /// value is that value: a struct type converts between the two slots
-    /// only then.
-    pub(super) fn fold_immutable_origin_casts(&self, ty: &Ty) -> Ty {
-        mojito_types::types::map_origins(ty, &|origin| self.fold_immutable_origin_cast(origin))
+    /// `ty` with each origin argument cast to the mutability its base
+    /// already has folded to the base ([`Self::fold_origin_mut_cast`]), as
+    /// upstream's cast of an `Origin[mut=m]` value to `m` is that value: a
+    /// struct type converts between the two slots only then.
+    pub(super) fn fold_origin_mut_casts(&self, ty: &Ty) -> Ty {
+        mojito_types::types::map_origins(ty, &|origin| self.fold_origin_mut_cast(origin))
     }
 
     /// The origin arguments among `bound`, a bracket's arguments bound
@@ -2214,26 +2214,71 @@ impl Checker {
         }))
     }
 
-    /// `origin` folded as [`Self::fold_immutable_origin_casts`] folds a
-    /// type's origin arguments: an `ImmOrigin(o)` cast of an `o` already
-    /// immutable is `o`.
-    pub(in crate::checker) fn fold_immutable_origin_cast(
+    /// `origin` folded as [`Self::fold_origin_mut_casts`] folds a type's
+    /// origin arguments: a cast `o.unsafe_mut_cast[m]()` (`ImmOrigin(o)`
+    /// at `m = False`) to the mutability `o` already has is `o`, as the pin
+    /// compares them.
+    pub(in crate::checker) fn fold_origin_mut_cast(
         &self,
         origin: &mojito_types::origin::Origin,
     ) -> mojito_types::origin::Origin {
         use mojito_types::origin::Origin;
         match origin {
-            Origin::Immutable(inner) if self.origin_is_immutable(inner) => {
-                self.fold_immutable_origin_cast(inner)
+            Origin::MutCast(inner, mutability) => {
+                let inner = self.fold_origin_mut_cast(inner);
+                if self.origin_has_mutability(&inner, mutability) {
+                    inner
+                } else {
+                    Origin::mut_cast(inner, mutability.clone())
+                }
             }
-            Origin::Immutable(inner) => Origin::immutable(self.fold_immutable_origin_cast(inner)),
             Origin::Union(members) => Origin::Union(
                 members
                     .iter()
-                    .map(|member| self.fold_immutable_origin_cast(member))
+                    .map(|member| self.fold_origin_mut_cast(member))
                     .collect(),
             ),
             other => other.clone(),
+        }
+    }
+
+    /// Whether `origin` is an `Origin[mut=mutability]` value already: an
+    /// immutable one for `False`, a mutable one for `True`, and an origin
+    /// binder declared `Origin[mut=m]` for a read of its own `m`.
+    fn origin_has_mutability(
+        &self,
+        origin: &mojito_types::origin::Origin,
+        mutability: &mojito_types::types::LitOriginMut,
+    ) -> bool {
+        use mojito_types::origin::{Mutability, Origin};
+        use mojito_types::types::LitOriginMut;
+        match mutability {
+            LitOriginMut::Known(false) => self.origin_is_immutable(origin),
+            LitOriginMut::Known(true) => {
+                origin.static_mutability() == Some(true)
+                    || self.bound_origin_mutability(origin) == Some(Mutability::Mutable)
+            }
+            LitOriginMut::Expr(read) => {
+                let Origin::Param(id) = origin else {
+                    return false;
+                };
+                let declared = |params: &[mojito_ast::ast::TypeParam]| {
+                    self.origin_binder_at(params, id.0 as usize)
+                        .and_then(|decl| match decl {
+                            ParamDecl::Origin {
+                                mutability: OriginMutability::Binder(binder),
+                                ..
+                            } => Some(binder.name),
+                            _ => None,
+                        })
+                };
+                let own = self.callable_type_params.borrow().last().cloned();
+                read.as_decl_ref().is_some_and(|read| {
+                    own.and_then(|own| declared(&own))
+                        .or_else(|| declared(&self.enclosing_type_params))
+                        .is_some_and(|binder| binder == read.name)
+                })
+            }
         }
     }
 

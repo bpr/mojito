@@ -863,6 +863,7 @@ assets/ok/origin_placeholder_initialized_local.mojo	-	ineligible	no-scalar-entry
 assets/ok/origin_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_result_keeps_owner_through_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_unbound_mutability_binder.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_unsafe_mut_cast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/os_dir_operations.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/os_path_functions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_key_scalar_alias_origin.mojo	-	ineligible	no-scalar-entry-shape

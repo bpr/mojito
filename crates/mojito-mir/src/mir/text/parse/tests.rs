@@ -498,6 +498,12 @@ fn fancy_struct_ty() -> TyKind {
             TyArg::Origin(Origin::UnsafeAny { mutable: true }),
             // Schema 1.208's `!lit.origin<mut>`.
             TyArg::Ty(TyKind::LitOrigin(mojito_types::types::LitOriginMut::Known(false)).into()),
+            // Schema 1.211's mutability casts, beside `ImmOrigin(o)`.
+            TyArg::Origin(Origin::immutable(Origin::Param(OriginParamId(0)))),
+            TyArg::Origin(Origin::mut_cast(
+                Origin::Static,
+                mojito_types::types::LitOriginMut::Known(true),
+            )),
         ],
     )
 }

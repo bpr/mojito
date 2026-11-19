@@ -67,6 +67,12 @@ impl Decoder {
                 self.unknown(fields, &["mutable"]);
                 Some(Origin::UnsafeAny { mutable })
             }
+            ValueKind::Record(tag, fields) if tag == "origin_mut_cast" => {
+                let base = self.req(value, fields, "base", Self::origin)?;
+                let mutability = self.req(value, fields, "mutable", Self::lit_origin_mut_slot)?;
+                self.unknown(fields, &["base", "mutable"]);
+                Some(Origin::mut_cast(base, mutability))
+            }
             ValueKind::Record(tag, fields) if tag == "origin_projected" => {
                 let base = self.req(value, fields, "base", Self::origin)?;
                 let path = self.req(value, fields, "path", |d, v| Some(d.origin_path(v)))?;

@@ -156,7 +156,7 @@ template; a field type under a symbolic index is opaque until a
 | `len_of_dereferenced_pointer_field.mojo` | Does `len` run on a list reached through a pointer field? | **differs**: the pin prints `3`, Mojito stops at run time ("methods on ref") — `docs/roadmap.md` R125 |
 | `per_call_clone_copied_loan.mojo` | Does a method with a parameter of its own keep the loan of a value it stores a copy of? | **differs**: the pin prints `3 1 8`, Mojito stops at run time ("checked nominal subscript receiver is None") — `docs/roadmap.md` R126 |
 | `pointer_to_runtime_subscript.mojo` | Does `Pointer(to=l[i])` point at the element a struct's `__getitem__` reference names? | **differs**: the pin prints `2` twice, Mojito fails MIR verification ("dynamic element projection requires checked indexed storage") — `docs/roadmap.md` R1298 |
-| `variadic_list_getitem_origin.mojo` | Does upstream's `VariadicList.__getitem__` result origin (`origin_of(Self.origin, self_origin).unsafe_mut_cast[Self.mut]()`) check? | **differs**: the pin prints `3`, Mojito rejects ("unsupported origin contract") — `docs/roadmap.md` R1299 |
+| `variadic_list_getitem_origin.mojo` | Does upstream's `VariadicList.__getitem__` result origin (`origin_of(Self.origin, self_origin).unsafe_mut_cast[Self.mut]()`) check? | **differs**: the pin prints `3`, Mojito rejects `origin_of` over origin values ("Undefined variable 'Self'") — `docs/roadmap.md` R1299 |
 | `reference_through_call_result_pointer.mojo` | Does a reference returned through a pointer a call yields (`return self.ptr()[unsafe_offset=i]`) name the pointee? | **differs**: the pin prints `2`, Mojito fails MIR verification ("register has no checked type") — `docs/roadmap.md` R1305 |
 
 ## Re-probes of enforced claims

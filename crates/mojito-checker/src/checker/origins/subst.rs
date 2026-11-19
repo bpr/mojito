@@ -24,6 +24,11 @@ pub(in crate::checker) fn lower_sig_origin_expression(
     if subtree_origin_syntax(expression).is_some() {
         return Err(reject_subtree_origin_here("a reference origin clause"));
     }
+    // A mutability cast names its receiver's storage; the capability it
+    // pins is the reference contract's ([`lower_ref_sig`]).
+    if let Some((receiver, _)) = origin_mut_cast_syntax(expression) {
+        return lower_sig_origin_expression(receiver, decls, params, struct_params);
+    }
     if let Some((base, name)) = interior_origin_syntax(expression) {
         return Ok(SigOrigin::Projected(
             Box::new(lower_sig_origin_expression(
@@ -362,7 +367,7 @@ pub(in crate::checker) fn origin_rooted_at(
     match origin {
         Origin::Place(place) => place.root == owner,
         Origin::Union(members) => members.iter().any(|member| origin_rooted_at(member, owner)),
-        Origin::Immutable(inner) => origin_rooted_at(inner, owner),
+        Origin::MutCast(inner, _) => origin_rooted_at(inner, owner),
         _ => false,
     }
 }
@@ -616,7 +621,9 @@ pub(in crate::checker) fn bind_self_origin_arguments(
                     .project_path(path)
                     .unwrap_or_else(|| receiver.clone()),
             ),
-            Origin::Immutable(inner) => rebase(inner, receiver).map(Origin::immutable),
+            Origin::MutCast(inner, mutability) => {
+                rebase(inner, receiver).map(|origin| Origin::mut_cast(origin, mutability.clone()))
+            }
             _ => None,
         }
     }
@@ -654,7 +661,9 @@ pub(in crate::checker) fn substitute_origin_params(
                 .into_iter()
                 .map(|member| substitute_origin_params(member, concrete)),
         ),
-        Origin::Immutable(inner) => Origin::immutable(substitute_origin_params(*inner, concrete)),
+        Origin::MutCast(inner, mutability) => {
+            Origin::mut_cast(substitute_origin_params(*inner, concrete), mutability)
+        }
         Origin::Projected(base, path) => {
             substitute_origin_params(*base, concrete).reprojected(&path)
         }

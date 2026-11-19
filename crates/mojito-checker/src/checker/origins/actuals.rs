@@ -48,7 +48,7 @@ impl Checker {
                     ) {
                         match origin {
                             mojito_types::origin::Origin::Place(place) => places.push(place),
-                            mojito_types::origin::Origin::Immutable(inner) => {
+                            mojito_types::origin::Origin::MutCast(inner, _) => {
                                 collect_places(*inner, places);
                             }
                             mojito_types::origin::Origin::Union(members) => {
@@ -733,7 +733,7 @@ impl Checker {
             match origin {
                 Origin::Place(_) => false,
                 Origin::Union(members) => !members.is_empty() && members.iter().all(is_abstract),
-                Origin::Immutable(inner) => is_abstract(inner),
+                Origin::MutCast(inner, _) => is_abstract(inner),
                 Origin::Param(_)
                 | Origin::SelfParam
                 | Origin::Static
@@ -1109,7 +1109,7 @@ fn mentions_origin_param(origin: &mojito_types::origin::Origin) -> bool {
     match origin {
         Origin::Param(_) => true,
         Origin::Union(members) => members.iter().any(mentions_origin_param),
-        Origin::Immutable(inner) | Origin::Projected(inner, _) => mentions_origin_param(inner),
+        Origin::MutCast(inner, _) | Origin::Projected(inner, _) => mentions_origin_param(inner),
         _ => false,
     }
 }

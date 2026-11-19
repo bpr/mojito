@@ -502,7 +502,7 @@ impl<'a> Flatten<'a> {
                         flatten(origin, out);
                     }
                 }
-                mojito_types::origin::Origin::Immutable(inner) => flatten(inner, out),
+                mojito_types::origin::Origin::MutCast(inner, _) => flatten(inner, out),
                 _ => {}
             }
         }

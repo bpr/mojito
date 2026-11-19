@@ -214,6 +214,38 @@ pub(in crate::checker) fn immutable_origin_cast(
     )))
 }
 
+/// Upstream's `o.unsafe_mut_cast[m]()` (`Origin.unsafe_mut_cast`) in an
+/// origin clause: the receiver, and the destination mutability argument.
+/// The signature lowerings hold no checker, so they recognize the cast by
+/// its spelling, as they do `ImmOrigin(o)`; the checker's own readers read
+/// it through the declaration ([`Checker::origin_method_cast`]).
+pub(in crate::checker) fn origin_mut_cast_syntax(
+    expression: &Expr,
+) -> Option<(&Expr, &mojito_ast::ast::ParamArg)> {
+    let ExprKind::Invoke {
+        callee,
+        param_args,
+        args,
+        kwargs,
+    } = &expression.kind
+    else {
+        return None;
+    };
+    let ExprKind::Member { object, field } = &callee.kind else {
+        return None;
+    };
+    let [destination] = param_args.as_slice() else {
+        return None;
+    };
+    let destination = match destination {
+        mojito_ast::ast::ParamArg::Named { name, value } if name == "dest_mut" => value.as_ref(),
+        mojito_ast::ast::ParamArg::Named { .. } => return None,
+        positional => positional,
+    };
+    (field == "unsafe_mut_cast" && args.is_empty() && kwargs.is_empty())
+        .then_some((object.as_ref(), destination))
+}
+
 pub(in crate::checker) fn validate_origin_expr(
     expr: &Expr,
     origin_params: &HashSet<&str>,
@@ -222,6 +254,9 @@ pub(in crate::checker) fn validate_origin_expr(
 ) -> Result<(), TypeError> {
     if let Some(inner) = immutable_origin_cast(expr) {
         return validate_origin_expr(inner?, origin_params, value_params, values);
+    }
+    if let Some((receiver, _)) = origin_mut_cast_syntax(expr) {
+        return validate_origin_expr(receiver, origin_params, value_params, values);
     }
     if let Some((base, _)) = interior_origin_syntax(expr) {
         return validate_origin_expr(base, origin_params, value_params, values);
@@ -619,17 +654,30 @@ pub(in crate::checker) fn lower_ref_sig(
     use mojito_types::origin::{Origin, RefSig, SigMutability, SigOrigin};
     let mut members = Vec::new();
     let mut mutability = SigMutability::Infer;
-    let mut cast_immutable = false;
+    let mut cast = None;
     for expression in spec {
-        // The immutable-origin cast wraps one member; unwrap it and pin the
-        // whole signature's capability after the member lowers normally.
-        let expression = match immutable_origin_cast(expression) {
-            Some(inner) => {
-                cast_immutable = true;
-                inner?
+        // A mutability cast (`ImmOrigin(o)`, `o.unsafe_mut_cast[m]()`)
+        // wraps one member; unwrap it and pin the whole signature's
+        // capability, the outermost cast's, after the member lowers
+        // normally.
+        let mut expression = expression;
+        let mut outermost = None;
+        loop {
+            if let Some(inner) = immutable_origin_cast(expression) {
+                outermost.get_or_insert(SigMutability::Immutable);
+                expression = inner?;
+            } else if let Some((receiver, destination)) = origin_mut_cast_syntax(expression) {
+                if outermost.is_none() {
+                    outermost = Some(cast_sig_mutability(destination, decls)?);
+                }
+                expression = receiver;
+            } else {
+                break;
             }
-            None => expression,
-        };
+        }
+        if outermost.is_some() {
+            cast = outermost;
+        }
         if subtree_origin_syntax(expression).is_some() {
             return Err(reject_subtree_origin_here("a reference origin clause"));
         }
@@ -769,8 +817,8 @@ pub(in crate::checker) fn lower_ref_sig(
         [single] => single.clone(),
         _ => SigOrigin::union(members),
     };
-    if cast_immutable {
-        mutability = SigMutability::Immutable;
+    if let Some(cast) = cast {
+        mutability = cast;
     }
     Ok(RefSig { origin, mutability })
 }
@@ -896,12 +944,14 @@ fn result_origin_roots<'a>(annotation: &'a SourceType, roots: &mut Vec<&'a str>)
 }
 
 /// The `origin_of(...)` place roots of one origin expression, under its
-/// immutable cast and interior projections.
+/// mutability casts and interior projections.
 fn origin_roots<'a>(expression: &'a Expr, roots: &mut Vec<&'a str>) {
     let mut expression = expression;
     loop {
         if let Some(Ok(inner)) = immutable_origin_cast(expression) {
             expression = inner;
+        } else if let Some((receiver, _)) = origin_mut_cast_syntax(expression) {
+            expression = receiver;
         } else if let Some((base, _)) = interior_origin_syntax(expression) {
             expression = base;
         } else if let Some(base) = subtree_origin_syntax(expression) {
@@ -918,4 +968,64 @@ fn origin_roots<'a>(expression: &'a Expr, roots: &mut Vec<&'a str>) {
                 .filter_map(|argument| place_path(argument).map(|(root, _)| root)),
         );
     }
+}
+
+/// The capability `o.unsafe_mut_cast[destination]()` pins a `ref` clause
+/// to: a `Bool` literal's, or the `Bool` binder of `decls` the destination
+/// names (`m`, `Self.mut`) as [`origin_decl_mutability`] numbers it.
+fn cast_sig_mutability(
+    destination: &mojito_ast::ast::ParamArg,
+    decls: &[ParamDecl],
+) -> Result<mojito_types::origin::SigMutability, TypeError> {
+    use mojito_ast::ast::{ParamArg, Type};
+    use mojito_types::origin::SigMutability;
+    let flag = |mutable: bool| {
+        if mutable {
+            SigMutability::Mutable
+        } else {
+            SigMutability::Immutable
+        }
+    };
+    let name = match destination {
+        ParamArg::Value(Expr {
+            kind: ExprKind::Bool(mutable),
+            ..
+        }) => return Ok(flag(*mutable)),
+        ParamArg::Type(Type::Named(name, args)) if args.is_empty() => match name.as_str() {
+            "True" => return Ok(flag(true)),
+            "False" => return Ok(flag(false)),
+            name => Some(name),
+        },
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) => Some(name.as_str()),
+        ParamArg::Value(Expr {
+            kind: ExprKind::Member { object, field },
+            ..
+        }) if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+            Some(field.as_str())
+        }
+        _ => None,
+    };
+    name.and_then(|name| {
+        decls
+            .iter()
+            .position(|decl| matches!(decl, ParamDecl::Value { .. }) && decl.name() == name)
+    })
+    .map(|slot| {
+        SigMutability::BoolParam(
+            decls[..slot]
+                .iter()
+                .filter(|earlier| !earlier.is_pack_list())
+                .count(),
+        )
+    })
+    .ok_or_else(|| {
+        TypeError::Unsupported(
+            "an 'unsafe_mut_cast' in a reference origin clause whose mutability is neither \
+             a Bool literal nor a Bool binder in scope"
+                .to_string(),
+        )
+    })
 }

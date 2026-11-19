@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::LitOriginMut;
 
 impl Checker {
     /// See [`Checker::lower_ref_sig_resolved`]. `Ok(None)` when `member` is
@@ -241,20 +242,34 @@ impl Checker {
                 verdict
             }
             Origin::Untracked { mutable } | Origin::UnsafeAny { mutable } => Some(*mutable),
-            Origin::Static | Origin::Immutable(_) => Some(false),
+            Origin::Static => Some(false),
+            Origin::MutCast(..) => origin.static_mutability(),
             Origin::Param(_) | Origin::SelfParam | Origin::Projected(..) | Origin::Unbound => None,
         }
     }
 
-    /// The origin a raw `!lit.origin` attribute names, and whether it is
-    /// mutable: upstream's `Origin[_mlir_origin=__mlir_attr[…]]()`, the
-    /// value every named origin in `std.origin` is. `None` when `expr` is
-    /// no bracketed `__mlir_attr`.
+    /// The origin a raw `!lit.origin` attribute names, and its mutability:
+    /// upstream's `Origin[_mlir_origin=__mlir_attr[…]]()`, the value every
+    /// named origin in `std.origin` is, and the `#lit.origin.mutcast`
+    /// `Origin.unsafe_mut_cast` builds. `None` when `expr` is no bracketed
+    /// `__mlir_attr`.
     pub(in crate::checker) fn lit_origin_attribute(
         &self,
         expr: &Expr,
-    ) -> Option<Result<(mojito_types::origin::Origin, bool), TypeError>> {
+    ) -> Option<Result<(mojito_types::origin::Origin, LitOriginMut), TypeError>> {
         self.lit_origin_attribute_in(expr, &[])
+    }
+
+    /// The origin a call of one of `std.origin`'s `Origin` methods building
+    /// an origin names, and its mutability: `o.unsafe_mut_cast[m]()`, read
+    /// from the method's declared result `Origin[_mlir_origin=...]` with
+    /// the receiver's origin for `Self`'s and the bracket's arguments for
+    /// the method's own binders. `None` when `expr` is no such call.
+    pub(in crate::checker) fn origin_method_cast(
+        &self,
+        expr: &Expr,
+    ) -> Option<Result<(mojito_types::origin::Origin, LitOriginMut), TypeError>> {
+        self.origin_method_cast_in(expr, &[])
     }
 
     /// The origin the declared origin value `argument` uses names, and
@@ -321,10 +336,14 @@ impl Checker {
             })
             .collect();
         loop {
+            let recorded = |value: &Expr| {
+                origin_value_use(&mojito_ast::ast::ParamArg::Value(value.clone()))
+                    .is_some_and(|(head, _)| self.origin_values.contains_key(head))
+            };
             let (ready, rest): (Vec<_>, Vec<_>) = pending.into_iter().partition(|(_, decl)| {
                 origin_construction_attribute(&decl.value).is_some()
-                    || origin_value_use(&mojito_ast::ast::ParamArg::Value(decl.value.clone()))
-                        .is_some_and(|(head, _)| self.origin_values.contains_key(head))
+                    || recorded(&decl.value)
+                    || origin_method_receiver(&decl.value).is_some_and(recorded)
             });
             if ready.is_empty() {
                 break;
@@ -367,6 +386,9 @@ impl Checker {
         // capability, so the cast erases here.
         if let Some(inner) = super::immutable_origin_cast(expression) {
             return self.explicit_origin_argument(&ParamArg::Value(inner?.clone()));
+        }
+        if let Some(read) = self.origin_method_cast(expression) {
+            return read.map(|(origin, _)| origin.uncast().clone());
         }
         // `base._get_owned_interior["tag"]` and `base._subtree` name a
         // projection of `base`'s origin, a binder's or the receiver's
@@ -508,8 +530,17 @@ impl Checker {
                 });
             }
         };
-        if let Some(read) = self.lit_origin_attribute(expression) {
-            return read.map(|(origin, mutable)| (origin, Some(Mutability::of(mutable))));
+        if let Some(read) = self
+            .lit_origin_attribute(expression)
+            .or_else(|| self.origin_method_cast(expression))
+        {
+            return read.map(|(origin, mutability)| {
+                let mutability = match mutability {
+                    LitOriginMut::Known(mutable) => Some(Mutability::of(mutable)),
+                    LitOriginMut::Expr(_) => self.bound_origin_mutability(&origin),
+                };
+                (origin, mutability)
+            });
         }
         // `ImmOrigin(o)`: `o`'s provenance as an `Origin[mut=False]` value,
         // so an `Origin[mut=True]` slot rejects it and the slot's `mut`
@@ -745,6 +776,24 @@ pub(in crate::checker) fn origin_construction(
     }))
 }
 
+/// The receiver of a call of an `Origin` method with no run-time arguments
+/// (`o.unsafe_mut_cast[False]()`), which may build an origin; `None` for
+/// any other expression.
+pub(in crate::checker) fn origin_method_receiver(value: &Expr) -> Option<&Expr> {
+    match &value.kind {
+        ExprKind::Invoke {
+            callee,
+            args,
+            kwargs,
+            ..
+        } if args.is_empty() && kwargs.is_empty() => match &callee.kind {
+            ExprKind::Member { object, .. } => Some(object),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 impl Checker {
     /// [`Self::named_origin_value`] under `bindings`, the arguments an
     /// enclosing generic origin value's binders took.
@@ -785,14 +834,136 @@ impl Checker {
                 }
                 own.push((binder, substitute_binding(value, bindings)));
             }
+            if origin_method_receiver(&decl.value).is_some() {
+                return self
+                    .origin_method_cast_in(&decl.value, &own)
+                    .unwrap_or_else(|| Err(unapplied()))
+                    .and_then(closed_origin_value);
+            }
             match origin_construction_attribute(&decl.value) {
                 Some(attribute) => self
                     .lit_origin_attribute_in(attribute, &own)
-                    .unwrap_or_else(|| Err(unapplied())),
+                    .unwrap_or_else(|| Err(unapplied()))
+                    .and_then(closed_origin_value),
                 None => self
                     .origin_value_in(&ParamArg::Value(decl.value.clone()), &own, depth + 1)
                     .unwrap_or_else(|| Err(unapplied())),
             }
+        })())
+    }
+
+    /// [`Self::origin_method_cast`] under `bindings`, the arguments an
+    /// enclosing generic origin value's binders took.
+    fn origin_method_cast_in(
+        &self,
+        expr: &Expr,
+        bindings: &[(String, mojito_ast::ast::ParamArg)],
+    ) -> Option<Result<(mojito_types::origin::Origin, LitOriginMut), TypeError>> {
+        use mojito_ast::ast::ParamArg;
+        let ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        let ExprKind::Member { object, field } = &callee.kind else {
+            return None;
+        };
+        if !args.is_empty() || !kwargs.is_empty() {
+            return None;
+        }
+        let info = self
+            .structs
+            .get("Origin")
+            .filter(|_| self.is_library_origin("Origin"))?;
+        let [sig] = info.methods.get(field)?.as_slice() else {
+            return None;
+        };
+        if sig.has_self || !sig.params.is_empty() {
+            return None;
+        }
+        let template = match sig.ret.kind() {
+            TyKind::Struct(name, arguments) if name == "Origin" => {
+                arguments.iter().find_map(|argument| match argument {
+                    TyArg::Origin(origin) => Some(origin),
+                    _ => None,
+                })?
+            }
+            _ => return None,
+        };
+        let own = info.params.iter().find_map(|decl| match decl {
+            ParamDecl::Origin { origin, name, .. } if name == MLIR_ORIGIN_BINDER => Some(*origin),
+            _ => None,
+        })?;
+        Some((|| {
+            let (base, _) = self.resolve_origin_param_arg(&substitute_binding(
+                ParamArg::Value((**object).clone()),
+                bindings,
+            ))?;
+            let binders: Vec<&ParamDecl> = sig
+                .declared
+                .iter()
+                .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
+                .collect();
+            let mismatch = || TypeError::TypeMismatch {
+                expected: format!("{} compile-time argument(s)", binders.len()),
+                found: format!("{}", param_args.len()),
+                context: format!("'Origin.{field}'"),
+            };
+            if param_args.len() != binders.len() {
+                return Err(mismatch());
+            }
+            let mut bound = Vec::with_capacity(binders.len());
+            for (position, argument) in param_args.iter().enumerate() {
+                let (binder, value) = match argument {
+                    ParamArg::Named { name, value } => (name.as_str(), value.as_ref()),
+                    positional => (binders[position].name(), positional),
+                };
+                let ParamArg::Value(value) = value else {
+                    return Err(mismatch());
+                };
+                let read = ParamArg::Value(Expr::new(
+                    ExprKind::Member {
+                        object: Box::new(value.clone()),
+                        field: mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
+                    },
+                    value.span,
+                ));
+                bound.push((
+                    binder.to_string(),
+                    self.lit_origin_mutability(&read, bindings)?,
+                ));
+            }
+            let origin =
+                instantiate_origin_method(template, own, &base, &bound).ok_or_else(|| {
+                    TypeError::Unsupported(format!(
+                        "the origin '{template}' 'Origin.{field}' declares"
+                    ))
+                })?;
+            let origin = self.fold_origin_mut_cast(&origin);
+            let mutability = match origin.static_mutability() {
+                Some(mutable) => LitOriginMut::Known(mutable),
+                None => match &origin {
+                    mojito_types::origin::Origin::MutCast(_, mutability) => mutability.clone(),
+                    _ => self
+                        .bound_origin_mutability(&origin)
+                        .and_then(|mutability| match mutability {
+                            mojito_types::origin::Mutability::Mutable => {
+                                Some(LitOriginMut::Known(true))
+                            }
+                            mojito_types::origin::Mutability::Immutable => {
+                                Some(LitOriginMut::Known(false))
+                            }
+                            mojito_types::origin::Mutability::Param(_) => None,
+                        })
+                        .or_else(|| bound.first().map(|(_, mutability)| mutability.clone()))
+                        .unwrap_or(LitOriginMut::Known(false)),
+                },
+            };
+            Ok((origin, mutability))
         })())
     }
 
@@ -801,7 +972,7 @@ impl Checker {
         &self,
         expr: &Expr,
         bindings: &[(String, mojito_ast::ast::ParamArg)],
-    ) -> Option<Result<(mojito_types::origin::Origin, bool), TypeError>> {
+    ) -> Option<Result<(mojito_types::origin::Origin, LitOriginMut), TypeError>> {
         let (name, args) = expr.bracket_application()?;
         if name != "__mlir_attr" || self.lookup(name).is_some() {
             return None;
@@ -811,30 +982,82 @@ impl Checker {
         let unsupported = || {
             TypeError::Unsupported(format!(
                 "the origin attribute '{shape}' is outside the subset; only \
-                 '#lit.any.origin', '#lit.origin.union<>', and the static \
-                 constants' origin are supported"
+                 '#lit.any.origin', '#lit.origin.union<>', the static \
+                 constants' origin, and '#lit.origin.mutcast' are supported"
             ))
         };
         Some((|| {
+            if shape == MUTCAST_ATTRIBUTE {
+                let [base, mutability] = operands.as_slice() else {
+                    return Err(unsupported());
+                };
+                return self.origin_mut_cast_in(base, mutability, bindings);
+            }
             let operand = match operands.as_slice() {
                 [] => None,
-                [operand] => Some(self.lit_origin_mutability(operand, bindings)?),
+                [operand] => match self.lit_origin_mutability(operand, bindings)? {
+                    LitOriginMut::Known(mutable) => Some(mutable),
+                    LitOriginMut::Expr(_) => {
+                        return Err(TypeError::Unsupported(
+                            "a raw origin attribute whose mutability is symbolic".to_string(),
+                        ));
+                    }
+                },
                 _ => return Err(unsupported()),
             };
             mojito_types::origin::Origin::from_lit_attribute(&shape, operand)
+                .map(|(origin, mutable)| (origin, LitOriginMut::Known(mutable)))
                 .ok_or_else(unsupported)
         })())
     }
 
+    /// Upstream's `#lit.origin.mutcast<base> : !lit.origin<mutability>`
+    /// under `bindings`: `base` a raw origin (`Self._mlir_origin`, the
+    /// enclosing `Origin`'s own binder unless `Self` is bound), cast to
+    /// `mutability`, folded as the pin compares casts.
+    fn origin_mut_cast_in(
+        &self,
+        base: &mojito_ast::ast::ParamArg,
+        mutability: &mojito_ast::ast::ParamArg,
+        bindings: &[(String, mojito_ast::ast::ParamArg)],
+    ) -> Result<(mojito_types::origin::Origin, LitOriginMut), TypeError> {
+        use mojito_ast::ast::ParamArg;
+        use mojito_types::origin::Origin;
+        let not_raw = || TypeError::TypeMismatch {
+            expected: "a raw origin ('X._mlir_origin')".to_string(),
+            found: "another operand".to_string(),
+            context: "'#lit.origin.mutcast' attribute".to_string(),
+        };
+        let raw = super::raw_origin_argument(base).ok_or_else(not_raw)?;
+        let reads_own_binder = matches!(&raw, ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(name),
+                ..
+            }) if name == "Self")
+            && !bindings.iter().any(|(binder, _)| binder == "Self");
+        let base = if reads_own_binder {
+            self.enclosing_origin_type_param(MLIR_ORIGIN_BINDER)
+                .map(|(index, _)| Origin::Param(mojito_types::origin::OriginParamId(index)))
+                .ok_or_else(not_raw)?
+        } else {
+            self.resolve_origin_param_arg(&substitute_binding(raw, bindings))?
+                .0
+        };
+        let mutability = self.lit_origin_mutability(mutability, bindings)?;
+        let cast = self.fold_origin_mut_cast(&Origin::mut_cast(base, mutability.clone()));
+        let mutability = cast
+            .static_mutability()
+            .map_or(mutability, LitOriginMut::Known);
+        Ok((cast, mutability))
+    }
+
     /// The `i1` mutability operand of a raw origin attribute
-    /// (`+mut._mlir_value`, `True._mlir_value`) under `bindings`, once it
-    /// folds: the named origins hold a closed mutability, which a symbolic
-    /// one cannot give.
+    /// (`+mut._mlir_value`, `True._mlir_value`) under `bindings`: `Known`
+    /// once it folds, else the `Bool` binder read it spells.
     fn lit_origin_mutability(
         &self,
         operand: &mojito_ast::ast::ParamArg,
         bindings: &[(String, mojito_ast::ast::ParamArg)],
-    ) -> Result<bool, TypeError> {
+    ) -> Result<LitOriginMut, TypeError> {
         use mojito_ast::ast::{ParamArg, PrefixOp};
         let operand = match operand {
             ParamArg::Value(Expr {
@@ -848,11 +1071,11 @@ impl Checker {
                 ParamArg::Value(Expr {
                     kind: ExprKind::Bool(literal),
                     ..
-                }) => return Ok(literal),
+                }) => return Ok(LitOriginMut::Known(literal)),
                 ParamArg::Type(mojito_ast::ast::Type::Named(name, args))
                     if args.is_empty() && (name == "True" || name == "False") =>
                 {
-                    return Ok(name == "True");
+                    return Ok(LitOriginMut::Known(name == "True"));
                 }
                 ParamArg::Value(base) => ParamArg::Value(Expr::new(
                     ExprKind::Member {
@@ -865,12 +1088,63 @@ impl Checker {
             },
             None => operand,
         };
-        match self.mlir_bool_operand(&operand)? {
-            mojito_types::types::LitOriginMut::Known(mutable) => Ok(mutable),
-            mojito_types::types::LitOriginMut::Expr(_) => Err(TypeError::Unsupported(
-                "a raw origin attribute whose mutability is symbolic".to_string(),
-            )),
+        self.mlir_bool_operand(&operand)
+    }
+}
+
+/// `template`, an `Origin` method's declared result origin, with the
+/// `Origin`'s own `_mlir_origin` binder `own` read as `base` and each cast
+/// mutability reading one of the method's binders as `bound` binds it.
+/// `None` for a template naming another binder.
+fn instantiate_origin_method(
+    template: &mojito_types::origin::Origin,
+    own: mojito_types::origin::OriginParamId,
+    base: &mojito_types::origin::Origin,
+    bound: &[(String, LitOriginMut)],
+) -> Option<mojito_types::origin::Origin> {
+    use mojito_types::origin::Origin;
+    match template {
+        Origin::Param(id) if *id == own => Some(base.clone()),
+        Origin::Param(_) | Origin::SelfParam | Origin::Projected(..) | Origin::Unbound => None,
+        Origin::MutCast(inner, mutability) => {
+            let mutability = match mutability {
+                LitOriginMut::Expr(read) => read
+                    .as_decl_ref()
+                    .and_then(|read| bound.iter().find(|(name, _)| **name == *read.name))
+                    .map(|(_, value)| value.clone())?,
+                known @ LitOriginMut::Known(_) => known.clone(),
+            };
+            Some(Origin::mut_cast(
+                instantiate_origin_method(inner, own, base, bound)?,
+                mutability,
+            ))
         }
+        Origin::Union(members) => members
+            .iter()
+            .map(|member| instantiate_origin_method(member, own, base, bound))
+            .collect::<Option<Vec<_>>>()
+            .map(Origin::union),
+        closed => Some(closed.clone()),
+    }
+}
+
+/// The shape of upstream's `#lit.origin.mutcast<base> : !lit.origin<m>`
+/// attribute, whitespace removed, its operands `{}` holes.
+const MUTCAST_ATTRIBUTE: &str = "#lit.origin.mutcast<{}>:!lit.origin<{}>";
+
+/// The `Origin` binder holding its raw `!lit.origin` attribute.
+const MLIR_ORIGIN_BINDER: &str = "_mlir_origin";
+
+/// A declared origin value's origin and closed mutability: a named origin
+/// is a closed value, which a symbolic cast mutability cannot give.
+fn closed_origin_value(
+    (origin, mutability): (mojito_types::origin::Origin, LitOriginMut),
+) -> Result<(mojito_types::origin::Origin, bool), TypeError> {
+    match mutability {
+        LitOriginMut::Known(mutable) => Ok((origin, mutable)),
+        LitOriginMut::Expr(_) => Err(TypeError::Unsupported(
+            "a declared origin value whose mutability is symbolic".to_string(),
+        )),
     }
 }
 

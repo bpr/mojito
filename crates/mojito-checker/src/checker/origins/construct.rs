@@ -324,7 +324,10 @@ impl Checker {
         match bound.or_else(|| self.decided_origin_mutability(origin)) {
             Some(Mutability::Mutable) => CtValue::Bool(true),
             Some(Mutability::Immutable) => CtValue::Bool(false),
-            Some(Mutability::Param(_)) | None => CtValue::Deferred(decl.binder()),
+            Some(Mutability::Param(_)) | None => origin.symbolic_cast_mutability().map_or_else(
+                || CtValue::Deferred(decl.binder()),
+                |read| CtValue::Expr(read.clone()),
+            ),
         }
     }
 
@@ -698,7 +701,7 @@ impl Checker {
             ParamDecl::Origin {
                 mutability: mojito_types::types::OriginMutability::Fixed(false),
                 ..
-            } => self.fold_immutable_origin_cast(&Origin::immutable(origin)),
+            } => self.fold_origin_mut_cast(&Origin::immutable(origin)),
             _ => origin,
         }
     }
@@ -1032,7 +1035,7 @@ fn tail_origin(origin: Origin) -> Origin {
     match origin {
         Origin::Place(_) | Origin::Projected(..) => origin.without_subtree(),
         Origin::Union(members) => Origin::union(members.into_iter().map(tail_origin)),
-        Origin::Immutable(inner) => Origin::immutable(tail_origin(*inner)),
+        Origin::MutCast(inner, mutability) => Origin::mut_cast(tail_origin(*inner), mutability),
         other => other,
     }
 }
@@ -1050,7 +1053,8 @@ fn origin_mutability(
         } else {
             Mutability::Immutable
         }),
-        Origin::Static | Origin::Immutable(_) => Some(Mutability::Immutable),
+        Origin::Static => Some(Mutability::Immutable),
+        Origin::MutCast(..) => origin.static_mutability().map(Mutability::of),
         Origin::Union(members) if !members.is_empty() => {
             let mut all = members
                 .iter()

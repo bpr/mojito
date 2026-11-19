@@ -7,7 +7,7 @@
 use super::*;
 use mojito_checked::checked::BracketBound as BoundAttribute;
 use mojito_types::origin::CallableEnvironment;
-use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
+use mojito_types::types::{FuncTy, GenericFuncTy, LitOriginMut, TransferSet};
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind, is_simd_length};
 
 /// Current Mojo treats a bare `def(...)` in a general type position (struct
@@ -4538,9 +4538,32 @@ impl Checker {
     ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
         use mojito_types::origin::{Mutability, Origin, PointerOrigin};
 
+        let static_cast = || {
+            TypeError::Unsupported(
+                "a writable cast of the static origin as a pointer's origin".into(),
+            )
+        };
         // `ImmOrigin(o)`: `o`'s provenance, read-only.
         if let Some(inner) = super::origins::immutable_origin_cast(expression) {
-            return self.pointer_origin_expr(inner?).map(immutable_capability);
+            return cast_capability(self.pointer_origin_expr(inner?)?, false)
+                .ok_or_else(static_cast);
+        }
+        // `o.unsafe_mut_cast[m]()`: `o`'s provenance at `m`, which a cast to
+        // the receiver's own `mut` leaves as it is.
+        if let Some(read) = self.origin_method_cast(expression)
+            && let Some(receiver) = super::origins::origin_method_receiver(expression)
+        {
+            let (cast, mutability) = read?;
+            let receiver = self.pointer_origin_expr(receiver)?;
+            return match (cast, mutability) {
+                (_, LitOriginMut::Known(mutable)) => {
+                    cast_capability(receiver, mutable).ok_or_else(static_cast)
+                }
+                (Origin::MutCast(..), LitOriginMut::Expr(_)) => Err(TypeError::Unsupported(
+                    "a pointer origin cast to a Bool other than its origin's own 'mut'".into(),
+                )),
+                (_, LitOriginMut::Expr(_)) => Ok(receiver),
+            };
         }
         if let Some((base, tag)) = super::origins::interior_origin_syntax(expression) {
             let origin = self.pointer_origin_expr(base)?;
@@ -5896,18 +5919,17 @@ fn subtree_is_terminal_error() -> TypeError {
     )
 }
 
-/// The same provenance with its capability pinned read-only: the
-/// resolution of the capability cast `ImmOrigin(o)` in a `Pointer` origin
-/// argument or an `unsafe_origin_cast` target.
-fn immutable_capability(
+/// The pointer provenance `origin` at the capability a mutability cast
+/// pins (`ImmOrigin(o)`, `o.unsafe_mut_cast[m]()`): the same storage, read
+/// only or writable. `None` for the static origin made writable, which no
+/// pointer provenance holds.
+fn cast_capability(
     origin: mojito_types::origin::PointerOrigin,
-) -> mojito_types::origin::PointerOrigin {
+    mutable: bool,
+) -> Option<mojito_types::origin::PointerOrigin> {
     use mojito_types::origin::{Mutability, PointerOrigin};
-    match origin {
-        PointerOrigin::Place { place, .. } => PointerOrigin::Place {
-            place,
-            mutable: false,
-        },
+    Some(match origin {
+        PointerOrigin::Place { place, .. } => PointerOrigin::Place { place, mutable },
         PointerOrigin::Param {
             id,
             interior,
@@ -5915,21 +5937,21 @@ fn immutable_capability(
             ..
         } => PointerOrigin::Param {
             id,
-            mutability: Mutability::Immutable,
+            mutability: Mutability::of(mutable),
             interior,
             subtree,
         },
         PointerOrigin::SelfPlace {
             interior, subtree, ..
         } => PointerOrigin::SelfPlace {
-            mutability: Mutability::Immutable,
+            mutability: Mutability::of(mutable),
             interior,
             subtree,
         },
-        PointerOrigin::Untracked { .. } => PointerOrigin::Untracked { mutable: false },
-        PointerOrigin::UnsafeAny { .. } => PointerOrigin::UnsafeAny { mutable: false },
-        PointerOrigin::Static => PointerOrigin::Static,
-    }
+        PointerOrigin::Untracked { .. } => PointerOrigin::Untracked { mutable },
+        PointerOrigin::UnsafeAny { .. } => PointerOrigin::UnsafeAny { mutable },
+        PointerOrigin::Static => return (!mutable).then_some(PointerOrigin::Static),
+    })
 }
 
 /// The struct `name` spelled bare as shown when it declares parameters:
@@ -5982,7 +6004,8 @@ fn immutable_slot_origin(
     let immutable_slot = declared_mutability(decl) == Some(false);
     if !immutable_slot
         || mutability == Some(Mutability::Immutable)
-        || matches!(origin, Origin::Unbound | Origin::Immutable(_))
+        || matches!(origin, Origin::Unbound)
+        || origin.is_immutable_cast()
     {
         return (origin, mutability);
     }
@@ -5999,15 +6022,24 @@ fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
     }
     match value {
         mojito_ast::ast::ParamArg::Type(mojito_ast::ast::Type::Named(_, targs)) => targs.is_empty(),
-        mojito_ast::ast::ParamArg::Value(expression) => {
-            matches!(
-                &expression.kind,
-                ExprKind::Call { name, .. } if name == "origin_of"
-            ) || matches!(
-                &expression.kind,
-                ExprKind::Identifier(_) | ExprKind::Member { .. } | ExprKind::Index { .. }
-            )
-        }
+        mojito_ast::ast::ParamArg::Value(expression) => match &expression.kind {
+            ExprKind::Call { name, .. } => name == "origin_of",
+            ExprKind::Identifier(_) | ExprKind::Member { .. } | ExprKind::Index { .. } => true,
+            // A method building an origin from an origin receiver
+            // (`o.unsafe_mut_cast[False]()`).
+            ExprKind::Invoke {
+                callee,
+                args,
+                kwargs,
+                ..
+            } if args.is_empty() && kwargs.is_empty() => match &callee.kind {
+                ExprKind::Member { object, .. } => {
+                    syntactic_origin_argument(&mojito_ast::ast::ParamArg::Value((**object).clone()))
+                }
+                _ => false,
+            },
+            _ => false,
+        },
         _ => false,
     }
 }

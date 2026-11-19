@@ -547,7 +547,9 @@ impl Checker {
                     self.record_origin_places(access, member, mutable);
                 }
             }
-            Origin::Immutable(inner) => self.record_origin_places(access, inner, Some(false)),
+            Origin::MutCast(inner, _) => {
+                self.record_origin_places(access, inner, origin.static_mutability().or(mutable));
+            }
             Origin::Param(_)
             | Origin::SelfParam
             | Origin::Projected(..)

@@ -1813,8 +1813,8 @@ impl Checker {
             return true;
         }
         if self.coerces_by_origins(
-            &self.fold_immutable_origin_casts(from),
-            &self.fold_immutable_origin_casts(to),
+            &self.fold_origin_mut_casts(from),
+            &self.fold_origin_mut_casts(to),
         ) {
             return true;
         }

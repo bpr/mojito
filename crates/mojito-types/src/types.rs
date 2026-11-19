@@ -6851,7 +6851,8 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
     })
 }
 
-/// [`rewrite_ty`] over a parameter-argument list. Origins pass through.
+/// [`rewrite_ty`] over a parameter-argument list. An origin's symbolic
+/// cast mutability is rewritten; the rest of an origin passes through.
 pub fn rewrite_tyargs(
     arguments: &[TyArg],
     rewrite: &mut dyn TyRewrite,
@@ -6862,7 +6863,9 @@ pub fn rewrite_tyargs(
             Ok(match argument {
                 TyArg::Ty(ty) => TyArg::Ty(rewrite_ty(ty, rewrite)?),
                 TyArg::Val(value) => TyArg::Val(rewrite_value(value, rewrite)?),
-                TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
+                TyArg::Origin(origin) => TyArg::Origin(
+                    origin.try_map_cast_mutability(&mut |mutability| rewrite.expr(mutability))?,
+                ),
             })
         })
         .collect()
@@ -7536,12 +7539,15 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
 }
 
 /// [`is_symbolic`] over one parameter argument, a closed application
-/// concrete when `keyed` ([`is_elaborated_symbolic`]); an origin never is.
+/// concrete when `keyed` ([`is_elaborated_symbolic`]); an origin is only
+/// through a symbolic cast mutability (`o.unsafe_mut_cast[m]()`).
 fn ty_arg_symbolic_in(argument: &TyArg, keyed: bool) -> bool {
     match argument {
         TyArg::Ty(ty) => symbolic_in(ty, keyed),
         TyArg::Val(value) => ct_value_symbolic_in(value, keyed),
-        TyArg::Origin(_) => false,
+        TyArg::Origin(origin) => {
+            origin.any_cast_mutability(&mut |mutability| mutability.as_bool().is_none())
+        }
     }
 }
 
@@ -7789,7 +7795,10 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
             CtValue::Type(ty) => mentions(ty, predicate),
             _ => false,
         }),
-        TyArg::Val(_) | TyArg::Origin(_) => false,
+        TyArg::Origin(origin) => {
+            origin.any_cast_mutability(&mut |mutability| expr_mentions(mutability, predicate))
+        }
+        TyArg::Val(_) => false,
     };
     match ty.kind() {
         TyKind::Struct(..) if skip_closed && ty.is_closed() => false,
@@ -7897,7 +7906,9 @@ fn argument_decorated(argument: &TyArg) -> bool {
     match argument {
         TyArg::Ty(ty) => ty.carries_decorations(),
         TyArg::Val(value) => value_decorated(value),
-        TyArg::Origin(_) => false,
+        TyArg::Origin(origin) => {
+            origin.any_cast_mutability(&mut |mutability| mutability.carries_decorations())
+        }
     }
 }
 
@@ -8463,7 +8474,10 @@ fn write_callable(
                         write!(f, "origin-union")?;
                     }
                     crate::origin::Origin::Unbound => write!(f, "_")?,
-                    crate::origin::Origin::Immutable(_) => write!(f, "imm-cast")?,
+                    crate::origin::Origin::MutCast(_, LitOriginMut::Known(false)) => {
+                        write!(f, "imm-cast")?;
+                    }
+                    crate::origin::Origin::MutCast(..) => write!(f, "mut-cast")?,
                     crate::origin::Origin::Projected(..) => write!(f, "origin-projected")?,
                     crate::origin::Origin::UnsafeAny { mutable: true } => {
                         write!(f, "mut-unsafe-any")?;

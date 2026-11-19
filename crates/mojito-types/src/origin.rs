@@ -6,6 +6,8 @@
 
 use std::cmp::Ordering;
 
+use crate::types::LitOriginMut;
+
 /// Stable identity of a value binding in one checker run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OwnerId(pub u32);
@@ -165,11 +167,13 @@ pub enum Origin {
     /// annotation position permits omission). Any origin coerces into it; it
     /// coerces into nothing concrete and designates no storage.
     Unbound,
-    /// Upstream's `ImmOrigin(o)` in a struct origin slot: the same storage
-    /// as `o`, as an `Origin[mut=False]` value, so the slot's infer-only
-    /// `mut` binds `False` and a `Pointer[T, Self.o]` member names it
-    /// immutably. Never nested, and never an immutable origin's cast.
-    Immutable(Box<Self>),
+    /// Upstream's `#lit.origin.mutcast<o> : !lit.origin<m>`, the origin
+    /// `o.unsafe_mut_cast[m]()` builds and `ImmOrigin(o)` is (at `m =
+    /// False`): the same storage as `o`, as an `Origin[mut=m]` value, so a
+    /// slot's infer-only `mut` binds `m` and a `Pointer[T, Self.o]` member
+    /// names it at `m`. Built only through [`Origin::mut_cast`], so never
+    /// nested and never a cast to the mutability its base already has.
+    MutCast(Box<Self>, LitOriginMut),
     /// Upstream's `#lit.interior.origin<…>` / `#lit.origin.subtree<…>` over
     /// an origin binder or the receiver (`o._get_owned_interior["tag"]`,
     /// `o._subtree`): `base` is `Param` or `SelfParam`, and the path is one
@@ -272,48 +276,128 @@ impl Origin {
         }
     }
 
-    /// The `ImmOrigin(origin)` cast of `origin`: an origin that is already
-    /// immutable (a cast, the static origin, an untracked or unsafe-any
-    /// immutable one) is its own cast, and an unbound slot stays unbound.
+    /// The `ImmOrigin(origin)` cast of `origin`, upstream's
+    /// `origin.unsafe_mut_cast[False]()` ([`Origin::mut_cast`]).
     #[must_use]
     pub fn immutable(origin: Self) -> Self {
-        match origin {
-            Self::Immutable(_)
-            | Self::Static
-            | Self::Unbound
-            | Self::Untracked { mutable: false }
-            | Self::UnsafeAny { mutable: false } => origin,
-            Self::Untracked { mutable: true } => Self::Untracked { mutable: false },
-            Self::UnsafeAny { mutable: true } => Self::UnsafeAny { mutable: false },
-            other => Self::Immutable(Box::new(other)),
+        Self::mut_cast(origin, LitOriginMut::Known(false))
+    }
+
+    /// Upstream's `origin.unsafe_mut_cast[mutability]()`, the
+    /// `#lit.origin.mutcast` attribute, canonical as the pin compares it: a
+    /// cast of a cast is the outer cast of the base, a known cast to the
+    /// mutability the origin already has is the origin itself, an untracked
+    /// or unsafe-any origin takes the flag, and an unbound slot stays
+    /// unbound.
+    #[must_use]
+    pub fn mut_cast(origin: Self, mutability: LitOriginMut) -> Self {
+        let origin = match origin {
+            Self::MutCast(base, _) => *base,
+            other => other,
+        };
+        match (origin, mutability) {
+            (Self::Unbound, _) => Self::Unbound,
+            (Self::Untracked { .. }, LitOriginMut::Known(mutable)) => Self::Untracked { mutable },
+            (Self::UnsafeAny { .. }, LitOriginMut::Known(mutable)) => Self::UnsafeAny { mutable },
+            (origin, LitOriginMut::Known(mutable))
+                if origin.static_mutability() == Some(mutable) =>
+            {
+                origin
+            }
+            (origin, mutability) => Self::MutCast(Box::new(origin), mutability),
         }
     }
 
     /// The `mut` an `Origin[mut=...]` binder bound to this origin takes when
-    /// the origin alone decides it: `false` for a cast, the static origin,
-    /// or an untracked immutable one, `true` for an untracked mutable one.
-    /// `None` where the storage it names (or a binder) decides it.
+    /// the origin alone decides it: a known cast's, `false` for the static
+    /// origin, and an untracked or unsafe-any origin's flag. `None` where
+    /// the storage it names (or a binder) decides it.
     pub const fn static_mutability(&self) -> Option<bool> {
         match self {
-            Self::Immutable(_) | Self::Static => Some(false),
-            Self::Untracked { mutable } | Self::UnsafeAny { mutable } => Some(*mutable),
+            Self::MutCast(_, LitOriginMut::Known(mutable))
+            | Self::Untracked { mutable }
+            | Self::UnsafeAny { mutable } => Some(*mutable),
+            Self::Static => Some(false),
             _ => None,
         }
     }
 
-    /// The storage this origin designates, below an `ImmOrigin(...)` cast.
+    /// The symbolic mutability a cast to a binder's `Bool` holds
+    /// (`o.unsafe_mut_cast[m]()`); `None` for any other origin.
+    #[must_use]
+    pub const fn symbolic_cast_mutability(&self) -> Option<&crate::param_expr::ParamExpr> {
+        match self {
+            Self::MutCast(_, LitOriginMut::Expr(mutability)) => Some(mutability),
+            _ => None,
+        }
+    }
+
+    /// Whether a symbolic cast mutability within this origin, through
+    /// unions and projections, satisfies `predicate`.
+    pub fn any_cast_mutability(
+        &self,
+        predicate: &mut dyn FnMut(&crate::param_expr::ParamExpr) -> bool,
+    ) -> bool {
+        match self {
+            Self::MutCast(base, mutability) => {
+                matches!(mutability, LitOriginMut::Expr(read) if predicate(read))
+                    || base.any_cast_mutability(predicate)
+            }
+            Self::Union(members) => members
+                .iter()
+                .any(|member| member.any_cast_mutability(predicate)),
+            Self::Projected(base, _) => base.any_cast_mutability(predicate),
+            _ => false,
+        }
+    }
+
+    /// This origin with each symbolic cast mutability rewritten by
+    /// `rewrite`, through unions and projections: a cast whose mutability
+    /// folds is canonical again ([`Origin::mut_cast`]).
+    pub fn try_map_cast_mutability(
+        &self,
+        rewrite: &mut dyn FnMut(
+            &crate::param_expr::ParamExpr,
+        ) -> Result<
+            crate::param_expr::ParamExpr,
+            crate::param_expr::ParamError,
+        >,
+    ) -> Result<Self, crate::param_expr::ParamError> {
+        if !self.any_cast_mutability(&mut |_| true) {
+            return Ok(self.clone());
+        }
+        Ok(match self {
+            Self::MutCast(base, mutability) => Self::mut_cast(
+                base.try_map_cast_mutability(rewrite)?,
+                mutability.try_map(&mut *rewrite)?,
+            ),
+            Self::Union(members) => Self::union(
+                members
+                    .iter()
+                    .map(|member| member.try_map_cast_mutability(rewrite))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Self::Projected(base, path) => Self::Projected(
+                Box::new(base.try_map_cast_mutability(rewrite)?),
+                path.clone(),
+            ),
+            other => other.clone(),
+        })
+    }
+
+    /// The storage this origin designates, below a mutability cast.
     #[must_use]
     pub fn uncast(&self) -> &Self {
         match self {
-            Self::Immutable(inner) => inner,
+            Self::MutCast(inner, _) => inner,
             other => other,
         }
     }
 
-    /// Whether this is an `ImmOrigin(...)` cast.
+    /// Whether this is an `ImmOrigin(...)` cast, one to `False`.
     #[must_use]
     pub const fn is_immutable_cast(&self) -> bool {
-        matches!(self, Self::Immutable(_))
+        matches!(self, Self::MutCast(_, LitOriginMut::Known(false)))
     }
 
     /// Whether a struct origin argument `self` satisfies the slot `expected`
@@ -325,12 +409,15 @@ impl Origin {
         if matches!(expected, Self::Unbound) || self == expected {
             return true;
         }
-        // An `ImmOrigin(...)` cast is a distinct origin value: it agrees
-        // only with another cast over agreeing storage. The checker folds a
-        // cast of storage that is already immutable before comparing.
+        // A mutability cast is a distinct origin value: it agrees only with
+        // a cast to the same mutability over agreeing storage. The checker
+        // folds a cast to the mutability its storage already has before
+        // comparing.
         match (self, expected) {
-            (Self::Immutable(actual), Self::Immutable(slot)) => return actual.coerces_to(slot),
-            (_, Self::Immutable(_)) => return false,
+            (Self::MutCast(actual, own), Self::MutCast(slot, mutability)) => {
+                return own == mutability && actual.coerces_to(slot);
+            }
+            (_, Self::MutCast(..)) => return false,
             _ => {}
         }
         match expected {
@@ -341,11 +428,9 @@ impl Origin {
                 let actual = self.without_subtree();
                 actual == *self && actual == expected.without_subtree()
             }
-            Self::Unbound
-            | Self::Param(_)
-            | Self::SelfParam
-            | Self::Static
-            | Self::Immutable(_) => false,
+            Self::Unbound | Self::Param(_) | Self::SelfParam | Self::Static | Self::MutCast(..) => {
+                false
+            }
             Self::Untracked { .. } | Self::UnsafeAny { .. } => !matches!(self, Self::Unbound),
             Self::Union(members) => match self {
                 Self::Unbound => false,
@@ -370,7 +455,9 @@ impl Origin {
                     .map(|member| member.substitute_params(origins))
                     .collect(),
             ),
-            Self::Immutable(inner) => Self::immutable(inner.substitute_params(origins)),
+            Self::MutCast(inner, mutability) => {
+                Self::mut_cast(inner.substitute_params(origins), mutability.clone())
+            }
             Self::Projected(base, path) => base.substitute_params(origins).reprojected(path),
             _ => self.clone(),
         }
@@ -437,7 +524,17 @@ impl std::fmt::Display for Origin {
                 Ok(())
             }
             Self::Static => write!(f, "ImmStaticOrigin"),
-            Self::Immutable(inner) => write!(f, "ImmOrigin({inner})"),
+            Self::MutCast(inner, LitOriginMut::Known(false)) => write!(f, "ImmOrigin({inner})"),
+            Self::MutCast(inner, LitOriginMut::Known(mutable)) => {
+                write!(
+                    f,
+                    "{inner}.unsafe_mut_cast[{}]()",
+                    if *mutable { "True" } else { "False" }
+                )
+            }
+            Self::MutCast(inner, LitOriginMut::Expr(mutability)) => {
+                write!(f, "{inner}.unsafe_mut_cast[{mutability}]()")
+            }
             Self::Projected(base, path) => {
                 write!(f, "{base}")?;
                 for segment in path {
@@ -799,7 +896,10 @@ impl PointerOrigin {
             Mutability::Param(_) => false,
         };
         match origin {
-            Origin::Immutable(inner) => Self::from_parts(*inner, Mutability::Immutable),
+            Origin::MutCast(inner, LitOriginMut::Known(mutable)) => {
+                Self::from_parts(*inner, Mutability::of(mutable))
+            }
+            Origin::MutCast(inner, LitOriginMut::Expr(_)) => Self::from_parts(*inner, mutability),
             Origin::Place(place) => match mutability {
                 Mutability::Mutable => Some(Self::Place {
                     place,
@@ -1133,8 +1233,8 @@ impl Origin {
     /// Whether two origins may designate overlapping storage.
     pub fn overlaps(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Immutable(left), right) => left.overlaps(right),
-            (left, Self::Immutable(right)) => left.overlaps(right),
+            (Self::MutCast(left, _), right) => left.overlaps(right),
+            (left, Self::MutCast(right, _)) => left.overlaps(right),
             (Self::Union(left), right) => left.iter().any(|item| item.overlaps(right)),
             (left, Self::Union(right)) => right.iter().any(|item| left.overlaps(item)),
             (Self::Place(left), Self::Place(right)) => places_overlap(left, right),
@@ -1215,7 +1315,9 @@ impl Origin {
                 .map(|member| member.project(segment))
                 .collect::<Option<Vec<_>>>()
                 .map(Self::union),
-            Self::Immutable(inner) => inner.project(segment).map(Self::immutable),
+            Self::MutCast(inner, mutability) => inner
+                .project(segment)
+                .map(|origin| Self::mut_cast(origin, mutability.clone())),
             Self::Static | Self::Untracked { .. } | Self::UnsafeAny { .. } | Self::Unbound => None,
         }
     }
@@ -1236,7 +1338,7 @@ fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
             Origin::Union(_) => 4,
             Origin::SelfParam => 5,
             Origin::Unbound => 6,
-            Origin::Immutable(_) => 7,
+            Origin::MutCast(..) => 7,
             Origin::Projected(..) => 8,
             Origin::UnsafeAny { .. } => 9,
         }
@@ -1251,7 +1353,9 @@ fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
             (Origin::Projected(a, a_path), Origin::Projected(b, b_path)) => {
                 cmp_origin(a, b).then_with(|| a_path.cmp(b_path))
             }
-            (Origin::Immutable(a), Origin::Immutable(b)) => cmp_origin(a, b),
+            (Origin::MutCast(a, a_mut), Origin::MutCast(b, b_mut)) => {
+                cmp_origin(a, b).then_with(|| cmp_lit_origin_mut(a_mut, b_mut))
+            }
             (Origin::Union(a), Origin::Union(b)) => a.len().cmp(&b.len()).then_with(|| {
                 a.iter()
                     .zip(b)
@@ -1261,6 +1365,15 @@ fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
             }),
             _ => Ordering::Equal,
         })
+}
+
+fn cmp_lit_origin_mut(left: &LitOriginMut, right: &LitOriginMut) -> Ordering {
+    match (left, right) {
+        (LitOriginMut::Known(a), LitOriginMut::Known(b)) => a.cmp(b),
+        (LitOriginMut::Known(_), LitOriginMut::Expr(_)) => Ordering::Less,
+        (LitOriginMut::Expr(_), LitOriginMut::Known(_)) => Ordering::Greater,
+        (LitOriginMut::Expr(a), LitOriginMut::Expr(b)) => a.to_string().cmp(&b.to_string()),
+    }
 }
 
 fn canonical_sig_origin(origin: SigOrigin) -> SigOrigin {
@@ -1326,6 +1439,36 @@ mod tests {
             root: OwnerId(root),
             path: path.to_vec(),
         })
+    }
+
+    /// `unsafe_mut_cast` is canonical as the pin compares casts: the outer
+    /// cast of a cast wins, a cast to the origin's own mutability is the
+    /// origin, and an untracked origin takes the flag.
+    #[test]
+    fn mut_cast_canonicalizes() {
+        let known = LitOriginMut::Known;
+        let x = place(1, &[]);
+        let imm = Origin::mut_cast(x.clone(), known(false));
+        assert_eq!(imm, Origin::immutable(x.clone()));
+        assert!(imm.is_immutable_cast());
+        let flipped = Origin::mut_cast(imm.clone(), known(true));
+        assert_eq!(flipped, Origin::MutCast(Box::new(x.clone()), known(true)));
+        assert_eq!(flipped.static_mutability(), Some(true));
+        assert_eq!(Origin::mut_cast(imm.clone(), known(false)), imm);
+        assert!(!flipped.coerces_to(&imm) && !imm.coerces_to(&flipped));
+        assert_eq!(
+            Origin::mut_cast(Origin::Static, known(false)),
+            Origin::Static
+        );
+        assert_eq!(
+            Origin::mut_cast(Origin::Untracked { mutable: true }, known(false)),
+            Origin::Untracked { mutable: false }
+        );
+        assert_eq!(
+            Origin::mut_cast(Origin::Unbound, known(true)),
+            Origin::Unbound
+        );
+        assert_eq!(flipped.to_string(), format!("{x}.unsafe_mut_cast[True]()"));
     }
 
     #[test]

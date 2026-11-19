@@ -2449,6 +2449,20 @@ fn syntactic_origin_argument(
         ExprKind::Call { name, .. } => {
             matches!(name.as_str(), "origin_of" | "ImmOrigin" | "MutOrigin")
         }
+        // A method building an origin from an origin receiver
+        // (`o.unsafe_mut_cast[False]()`); the check rejects one whose
+        // result is no origin.
+        ExprKind::Invoke {
+            callee,
+            args,
+            kwargs,
+            ..
+        } if args.is_empty() && kwargs.is_empty() => match &callee.kind {
+            ExprKind::Member { object, .. } => {
+                syntactic_origin_argument(&ParamArg::Value((**object).clone()), type_bounds)
+            }
+            _ => false,
+        },
         // A generic named origin's application (`UntrackedOrigin[mut=True]`).
         _ => value.bracket_application().is_some_and(|(name, _)| {
             matches!(name, "UntrackedOrigin" | "AnyOrigin" | "UnsafeAnyOrigin")

@@ -494,7 +494,7 @@ fn names_a_place(ty: &Ty) -> bool {
         match origin {
             Origin::Place(_) => true,
             Origin::Union(origins) => origins.iter().any(place),
-            Origin::Immutable(inner) => place(inner),
+            Origin::MutCast(inner, _) => place(inner),
             _ => false,
         }
     }
