@@ -803,6 +803,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Seven MIR pass test inputs (`inline-parametric/destructor_drop`,
+  `destructor_arm_entry_inlined`, `field_destructor_place`,
+  `owned_param_dropped`, `read_through_reference_register`,
+  `tuple_reverse_closed`, and `sroa/destructor_call_kept`) now destroy a
+  memory-only value through the `ref.make` of its slot, as
+  `elaborate-drops` emits it, and load again under R1873's verifier rule
+  (R2045).
+
 - A store or augmented store through a reference-returning `__getitem__`
   whose index parameter is taken by address (`a[Int8(2)] = 6`,
   `l[Int32(0)] += 1` over `Some[Indexer]`) now passes the index's

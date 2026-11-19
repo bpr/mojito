@@ -9840,32 +9840,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2045 Seven MIR pass test inputs destroy a memory-only value
-  through a `deinit` receiver register and fail at load**
-
-  The MIR verifier rejects a `deinit` receiver call that destroys a
-  memory-only register (R1873), forwarded receivers included since R2273,
-  as upstream destroys such a value through its storage (`DeinitMem`).
-  These inputs predate that rule, so `tests/mir_pass_test.rs` fails before
-  the pass runs.
-  - `inline-parametric/destructor_drop.mir` and
-    `destructor_arm_entry_inlined.mir` (`D[n]`),
-    `field_destructor_place.mir` (`S[3]`, `S[2]`),
-    `owned_param_dropped.mir` (`Token`),
-    `read_through_reference_register.mir` (`Res`), and
-    `tuple_reverse_closed.mir` (`_ZeroStartingRange[DType.int]`, in
-    `$comptime$Tuple.__deinit__$c0` and `$comptime$Tuple.reverse$c0`).
-  - `sroa/destructor_call_kept.mir` (`S`).
-  - Fix: pass the receiver as a `ref.make` of the slot that holds it, as
-    `elaborate-drops` now emits a memory-only slot's drop, or re-emit the
-    input with `emit-mir`, then re-bless and check each expectation still
-    shows what its case is about.
-  - Probe: `mojito opt tests/mir_passes/sroa/destructor_call_kept.mir`
-    reports "call.method deinit receiver destroys %r13 of memory-only type
-    S".
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2046 With the library linked from source, a compile-time call
   passing a `String` to a `ref` parameter reads an unresolved value**
 
