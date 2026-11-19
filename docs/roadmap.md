@@ -10686,10 +10686,18 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   where the pin prints `True`.
   - A call infers the origin from its argument's place but binds the
     `mut=` binder no attribute, so no specialization has its value.
-  - The lever: the call records the inferred origin's mutability as the
-    binder's parameter attribute, by its declaration (R2124), and the body
-    declares the binder like any value binder (`scopes.rs` skips it).
-  - Depends on R2124, R2126.
+  - The body reads the argument view: `def_signature_in_scope`
+    (`checker/statements.rs`) hands the body `ParamDecl::argument_decls`,
+    which drops the binder, so widening `declare_value_parameters`
+    (`scopes.rs`) alone changes nothing.
+  - A lowered call's `param_decls`, the verifier, and the elaborator's
+    specializer align with the argument view, so the call has no slot to
+    carry the attribute until R2345 binds the whole declared list.
+  - The lever: once R2345 lands, the call records the inferred origin's
+    mutability (the value a `where` clause already reads) as the binder's
+    attribute, by its declaration, and the body declares the binder like
+    any value binder.
+  - Depends on R2124, R2126, R2345.
   - Model: Opus, Not Planned.
 
 - [ ] **R762 A struct instance's origin arguments are a tail after its
