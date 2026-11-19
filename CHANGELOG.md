@@ -1443,6 +1443,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- R2348, binding a call's bracket against its callee's whole declared list,
+  is split by cause: an origin-only function's non-generic type (R2351), the
+  signature rewrite an explicit origin argument does before binding (R2352),
+  a method bracket's rejection of an origin argument (R2353), and a
+  synthesized construction's missing bracket binding (R2354).
+
 - A free call's explicit origin argument is now recorded by its origin
   binder's declaration, in that binder's slot of the callee's whole
   declared list, as upstream's binder fills the op's list

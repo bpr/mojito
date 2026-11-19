@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2351**.
+Next free ID: **R2355**.
 
 ## Ordered Work
 
@@ -10627,6 +10627,79 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2351 A function whose only compile-time parameters are origins
+  has a non-generic type, where upstream's function with any parameter is
+  a generator over its declared list**
+
+  Such a callee is a `TyKind::Func` holding no declared list, so no
+  bracket binder sees its bracket; `prepare_callable_specialization`
+  (`checker/generics.rs`) binds it from the side table
+  `CallableOriginSignature::source` instead.
+  - Probe: `infer_callable_ty`'s `TyKind::Func` arm
+    (`checker/call_inference.rs`) rejects any bracket, so a call reaches
+    it only after the split has emptied the bracket.
+  - Probe: `declared_list` (`checker/call_inference.rs`) is empty for
+    such a callee, so `CallableSpecialization::declared`
+    (`checker/type_resolution.rs`) falls back to the source list's slots.
+  - The lever: give such a function a `GenericFunc` type over its whole
+    declared list, so every free call with a bracket reaches
+    `infer_generic_call`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2352 An explicit origin argument rewrites its callee's signature
+  before the bracket binds, where upstream substitutes the bound
+  declared list into the signature after binding**
+
+  `bind_callable_origins` and `bind_callable_origin_tails`
+  (`checker/generics.rs`) rebind the callee type's `ref_params`,
+  `ref_return`, and parameter-type origin tails from the slots
+  `CallableOriginSignature::origins` lists, before
+  `resolve_explicit_use_params` (`checker/declarations.rs`) runs on the
+  bracket with the origin arguments taken out.
+  - The lever: have `resolve_explicit_use_params` bind an origin
+    argument in its binder's declared slot and return the bound origin
+    in `BoundParameters`, and have the call substitute it into the
+    signature as it substitutes solved types.
+  - Then `split_callable_specialization`, `CallableSpecialization`, and
+    `CallableOriginSignature::{origins, source}` go.
+  - Depends on R2351.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2353 A method call's bracket cannot take an origin argument**
+
+  `s.get[origin_of(a)](Pointer(to=a))` over `def get[o: ImmOrigin](self,
+  p: Pointer[Int, o]) -> Int` is rejected ("no overload matches the
+  supplied arguments"), where upstream binds `o` from the bracket.
+  - `instantiate_method_generics` (`checker/generics.rs`) binds the
+    bracket against `MethodSig::decls`, the argument view, and has no
+    split, so an origin argument lands in no binder.
+  - Probe: `checked_parameter_arguments`
+    (`method_calls/call_contract.rs`) drops an origin argument, so a
+    method or subscript call's lowered call names no origin binder's
+    slot, where a free call's does.
+  - The lever: bind a method bracket against `MethodSig::declared`
+    through R2352's whole-list binder, and record the origin argument in
+    its binder's slot.
+  - Depends on R2352.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2354 A construction the check synthesizes records no bracket
+  binding, so its parameters name no declaration**
+
+  A construction synthesized at struct level over `struct
+  EntryIter[m: Bool, //, o: Origin[mut=m]]`
+  (`assets/ok/pointer_field_wrapper_iterator_protocol.mojo`) holds its
+  `m=` and origin arguments in parameters whose
+  `CheckedParameter::declaration` is `None`.
+  - `checked.rs`'s parameter builder places a bracket argument by the
+    `BracketBinding` recorded at the node's span, and the synthesized
+    node's span has none, so each argument falls to the unplaced tail.
+  - The lever: record the binder's `DeclaredAttributes` at the
+    synthesized construction's span, as a source construction does.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2348 A call's bracket binder sees its callee's argument view,
   where upstream's binds the whole declared list, origin parameters in
   place**
@@ -10641,20 +10714,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `GenericFuncTy::argument_view`, `MethodSig::decls`, and
     `Ty::generator_params` are the views each call path, a method's and a
     `#kgen.bind_params` included, binds against.
-  - Probe: a method or subscript call's
-    `CheckedCallContract::parameter_arguments` follows the argument view
-    and drops an origin argument (`checked_parameter_arguments`,
-    `method_calls/call_contract.rs`), so its lowered call names no origin
-    binder's slot, where a free call's does.
-  - Probe: a construction the check synthesizes at struct level over
-    `struct EntryIter[m: Bool, //, o: Origin[mut=m]]`
-    (`assets/ok/pointer_field_wrapper_iterator_protocol.mojo`) holds its
-    `m=` and origin arguments in parameters naming no declaration
-    (`CheckedParameter::declaration` is `None`), so a binder over the
-    whole list would bind them nothing.
+  - The method-call, origin-only-callee, signature-rewrite, and
+    synthesized-construction causes are R2353, R2351, R2352, and R2354;
+    once they land, what remains is `Ty::generator_params`'
+    `#kgen.bind_params` view and the split's deletion.
   - The lever: bind the bracket against the whole declared list, an
     origin argument in its binder's slot, and delete the split.
-  - Depends on nothing.
+  - Depends on R2351, R2352, R2353, R2354.
   - Model: Opus, Not Planned.
 
 - [ ] **R2350 A call's solved arguments bind its callee's argument view,
