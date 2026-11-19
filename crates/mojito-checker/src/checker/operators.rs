@@ -1229,6 +1229,7 @@ impl Checker {
                 Some(pointer)
             }
         };
+        let bracket_origin = bracket.as_ref().map(|(_, origin)| origin.clone());
         let operand = self.infer(value)?;
         let (element, origin) = match (operand.kind(), bracket) {
             (TyKind::LitRef { element, origin }, None) => (element.clone(), origin.clone()),
@@ -1269,6 +1270,14 @@ impl Checker {
                 });
             }
         };
+        if let Some(bracket_origin) = bracket_origin {
+            let attributes = super::type_resolution::pointer_construction_attributes(
+                param_args,
+                &element,
+                &bracket_origin,
+            )?;
+            self.record_declared_attributes(span.clone(), &attributes);
+        }
         self.record_pointer_adjustment(
             span,
             SemanticAdjustment::PointerConvert {

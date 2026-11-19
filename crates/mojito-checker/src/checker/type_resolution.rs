@@ -237,6 +237,32 @@ pub(super) fn tyarg_is_symbolic(argument: &TyArg) -> bool {
     }
 }
 
+/// The binding upstream's `Pointer` binder makes of construction bracket
+/// `args` (`Pointer[origin=o](_mlir_value=k)`) once the construction bound
+/// element `element` and origin `origin`: each argument keyed by its
+/// declaration of `Pointer[mut: Bool, //, T, origin, *, address_space]`,
+/// as a declared struct's construction records its bracket.
+pub(super) fn pointer_construction_attributes(
+    args: &[mojito_ast::ast::ParamArg],
+    element: &Ty,
+    origin: &mojito_types::origin::PointerOrigin,
+) -> Result<DeclaredAttributes, TypeError> {
+    let keywords = mojito_ast::call::bracket_keywords(args);
+    let slots = mojito_ast::call::match_parameter_slots(POINTER_PARAMS, &keywords)
+        .map_err(|error| error.into_type_error("Pointer"))?;
+    let attributes = args
+        .iter()
+        .zip(slots)
+        .map(|(argument, index)| match POINTER_PARAMS[index].name {
+            "T" => bracket_attribute(argument, &TyArg::Ty(element.clone())),
+            "origin" => pointer_origin_attribute(origin)
+                .and_then(|bound| bracket_attribute(argument, &TyArg::Origin(bound))),
+            _ => None,
+        })
+        .collect();
+    DeclaredAttributes::of_builtin("Pointer", POINTER_PARAMS, args, attributes)
+}
+
 /// The attribute bracket argument `argument` carries once binding resolved
 /// it to `bound`: a type-shaped argument always has one, and a
 /// value-shaped one only when it bound to a type or an origin, a run-time

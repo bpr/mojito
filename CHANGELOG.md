@@ -803,6 +803,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `Pointer[T, o](_mlir_value=k)` construction now records its bracket's
+  binding, each argument keyed by `Pointer`'s declared `T` or `origin`, as
+  a declared struct's construction does, where each argument named no
+  declaration. This covers the construction the check spells for
+  `__get_address_as_owned_value(k)`; other checker-typed brackets remain
+  R2131 (R2354).
+
 - A method call's bracket now binds an explicit origin argument
   (`s.get[origin_of(a)](Pointer(to=a))` over `def get[o: ImmOrigin](self,
   p: Pointer[Int, o])`) in its binder's slot of the method's whole declared

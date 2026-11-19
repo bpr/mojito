@@ -10504,6 +10504,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     parameter list, as any struct's.
   - Probe: the `LIST_PARAMS`, `SET_PARAMS`, `DICT_PARAMS`, `PACK_PARAMS`,
     `POINTER_PARAMS`, `FIXED_POINTER_PARAMS`, and `SIMD_PARAMS` tables.
+  - Probe: `pointer_construction_attributes` keys a `Pointer[...]
+    (_mlir_value=k)` construction's bracket by `POINTER_PARAMS`.
   - Probe: `Variant`'s `isa[T]`, `unsafe_get`, `set`, `unwrap`, and
     `replace` key by `T_PARAMS`/`VARIANT_REPLACE_PARAMS`
     (`checker/inference.rs`), not the bundled methods' lists.
@@ -10555,6 +10557,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `r.field_ref[i](this)` (`checker/reflection.rs`),
     `materialize[names[i]]()`, and an element invocation (`Self.Ts[i]()`,
     `objs[0](3)`).
+  - Probe: `TypeList[Trait=AnyType, T._union_case_types]()`
+    (`std/format/__init__.mojo`), a builtin construction.
+  - Not a gap: `Pointer[T, o](_mlir_value=k)` records its binding
+    (`pointer_construction_attributes`, `checker/type_resolution.rs`).
   - Probe: a call in a `comptime` member's body, `_max_finite[Self.dtype]()`
     (`SIMD.MAX_FINITE`) and `_get_kgen_string[s]()` (`StringLiteral._from`).
   - Not a gap: an `__mlir_op`'s bracket is its op's named attributes, which
@@ -10687,22 +10693,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     origins, and delete `CallableOriginSignature::origins`.
   - Found while landing R2352 (2026-11-19).
   - Depends on R2346.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2354 A construction the check synthesizes records no bracket
-  binding, so its parameters name no declaration**
-
-  A construction synthesized at struct level over `struct
-  EntryIter[m: Bool, //, o: Origin[mut=m]]`
-  (`assets/ok/pointer_field_wrapper_iterator_protocol.mojo`) holds its
-  `m=` and origin arguments in parameters whose
-  `CheckedParameter::declaration` is `None`.
-  - `checked.rs`'s parameter builder places a bracket argument by the
-    `BracketBinding` recorded at the node's span, and the synthesized
-    node's span has none, so each argument falls to the unplaced tail.
-  - The lever: record the binder's `DeclaredAttributes` at the
-    synthesized construction's span, as a source construction does.
-  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R2348 A call's bracket binder sees its callee's argument view,
