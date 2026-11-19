@@ -1046,6 +1046,10 @@ impl Checker {
             if decl.is_argument_binder(decls) {
                 continue;
             }
+            // A `_` leaves its binder to the call's arguments.
+            let arguments = arguments
+                .iter()
+                .filter(|(_, argument)| mojito_ast::call::unbound_marker(argument).is_none());
             for &(position, argument) in arguments {
                 match decl {
                     ParamDecl::Origin {
@@ -1542,6 +1546,7 @@ impl Checker {
         // the signature; then the method's remaining origin binders bind
         // from the arguments before its type parameters solve.
         let explicit = self.explicit_type_args(name, &signature.declared, param_args)?;
+        reject_unbound_method_origin(name, &signature.declared, param_args)?;
         let bracket_origins: HashMap<_, _> = explicit
             .origins()
             .iter()
@@ -2072,8 +2077,11 @@ impl Checker {
         }))
     }
     /// Bind a method's own origin binders from the arguments filling the
-    /// slots that name them, through the free call's one pre-solve. A call
-    /// whose arguments match no slot binds nothing: scoring reports it.
+    /// slots that name them, in a pass before the method's solve
+    /// ([`Self::substitute_callee_pointer_origins`]), as a function value's
+    /// call binds them: the method's declared origin binders are numbered
+    /// apart from its signature's. A call whose arguments match no slot
+    /// binds nothing: scoring reports it.
     fn bind_method_origins(
         &self,
         name: &str,
@@ -2393,4 +2401,31 @@ fn owner_value_bindings(
     let mut bindings = mojito_types::param_expr::ParamBindings::new();
     bindings.bind_value_arguments(&context, decls, targs);
     bindings
+}
+
+/// Reject a `_` a method call's bracket `param_args` spells for an origin
+/// binder of the method's declared list `decls`: a method's origin binders
+/// still bind from its arguments before its one solve, under the
+/// signature's numbering rather than their declared slots', so the slot has
+/// no inferred origin to record as its attribute.
+fn reject_unbound_method_origin(
+    name: &str,
+    decls: &[ParamDecl],
+    param_args: &[mojito_ast::ast::ParamArg],
+) -> Result<(), TypeError> {
+    let Ok(unbound) = mojito_ast::call::bracket_unbound_slots(decls, param_args) else {
+        return Ok(());
+    };
+    match decls
+        .iter()
+        .zip(&unbound.open)
+        .find(|(decl, open)| open.is_some() && matches!(decl, ParamDecl::Origin { .. }))
+    {
+        Some((decl, _)) => Err(TypeError::Unsupported(format!(
+            "a '_' for the origin parameter '{}' of method '{name}' is not inferred from the \
+             call's arguments yet",
+            decl.name()
+        ))),
+        None => Ok(()),
+    }
 }

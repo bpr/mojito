@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2359**.
+Next free ID: **R2360**.
 
 ## Ordered Work
 
@@ -10671,6 +10671,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     list, and let a runtime parameter declare a parametric function type
     that leaves only origins unbound (`is_unbound_parametric_function`),
     as a reference to such a `def` is already a runtime closure.
+  - Probe: a call of a function value whose open parameters are only
+    origin binders (`var g = first`, or the partial binding `comptime
+    plus_six = first[_, 6]`) reaches the concrete call path, whose
+    `Func` names binders no declared list declares, so
+    `substitute_callee_pointer_origins` (`checker/call_inference.rs`)
+    binds every origin its parameters name in a pass before the
+    arguments check. With a `GenericFunc` type the call binds them in
+    `resolve_call_params`'s one solve, as a named `def`'s does, and the
+    pass goes.
   - Found while landing R2351 (2026-11-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10741,26 +10750,35 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The lever: record each origin binder's solved origin and each `mut=`
     binder's value in the instantiation, in declared order, and have each
     reader bind the whole list.
-  - Depends on R2346.
+  - Depends on R2346, R2359.
   - Model: Opus, Not Planned.
 
-- [ ] **R2346 A call infers its callee's origin binders in a pass before
-  the type-parameter solve, where upstream infers them together**
+- [ ] **R2359 A method's declared origin binder numbers its slot in the
+  method's own list, while its signature numbers it past its struct's
+  parameters**
 
-  `substitute_callee_pointer_origins` and `bind_generic_callee_origins`
-  (`checker/call_inference.rs`) bind the callee's own origin binders from
-  its argument types before `resolve_explicit_use_params` solves the
-  rest, on every call path.
-  - Probe: a `_` in a call's bracket for an origin binder (`first[_,
-    7](Pointer(to=y))` over `def first[o: ImmOrigin, n: Int](p:
-    Pointer[Int, o])`) is rejected ("found '_', which names no in-scope
-    Origin parameter"), where the pin prints `9`: the bracket's binder
-    has no inferred origin to record as the slot's attribute. The
-    partial binding `comptime k = first[_, 6]` binds.
-  - The lever: have the one solver bind the declared list's origin
-    binders from places beside its type and value binders, and delete the
-    pre-pass and `CalleeOriginArguments::own_binders`.
-  - Depends on R2348.
+  `ParamDecl::Origin::origin` of an ordinary method's binder is its index
+  in the method's list, but `enclosing_origin_type_param` resolves the
+  signature's `Origin::Param` past `StructInfo::method_origin_binders`,
+  so a method call cannot bind its declared origin binders in
+  `resolve_call_params` (`checker/call_inference.rs`) as a free call
+  does.
+  - Probe: `s.get[_, 5](Pointer(to=a))` over `def get[o: ImmOrigin, n:
+    Int](self, p: Pointer[Int, o])` is rejected
+    (`reject_unbound_method_origin`, `checker/generics.rs`), where the
+    pin prints `16`.
+  - Probe: on a struct with a parameter (`struct G[T: ...]`),
+    `g.view[origin_of(a)](Pointer(to=b))` over `def view[o:
+    ImmOrigin](self, p: Pointer[Int, o]) -> Pointer[Int, o]` is
+    accepted, because the bracket's origin binds the declared id the
+    signature does not name, where the pin rejects it as `S.view` already
+    is.
+  - The lever: number a method's declared origin binders as its signature
+    does, have `instantiate_method_generics` bind them in
+    `resolve_call_params`, and delete `bind_method_origins`,
+    `CalleeOriginArguments::own_binders`, and `CalleeBinders::From`.
+  - Found while landing R2346 (2026-11-19).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R2128 A function's origin mutability binder has no value in its

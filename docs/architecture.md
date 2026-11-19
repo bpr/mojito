@@ -1263,11 +1263,18 @@ binder's (`bind_bracket_params`, which `resolve_explicit_use_params` runs
 over that list: `bound_bracket_origins` binds the origin arguments, the
 argument view's binders solve to the call's arguments, and the bound
 origins `BoundParameters::origins` returns are substituted into the call's
-or value's signature through `bind_bracket_origins`; a method call's bracket binds
+or value's signature through `bind_bracket_origins`, a `_` leaving its
+origin binder to the call's one solve, `resolve_call_params`, which binds
+the declared list's open origin binders from the places its arguments lend
+(`bind_callee_origins` over `CalleeBinders::Declared`) beside its type and
+value binders and records each such `_`'s attribute as the origin it bound;
+a method call's bracket binds
 its method's whole declared list (`MethodSig::declared`) the same way in
 `instantiate_method_generics`, which substitutes the bound origins into the
 method's parameters and result through `bind_origin_tails` before the
-remaining origin binders bind from the arguments); a compiler builtin's binder
+remaining origin binders bind from the arguments in a pass before its solve,
+under the signature's numbering, past the struct's parameters (R2359)); a
+compiler builtin's binder
 (`applied_type`'s collection, pointer, `SIMD`, and storage types,
 `external_call`, `reflect`, the `Variant` storage methods, the
 one-type-argument trait tests) keys its arguments the same way, by the

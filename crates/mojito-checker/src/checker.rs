@@ -2209,7 +2209,7 @@ impl Checker {
                     &sig.names,
                     std::slice::from_ref(&parameter),
                     &[(0, from)],
-                    own_origins_from,
+                    origins::CalleeBinders::From(own_origins_from),
                 )
                 .ok()?;
                 let parameter = origins.substitute(&parameter);

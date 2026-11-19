@@ -19,9 +19,34 @@ use mojito_types::types::TyKind;
 pub(in crate::checker) struct ConstructorOriginBindings {
     pub(in crate::checker) pointers: HashMap<OriginParamId, PointerOrigin>,
     pub(in crate::checker) origins: HashMap<OriginParamId, Origin>,
-    /// The first binder this binding binds: a method's own binders follow
-    /// its struct's, which its receiver or construction binds instead.
-    own_from: u32,
+    /// The binders this binding binds: a method's own binders follow its
+    /// struct's, which its receiver or construction binds instead.
+    binders: CalleeBinders,
+}
+
+/// The origin binders a callee's call binds from its arguments: every one
+/// numbered from a first (a method's follow its struct's), or exactly those
+/// a declared list declares.
+#[derive(Clone)]
+pub(in crate::checker) enum CalleeBinders {
+    From(u32),
+    Declared(Vec<OriginParamId>),
+}
+
+impl Default for CalleeBinders {
+    fn default() -> Self {
+        Self::From(0)
+    }
+}
+
+impl CalleeBinders {
+    /// Whether the call binds the binder `id`.
+    pub(in crate::checker) fn binds(&self, id: OriginParamId) -> bool {
+        match self {
+            Self::From(first) => id.0 >= *first,
+            Self::Declared(declared) => declared.contains(&id),
+        }
+    }
 }
 
 impl ConstructorOriginBindings {
@@ -169,7 +194,7 @@ impl ConstructorOriginBindings {
         provenance: &PointerOrigin,
         conflict: impl Fn() -> TypeError,
     ) -> Result<(), TypeError> {
-        if id.0 < self.own_from {
+        if !self.binders.binds(id) {
             return Ok(());
         }
         match self.pointers.get(&id) {
@@ -198,7 +223,7 @@ impl ConstructorOriginBindings {
         origin: &Origin,
         conflict: impl Fn() -> TypeError,
     ) -> Result<(), TypeError> {
-        if matches!(origin, Origin::Unbound) || id.0 < self.own_from {
+        if matches!(origin, Origin::Unbound) || !self.binders.binds(id) {
             return Ok(());
         }
         let origin = tail_origin(origin.clone());
@@ -407,12 +432,12 @@ impl Checker {
         names: &[String],
         params: &[Ty],
         bound: &[(usize, &Ty)],
-        own_from: u32,
+        binders: CalleeBinders,
     ) -> Result<ConstructorOriginBindings, TypeError> {
         let mut bindings = ConstructorOriginBindings {
-            pointers: Self::bind_callable_pointer_origins(callee, names, params, bound, own_from)?,
+            pointers: Self::bind_callable_pointer_origins(callee, names, params, bound, &binders)?,
             origins: HashMap::new(),
-            own_from,
+            binders,
         };
         for (id, provenance) in &bindings.pointers {
             if let Some(origin) = provenance
@@ -441,13 +466,13 @@ impl Checker {
     /// binds `o` to `x`'s provenance). A `MutOrigin` binder rejects an
     /// immutable-origin actual; a projected binder is checked by coercion,
     /// not bound. `bound` pairs a parameter index with the actual type; a
-    /// binder below `own_from` is an enclosing struct's, left alone.
+    /// binder `binders` does not bind is an enclosing struct's, left alone.
     pub(in crate::checker) fn bind_callable_pointer_origins(
         callee: &str,
         names: &[String],
         params: &[Ty],
         bound: &[(usize, &Ty)],
-        own_from: u32,
+        binders: &CalleeBinders,
     ) -> Result<HashMap<OriginParamId, PointerOrigin>, TypeError> {
         let mut bindings: HashMap<OriginParamId, PointerOrigin> = HashMap::new();
         for (index, actual) in bound {
@@ -471,7 +496,7 @@ impl Checker {
             else {
                 continue;
             };
-            if id.0 < own_from {
+            if !binders.binds(id) {
                 continue;
             }
             let parameter = names.get(*index).map_or("?", String::as_str);

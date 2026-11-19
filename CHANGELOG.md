@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic call now binds its callee's origin binders in the same solve as
+  its type and value parameters, keyed by its declared list, where a pass
+  bound them from the arguments first. A `_` in the call's bracket for an
+  origin binder now leaves it to that solve, so `first[_, 7](Pointer(to=y))`
+  over `def first[o: ImmOrigin, n: Int](p: Pointer[Int, o])` prints `9`, and
+  one no argument's place binds is rejected ("failed to infer parameter
+  'o'"), as at the pin
+  (`assets/ok/function_bracket_unbound_origin_inferred.mojo`,
+  `assets/type_error/function_bracket_unbound_origin_uninferred.mojo`,
+  R2346).
+
 - A call's bracket now binds its callee's whole declared list in one pass,
   each origin argument in its origin binder's slot, where the origin
   arguments were split off and the rest bound against the argument view.
