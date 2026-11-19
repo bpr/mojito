@@ -14,7 +14,7 @@ pub(in crate::checker) fn validate_origin_signature(
     decls: &[ParamDecl],
     params: &[mojito_ast::ast::FnParam],
     self_origin: Option<&mojito_ast::ast::OriginSpec>,
-    values: OriginValues<'_>,
+    values: &dyn OriginDecls,
 ) -> Result<(), TypeError> {
     let origin_params: HashSet<&str> = decls
         .iter()

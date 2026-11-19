@@ -1630,9 +1630,7 @@ impl Checker {
     ) -> Result<mojito_types::origin::RefSig, TypeError> {
         use mojito_types::origin::{Mutability, RefSig, SigMutability, SigOrigin};
 
-        if let Ok(signature) =
-            lower_ref_sig(spec, decls, params, 0, &|expr| self.origin_value_of(expr))
-        {
+        if let Ok(signature) = lower_ref_sig(spec, decls, params, 0, self) {
             return Ok(signature);
         }
         let mut members = Vec::new();

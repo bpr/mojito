@@ -7801,9 +7801,28 @@ fn immutable_origin_cast_pins_reference_results_read_only() {
 }
 
 #[test]
-fn origin_cast_cannot_upgrade_capability() {
-    let src = "@fieldwise_init\nstruct It[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    def first(self) -> ref[MutOrigin(Self.o)] Int:\n        return self.src[0]\n\ndef main():\n    print(1)\n";
-    assert!(matches!(err(src), TypeError::Unsupported(_)));
+fn origin_conversion_to_a_mutable_origin_matches_no_initializer() {
+    // `Origin` declares only the `@implicit` conversion to `ImmOrigin`, so
+    // `MutOrigin(o)` matches no initializer, in a `ref` clause and in a
+    // struct's origin slot alike, as at the pin.
+    let reference = "@fieldwise_init\nstruct It[m: Bool, //, o: Origin[mut=m]]:\n    var src: ref[o] List[Int]\n    def first(self) -> ref[MutOrigin(Self.o)] Int:\n        return self.src[0]\n\ndef main():\n    print(1)\n";
+    let slot = "struct S[o: Origin]:\n    def __init__(out self):\n        pass\n\ndef f[o: MutOrigin](ref[o] x: Int):\n    var a: S[MutOrigin(o)] = S[o]()\n";
+    for src in [reference, slot] {
+        let error = err_std(src);
+        assert!(
+            matches!(&error, TypeError::BadCall { func, .. } if func == "Origin"),
+            "unexpected error: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn origin_conversion_reads_through_any_origin_callee() {
+    // A user alias of `Origin[mut=False]` and the bare `Origin` convert an
+    // origin through the declared initializer, as `ImmOrigin` does.
+    ok_std(
+        "struct S[o: Origin]:\n    def __init__(out self):\n        pass\n\ncomptime MyImm = Origin[mut=False]\n\ndef f[o: MutOrigin](ref[o] x: Int):\n    var a: S[MyImm(o)] = S[ImmOrigin(o)]()\n    var b: S[Origin(o)] = S[ImmOrigin(o)]()\n",
+    );
 }
 
 #[test]

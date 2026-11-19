@@ -919,7 +919,7 @@ impl Checker {
         let result = (|| {
             self.declare_value_parameters(&signature.decls())?;
             let self_writable =
-                ref_binding_is_writable(signature.self_convention, None, &[], &|_| None);
+                ref_binding_is_writable(signature.self_convention, None, &[], &*self);
             self.bind_receiver(self_ty, self_writable)?;
             let mut regular = signature.params.iter();
             for param in &wrapper.shape.params {
@@ -952,7 +952,7 @@ impl Checker {
                         convention: param.convention,
                     },
                     &pty,
-                    ref_binding_is_writable(param.convention, None, &[], &|_| None),
+                    ref_binding_is_writable(param.convention, None, &[], &*self),
                     None,
                 )?;
             }

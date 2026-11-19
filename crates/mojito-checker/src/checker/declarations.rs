@@ -384,6 +384,13 @@ impl Collectors {
     }
 }
 
+/// The pin's verdict on a construction no declared initializer matches
+/// (`MutOrigin(o)`, whose `Origin` declares no conversion to a mutable
+/// origin).
+pub(in crate::checker) fn no_constructor_match(name: &str) -> TypeError {
+    constructor_miss(name, OverloadSelect::NoMatch, None, None)
+}
+
 /// Why a construction selected no constructor: the availability clause of a
 /// candidate the arguments would have selected, a candidate's failed
 /// binding, or a bare miss.
@@ -753,7 +760,7 @@ impl Checker {
                 &self.enclosing_param_decls,
                 &regular_params,
                 self.enclosing_struct_type_params.get(),
-                &|expr| self.origin_value_of(expr),
+                self,
             )?,
             ref_return: match &method.ret {
                 Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
@@ -2065,7 +2072,7 @@ impl Checker {
             &self.enclosing_param_decls,
             &m.params,
             m.self_origin.as_ref(),
-            &|expr| self.origin_value_of(expr),
+            self,
         )?;
         if is_legacy_bare_move_constructor(m) {
             return Err(TypeError::Unsupported(
@@ -2257,7 +2264,7 @@ impl Checker {
             m.self_convention,
             m.self_origin.as_deref(),
             &self.enclosing_param_decls,
-            &|expr| self.origin_value_of(expr),
+            self,
         );
         // An initializer's `out self` follows the arguments its refined
         // annotation may read (`origin_of(iterable)`).
@@ -2302,9 +2309,7 @@ impl Checker {
                 mojito_ast::ast::ParamKind::Regular => pty,
             };
             param_tys.push(pty.clone());
-            let writable = ref_parameter_is_writable(p, &self.enclosing_param_decls, &|expr| {
-                self.origin_value_of(expr)
-            });
+            let writable = ref_parameter_is_writable(p, &self.enclosing_param_decls, self);
             let binder = matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Ref))
                 .then(|| self.reference_parameter_struct_binder(p.origin.as_deref()))
                 .flatten();

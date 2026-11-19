@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2388**.
+Next free ID: **R2390**.
 
 ## Ordered Work
 
@@ -2845,26 +2845,56 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2386 `Origin`'s `@implicit __init__` is not declared, so
-  `ImmOrigin(o)` is matched by name**
+- [ ] **R2388 An explicit construction through a result-form initializer
+  of a struct with an origin binder leaves the struct's parameters
+  unsolved**
 
-  `std.origin`'s `Origin` lacks upstream's `@implicit def __init__(v:
-  Origin) -> ImmOrigin[_mlir_origin=v._mlir_origin]`, so `ImmOrigin(o)`
-  and `Origin[mut=False](o)` are recognized by spelling
-  (`origins/sig.rs::immutable_origin_cast` and its callers), not through a
-  declaration.
-  - The declaration's result-form constructor (`-> T`, no `out self`) is
-    R1784's.
-  - The declared result stored into a `LITImmOrigin` slot is
-    `Origin::mut_cast(v, Known(false))`, the origin
-    `v.unsafe_mut_cast[False]()` already builds.
-  - Landing it deletes `immutable_origin_cast`'s name match and makes
-    `MutOrigin(o)` "no matching function in initialization", as at the
-    pin, where Mojito says "an origin cast cannot upgrade capability".
-  - Probe: `comptime c = ImmOrigin(o); print(c.mut)` in a generic `def`
-    is "invalid call to 'Origin'" (R2344 needs this too).
-  - Probe: `var a: S[MutOrigin(o)] = S[o]()` over `o: MutOrigin`.
-  - Depends on R1784.
+  `var d = ImmOrigin(MutUntrackedOrigin)` fails MIR verification ("value
+  parameter 'mut' has no runtime register"), where the pin prints `False`
+  for `d.mut`.
+  - The selected initializer is `Origin`'s `@implicit __init__(v: Origin)
+    -> ImmOrigin[_mlir_origin=v._mlir_origin]`. Its call carries the
+    struct's `mut` as `Deferred` and `_mlir_origin` as `Unbound`, so the
+    refinement never binds them.
+  - The same call as an implicit conversion (`def h(v: ImmOrigin)` called
+    as `h(MutUntrackedOrigin)`) runs, and so does an explicit result-form
+    construction of a struct with no origin binder
+    (`assets/ok/result_initializer.mojo`).
+  - The construction never reaches `solve_refined_construction`
+    (`checker/declarations.rs`), which binds a refinement's parameters.
+  - Probe: `var d = ImmOrigin(MutUntrackedOrigin); print(d.mut)`, and the
+    same through `Origin[mut=False](...)` and `Origin(...)`.
+  - Probe: `comptime c = ImmOrigin(MutUntrackedOrigin); print(c.mut)` is
+    "'mut' is not a compile-time constant here".
+  - Probe: a user copy of `Origin`, `struct O2[mut: Bool, _mlir_origin:
+    _lit_origin_type_of_mut[mut], //]` declaring `@implicit def
+    __init__(v: O2) -> O2[mut=False, _mlir_origin=v._mlir_origin]`,
+    constructed as `O2(O2[mut=True, _mlir_origin=
+    MutUntrackedOrigin._mlir_origin]())`.
+  - Found while landing R2386 (2026-11-19).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2389 An `Origin` construction from a raw origin read is not an
+  origin argument**
+
+  `S[ImmOrigin[_mlir_origin=o._mlir_origin]()]` over `struct S[o:
+  ImmOrigin]` is rejected ("type 'S' expects 0 type argument(s), got
+  1"), where the pin reads it as the origin `ImmOrigin(o)`.
+  - `origin_construction_attribute` (`checker/origins/binders.rs`) reads
+    only an `Origin[_mlir_origin=__mlir_attr[…]]()` construction, so a
+    construction over a raw read (`X._mlir_origin`) or a raw binder names
+    no origin.
+  - The comptime alias `comptime O = ImmOrigin[_mlir_origin=
+    origin_of(x)._mlir_origin]` already resolves; only the construction
+    `O()` as an origin value does not.
+  - Probe: the struct slot above, inside `def f[o: MutOrigin](ref[o] x:
+    Int)`.
+  - Probe: `var a: Pointer[Int, Origin[_mlir_origin=r]()]` in `def g[r:
+    _lit_origin_type_of_mut[False]](x: Int)` is "type mismatch for
+    Pointer origin … found a runtime value"; the pin runs it.
+  - Found while landing R2386 (2026-11-19).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2387 A returned reference's mutability is not checked against
@@ -2958,7 +2988,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     the same in-scope value node, so `Origin[_mlir_origin=r]` can then
     read it back.
   - Planned in R2139 (2026-11-18).
-  - Depends on R2343, R2380, and R2386.
+  - Depends on R2343, R2380, R2386, and R2388 (the `ImmOrigin(o)` value
+    probe constructs through the declared conversion).
   - Model: Fable, Planned.
 
 - [ ] **R2357 A call bracket's origin argument is not checked against its

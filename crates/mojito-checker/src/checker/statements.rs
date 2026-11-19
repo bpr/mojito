@@ -3480,11 +3480,7 @@ impl Checker {
                                 param.convention,
                                 Some(mojito_ast::ast::ArgConvention::Out)
                             )
-                            || ref_parameter_is_writable(
-                                param,
-                                &self.enclosing_param_decls,
-                                &|expr| self.origin_value_of(expr),
-                            ),
+                            || ref_parameter_is_writable(param, &self.enclosing_param_decls, self),
                     );
                     if result.is_ok() {
                         self.record_owned_pack(&param.name, param.kind, param.convention);
@@ -3497,11 +3493,7 @@ impl Checker {
                         self.register_reference_parameter(
                             &param.name,
                             bind_ty.clone(),
-                            ref_parameter_is_writable(
-                                param,
-                                &self.enclosing_param_decls,
-                                &|expr| self.origin_value_of(expr),
-                            ),
+                            ref_parameter_is_writable(param, &self.enclosing_param_decls, self),
                             binder,
                         );
                         self.register_reference_binder(
@@ -4092,9 +4084,7 @@ impl Checker {
             named_result,
             ..
         } = shape;
-        super::origins::validate_origin_signature(&decls, params, None, &|expr| {
-            self.origin_value_of(expr)
-        })?;
+        super::origins::validate_origin_signature(&decls, params, None, self)?;
         let pos_only = regular_marker_index(params, *positional_only);
         let kw_only = effective_keyword_only_index(params, *keyword_only, *variadic_idx);
         // The clauses a compile-time application already emitted are the
@@ -4171,9 +4161,7 @@ impl Checker {
             },
             decls.clone(),
         );
-        let ref_params = lower_ref_param_sigs(&decls, caller_regular, 0, &|expr| {
-            self.origin_value_of(expr)
-        })?;
+        let ref_params = lower_ref_param_sigs(&decls, caller_regular, 0, self)?;
         let ref_return = match ret_anno {
             Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                 origin.as_ref().ok_or_else(|| {

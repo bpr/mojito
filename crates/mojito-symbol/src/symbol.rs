@@ -2412,7 +2412,8 @@ fn parameter_raw(name: &str, type_bounds: &HashMap<String, BinderSpelling>) -> S
 }
 
 /// Whether an annotation argument spells an origin: the `_`/`...` placeholder,
-/// an `origin_of(...)`/`ImmOrigin(...)`/`MutOrigin(...)` value, one of
+/// an `origin_of(...)` value, a one-argument call converting an origin
+/// (`ImmOrigin(o)`), a method building one (`o.unsafe_mut_cast[m]()`), one of
 /// `std.origin`'s named origins, or a parameter the signature binds by
 /// `Origin`/`OriginSet`.
 fn syntactic_origin_argument(
@@ -2446,9 +2447,16 @@ fn syntactic_origin_argument(
                     | "MutAnyOrigin"
             ) || is_origin_binder(name)
         }
-        ExprKind::Call { name, .. } => {
-            matches!(name.as_str(), "origin_of" | "ImmOrigin" | "MutOrigin")
-        }
+        ExprKind::Call { name, .. } if name == "origin_of" => true,
+        // A conversion of an origin (`ImmOrigin(o)`, `MyImm(o)`): a call
+        // with one positional argument that is an origin, whatever its
+        // callee; the check rejects one building no origin.
+        ExprKind::Call { args, kwargs, .. } => match args.as_slice() {
+            [operand] if kwargs.is_empty() => {
+                syntactic_origin_argument(&ParamArg::Value(operand.clone()), type_bounds)
+            }
+            _ => false,
+        },
         // A method building an origin from an origin receiver
         // (`o.unsafe_mut_cast[False]()`); the check rejects one whose
         // result is no origin.

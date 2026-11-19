@@ -28,11 +28,20 @@ pub(in crate::checker) fn raw_origin_argument(
     }
 }
 
-/// The declared origin values a signature lowering reads a named origin
-/// through ([`Checker::origin_value_of`]): the origin a use names and
-/// whether it is mutable, or `None` for a name that is no origin value.
-pub(in crate::checker) type OriginValues<'a> =
-    &'a dyn Fn(&Expr) -> Option<(mojito_types::origin::Origin, bool)>;
+/// The `std.origin` declarations a signature lowering, which holds no
+/// checker, reads origins through; the checker implements it.
+pub(in crate::checker) trait OriginDecls {
+    /// The origin a use of a declared origin value names, and whether it is
+    /// mutable ([`Checker::named_origin_value`]); `None` for an expression
+    /// naming no origin value.
+    fn value(&self, expr: &Expr) -> Option<(mojito_types::origin::Origin, bool)>;
+
+    /// The operand of an `Origin` conversion (`ImmOrigin(o)`), read
+    /// through `Origin`'s declared `@implicit` initializer
+    /// ([`Checker::origin_conversion`]), and whether its result is
+    /// mutable; `None` for an expression that is no such conversion.
+    fn conversion<'e>(&self, expr: &'e Expr) -> Option<Result<(&'e Expr, bool), TypeError>>;
+}
 
 /// Whether `argument` is a raw `!lit.origin` rather than an `Origin`
 /// value: an `X._mlir_origin` read ([`raw_origin_argument`]) or a
@@ -141,57 +150,10 @@ pub(in crate::checker) fn reject_subtree_origin_here(context: &str) -> TypeError
     ))
 }
 
-/// The immutable-origin capability cast: current Mojo's `ImmOrigin(o)` /
-/// `Origin[mut=False](o)` (the `@implicit` `Origin` conversion). It pins a
-/// capability to read-only while keeping `o`'s provenance. Returns the inner
-/// origin expression; the upgrade direction (`MutOrigin(o)`, `mut=True`) is
-/// rejected. The removed `Origin[mut=...].cast_from[o]` spelling is rejected
-/// with a migration diagnostic, as `StaticConstantOrigin` is.
-pub(in crate::checker) fn immutable_origin_cast(
-    expression: &Expr,
-) -> Option<Result<&Expr, TypeError>> {
-    if let ExprKind::Call {
-        name,
-        args,
-        kwargs,
-        param_args,
-    } = &expression.kind
-    {
-        let [inner] = args.as_slice() else {
-            return None;
-        };
-        if !kwargs.is_empty() {
-            return None;
-        }
-        let mutable = match (name.as_str(), param_args.as_slice()) {
-            ("ImmOrigin", []) => false,
-            ("MutOrigin", []) => true,
-            (
-                "Origin",
-                [
-                    mojito_ast::ast::ParamArg::Named {
-                        name: keyword,
-                        value,
-                    },
-                ],
-            ) if keyword == "mut" => match value.as_ref() {
-                mojito_ast::ast::ParamArg::Value(Expr {
-                    kind: ExprKind::Bool(flag),
-                    ..
-                }) => *flag,
-                _ => return None,
-            },
-            _ => return None,
-        };
-        return Some(if mutable {
-            Err(TypeError::Unsupported(format!(
-                "an origin cast cannot upgrade capability: '{name}(...)' with a mutable \
-                 origin is rejected"
-            )))
-        } else {
-            Ok(inner)
-        });
-    }
+/// The removed `Origin[mut=...].cast_from[o]` spelling's migration
+/// diagnostic, as `StaticConstantOrigin`'s is; `None` for any other
+/// expression.
+pub(in crate::checker) fn removed_origin_cast_from(expression: &Expr) -> Option<TypeError> {
     let ExprKind::Index { object, .. } = &expression.kind else {
         return None;
     };
@@ -202,23 +164,34 @@ pub(in crate::checker) fn immutable_origin_cast(
     else {
         return None;
     };
-    if field != "cast_from" {
-        return None;
-    }
     let (name, _) = applied.bracket_application()?;
-    if name != "Origin" {
-        return None;
+    (field == "cast_from" && name == "Origin").then(|| {
+        TypeError::Unsupported(
+            "'Origin[mut=...].cast_from[o]' was removed; use 'ImmOrigin(o)'".to_string(),
+        )
+    })
+}
+
+/// The operand of a call with one positional argument (`ImmOrigin(o)`,
+/// `MyImm(o)`), which may convert an origin; `None` for any other
+/// expression, an `origin_of` observation included.
+pub(in crate::checker) fn conversion_operand(expression: &Expr) -> Option<&Expr> {
+    match &expression.kind {
+        ExprKind::Call {
+            name, args, kwargs, ..
+        } if kwargs.is_empty() && name != "origin_of" => match args.as_slice() {
+            [operand] => Some(operand),
+            _ => None,
+        },
+        _ => None,
     }
-    Some(Err(TypeError::Unsupported(
-        "'Origin[mut=...].cast_from[o]' was removed; use 'ImmOrigin(o)'".to_string(),
-    )))
 }
 
 /// Upstream's `o.unsafe_mut_cast[m]()` (`Origin.unsafe_mut_cast`) in an
 /// origin clause: the receiver, and the destination mutability argument.
 /// The signature lowerings hold no checker, so they recognize the cast by
-/// its spelling, as they do `ImmOrigin(o)`; the checker's own readers read
-/// it through the declaration ([`Checker::origin_method_cast`]).
+/// its spelling; the checker's own readers read it through the declaration
+/// ([`Checker::origin_method_cast`]).
 pub(in crate::checker) fn origin_mut_cast_syntax(
     expression: &Expr,
 ) -> Option<(&Expr, &mojito_ast::ast::ParamArg)> {
@@ -250,10 +223,13 @@ pub(in crate::checker) fn validate_origin_expr(
     expr: &Expr,
     origin_params: &HashSet<&str>,
     value_params: &HashSet<&str>,
-    values: OriginValues<'_>,
+    values: &dyn OriginDecls,
 ) -> Result<(), TypeError> {
-    if let Some(inner) = immutable_origin_cast(expr) {
-        return validate_origin_expr(inner?, origin_params, value_params, values);
+    if let Some(error) = removed_origin_cast_from(expr) {
+        return Err(error);
+    }
+    if let Some(conversion) = values.conversion(expr) {
+        return validate_origin_expr(conversion?.0, origin_params, value_params, values);
     }
     if let Some((receiver, _)) = origin_mut_cast_syntax(expr) {
         return validate_origin_expr(receiver, origin_params, value_params, values);
@@ -273,7 +249,7 @@ pub(in crate::checker) fn validate_origin_expr(
         {
             Ok(())
         }
-        _ if values(expr).is_some() => Ok(()),
+        _ if values.value(expr).is_some() => Ok(()),
         ExprKind::Call {
             name,
             args,
@@ -372,7 +348,7 @@ pub(in crate::checker) fn lower_ref_param_sigs(
     decls: &[ParamDecl],
     params: &[&FnParam],
     struct_params: usize,
-    values: OriginValues<'_>,
+    values: &dyn OriginDecls,
 ) -> Result<Vec<Option<mojito_types::origin::RefSig>>, TypeError> {
     params
         .iter()
@@ -586,9 +562,7 @@ impl Checker {
                 continue;
             }
             let spec: mojito_ast::ast::OriginSpec = vec![expression.clone()];
-            let Ok(mut sig) = lower_ref_sig(&spec, decls, params, struct_params, &|expr| {
-                self.origin_value_of(expr)
-            }) else {
+            let Ok(mut sig) = lower_ref_sig(&spec, decls, params, struct_params, self) else {
                 continue;
             };
             if sig.mutability == SigMutability::Infer
@@ -649,7 +623,7 @@ pub(in crate::checker) fn lower_ref_sig(
     decls: &[ParamDecl],
     params: &[&FnParam],
     struct_params: usize,
-    values: OriginValues<'_>,
+    values: &dyn OriginDecls,
 ) -> Result<mojito_types::origin::RefSig, TypeError> {
     use mojito_types::origin::{Origin, RefSig, SigMutability, SigOrigin};
     let mut members = Vec::new();
@@ -663,9 +637,17 @@ pub(in crate::checker) fn lower_ref_sig(
         let mut expression = expression;
         let mut outermost = None;
         loop {
-            if let Some(inner) = immutable_origin_cast(expression) {
-                outermost.get_or_insert(SigMutability::Immutable);
-                expression = inner?;
+            if let Some(error) = removed_origin_cast_from(expression) {
+                return Err(error);
+            }
+            if let Some(conversion) = values.conversion(expression) {
+                let (operand, mutable) = conversion?;
+                outermost.get_or_insert(if mutable {
+                    SigMutability::Mutable
+                } else {
+                    SigMutability::Immutable
+                });
+                expression = operand;
             } else if let Some((receiver, destination)) = origin_mut_cast_syntax(expression) {
                 if outermost.is_none() {
                     outermost = Some(cast_sig_mutability(destination, decls)?);
@@ -700,7 +682,7 @@ pub(in crate::checker) fn lower_ref_sig(
         match &expression.kind {
             ExprKind::Identifier(name) if name == "_" => members.push(SigOrigin::Infer),
             ExprKind::Identifier(name) if name == "self" => members.push(SigOrigin::Self_),
-            _ if let Some((origin, mutable)) = values(expression).filter(|_| {
+            _ if let Some((origin, mutable)) = values.value(expression).filter(|_| {
                 origin_binder_name(expression).is_none_or(|name| origin_decl(decls, name).is_none())
             }) =>
             {
@@ -948,8 +930,8 @@ fn result_origin_roots<'a>(annotation: &'a SourceType, roots: &mut Vec<&'a str>)
 fn origin_roots<'a>(expression: &'a Expr, roots: &mut Vec<&'a str>) {
     let mut expression = expression;
     loop {
-        if let Some(Ok(inner)) = immutable_origin_cast(expression) {
-            expression = inner;
+        if let Some(operand) = conversion_operand(expression) {
+            expression = operand;
         } else if let Some((receiver, _)) = origin_mut_cast_syntax(expression) {
             expression = receiver;
         } else if let Some((base, _)) = interior_origin_syntax(expression) {

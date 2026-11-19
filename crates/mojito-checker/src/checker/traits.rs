@@ -512,7 +512,7 @@ impl Checker {
             &declared,
             &m.params,
             m.self_origin.as_ref(),
-            &|expr| self.origin_value_of(expr),
+            self,
         )?;
         let decls = ParamDecl::argument_decls(&declared);
         self.push_param_scope(&decls);
@@ -581,13 +581,11 @@ impl Checker {
                 &declared,
                 &regular_params,
                 0,
-                &|expr| self.origin_value_of(expr),
+                self,
             )?),
             _ => None,
         };
-        let ref_params = lower_ref_param_sigs(&declared, &regular_params, 0, &|expr| {
-            self.origin_value_of(expr)
-        })?;
+        let ref_params = lower_ref_param_sigs(&declared, &regular_params, 0, self)?;
         let sig = MethodSig {
             declared,
             availability: Vec::new(),

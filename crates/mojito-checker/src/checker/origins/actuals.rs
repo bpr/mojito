@@ -1073,9 +1073,7 @@ impl Checker {
         {
             return Ok(resolved);
         }
-        lower_ref_sig(spec, decls, params, struct_params, &|expr| {
-            self.origin_value_of(expr)
-        })
+        lower_ref_sig(spec, decls, params, struct_params, self)
     }
 
     /// Whether `expr` names a local `comptime` binding of a requested

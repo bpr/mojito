@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Origin` declares upstream's `@implicit __init__(v: Origin) ->
+  ImmOrigin[_mlir_origin=v._mlir_origin]`, and every origin position reads
+  `ImmOrigin(o)` through it rather than by its spelling, so a user alias
+  (`MyImm(o)`) and the bare `Origin(o)` convert too, an argument converts
+  implicitly where an `ImmOrigin` is expected, and `MutOrigin(o)` matches
+  no initializer, as at the pin. A raw origin binder now binds a raw
+  `_mlir_origin` slot (a bare `v: Origin` argument included), `v._mlir_origin`
+  reads a value's origin, and `ImmOrigin[_mlir_origin=r]` takes the alias's
+  unbound infer-only parameter by keyword. A raw binder typed
+  `_lit_origin_type_of_mut[m]` now names `m` as its mutability rather than
+  the alias's own `mut` (R2386).
 - An `__init__` without `out self` that declares its result type (`def
   __init__(x: W[_]) -> W[x.n + 1]`) is the initializer whose `out self`
   is that result, following its parameters, as upstream's is: a

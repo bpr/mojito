@@ -789,7 +789,7 @@ pub(in crate::checker) fn origin_is_declared(
 pub(in crate::checker) fn ref_parameter_is_writable(
     parameter: &FnParam,
     decls: &[ParamDecl],
-    values: OriginValues<'_>,
+    values: &dyn OriginDecls,
 ) -> bool {
     ref_binding_is_writable(
         parameter.convention,
@@ -810,7 +810,7 @@ pub(in crate::checker) fn ref_binding_is_writable(
     convention: Option<ArgConvention>,
     origin: Option<&[Expr]>,
     decls: &[ParamDecl],
-    values: OriginValues<'_>,
+    values: &dyn OriginDecls,
 ) -> bool {
     if convention != Some(ArgConvention::Ref) {
         return parameter_is_writable(&convention);
@@ -822,13 +822,13 @@ pub(in crate::checker) fn ref_binding_is_writable(
         return false;
     };
     let Some(origin_name) = origin_binder_name(expression) else {
-        return values(expression).is_some_and(|(_, mutable)| mutable);
+        return values.value(expression).is_some_and(|(_, mutable)| mutable);
     };
     match origin_decl(decls, origin_name) {
         Some((decl, _)) => {
             origin_decl_mutability(decl, decls) == mojito_types::origin::SigMutability::Mutable
         }
-        None => values(expression).is_some_and(|(_, mutable)| mutable),
+        None => values.value(expression).is_some_and(|(_, mutable)| mutable),
     }
 }
 

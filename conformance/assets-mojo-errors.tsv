@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1246
+# swept-count	1247
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
@@ -856,6 +856,7 @@ assets/type_error/origin_annotated_reassignment.mojo	compile-reject	agree	error:
 assets/type_error/origin_carrying_callable_struct.mojo	compile-reject	agree	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/origin_cast_from_removed.mojo	compile-reject	agree	error: 'ImmOrigin' value has no attribute 'cast_from'
 assets/type_error/origin_delegated_value_return.mojo	compile-reject	agree	error: value of type 'Int' doesn't have a memory origin in origin specifier
+assets/type_error/origin_implicit_conversion_rejects_mut.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/origin_parameterized_alias_binder_rejects_non_bool.mojo	compile-reject	agree	error: 'Origin' parameter 'm' has 'Bool' type, but value has type 'IntLiteral[3]'
 assets/type_error/origin_placeholder_field.mojo	compile-reject	agree	error: 'Span[Int, _]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/out_self_init.mojo	compile-reject	agree	error: 'Counter' has an explicitly declared fieldwise initializer

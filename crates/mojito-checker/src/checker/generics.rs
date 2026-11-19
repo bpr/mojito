@@ -784,6 +784,14 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
                 _ => recur(&resolved),
             }
         }
+        // A raw origin's symbolic mutability reads the bound `Bool`
+        // (`_lit_origin_type_of_mut[m]` is `!lit.origin<m>`).
+        TyKind::LitOrigin(mutability) => TyKind::LitOrigin(
+            mutability
+                .try_map(|mutability| context.replace(mutability, bindings))
+                .unwrap_or_else(|_| mutability.clone()),
+        )
+        .into(),
         // A callable contract closes over the parameters its signature
         // names, its own binders excepted (`def(Scalar[Self.dtype])`).
         TyKind::Func(_) | TyKind::GenericFunc(_) => {

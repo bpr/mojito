@@ -1126,7 +1126,7 @@ impl Checker {
                 let declared = self
                     .origin_binder(&self.enclosing_type_params, &origin_name)
                     .is_none()
-                    .then(|| self.origin_value_of(origin_expr))
+                    .then(|| super::origins::OriginDecls::value(self, origin_expr))
                     .flatten();
                 match declared {
                     Some((mojito_types::origin::Origin::UnsafeAny { .. }, _)) => {
@@ -2818,7 +2818,7 @@ impl Checker {
             ..
         } = decl
             && !origin_placeholder(value)
-            && super::reads_raw_origin(value) != *lit
+            && self.origin_argument_is_raw(value) != *lit
         {
             use mojito_types::origin::Mutability;
             // The argument's own mutability, before an immutable slot
@@ -2848,6 +2848,22 @@ impl Checker {
                 .then_some(attribute),
             _ => Some(attribute),
         })
+    }
+
+    /// Whether origin argument `value` is a raw `!lit.origin` rather than
+    /// an `Origin` value: a raw read ([`super::reads_raw_origin`]), or a
+    /// use of an in-scope origin binder (`r`, `Self.r`) declared raw.
+    fn origin_argument_is_raw(&self, value: &mojito_ast::ast::ParamArg) -> bool {
+        use mojito_ast::ast::{ParamArg, Type};
+        let binder = match value {
+            ParamArg::Type(Type::Named(name, args)) if args.is_empty() => Some(name.as_str()),
+            ParamArg::Value(expr) => super::origin_binder_name(expr),
+            _ => None,
+        };
+        super::reads_raw_origin(value)
+            || binder
+                .and_then(|name| self.enclosing_origin_type_param(name))
+                .is_some_and(|(_, decl)| matches!(decl, ParamDecl::Origin { lit: true, .. }))
     }
 
     /// Resolve the type-valued sequence at the base of an indexed type
@@ -3327,6 +3343,9 @@ impl Checker {
         {
             return self.applied_type_at_depth(generator, args);
         }
+        if let Some((head, applied)) = self.alias_infer_only_application(alias, args) {
+            return self.applied_type_at_depth(head, &applied);
+        }
         let template = match &alias.body {
             AliasBody::Type(template) => template,
             AliasBody::Predicate(_) => {
@@ -3389,6 +3408,40 @@ impl Checker {
             self.resolve_assoc_ty(&substitute_assoc(&template, &bindings)),
             attributes,
         ))
+    }
+
+    /// The struct application an alias declaring no parameters takes
+    /// `args` into, when each is a keyword naming an infer-only parameter
+    /// the alias's struct application leaves unbound: upstream's alias
+    /// keeps such a parameter applicable (`ImmOrigin[_mlir_origin=r]`
+    /// over `comptime ImmOrigin = Origin[mut=False]`). `None` for any other
+    /// application.
+    fn alias_infer_only_application<'a>(
+        &self,
+        alias: &'a ComptimeAlias,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Option<(&'a str, Vec<mojito_ast::ast::ParamArg>)> {
+        use mojito_ast::ast::ParamArg;
+        use mojito_ast::call::CompileTimeParam as _;
+        if !alias.decls.is_empty() || args.is_empty() {
+            return None;
+        }
+        let (head, written) = alias.value.bracket_application()?;
+        let params = &self.structs.get(head)?.params;
+        let bound = |keyword: &str| {
+            written
+                .iter()
+                .any(|argument| matches!(argument, ParamArg::Named { name, .. } if name == keyword))
+        };
+        args.iter()
+            .all(|argument| {
+                matches!(argument, ParamArg::Named { name: keyword, .. }
+                    if !bound(keyword)
+                        && params
+                            .iter()
+                            .any(|decl| decl.infer_only() && decl.name() == keyword))
+            })
+            .then(|| (head, written.iter().chain(args).cloned().collect()))
     }
 
     /// Concretely resolve a parameterized associated-type application on a
@@ -4543,15 +4596,15 @@ impl Checker {
                 "a writable cast of the static origin as a pointer's origin".into(),
             )
         };
-        // `ImmOrigin(o)`: `o`'s provenance, read-only.
-        if let Some(inner) = super::origins::immutable_origin_cast(expression) {
-            return cast_capability(self.pointer_origin_expr(inner?)?, false)
-                .ok_or_else(static_cast);
+        if let Some(error) = super::origins::removed_origin_cast_from(expression) {
+            return Err(error);
         }
-        // `o.unsafe_mut_cast[m]()`: `o`'s provenance at `m`, which a cast to
-        // the receiver's own `mut` leaves as it is.
-        if let Some(read) = self.origin_method_cast(expression)
-            && let Some(receiver) = super::origins::origin_method_receiver(expression)
+        // `o.unsafe_mut_cast[m]()` or `ImmOrigin(o)`: `o`'s provenance at
+        // `m`, which a cast to the receiver's own `mut` leaves as it is.
+        if let Some(read) = self
+            .origin_method_cast(expression)
+            .or_else(|| self.origin_conversion(expression))
+            && let Some(receiver) = super::origins::origin_call_operand(expression)
         {
             let (cast, mutability) = read?;
             let receiver = self.pointer_origin_expr(receiver)?;
@@ -6023,7 +6076,14 @@ fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
     match value {
         mojito_ast::ast::ParamArg::Type(mojito_ast::ast::Type::Named(_, targs)) => targs.is_empty(),
         mojito_ast::ast::ParamArg::Value(expression) => match &expression.kind {
-            ExprKind::Call { name, .. } => name == "origin_of",
+            // An `origin_of` observation, or a conversion of an origin
+            // (`ImmOrigin(o)`); the check rejects a call building no origin.
+            ExprKind::Call { name, .. } if name == "origin_of" => true,
+            ExprKind::Call { .. } => {
+                super::origins::conversion_operand(expression).is_some_and(|operand| {
+                    syntactic_origin_argument(&mojito_ast::ast::ParamArg::Value(operand.clone()))
+                })
+            }
             ExprKind::Identifier(_) | ExprKind::Member { .. } | ExprKind::Index { .. } => true,
             // A method building an origin from an origin receiver
             // (`o.unsafe_mut_cast[False]()`).

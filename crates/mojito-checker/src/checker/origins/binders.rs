@@ -272,6 +272,95 @@ impl Checker {
         self.origin_method_cast_in(expr, &[])
     }
 
+    /// The origin an `Origin` conversion `X(o)` names, and its mutability,
+    /// read through `Origin`'s declared `@implicit __init__(v: Origin) ->
+    /// ImmOrigin[_mlir_origin=v._mlir_origin]`: the declared result origin
+    /// with `v`'s origin `o`'s, as `X` (`ImmOrigin`, `Origin[mut=False]`,
+    /// bare `Origin`, or an alias of one) constructs it. A callee whose
+    /// `mut` the declared result does not have (`MutOrigin(o)`) matches no
+    /// initializer, as at the pin. `None` when `X` is no `Origin` type.
+    pub(in crate::checker) fn origin_conversion(
+        &self,
+        expr: &Expr,
+    ) -> Option<Result<(mojito_types::origin::Origin, LitOriginMut), TypeError>> {
+        use mojito_ast::ast::ParamArg;
+        let operand = super::conversion_operand(expr)?;
+        let ExprKind::Call {
+            name, param_args, ..
+        } = &expr.kind
+        else {
+            return None;
+        };
+        if self.lookup(name).is_some() {
+            return None;
+        }
+        // The bare struct (`Origin(o)`) leaves its parameters to the
+        // conversion: the struct at its own binders.
+        let callee = match self.ty_from_anno(&mojito_ast::ast::Type::Named(
+            name.clone(),
+            param_args.clone(),
+        )) {
+            Ok(callee) => callee,
+            Err(_) if param_args.is_empty() => self.self_instance_ty(name)?,
+            Err(_) => return None,
+        };
+        let (head, arguments) = callee.kind().as_non_simd_struct()?;
+        if head != "Origin" || !self.is_library_origin(head) {
+            return None;
+        }
+        let info = self.structs.get(head)?;
+        let mut_slot = info.params.iter().position(|decl| decl.name() == "mut")?;
+        let origin_slot = info
+            .params
+            .iter()
+            .position(|decl| decl.is_origin() && decl.name() == MLIR_ORIGIN_BINDER)?;
+        let conversions: Vec<&MethodSig> = info
+            .methods
+            .get("__init__")?
+            .iter()
+            .filter(|sig| sig.implicit && crate::checker::converts_one_argument(sig))
+            .collect();
+        let [sig] = conversions.as_slice() else {
+            return None;
+        };
+        let refinement = mojito_types::types::nominal_parts(sig.refined_self.as_ref()?)?.1;
+        let declared_mut = match ParamDecl::source_argument(&info.params, &refinement, mut_slot)? {
+            TyArg::Val(CtValue::Bool(mutable)) => *mutable,
+            _ => return None,
+        };
+        let Some(TyArg::Origin(template)) =
+            ParamDecl::source_argument(&info.params, &refinement, origin_slot)
+        else {
+            return None;
+        };
+        let own: Vec<mojito_types::origin::OriginParamId> =
+            super::declared_origin_binders(&sig.declared).collect();
+        let callee_mut = match ParamDecl::source_argument(&info.params, arguments, mut_slot) {
+            Some(TyArg::Val(CtValue::Bool(mutable))) => Some(*mutable),
+            _ => None,
+        };
+        Some((|| {
+            if callee_mut.is_some_and(|mutable| mutable != declared_mut) {
+                return Err(crate::checker::declarations::no_constructor_match(head));
+            }
+            let (base, _) = self.resolve_origin_param_arg(&ParamArg::Value(operand.clone()))?;
+            let origin =
+                instantiate_origin_method(template, &own, &base, &[]).ok_or_else(|| {
+                    TypeError::Unsupported(format!(
+                        "the origin '{template}' 'Origin.__init__' declares"
+                    ))
+                })?;
+            let mutability = LitOriginMut::Known(declared_mut);
+            Ok((
+                self.fold_origin_mut_cast(&mojito_types::origin::Origin::mut_cast(
+                    origin,
+                    mutability.clone(),
+                )),
+                mutability,
+            ))
+        })())
+    }
+
     /// The origin the declared origin value `argument` uses names, and
     /// whether it is mutable, read from its declaration as upstream's named
     /// origins are `Origin` values built from a raw attribute:
@@ -296,16 +385,6 @@ impl Checker {
             mojito_ast::ast::Type::Named(name.to_string(), args.to_vec()),
         ))
         .unwrap_or_else(|| Err(TypeError::UnknownType(name.to_string())))
-    }
-
-    /// [`Self::named_origin_value`] as a free resolver, for the signature
-    /// lowerings that hold no checker.
-    pub(in crate::checker) fn origin_value_of(
-        &self,
-        expr: &Expr,
-    ) -> Option<(mojito_types::origin::Origin, bool)> {
-        self.named_origin_value(&mojito_ast::ast::ParamArg::Value(expr.clone()))?
-            .ok()
     }
 
     /// Record every module `comptime` whose value is an origin before any
@@ -382,12 +461,16 @@ impl Checker {
         if let Some(read) = self.lit_origin_attribute(expression) {
             return read.map(|(origin, _)| origin);
         }
-        // `ImmOrigin(o)` names `o`'s provenance; origin arguments carry no
-        // capability, so the cast erases here.
-        if let Some(inner) = super::immutable_origin_cast(expression) {
-            return self.explicit_origin_argument(&ParamArg::Value(inner?.clone()));
+        // A conversion (`ImmOrigin(o)`) or cast (`o.unsafe_mut_cast[m]()`)
+        // names `o`'s provenance; origin arguments carry no capability, so
+        // the cast erases here.
+        if let Some(error) = super::removed_origin_cast_from(expression) {
+            return Err(error);
         }
-        if let Some(read) = self.origin_method_cast(expression) {
+        if let Some(read) = self
+            .origin_method_cast(expression)
+            .or_else(|| self.origin_conversion(expression))
+        {
             return read.map(|(origin, _)| origin.uncast().clone());
         }
         // `base._get_owned_interior["tag"]` and `base._subtree` name a
@@ -450,6 +533,7 @@ impl Checker {
             ExprKind::Identifier(name) => self
                 .enclosing_origin_type_param(name)
                 .map(|(index, _)| Origin::Param(mojito_types::origin::OriginParamId(index)))
+                .or_else(|| self.origin_typed_value(name).map(|(origin, _)| origin))
                 .ok_or_else(|| TypeError::TypeMismatch {
                     expected: "origin_of(place) or a builtin Origin value".to_string(),
                     found: format!("'{name}', which names no in-scope Origin parameter"),
@@ -470,6 +554,34 @@ impl Checker {
                 context: "explicit callable origin specialization".to_string(),
             }),
         }
+    }
+
+    /// The origin a value `name` holds in its type's `_mlir_origin`
+    /// binder, and its mutability when the type fixes it: upstream's read
+    /// of a value's type parameter (`v._mlir_origin` over `v: Origin`).
+    /// `None` for a name bound to no value of such a type.
+    pub(in crate::checker) fn origin_typed_value(
+        &self,
+        name: &str,
+    ) -> Option<(
+        mojito_types::origin::Origin,
+        Option<mojito_types::origin::Mutability>,
+    )> {
+        let ty = self.lookup(name)?;
+        let (head, arguments) = ty.kind().as_non_simd_struct()?;
+        let params = &self.structs.get(head)?.params;
+        let slot = params
+            .iter()
+            .position(|decl| decl.is_origin() && decl.name() == MLIR_ORIGIN_BINDER)?;
+        let Some(TyArg::Origin(origin)) = ParamDecl::source_argument(params, arguments, slot)
+        else {
+            return None;
+        };
+        let mutability = origin
+            .static_mutability()
+            .map(mojito_types::origin::Mutability::of)
+            .or_else(|| self.bound_origin_mutability(origin));
+        Some((origin.clone(), mutability))
     }
 
     /// Resolve an explicit origin argument together with its known mutability
@@ -530,9 +642,13 @@ impl Checker {
                 });
             }
         };
+        if let Some(error) = super::removed_origin_cast_from(expression) {
+            return Err(error);
+        }
         if let Some(read) = self
             .lit_origin_attribute(expression)
             .or_else(|| self.origin_method_cast(expression))
+            .or_else(|| self.origin_conversion(expression))
         {
             return read.map(|(origin, mutability)| {
                 let mutability = match mutability {
@@ -541,19 +657,6 @@ impl Checker {
                 };
                 (origin, mutability)
             });
-        }
-        // `ImmOrigin(o)`: `o`'s provenance as an `Origin[mut=False]` value,
-        // so an `Origin[mut=True]` slot rejects it and the slot's `mut`
-        // binds `False`. An origin already immutable is its own cast.
-        if let Some(inner) = super::immutable_origin_cast(expression) {
-            let (origin, mutability) =
-                self.resolve_origin_param_arg(&ParamArg::Value(inner?.clone()))?;
-            let origin = if mutability == Some(Mutability::Immutable) {
-                origin
-            } else {
-                Origin::immutable(origin)
-            };
-            return Ok((origin, Some(Mutability::Immutable)));
         }
         let named_param_mutability = |name: &str| match self.enclosing_origin_type_param(name) {
             Some((index, decl)) => Some(super::super::generics::origin_binder_mutability(
@@ -569,7 +672,10 @@ impl Checker {
                 .map(|(_, mutable)| Mutability::of(mutable)),
         };
         let mutability = match &expression.kind {
-            ExprKind::Identifier(name) => named_param_mutability(name),
+            ExprKind::Identifier(name) => named_param_mutability(name).or_else(|| {
+                self.origin_typed_value(name)
+                    .and_then(|(_, mutability)| mutability)
+            }),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(n) if n == "Self") => {
                 named_param_mutability(field)
             }
@@ -794,6 +900,32 @@ pub(in crate::checker) fn origin_method_receiver(value: &Expr) -> Option<&Expr> 
     }
 }
 
+/// The origin a call building one reads: the receiver of an `Origin`
+/// method (`o.unsafe_mut_cast[False]()`) or the operand of a conversion
+/// (`ImmOrigin(o)`).
+pub(in crate::checker) fn origin_call_operand(value: &Expr) -> Option<&Expr> {
+    origin_method_receiver(value).or_else(|| super::conversion_operand(value))
+}
+
+impl super::OriginDecls for Checker {
+    fn value(&self, expr: &Expr) -> Option<(mojito_types::origin::Origin, bool)> {
+        self.named_origin_value(&mojito_ast::ast::ParamArg::Value(expr.clone()))?
+            .ok()
+    }
+
+    fn conversion<'e>(&self, expr: &'e Expr) -> Option<Result<(&'e Expr, bool), TypeError>> {
+        let operand = super::conversion_operand(expr)?;
+        self.origin_conversion(expr).map(|read| {
+            read.and_then(|(_, mutability)| match mutability {
+                LitOriginMut::Known(mutable) => Ok((operand, mutable)),
+                LitOriginMut::Expr(_) => Err(TypeError::Unsupported(
+                    "an origin conversion whose mutability is symbolic".to_string(),
+                )),
+            })
+        })
+    }
+}
+
 impl Checker {
     /// [`Self::named_origin_value`] under `bindings`, the arguments an
     /// enclosing generic origin value's binders took.
@@ -938,7 +1070,7 @@ impl Checker {
                 ));
             }
             let origin =
-                instantiate_origin_method(template, own, &base, &bound).ok_or_else(|| {
+                instantiate_origin_method(template, &[own], &base, &bound).ok_or_else(|| {
                     TypeError::Unsupported(format!(
                         "the origin '{template}' 'Origin.{field}' declares"
                     ))
@@ -1092,19 +1224,20 @@ impl Checker {
     }
 }
 
-/// `template`, an `Origin` method's declared result origin, with the
-/// `Origin`'s own `_mlir_origin` binder `own` read as `base` and each cast
-/// mutability reading one of the method's binders as `bound` binds it.
-/// `None` for a template naming another binder.
+/// `template`, an `Origin` member's declared result origin, with each
+/// origin binder of `own` (the `Origin`'s own `_mlir_origin`, or a
+/// converted argument's) read as `base` and each cast mutability reading
+/// one of the member's binders as `bound` binds it. `None` for a template
+/// naming another binder.
 fn instantiate_origin_method(
     template: &mojito_types::origin::Origin,
-    own: mojito_types::origin::OriginParamId,
+    own: &[mojito_types::origin::OriginParamId],
     base: &mojito_types::origin::Origin,
     bound: &[(String, LitOriginMut)],
 ) -> Option<mojito_types::origin::Origin> {
     use mojito_types::origin::Origin;
     match template {
-        Origin::Param(id) if *id == own => Some(base.clone()),
+        Origin::Param(id) if own.contains(id) => Some(base.clone()),
         Origin::Param(_) | Origin::SelfParam | Origin::Projected(..) | Origin::Unbound => None,
         Origin::MutCast(inner, mutability) => {
             let mutability = match mutability {
