@@ -578,8 +578,9 @@ pub(super) fn verify_subscript_call(
 /// declared list, each argument binding the declaration it names
 /// ([`crate::mir::MirParamArg::declaration_index`]), so a non-pack
 /// declaration named twice is rejected. An origin argument names its
-/// origin binder and is erased; `instantiated` binds the list's
-/// [`mojito_types::types::ParamDecl::argument_view`]. A
+/// origin binder and is erased; `instantiated`, when the call carries it,
+/// holds a value for every declared parameter, origins included, as
+/// upstream's call does. A
 /// type argument occupies a slot but has no register, while every supplied
 /// value argument must carry a register compatible with its declared checked
 /// type.
@@ -623,20 +624,20 @@ pub(super) fn verify_param_arguments(
                 | mojito_types::types::ParamDecl::Value { variadic: true, .. }
         )
     };
+    if !instantiated.is_empty() && instantiated.len() != declarations.len() {
+        errors.push(format!(
+            "{prefix}: the call's {} solved argument(s) do not bind its callee's {} declared parameter(s)",
+            instantiated.len(),
+            declarations.len()
+        ));
+    }
     let context = mojito_types::param_expr::ParamContext::detached();
     let mut bindings = mojito_types::param_expr::ParamBindings::new();
     if let Some((owner_decls, owner_arguments)) = owner {
         bindings.bind_value_arguments(&context, owner_decls, owner_arguments);
     }
-    bindings.bind_value_arguments(
-        &context,
-        &mojito_types::types::ParamDecl::argument_view(declarations),
-        instantiated,
-    );
-    let instantiated_at = |index: usize| {
-        mojito_types::types::ParamDecl::argument_position(declarations, index)
-            .and_then(|position| instantiated.get(position))
-    };
+    bindings.bind_value_arguments(&context, declarations, instantiated);
+    let instantiated_at = |index: usize| instantiated.get(index);
     let mut occupied = vec![false; declarations.len()];
     for argument in arguments {
         let Some(index) = argument.declaration_index(declarations) else {

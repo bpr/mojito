@@ -5733,7 +5733,8 @@ fn member_defaults(
                     .iter()
                     .map(|binder| {
                         member
-                            .argument_binders()
+                            .param_decls
+                            .iter()
                             .position(|own| own.id() == binder.id())
                             .and_then(|position| instantiation.get(position))
                             .cloned()

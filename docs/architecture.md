@@ -2298,9 +2298,18 @@ read. A lowered call's `param_decls` (a method call's, an indirect call's,
 a subscript's, and the selected contract's
 `CheckedCallContract::param_decls`) is the callee's whole declared list,
 and an explicit origin argument is an erased `MirParamArg` named by its
-origin binder; the call's `instantiated_args` bind that list's argument
-view, so a reader maps a declared slot to its solved argument through
-`ParamDecl::argument_position` (R2350). The shared `CtValue` model carries integers, booleans,
+origin binder; the call's `instantiated_args` hold a value for every
+parameter of that list, as upstream's call holds an attribute for each:
+the check records each origin binder's solved origin and each `mut=`
+binder's mutability in place (`Checker::declared_call_arguments`), a
+construction's struct origins from the instance it builds, a mutability
+the caller's binders decide as `CtValue::Deferred`, and a call MIR
+synthesizes from an instance type maps that instance's arguments onto the
+list (`ParamDecl::instance_arguments`). The verifier rejects a call whose
+solved arguments bind any other list (`verify_param_arguments`), and each
+reader indexes a declared slot directly; a reader keyed by the argument
+view (a nested body's generator scope) takes the view's solutions
+(`ParamDecl::argument_view_arguments`). The shared `CtValue` model carries integers, booleans,
 strings, tuples/lists, types, residual parameter expressions, and zero-sized
 reflection handles. The check and the elaborator below MIR fold through
 `param_expr::fold`.

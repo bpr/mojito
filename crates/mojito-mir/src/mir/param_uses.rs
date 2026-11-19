@@ -1074,16 +1074,12 @@ fn drop_arguments(
         let argument = &mut param_arg_regs[index];
         changed |= argument.value.take().is_some() | argument.expr.take().is_some();
     }
-    // The solved arguments bind the argument view of `decls`.
+    // The solved arguments hold a value for every parameter of `decls`.
     if let Some(instantiated_args) = instantiated_args
-        && instantiated_args.len() == ParamDecl::argument_view(decls).len()
+        && instantiated_args.len() == decls.len()
     {
-        for position in dropped
-            .iter()
-            .rev()
-            .filter_map(|&index| ParamDecl::argument_position(decls, index))
-        {
-            instantiated_args.remove(position);
+        for &index in dropped.iter().rev() {
+            instantiated_args.remove(index);
             changed = true;
         }
     }

@@ -4245,10 +4245,13 @@ fn instantiated<'c>(
         && declaration.argument_binders().next().is_none()
         && arguments.existentials.is_empty()
     {
-        return arguments.binding().is_empty().then_some(Instantiated {
-            body: Cow::Borrowed(callee),
-            closures: Vec::new(),
-        });
+        return arguments
+            .binding(&declaration.param_decls)
+            .is_empty()
+            .then_some(Instantiated {
+                body: Cow::Borrowed(callee),
+                closures: Vec::new(),
+            });
     }
     let mut instantiation = Instantiation::new(declaration, owner, arguments, declarations)?;
     let mut function = callee.clone();
@@ -4709,14 +4712,29 @@ struct Arguments<'a> {
 }
 
 impl Arguments<'_> {
-    /// The arguments that bind a binder, origins left out, each with its
-    /// function.
-    fn binding(&self) -> Vec<(&TyArg, Option<&CallableArgument>)> {
+    /// The arguments that bind a binder of `decls`, the callee's whole
+    /// declared list, each with its function: the call holds one for every
+    /// declared parameter, and its origin binders and their `mut=` binders
+    /// bind nothing an inlined body reads, their origins erased.
+    fn binding(&self, decls: &[ParamDecl]) -> Vec<(&TyArg, Option<&CallableArgument>)> {
+        let whole = self.compile_time.len() == decls.len();
         self.compile_time
             .iter()
             .enumerate()
-            .filter(|(_, argument)| !matches!(argument, TyArg::Origin(_)))
-            .map(|(index, argument)| (argument, self.callables.get(index).and_then(Option::as_ref)))
+            .filter(
+                |(index, argument)| match decls.get(*index).filter(|_| whole) {
+                    Some(decl) => decl.is_argument_binder(decls),
+                    None => !matches!(argument, TyArg::Origin(_)),
+                },
+            )
+            .map(|(_, argument)| argument)
+            .enumerate()
+            .map(|(position, argument)| {
+                (
+                    argument,
+                    self.callables.get(position).and_then(Option::as_ref),
+                )
+            })
             .collect()
     }
 }
@@ -4777,7 +4795,7 @@ impl<'d> Instantiation<'d> {
         let covered = owner.map_or(0, |owner| restated_owner_binders(&owner.decls, decls));
         let own = &decls[covered..];
         let existentials = arguments.existentials;
-        let arguments = arguments.binding();
+        let arguments = arguments.binding(&declaration.param_decls);
         let own_arguments = if arguments.len() == decls.len() {
             &arguments[covered..]
         } else if arguments.len() == own.len() {

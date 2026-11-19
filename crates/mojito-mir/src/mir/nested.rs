@@ -255,6 +255,57 @@ pub(super) fn upgrade_call_parameter_lists(
     }
 }
 
+/// Give each call of `functions` whose `instantiated_args` bind its
+/// callee's argument view, as an artifact before MIR 1.205 writes them, a
+/// value for every declared parameter: each origin binder's left unbound
+/// and each `mut=` binder's deferred to the elaborated call
+/// ([`ParamDecl::instance_arguments`]), as an older call solved neither.
+pub(super) fn upgrade_instantiated_arguments(
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+) {
+    fn widen(arguments: &mut Vec<TyArg>, declared: &[ParamDecl]) {
+        if !arguments.is_empty()
+            && arguments.len() != declared.len()
+            && arguments.len() == ParamDecl::argument_binders(declared).count()
+        {
+            *arguments = ParamDecl::instance_arguments(declared, arguments);
+        }
+    }
+    fn upgrade(block: &mut MirBlock, declarations: &MirDeclarations) {
+        for instruction in &mut block.instrs {
+            for region in instruction_regions_mut(instruction) {
+                upgrade(region, declarations);
+            }
+            match instruction {
+                MirInstr::Call {
+                    func,
+                    instantiated_args,
+                    ..
+                } => {
+                    if let Some(declaration) = declarations.function(&func.0) {
+                        widen(instantiated_args, &declaration.param_decls);
+                    }
+                }
+                MirInstr::MethodCall {
+                    param_decls,
+                    instantiated_args,
+                    ..
+                }
+                | MirInstr::CallIndirect {
+                    param_decls,
+                    instantiated_args,
+                    ..
+                } => widen(instantiated_args, param_decls),
+                _ => {}
+            }
+        }
+    }
+    for (_, function) in functions.iter_mut() {
+        upgrade(&mut function.body, declarations);
+    }
+}
+
 /// Where one [`lower_fn_nested`] began pushing: the functions, function
 /// declarations, and struct declarations it lowers lie past these.
 #[derive(Clone, Copy)]

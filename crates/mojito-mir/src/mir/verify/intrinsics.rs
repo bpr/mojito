@@ -142,7 +142,7 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
     else {
         return Err("retained contract is not generic".to_string());
     };
-    let decls = &*ParamDecl::argument_view(binders);
+    let decls = binders.as_slice();
     if decls.len() != arguments.len() {
         return Err(format!(
             "{} retained argument(s) for {} declaration(s)",
@@ -211,6 +211,10 @@ pub(super) fn generic_argument_maps(
             (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
                 types.insert(id.clone(), ty.clone());
             }
+            // A value the call leaves to the elaborated instance (an
+            // origin's `mut=` the caller's binders decide) binds nothing
+            // here.
+            (_, TyArg::Val(CtValue::Deferred(_))) => {}
             (
                 ParamDecl::Value { .. } | ParamDecl::Type { variadic: true, .. },
                 TyArg::Val(value),

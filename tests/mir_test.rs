@@ -3004,6 +3004,122 @@ fn lowered_calls_carry_their_callees_whole_parameter_lists() {
 }
 
 #[test]
+fn calls_solve_a_value_for_every_declared_parameter() {
+    // A call's solved arguments hold a value for every parameter its callee
+    // declares: an inferred origin binder's origin, and its `mut=` binder's
+    // mutability, in place beside the type and value binders.
+    let source = "struct Holder:\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def read[o: ImmOrigin, n: Int](self, p: Pointer[Int, o]) -> Int:\n        return p[] + n + self.x\n\ndef flag[mut: Bool, //, o: Origin[mut=mut], k: Int](p: Pointer[Int, o]) -> Int:\n    return p[] + k\n\ndef main():\n    var v = 5\n    var h = Holder(2)\n    var p = Pointer(to=v)\n    print(h.read[n=3](p), flag[k=4](p))\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile calls over origin binders");
+    let mir = compiled.mir();
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    let solved = |wanted: &str| {
+        main.body
+            .instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func,
+                    instantiated_args,
+                    ..
+                } if func.0.starts_with(wanted) => Some(instantiated_args.clone()),
+                MirInstr::MethodCall {
+                    method,
+                    instantiated_args,
+                    ..
+                } if method == wanted => Some(instantiated_args.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the call of {wanted} is lowered"))
+    };
+    let read = solved("read");
+    assert!(
+        matches!(
+            read.as_slice(),
+            [
+                mojito::types::TyArg::Origin(_),
+                mojito::types::TyArg::Val(_)
+            ]
+        ),
+        "{read:?}"
+    );
+    let flag = solved("flag");
+    assert!(
+        matches!(
+            flag.as_slice(),
+            [
+                mojito::types::TyArg::Val(mojito::ct::CtValue::Bool(true)),
+                mojito::types::TyArg::Origin(_),
+                mojito::types::TyArg::Val(_),
+            ]
+        ),
+        "{flag:?}"
+    );
+    assert_eq!(compiler.execute(&compiled).unwrap().output, "10 9\n");
+    // A call whose solved arguments bind only the argument view is rejected.
+    let mut narrowed = mir.clone();
+    let main = &mut narrowed
+        .functions
+        .iter_mut()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    for instruction in &mut main.body.instrs {
+        if let MirInstr::Call {
+            func,
+            instantiated_args,
+            ..
+        } = instruction
+            && func.0.starts_with("flag")
+        {
+            instantiated_args.retain(|argument| {
+                !matches!(
+                    argument,
+                    mojito::types::TyArg::Origin(_)
+                        | mojito::types::TyArg::Val(mojito::ct::CtValue::Bool(_))
+                )
+            });
+        }
+    }
+    let errors = mojito::mir::verify::verify(&narrowed);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("solved argument(s) do not bind its callee's")),
+        "{errors:?}"
+    );
+    // An artifact before schema 1.205 writes that view, which the reader
+    // widens to a value for every declared parameter.
+    let text = mojito::mir::text::disassemble(mir).expect("disassemble");
+    let older = text
+        .replacen(&mojito::mir::text::version_header(), "mojito-mir 1.204", 1)
+        .lines()
+        .map(
+            |line| match line.find("instantiated_args: [value_arg(ct_bool(true)), ") {
+                Some(start) if line.contains("func: flag") => {
+                    let rest = &line[start..];
+                    let kept = rest.find("value_arg(ct_int(4))").expect("k's value");
+                    format!("{}instantiated_args: [{}", &line[..start], &rest[kept..])
+                }
+                _ => line.to_string(),
+            },
+        )
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(older.contains("instantiated_args: [value_arg(ct_int(4))]"));
+    let loaded = mojito::mir::text::load_artifact(older.as_bytes(), "older.mir")
+        .expect("an older artifact's solved arguments are widened at load");
+    assert!(mojito::mir::verify::verify(&loaded.program).is_empty());
+}
+
+#[test]
 fn inferred_generic_method_calls_retain_parameter_declarations() {
     let source = "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(counter.size(left=1, right=2))\n";
     let compiler = Compiler::default().with_snippet_module_scope();

@@ -13,7 +13,7 @@ use crate::mir::{
     Const, FuncRef, MirBlock, MirDeclarations, MirInstr, MirParamArg, Reg, instruction_regions_mut,
 };
 use mojito_types::param_expr::ParamRef;
-use mojito_types::types::{Ty, TyArg, TyKind};
+use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -204,7 +204,7 @@ pub fn struct_copy(dest: Reg, ty: &Ty, source: Reg, declarations: &MirDeclaratio
     initializer_call(
         dest,
         initializer,
-        struct_arguments(ty, declarations),
+        struct_arguments(ty, initializer, declarations),
         vec![("copy".to_string(), source)],
     )
 }
@@ -282,7 +282,7 @@ fn default_construction(
                 initializer_call(
                     dest,
                     initializer,
-                    struct_arguments(ty, declarations),
+                    struct_arguments(ty, initializer, declarations),
                     Vec::new(),
                 )
             },
@@ -327,20 +327,25 @@ fn copy_construction<C: ConstructionTypes>(
     Some(registers.read_through(copy))
 }
 
-/// The compile-time arguments a call of the struct `ty`'s initializer
-/// binds its parameters by: the type's arguments, one per parameter, a lone
-/// pack the type spells element by element (`Tuple[Int, Bool]`) passed
-/// whole as a direct call passes it.
-fn struct_arguments(ty: &Ty, declarations: &MirDeclarations) -> Vec<TyArg> {
+/// The compile-time arguments a call of the struct `ty`'s `initializer`
+/// binds its whole declared list by: the type's arguments, one per
+/// parameter ([`ParamDecl::instance_arguments`]), a lone pack the type
+/// spells element by element (`Tuple[Int, Bool]`) passed whole as a direct
+/// call passes it.
+fn struct_arguments(ty: &Ty, initializer: &str, declarations: &MirDeclarations) -> Vec<TyArg> {
     let TyKind::Struct(name, arguments) = ty.kind() else {
         return Vec::new();
     };
-    declarations
+    let arguments = declarations
         .structure(mojito_types::types::struct_template(name))
         .and_then(|declaration| {
             mojito_types::types::lone_pack_arguments(&declaration.argument_view(), arguments)
         })
-        .unwrap_or_else(|| arguments.clone())
+        .unwrap_or_else(|| arguments.clone());
+    declarations.function(initializer).map_or_else(
+        || arguments.clone(),
+        |declaration| ParamDecl::instance_arguments(&declaration.param_decls, &arguments),
+    )
 }
 
 /// A call of the struct initializer `initializer` over the keyword

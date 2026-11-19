@@ -1176,7 +1176,7 @@ impl<'a> Specializer<'a> {
                     };
                     (
                         func.0.as_str(),
-                        declaration.argument_view(),
+                        declaration.param_decls.as_slice(),
                         instantiated_args,
                         receiver.as_mut(),
                     )
@@ -1188,7 +1188,7 @@ impl<'a> Specializer<'a> {
                     ..
                 } => (
                     target.as_str(),
-                    ParamDecl::argument_view(param_decls),
+                    param_decls.as_slice(),
                     instantiated_args,
                     None,
                 ),
@@ -1210,7 +1210,7 @@ impl<'a> Specializer<'a> {
                 }
             };
             if instantiated_args.len() == decls.len() {
-                erase(&decls, instantiated_args);
+                erase(decls, instantiated_args);
             }
             if let Some(receiver) = receiver
                 && let Some((name, arguments)) = receiver.kind().as_non_simd_struct()
@@ -3122,8 +3122,15 @@ impl<'a> Specializer<'a> {
                     );
                 }
                 // A nested callee's leading arguments apply its generator
-                // to the instance it is declared in.
+                // to the instance it is declared in, over the view of its
+                // declared list its generator scope binds.
                 if self.is_nested(&func.0) {
+                    if let Some(declaration) = self.declarations.get(func.0.as_str()) {
+                        *instantiated_args = ParamDecl::argument_view_arguments(
+                            &declaration.param_decls,
+                            instantiated_args,
+                        );
+                    }
                     self.apply_nested_generator(owner, &mut func.0, instantiated_args)?;
                 }
             }

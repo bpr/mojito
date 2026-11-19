@@ -1431,7 +1431,7 @@ impl Checker {
             instantiated_args: self.conversion_instantiation(
                 to,
                 &selected.target,
-                selected.own_arguments,
+                (&selected.own_decls, selected.own_arguments),
             ),
             constructor: selected.target,
             ty: to.clone(),
@@ -2054,8 +2054,11 @@ impl Checker {
         else {
             return Ok(None);
         };
-        let instantiated_args =
-            self.conversion_instantiation(&target, &materialize.target, materialize.own_arguments);
+        let instantiated_args = self.conversion_instantiation(
+            &target,
+            &materialize.target,
+            (&materialize.own_decls, materialize.own_arguments),
+        );
         Ok(Some(SelectedConversion {
             materialization: Some(mojito_checked::checked::ConversionMaterialization {
                 constructor: materialize.target,
@@ -2073,12 +2076,14 @@ impl Checker {
 
     /// The compile-time arguments the converting constructor `target` of
     /// `to` takes: `to`'s binder prefix, then the constructor's own
-    /// arguments, as any construction passes them.
+    /// arguments (declared `own_decls`), over its whole declared list, as
+    /// any construction passes them
+    /// ([`Self::construction_arguments`]).
     fn conversion_instantiation(
         &self,
         to: &Ty,
         target: &str,
-        own_arguments: Vec<TyArg>,
+        (own_decls, own_arguments): (&[ParamDecl], Vec<TyArg>),
     ) -> Vec<TyArg> {
         let TyKind::Struct(name, arguments) = to.kind() else {
             return Vec::new();
@@ -2090,11 +2095,12 @@ impl Checker {
             return Vec::new();
         };
         let arguments = comptime_validation::positional_pack_arguments(&info.decls(), arguments);
-        arguments[..info.decls().len().min(arguments.len())]
+        let solved: Vec<TyArg> = arguments[..info.decls().len().min(arguments.len())]
             .iter()
             .cloned()
             .chain(own_arguments)
-            .collect()
+            .collect();
+        self.construction_arguments(name, to, own_decls, &solved)
     }
 
     /// Whether `sig`'s refined `out self`, with the own origin binders
@@ -2304,6 +2310,7 @@ impl Checker {
                     parameter: parameter.clone(),
                     declared_by_address,
                     own_arguments: own_arguments.clone(),
+                    own_decls: sig.declared.clone(),
                     materialization: None,
                 }))
             }
@@ -2355,6 +2362,7 @@ impl Checker {
             parameter,
             declared_by_address,
             own_arguments,
+            own_decls,
             materialization,
         } = selected;
         let span = expression.source_span();
@@ -2406,7 +2414,7 @@ impl Checker {
         // A constructor restates its struct's parameters, so the conversion
         // passes the converted-to type's binder prefix, then the
         // constructor's own arguments, as any construction does.
-        let instantiation = self.conversion_instantiation(to, &target, own_arguments);
+        let instantiation = self.conversion_instantiation(to, &target, (&own_decls, own_arguments));
         if !instantiation.is_empty() {
             self.record_at(span.clone()).conversion_instantiation = Some(instantiation);
         }
@@ -3535,6 +3543,8 @@ struct SelectedConversion {
     /// The constructor's own compile-time arguments, solved from the
     /// source, in declaration order.
     own_arguments: Vec<TyArg>,
+    /// The constructor's own declared list.
+    own_decls: Vec<ParamDecl>,
     /// The materialization of a `@__nonmaterializable` source the
     /// constructor converts the target of.
     materialization: Option<mojito_checked::checked::ConversionMaterialization>,
@@ -3780,6 +3790,9 @@ struct MethodCallResolution {
     /// The method's own resolved compile-time arguments, in declaration
     /// order, when the selected signature declares any.
     instantiation: Option<Vec<TyArg>>,
+    /// [`Self::instantiation`] over the whole declared list, origins in
+    /// place ([`Checker::declared_call_arguments`]).
+    declared_instantiation: Option<Vec<TyArg>>,
     /// The selected signature's runtime parameter names, in declaration order.
     parameter_names: Vec<String>,
     /// See [`MethodSig::view_return_interior`].
@@ -4052,6 +4065,9 @@ struct MethodInstantiation {
     subst: TySubst,
     /// The method's own type and value arguments.
     arguments: Vec<TyArg>,
+    /// The method's whole declared list's arguments, origins in place
+    /// ([`Checker::declared_call_arguments`]).
+    declared: Vec<TyArg>,
     /// What each of the call's bracket arguments bound to.
     attributes: DeclaredAttributes,
     /// The method's own origin binders, bound from the arguments' types.

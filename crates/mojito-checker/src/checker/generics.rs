@@ -1574,6 +1574,7 @@ impl Checker {
                 kw_variadic: kw_variadic.cloned(),
                 subst: HashMap::new(),
                 arguments: Vec::new(),
+                declared: Vec::new(),
                 attributes,
                 origin_bindings: None,
                 bracket_origins,
@@ -1744,12 +1745,19 @@ impl Checker {
             }
             _ => variadic.map(resolve).transpose()?,
         };
+        let declared = self.declared_call_arguments(
+            &signature.declared,
+            &tyargs,
+            &bracket_origins,
+            origin_bindings.as_ref(),
+        );
         Ok(MethodInstantiation {
             params: params.iter().map(resolve).collect::<Result<Vec<_>, _>>()?,
             variadic: resolved_variadic,
             kw_variadic: kw_variadic.map(resolve).transpose()?,
             subst,
             arguments: tyargs,
+            declared,
             attributes,
             origin_bindings,
             bracket_origins,
@@ -2257,6 +2265,19 @@ pub(super) fn method_instantiation_arguments(
 ) -> Option<Vec<TyArg>> {
     (!signature.decls().is_empty() && arguments.len() == signature.decls().len())
         .then(|| arguments.to_vec())
+}
+
+/// [`method_instantiation_arguments`] over the whole declared list: the
+/// call's `declared` arguments ([`Checker::declared_call_arguments`]) when
+/// it resolved its argument view's.
+pub(super) fn method_declared_arguments(
+    signature: &MethodSig,
+    arguments: &[TyArg],
+    declared: &[TyArg],
+) -> Option<Vec<TyArg>> {
+    method_instantiation_arguments(signature, arguments)
+        .map(|_| declared.to_vec())
+        .filter(|declared| declared.len() == signature.declared.len())
 }
 
 /// [`substitute_at`], binding the receiver's origin tail into pointer

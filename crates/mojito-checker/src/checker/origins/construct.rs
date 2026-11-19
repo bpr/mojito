@@ -153,7 +153,7 @@ impl ConstructorOriginBindings {
 
     /// The mutability binder `id` was bound with: a pointer's provenance,
     /// else the storage its origin names.
-    fn bound_mutability(
+    pub(in crate::checker) fn bound_mutability(
         &self,
         id: OriginParamId,
         owner_mutability: &dyn Fn(mojito_types::origin::OwnerId) -> Mutability,
@@ -248,6 +248,69 @@ impl ConstructorOriginBindings {
 }
 
 impl Checker {
+    /// A call's solved arguments over its callee's whole declared list
+    /// `decls`, as upstream's call holds a value for every declared
+    /// parameter: `arguments`, the type and value binders' solutions over
+    /// the list's argument view ([`ParamDecl::argument_view`]), with each
+    /// origin binder's origin in place, the one its bracket bound
+    /// (`bracket`) or else the one the arguments' places bound it to
+    /// (`bindings`), and each `mut=` binder's value, that origin's
+    /// mutability. A mutability the caller's own binder decides is
+    /// [`CtValue::Deferred`], as its value arrives with the caller's
+    /// instance. `arguments` is returned as it stands when it is no
+    /// solution of the argument view.
+    pub(in crate::checker) fn declared_call_arguments(
+        &self,
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+        bracket: &HashMap<OriginParamId, Origin>,
+        bindings: Option<&ConstructorOriginBindings>,
+    ) -> Vec<TyArg> {
+        if arguments.len() != ParamDecl::argument_binders(decls).count()
+            || arguments.len() == decls.len()
+        {
+            return arguments.to_vec();
+        }
+        let origin = |id: OriginParamId| {
+            bracket
+                .get(&id)
+                .or_else(|| bindings.and_then(|bindings| bindings.origins.get(&id)))
+                .cloned()
+        };
+        let mutability = |id: OriginParamId| match bracket.get(&id) {
+            Some(origin) => self.bound_origin_mutability(origin),
+            None => bindings?.bound_mutability(id, &|owner| self.owner_reference_mutability(owner)),
+        };
+        let mut solved = arguments.iter();
+        decls
+            .iter()
+            .map(|decl| match decl {
+                ParamDecl::Origin { origin: id, .. } => {
+                    TyArg::Origin(origin(*id).unwrap_or(Origin::Unbound))
+                }
+                _ if decl.is_origin_mutability_binder(decls) => {
+                    let governed = decls.iter().find_map(|candidate| match candidate {
+                        ParamDecl::Origin {
+                            origin,
+                            mutability: mojito_types::types::OriginMutability::Binder(binder),
+                            ..
+                        } if binder.id == *decl.id() => Some(*origin),
+                        _ => None,
+                    });
+                    TyArg::Val(match governed.and_then(mutability) {
+                        Some(Mutability::Mutable) => CtValue::Bool(true),
+                        Some(Mutability::Immutable) => CtValue::Bool(false),
+                        Some(Mutability::Param(_)) | None => CtValue::Deferred(decl.binder()),
+                    })
+                }
+                _ => solved
+                    .next()
+                    .cloned()
+                    .unwrap_or(TyArg::Origin(Origin::Unbound)),
+            })
+            .collect()
+    }
+
     /// The checked type of a construction: the solved binder prefix followed
     /// by the origin tail the application and the arguments bound.
     pub(in crate::checker) fn constructed_type(

@@ -179,12 +179,18 @@ pub fn build_variadic_list(
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         receiver: None,
+        // The constructor's whole declared list: the list's
+        // `elt_is_mutable`, `origin`, `element_type`, and `is_owned`, then
+        // its own `size` and the array's `container_origin`.
         instantiated_args: vec![
+            TyArg::Val(CtValue::Bool(owned)),
+            TyArg::Origin(mojito_types::origin::Origin::Unbound),
             TyArg::Ty(element.clone()),
             TyArg::Val(CtValue::Bool(owned)),
             TyArg::Val(CtValue::Index(
                 i64::try_from(length).expect("a call's argument count fits an Int"),
             )),
+            TyArg::Origin(mojito_types::origin::Origin::Untracked { mutable: false }),
         ],
         spread: None,
     });

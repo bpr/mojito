@@ -235,7 +235,7 @@ fn constructor_argument(
     let [name] = declaration.param_names.as_slice() else {
         return None;
     };
-    let struct_arguments = restated_arguments(&declaration.argument_view(), ty)?;
+    let struct_arguments = restated_arguments(&declaration.param_decls, ty)?;
     initializer.then(|| ConstructorArgument {
         name: name.clone(),
         keyword: declaration.keyword_only == Some(0),
@@ -244,8 +244,9 @@ fn constructor_argument(
 }
 
 /// The arguments of the value type `ty` for the struct parameters `decls`
-/// a constructor restates, one per parameter. A type argument spreading a
-/// pack (`Tuple[*Ts.reverse()]`) is a list of types, not one: a constructor
+/// a constructor restates, a value for every one, origins included
+/// ([`ParamDecl::instance_arguments`]). A type argument spreading a pack
+/// (`Tuple[*Ts.reverse()]`) is a list of types, not one: a constructor
 /// restating a pack takes none, its owner's type binding them, unless it
 /// also restates a value parameter the call must then carry. `None` when
 /// `ty` applies too few.
@@ -257,18 +258,36 @@ fn restated_arguments(decls: &[ParamDecl], ty: &Ty) -> Option<Vec<TyArg>> {
         )
     };
     if decls.iter().any(variadic) {
-        return decls
-            .iter()
+        return ParamDecl::argument_binders(decls)
             .all(|decl| variadic(decl) || matches!(decl, ParamDecl::Type { .. }))
             .then(Vec::new);
     }
+    let view = ParamDecl::argument_binders(decls).count();
     let arguments: Vec<TyArg> = match ty.kind() {
-        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments
-            .iter()
-            .take_while(|argument| !matches!(argument, TyArg::Origin(_)))
-            .take(decls.len())
-            .cloned()
-            .collect(),
+        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+            let solved = arguments
+                .iter()
+                .take_while(|argument| !matches!(argument, TyArg::Origin(_)))
+                .take(view)
+                .count();
+            if solved != view {
+                return None;
+            }
+            // A closure storage's type carries origins its list declares
+            // no binder for.
+            let tail = arguments
+                .iter()
+                .skip_while(|argument| !matches!(argument, TyArg::Origin(_)))
+                .take(decls.iter().filter(|decl| decl.is_origin()).count());
+            ParamDecl::instance_arguments(
+                decls,
+                &arguments[..solved]
+                    .iter()
+                    .chain(tail)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        }
         _ => Vec::new(),
     };
     (arguments.len() == decls.len()).then_some(arguments)

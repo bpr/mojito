@@ -3392,11 +3392,24 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   contract's `CheckedCallContract::param_decls` are the callee's whole
   list (`MethodSig::declared`, `GenericFuncTy::decls`), an explicit origin
   argument an erased `MirParamArg` named by its binder
-  (`Flatten::param_arg_regs_folding`, `mir.rs`); a reader pairs a declared
-  slot with the call's `instantiated_args`, which bind the argument view,
-  through `ParamDecl::argument_position` (`types.rs`), and
-  `nested::upgrade_call_parameter_lists` widens an artifact's call before
-  schema 1.204.
+  (`Flatten::param_arg_regs_folding`, `mir.rs`); the call's
+  `instantiated_args` hold a value for every declared parameter (schema
+  1.205): the check's `Checker::declared_call_arguments`
+  (`checker/origins/construct.rs`) places each origin binder's solved
+  origin and each `mut=` binder's mutability, for a free call
+  (`record_generic_application`), a method call
+  (`MethodInstantiation::declared`, `method_declared_arguments`), a
+  construction (`record_construction_instantiation`,
+  `bind_constructed_origins`, `construction_arguments`), and a conversion
+  (`conversion_instantiation`); `ParamDecl::instance_arguments`
+  (`types.rs`) maps an instance type's arguments onto a constructor's list
+  for the calls MIR synthesizes (`struct_arguments`, `restated_arguments`,
+  `constructed_arguments`, `build_variadic_list`), and
+  `ParamDecl::argument_view_arguments` takes the view's solutions for a
+  nested body's generator scope. `verify_param_arguments` rejects any other
+  length. `nested::upgrade_call_parameter_lists` widens an artifact's call
+  before schema 1.204, and `nested::upgrade_instantiated_arguments` its
+  solved arguments before 1.205.
 - A type binder bounded by a trait-valued sibling (`T: Tr`, `*Ts: Tr`) is a
   `ParamDecl::Type` whose `trait_param` names that sibling (upstream's
   `ParamType`) and whose `bounds` hold the sibling's declared set, the

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2360**.
+Next free ID: **R2361**.
 
 ## Ordered Work
 
@@ -10730,34 +10730,37 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `generator_shape` (`mojito-types/src/param_expr.rs`) return the whole
     declared list, and have `resolve_partial_use_params` return its
     arguments over that list, as `bind_bracket_params` already binds it.
+  - Probe: a function value's symbol (`ct::FuncSymbolRef::arguments`)
+    binds its generator's argument view, so the elaborator's nested
+    generator scope (`nested_application_scope`, `function_value_instance`
+    in `native/mono/specializer.rs`) reads that view, and
+    `apply_nested_generator` takes a nested call's whole solved arguments
+    down to it (`ParamDecl::argument_view_arguments`) before applying the
+    generator; a `def(...)` bound's inflated callee
+    (`bound_calls::bound_call_from_indirect`) chains that view before the
+    call's whole list.
   - Found while landing R2348 (2026-11-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2350 A call's solved arguments bind its callee's argument view,
-  where upstream's call holds a value for every declared parameter,
-  origins included**
+- [ ] **R2360 A construction's solved arguments leave its initializer's
+  own origin binders unbound, where upstream's call binds every declared
+  parameter in its one solve**
 
-  A lowered call's `param_decls` is its callee's whole declared list, but
-  its `instantiated_args` skip the origin binders and their `mut=`
-  binders, because the check records a call's instantiation over the
-  argument view.
-  - Probe: `GenericInstantiation::arguments` and
-    `MethodInstantiation::arguments` (`checker/call_inference.rs`,
-    `method_instantiation_arguments` in `checker/generics.rs`) list the
-    argument view's solutions only.
-  - Probe: each positional reader maps a declared slot through
-    `ParamDecl::argument_position` or binds `ParamDecl::argument_view`:
-    `verify_param_arguments` (`verify/subscripts.rs`),
-    `instantiate_generic_callable_contract` (`verify/intrinsics.rs`),
-    `drop_arguments` (`param_uses.rs`), `collect_through_requirement`
-    (`call_defaults.rs`), `self_forwards` (`unused_params.rs`), and
-    `erase_valueless_removed_arguments` and `bind_instantiated_arguments`
-    (`native/mono/{specializer,infer}.rs`).
-  - The lever: record each origin binder's solved origin and each `mut=`
-    binder's value in the instantiation, in declared order, and have each
-    reader bind the whole list.
-  - Depends on R2346, R2359.
+  `record_construction_instantiation` (`checker/declarations.rs`) places
+  the struct's origin binders from the constructed instance
+  (`bind_constructed_origins`), but an `__init__`'s own origin binder, and
+  its `mut=` binder, record `origin_unbound` and `ct_deferred`.
+  - Probe: `__init__[T: Copyable, o: ImmOrigin](out self, x: T, p:
+    Pointer[Int, o])` constructed as `W(1, Pointer(to=k))` records `T` and
+    an unbound `o` in the call's `instantiated_args`, though the check
+    bound `o` to `origin_of(k)` to type the argument.
+  - The lever: solve the initializer's own origin binders with its type
+    and value binders (`solve_constructor_own_params`), as a method's
+    are (`instantiate_method_generics`), and record that solution through
+    `Checker::declared_call_arguments`.
+  - Found while landing R2350 (2026-11-19).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R2128 A function's origin mutability binder has no value in its
@@ -10772,9 +10775,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`checker/statements.rs`) hands the body `ParamDecl::argument_decls`,
     which drops the binder, so widening `declare_value_parameters`
     (`scopes.rs`) alone changes nothing.
-  - A lowered call's `param_decls` is the whole declared list, but its
-    solved arguments bind the argument view (R2350), so the elaborator
-    binds the binder no value from the call.
+  - A call's solved arguments hold the binder's value where the bound
+    origin decides it (`ct_bool`), and `ct_deferred` where the caller's
+    binders do (`Checker::declared_call_arguments`), so the elaborator
+    binds it from a call when it is closed, but no body reads it.
   - Probe: an origin-only binder's `where` clause is evaluated from the
     call's `Bool` bindings keyed by source slot, which
     `CallableOriginSignature::binder_names` (`checker.rs`) names, not
@@ -10814,6 +10818,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `param_uses.rs`, `struct_reads.rs`, `inline_parametric.rs`), since an
     instance's arguments are that view plus the tail; a closure storage
     struct's row (`CheckedClosureUses::binders`) holds the view alone.
+  - Probe: a call MIR synthesizes from an instance type (a copy or
+    default construction, a default argument's conversion, a keyword
+    collector) maps the instance's prefix and tail onto the constructor's
+    whole list (`ParamDecl::instance_arguments`, `types.rs`), and a
+    construction's checked arguments rebind the struct's origin slots from
+    the constructed tail (`bind_constructed_origins`); a closure storage's
+    type carries origins its list declares no binder for, which
+    `build_closure_storage` (`mir/lower_stmt.rs`) and `restated_arguments`
+    (`mir/copy_calls.rs`) drop from its constructor's arguments.
+  - Probe: such a call's `mut=` slot is `ct_deferred` wherever its
+    origin's storage decides the value (an `_ArrayIter` instance's
+    `__moveinit__` the elaborator names), as the instance type spells no
+    `mut=` argument, so the concrete verifier (`verify/concrete.rs`)
+    admits a deferred value in a call's solved arguments.
   - `StructDeclaration::origin_params` (MIR text 1.168) is the tail's
     handoff, keying each origin argument to the id a member template
     names; it goes away once origins are `ParamDecl`s in place.

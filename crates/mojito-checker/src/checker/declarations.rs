@@ -2844,15 +2844,18 @@ impl Checker {
     /// (`Counter[4](1)` calls `Counter[4].__init__`). A bracket argument
     /// solved to a closed value is the construction's parameter attribute,
     /// so the call lowers no run-time form for it; `partitioned` places the
-    /// forwarded `param_args` in the struct's declared list.
+    /// forwarded `param_args` in the struct's declared list. The recorded
+    /// arguments bind the constructor's whole declared list, the struct's
+    /// then its own (`own`), each origin binder's left for the constructed
+    /// type to bind ([`Self::bind_constructed_origins`]).
     fn record_construction_instantiation(
         &self,
         span: &SourceSpan,
         name: &str,
         bracket: (&[ParamDecl], &[mojito_ast::ast::ParamArg]),
         partitioned: &super::type_resolution::PartitionedStructArgs,
-        parameter_names: &[String],
-        arguments: Vec<TyArg>,
+        (own, parameter_names): (&[ParamDecl], &[String]),
+        arguments: &[TyArg],
     ) {
         if arguments.is_empty() {
             return;
@@ -2861,9 +2864,19 @@ impl Checker {
         self.record_folded_bracket_attributes(
             span,
             &partitioned.declared(crate::checker::call_inference::folded_parameter_attributes(
-                decls, param_args, &arguments,
+                decls, param_args, arguments,
             )),
         );
+        let declared: Vec<ParamDecl> = self
+            .structs
+            .get(name)
+            .map(|info| info.params.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .chain(own)
+            .cloned()
+            .collect();
+        let arguments = self.declared_call_arguments(&declared, arguments, &HashMap::new(), None);
         self.record_at(span.clone()).generic_instantiation =
             Some(mojito_checked::checked::GenericInstantiation {
                 callee: name.to_string(),
@@ -3096,9 +3109,94 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
-        self.with_argument_memo(|| {
+        let constructed = self.with_argument_memo(|| {
             self.infer_construction_ranked(span, name, constructed, param_args, args, kwargs)
-        })
+        })?;
+        self.bind_constructed_origins(span, name, &constructed);
+        Ok(constructed)
+    }
+
+    /// The arguments of a construction of `name` that solved `arguments`,
+    /// the struct's argument view and then its constructor's (declared
+    /// `own`), over the constructor's whole declared list: the struct's
+    /// origin binders, and their `mut=` binders, bound to the origins the
+    /// `constructed` instance carries, as the call binds every declared
+    /// parameter.
+    pub(super) fn construction_arguments(
+        &self,
+        name: &str,
+        constructed: &Ty,
+        own: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> Vec<TyArg> {
+        let Some(info) = self.structs.get(name) else {
+            return arguments.to_vec();
+        };
+        let declared: Vec<ParamDecl> = info.params.iter().chain(own).cloned().collect();
+        self.declared_call_arguments(
+            &declared,
+            arguments,
+            &Self::constructed_origins(info, name, constructed),
+            None,
+        )
+    }
+
+    /// Bind the struct's origin binders, and their `mut=` binders, in the
+    /// arguments the construction at `span` recorded
+    /// ([`Self::record_construction_instantiation`]) to the origins the
+    /// `constructed` instance carries ([`Self::construction_arguments`]).
+    fn bind_constructed_origins(&self, span: &SourceSpan, name: &str, constructed: &Ty) {
+        let Some(info) = self.structs.get(name) else {
+            return;
+        };
+        let origins = Self::constructed_origins(info, name, constructed);
+        if origins.is_empty() {
+            return;
+        }
+        let decls = &info.params;
+        let Some(recorded) = self
+            .fact(span, |facts| facts.generic_instantiation.as_ref())
+            .filter(|instantiation| {
+                instantiation.callee == name && instantiation.arguments.len() >= decls.len()
+            })
+        else {
+            return;
+        };
+        let view: Vec<TyArg> = decls
+            .iter()
+            .zip(&recorded.arguments)
+            .filter(|(decl, _)| decl.is_argument_binder(decls))
+            .map(|(_, argument)| argument.clone())
+            .collect();
+        let bound = self.declared_call_arguments(decls, &view, &origins, None);
+        if let Some(instantiation) = self.record_at(span.clone()).generic_instantiation.as_mut() {
+            instantiation.arguments.splice(..decls.len(), bound);
+        }
+    }
+
+    /// The origin each origin binder of the struct `info`, named `name`,
+    /// binds in the instance `constructed`, by binder.
+    fn constructed_origins(
+        info: &StructInfo,
+        name: &str,
+        constructed: &Ty,
+    ) -> HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin> {
+        let Some((_, instance)) = constructed
+            .kind()
+            .as_non_simd_struct()
+            .filter(|(constructed, _)| constructed.as_str() == name)
+        else {
+            return HashMap::new();
+        };
+        let tail = instance.get(info.decls().len()..).unwrap_or_default();
+        info.origin_slots()
+            .into_iter()
+            .zip(tail)
+            .filter_map(|((id, _), argument)| match argument {
+                TyArg::Origin(origin) => Some((id, origin.clone())),
+                _ => None,
+            })
+            .collect()
     }
 
     /// [`Self::infer_construction_of`] inside its argument memo.
@@ -3255,6 +3353,7 @@ impl Checker {
                             param_decls: sig.declared.clone(),
                             parametric_origin_writes: sig.parametric_origin_writes.clone(),
                             instantiation,
+                            declared_instantiation: None,
                             parameter_names: sig.names.clone(),
                             view_return_interior: sig.view_return_interior.clone(),
                             view_return: Vec::new(),
@@ -3284,8 +3383,8 @@ impl Checker {
                     name,
                     (&ParamDecl::argument_view(&selected.param_decls), param_args),
                     &partitioned,
-                    &selected.parameter_names,
-                    selected.instantiation.clone().unwrap_or_default(),
+                    (&selected.param_decls, &selected.parameter_names),
+                    selected.instantiation.as_deref().unwrap_or_default(),
                 );
                 self.record_selected_method_conversions("__init__", &selected, args, kwargs)?;
                 // Constructor calls use the same reference-parameter handles as
@@ -3452,12 +3551,12 @@ impl Checker {
                     name,
                     (&decls, param_args),
                     &partitioned,
-                    &sig.names,
-                    tyargs
+                    (&sig.declared, &sig.names),
+                    &tyargs
                         .iter()
                         .cloned()
                         .chain(own.arguments.clone())
-                        .collect(),
+                        .collect::<Vec<_>>(),
                 );
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 let mut bound = Vec::with_capacity(args.len());
@@ -3971,8 +4070,12 @@ impl Checker {
                     name,
                     (&decls, param_args),
                     &partitioned,
-                    &sig.names,
-                    tyargs.iter().cloned().chain(own_arguments).collect(),
+                    (&sig.declared, &sig.names),
+                    &tyargs
+                        .iter()
+                        .cloned()
+                        .chain(own_arguments)
+                        .collect::<Vec<_>>(),
                 );
                 // `expected` addresses the packed layout: the non-default
                 // slots in order, then the gathered arguments.
@@ -4126,8 +4229,8 @@ impl Checker {
             name,
             (&decls, param_args),
             &partitioned,
-            &field_names,
-            tyargs.clone(),
+            (&[], &field_names),
+            &tyargs,
         );
         let origin_bindings = self.bind_fieldwise_origins(
             name,
@@ -5187,8 +5290,12 @@ impl Checker {
             name,
             (&decls, param_args),
             partitioned,
-            &sig.names,
-            tyargs.iter().cloned().chain(own.arguments).collect(),
+            (&sig.declared, &sig.names),
+            &tyargs
+                .iter()
+                .cloned()
+                .chain(own.arguments)
+                .collect::<Vec<_>>(),
         );
         // A copy keeps the source's origin tail.
         let mut arguments = tyargs;

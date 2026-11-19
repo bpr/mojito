@@ -656,8 +656,11 @@ impl Checker {
         // The constructor's own parameters solved from the value (`String`'s
         // `__init__(data: StringLiteral)` binds the literal's `value`) are
         // its call's arguments, as any conversion passes them.
-        let instantiation =
-            self.conversion_instantiation(&target, &selected.target, selected.own_arguments);
+        let instantiation = self.conversion_instantiation(
+            &target,
+            &selected.target,
+            (&selected.own_decls, selected.own_arguments),
+        );
         // A view conversion already recorded at this span supersedes the
         // materialization; re-inferring the expression must not revert it.
         let mut facts = self.record_at(span);
@@ -2275,7 +2278,8 @@ impl Checker {
         attributes.merge(folded_parameter_attributes(binders, param_args, &tyargs));
         // An overload candidate's write here is undone with its probe; the
         // selected candidate's re-run is the only one kept.
-        self.record_generic_application(span, name, generic, (param_args, decls), tyargs);
+        let solved = (binders.as_slice(), &explicit, origins.as_ref());
+        self.record_generic_application(span, name, generic, (param_args, decls), &tyargs, solved);
         Ok((
             result,
             overload_rank(
@@ -2306,24 +2310,37 @@ impl Checker {
     /// `decls`: the already-minted clone a closed inferred application
     /// retargets to by exact name instead of requesting a discovery round
     /// of its own (an earlier round minted it for another occurrence), or
-    /// the application instantiation discovery reads.
+    /// the application, its arguments over the whole declared list
+    /// `binders`, each origin binder's from the bracket or the arguments'
+    /// places `origins` bound it to ([`Self::declared_call_arguments`]).
     fn record_generic_application(
         &self,
         span: &SourceSpan,
         name: &str,
         generic: &Ty,
         (param_args, decls): (&[mojito_ast::ast::ParamArg], &[ParamDecl]),
-        tyargs: Vec<TyArg>,
+        tyargs: &[TyArg],
+        (binders, explicit, origins): (
+            &[ParamDecl],
+            &ExplicitTypes,
+            Option<&super::origins::ConstructorOriginBindings>,
+        ),
     ) {
         let Some(func) = generic.as_generic_func() else {
             return;
         };
         if param_args.is_empty()
-            && let Some(clone) = self.existing_def_clone(name, decls, &tyargs)
+            && let Some(clone) = self.existing_def_clone(name, decls, tyargs)
         {
             self.clear_fact(span, |facts| facts.generic_instantiation.take());
             self.record_at(span.clone()).overload_target = Some(clone);
         } else {
+            let bracket = explicit
+                .origins()
+                .iter()
+                .map(|bound| (bound.id, bound.origin.clone()))
+                .collect();
+            let declared = self.declared_call_arguments(binders, tyargs, &bracket, origins);
             self.record_at(span.clone()).generic_instantiation =
                 Some(mojito_checked::checked::GenericInstantiation {
                     callee: name.to_string(),
@@ -2334,7 +2351,7 @@ impl Checker {
                         .map(|ty| TypeKey::from_ty(ty).as_str().to_string())
                         .collect(),
                     variadic: mojito_symbol::symbol::VariadicKey::from_callable(generic),
-                    arguments: tyargs,
+                    arguments: declared,
                 });
         }
     }

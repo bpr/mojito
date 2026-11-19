@@ -513,12 +513,12 @@ fn self_forwards(
                 })
                 .map(|(decl, _)| decl.id().clone())
                 .collect();
-            let view = ParamDecl::argument_view(&decls);
-            if instantiated.len() == view.len() {
+            if instantiated.len() == decls.len() {
                 itself.extend(
-                    view.iter()
+                    decls
+                        .iter()
                         .zip(instantiated)
-                        .filter(|(decl, argument)| names_parameter(argument, decl.id()))
+                        .filter(|(decl, argument)| names_parameter(argument, decl))
                         .map(|(decl, _)| decl.id().clone()),
                 );
             }
@@ -586,19 +586,23 @@ fn receiver_forwarded_owner_params(
     decls
         .iter()
         .zip(arguments)
-        .filter(|(decl, argument)| names_parameter(argument, decl.id()))
+        .filter(|(decl, argument)| names_parameter(argument, decl))
         .map(|(decl, _)| decl.id().clone())
         .collect()
 }
 
-/// Whether the type or value argument `argument` is the parameter `id`
+/// Whether the argument `argument` is the parameter `decl`
 /// itself.
-fn names_parameter(argument: &TyArg, id: &ParamId) -> bool {
+fn names_parameter(argument: &TyArg, decl: &ParamDecl) -> bool {
+    let id = decl.id();
     match argument {
         TyArg::Val(CtValue::Expr(expr)) => {
             matches!(expr.kind(), ParamKind::DeclRef(reference) if reference.id == *id)
         }
         TyArg::Ty(ty) => matches!(ty.kind(), TyKind::Param { binder, .. } if binder.id == *id),
+        TyArg::Origin(mojito_types::origin::Origin::Param(origin)) => {
+            matches!(decl, ParamDecl::Origin { origin: declared, .. } if declared == origin)
+        }
         TyArg::Val(_) | TyArg::Origin(_) => false,
     }
 }

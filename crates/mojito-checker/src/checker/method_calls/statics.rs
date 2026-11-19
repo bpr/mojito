@@ -425,10 +425,13 @@ impl Checker {
                 kw_variadic,
                 subst: method_subst,
                 arguments: method_arguments,
+                declared: declared_arguments,
                 attributes: bracket_attributes,
                 ..
             } = instantiated;
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
+            let declared_instantiation =
+                method_declared_arguments(sig, &method_arguments, &declared_arguments);
             if let Err(failure) =
                 self.method_constraint_result(sig, &method_arguments, &info.decls(), tyargs)
             {
@@ -507,6 +510,7 @@ impl Checker {
                     param_decls: sig.declared.clone(),
                     parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     instantiation: instantiation.clone(),
+                    declared_instantiation: declared_instantiation.clone(),
                     parameter_names: sig.names.clone(),
                     view_return_interior: sig.view_return_interior.clone(),
                     view_return: sig.view_return.clone(),
@@ -579,7 +583,10 @@ impl Checker {
                     method: source_method.to_string(),
                     parameter_names: selected.parameter_names.clone(),
                     overload,
-                    arguments: arguments.clone(),
+                    arguments: selected
+                        .declared_instantiation
+                        .clone()
+                        .unwrap_or_else(|| arguments.clone()),
                 });
             self.record_folded_bracket_attributes(
                 &span,

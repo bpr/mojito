@@ -292,7 +292,7 @@ impl Specializer<'_> {
         });
         // A constructor's declaration restates its struct's parameters
         // first, which a method's receiver binds.
-        let (own_start, mut owner_covered) = match receiver {
+        let (mut owner_covered, declared_start) = match receiver {
             Some(receiver) => {
                 let actual_receiver = peel_refs(reg_ty(caller, receiver, owner)?);
                 self.bind_call_receiver(owner, target, actual_receiver, &mut bindings)?
@@ -300,12 +300,17 @@ impl Specializer<'_> {
             None => (0, 0),
         };
         // A construction's solved arguments restate its struct's, as its
-        // declaration does; a method call's are the method's own.
-        let instantiated_start = if receiver == Some(dest) { 0 } else { own_start };
+        // declaration does; a method call's are the method's own. Either
+        // holds a value for every declared parameter, origins included.
+        let instantiated_start = if receiver == Some(dest) {
+            0
+        } else {
+            declared_start
+        };
         self.bind_instantiated_arguments(
             owner,
             target,
-            &declaration.argument_view()[instantiated_start..],
+            &declaration.param_decls[instantiated_start..],
             instantiated,
             &mut bindings,
         )?;
@@ -1012,9 +1017,9 @@ impl Specializer<'_> {
     /// Bind a call's receiver register type into `bindings`: the owning
     /// struct's parameters from its arguments, the owner's concrete
     /// identity when the receiver is instance-named, and the callee's
-    /// receiver pattern. Returns how many leading declaration parameters
-    /// restate the struct's, and how many of those the instance identity
-    /// covers.
+    /// receiver pattern. Returns how many of the leading argument binders
+    /// restating the struct's the instance identity covers, and how many
+    /// leading declared parameters restate the struct's.
     fn bind_call_receiver(
         &self,
         owner: &str,
@@ -1023,14 +1028,16 @@ impl Specializer<'_> {
         bindings: &mut Bindings,
     ) -> Result<(usize, usize), MonoError> {
         let declaration = &self.declarations[target];
-        let mut own_start = 0;
         let mut owner_covered = 0;
+        let mut declared_start = 0;
         if let Some((receiver_name, arguments)) =
             mojito_types::types::nominal_parts(actual_receiver)
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
         {
-            own_start =
+            let own_start =
                 owner_covered_prefix(&struct_decl.argument_view(), &declaration.argument_view());
+            declared_start =
+                owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
             bind_ty_args(&struct_decl.argument_view(), &arguments, bindings).map_err(|e| {
                 self.error(
                     Some(owner),
@@ -1060,6 +1067,6 @@ impl Specializer<'_> {
             })?;
         unify(receiver_pattern, actual_receiver, bindings)
             .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
-        Ok((own_start, owner_covered))
+        Ok((owner_covered, declared_start))
     }
 }

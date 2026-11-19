@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call's solved compile-time arguments now hold a value for every
+  parameter its callee declares, as upstream's call holds an attribute for
+  each: an origin binder's inferred or bracket origin and its `mut=`
+  binder's mutability sit in place beside the type and value binders'
+  solutions, for a free call, a method call, a construction, and a
+  conversion, and the MIR verifier rejects a call whose solved arguments
+  bind any other list. MIR text moves to schema 1.205 and the package
+  format to `mojito-package 233`; an older artifact's calls are widened at
+  load (R2350).
+
 - A method call now binds its method's origin binders in the same solve as
   its type and value parameters, as a free call does, and a method's
   declared origin binder is numbered past its struct's parameters, as its

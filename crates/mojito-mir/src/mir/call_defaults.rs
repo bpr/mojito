@@ -371,7 +371,7 @@ fn fill_call(
             && callee
                 .variadic_index
                 .is_none_or(|collector| default.slot < collector);
-        let value = evaluate_default(function, &default, location.as_ref(), prelude);
+        let value = evaluate_default(function, &default, location.as_ref(), declarations, prelude);
         let argument = if declarations.register_passable(&default.ty) && !default.by_address {
             value
         } else {
@@ -616,8 +616,7 @@ fn collect_through_requirement(
         leading: 0,
         args: args.clone(),
         kwargs: kwargs.clone(),
-        bound: shape
-            .param_decls
+        bound: param_decls
             .iter()
             .cloned()
             .zip(instantiated_args.iter().cloned())
@@ -774,12 +773,11 @@ fn build_keyword_collector(
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         receiver: None,
-        instantiated_args: match ty.kind() {
-            struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
-                arguments.clone()
-            }
-            _ => Vec::new(),
-        },
+        instantiated_args: constructed_arguments(
+            &mojito_symbol::symbol::keyword_collector_constructor_symbol(),
+            &ty,
+            declarations,
+        ),
         spread: None,
     });
     let variable = place.root;
@@ -1849,8 +1847,12 @@ fn bindings_of(
     caller: &Caller<'_>,
 ) -> Vec<(ParamDecl, TyArg)> {
     let declarations = caller.declarations;
-    let own = declaration.argument_binders().cloned();
-    let mut bound: Vec<(ParamDecl, TyArg)> = own.zip(instantiated.iter().cloned()).collect();
+    let mut bound: Vec<(ParamDecl, TyArg)> = declaration
+        .param_decls
+        .iter()
+        .cloned()
+        .zip(instantiated.iter().cloned())
+        .collect();
     if let Some(enclosing) = declaration.enclosing.as_deref()
         && declared_within(caller.name, enclosing, declarations)
     {
@@ -2115,6 +2117,7 @@ fn evaluate_default(
     function: &mut MirFunction,
     default: &Omitted,
     location: Option<&SourceSpan>,
+    declarations: &MirDeclarations,
     prelude: &mut Vec<MirInstr>,
 ) -> Reg {
     match &default.default {
@@ -2126,9 +2129,14 @@ fn evaluate_default(
             });
             value
         }
-        OmittedDefault::Constant(constant) => {
-            evaluate_constant(function, constant, &default.ty, location, prelude)
-        }
+        OmittedDefault::Constant(constant) => evaluate_constant(
+            function,
+            constant,
+            &default.ty,
+            location,
+            declarations,
+            prelude,
+        ),
     }
 }
 
@@ -2139,6 +2147,7 @@ fn evaluate_constant(
     default: &CheckedConst,
     ty: &Ty,
     location: Option<&SourceSpan>,
+    declarations: &MirDeclarations,
     prelude: &mut Vec<MirInstr>,
 ) -> Reg {
     match default {
@@ -2148,17 +2157,12 @@ fn evaluate_constant(
             parameter,
         } => {
             let at = parameter.clone().unwrap_or_else(|| literal_type(arg));
-            let argument = evaluate_constant(function, arg, &at, location, prelude);
+            let argument = evaluate_constant(function, arg, &at, location, declarations, prelude);
             let value = fresh_register(function, ty.clone(), location);
             // The constructor is owner-less: the call binds the struct's
             // parameters to the arguments of the type it builds, as a
-            // written conversion's call does.
-            let instantiated_args = match ty.kind() {
-                struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
-                    arguments.clone()
-                }
-                _ => Vec::new(),
-            };
+            // written conversion's call does, a value for each declared one.
+            let instantiated_args = constructed_arguments(target, ty, declarations);
             prelude.push(MirInstr::Call {
                 conventions: crate::mir::MirArgConventions::default(),
                 dest: value,
@@ -2511,4 +2515,17 @@ fn erase_slice(
         }
         !serves
     });
+}
+
+/// The arguments a call of `constructor` binds when it builds `ty`, an
+/// instance of its struct: a value for each declared parameter
+/// ([`ParamDecl::instance_arguments`]).
+fn constructed_arguments(constructor: &str, ty: &Ty, declarations: &MirDeclarations) -> Vec<TyArg> {
+    let Some((_, arguments)) = ty.kind().as_non_simd_struct() else {
+        return Vec::new();
+    };
+    declarations.function(constructor).map_or_else(
+        || arguments.clone(),
+        |declaration| ParamDecl::instance_arguments(&declaration.param_decls, arguments),
+    )
 }

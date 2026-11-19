@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.203
+mojito-mir 1.205
 ```
 
-The writer emits 1.203. The reader accepts 1.0 through 1.203; *Schema 1.0*
+The writer emits 1.205. The reader accepts 1.0 through 1.205; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1233,6 +1233,18 @@ The package format moves to `mojito-package 230` when a chained
 comparison's link carries the interior invalidations its own call makes
 (`CheckedCompareLink::interior_invalidations`); the MIR text schema is
 unchanged (R2322).
+
+Schema 1.205 gives a call's `instantiated_args` a value for every
+parameter its callee declares, as upstream's call op holds one attribute per
+declared parameter: each origin binder's solved origin (`origin_arg`) and
+each `mut=` binder's mutability (`ct_bool`, or `ct_deferred` where the
+caller's binders decide it) in place beside the type and value binders'
+solutions, a construction's struct prefix included. The verifier rejects a
+call whose solved arguments bind any other list. A call in an older
+artifact, whose solved arguments bind the argument view, is widened at load,
+each origin binder's slot `origin_unbound` and each `mut=` binder's
+deferred. The package format moves to `mojito-package 233`, a call's
+recorded instantiation holding the whole list (R2350).
 
 Schema 1.204 gives every call its callee's whole declared parameter list,
 origin binders and their `mut=` binders in place, as upstream's call op

@@ -3563,6 +3563,93 @@ impl ParamDecl {
         })
     }
 
+    /// The solutions of [`Self::argument_view`] among `arguments`, a value
+    /// for every parameter `decls` declares: what a reader keyed by the
+    /// view (a nested body's generator scope, a function value's symbol)
+    /// binds. `arguments` as they stand when they bind no whole list.
+    pub fn argument_view_arguments(decls: &[Self], arguments: &[TyArg]) -> Vec<TyArg> {
+        if arguments.len() != decls.len() {
+            return arguments.to_vec();
+        }
+        decls
+            .iter()
+            .zip(arguments)
+            .filter(|(decl, _)| decl.is_argument_binder(decls))
+            .map(|(_, argument)| argument.clone())
+            .collect()
+    }
+
+    /// The arguments a call of a constructor declaring `decls` binds when
+    /// it builds the struct instance whose arguments are `instance` (its
+    /// argument view's, then its origin tail): a value for every declared
+    /// parameter, as upstream's call holds one. Each argument binder takes
+    /// the instance's next argument and each origin binder the tail's next
+    /// origin; a `mut=` binder takes that origin's mutability where the
+    /// origin alone decides it ([`crate::origin::Origin::static_mutability`]),
+    /// and a binder the instance does not spell (the constructor's own,
+    /// which its arguments solve, or a mutability the caller's binders
+    /// decide) is [`CtValue::Deferred`], its value arriving with the
+    /// elaborated call. `instance` is returned as it stands when its
+    /// argument view does not match `decls`'.
+    pub fn instance_arguments(decls: &[Self], instance: &[TyArg]) -> Vec<TyArg> {
+        let split = instance
+            .iter()
+            .position(|argument| matches!(argument, TyArg::Origin(_)))
+            .unwrap_or(instance.len());
+        let (view, tail) = instance.split_at(split);
+        if decls.len() == instance.len()
+            || view.len() > Self::argument_binders(decls).count()
+            || tail.len() > decls.iter().filter(|decl| decl.is_origin()).count()
+        {
+            return instance.to_vec();
+        }
+        let origins: Vec<(&ParamId, &crate::origin::Origin)> = decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Self::Origin { id, .. } => Some(id),
+                _ => None,
+            })
+            .zip(tail.iter().filter_map(|argument| match argument {
+                TyArg::Origin(origin) => Some(origin),
+                _ => None,
+            }))
+            .collect();
+        let origin_of = |id: &ParamId| {
+            origins
+                .iter()
+                .find(|(declared, _)| *declared == id)
+                .map(|(_, origin)| *origin)
+        };
+        let deferred = |decl: &Self| TyArg::Val(CtValue::Deferred(decl.binder()));
+        let mut solved = view.iter();
+        decls
+            .iter()
+            .map(|decl| match decl {
+                Self::Origin { id, .. } => TyArg::Origin(
+                    origin_of(id)
+                        .cloned()
+                        .unwrap_or(crate::origin::Origin::Unbound),
+                ),
+                _ if decl.is_origin_mutability_binder(decls) => decls
+                    .iter()
+                    .find_map(|candidate| match candidate {
+                        Self::Origin {
+                            id,
+                            mutability: OriginMutability::Binder(binder),
+                            ..
+                        } if binder.id == *decl.id() => origin_of(id),
+                        _ => None,
+                    })
+                    .and_then(crate::origin::Origin::static_mutability)
+                    .map_or_else(
+                        || deferred(decl),
+                        |mutable| TyArg::Val(CtValue::Bool(mutable)),
+                    ),
+                _ => solved.next().cloned().unwrap_or_else(|| deferred(decl)),
+            })
+            .collect()
+    }
+
     /// This declaration with each unbound reference of its `where` clauses
     /// and its callable default bound in `scopes`
     /// ([`GenericConstraint::bind`]).

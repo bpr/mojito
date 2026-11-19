@@ -188,6 +188,18 @@ impl Origin {
         }
     }
 
+    /// The `mut` an `Origin[mut=...]` binder bound to this origin takes when
+    /// the origin alone decides it: `false` for a cast, the static origin,
+    /// or an untracked immutable one, `true` for an untracked mutable one.
+    /// `None` where the storage it names (or a binder) decides it.
+    pub const fn static_mutability(&self) -> Option<bool> {
+        match self {
+            Self::Immutable(_) | Self::Static => Some(false),
+            Self::Untracked { mutable } => Some(*mutable),
+            _ => None,
+        }
+    }
+
     /// The storage this origin designates, below an `ImmOrigin(...)` cast.
     #[must_use]
     pub fn uncast(&self) -> &Self {

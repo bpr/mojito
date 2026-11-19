@@ -153,6 +153,11 @@ impl Decoder {
         if self.minor < 204 {
             crate::mir::nested::upgrade_call_parameter_lists(&mut functions, &declarations);
         }
+        // Schema 1.205 gives a call's solved arguments a value for every
+        // declared parameter; an older call's bind the argument view.
+        if self.minor < 205 {
+            crate::mir::nested::upgrade_instantiated_arguments(&mut functions, &declarations);
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {
