@@ -496,6 +496,8 @@ fn fancy_struct_ty() -> TyKind {
                 vec![OriginSeg::Interior("e".into()), OriginSeg::Subtree],
             )),
             TyArg::Origin(Origin::UnsafeAny { mutable: true }),
+            // Schema 1.208's `!lit.origin<mut>`.
+            TyArg::Ty(TyKind::LitOrigin(mojito_types::types::LitOriginMut::Known(false)).into()),
         ],
     )
 }

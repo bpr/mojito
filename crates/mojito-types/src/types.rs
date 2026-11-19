@@ -353,6 +353,67 @@ impl fmt::Display for ArraySize {
     }
 }
 
+/// The mutability slot of a `!lit.origin<mut>`, an `i1` that a `Bool`'s
+/// `_mlir_value` spells (`` `!lit.origin<`, mut._mlir_value, `>` ``), as
+/// upstream's `_lit_origin_type_of_mut` does.
+///
+/// `Expr` holds the `Bool`-valued parameter expression whose storage the
+/// slot reads (a binder `mut`), never a closed one: [`LitOriginMut::of`]
+/// makes one `Known`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum LitOriginMut {
+    Known(bool),
+    Expr(ParamExpr),
+}
+
+impl LitOriginMut {
+    /// The slot holding the `Bool`-valued `mutability`: `Known` once it
+    /// folds.
+    pub fn of(mutability: ParamExpr) -> Result<Self, ParamError> {
+        if !mutability
+            .meta()
+            .as_value()
+            .is_some_and(|ty| ty.kind().is_bool())
+        {
+            return Err(ParamError::TypeMismatch {
+                operation: "'!lit.origin' mutability".to_string(),
+                expected: BOOL_TYPE_NAME.to_string(),
+                found: mutability.meta().to_string(),
+            });
+        }
+        Ok(mutability
+            .as_bool()
+            .map_or(Self::Expr(mutability), Self::Known))
+    }
+
+    /// Whether only an instantiation can say which mutability it is.
+    pub fn is_symbolic(&self) -> bool {
+        matches!(self, Self::Expr(mutability) if mutability.as_bool().is_none())
+    }
+
+    /// This slot after `rewrite` rewrote its expression.
+    pub fn try_map(
+        &self,
+        rewrite: impl FnOnce(&ParamExpr) -> Result<ParamExpr, ParamError>,
+    ) -> Result<Self, ParamError> {
+        match self {
+            Self::Known(_) => Ok(self.clone()),
+            Self::Expr(mutability) => Self::of(rewrite(mutability)?),
+        }
+    }
+}
+
+/// The pin's display: `LITImmOrigin`, `LITMutOrigin`, `LITOrigin[m]`.
+impl fmt::Display for LitOriginMut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(false) => f.write_str("LITImmOrigin"),
+            Self::Known(true) => f.write_str("LITMutOrigin"),
+            Self::Expr(mutability) => write!(f, "LITOrigin[{mutability}]"),
+        }
+    }
+}
+
 /// Upstream's `SIMDLength`, the type of a `SIMD` width slot.
 pub fn simd_length_ty() -> Ty {
     TyKind::Struct(SIMD_LENGTH_TYPE_NAME.to_string(), Vec::new()).into()
@@ -811,6 +872,12 @@ pub enum TyKind {
     /// a `*xs: T` callee's `VariadicList`, in a slot of its own
     /// (`__passed_varargs__`).
     PopArray { size: ArraySize, element: Ty },
+    /// Upstream's `!lit.origin<mut>` (`_lit_origin_type_of_mut[mut]`), the
+    /// type of an origin's raw attribute (`Origin._mlir_origin`, `o.
+    /// _mlir_origin`), displayed as the pin does (`LITImmOrigin`,
+    /// `LITMutOrigin`, `LITOrigin[m]`). It is compile-time only: no
+    /// register holds one, it has no members, and it conforms to no trait.
+    LitOrigin(LitOriginMut),
     /// Internal checked ABI type for a compile-time-specialized heterogeneous
     /// runtime parameter pack. Unlike a source `Tuple[...]` used as the element
     /// type of an ordinary homogeneous `*args`, each entry describes one
@@ -4461,6 +4528,7 @@ impl fmt::Display for TyKind {
                 write!(f, "]")
             }
             Self::PopArray { size, element } => write!(f, "!pop.array<{size}, {element}>"),
+            Self::LitOrigin(mutability) => write!(f, "{mutability}"),
             Self::RuntimePack(elems) => {
                 write!(f, "$pack[")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -6186,7 +6254,10 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             }
             ty.reusing(TyKind::Struct(name.clone(), args))
         }
-        TyKind::Dependent(_) | TyKind::KgenSimd { .. } | TyKind::KgenAddressSimd { .. }
+        TyKind::Dependent(_)
+        | TyKind::KgenSimd { .. }
+        | TyKind::KgenAddressSimd { .. }
+        | TyKind::LitOrigin(_)
             if is_symbolic(ty) =>
         {
             replace_parameters(&ParamContext::detached(), ty, &type_bindings(subst), 0)
@@ -6484,6 +6555,9 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             element: rewrite_ty(element, rewrite)?,
         }
         .into(),
+        TyKind::LitOrigin(mutability) => {
+            TyKind::LitOrigin(mutability.try_map(|mutability| rewrite.expr(mutability))?).into()
+        }
         TyKind::Tuple(elements) => TyKind::Tuple(list(elements, rewrite)?).into(),
         TyKind::RuntimePack(elements) => TyKind::RuntimePack(list(elements, rewrite)?).into(),
         TyKind::Variant(alternatives) => TyKind::Variant(list(alternatives, rewrite)?).into(),
@@ -7326,6 +7400,7 @@ fn symbolic_in(ty: &Ty, keyed: bool) -> bool {
         | TyKind::LitRef { element, .. } => symbolic_in(element, keyed),
         TyKind::LitRefPack { elements, .. } => elements.iter().any(|ty| symbolic_in(ty, keyed)),
         TyKind::PopArray { size, element } => size.is_symbolic() || symbolic_in(element, keyed),
+        TyKind::LitOrigin(mutability) => mutability.is_symbolic(),
         TyKind::Ref(reference) => symbolic_in(&reference.referent, keyed),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::KgenAddressSimd { width } => width.is_symbolic(),
@@ -7528,6 +7603,7 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
             matches!(size, ArraySize::Expr(expr) if expr_mentions(expr, predicate))
                 || mentions(element, predicate)
         }
+        TyKind::LitOrigin(LitOriginMut::Expr(expr)) => expr_mentions(expr, predicate),
         TyKind::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().any(|element| mentions(element, predicate))
@@ -7598,6 +7674,7 @@ fn decorated(ty: &Ty) -> bool {
             matches!(size, ArraySize::Expr(expr) if expr.carries_decorations())
                 || element.carries_decorations()
         }
+        TyKind::LitOrigin(LitOriginMut::Expr(expr)) => expr.carries_decorations(),
         TyKind::Ref(reference) => reference.referent.carries_decorations(),
         TyKind::Dependent(dependent) => dependent.expr().carries_decorations(),
         TyKind::KgenSimd { dtype, width } => {
@@ -7711,6 +7788,7 @@ fn closed_kind(kind: &TyKind) -> bool {
         TyKind::PopArray { size, element } => {
             matches!(size, ArraySize::Known(_)) && element.is_closed()
         }
+        TyKind::LitOrigin(mutability) => matches!(mutability, LitOriginMut::Known(_)),
         _ => false,
     }
 }
@@ -7988,6 +8066,16 @@ fn expand_packs<S: std::hash::BuildHasher>(
             element: recurse(element),
         }
         .into(),
+        TyKind::LitOrigin(mutability @ LitOriginMut::Expr(_)) if !values.is_empty() => {
+            let context = ParamContext::detached();
+            let bindings = pack_bindings(&context, subst, packs, values);
+            TyKind::LitOrigin(
+                mutability
+                    .try_map(|mutability| context.replace(mutability, &bindings))
+                    .unwrap_or_else(|_| mutability.clone()),
+            )
+            .into()
+        }
         TyKind::Pointer { element, origin } => TyKind::Pointer {
             element: recurse(element),
             origin: origin.clone(),

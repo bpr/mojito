@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2370**.
+Next free ID: **R2372**.
 
 ## Ordered Work
 
@@ -2844,9 +2844,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `operators.rs`, `comptime.rs`, `symbol.rs`
     (`syntactic_origin_argument`), and the `types.rs`/`origin.rs`
     displays.
-  - Gap: a parameterized `__mlir_type[...]` alias is not accepted as a
-    value-parameter type, so `_lit_origin_type_of_mut[mut]` cannot be
-    declared ("unknown type '_lit_origin_type_of_mut'"). R2369 owns it.
   - Split this if it does not fit: values and `OriginSet` first, members
     second.
   - Probe: `var b: S[o.unsafe_mut_cast[False]()] = S[o]()` over
@@ -2856,7 +2853,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `print(String(reflect[type_of(S)].name()))`.
   - Re-probe R1299 (`unsafe_mut_cast` in a result origin).
   - Planned in R2139 (2026-11-18).
-  - Depends on R2369, which gives `Origin` its `_mlir_origin`.
+  - Depends on R2370, which gives `Origin` its `_mlir_origin`.
   - Model: Fable, Planned.
 
 - [ ] **R2344 An origin binder is not a value of its `Origin` type in
@@ -2874,9 +2871,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     since `_mlir_origin` is unbound). Fix it here, or file it on the
     `divergences` track if out of reach.
   - Probes: the two shapes above, and `reflect[MutOrigin]`.
-  - Probe: R2209's ``__mlir_type[`!lit.ref<`, T, `, `, o._mlir_origin,
-    `, `, `0`, `>`]`` in `def show[T: AnyType, o: ImmOrigin](ref[o] x: T)`
-    is rejected; the pin accepts it.
+  - Probe: `comptime O = origin_of(x)` in a function is rejected
+    ("Undefined variable 'origin_of'"); the pin accepts it, an origin
+    value of type `Origin`.
   - Probe: `comptime c = ImmOrigin(o); print(c.mut)` in
     `def f[o: MutOrigin](ref[o] x: Int)` is rejected ("struct 'Origin'
     has no constructor"); the pin prints `False`. It needs R2343's
@@ -6965,9 +6962,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `TypeNameSpeller` (`mojito-symbol`) sees only the arguments a
     `TyKind::Struct` carries, and Mojito's `Span` declares no
     `address_space`.
-  - The pin's second `{}` beside an origin is not located. A variadic type
-    pack already spells as the pin's `<unprintable>, {}` (`Tuple`,
-    `Variant`).
+  - The pin's second `{}` beside an origin is the binder's implicit
+    `_mlir_origin` binder (R2371). A variadic type pack already spells as
+    the pin's `<unprintable>, {}` (`Tuple`, `Variant`).
   - Probe: `_unqualified_type_name[StaticString]()` prints
     `StringSpan[ImmStaticOrigin]`, where the pin prints `StringSpan[{}, {}]`
     (`unqualified_instance_name`, `mojito-symbol`).
@@ -10215,6 +10212,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and export it from `std.memory`.
   - Give `TyKind::KgenPointer` its address-space argument and accept
     ``__mlir_type[`!kgen.pointer<`, T, `, `, as._value._mlir_value, `>`]``.
+  - Probe: ``__mlir_type[`!lit.ref<`, T, `, `, o._mlir_origin, `, `, `1`,
+    `>`]`` is rejected ("outside the generic address space"); the pin
+    accepts it. `TyKind::LitRef` carries no address space either.
   - Both backends lay out and run only `GENERIC`; any other space fails
     explicitly as `MirInstr::Unsupported`.
   - Needs a package format bump.
@@ -10237,7 +10237,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A `Pointer[...]` application still builds `TyKind::Pointer` (the
     bridge), and the checker's member rules still win.
   - A member with no checker rule resolves to the declared body.
-  - The `_mlir_lit_ref` comptime keeps Mojito's rule until R2369 gives
+  - The `_mlir_lit_ref` comptime keeps Mojito's rule until R2370 gives
     `Origin` its `_mlir_origin`.
   - Probe: `p.as_imm()[]` is rejected; the pin prints the pointee.
   - Probe: R1463's `print(p)`.
@@ -10333,25 +10333,57 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2369 `Origin` declares no `_mlir_origin` parameter**
+- [ ] **R2370 `Origin` declares no `_mlir_origin` parameter**
 
   Upstream's header is `struct Origin[mut: Bool, _mlir_origin:
   _lit_origin_type_of_mut[mut], //]`, where Mojito's `Origin` declares
   only `mut`, so a `TyArg::Origin` is no struct argument a program can
   name.
-  - A `TyArg::Origin` is the `_mlir_origin` argument; the struct's `mut`
-    is its type's argument.
-  - `!lit.origin<mut>` is not a type spelling, and a parameterized
-    `__mlir_type` alias is not a value-parameter type (R2139's `p1`).
-  - ``__mlir_type[`!lit.ref<`, T, `, `, origin, `, `, as, `>`]`` is
-    rejected as an unsupported type spelling.
-  - Probe: ``comptime R = __mlir_type[`!lit.ref<`, T, `, `,
-    Self.o._mlir_origin, `, `, `0`, `>`]`` inside a struct over
-    `o: ImmOrigin` is rejected ("this MLIR type spelling is outside the
-    supported subset"); the pin accepts it. The function-binder form
-    waits on R2344.
+  - `_lit_origin_type_of_mut` is declared and `!lit.origin<mut>` is
+    `TyKind::LitOrigin`; what remains is the header.
+  - Classify `_mlir_origin` as a `ParamDecl::Origin` whose mutability is
+    the `mut` binder (`origin_binder_decl` over an annotation resolving to
+    `TyKind::LitOrigin`), so `Origin`'s list has `Span`'s shape.
+  - `Origin[mut=m]`, `ImmOrigin`, `MutOrigin`, and bare `Origin` in type
+    position leave `_mlir_origin` unbound instead of failing with
+    `CannotInferTypeParam` (`resolve_partial_use_params`).
+  - `origin_annotation_mutability` reads `mut` by its declared slot, not
+    `args.first()`, which needs R2362: `instance_binders` drops a `mut=`
+    binder, so `Origin[mut=True]` would lose its argument.
+  - Re-check every reader of `Origin`'s arguments: `immutable_origin_cast`
+    (`origins/sig.rs`), `fold_origin_alias_bounds` (`comptime/synth.rs`),
+    the parser's `Origin[mut=…]` case, `is_erased_origin_param`
+    (`mojito-ast`), `symbol.rs`, `module.rs`, and the `Origin[...]`
+    displays; the std build finds the rest loudly.
+  - Probe: `comptime O = Origin[_mlir_origin=origin_of(x)._mlir_origin]`,
+    then `O.mut`, prints `True` at the pin; Mojito rejects it.
+  - Probe: `comptime v: Int = Self.o._mlir_origin` over `o: ImmOrigin`
+    reports "unsupported associated comptime member access", where the pin
+    reports
+    "cannot implicitly convert 'LITImmOrigin' value to 'Int'".
+  - Re-run every `assets/ok/origin_*` and `struct_origin_*` fixture, and
+    `scripts/smoke --suites`, since the change reaches many sites.
   - Found while landing R2209 (2026-11-19).
-  - Depends on nothing.
+  - Depends on R2362.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2371 A binder typed by an `Origin` with an unbound `_mlir_origin`
+  declares no implicit `_mlir_origin` binder**
+
+  `reflect[type_of(S[origin_of(x)]())].name()` over `struct S[o:
+  ImmOrigin]` prints `S[{}]`, where the pin prints `S[{}, {}]`: upstream
+  auto-parameterizes the binder's infer-only `_mlir_origin` into an
+  implicit binder ahead of `o`.
+  - With a bare `o: Origin`, both `mut` and `_mlir_origin` are
+    auto-parameterized, so the pin prints `S[True, {}, {}]`.
+  - `ParamDecl::instance_binders` and the pre-check `auto_parameterize`
+    (R2342) are where the implicit binder enters.
+  - Probe: `U[origin_of(x), Int]` over `struct U[o: ImmOrigin, T:
+    AnyType]` prints `U[{}, SIMD[DType.int, 1]]`; the pin prints `U[{},
+    {}, SIMD[DType.int, 1]]`.
+  - It is R1680's second `{}` beside an origin.
+  - Found while planning R2369 (2026-11-19).
+  - Depends on R2370.
   - Model: Fable, Not Planned.
 
 - [ ] **R2210 A `Pointer` application is `TyKind::Pointer`, not the

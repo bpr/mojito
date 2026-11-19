@@ -9363,6 +9363,24 @@ fn reference_pack_extract_rejects_other_operands() {
 }
 
 #[test]
+fn lit_ref_type_reads_an_origin_operand() {
+    // Upstream's `!lit.ref<T, origin._mlir_origin[, 0]>` names a reference
+    // to `T` under a struct's or a function's origin binder.
+    ok_std(
+        "struct V[T: AnyType, o: ImmOrigin]:\n    comptime R = __mlir_type[`!lit.ref<`, Self.T, `, `, Self.o._mlir_origin, `, `, `0`, `>`]\n    comptime G = __mlir_type[`!lit.ref<`, Self.T, `, `, Self.o._mlir_origin, `>`]\n\ndef f[o: ImmOrigin](p: Pointer[Int, o]) -> Int:\n    comptime R = V[Int, o].R\n    return p[]\n\ndef main():\n    var x = 1\n    comptime R = V[Int, origin_of(x)].G\n    print(f(Pointer(to=x)))\n",
+    );
+}
+
+#[test]
+fn lit_ref_type_rejects_other_address_spaces() {
+    // An address space other than the generic `0` is R2204's.
+    let error = err_std(
+        "struct V[T: AnyType, o: ImmOrigin]:\n    comptime R = __mlir_type[`!lit.ref<`, Self.T, `, `, Self.o._mlir_origin, `, `, `1`, `>`]\n\ndef main():\n    var x = 1\n    comptime R = V[Int, origin_of(x)].R\n    print(x)\n",
+    );
+    assert!(error.to_string().contains("address space"), "{error}");
+}
+
+#[test]
 fn pop_and_index_ops_type_as_their_verifiers_do() {
     // `pop` arithmetic keeps its operands' `!kgen.simd` storage type, which
     // `mlir_value=` takes back, `pop.cmp` gives the mask's, `pop.cast` (to and from `bool` lanes too) and

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Upstream's `!lit.origin<mut>` type and `std.origin`'s
+  `_lit_origin_type_of_mut[mut]` alias, which types a value parameter over
+  a fixed or symbolic mutability, and the bracketed ``__mlir_type[`!lit.ref<`,
+  T, `, `, o._mlir_origin, `, `, `0`, `>`]`` spelling, which names a
+  reference under a struct's or function's origin binder; a function-scope
+  `comptime` over `origin_of(place)` is no longer a dynamic value. `Origin`
+  still declares only `mut` (R2370). MIR text moves to schema 1.208
+  (`lit_origin`) and the package format to `mojito-package 236` (R2369).
 - A struct's origin argument now holds an interior or subtree projection
   over an origin binder or the receiver (`S[o._get_owned_interior["e"]]`,
   `S[o._subtree]`) and the unsafe-any origins, as upstream's `_mlir_origin`

@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.207
+mojito-mir 1.208
 ```
 
-The writer emits 1.207. The reader accepts 1.0 through 1.207; *Schema 1.0*
+The writer emits 1.208. The reader accepts 1.0 through 1.208; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1234,6 +1234,12 @@ comparison's link carries the interior invalidations its own call makes
 (`CheckedCompareLink::interior_invalidations`); the MIR text schema is
 unchanged (R2322).
 
+Schema 1.208 adds upstream's `!lit.origin<mut>` type, `lit_origin {
+mutable }`, the type of an origin's raw `_mlir_origin` attribute and of a
+value parameter an `_lit_origin_type_of_mut[mut]` alias annotates. `mutable`
+is a boolean, or `ct_expr(<param-expr>)` for a `Bool` a template's
+parameter spells. The package format moves to `mojito-package 236` (R2369).
+
 Schema 1.207 adds two origin spellings a struct's origin argument can
 hold, as upstream's `_mlir_origin` attribute can: `origin_projected { base,
 path }`, an interior or subtree projection over an origin binder or the
@@ -2218,6 +2224,7 @@ kgen_address_simd { width }
 comptime_list(type) param_list(type) any_trait([trait...]) any_struct(type) trait_type([trait...])
 tuple([type...]) runtime_pack([type...])
 pop_array { size, element } variadic_pack(type) variant([type...])
+lit_origin { mutable }
 pointer { element, origin }
 kgen_pointer { element }
 lit_ref { element, origin }

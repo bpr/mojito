@@ -364,6 +364,10 @@ impl ScopeCx<'_> {
                 self.expr(role, "width", expr, &length, nested);
             }
             TyKind::KgenAddressSimd { .. } => {}
+            TyKind::LitOrigin(mojito_types::types::LitOriginMut::Expr(expr)) => {
+                self.expr(role, "mutability", expr, &MetaTy::value(Ty::bool()), nested);
+            }
+            TyKind::LitOrigin(_) => {}
             TyKind::Struct(name, args) => {
                 let declared = self
                     .declarations

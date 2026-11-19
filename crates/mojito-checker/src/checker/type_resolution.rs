@@ -1724,8 +1724,11 @@ impl Checker {
     /// and `!kgen.pointer<T>` the default-address-space address a `Pointer`
     /// wraps ([`TyKind::KgenPointer`]). `!kgen.struct<:param_list<type> L
     /// isParamPack>` is the literal struct of a computed list of types
-    /// (`VariadicPack._kgen_pack_with_pointer_type`). Every other spelling is
-    /// outside the subset.
+    /// (`VariadicPack._kgen_pack_with_pointer_type`). `!lit.origin<mut>` is
+    /// an origin's raw attribute type ([`TyKind::LitOrigin`]), and
+    /// `!lit.ref<T, origin._mlir_origin[, 0]>` and `!lit.ref.pack<…>` the
+    /// references a `Pointer` and a `VariadicPack` hold. Every other spelling
+    /// is outside the subset.
     fn mlir_applied_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
         let (text, operands) = mojito_types::types::mlir_type_spelling(args);
         match (text.as_str(), operands.as_slice()) {
@@ -1750,6 +1753,19 @@ impl Checker {
             }
             ("!kgen.pointer<{}>", [element]) => {
                 Ok(TyKind::KgenPointer(self.mlir_type_operand(element)?).into())
+            }
+            ("!lit.ref<{},{}>" | "!lit.ref<{},{},0>", [element, origin]) => {
+                self.mlir_lit_ref_type(element, origin)
+            }
+            (text, [_, _, ..]) if text.starts_with("!lit.ref<{},{},") => {
+                Err(TypeError::Unsupported(
+                    "a '!lit.ref' outside the generic address space '0' is not \
+                     supported (R2204)"
+                        .to_string(),
+                ))
+            }
+            ("!lit.origin<{}>", [mutability]) => {
+                Ok(TyKind::LitOrigin(self.mlir_bool_operand(mutability)?).into())
             }
             ("!pop.array<{},{}>", [size, element]) => {
                 let size = self.mlir_array_size_operand(size)?;
@@ -1843,16 +1859,47 @@ impl Checker {
             return Err(unsupported_mlir_type());
         };
         let elements = self.mlir_type_list_elements(values)?;
-        let origin = match origin {
+        let origin = self.mlir_origin_operand(origin)?;
+        Ok(TyKind::LitRefPack { elements, origin }.into())
+    }
+
+    /// The reference `!lit.ref<element, origin._mlir_origin[, as]>`, a
+    /// `!lit.ref` to `element` under `origin`, as upstream's
+    /// `Pointer._mlir_lit_ref` spells it. The address space is the generic
+    /// one, `0`; any other is R2204's.
+    fn mlir_lit_ref_type(
+        &self,
+        element: &mojito_ast::ast::ParamArg,
+        origin: &mojito_ast::ast::ParamArg,
+    ) -> Result<Ty, TypeError> {
+        Ok(TyKind::LitRef {
+            element: self.mlir_type_operand(element)?,
+            origin: self.mlir_origin_operand(origin)?,
+        }
+        .into())
+    }
+
+    /// The raw origin operand `X._mlir_origin` of an MLIR type spelling,
+    /// the origin `X` names (`Self.o`, a binder `o`, `origin_of(...)`).
+    fn mlir_origin_operand(
+        &self,
+        origin: &mojito_ast::ast::ParamArg,
+    ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        match origin {
             ParamArg::Value(Expr {
                 kind: ExprKind::Member { object, field },
                 ..
-            }) if field == "_mlir_origin" => {
-                self.pointer_origin_arg(&ParamArg::Value((**object).clone()))?
+            }) if field == MLIR_ORIGIN_FIELD => {
+                self.pointer_origin_arg(&ParamArg::Value((**object).clone()))
             }
-            _ => return Err(unsupported_mlir_type()),
-        };
-        Ok(TyKind::LitRefPack { elements, origin }.into())
+            ParamArg::Type(SourceType::Assoc { base, name, args })
+                if name == MLIR_ORIGIN_FIELD && args.is_empty() =>
+            {
+                self.pointer_origin_arg(&ParamArg::Type((**base).clone()))
+            }
+            _ => Err(unsupported_mlir_type()),
+        }
     }
 
     /// The elements of a type list's raw `values` (`Self.Ts.values`,
@@ -1939,6 +1986,22 @@ impl Checker {
             return Err(not_index());
         }
         SimdWidth::of_length(&self.param_context, length).map_err(param_error)
+    }
+
+    /// The `i1` mutability operand of a `!lit.origin`, a `Bool`'s
+    /// `_mlir_value` (`mut._mlir_value`, `True._mlir_value`), as upstream's
+    /// `_lit_origin_type_of_mut` spells it.
+    fn mlir_bool_operand(
+        &self,
+        arg: &mojito_ast::ast::ParamArg,
+    ) -> Result<mojito_types::types::LitOriginMut, TypeError> {
+        let not_bool = || mlir_operand_mismatch("i1", "Bool");
+        let operand = mojito_types::types::mlir_value_operand(arg).ok_or_else(not_bool)?;
+        let mutability = match self.slot_value(&operand)? {
+            CtValue::Expr(mutability) => mutability,
+            closed => self.param_context.constant(closed).map_err(param_error)?,
+        };
+        mojito_types::types::LitOriginMut::of(mutability).map_err(|_| not_bool())
     }
 
     /// The type a bracket argument denotes where a trait is a type (a raw
@@ -5602,6 +5665,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element) => type_is_symbolic(element),
         TyKind::PopArray { size, element } => size.is_symbolic() || type_is_symbolic(element),
+        TyKind::LitOrigin(mutability) => mutability.is_symbolic(),
         TyKind::Pointer { element, .. }
         | TyKind::KgenPointer(element)
         | TyKind::LitRef { element, .. } => type_is_symbolic(element),
@@ -5665,6 +5729,10 @@ fn project_pointer_origin(
         })
 }
 
+/// The raw attribute an origin value holds, upstream's
+/// `Origin._mlir_origin`.
+const MLIR_ORIGIN_FIELD: &str = "_mlir_origin";
+
 fn unsupported_mlir_type() -> TypeError {
     TypeError::Unsupported(
         "this MLIR type spelling is outside the supported subset; only \
@@ -5675,6 +5743,9 @@ fn unsupported_mlir_type() -> TypeError {
          '__mlir_type[`!kgen.struct<`, ~Ts.values, ` isParamPack>`]', \
          '__mlir_type[`!kgen.struct<:param_list<type> `, L, ` isParamPack>`]', \
          '__mlir_type[`!kgen.pointer<`, T, `>`]', \
+         '__mlir_type[`!lit.origin<`, mut._mlir_value, `>`]', \
+         '__mlir_type[`!lit.ref<`, T, `, `, origin._mlir_origin, `>`]' (with an optional \
+         generic address space `0`), \
          '__mlir_type[`!pop.array<`, n.__mlir_index__(), `, `, T, `>`]', and \
          '__mlir_type.`!pop.array<n, T>`' are accepted"
             .to_string(),

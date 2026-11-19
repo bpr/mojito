@@ -209,6 +209,12 @@ impl Decoder {
                     self.unknown(fields, &["size", "element"]);
                     TyKind::PopArray { size, element }.into()
                 }
+                "lit_origin" => {
+                    let mutability =
+                        self.req(value, fields, "mutable", Self::lit_origin_mut_slot)?;
+                    self.unknown(fields, &["mutable"]);
+                    TyKind::LitOrigin(mutability).into()
+                }
                 "ref" => TyKind::Ref(self.ref_ty(value)?).into(),
                 other => {
                     self.error(value.span, format!("unknown type `{other}`"));
@@ -797,6 +803,22 @@ impl Decoder {
                 }
             }
             _ => self.uint64(value).map(ArraySize::Known),
+        }
+    }
+
+    pub(super) fn lit_origin_mut_slot(
+        &mut self,
+        value: &Value,
+    ) -> Option<mojito_types::types::LitOriginMut> {
+        use mojito_types::types::LitOriginMut;
+        match &value.kind {
+            ValueKind::Positional(tag, inner) if tag == "ct_expr" => {
+                let mutability = self.param_expr(inner)?;
+                LitOriginMut::of(mutability)
+                    .map_err(|error| self.error(value.span, format!("origin mutability: {error}")))
+                    .ok()
+            }
+            _ => self.boolean(value).map(LitOriginMut::Known),
         }
     }
 

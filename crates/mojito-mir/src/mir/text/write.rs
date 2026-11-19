@@ -2373,6 +2373,10 @@ fn ty_value(ty: &Ty) -> String {
                 ("element", ty_value(element)),
             ],
         ),
+        TyKind::LitOrigin(mutability) => record(
+            "lit_origin",
+            &[("mutable", lit_origin_mut_slot(mutability))],
+        ),
         TyKind::RuntimePack(values) => {
             positional("runtime_pack", &list(values.iter().map(ty_value)))
         }
@@ -2721,6 +2725,14 @@ fn array_size_slot(size: &mojito_types::types::ArraySize) -> String {
     match size {
         mojito_types::types::ArraySize::Known(size) => size.to_string(),
         mojito_types::types::ArraySize::Expr(expr) => positional("ct_expr", &param_expr(expr)),
+    }
+}
+
+/// A known mutability is its boolean, a template's `ct_expr(...)`.
+fn lit_origin_mut_slot(mutability: &mojito_types::types::LitOriginMut) -> String {
+    match mutability {
+        mojito_types::types::LitOriginMut::Known(mutable) => mutable.to_string(),
+        mojito_types::types::LitOriginMut::Expr(expr) => positional("ct_expr", &param_expr(expr)),
     }
 }
 

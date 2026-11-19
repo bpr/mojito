@@ -7938,7 +7938,11 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
                 ExprKind::Identifier(name) => {
                     self.values.push((std::ptr::from_ref(expr), name.clone()));
                 }
-                ExprKind::Call { name, args, .. } if name == "type_of" => {
+                // An operand whose type or origin alone is read, never its
+                // value.
+                ExprKind::Call { name, args, .. }
+                    if matches!(name.as_str(), "type_of" | "origin_of") =>
+                {
                     for operand in args {
                         self.type_operand(operand);
                     }
