@@ -1092,11 +1092,11 @@ impl Checker {
                 }
                 super::type_resolution::reject_trait_callable_call(&callable)?;
                 let target = self.indirect_callable_target(&callable);
-                let (ret, _, error, _, _, attributes) = self.infer_callable_ty(
+                let (ret, _, error, _, _, attributes, _) = self.infer_callable_ty(
                     &expr.source_span(),
                     "<callable>",
                     callable.clone(),
-                    param_args,
+                    (param_args, None),
                     args,
                     kwargs,
                 )?;

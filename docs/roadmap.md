@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2356**.
+Next free ID: **R2357**.
 
 ## Ordered Work
 
@@ -10648,23 +10648,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2352 An explicit origin argument rewrites its callee's signature
-  before the bracket binds, where upstream substitutes the bound
-  declared list into the signature after binding**
+- [ ] **R2356 A `ref [o]` contract names the parameters sharing its
+  origin binder, where upstream's names the binder**
 
-  `bind_callable_origins` and `bind_callable_origin_tails`
-  (`checker/generics.rs`) rebind the callee type's `ref_params`,
-  `ref_return`, and parameter-type origin tails from the slots
-  `CallableOriginSignature::origins` lists, before
-  `resolve_explicit_use_params` (`checker/declarations.rs`) runs on the
-  bracket with the origin arguments taken out.
-  - The lever: have `resolve_explicit_use_params` bind an origin
-    argument in its binder's declared slot and return the bound origin
-    in `BoundParameters`, and have the call substitute it into the
-    signature as it substitutes solved types.
-  - Then `split_callable_specialization`, `CallableSpecialization`, and
-    `CallableOriginSignature::{origins, source}` go.
-  - Depends on R2351.
+  `lower_ref_sig` (`checker/origins/sig.rs`) lowers `ref [o] x` and `->
+  ref [o] T` to the union of `SigOrigin::Param` over every parameter
+  whose clause names `o`, so a callable type alone cannot say which
+  binder a contract is over.
+  - Probe: `CallableOriginSignature::origins` (`checker.rs`) keeps each
+    binder's parameter list beside the type, and `bind_bracket_origins`
+    (`checker/generics.rs`) needs it to substitute `pick[origin_of(y)]`'s
+    origin into the `ref` contracts, so `infer_callable_ty` takes the
+    signature beside the type.
+  - The lever: lower a binder in a `ref` clause to the binder by its
+    declared slot (`SigOrigin::Bound(Origin::Param(id))`), have call
+    origin solving bind it from the `ref` arguments as it binds pointer
+    origins, and delete `CallableOriginSignature::origins`.
+  - Found while landing R2352 (2026-11-19).
+  - Depends on R2346.
   - Model: Opus, Not Planned.
 
 - [ ] **R2353 A method call's bracket cannot take an origin argument**
@@ -10685,8 +10686,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     verification fails ("register r15 has no checked type"), where the
     pin prints `13`.
   - The lever: bind a method bracket against `MethodSig::declared`
-    through R2352's whole-list binder, and record the origin argument in
-    its binder's slot.
+    through `bind_origin_arguments` (`checker/generics.rs`), the free
+    call's whole-list binder, and record the origin argument in its
+    binder's slot.
   - Depends on R2352.
   - Model: Opus, Not Planned.
 
@@ -10710,23 +10712,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   where upstream's binds the whole declared list, origin parameters in
   place**
 
-  `resolve_explicit_use_params` (`checker/declarations.rs`) aligns a
-  bracket with `ParamDecl::argument_binders`, so an origin argument is
-  split out before it binds and re-keyed by its binder afterwards.
-  - Probe: `split_callable_specialization` (`checker/generics.rs`) takes
-    a free call's origin arguments out of the bracket, and
-    `CallableSpecialization::declared` (`checker/type_resolution.rs`)
-    puts them back in their binders' declared slots.
+  `resolve_explicit_use_params` (`checker/declarations.rs`) takes the
+  whole declared list, but `bind_origin_arguments` (`checker/generics.rs`)
+  binds only the origin arguments there and hands the rest to a binder
+  over `ParamDecl::argument_binders`, whose attributes
+  `OriginBracket::declared` (`checker/type_resolution.rs`) moves to their
+  declared slots afterwards.
   - Probe: `GenericFuncTy::argument_view`, `MethodSig::decls`, and
     `Ty::generator_params` are the views each call path, a method's and a
     `#kgen.bind_params` included, binds against.
-  - The method-call, origin-only-callee, signature-rewrite, and
-    synthesized-construction causes are R2353, R2351, R2352, and R2354;
-    once they land, what remains is `Ty::generator_params`'
-    `#kgen.bind_params` view and the split's deletion.
-  - The lever: bind the bracket against the whole declared list, an
-    origin argument in its binder's slot, and delete the split.
-  - Depends on R2351, R2352, R2353, R2354.
+  - The method-call, origin-only-callee, and synthesized-construction
+    causes are R2353, R2351, and R2354; once they land, what remains is
+    `Ty::generator_params`' `#kgen.bind_params` view and the split's
+    deletion.
+  - The lever: have `bind_bracket_params` bind the whole declared list,
+    an origin argument in its binder's slot, and delete `OriginBracket`'s
+    ordinary sub-list.
+  - Depends on R2351, R2353, R2354.
   - Model: Opus, Not Planned.
 
 - [ ] **R2350 A call's solved arguments bind its callee's argument view,
@@ -10783,6 +10785,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A lowered call's `param_decls` is the whole declared list, but its
     solved arguments bind the argument view (R2350), so the elaborator
     binds the binder no value from the call.
+  - Probe: an origin-only binder's `where` clause is evaluated from the
+    call's `Bool` bindings keyed by source slot, which
+    `CallableOriginSignature::binder_names` (`checker.rs`) names, not
+    from the binder's bound value.
   - The lever: once R2350 lands, the call records the inferred origin's
     mutability (the value a `where` clause already reads) as the binder's
     attribute, by its declaration, and the body declares the binder like

@@ -3376,6 +3376,7 @@ impl Checker {
                     mut subst,
                     arguments: tyargs,
                     attributes,
+                    ..
                 } = self.resolve_explicit_use_params(
                     name,
                     &decls,
@@ -3685,6 +3686,7 @@ impl Checker {
                     subst,
                     arguments: tyargs,
                     attributes,
+                    ..
                 }) = resolved_use
                 {
                     self.record_declared_attributes(
@@ -4086,6 +4088,7 @@ impl Checker {
             subst,
             arguments: tyargs,
             attributes,
+            ..
         } = self.resolve_explicit_use_params(
             name,
             &decls,
@@ -4246,6 +4249,11 @@ impl Checker {
     /// [`Self::resolve_use_params`] of a bracket whose explicit type
     /// arguments [`Self::explicit_type_args`] already resolved: each is
     /// read back, not resolved again.
+    ///
+    /// `decls` is the use's whole declared list: an origin argument binds
+    /// its origin binder's declared slot and comes back in
+    /// [`BoundParameters::origins`], for the use to substitute into its
+    /// signature, and every attribute is keyed by its declared slot.
     pub(super) fn resolve_explicit_use_params(
         &self,
         name: &str,
@@ -4254,7 +4262,32 @@ impl Checker {
         patterns: &[Ty],
         actuals: &[Ty],
     ) -> Result<BoundParameters, TypeError> {
-        let decls = &*ParamDecl::argument_view(decls);
+        let bracket = match explicit.bracket() {
+            Some(bracket) => std::borrow::Cow::Borrowed(bracket),
+            None => std::borrow::Cow::Owned(self.bind_origin_arguments(name, decls, param_args)?),
+        };
+        let mut bound = self.resolve_view_params(
+            name,
+            &ParamDecl::argument_view(decls),
+            (&bracket.ordinary, explicit),
+            patterns,
+            actuals,
+        )?;
+        bound.attributes = bracket.declared(bound.attributes, decls);
+        bound.origins = bracket.origins().to_vec();
+        Ok(bound)
+    }
+
+    /// [`Self::resolve_explicit_use_params`] over the argument view
+    /// `decls`, binding the bracket's ordinary arguments `param_args`.
+    fn resolve_view_params(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        (param_args, explicit): (&[mojito_ast::ast::ParamArg], &ExplicitTypes),
+        patterns: &[Ty],
+        actuals: &[Ty],
+    ) -> Result<BoundParameters, TypeError> {
         let mut subst: TySubst = TySubst::new();
         if decls.is_empty() {
             if !param_args.is_empty() {
@@ -4268,6 +4301,7 @@ impl Checker {
                 subst,
                 arguments: Vec::new(),
                 attributes: DeclaredAttributes::default(),
+                origins: Vec::new(),
             });
         }
         if !param_args.is_empty() {
@@ -4514,6 +4548,7 @@ impl Checker {
             subst,
             arguments: tyargs,
             attributes: DeclaredAttributes::default(),
+            origins: Vec::new(),
         })
     }
 
@@ -4574,9 +4609,12 @@ impl Checker {
         if param_args.is_empty() || decls.is_empty() {
             return Ok(explicit);
         }
-        for (index, (decl, arguments)) in decls
+        let bracket = self.bind_origin_arguments(name, decls, param_args)?;
+        let view = ParamDecl::argument_view(decls);
+        let param_args = bracket.ordinary.as_slice();
+        for (index, (decl, arguments)) in view
             .iter()
-            .zip(bracket_bindings(name, decls, param_args, None)?)
+            .zip(bracket_bindings(name, &view, param_args, None)?)
             .enumerate()
         {
             if let (
@@ -4596,6 +4634,7 @@ impl Checker {
                 explicit.insert(index, *position, resolved);
             }
         }
+        explicit.set_bracket(bracket);
         Ok(explicit)
     }
 
@@ -5106,6 +5145,7 @@ impl Checker {
             subst,
             arguments: tyargs,
             attributes,
+            ..
         } = self.resolve_use_params(
             name,
             &decls,
@@ -6362,6 +6402,7 @@ impl Checker {
             subst,
             arguments: tyargs,
             attributes,
+            origins: Vec::new(),
         })
     }
 }

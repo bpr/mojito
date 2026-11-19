@@ -1017,164 +1017,123 @@ impl Checker {
         mojito_types::types::map_origins(ty, &|origin| self.fold_immutable_origin_cast(origin))
     }
 
-    /// Split the source parameter list at an explicit specialization site.
-    /// Origin arguments are erased from the ordinary list handed to the
-    /// generic binder, which binds the list as this split does
-    /// ([`mojito_ast::call::match_parameter_slots`]), so an ordinary argument
-    /// keeps its source form.
-    pub(super) fn split_callable_specialization(
+    /// Bind the bracket `arguments` against `decls`, a callee's whole
+    /// declared list, as upstream's binder does: an origin argument binds
+    /// its origin binder's declared slot, and every other argument goes to
+    /// the binder of the argument view ([`ParamDecl::argument_binders`]),
+    /// which binds the list by the same rule
+    /// ([`mojito_ast::call::match_parameter_slots`]). An origin's `mut=`
+    /// binder and an `OriginSet` are inferred, never supplied.
+    pub(super) fn bind_origin_arguments(
         &self,
         name: &str,
+        decls: &[ParamDecl],
         arguments: &[mojito_ast::ast::ParamArg],
-        signature: &CallableOriginSignature,
-    ) -> Result<SplitCallableSpecialization, TypeError> {
+    ) -> Result<OriginBracket, TypeError> {
         use mojito_ast::ast::ParamArg;
 
-        if signature.origins.is_empty() {
-            return Ok((
-                arguments.to_vec(),
-                CallableSpecialization::all(arguments.len()),
-                Vec::new(),
-                HashMap::new(),
-            ));
+        let whole = !decls.iter().all(|decl| decl.is_argument_binder(decls));
+        if !whole || arguments.is_empty() {
+            return Ok(OriginBracket::view(arguments, whole));
         }
         let slots = mojito_ast::call::match_parameter_slots(
-            &signature.source,
+            decls,
             &mojito_ast::call::bracket_keywords(arguments),
         )
         .map_err(|error| error.into_type_error(name))?;
-        let mut origins = vec![None; signature.origins.len()];
-        let mut ordinary = Vec::new();
-        let mut forwarded = CallableSpecialization::default();
+        let mut bracket = OriginBracket::view(&[], true);
         for (position, (argument, index)) in arguments.iter().zip(slots).enumerate() {
-            let (is_named, value) = match argument {
-                ParamArg::Named { value, .. } => (true, (**value).clone()),
-                other => (false, other.clone()),
-            };
-            let parameter = &signature.source[index];
-            if let Some(origin_index) = parameter.origin {
-                let origin = self.explicit_origin_argument(&value)?;
-                forwarded.bind_origin(
-                    &parameter.name,
-                    position,
-                    bracket_attribute(&value, &TyArg::Origin(origin.clone())),
-                );
-                origins[origin_index] = Some(origin);
-            } else if parameter.ordinary {
-                forwarded.bind(position);
-                ordinary.push(if is_named {
-                    ParamArg::Named {
-                        name: parameter.name.trim_start_matches('*').to_string(),
-                        value: Box::new(value),
-                    }
-                } else {
-                    value
-                });
-            } else {
-                return Err(TypeError::Unsupported(format!(
-                    "semantic parameter '{}' is inferred and cannot be supplied explicitly",
-                    parameter.name
-                )));
+            let decl = &decls[index];
+            match decl {
+                ParamDecl::Origin {
+                    origin: id,
+                    mutability,
+                    ..
+                } if *mutability != mojito_types::types::OriginMutability::Set => {
+                    let value = match argument {
+                        ParamArg::Named { value, .. } => value,
+                        other => other,
+                    };
+                    let origin = self.explicit_origin_argument(value)?;
+                    bracket.bind_origin(BoundOrigin {
+                        slot: index,
+                        binder: decl.name().to_string(),
+                        id: *id,
+                        position,
+                        attribute: bracket_attribute(value, &TyArg::Origin(origin.clone())),
+                        origin,
+                    });
+                }
+                _ if decl.is_argument_binder(decls) => bracket.bind(position, argument.clone()),
+                _ => {
+                    return Err(TypeError::Unsupported(format!(
+                        "semantic parameter '{}' is inferred and cannot be supplied explicitly",
+                        decl.name()
+                    )));
+                }
             }
         }
-
-        // A value type names an origin binder by its source slot
-        // (`Span[Int, o]` in a result or parameter type), which the explicit
-        // argument binds as it binds the `ref` signatures naming it.
-        let tails = signature
-            .source
-            .iter()
-            .enumerate()
-            .filter_map(|(index, parameter)| {
-                let origin = origins.get(parameter.origin?)?.clone()?;
-                Some((
-                    mojito_types::origin::OriginParamId(u32::try_from(index).ok()?),
-                    origin,
-                ))
-            })
-            .collect();
-        let bindings = signature
-            .origins
-            .iter()
-            .zip(origins)
-            .filter_map(|(parameter, origin)| {
-                origin.map(|origin| (parameter.slots.clone(), origin))
-            })
-            .collect::<Vec<_>>();
-        Ok((ordinary, forwarded, bindings, tails))
+        Ok(bracket)
     }
 
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
-    pub(super) fn bind_callable_origins(
-        &self,
-        mut callable: Ty,
-        bindings: &[(Vec<usize>, mojito_types::origin::Origin)],
+    /// `callable` with the origins its bracket bound substituted into its
+    /// signature, as upstream substitutes a bound declared list: each
+    /// parameter, collector, and result type naming a bound origin binder
+    /// (`Span[Int, o]`, `Pointer[Pointer[Int, o], …]`), and each `ref`
+    /// contract over the parameters `signature` lists for that binder.
+    pub(super) fn bind_bracket_origins(
+        callable: Ty,
+        origins: &[BoundOrigin],
+        signature: Option<&CallableOriginSignature>,
     ) -> Ty {
-        if callable.callable().is_none() {
+        if origins.is_empty() || callable.callable().is_none() {
             return callable;
         }
-        callable.update(|kind| {
-            let Some(FuncTy {
-                ref_params,
-                ref_return,
-                ..
-            }) = kind.callable_mut()
-            else {
-                return;
-            };
-            for signature in ref_params.iter_mut().flatten() {
-                signature.origin = bind_sig_origin(&signature.origin, bindings);
-            }
-            if let Some(signature) = ref_return {
-                signature.origin = bind_sig_origin(&signature.origin, bindings);
-            }
+        let tails = origins
+            .iter()
+            .map(|bound| (bound.id, bound.origin.clone()))
+            .collect();
+        let references = signature.map_or_else(Vec::new, |signature| {
+            origins
+                .iter()
+                .filter_map(|bound| {
+                    let parameter = signature
+                        .origins
+                        .iter()
+                        .find(|parameter| parameter.name == bound.binder)?;
+                    Some((parameter.slots.clone(), bound.origin.clone()))
+                })
+                .collect::<Vec<_>>()
         });
-        callable
-    }
-
-    pub(super) fn prepare_callable_specialization(
-        &self,
-        name: &str,
-        arguments: &[mojito_ast::ast::ParamArg],
-        callable: Ty,
-        signature: Option<&CallableOriginSignature>,
-    ) -> Result<(Ty, Vec<mojito_ast::ast::ParamArg>, CallableSpecialization), TypeError> {
-        let Some(signature) = signature else {
-            return Ok((
-                callable,
-                arguments.to_vec(),
-                CallableSpecialization::all(arguments.len()),
-            ));
-        };
-        let (ordinary, forwarded, bindings, tails) =
-            self.split_callable_specialization(name, arguments, signature)?;
-        let callable =
-            bind_callable_origin_tails(self.bind_callable_origins(callable, &bindings), &tails);
-        Ok((callable, ordinary, forwarded))
+        bind_callable_origin_tails(bind_callable_ref_origins(callable, &references), &tails)
     }
 
     /// Materialize the monomorphic checked view of an explicitly specialized
-    /// generic function value. Generic execution remains type-erased; only its
-    /// callable contract is instantiated here.
+    /// generic function value: its bracket `arguments` bound against its
+    /// whole declared list, and what they bound substituted into its
+    /// signature. Generic execution remains type-erased; only its callable
+    /// contract is instantiated here.
     pub(super) fn instantiate_generic_callable_value(
         &self,
         name: &str,
         callable: Ty,
         arguments: &[mojito_ast::ast::ParamArg],
+        signature: Option<&CallableOriginSignature>,
     ) -> Result<(Ty, Vec<TyArg>), TypeError> {
         let TyKind::GenericFunc(generic) = callable.kind() else {
             return Ok((callable, Vec::new()));
         };
-        let GenericFuncTy { decls, func } = (**generic).clone();
-        let decls = ParamDecl::argument_decls(&decls);
         let BoundParameters {
             subst,
             arguments: tyargs,
+            origins,
             ..
-        } = self.resolve_use_params(name, &decls, arguments, &[], &[])?;
+        } = self.resolve_use_params(name, &generic.decls, arguments, &[], &[])?;
+        let bound = Self::bind_bracket_origins(callable.clone(), &origins, signature);
+        let Some(GenericFuncTy { decls, func }) = bound.as_generic_func() else {
+            return Ok((bound, tyargs));
+        };
+        let decls = ParamDecl::argument_view(decls);
         let values = DependentValues::own(&self.param_context, &decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = expand_solved_packs(ty, &decls, &tyargs);
@@ -1192,8 +1151,6 @@ impl Checker {
         callable: Ty,
         signature: Option<&CallableOriginSignature>,
     ) -> Result<(Ty, Vec<TyArg>), TypeError> {
-        let (callable, ordinary, _) =
-            self.prepare_callable_specialization(name, arguments, callable, signature)?;
         // The pinned compiler accepts explicit Origin specialization of a
         // stateless nested function as a value but rejects materializing one
         // that has a capture environment.
@@ -1218,13 +1175,13 @@ impl Checker {
                 Ok((callable, Vec::new()))
             }
             TyKind::GenericFunc(_) => {
-                self.instantiate_generic_callable_value(name, callable, &ordinary)
+                self.instantiate_generic_callable_value(name, callable, arguments, signature)
             }
-            TyKind::Func(_) if ordinary.is_empty() => Ok((callable, Vec::new())),
+            TyKind::Func(_) if arguments.is_empty() => Ok((callable, Vec::new())),
             TyKind::Func(_) => Err(TypeError::WrongTypeArgCount {
                 name: name.to_string(),
                 expected: 0,
-                got: ordinary.len(),
+                got: arguments.len(),
             }),
             other => Err(TypeError::NotCallable {
                 name: name.to_string(),
@@ -1701,6 +1658,7 @@ impl Checker {
             subst,
             arguments: tyargs,
             attributes,
+            ..
         } = self.resolve_explicit_use_params(
             name,
             &signature.decls(),
@@ -2338,6 +2296,34 @@ fn substitute_at_with(
             origins: HashMap::new(),
         },
     )
+}
+
+/// `callable` with each `ref` contract over the parameters a binding lists
+/// rebound to that binding's origin ([`bind_sig_origin`]).
+fn bind_callable_ref_origins(
+    mut callable: Ty,
+    bindings: &[(Vec<usize>, mojito_types::origin::Origin)],
+) -> Ty {
+    if bindings.is_empty() {
+        return callable;
+    }
+    callable.update(|kind| {
+        let Some(FuncTy {
+            ref_params,
+            ref_return,
+            ..
+        }) = kind.callable_mut()
+        else {
+            return;
+        };
+        for signature in ref_params.iter_mut().flatten() {
+            signature.origin = bind_sig_origin(&signature.origin, bindings);
+        }
+        if let Some(signature) = ref_return {
+            signature.origin = bind_sig_origin(&signature.origin, bindings);
+        }
+    });
+    callable
 }
 
 /// `callable` with every struct origin tail of its parameter, collector,

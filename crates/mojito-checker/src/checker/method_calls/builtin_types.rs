@@ -620,8 +620,14 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
-        let (ret, _, error, ..) =
-            self.infer_callable_ty(&span, "<callable>", callable.clone(), &[], args, kwargs)?;
+        let (ret, _, error, ..) = self.infer_callable_ty(
+            &span,
+            "<callable>",
+            callable.clone(),
+            (&[], None),
+            args,
+            kwargs,
+        )?;
         self.record_call_environment_effects(span.clone(), callable, &[], &[], args, kwargs)?;
         let carried = contract_transfer_effects(callable);
         if !carried.is_empty() {

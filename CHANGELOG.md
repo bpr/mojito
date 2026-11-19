@@ -1451,6 +1451,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call's or function value's bracket now binds an explicit origin
+  argument in its binder's slot of the callee's whole declared list, and the
+  call substitutes the bound origin into the signature after binding, as
+  upstream does, where the argument used to rewrite the signature before the
+  bracket bound. A `ref [o]` contract still finds its binder through the
+  declaration's origin signature (R2356) (R2352).
+
 - R2348, binding a call's bracket against its callee's whole declared list,
   is split by cause: an origin-only function's non-generic type (R2351), the
   signature rewrite an explicit origin argument does before binding (R2352),

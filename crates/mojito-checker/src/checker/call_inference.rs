@@ -14,6 +14,10 @@ use mojito_types::types::{FuncTy, GenericFuncTy};
 /// bare type parameter (`CallableOverloadMatch::simd_erasures`).
 /// A typed call: its result, overload rank, raised error, bool origin
 /// bindings, SIMD erasures, and what each of its bracket arguments bound to.
+/// A checked call: its result, overload score, error type, the `Bool`
+/// binders its origins bound, its SIMD erasures, the attributes its bracket
+/// bound over the callee's declared list, and the callee with what the
+/// bracket bound substituted into its signature.
 type InferredCall = (
     Ty,
     usize,
@@ -21,6 +25,7 @@ type InferredCall = (
     HashMap<usize, bool>,
     usize,
     DeclaredAttributes,
+    Ty,
 );
 
 impl Checker {
@@ -44,9 +49,9 @@ impl Checker {
             .iter()
             .filter_map(|(index, value)| {
                 signature
-                    .source
+                    .binder_names
                     .get(*index)
-                    .map(|parameter| (parameter.name.clone(), TyArg::Val(CtValue::Bool(*value))))
+                    .map(|name| (name.clone(), TyArg::Val(CtValue::Bool(*value))))
             })
             .collect()
     }
@@ -447,23 +452,15 @@ impl Checker {
         candidate: &Ty,
         signature: Option<&CallableOriginSignature>,
     ) -> CandidateOutcome {
-        let Ok((prepared, ordinary_param_args, _)) = self.prepare_callable_specialization(
-            call.name,
-            call.param_args,
-            candidate.clone(),
-            signature,
-        ) else {
-            return CandidateOutcome::Rejected;
-        };
         match self.infer_callable_ty(
             call.span,
             call.name,
-            prepared.clone(),
-            &ordinary_param_args,
+            candidate.clone(),
+            (call.param_args, signature),
             call.args,
             call.kwargs,
         ) {
-            Ok((ret, score, error, bool_bindings, simd_erasures, _)) => {
+            Ok((ret, score, error, bool_bindings, simd_erasures, ..)) => {
                 let Some(target) = callable_lowered_name(call.name, candidate) else {
                     return CandidateOutcome::Rejected;
                 };
@@ -497,7 +494,7 @@ impl Checker {
                 // Probe the same candidate without those availability
                 // predicates so only an otherwise call-compatible shape
                 // can contribute a retained diagnostic.
-                let mut unconstrained = prepared;
+                let mut unconstrained = candidate.clone();
                 unconstrained.update(|kind| {
                     if let Some(GenericFuncTy { decls, .. }) = kind.as_generic_func_mut() {
                         for constraints in decls.iter_mut().filter_map(ParamDecl::constraints_mut) {
@@ -510,7 +507,7 @@ impl Checker {
                         call.span,
                         call.name,
                         unconstrained,
-                        &ordinary_param_args,
+                        (call.param_args, signature),
                         call.args,
                         call.kwargs,
                     )
@@ -1189,29 +1186,19 @@ impl Checker {
                             .get(selected_index)
                             .map(|selected| (selected_index, selected))
                         {
-                            let (prepared, ordinary_param_args, forwarded) = self
-                                .prepare_callable_specialization(
-                                    name,
-                                    param_args,
-                                    selected.clone(),
-                                    origin_signatures.get(index),
-                                )?;
-                            let (.., attributes) = self.infer_callable_ty(
+                            let (.., attributes, prepared) = self.infer_callable_ty(
                                 &span,
                                 name,
-                                prepared.clone(),
-                                &ordinary_param_args,
+                                selected.clone(),
+                                (param_args, origin_signatures.get(index)),
                                 args,
                                 kwargs,
                             )?;
-                            self.record_declared_attributes(
-                                span.clone(),
-                                &forwarded.declared(attributes.clone(), declared_list(&prepared)),
-                            );
+                            self.record_declared_attributes(span.clone(), &attributes);
                             self.record_call_environment_effects(
                                 span.clone(),
                                 &prepared,
-                                &ordinary_param_args,
+                                param_args,
                                 &attributes.source_order(),
                                 args,
                                 kwargs,
@@ -1339,8 +1326,6 @@ impl Checker {
             return self.infer_element_call(span, &receiver, &ty, &indices, args, kwargs);
         }
         reject_unavailable(origin_signatures.first())?;
-        let (ty, ordinary_param_args, forwarded) =
-            self.prepare_callable_specialization(name, param_args, ty, origin_signatures.first())?;
         let indirect_target = match ty.kind() {
             struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {
                 self.indirect_callable_target(&ty)
@@ -1354,8 +1339,12 @@ impl Checker {
         };
         let contract = self.closure_contract(&ty).unwrap_or_else(|| ty.clone());
         if indirect_target.is_some() && matches!(contract.kind(), TyKind::GenericFunc(_)) {
-            let (contract, arguments) =
-                self.instantiate_generic_callable_value(name, contract, &ordinary_param_args)?;
+            let (contract, arguments) = self.instantiate_generic_callable_value(
+                name,
+                contract,
+                param_args,
+                origin_signatures.first(),
+            )?;
             self.record_at(span.clone()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::InstantiatedCallableContract {
                     contract,
@@ -1364,12 +1353,15 @@ impl Checker {
             ));
         }
         super::type_resolution::reject_trait_callable_call(&ty)?;
-        let (ret, _, error, bool_bindings, _, attributes) =
-            self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
-        self.record_declared_attributes(
-            span.clone(),
-            &forwarded.declared(attributes.clone(), declared_list(&ty)),
-        );
+        let (ret, _, error, bool_bindings, _, attributes, ty) = self.infer_callable_ty(
+            &span,
+            name,
+            ty,
+            (param_args, origin_signatures.first()),
+            args,
+            kwargs,
+        )?;
+        self.record_declared_attributes(span.clone(), &attributes);
         if let Some(signature) = origin_signatures.first() {
             self.validate_erased_origin_constraint(name, signature, &bool_bindings)?;
         }
@@ -1415,7 +1407,7 @@ impl Checker {
         self.record_call_environment_effects(
             span.clone(),
             &ty,
-            &ordinary_param_args,
+            param_args,
             &attributes.source_order(),
             args,
             kwargs,
@@ -1616,8 +1608,14 @@ impl Checker {
                 self.clear_fact(&span, |facts| facts.overload_target.take());
             }
         }
-        let (ret, _, error, ..) =
-            self.infer_callable_ty(&span, "<element>", callable.clone(), &[], args, kwargs)?;
+        let (ret, _, error, ..) = self.infer_callable_ty(
+            &span,
+            "<element>",
+            callable.clone(),
+            (&[], None),
+            args,
+            kwargs,
+        )?;
         let carried = contract_transfer_effects(&callable);
         if !carried.is_empty() {
             self.replay_transfer_effects(carried, None, args, &span, &TySubst::new())?;
@@ -1645,20 +1643,37 @@ impl Checker {
         Ok(ret)
     }
 
+    /// Check a call of `ty`, named `name`, with bracket `param_args`;
+    /// `signature` lists the `ref` contracts over each of the callee's
+    /// origin binders, for an origin the bracket binds.
     pub(super) fn infer_callable_ty(
         &self,
         span: &SourceSpan,
         name: &str,
         ty: Ty,
-        param_args: &[mojito_ast::ast::ParamArg],
+        (param_args, signature): (
+            &[mojito_ast::ast::ParamArg],
+            Option<&CallableOriginSignature>,
+        ),
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<InferredCall, TypeError> {
-        // Bind ordinary arguments first, then infer or apply the generic
-        // function's compile-time parameters from the occupied slots.
-        if matches!(ty.kind(), TyKind::GenericFunc(_)) {
-            return self.infer_generic_call(span, name, &ty, param_args, args, kwargs);
+        // The bracket binds the whole declared list first, and what it
+        // bound is substituted into the signature; then the ordinary
+        // arguments bind, and infer the compile-time parameters left open.
+        if let Some(generic) = ty.as_generic_func() {
+            let explicit = self.explicit_type_args(name, &generic.decls, param_args)?;
+            let bound = Self::bind_bracket_origins(ty.clone(), explicit.origins(), signature);
+            return self.infer_generic_call(
+                span,
+                name,
+                &bound,
+                (param_args, explicit),
+                args,
+                kwargs,
+            );
         }
+        let callee = ty.clone();
         let simd = ty.is_simd();
         let (
             params,
@@ -1679,14 +1694,18 @@ impl Checker {
                 callable_bound: Some(bound),
                 ..
             } => {
-                return self.infer_callable_ty(span, name, bound, param_args, args, kwargs);
+                return self
+                    .infer_callable_ty(span, name, bound, (param_args, signature), args, kwargs)
+                    .map(|call| with_callee(call, callee));
             }
             TyKind::Struct(struct_name, arguments) if !simd => {
                 let actual = Ty::new(TyKind::Struct(struct_name.clone(), arguments));
                 let callable = self
                     .declared_callable_contract(&actual)
                     .ok_or_else(|| self.struct_not_callable(name, &struct_name, param_args))?;
-                return self.infer_callable_ty(span, name, callable, param_args, args, kwargs);
+                return self
+                    .infer_callable_ty(span, name, callable, (param_args, signature), args, kwargs)
+                    .map(|call| with_callee(call, callee));
             }
             // A non-generic function takes no compile-time parameters.
             TyKind::Func(func) => {
@@ -1952,18 +1971,22 @@ impl Checker {
             bool_bindings,
             0,
             DeclaredAttributes::default(),
+            callee,
         ))
     }
 
     /// Type a call to a generic function: solve its type parameters from the
     /// argument types, then check each argument coerces to the substituted
     /// parameter type and return the substituted result type.
-    pub(super) fn infer_generic_call(
+    /// [`Self::infer_callable_ty`] of the generic function `generic`, with
+    /// what its bracket `param_args` bound, `explicit`, already substituted
+    /// into its signature.
+    fn infer_generic_call(
         &self,
         span: &SourceSpan,
         name: &str,
         generic: &Ty,
-        param_args: &[mojito_ast::ast::ParamArg],
+        (param_args, explicit): (&[mojito_ast::ast::ParamArg], ExplicitTypes),
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<InferredCall, TypeError> {
@@ -2041,7 +2064,6 @@ impl Checker {
             },
         )?;
         let params = &params;
-        let explicit = self.explicit_type_args(name, decls, param_args)?;
         let mut use_params = Vec::new();
         let mut arg_tys = Vec::new();
         let mut arg_exprs = Vec::new();
@@ -2091,8 +2113,14 @@ impl Checker {
             subst,
             arguments: tyargs,
             mut attributes,
-        } =
-            self.resolve_call_params(name, decls, (param_args, &explicit), &use_params, &arg_tys)?;
+            ..
+        } = self.resolve_call_params(
+            name,
+            binders,
+            (param_args, &explicit),
+            &use_params,
+            &arg_tys,
+        )?;
         let values = DependentValues::own(&self.param_context, decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = super::generics::expand_solved_packs(ty, decls, &tyargs);
@@ -2238,32 +2266,12 @@ impl Checker {
         self.call_bindings
             .borrow_mut()
             .insert(span.clone(), subst.clone());
-        // An inferred application whose clone already exists (an earlier
-        // discovery round minted it for another occurrence) retargets to it
-        // by exact name instead of requesting a round of its own; otherwise
-        // retain the resolved application for instantiation discovery.
+        attributes.merge(folded_bracket_attributes(
+            &explicit, binders, param_args, &tyargs,
+        ));
         // An overload candidate's write here is undone with its probe; the
         // selected candidate's re-run is the only one kept.
-        attributes.merge(folded_parameter_attributes(decls, param_args, &tyargs));
-        if param_args.is_empty()
-            && let Some(clone) = self.existing_def_clone(name, decls, &tyargs)
-        {
-            self.clear_fact(span, |facts| facts.generic_instantiation.take());
-            self.record_at(span.clone()).overload_target = Some(clone);
-        } else {
-            self.record_at(span.clone()).generic_instantiation =
-                Some(mojito_checked::checked::GenericInstantiation {
-                    callee: name.to_string(),
-                    parameter_names: names.clone(),
-                    parameter_types: func
-                        .params
-                        .iter()
-                        .map(|ty| TypeKey::from_ty(ty).as_str().to_string())
-                        .collect(),
-                    variadic: mojito_symbol::symbol::VariadicKey::from_callable(generic),
-                    arguments: tyargs,
-                });
-        }
+        self.record_generic_application(span, name, generic, (param_args, decls), tyargs);
         Ok((
             result,
             overload_rank(
@@ -2285,7 +2293,46 @@ impl Checker {
             bool_bindings,
             simd_erasures,
             attributes,
+            generic.clone(),
         ))
+    }
+
+    /// Record the call at `span` of `generic`, named `name`, with bracket
+    /// `param_args` and solved arguments `tyargs` over its argument view
+    /// `decls`: the already-minted clone a closed inferred application
+    /// retargets to by exact name instead of requesting a discovery round
+    /// of its own (an earlier round minted it for another occurrence), or
+    /// the application instantiation discovery reads.
+    fn record_generic_application(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        generic: &Ty,
+        (param_args, decls): (&[mojito_ast::ast::ParamArg], &[ParamDecl]),
+        tyargs: Vec<TyArg>,
+    ) {
+        let Some(func) = generic.as_generic_func() else {
+            return;
+        };
+        if param_args.is_empty()
+            && let Some(clone) = self.existing_def_clone(name, decls, &tyargs)
+        {
+            self.clear_fact(span, |facts| facts.generic_instantiation.take());
+            self.record_at(span.clone()).overload_target = Some(clone);
+        } else {
+            self.record_at(span.clone()).generic_instantiation =
+                Some(mojito_checked::checked::GenericInstantiation {
+                    callee: name.to_string(),
+                    parameter_names: func.names.clone(),
+                    parameter_types: func
+                        .params
+                        .iter()
+                        .map(|ty| TypeKey::from_ty(ty).as_str().to_string())
+                        .collect(),
+                    variadic: mojito_symbol::symbol::VariadicKey::from_callable(generic),
+                    arguments: tyargs,
+                });
+        }
     }
 
     /// The already-minted clone of bound-generic `name` for a closed inferred
@@ -2841,6 +2888,25 @@ pub(super) fn folded_parameter_attributes(
     folded
 }
 
+/// [`folded_parameter_attributes`] of a call's bracket `param_args` over
+/// its callee's whole declared list `decls`, the argument view's binder
+/// having bound `arguments` from the bracket's ordinary arguments.
+fn folded_bracket_attributes(
+    explicit: &ExplicitTypes,
+    decls: &[ParamDecl],
+    param_args: &[mojito_ast::ast::ParamArg],
+    arguments: &[TyArg],
+) -> DeclaredAttributes {
+    let view = ParamDecl::argument_view(decls);
+    match explicit.bracket() {
+        Some(bracket) => bracket.declared(
+            folded_parameter_attributes(&view, &bracket.ordinary, arguments),
+            decls,
+        ),
+        None => folded_parameter_attributes(&view, param_args, arguments),
+    }
+}
+
 /// The arguments of a call whose callee's origin binders bind: the regular
 /// slots and the positions its `*args` collector gathers.
 pub(super) struct CalleeOriginArguments<'a> {
@@ -2998,10 +3064,18 @@ fn argument_mismatch(callee: &str, param: &str, expected: &Ty, found: &Ty) -> Ty
     }
 }
 
-/// The whole declared parameter list of callable type `callee`, origin
-/// binders in place; empty for a non-generic one.
-fn declared_list(callee: &Ty) -> &[ParamDecl] {
-    callee
-        .as_generic_func()
-        .map_or(&[], |generic| generic.decls.as_slice())
+/// `call` with `callee` as the callee it checked: a call through a
+/// callable bound or a struct's `__call__` contract keeps the callee it
+/// named.
+fn with_callee(call: InferredCall, callee: Ty) -> InferredCall {
+    let (ret, score, error, bool_bindings, simd_erasures, attributes, _) = call;
+    (
+        ret,
+        score,
+        error,
+        bool_bindings,
+        simd_erasures,
+        attributes,
+        callee,
+    )
 }

@@ -3975,43 +3975,15 @@ impl CapturePolicy {
     }
 }
 
-/// How one source-level `Origin` parameter is represented by the callable's
-/// slot-relative reference contracts. Origin parameters are erased from
-/// `TyKind::Func`'s ordinary compile-time parameter list, so this checker-owned fact
-/// is what lets a value expression such as `borrow[origin_of(value)]` bind that
-/// parameter without reconstructing it from source later in MIR lowering.
+/// The `ref` contracts one origin binder of a callable declaration names:
+/// each value parameter whose `ref [o]` clause names the binder, which a
+/// contract over the binder lists in its stead (`SigOrigin::Param`). A call
+/// whose bracket binds the binder rebinds those contracts to the origin it
+/// bound ([`Checker::bind_bracket_origins`]).
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct CallableOriginParam {
     name: String,
     slots: Vec<usize>,
-}
-
-/// One source compile-time parameter in a callable declaration. `Origin`
-/// parameters are erased from `GenericFuncTy::decls`, so retaining this
-/// ordered layout is necessary to split a mixed specialization such as
-/// `borrow[Int, origin_of(value)]` without shifting the ordinary type argument.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct CallableSourceParam {
-    name: String,
-    infer_only: bool,
-    origin: Option<usize>,
-    ordinary: bool,
-}
-
-impl mojito_ast::call::CompileTimeParam for CallableSourceParam {
-    fn keyword(&self) -> &str {
-        self.name.trim_start_matches('*')
-    }
-
-    fn infer_only(&self) -> bool {
-        self.infer_only
-    }
-
-    /// Whether the parameter is a pack (`*Ts`, `*values: Int`), which
-    /// collects every positional argument from its slot on.
-    fn variadic(&self) -> bool {
-        self.name.starts_with('*')
-    }
 }
 
 /// Origin-specialization metadata for one declaration in an overload set.
@@ -4019,7 +3991,9 @@ impl mojito_ast::call::CompileTimeParam for CallableSourceParam {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct CallableOriginSignature {
     origins: Vec<CallableOriginParam>,
-    source: Vec<CallableSourceParam>,
+    /// The name of each source compile-time parameter, by source slot: the
+    /// `Bool` binder an origin's `mut=` names is keyed by its slot.
+    binder_names: Vec<String>,
     /// Declaration constraints whose only binders were erased origin
     /// metadata, one per trailing `where` clause. They are checked after
     /// call-origin solving recovers the inferred Bool mutability arguments.
@@ -4154,13 +4128,6 @@ fn first_unbound_parameter(ty: &Ty) -> Option<(String, String)> {
     }
 }
 
-type SplitCallableSpecialization = (
-    Vec<mojito_ast::ast::ParamArg>,
-    CallableSpecialization,
-    Vec<(Vec<usize>, mojito_types::origin::Origin)>,
-    HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
-);
-
 mod places;
 
 mod builtin_fold;
@@ -4194,8 +4161,8 @@ mod iteration;
 
 mod type_resolution;
 use type_resolution::{
-    BoundParameters, CallableSpecialization, DeclaredAttributes, DependentValues,
-    EXTERNAL_CALL_PARAMS, ExplicitTypes, T_PARAMS, TYPE_PARAMS, U_PARAMS, VALUE_PACK_PARAMS,
+    BoundOrigin, BoundParameters, DeclaredAttributes, DependentValues, EXTERNAL_CALL_PARAMS,
+    ExplicitTypes, OriginBracket, T_PARAMS, TYPE_PARAMS, U_PARAMS, VALUE_PACK_PARAMS,
     VARIANT_REPLACE_PARAMS, bracket_attribute, tyarg_is_symbolic, types_attributes,
 };
 

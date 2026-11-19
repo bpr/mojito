@@ -719,7 +719,7 @@ policy or data-model responsibilities to focused children:
   Mojo binds one: positional arguments first, each to the next parameter
   that is not infer-only (a pack takes the rest), then each keyword by
   name, an infer-only binder included; the checker's `bracket_bindings`,
-  `bracket_argument_slots`, and `split_callable_specialization` all use it.
+  `bracket_argument_slots`, and `bind_origin_arguments` all use it.
 - `checker.rs` holds the `Checker` state, constructors, and shared prelude
   types, and coordinates checking; the single `Checker` type's methods are split
   by responsibility across `impl Checker` blocks in the `checker/` submodules —
@@ -1259,7 +1259,10 @@ its declared slot of the struct's checked list, which also declares a pack's
 implicit list binder (`PartitionedStructArgs::declared`), and an explicit
 specialization placing the generic binder's argument-view slots and each
 origin argument in their binders' slots of the callee's whole declared list
-(`CallableSpecialization::declared`); a compiler builtin's binder
+(`OriginBracket::declared`, from `bind_origin_arguments`, which
+`resolve_explicit_use_params` runs over that list and whose bound origins
+`BoundParameters::origins` returns for the call or value to substitute into
+its signature through `bind_bracket_origins`); a compiler builtin's binder
 (`applied_type`'s collection, pointer, `SIMD`, and storage types,
 `external_call`, `reflect`, the `Variant` storage methods, the
 one-type-argument trait tests) keys its arguments the same way, by the

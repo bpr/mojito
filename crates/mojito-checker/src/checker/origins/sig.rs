@@ -333,23 +333,12 @@ pub(in crate::checker) fn callable_origin_signature(
                 .collect(),
         })
         .collect::<Vec<_>>();
-    let source = type_params
-        .iter()
-        .map(|parameter| CallableSourceParam {
-            name: parameter.name.clone(),
-            infer_only: parameter.infer_only,
-            origin: origins
-                .iter()
-                .position(|origin| origin.name == parameter.name),
-            ordinary: !matches!(
-                parameter.bounds.as_slice(),
-                [only] if only == "Origin" || only == "OriginSet"
-            ),
-        })
-        .collect();
     CallableOriginSignature {
         origins,
-        source,
+        binder_names: type_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect(),
         availability,
         view_return: Vec::new(),
         unavailable: None,
