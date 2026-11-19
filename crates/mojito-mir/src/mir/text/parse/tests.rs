@@ -490,6 +490,12 @@ fn fancy_struct_ty() -> TyKind {
                 Origin::Param(OriginParamId(0)),
                 Origin::SelfParam,
             ])),
+            // Schema 1.207's projected and unsafe-any origins.
+            TyArg::Origin(Origin::Projected(
+                Box::new(Origin::Param(OriginParamId(0))),
+                vec![OriginSeg::Interior("e".into()), OriginSeg::Subtree],
+            )),
+            TyArg::Origin(Origin::UnsafeAny { mutable: true }),
         ],
     )
 }

@@ -3094,6 +3094,16 @@ fn origin(value: &Origin) -> String {
         }
         Origin::Unbound => "origin_unbound".into(),
         Origin::Immutable(inner) => positional("origin_immutable", &origin(inner)),
+        Origin::Projected(base, path) => record(
+            "origin_projected",
+            &[
+                ("base", origin(base)),
+                ("path", list(path.iter().map(origin_seg))),
+            ],
+        ),
+        Origin::UnsafeAny { mutable } => {
+            record("origin_unsafe_any", &[("mutable", mutable.to_string())])
+        }
     }
 }
 fn pointer_origin(value: &PointerOrigin) -> String {

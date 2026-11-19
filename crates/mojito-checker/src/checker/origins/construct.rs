@@ -204,14 +204,9 @@ impl ConstructorOriginBindings {
         match self.pointers.get(&id) {
             None => {
                 self.pointers.insert(id, provenance.clone());
-                if let Some(origin) = provenance
-                    .as_origin()
-                    .or_else(|| untracked_pointer_origin(provenance))
-                {
-                    self.origins
-                        .entry(id)
-                        .or_insert_with(|| tail_origin(origin));
-                }
+                self.origins
+                    .entry(id)
+                    .or_insert_with(|| tail_origin(provenance.parts().0));
                 Ok(())
             }
             Some(existing) if existing == provenance => Ok(()),
@@ -517,12 +512,7 @@ impl Checker {
             binders,
         };
         for (id, provenance) in &bindings.pointers {
-            if let Some(origin) = provenance
-                .as_origin()
-                .or_else(|| untracked_pointer_origin(provenance))
-            {
-                bindings.origins.insert(*id, origin);
-            }
+            bindings.origins.insert(*id, provenance.parts().0);
         }
         for (index, actual) in bound {
             let Some(pattern) = params.get(*index) else {
@@ -715,13 +705,12 @@ impl Checker {
                     });
                 }
                 if let Some(explicit) = explicit.iter().find(|origin| origin.id == id) {
-                    let within = match actual_origin.as_origin() {
-                        Some(actual) => origin_is_within(&actual, &explicit.origin),
-                        None => {
-                            matches!(explicit.origin, Origin::Untracked { .. })
-                                || (actual_origin == PointerOrigin::Static
-                                    && explicit.origin == Origin::Static)
-                        }
+                    let (actual, _) = actual_origin.parts();
+                    let within = if actual_origin.as_origin().is_some() {
+                        origin_is_within(&actual, &explicit.origin)
+                    } else {
+                        explicit.origin.is_untracked()
+                            || (actual == Origin::Static && explicit.origin == Origin::Static)
                     };
                     if !within {
                         return Err(TypeError::TypeMismatch {
@@ -729,7 +718,7 @@ impl Checker {
                                 "a pointer whose origin lies within the supplied '{}' argument",
                                 slot.name()
                             ),
-                            found: format!("a pointer of origin {actual_origin:?}"),
+                            found: format!("a pointer of origin {actual}"),
                             context: context(),
                         });
                     }
@@ -922,7 +911,7 @@ fn bind_callable_tail_pattern(
 /// without the subtree projection a pointer's loan domain may carry.
 fn tail_origin(origin: Origin) -> Origin {
     match origin {
-        Origin::Place(place) => Origin::Place(place.without_subtree()),
+        Origin::Place(_) | Origin::Projected(..) => origin.without_subtree(),
         Origin::Union(members) => Origin::union(members.into_iter().map(tail_origin)),
         Origin::Immutable(inner) => Origin::immutable(tail_origin(*inner)),
         other => other,
@@ -937,7 +926,7 @@ fn origin_mutability(
 ) -> Option<Mutability> {
     match origin {
         Origin::Place(place) => Some(owner_mutability(place.root)),
-        Origin::Untracked { mutable } => Some(if *mutable {
+        Origin::Untracked { mutable } | Origin::UnsafeAny { mutable } => Some(if *mutable {
             Mutability::Mutable
         } else {
             Mutability::Immutable
@@ -956,19 +945,6 @@ fn origin_mutability(
             )
         }
         _ => None,
-    }
-}
-
-/// The origin an untracked pointer provenance binds a struct slot to.
-const fn untracked_pointer_origin(provenance: &PointerOrigin) -> Option<Origin> {
-    match provenance {
-        PointerOrigin::Static => Some(Origin::Static),
-        PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
-            Some(Origin::Untracked { mutable: *mutable })
-        }
-        PointerOrigin::Place { .. }
-        | PointerOrigin::Param { .. }
-        | PointerOrigin::SelfPlace { .. } => None,
     }
 }
 

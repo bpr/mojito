@@ -163,7 +163,14 @@ impl Checker {
                     _ => Some(SigOrigin::union(members)),
                 }
             }
-            Origin::Param(_) | Origin::Static | Origin::Untracked { .. } | Origin::Unbound => None,
+            Origin::Projected(base, path) => self
+                .abstract_body_origin(base, param_owners, self_owner)
+                .map(|base| SigOrigin::Projected(Box::new(base), path.clone())),
+            Origin::Param(_)
+            | Origin::Static
+            | Origin::Untracked { .. }
+            | Origin::UnsafeAny { .. }
+            | Origin::Unbound => None,
         }
     }
 
@@ -192,8 +199,10 @@ impl Checker {
             Origin::Immutable(inner) => self.aggregate_origin_escapes(inner),
             Origin::Param(_)
             | Origin::SelfParam
+            | Origin::Projected(..)
             | Origin::Static
             | Origin::Untracked { .. }
+            | Origin::UnsafeAny { .. }
             | Origin::Unbound => false,
         }
     }
@@ -859,7 +868,7 @@ fn mentions_pack_binder(origin: &mojito_types::origin::Origin) -> bool {
     match origin {
         Origin::Param(id) => id.is_pack_binder(),
         Origin::Union(members) => members.iter().any(mentions_pack_binder),
-        Origin::Immutable(inner) => mentions_pack_binder(inner),
+        Origin::Immutable(inner) | Origin::Projected(inner, _) => mentions_pack_binder(inner),
         _ => false,
     }
 }

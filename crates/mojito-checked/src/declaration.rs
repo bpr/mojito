@@ -979,6 +979,7 @@ fn names_origin_param(ty: &Ty) -> bool {
         match origin {
             Origin::Param(_) => true,
             Origin::Union(members) => members.iter().any(names),
+            Origin::Projected(base, _) => names(base),
             _ => false,
         }
     }

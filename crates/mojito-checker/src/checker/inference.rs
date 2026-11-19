@@ -778,17 +778,10 @@ impl Checker {
                 coerces(&actual.referent, &expected.referent)
                     && (expected.mutability != mojito_types::origin::Mutability::Mutable
                         || actual.mutability == mojito_types::origin::Mutability::Mutable)
-                    && match &expected.origin {
-                        mojito_types::origin::Origin::Untracked { mutable } => matches!(
-                            &actual.origin,
-                            mojito_types::origin::Origin::Untracked {
-                                mutable: actual_mutability
-                            } if actual_mutability == mutable
-                        ),
-                        _ => !matches!(
-                            actual.origin,
-                            mojito_types::origin::Origin::Untracked { .. }
-                        ),
+                    && if expected.origin.is_untracked() {
+                        actual.origin == expected.origin
+                    } else {
+                        !actual.origin.is_untracked()
                     }
             }
             (actual_kind, expected_kind)

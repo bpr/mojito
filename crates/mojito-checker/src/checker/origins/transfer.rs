@@ -201,7 +201,7 @@ impl Checker {
             carried.push(reference.origin);
         }
         for origin in carried {
-            if matches!(origin, Origin::Static | Origin::Untracked { .. }) {
+            if matches!(origin, Origin::Static) || origin.is_untracked() {
                 continue;
             }
             match self.abstract_body_origin(&origin, param_owners, self_owner) {
@@ -534,11 +534,7 @@ impl Checker {
                 }
             };
             sources.retain(|origin| {
-                !matches!(
-                    origin,
-                    mojito_types::origin::Origin::Static
-                        | mojito_types::origin::Origin::Untracked { .. }
-                )
+                !matches!(origin, mojito_types::origin::Origin::Static) && !origin.is_untracked()
             });
             if sources.is_empty() && symbolic_value.is_none() {
                 continue;

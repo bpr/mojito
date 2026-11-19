@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2368**.
+Next free ID: **R2370**.
 
 ## Ordered Work
 
@@ -2846,15 +2846,17 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     displays.
   - Gap: a parameterized `__mlir_type[...]` alias is not accepted as a
     value-parameter type, so `_lit_origin_type_of_mut[mut]` cannot be
-    declared ("unknown type '_lit_origin_type_of_mut'"). If R2209 does
-    not close it, file it as an entry this one depends on.
-  - If R2209 did not make `_mlir_origin` resolvable, split this: values
-    and `OriginSet` first, members second.
+    declared ("unknown type '_lit_origin_type_of_mut'"). R2369 owns it.
+  - Split this if it does not fit: values and `OriginSet` first, members
+    second.
+  - Probe: `var b: S[o.unsafe_mut_cast[False]()] = S[o]()` over
+    `struct S[o: Origin]` is rejected as "type 'S' expects 0 type
+    argument(s), got 1"; the pin rejects the conversion instead.
   - Probe: `comptime S = ImmStaticOrigin` /
     `print(String(reflect[type_of(S)].name()))`.
   - Re-probe R1299 (`unsafe_mut_cast` in a result origin).
   - Planned in R2139 (2026-11-18).
-  - Depends on R2209, which gives `Origin` its `_mlir_origin`.
+  - Depends on R2369, which gives `Origin` its `_mlir_origin`.
   - Model: Fable, Planned.
 
 - [ ] **R2344 An origin binder is not a value of its `Origin` type in
@@ -2872,6 +2874,13 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     since `_mlir_origin` is unbound). Fix it here, or file it on the
     `divergences` track if out of reach.
   - Probes: the two shapes above, and `reflect[MutOrigin]`.
+  - Probe: R2209's ``__mlir_type[`!lit.ref<`, T, `, `, o._mlir_origin,
+    `, `, `0`, `>`]`` in `def show[T: AnyType, o: ImmOrigin](ref[o] x: T)`
+    is rejected; the pin accepts it.
+  - Probe: `comptime c = ImmOrigin(o); print(c.mut)` in
+    `def f[o: MutOrigin](ref[o] x: Int)` is rejected ("struct 'Origin'
+    has no constructor"); the pin prints `False`. It needs R2343's
+    `@implicit __init__` too.
   - Probe: a body's binder scope below the check still takes the argument
     view: `EnclosingBinders` (`mir.rs`), the lifted thunks' lists it
     yields, `binder_scope`, and `closure_uses`' `BinderScope` read
@@ -8900,6 +8909,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   `var box: Borrowed[MutUnsafeAnyOrigin] = Borrowed(UnsafePointer(to=x))`
   compiles, where the pin rejects it: "cannot implicitly convert
   'Borrowed[origin_of(x)]' value to 'Borrowed[MutUnsafeAnyOrigin]'".
+  - An `Untracked` slot accepts any bound origin too
+    (`Origin::coerces_to`): the pin rejects `var b: S[MutUntrackedOrigin]
+    = S[MutUnsafeAnyOrigin]()`, which Mojito accepts (R2209's p5).
   - The two `Borrowed` rebinding tests of `tests/drops_test.rs` rely on the
     conversion. Respelling them with an explicit `unsafe_origin_cast` needs
     the owners kept alive first.
@@ -10225,7 +10237,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A `Pointer[...]` application still builds `TyKind::Pointer` (the
     bridge), and the checker's member rules still win.
   - A member with no checker rule resolves to the declared body.
-  - The `_mlir_lit_ref` comptime keeps Mojito's rule until R2209 gives
+  - The `_mlir_lit_ref` comptime keeps Mojito's rule until R2369 gives
     `Origin` its `_mlir_origin`.
   - Probe: `p.as_imm()[]` is rejected; the pin prints the pointee.
   - Probe: R1463's `print(p)`.
@@ -10298,34 +10310,65 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2207.
   - Model: Fable, Not Planned.
 
-- [ ] **R2209 A struct's `Origin` argument cannot hold a pointer's projected
-  or receiver origin**
+- [ ] **R2368 A `Pointer`'s origin argument has its own resolver, where
+  upstream's is an ordinary struct argument**
 
-  `PointerOrigin` (`mojito-types/src/origin.rs`) holds a parameter's
-  interior and subtree projection, `SelfPlace`, `UnsafeAny`, and each
-  form's mutability, where a struct's `TyArg::Origin` holds none of them.
-  - Upstream has one `Origin[mut, _mlir_origin]`, with
-    `_get_owned_interior`, `_subtree`, and `unsafe_mut_cast` as comptime
-    members.
-  - Make `PointerOrigin` a view of an `Origin` plus the `mut` argument,
-    pinned by a `mojito-types` unit test that round-trips every form.
-  - Probe: ``__mlir_type[`!lit.ref<`, T, `, `, o._mlir_origin, `, `, `0`, `>`]``
-    is rejected as an unsupported type spelling; the pin accepts it.
-  - Probe: `ImmOrigin(o)` is rejected ("struct 'Origin' has no
-    constructor").
-  - Needs a MIR text schema bump.
-  - Found while planning R1681 (2026-11-14).
-  - Depends on R2341.
+  `pointer_origin_arg` and `pointer_origin_expr`
+  (`checker/type_resolution.rs`) resolve a `Pointer`'s origin argument
+  apart from `resolve_origin_param_arg`, so the two read `origin_of(self)`
+  differently.
+  - The pointer resolver always gives `SelfPlace`; the struct resolver
+    gives `SelfParam` only when no `self` is bound.
+  - Lever: resolve through `resolve_origin_param_arg` and
+    `PointerOrigin::from_parts`, keeping the `_` placeholder and the
+    one-argument spelling at `pointer_type`.
+  - Probe: `struct S[mut: Bool, //, o: Origin[mut=mut]]` holding
+    `var p: Pointer[Int, Self.o]`, built by a `Box` method
+    `def view(ref self) -> S[origin_of(self)]: return
+    S[origin_of(self)](Pointer(to=self.x).unsafe_origin_cast[origin_of(self)]())`,
+    then `print(b.view().p[])`: Mojito rejects it ("expected a pointer
+    whose origin lies within the supplied 'o' argument, found a pointer of
+    origin origin_of(self)"); the pin prints `1`.
+  - Found while landing R2209 (2026-11-19).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2369 `Origin` declares no `_mlir_origin` parameter**
+
+  Upstream's header is `struct Origin[mut: Bool, _mlir_origin:
+  _lit_origin_type_of_mut[mut], //]`, where Mojito's `Origin` declares
+  only `mut`, so a `TyArg::Origin` is no struct argument a program can
+  name.
+  - A `TyArg::Origin` is the `_mlir_origin` argument; the struct's `mut`
+    is its type's argument.
+  - `!lit.origin<mut>` is not a type spelling, and a parameterized
+    `__mlir_type` alias is not a value-parameter type (R2139's `p1`).
+  - ``__mlir_type[`!lit.ref<`, T, `, `, origin, `, `, as, `>`]`` is
+    rejected as an unsupported type spelling.
+  - Probe: ``comptime R = __mlir_type[`!lit.ref<`, T, `, `,
+    Self.o._mlir_origin, `, `, `0`, `>`]`` inside a struct over
+    `o: ImmOrigin` is rejected ("this MLIR type spelling is outside the
+    supported subset"); the pin accepts it. The function-binder form
+    waits on R2344.
+  - Found while landing R2209 (2026-11-19).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2210 A `Pointer` application is `TyKind::Pointer`, not the
   declared struct**
 
-  Every reader outside `mojito-types` goes through `Ty::pointer`,
-  `as_pointer`, `pointer_element`, `pointer_origin`,
-  `pointer_or_lit_ref`, and `is_pointer`, so the flip changes those
-  accessors to read `TyKind::Struct("Pointer", …)` and deletes the
-  variant.
+  The flip changes `Ty::pointer`, `as_pointer`, `pointer_element`,
+  `pointer_origin`, `pointer_or_lit_ref`, and `is_pointer` to read
+  `TyKind::Struct("Pointer", …)` and deletes the variant.
+  - Not every reader goes through those accessors: about 60 sites outside
+    `mojito-types` bind `TyKind::Pointer`/`LitRef`/`LitRefPack`'s
+    `origin` directly (`subst.rs` 14, `generics.rs` 8, `symbol.rs`,
+    `mono/substitute.rs`, and `operators.rs` 4 each, and smaller counts
+    across the MIR verifier, text, VM, and pliron).
+  - Store the origin as a `TyArg::Origin` plus a `mut` argument through
+    `PointerOrigin::parts`/`from_parts`, and let
+    `substitute_struct_origins` subsume `substitute_pointer_origin_params`
+    and `bind_pointer_origins`.
   - Exhaustive matches still name the variant, and the compiler flags
     them: `type_is_symbolic` (`checker/type_resolution.rs`),
     `ScopeWalker::walk_in` (`mir/verify/scope.rs`), and the MIR text

@@ -888,6 +888,9 @@ impl Checker {
             crate::checker::origins::bind_self_origin_arguments(&protocol.iterator_ty, &place);
         let resolve = |argument: &TyArg| match argument {
             TyArg::Origin(Origin::Param(_)) => TyArg::Origin(place.clone()),
+            TyArg::Origin(Origin::Projected(base, path)) if matches!(**base, Origin::Param(_)) => {
+                TyArg::Origin(place.clone().reprojected(path))
+            }
             other => other.clone(),
         };
         let resolved = match bound.kind() {
@@ -1050,8 +1053,10 @@ fn instantiate_iterator_reference(
         },
         SigMutability::Infer => match &origin {
             mojito_types::origin::Origin::Static => Mutability::Immutable,
-            mojito_types::origin::Origin::Untracked { mutable: true } => Mutability::Mutable,
-            mojito_types::origin::Origin::Untracked { mutable: false } => Mutability::Immutable,
+            mojito_types::origin::Origin::Untracked { mutable: true }
+            | mojito_types::origin::Origin::UnsafeAny { mutable: true } => Mutability::Mutable,
+            mojito_types::origin::Origin::Untracked { mutable: false }
+            | mojito_types::origin::Origin::UnsafeAny { mutable: false } => Mutability::Immutable,
             mojito_types::origin::Origin::Param(parameter) => Mutability::Param(*parameter),
             _ if mutable_receiver => Mutability::Mutable,
             _ => Mutability::Immutable,

@@ -3672,6 +3672,16 @@ operation (lowering forwards the receiver register; MIR verify compares
 pointer ABI modulo origin) and never upgrades a statically immutable
 capability.
 
+A pointer's origin (`PointerOrigin`) is a view of the struct origin argument
+upstream's `Pointer[mut, T, origin]` holds plus its `mut` argument
+(`PointerOrigin::parts`/`from_parts`, lossless), not a second vocabulary: a
+struct's `Origin` holds the same interior and subtree projections over a
+binder or the receiver (`Origin::Projected`) and the unsafe-any origin
+(`Origin::UnsafeAny`), and both project through one rule
+(`Origin::owned_interior`/`subtree`). `PointerOrigin::as_origin` is the
+loan-tracked root, with the projection dropped, for the readers that ask
+which storage a loan keeps.
+
 Borrowed views (`Span`, `StringSpan`) are pointer-plus-length structs over
 that capability. Their loans flow through three checked channels: a
 constructor's `ref [origin]` parameter records `BorrowRefArguments` (the

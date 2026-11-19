@@ -230,10 +230,10 @@ pub(super) fn tyarg_is_symbolic(argument: &TyArg) -> bool {
             .iter()
             .any(|value| matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))),
         TyArg::Val(_) => false,
-        TyArg::Origin(
-            mojito_types::origin::Origin::Param(_) | mojito_types::origin::Origin::SelfParam,
-        ) => true,
-        TyArg::Origin(_) => false,
+        TyArg::Origin(origin) => matches!(
+            origin.projection_base(),
+            mojito_types::origin::Origin::Param(_) | mojito_types::origin::Origin::SelfParam
+        ),
         TyArg::Ty(ty) => type_is_symbolic(ty),
     }
 }
@@ -256,8 +256,7 @@ pub(super) fn pointer_construction_attributes(
         .zip(slots)
         .map(|(argument, index)| match POINTER_PARAMS[index].name {
             "T" => bracket_attribute(argument, &TyArg::Ty(element.clone())),
-            "origin" => pointer_origin_attribute(origin)
-                .and_then(|bound| bracket_attribute(argument, &TyArg::Origin(bound))),
+            "origin" => bracket_attribute(argument, &TyArg::Origin(origin.parts().0)),
             _ => None,
         })
         .collect();
@@ -4281,10 +4280,10 @@ impl Checker {
         }
         let mut attributes = vec![bracket_attribute(&args[0], &TyArg::Ty(elem.clone()))];
         if let Some(argument) = args.get(1) {
-            attributes.push(
-                pointer_origin_attribute(&origin)
-                    .and_then(|bound| bracket_attribute(argument, &TyArg::Origin(bound))),
-            );
+            attributes.push(bracket_attribute(
+                argument,
+                &TyArg::Origin(origin.parts().0),
+            ));
         }
         let params = match name {
             "MutPointer" | "ImmPointer" => FIXED_POINTER_PARAMS,
@@ -4367,11 +4366,11 @@ impl Checker {
         }
         if let Some((base, tag)) = super::origins::interior_origin_syntax(expression) {
             let origin = self.pointer_origin_expr(base)?;
-            return append_interior_tag(origin, tag);
+            return append_interior_tag(&origin, tag);
         }
         if let Some(base) = super::origins::subtree_origin_syntax(expression) {
             let origin = self.pointer_origin_expr(base)?;
-            return append_subtree(origin);
+            return append_subtree(&origin);
         }
         match &expression.kind {
             // `Self.origin` spelled in expression position (a projection base).
@@ -5617,69 +5616,53 @@ pub(super) fn is_value_parameter(param: &mojito_ast::ast::TypeParam) -> bool {
         || matches!(param.bounds.as_slice(), [only] if scalar_type_name(only).is_some())
 }
 
+/// Upstream's `_get_owned_interior[tag]` on a pointer's origin argument, by
+/// the projection rule a struct origin argument follows
+/// ([`mojito_types::origin::Origin::owned_interior`]).
 pub(in crate::checker) fn append_interior_tag(
-    mut origin: mojito_types::origin::PointerOrigin,
+    origin: &mojito_types::origin::PointerOrigin,
     tag: &str,
 ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-    use mojito_types::origin::{OriginSeg, PointerOrigin};
-    if origin_has_subtree_tail(&origin) {
-        return Err(subtree_is_terminal_error());
-    }
-    match &mut origin {
-        PointerOrigin::Param { interior, .. } | PointerOrigin::SelfPlace { interior, .. } => {
-            interior.push(tag.to_string());
-        }
-        PointerOrigin::Place { place, .. } => {
-            place.path.push(OriginSeg::Interior(tag.to_string()));
-        }
-        _ => {
-            return Err(TypeError::TypeMismatch {
-                expected: "an origin parameter or origin_of(place) base".to_string(),
-                found: "an untracked origin".to_string(),
-                context: "interior origin projection".to_string(),
-            });
-        }
-    }
-    Ok(origin)
+    project_pointer_origin(
+        origin,
+        |base| base.owned_interior(tag),
+        "interior origin projection",
+    )
 }
 
-/// Append the conservative `._subtree` projection to a tracked pointer origin.
-/// Subtree is terminal: nothing projects below it, including another
-/// `._subtree`. Untracked provenances have no place to project into.
+/// Upstream's `_subtree` on a pointer's origin argument. Subtree is
+/// terminal: nothing projects below it, including another `._subtree`.
+/// Untracked provenances have no place to project into.
 pub(in crate::checker) fn append_subtree(
-    mut origin: mojito_types::origin::PointerOrigin,
+    origin: &mojito_types::origin::PointerOrigin,
 ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-    use mojito_types::origin::{OriginSeg, PointerOrigin};
-    if origin_has_subtree_tail(&origin) {
-        return Err(subtree_is_terminal_error());
-    }
-    match &mut origin {
-        PointerOrigin::Param { subtree, .. } | PointerOrigin::SelfPlace { subtree, .. } => {
-            *subtree = true;
-        }
-        PointerOrigin::Place { place, .. } => {
-            place.path.push(OriginSeg::Subtree);
-        }
-        _ => {
-            return Err(TypeError::TypeMismatch {
-                expected: "an origin parameter or origin_of(place) base".to_string(),
-                found: "an untracked origin".to_string(),
-                context: "'_subtree' origin projection".to_string(),
-            });
-        }
-    }
-    Ok(origin)
+    project_pointer_origin(
+        origin,
+        mojito_types::origin::Origin::subtree,
+        "'_subtree' origin projection",
+    )
 }
 
-fn origin_has_subtree_tail(origin: &mojito_types::origin::PointerOrigin) -> bool {
-    use mojito_types::origin::{OriginSeg, PointerOrigin};
-    match origin {
-        PointerOrigin::Param { subtree, .. } | PointerOrigin::SelfPlace { subtree, .. } => *subtree,
-        PointerOrigin::Place { place, .. } => {
-            matches!(place.path.last(), Some(OriginSeg::Subtree))
-        }
-        _ => false,
+/// `origin`'s struct-argument part projected by `project`, as a pointer of
+/// the same mutability.
+fn project_pointer_origin(
+    origin: &mojito_types::origin::PointerOrigin,
+    project: impl Fn(&mojito_types::origin::Origin) -> Option<mojito_types::origin::Origin>,
+    context: &str,
+) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
+    if origin.subtree() {
+        return Err(subtree_is_terminal_error());
     }
+    let (base, mutability) = origin.parts();
+    project(&base)
+        .and_then(|projected| {
+            mojito_types::origin::PointerOrigin::from_parts(projected, mutability)
+        })
+        .ok_or_else(|| TypeError::TypeMismatch {
+            expected: "an origin parameter or origin_of(place) base".to_string(),
+            found: "an untracked origin".to_string(),
+            context: context.to_string(),
+        })
 }
 
 fn unsupported_mlir_type() -> TypeError {
@@ -5758,23 +5741,6 @@ fn immutable_capability(
         PointerOrigin::Untracked { .. } => PointerOrigin::Untracked { mutable: false },
         PointerOrigin::UnsafeAny { .. } => PointerOrigin::UnsafeAny { mutable: false },
         PointerOrigin::Static => PointerOrigin::Static,
-    }
-}
-
-/// Whether an application argument is upstream's origin placeholder spelling
-/// (`_` or `...`), possibly behind a keyword (`origin=_`): the slot is
-/// explicitly marked inferred rather than omitted.
-/// The struct origin a pointer provenance binds as a bracket argument.
-fn pointer_origin_attribute(
-    origin: &mojito_types::origin::PointerOrigin,
-) -> Option<mojito_types::origin::Origin> {
-    use mojito_types::origin::{Origin, PointerOrigin};
-    match origin {
-        PointerOrigin::Static => Some(Origin::Static),
-        PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
-            Some(Origin::Untracked { mutable: *mutable })
-        }
-        other => other.as_origin(),
     }
 }
 

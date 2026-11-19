@@ -60,6 +60,8 @@ impl Checker {
                             | mojito_types::origin::Origin::SelfParam
                             | mojito_types::origin::Origin::Static
                             | mojito_types::origin::Origin::Untracked { .. }
+                            | mojito_types::origin::Origin::UnsafeAny { .. }
+                            | mojito_types::origin::Origin::Projected(..)
                             | mojito_types::origin::Origin::Unbound => {}
                         }
                     }
@@ -736,6 +738,8 @@ impl Checker {
                 | Origin::SelfParam
                 | Origin::Static
                 | Origin::Untracked { .. }
+                | Origin::UnsafeAny { .. }
+                | Origin::Projected(..)
                 | Origin::Unbound => true,
             }
         }
@@ -1103,6 +1107,7 @@ fn mentions_origin_param(origin: &mojito_types::origin::Origin) -> bool {
     match origin {
         Origin::Param(_) => true,
         Origin::Union(members) => members.iter().any(mentions_origin_param),
+        Origin::Immutable(inner) | Origin::Projected(inner, _) => mentions_origin_param(inner),
         _ => false,
     }
 }

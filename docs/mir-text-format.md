@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.206
+mojito-mir 1.207
 ```
 
-The writer emits 1.206. The reader accepts 1.0 through 1.206; *Schema 1.0*
+The writer emits 1.207. The reader accepts 1.0 through 1.207; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1234,6 +1234,15 @@ comparison's link carries the interior invalidations its own call makes
 (`CheckedCompareLink::interior_invalidations`); the MIR text schema is
 unchanged (R2322).
 
+Schema 1.207 adds two origin spellings a struct's origin argument can
+hold, as upstream's `_mlir_origin` attribute can: `origin_projected { base,
+path }`, an interior or subtree projection over an origin binder or the
+receiver, and `origin_unsafe_any { mutable }`, the unsafe-any origin, which
+an older artifact spelled `origin_untracked`. A `PointerOrigin` is a view of
+an origin plus its mutability (`PointerOrigin::parts`/`from_parts`), so its
+own spellings are unchanged. The package format moves to `mojito-package
+235` (R2209).
+
 Schema 1.206 orders a struct instance's arguments by its declared
 parameter list, as upstream's `!kgen.struct` attributes are: each origin
 binder's `origin_arg` sits at its binder's position among the binders an
@@ -2413,8 +2422,13 @@ in a 1.0 reference chooses between them, and the reader does not guess.
 
 Origin path segments are `field(symbol)`, `any_index`, `interior(symbol)`, and
 `subtree`. Origins are `origin_param(id)`, `origin_self`,
-`origin_place { root: $vN, path }`, `origin_union`, `origin_static`, and
-`origin_untracked { mutable }`. Pointer origins are `pointer_place`,
+`origin_place { root: $vN, path }`, `origin_union`, `origin_static`,
+`origin_untracked { mutable }`, `origin_unbound`, `origin_immutable(origin)`,
+`origin_projected { base, path }` (schema 1.207: an interior or subtree
+projection over an `origin_param` or `origin_self` base, upstream's
+`_get_owned_interior`/`_subtree` over a binder), and
+`origin_unsafe_any { mutable }` (schema 1.207: upstream's
+`Imm/MutUnsafeAnyOrigin`, distinct from the untracked origin). Pointer origins are `pointer_place`,
 `pointer_param`, `pointer_self`, `pointer_static`, `pointer_untracked`, and
 `pointer_unsafe_any`; all fields of the corresponding `PointerOrigin` variant
 are required.

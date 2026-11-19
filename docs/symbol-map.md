@@ -805,6 +805,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   lowering (including the shared `SigOrigin` instantiation helpers
   `instantiate_sig_origin`/`instantiate_bound_origin` used by the iteration
   protocol and delegated-call expression-origin resolution,
+  the projection rule a struct origin argument and a pointer's origin share:
+  `Origin::{owned_interior, subtree, project_path, reprojected}`
+  (`mojito-types/src/origin.rs`, upstream's `_get_owned_interior` and
+  `_subtree`), read by `explicit_origin_argument` and, through the
+  `PointerOrigin::{parts, from_parts}` view of a pointer's origin as its
+  `Origin` plus `mut` argument, by `append_interior_tag`/`append_subtree`
+  and `bind_pointer_origins`,
   `lower_ref_sig_resolved`; `origins/sig.rs`'s `check_result_origins` is the
   one rule for which parameter or receiver a result may name the origin
   of, called once per struct method, trait requirement, and `def`

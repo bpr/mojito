@@ -5968,7 +5968,9 @@ fn names_own_origin_binder(
     use mojito_types::origin::Origin;
     match origin {
         Origin::Param(id) => own.contains(id),
-        Origin::Immutable(inner) => names_own_origin_binder(inner, own),
+        Origin::Immutable(inner) | Origin::Projected(inner, _) => {
+            names_own_origin_binder(inner, own)
+        }
         Origin::Union(members) => members
             .iter()
             .any(|member| names_own_origin_binder(member, own)),

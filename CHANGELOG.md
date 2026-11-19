@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's origin argument now holds an interior or subtree projection
+  over an origin binder or the receiver (`S[o._get_owned_interior["e"]]`,
+  `S[o._subtree]`) and the unsafe-any origins, as upstream's `_mlir_origin`
+  attribute does, where Mojito dropped the projection and read unsafe-any
+  as untracked. `S[o]` to `S[o._get_owned_interior["e"]]` is now rejected,
+  as at the pin, and `S[o]` converts to `S[o._subtree]` but not back. A
+  pointer's origin is a lossless view of that origin plus its `mut`
+  argument (`PointerOrigin::parts`/`from_parts`). MIR text moves to schema
+  1.207 (`origin_projected`, `origin_unsafe_any`) and the package format to
+  `mojito-package 235` (R2209).
 - A struct instance's compile-time arguments now follow its declared
   parameter list, each origin argument at its binder's position, as
   upstream's struct attributes do, where origins were a tail after the type

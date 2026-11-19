@@ -194,6 +194,7 @@ pub(in crate::checker) fn instantiate_bound_origin(
                 .iter()
                 .map(|member| instantiate_bound_origin(member, tail)),
         ),
+        Origin::Projected(base, path) => instantiate_bound_origin(base, tail).reprojected(path),
         _ => origin.clone(),
     }
 }
@@ -253,6 +254,10 @@ pub(in crate::checker) fn map_delegated_sig_origin(
                     .map(|member| map_bound(member, receiver_tail, correspondences, caller_binder))
                     .collect::<Result<Vec<_>, _>>()?,
             )),
+            Origin::Projected(base, path) => {
+                map_bound(base, receiver_tail, correspondences, caller_binder)
+                    .map(|base| base.reprojected(path))
+            }
             other => Ok(other.clone()),
         }
     }
@@ -399,11 +404,12 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
             let mut bound = Ok(bindings[id].clone());
             for tag in interior {
                 bound = bound.and_then(|origin| {
-                    crate::checker::type_resolution::append_interior_tag(origin, tag)
+                    crate::checker::type_resolution::append_interior_tag(&origin, tag)
                 });
             }
             if *subtree {
-                bound = bound.and_then(crate::checker::type_resolution::append_subtree);
+                bound = bound
+                    .and_then(|origin| crate::checker::type_resolution::append_subtree(&origin));
             }
             bound.unwrap_or_else(|_| origin.clone())
         }
@@ -469,16 +475,12 @@ pub(in crate::checker) fn bind_pointer_origins(
     tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
     binder_mutability: Option<BinderMutability<'_>>,
 ) -> Ty {
-    use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
+    use mojito_types::origin::{Mutability, Origin, PointerOrigin};
     let recur = |ty: &Ty| bind_pointer_origins(ty, tails, binder_mutability);
+    // The pointer's own projection re-applies below the tail's origin, by
+    // the projection rule a struct origin argument follows.
     let bind = |origin: &PointerOrigin| -> Option<PointerOrigin> {
-        let PointerOrigin::Param {
-            id,
-            mutability,
-            interior,
-            subtree,
-        } = origin
-        else {
+        let PointerOrigin::Param { id, mutability, .. } = origin else {
             return None;
         };
         let tail = tails.get(id)?;
@@ -486,28 +488,16 @@ pub(in crate::checker) fn bind_pointer_origins(
             Mutability::Param(_) => binder_mutability?(*id, tail)?,
             fixed => *fixed,
         };
-        match tail.uncast() {
-            Origin::Place(place) => {
-                let mut place = place.clone();
-                place.path.extend(
-                    interior
-                        .iter()
-                        .map(|tag| OriginSeg::Interior(tag.clone()))
-                        .chain(subtree.then_some(OriginSeg::Subtree)),
-                );
-                Some(PointerOrigin::Place {
-                    place,
-                    mutable: mutability == Mutability::Mutable,
-                })
-            }
-            Origin::Param(caller) if binder_mutability.is_some() => Some(PointerOrigin::Param {
-                id: *caller,
-                mutability,
-                interior: interior.clone(),
-                subtree: *subtree,
-            }),
-            _ => None,
-        }
+        let path = match origin.parts().0 {
+            Origin::Projected(_, path) => path,
+            _ => Vec::new(),
+        };
+        bind_tail(
+            tail.uncast(),
+            &path,
+            mutability,
+            binder_mutability.is_some(),
+        )
     };
     let bind = |origin: &PointerOrigin| bind(origin).unwrap_or_else(|| origin.clone());
     match ty.kind() {
@@ -611,13 +601,31 @@ pub(in crate::checker) fn bind_self_origin_arguments(
     origin: &mojito_types::origin::Origin,
 ) -> Ty {
     use mojito_types::origin::Origin;
+    // The receiver's origin in place of `origin_of(self)`, below an
+    // `ImmOrigin(...)` cast and with an interior or subtree projection
+    // re-applied (`origin_of(self)._get_owned_interior["bytes"]`); a
+    // receiver origin that cannot carry the projection binds whole.
+    fn rebase(
+        argument: &mojito_types::origin::Origin,
+        receiver: &mojito_types::origin::Origin,
+    ) -> Option<mojito_types::origin::Origin> {
+        match argument {
+            Origin::SelfParam => Some(receiver.clone()),
+            Origin::Projected(base, path) if **base == Origin::SelfParam => Some(
+                receiver
+                    .project_path(path)
+                    .unwrap_or_else(|| receiver.clone()),
+            ),
+            Origin::Immutable(inner) => rebase(inner, receiver).map(Origin::immutable),
+            _ => None,
+        }
+    }
     let bind = |argument: &TyArg| match argument {
-        TyArg::Origin(Origin::SelfParam) => TyArg::Origin(origin.clone()),
-        TyArg::Origin(Origin::Immutable(inner)) if **inner == Origin::SelfParam => {
-            TyArg::Origin(Origin::immutable(origin.clone()))
+        TyArg::Origin(argument) => {
+            TyArg::Origin(rebase(argument, origin).unwrap_or_else(|| argument.clone()))
         }
         TyArg::Ty(ty) => TyArg::Ty(bind_self_origin_arguments(ty, origin)),
-        other => other.clone(),
+        TyArg::Val(_) => argument.clone(),
     };
     match ty.kind() {
         struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => ty.reusing(
@@ -647,6 +655,9 @@ pub(in crate::checker) fn substitute_origin_params(
                 .map(|member| substitute_origin_params(member, concrete)),
         ),
         Origin::Immutable(inner) => Origin::immutable(substitute_origin_params(*inner, concrete)),
+        Origin::Projected(base, path) => {
+            substitute_origin_params(*base, concrete).reprojected(&path)
+        }
         other => other,
     }
 }
@@ -751,7 +762,7 @@ pub(in crate::checker) fn origin_is_declared(
         (_, Origin::Union(members)) => members
             .iter()
             .any(|member| origin_is_declared(actual, member)),
-        (_, Origin::Untracked { .. }) => true,
+        (_, declared) if declared.is_untracked() => true,
         (Origin::Place(actual), Origin::Place(declared)) => {
             actual.root == declared.root
                 && match declared.path.split_last() {
@@ -929,6 +940,34 @@ pub(in crate::checker) fn callable_value_argument(
             kind: ExprKind::Identifier(name),
             ..
         }) => Some(name.clone()),
+        _ => None,
+    }
+}
+
+/// The provenance a binder pointer projected by `path` takes once its
+/// binder is bound to `tail`: a place, or (when `symbolic`) another binder,
+/// with the projection re-applied below it. `None` leaves it unbound.
+fn bind_tail(
+    tail: &mojito_types::origin::Origin,
+    path: &[mojito_types::origin::OriginSeg],
+    mutability: mojito_types::origin::Mutability,
+    symbolic: bool,
+) -> Option<mojito_types::origin::PointerOrigin> {
+    use mojito_types::origin::{Mutability, Origin, PointerOrigin};
+    match tail {
+        Origin::Place(_) => PointerOrigin::from_parts(
+            tail.project_path(path)?,
+            if mutability == Mutability::Mutable {
+                Mutability::Mutable
+            } else {
+                Mutability::Immutable
+            },
+        ),
+        Origin::Param(_) | Origin::Projected(..)
+            if symbolic && matches!(tail.projection_base(), Origin::Param(_)) =>
+        {
+            PointerOrigin::from_parts(tail.project_path(path)?, mutability)
+        }
         _ => None,
     }
 }

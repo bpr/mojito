@@ -1923,7 +1923,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
 
     @inline(.always)
     def as_bytes(self) -> Span[Byte, Self.origin]:
-        return Span[Byte](unsafe_ptr=self._data, length=self._size)
+        return Span[Byte, Self.origin](unsafe_ptr=self._data, length=self._size)
 
     @inline(.always)
     def codepoints(self) -> CodepointsIter[ImmOrigin(Self.origin)]:

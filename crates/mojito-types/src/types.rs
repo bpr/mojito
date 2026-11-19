@@ -8171,6 +8171,13 @@ fn write_callable(
                     }
                     crate::origin::Origin::Unbound => write!(f, "_")?,
                     crate::origin::Origin::Immutable(_) => write!(f, "imm-cast")?,
+                    crate::origin::Origin::Projected(..) => write!(f, "origin-projected")?,
+                    crate::origin::Origin::UnsafeAny { mutable: true } => {
+                        write!(f, "mut-unsafe-any")?;
+                    }
+                    crate::origin::Origin::UnsafeAny { mutable: false } => {
+                        write!(f, "immut-unsafe-any")?;
+                    }
                 }
             }
             write!(f, "]")?;

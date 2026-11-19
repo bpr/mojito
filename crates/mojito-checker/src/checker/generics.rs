@@ -2238,7 +2238,9 @@ impl Checker {
     fn origin_is_immutable(&self, origin: &mojito_types::origin::Origin) -> bool {
         use mojito_types::origin::{Mutability, Origin};
         match origin {
-            Origin::Static | Origin::Untracked { mutable: false } => true,
+            Origin::Static
+            | Origin::Untracked { mutable: false }
+            | Origin::UnsafeAny { mutable: false } => true,
             Origin::Place(place) if self.owner_scope(place.root).is_none() => false,
             Origin::Union(members) => members
                 .iter()

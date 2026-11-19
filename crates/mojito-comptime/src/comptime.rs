@@ -523,23 +523,16 @@ fn source_type_from_ty_with_origins(
                         source_type_from_ty_with_origins(ty, origin_names).map(ParamArg::Type)
                     }
                     TyArg::Val(value) => value.materialize((0, 0)).map(ParamArg::Value),
-                    // An origin tail entry spells as the binder it names when
-                    // the clone has one in scope, else as upstream's `_`
-                    // placeholder: a concrete place has no source spelling,
-                    // and the slot infers again at the clone's own use sites.
-                    TyArg::Origin(origin) => {
-                        let spelling = match origin {
-                            mojito_types::origin::Origin::Param(id) => origin_names
-                                .get(id)
-                                .cloned()
-                                .unwrap_or_else(|| "_".to_string()),
-                            _ => "_".to_string(),
-                        };
-                        Some(ParamArg::Value(Expr::new(
-                            ExprKind::Identifier(spelling),
-                            (0, 0),
-                        )))
-                    }
+                    // An origin tail entry spells as the binder it names, with
+                    // its interior or subtree projection, when the clone has
+                    // one in scope, else as upstream's `_` placeholder: a
+                    // concrete place has no source spelling, and the slot
+                    // infers again at the clone's own use sites.
+                    TyArg::Origin(origin) => Some(ParamArg::Value(
+                        binder_origin_spelling(origin, origin_names).unwrap_or_else(|| {
+                            Expr::new(ExprKind::Identifier("_".to_string()), (0, 0))
+                        }),
+                    )),
                 })
                 .collect::<Option<Vec<_>>>()?,
         ),
@@ -581,6 +574,39 @@ fn source_type_from_ty_with_origins(
             }
         }
         _ => return None,
+    })
+}
+
+/// The source spelling of an origin argument over a binder `origin_names`
+/// names: the binder, then each `._get_owned_interior["tag"]` and
+/// `._subtree` projection upstream spells on it.
+fn binder_origin_spelling(
+    origin: &mojito_types::origin::Origin,
+    origin_names: &HashMap<mojito_types::origin::OriginParamId, String>,
+) -> Option<Expr> {
+    use mojito_types::origin::{Origin, OriginSeg};
+    let (base, path) = match origin {
+        Origin::Projected(base, path) => (&**base, path.as_slice()),
+        other => (other, &[][..]),
+    };
+    let Origin::Param(id) = base else {
+        return None;
+    };
+    let binder = Expr::new(ExprKind::Identifier(origin_names.get(id)?.clone()), (0, 0));
+    path.iter().try_fold(binder, |object, segment| {
+        let member = |object, field: &str| ExprKind::Member {
+            object: Box::new(object),
+            field: field.to_string(),
+        };
+        let kind = match segment {
+            OriginSeg::Interior(tag) => ExprKind::Index {
+                object: Box::new(Expr::new(member(object, "_get_owned_interior"), (0, 0))),
+                index: Box::new(Expr::new(ExprKind::Str(tag.clone()), (0, 0))),
+            },
+            OriginSeg::Subtree => member(object, "_subtree"),
+            OriginSeg::Field(_) | OriginSeg::AnyIndex => return None,
+        };
+        Some(Expr::new(kind, (0, 0)))
     })
 }
 

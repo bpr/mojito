@@ -240,9 +240,9 @@ impl Checker {
                 }
                 verdict
             }
-            Origin::Untracked { mutable } => Some(*mutable),
+            Origin::Untracked { mutable } | Origin::UnsafeAny { mutable } => Some(*mutable),
             Origin::Static | Origin::Immutable(_) => Some(false),
-            Origin::Param(_) | Origin::SelfParam | Origin::Unbound => None,
+            Origin::Param(_) | Origin::SelfParam | Origin::Projected(..) | Origin::Unbound => None,
         }
     }
 
@@ -272,17 +272,19 @@ impl Checker {
         if let Some(inner) = super::immutable_origin_cast(expression) {
             return self.explicit_origin_argument(&ParamArg::Value(inner?.clone()));
         }
-        // `base._get_owned_interior["tag"]` names the owned interior region
-        // of `base`'s origin; an abstract receiver origin stays as is.
+        // `base._get_owned_interior["tag"]` and `base._subtree` name a
+        // projection of `base`'s origin, a binder's or the receiver's
+        // included, as upstream's comptime members do. An origin naming no
+        // tracked storage has no region to project, so it stands whole.
         if let Some((base, tag)) = super::interior_origin_syntax(expression) {
             return self
                 .explicit_origin_argument(&ParamArg::Value(base.clone()))
-                .map(|origin| {
-                    super::project_origin(
-                        origin,
-                        &[mojito_types::origin::OriginSeg::Interior(tag.to_string())],
-                    )
-                });
+                .map(|origin| origin.owned_interior(tag).unwrap_or(origin));
+        }
+        if let Some(base) = super::subtree_origin_syntax(expression) {
+            return self
+                .explicit_origin_argument(&ParamArg::Value(base.clone()))
+                .map(|origin| origin.subtree().unwrap_or(origin));
         }
         match &expression.kind {
             ExprKind::Call {
@@ -326,13 +328,13 @@ impl Checker {
                 Ok(Origin::Untracked { mutable: false })
             }
             ExprKind::Identifier(name) if name == "MutUnsafeAnyOrigin" => {
-                Ok(Origin::Untracked { mutable: true })
+                Ok(Origin::UnsafeAny { mutable: true })
             }
             ExprKind::Identifier(name) if name == "MutUntrackedOrigin" => {
                 Ok(Origin::Untracked { mutable: true })
             }
             ExprKind::Identifier(name) if name == "ImmUnsafeAnyOrigin" => {
-                Ok(Origin::Untracked { mutable: false })
+                Ok(Origin::UnsafeAny { mutable: false })
             }
             // A bare name (or `Self.name`) may spell an in-scope Origin
             // parameter directly, mirroring the `ref[o]` annotation channel:
@@ -401,12 +403,16 @@ impl Checker {
                     Origin::Untracked { mutable: false },
                     Some(Mutability::Immutable),
                 )),
-                "MutUnsafeAnyOrigin" | "MutUntrackedOrigin" => Ok((
+                "MutUntrackedOrigin" => Ok((
                     Origin::Untracked { mutable: true },
                     Some(Mutability::Mutable),
                 )),
+                "MutUnsafeAnyOrigin" => Ok((
+                    Origin::UnsafeAny { mutable: true },
+                    Some(Mutability::Mutable),
+                )),
                 "ImmUnsafeAnyOrigin" => Ok((
-                    Origin::Untracked { mutable: false },
+                    Origin::UnsafeAny { mutable: false },
                     Some(Mutability::Immutable),
                 )),
                 _ => Err(TypeError::TypeMismatch {

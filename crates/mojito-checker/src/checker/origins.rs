@@ -21,6 +21,7 @@ pub(super) fn collect_origin_params(
                 collect_origin_params(origin, out);
             }
         }
+        mojito_types::origin::Origin::Projected(base, _) => collect_origin_params(base, out),
         _ => {}
     }
 }
