@@ -380,7 +380,10 @@ impl Checker {
             {
                 Ok(value_ty.clone())
             }
-            TyKind::GenericFunc(_) => Err(super::parametric_runtime_closure(value_ty)),
+            TyKind::GenericFunc(_) if super::is_unbound_parametric_function(value_ty) => {
+                Err(super::parametric_runtime_closure(value_ty))
+            }
+            TyKind::GenericFunc(_) => Ok(super::runtime_closure_ty(value_ty)),
             TyKind::Func(_) | TyKind::Overload(_) => Err(TypeError::ClosureEscape),
             _ => Ok(default_literal(value_ty)),
         }

@@ -401,9 +401,7 @@ pub(crate) fn is_closure_storage(ty: &Ty) -> bool {
 /// parameters: the note names the first unbound one.
 pub(crate) fn parametric_runtime_closure(ty: &Ty) -> TypeError {
     TypeError::ParametricRuntimeClosure {
-        unbound: ty
-            .generator_params()
-            .and_then(|params| mojito_types::types::ParamDecl::first_unbound(&params)),
+        unbound: first_unbound_parameter(ty),
     }
 }
 
@@ -411,9 +409,19 @@ pub(crate) fn parametric_runtime_closure(ty: &Ty) -> TypeError {
 /// unbound, which converts to no non-parametric function type: upstream
 /// infers no specialization from the slot a reference fills.
 pub(crate) fn is_unbound_parametric_function(ty: &Ty) -> bool {
-    ty.generator_params()
-        .and_then(|params| mojito_types::types::ParamDecl::first_unbound(&params))
-        .is_some()
+    first_unbound_parameter(ty).is_some()
+}
+
+/// The runtime closure a reference to `ty` materializes: a generic function
+/// whose only unbound binders are origins is its signature, as the pin
+/// materializes one; any other type is itself.
+pub(crate) fn runtime_closure_ty(ty: &Ty) -> Ty {
+    match ty.kind() {
+        TyKind::GenericFunc(generic) if !is_unbound_parametric_function(ty) => {
+            TyKind::Func(Box::new(generic.func.clone())).into()
+        }
+        _ => ty.clone(),
+    }
 }
 
 /// The module holding the functions the compiler calls by module path.
@@ -4131,6 +4139,19 @@ struct ValueAdjustmentSnapshot {
     overload_target: Option<String>,
     implicit_conversion: Option<String>,
     operation: Option<Box<mojito_checked::checked::SemanticAdjustment>>,
+}
+
+/// The first declared binder of the generator `ty` a bare reference leaves
+/// unbound, read off its whole declared list ([`ParamDecl::first_unbound`]).
+fn first_unbound_parameter(ty: &Ty) -> Option<(String, String)> {
+    match ty.kind() {
+        TyKind::GenericFunc(generic) => {
+            mojito_types::types::ParamDecl::first_unbound(&generic.decls)
+        }
+        _ => ty
+            .generator_params()
+            .and_then(|params| mojito_types::types::ParamDecl::first_unbound(&params)),
+    }
 }
 
 type SplitCallableSpecialization = (

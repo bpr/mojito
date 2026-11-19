@@ -477,18 +477,11 @@ impl CallableSpecialization {
         self.positions.push(position);
     }
 
-    /// The argument at source `position` binds the origin binder `binder`,
-    /// the `source`th parameter of the source list, to `attribute`.
-    pub(super) fn bind_origin(
-        &mut self,
-        binder: &str,
-        source: usize,
-        position: usize,
-        attribute: Option<TyArg>,
-    ) {
+    /// The argument at source `position` binds the origin binder `binder`
+    /// to `attribute`.
+    pub(super) fn bind_origin(&mut self, binder: &str, position: usize, attribute: Option<TyArg>) {
         self.origins.push(OriginArgument {
             binder: binder.to_string(),
-            source,
             bound: BoundAttribute {
                 position,
                 attribute,
@@ -500,8 +493,7 @@ impl CallableSpecialization {
     /// list `decls`, as upstream's binder fills it: `bound`, the generic
     /// binder's over the argument view ([`ParamDecl::argument_binders`]),
     /// each in its binder's declared slot, beside each origin argument in
-    /// its origin binder's. A callee declaring only origin binders has a
-    /// non-generic type and no `decls`; its source list is its declared one.
+    /// its origin binder's.
     pub(super) fn declared(
         &self,
         bound: DeclaredAttributes,
@@ -528,10 +520,12 @@ impl CallableSpecialization {
             }
         }
         for origin in &self.origins {
-            let index = decls
+            let Some(index) = decls
                 .iter()
                 .position(|decl| decl.is_origin() && decl.name() == origin.binder)
-                .unwrap_or(origin.source);
+            else {
+                continue;
+            };
             declared.declare(index, &origin.binder);
             declared.bind(index, origin.bound.position, origin.bound.attribute.clone());
         }
@@ -540,12 +534,10 @@ impl CallableSpecialization {
 }
 
 /// One origin argument of an explicit callable specialization: the origin
-/// binder it binds, that binder's slot in the source list, and the
-/// argument's attribute at its source position.
+/// binder it binds and the argument's attribute at its source position.
 #[derive(Clone)]
 struct OriginArgument {
     binder: String,
-    source: usize,
     bound: BoundAttribute,
 }
 

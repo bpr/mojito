@@ -3474,9 +3474,14 @@ impl ParamDecl {
 
     /// The first binder of `decls` a bare reference leaves unbound, with the
     /// type it declares, as the pin's note on a parametric function used as
-    /// a runtime value names it (`parameter 'T' of type 'Intable'`).
+    /// a runtime value names it (`parameter 'T' of type 'Intable'`). An
+    /// origin binder is none: the pin materializes a function whose only
+    /// unbound binders are origins as a runtime closure, though not one
+    /// leaving an origin's `mut=` binder unbound.
     pub fn first_unbound(decls: &[Self]) -> Option<(String, String)> {
-        let decl = Self::argument_binders(decls).find(|decl| !decl.is_pack_list())?;
+        let decl = decls
+            .iter()
+            .find(|decl| !decl.is_origin() && !decl.is_pack_list())?;
         let bounds_text = |bounds: &[String]| {
             if bounds.is_empty() {
                 "AnyType".to_string()

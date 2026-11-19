@@ -2259,8 +2259,12 @@ declared position, origin parameters counted. A struct's list in the check
 (`StructInfo::params`, the struct's `GenericSite`), a function's or callable
 type's (`GenericFuncTy::decls`, the function's `GenericSite`), and a
 method's (`MethodSig::declared`, its `GenericSite`) hold the origin
-binders; a function whose only binders are origins stays a non-generic
-`Func`. Every parameter list MIR lowers holds the whole list too: a
+binders. A function with any binder, origins included, is a
+`GenericFunc` over that list, as upstream's is a generator over it; a
+reference to one whose only unbound binders are origins reads as its
+signature's `Func`, the runtime closure the pin materializes
+(`runtime_closure_ty`), while a callable type whose only binders are
+origins stays a non-generic `Func`. Every parameter list MIR lowers holds the whole list too: a
 function's and method's (`CheckedSignature::parameters`), a struct row,
 an initializer's struct prefix, and a synthesized member's. A body's scope
 (`Checker::classify_params`, MIR's `EnclosingBinders`, `closure_uses`) is

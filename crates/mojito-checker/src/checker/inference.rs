@@ -1282,10 +1282,12 @@ impl Checker {
                         ));
                     }
                 }
+                // A function whose only unbound binders are origins reads as
+                // the runtime closure the pin materializes from it.
                 self.lookup(name)
                     .map(|ty| match ty.kind() {
                         TyKind::Ref(reference) => reference.referent.clone(),
-                        _ => ty.clone(),
+                        _ => super::runtime_closure_ty(ty),
                     })
                     .map(|ty| self.bake_value_transfer_effects(name, ty))
                     .map_or_else(
@@ -1551,7 +1553,7 @@ impl Checker {
                 for (value, ty) in elems.iter().zip(&tys) {
                     // A generic `def` is no runtime value until specialized,
                     // as the pin reports for a display element.
-                    if matches!(ty.kind(), TyKind::GenericFunc(_)) {
+                    if super::is_unbound_parametric_function(ty) {
                         return Err(super::parametric_runtime_closure(ty));
                     }
                     self.check_consuming(value, ty, "Tuple display element")?;

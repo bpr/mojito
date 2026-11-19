@@ -803,6 +803,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A function whose only compile-time parameters are origins now has a
+  generic type over its whole declared list, as upstream's function with
+  any parameter is a generator over it, so its bracketed calls bind through
+  the generic call path. A reference to it is still a runtime closure, as
+  at the pin, but one leaving an origin's `mut=` binder unbound (`var g =
+  peek` over `def peek[m: Bool, //, o: Origin[mut=m]]`) is now rejected
+  with the pin's "parameter 'm' of type 'Bool' is not bound" (R2351).
+
 - A callable type's own origin binder now scopes over its own signature,
   so `def call_it[f: def[o: ImmOrigin](Pointer[Int, o]) thin -> Int]()`
   and `comptime F = def[T: AnyType, o: ImmOrigin](Pointer[T, o]) thin ->

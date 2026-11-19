@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2355**.
+Next free ID: **R2356**.
 
 ## Ordered Work
 
@@ -10627,23 +10627,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2351 A function whose only compile-time parameters are origins
-  has a non-generic type, where upstream's function with any parameter is
-  a generator over its declared list**
+- [ ] **R2355 A function type whose only compile-time parameters are
+  origins is a non-generic `Func`, and a runtime parameter cannot declare
+  one, where upstream's function type with any parameter is a generator
+  over its declared list**
 
-  Such a callee is a `TyKind::Func` holding no declared list, so no
-  bracket binder sees its bracket; `prepare_callable_specialization`
-  (`checker/generics.rs`) binds it from the side table
-  `CallableOriginSignature::source` instead.
-  - Probe: `infer_callable_ty`'s `TyKind::Func` arm
-    (`checker/call_inference.rs`) rejects any bracket, so a call reaches
-    it only after the split has emptied the bracket.
-  - Probe: `declared_list` (`checker/call_inference.rs`) is empty for
-    such a callee, so `CallableSpecialization::declared`
-    (`checker/type_resolution.rs`) falls back to the source list's slots.
-  - The lever: give such a function a `GenericFunc` type over its whole
-    declared list, so every free call with a bracket reaches
-    `infer_generic_call`.
+  `lower_anonymous_callable_type` (`checker/declarations.rs`) keeps a
+  callable type declaring only origin binders a `TyKind::Func`, while a
+  named `def` over the same list is a `GenericFunc`.
+  - Probe: `def apply(f: def[o: ImmOrigin](Pointer[Int, o]) thin -> Int,
+    x: Int) -> Int` is rejected by `param_tys` (`checker/statements.rs`,
+    "a runtime parameter cannot use a parametric function type"), where
+    the pin runs `apply(first, 3)` over `def first[o: ImmOrigin](p:
+    Pointer[Int, o]) -> Int` and calls `f` with its origin inferred.
+  - The lever: give such a type a `GenericFunc` over its whole declared
+    list, and let a runtime parameter declare a parametric function type
+    that leaves only origins unbound (`is_unbound_parametric_function`),
+    as a reference to such a `def` is already a runtime closure.
+  - Found while landing R2351 (2026-11-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10678,6 +10679,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`method_calls/call_contract.rs`) drops an origin argument, so a
     method or subscript call's lowered call names no origin binder's
     slot, where a free call's does.
+  - Probe: a capturing nested `def cap[o: ImmOrigin](p: Pointer[Int, o])
+    {imm} -> Int` called as `cap[origin_of(x)](Pointer(to=x))` dispatches
+    its storage's method, so the origin argument binds no slot and MIR
+    verification fails ("register r15 has no checked type"), where the
+    pin prints `13`.
   - The lever: bind a method bracket against `MethodSig::declared`
     through R2352's whole-list binder, and record the origin argument in
     its binder's slot.

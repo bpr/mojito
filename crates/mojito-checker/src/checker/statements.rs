@@ -4234,9 +4234,9 @@ impl Checker {
             ref_return: ref_return.clone().map(Box::new),
             transfers: TransferSet::default(),
         };
-        // A function whose only binders are origins is no generic one: a
-        // call infers every origin from a place.
-        let fn_ty = Ty::new(if arguments.is_empty() {
+        // Upstream's function with any declared parameter, origins
+        // included, is a generator over its whole declared list.
+        let fn_ty = Ty::new(if decls.is_empty() {
             TyKind::Func(Box::new(func))
         } else {
             TyKind::GenericFunc(Box::new(GenericFuncTy { decls, func }))

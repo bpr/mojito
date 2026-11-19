@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1229
+# swept-count	1230
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/mut_origin_binder_generic_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(anonymous*)]' to 'Pointer[T, o]'
@@ -43,6 +43,7 @@ assets/type_error/none_result_not_writable.mojo	compile-reject	agree	error: inva
 assets/type_error/none_type_to_none_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'NoneType' to 'None'
 assets/type_error/none_type_to_none_return.mojo	compile-reject	agree	error: cannot implicitly convert 'NoneType' value to 'None' in return value
 assets/type_error/none_value_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/type_error/origin_mutability_binder_function_value.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
 assets/type_error/overloaded_function_value_binding.mojo	compile-reject	agree	error: cannot form a reference to overloaded declaration of 'f'
 assets/type_error/parametric_function_callable_default.mojo	compile-reject	agree	error: cannot implicitly convert 'def h[b: Int = Int(3)](y: Int) thin -> Int' value to 'def(Int) thin -> Int' in default parameter
 assets/type_error/parametric_function_callable_parameter.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'f' has 'def(Int) thin -> Int' type, but value has type 'def h[b: Int = Int(3)](y: Int) thin -> Int'
