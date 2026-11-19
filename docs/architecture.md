@@ -2284,11 +2284,19 @@ signature's `Func`, the runtime closure the pin materializes
 (`runtime_closure_ty`), while a callable type whose only binders are
 origins stays a non-generic `Func`. Every parameter list MIR lowers holds the whole list too: a
 function's and method's (`CheckedSignature::parameters`), a struct row,
-an initializer's struct prefix, and a synthesized member's. A body's scope
+an initializer's struct prefix, and a synthesized member's. A body's
+value scope binds every value binder of the whole list, an origin's
+`mut=` binder included (`Checker::declare_value_parameters`), as
+upstream's body reads it; the rest of a body's scope
 (`Checker::classify_params`, MIR's `EnclosingBinders`, `closure_uses`) is
 the argument view (`ParamDecl::argument_binders`), which leaves out the
 origin binders and their `mut=` binders, because an instance carries its
-origins as a tail and a call infers them from places. Code that aligns a
+origins as a tail and a call infers them from places. The elaborator keys
+an instance on the `mut=` binders its body (or a body nested in it) reads
+beside the argument view's (`Specializer::mutability_arguments`,
+`nested_bindings`), and `remove-unused-params` removes an unread one
+(`candidate_parameters`, `param_uses.rs`), so only a body that reads one
+has an instance per mutability. Code that aligns a
 declaration's binders with its arguments reads that view: in the check
 `StructInfo::decls`, `MethodSig::decls`, and
 `GenericFuncTy::argument_view`; below it

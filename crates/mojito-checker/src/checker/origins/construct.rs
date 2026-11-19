@@ -255,9 +255,10 @@ impl Checker {
     /// origin binder's origin in place, the one its bracket bound
     /// (`bracket`) or else the one the arguments' places bound it to
     /// (`bindings`), and each `mut=` binder's value, that origin's
-    /// mutability. A mutability the caller's own binder decides is
-    /// [`CtValue::Deferred`], as its value arrives with the caller's
-    /// instance. `arguments` is returned as it stands when it is no
+    /// mutability. A mutability the caller's own `mut=` binder decides is
+    /// a read of that binder, which the caller's instance closes, and one
+    /// no binder in scope names is [`CtValue::Deferred`]. `arguments` is
+    /// returned as it stands when it is no
     /// solution of the argument view.
     pub(in crate::checker) fn declared_call_arguments(
         &self,
@@ -300,7 +301,10 @@ impl Checker {
                     TyArg::Val(match governed.and_then(mutability) {
                         Some(Mutability::Mutable) => CtValue::Bool(true),
                         Some(Mutability::Immutable) => CtValue::Bool(false),
-                        Some(Mutability::Param(_)) | None => CtValue::Deferred(decl.binder()),
+                        Some(Mutability::Param(id)) => self
+                            .origin_mutability_binder_read(id)
+                            .map_or_else(|| CtValue::Deferred(decl.binder()), CtValue::Expr),
+                        None => CtValue::Deferred(decl.binder()),
                     })
                 }
                 _ => solved
@@ -602,6 +606,17 @@ impl Checker {
             }
         }
         Ok(bindings)
+    }
+
+    /// The read of the `mut=` binder the enclosing origin binder `id`
+    /// declares as its mutability (`o: Origin[mut=mut]`), when that binder
+    /// is a value parameter in scope.
+    fn origin_mutability_binder_read(&self, id: OriginParamId) -> Option<ParamExpr> {
+        let binder = self.enclosing_type_params.get(id.0 as usize)?;
+        match &binder.origin_mutability.as_ref()?.kind {
+            ExprKind::Identifier(name) => self.value_parameter_in_scope(name),
+            _ => None,
+        }
     }
 
     /// The origin an argument lends to a `ref [o]` parameter or reference

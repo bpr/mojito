@@ -655,6 +655,12 @@ impl FunctionDeclaration {
         ParamDecl::argument_view(&self.param_decls)
     }
 
+    /// The `mut=` binders of the function's origin binders
+    /// ([`ParamDecl::mutability_binders`]), in declared order.
+    pub fn mutability_binders(&self) -> impl Iterator<Item = &ParamDecl> {
+        ParamDecl::mutability_binders(&self.param_decls)
+    }
+
     /// Whether the compiler synthesized the function for a struct that
     /// declares none ([`FunctionProvenance::Synthesized`]).
     pub fn is_synthesized(&self) -> bool {

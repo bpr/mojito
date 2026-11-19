@@ -853,6 +853,7 @@ assets/ok/origin_delegated_call_with_arguments.mojo	-	ineligible	no-scalar-entry
 assets/ok/origin_delegated_multi_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_delegated_multi_binder_alias_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_delegated_parameter_receiver.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_mutability_binder_body_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_parameter_before_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_placeholder_initialized_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape

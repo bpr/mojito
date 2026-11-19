@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2361**.
+Next free ID: **R2362**.
 
 ## Ordered Work
 
@@ -10739,6 +10739,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     generator; a `def(...)` bound's inflated callee
     (`bound_calls::bound_call_from_indirect`) chains that view before the
     call's whole list.
+  - Probe: a function value of a generator whose body reads its origin's
+    `mut=` binder (`var f = g[o=origin_of(a)]` over `def g[mut: Bool, //,
+    o: Origin[mut=mut]](x: Pointer[Int, o]) -> Bool: return mut`) fails
+    elaboration ("cannot resolve parameter `mut`"), where the pin prints
+    `True`: the value's symbol binds the argument view, which holds no
+    slot for the binder, so its instance has no value for it.
   - Found while landing R2348 (2026-11-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10763,31 +10769,33 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2128 A function's origin mutability binder has no value in its
-  body**
+- [ ] **R2361 A `where` clause over an origin's `mut=` binder is no
+  constraint of the declared list, where upstream's clause is one of the
+  generator's, evaluated with every parameter bound**
 
-  `return mut` over `def g[mut: Bool, //, o: Origin[mut=mut]](x:
-  Pointer[Int, o]) -> Bool` is rejected ("Undefined variable 'mut'"),
-  where the pin prints `True`.
-  - A call infers the origin from its argument's place but binds the
-    `mut=` binder no attribute, so no specialization has its value.
-  - The body reads the argument view: `def_signature_in_scope`
-    (`checker/statements.rs`) hands the body `ParamDecl::argument_decls`,
-    which drops the binder, so widening `declare_value_parameters`
-    (`scopes.rs`) alone changes nothing.
-  - A call's solved arguments hold the binder's value where the bound
-    origin decides it (`ct_bool`), and `ct_deferred` where the caller's
-    binders do (`Checker::declared_call_arguments`), so the elaborator
-    binds it from a call when it is closed, but no body reads it.
-  - Probe: an origin-only binder's `where` clause is evaluated from the
-    call's `Bool` bindings keyed by source slot, which
-    `CallableOriginSignature::binder_names` (`checker.rs`) names, not
-    from the binder's bound value.
-  - The lever: once R2350 lands, the call records the inferred origin's
-    mutability (the value a `where` clause already reads) as the binder's
-    attribute, by its declaration, and the body declares the binder like
-    any value binder.
-  - Depends on R2124, R2126, R2349, R2350.
+  A function whose only argument binders are origins keeps its clause in
+  `CallableOriginSignature::availability` (`erased_origin_constraints`,
+  `def_signature_in_scope` in `checker/statements.rs`), because
+  `ParamDecl::clause_constraints` attaches a clause only to an argument
+  binder.
+  - A single free call reads the binder from the call's recorded solved
+    arguments (`recorded_mutability_bindings`,
+    `checker/call_inference.rs`), beside the `ref` parameters' `Bool`
+    bindings keyed by source slot (`binder_names`).
+  - Probe: an overloaded `def w[mut: Bool, //, o: Origin[mut=mut]](x:
+    Pointer[Int, o]) -> Int where mut` beside `def w(x: Int)` called as
+    `w(Pointer(to=a))` is "no overload matches", where the pin prints
+    `7`: `check_overload_candidate` reads the source-slot bindings only.
+  - Probe: the same `where mut` on a method (`def m[mut: Bool, //, o:
+    Origin[mut=mut]](self, x: Pointer[Int, o]) -> Int where mut`) is
+    "unsupported generic where proposition", where the pin prints `3`.
+  - The lever: attach the clause to the declared list's last binder, the
+    `mut=` binder included, evaluate it against the call's solved
+    arguments over the whole list, and delete
+    `CallableOriginSignature::{availability, binder_names}` and the
+    erased-origin evaluation in `call_inference.rs`.
+  - Found while landing R2128 (2026-11-19).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R762 A struct instance's origin arguments are a tail after its

@@ -3265,7 +3265,14 @@ impl Checker {
         // Type parameters are in scope while checking the body (as bare
         // `T`), and value parameters as the typed references a dependent
         // parameter expression names (`Buf[n + 1]`).
-        self.push_param_scope(&decls);
+        // The body reads every value binder the function declares, an
+        // origin's `mut=` binder included, as upstream's body is emitted with
+        // its whole declared list in scope.
+        let declared = match fn_ty.kind() {
+            TyKind::GenericFunc(generic) => generic.decls.clone(),
+            _ => decls.clone(),
+        };
+        self.push_param_scope(&declared);
         self.bind_trait_self();
         let capture_policy = if self.function_bases.is_empty() {
             if captures.is_some() {
@@ -3430,7 +3437,7 @@ impl Checker {
         if carried {
             // Nothing to bind or infer: the pops below balance the pushes above.
         } else {
-            result = self.declare_value_parameters(&decls);
+            result = self.declare_value_parameters(&declared);
             if result.is_ok() {
                 for (slot, ((param, ty), opaque)) in params
                     .iter()

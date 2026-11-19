@@ -2258,12 +2258,13 @@ fn is_span_struct_name(name: &str) -> bool {
 
 /// The declaration-order compile-time arguments a generic method call
 /// resolved, materialized for its specialization identity, when the
-/// signature declares any.
+/// signature declares any parameter, origins included: upstream's method
+/// with only origin binders is a generator too.
 pub(super) fn method_instantiation_arguments(
     signature: &MethodSig,
     arguments: &[TyArg],
 ) -> Option<Vec<TyArg>> {
-    (!signature.decls().is_empty() && arguments.len() == signature.decls().len())
+    (!signature.declared.is_empty() && arguments.len() == signature.decls().len())
         .then(|| arguments.to_vec())
 }
 

@@ -3536,6 +3536,16 @@ impl ParamDecl {
             .filter(move |decl| decl.is_argument_binder(decls))
     }
 
+    /// The binders of `decls` an origin binder names as its mutability
+    /// ([`Self::is_origin_mutability_binder`]), in declared order: values a
+    /// body reads and an instance is keyed on, though no instance argument
+    /// carries them.
+    pub fn mutability_binders(decls: &[Self]) -> impl Iterator<Item = &Self> + '_ {
+        decls
+            .iter()
+            .filter(move |decl| decl.is_origin_mutability_binder(decls))
+    }
+
     /// [`Self::argument_binders`], owned.
     pub fn argument_decls(decls: &[Self]) -> Vec<Self> {
         Self::argument_binders(decls).cloned().collect()

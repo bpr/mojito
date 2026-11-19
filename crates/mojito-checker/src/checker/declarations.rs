@@ -1737,11 +1737,14 @@ impl Checker {
     ) -> Result<(), TypeError> {
         self.parametric_write_frames.borrow_mut().push(Vec::new());
         let owner = self.method_binder_owner(declaration, method_index, m);
-        let decls = self.classify_params(&owner, &m.type_params)?;
+        // The body reads every value binder the method declares, an
+        // origin's `mut=` binder included.
+        let declared = self.classify_param_list(&owner, &m.type_params)?;
+        let decls = ParamDecl::argument_decls(&declared);
         let saved_site = self
             .method_site
             .replace((module.cloned(), declaration.to_string()));
-        self.push_param_scope(&decls);
+        self.push_param_scope(&declared);
         let saved = self.enclosing_type_params.clone();
         let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
         self.enclosing_type_params.extend(m.type_params.clone());
@@ -1963,10 +1966,11 @@ impl Checker {
         };
         // A default may name the method's own value parameters
         // (`x: Int = Self.n + j`), bound around the defaults as in the body.
-        let method_decls = self.classify_params(owner, &m.type_params)?;
+        let declared = self.classify_param_list(owner, &m.type_params)?;
+        let method_decls = ParamDecl::argument_decls(&declared);
         self.push_scope();
         let defaults = self
-            .declare_value_parameters(&method_decls)
+            .declare_value_parameters(&declared)
             .and_then(|()| self.check_method_defaults(m));
         self.pop_scope();
         defaults?;
@@ -2062,8 +2066,9 @@ impl Checker {
         // Compile-time callable/scalar value parameters occupy named runtime
         // slots in a method body, just as they do in a generic free function.
         // Type parameters remain type-only and are available through `tparams`.
-        let method_decls = self.classify_params(owner, &m.type_params)?;
-        self.declare_value_parameters(&method_decls)?;
+        let declared = self.classify_param_list(owner, &m.type_params)?;
+        self.declare_value_parameters(&declared)?;
+        let method_decls = ParamDecl::argument_decls(&declared);
         let mut reference_type_params = self.enclosing_type_params.clone();
         reference_type_params.extend(m.type_params.iter().cloned());
         let self_writable = ref_binding_is_writable(

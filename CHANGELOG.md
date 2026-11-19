@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A function's or method's origin `mut=` binder (`def g[mut: Bool, //, o:
+  Origin[mut=mut]](x: Pointer[Int, o])`) is now a value in its body and in
+  the functions nested in it, as at the pin: each call binds it to the
+  mutability of the origin it infers, a caller whose own binder decides
+  that mutability passes the binder on, and a body that reads it is
+  specialized once per mutability. A method declaring only origin binders
+  now records its call's solved arguments like any generic method, and a
+  `where` clause over the binder is checked at a free call against the
+  call's binding (R2128).
 - A call's solved compile-time arguments now hold a value for every
   parameter its callee declares, as upstream's call holds an attribute for
   each: an origin binder's inferred or bracket origin and its `mut=`

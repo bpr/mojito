@@ -3374,8 +3374,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   only binders are origins stays a `Func`.
   `Checker::classify_params` returns the argument view
   (`ParamDecl::{argument_binders, argument_decls, argument_view}`), which
-  a body's scope binds and every consumer aligning binders with arguments
-  reads: `StructInfo::decls`, `MethodSig::decls`,
+  every consumer aligning binders with arguments reads, while a body's
+  value scope binds the whole list's value binders, each `mut=` binder
+  (`ParamDecl::mutability_binders`) included
+  (`Checker::declare_value_parameters`, `scopes.rs`; `check_def_inner`,
+  `statements.rs`; `check_method`, `bind_and_check_method`,
+  `declarations.rs`). The elaborator keys an instance on the read ones
+  (`Specializer::mutability_arguments`, `nested_bindings`,
+  `native/mono/specializer.rs`). Readers of the argument view: `StructInfo::decls`, `MethodSig::decls`,
   `GenericFuncTy::{argument_view, argument_binders}`, `Ty::generator_params`,
   and `CheckedSignature::argument_binders` (`checked.rs`). A `where` clause
   attaches to the last argument binder (`ParamDecl::clause_constraints`).

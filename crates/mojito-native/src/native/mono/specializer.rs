@@ -445,6 +445,30 @@ impl<'a> Specializer<'a> {
             .collect()
     }
 
+    /// The values of `target`'s own origin `mut=` binders its body reads,
+    /// in declared order: upstream's generator is keyed on every parameter
+    /// it keeps, so a body reading `mut` has one instance per mutability,
+    /// though no instance argument carries the binder.
+    pub(super) fn mutability_arguments(
+        &self,
+        declaration: &MirFunctionDeclaration,
+        bindings: &Bindings,
+        target: &str,
+    ) -> Result<Vec<InstanceArg>, MonoError> {
+        let removed = self
+            .functions
+            .get(target)
+            .map_or(&[][..], |function| function.removed_params.as_slice());
+        declaration
+            .mutability_binders()
+            .filter(|decl| {
+                !removed.contains(decl.id())
+                    && mojito_symbol::symbol::owns_binder(target, &decl.id().owner)
+            })
+            .map(|decl| bound_argument(decl, bindings, target))
+            .collect()
+    }
+
     /// Demand the instance of `template` under `bindings`. A member whose
     /// `where` clause these bindings disprove is not part of its owner's
     /// instance, so demanding it is an error.
@@ -2980,8 +3004,17 @@ impl<'a> Specializer<'a> {
         .filter_map(|name| self.declarations.get(name))
         .collect();
         enclosing.reverse();
-        for declaration in enclosing {
+        for declaration in &enclosing {
             push_existential_arguments(declaration, &bindings, &mut arguments);
+        }
+        // An enclosing origin's `mut=` binder the body reads keys it too,
+        // though the generator scope lists no slot for it.
+        for decl in enclosing
+            .iter()
+            .flat_map(|declaration| declaration.mutability_binders())
+            .filter(|decl| !removed.contains(decl.id()))
+        {
+            arguments.push(bound_argument(decl, &bindings, target)?);
         }
         Ok((bindings, arguments))
     }

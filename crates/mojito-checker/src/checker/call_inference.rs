@@ -536,11 +536,17 @@ impl Checker {
         }
     }
 
+    /// Validate the `where` clauses over `signature`'s erased origin
+    /// binders at a call: each `mut=` binder reads the value the call
+    /// recorded for it (`declared`, [`Self::recorded_mutability_bindings`]),
+    /// as upstream's call binds it, and a `ref` parameter's `Bool` binder
+    /// the mutability its argument bound.
     fn validate_erased_origin_constraint(
         &self,
         name: &str,
         signature: &CallableOriginSignature,
         bindings: &HashMap<usize, bool>,
+        declared: &[(String, TyArg)],
     ) -> Result<(), TypeError> {
         if signature.availability.is_empty() {
             return Ok(());
@@ -548,12 +554,42 @@ impl Checker {
         let owned = Self::erased_origin_constraint_environment(signature, bindings);
         let environment = ConstraintEnvironment::named(
             &[],
-            owned.iter().map(|(name, value)| (name.as_str(), value)),
+            declared
+                .iter()
+                .chain(&owned)
+                .map(|(name, value)| (name.as_str(), value)),
         );
         for constraint in &signature.availability {
             self.validate_constraint_in_environment(name, constraint, &environment)?;
         }
         Ok(())
+    }
+
+    /// The value the call at `span` of `callee` recorded for each of its
+    /// origin `mut=` binders that the bound origin decides, by name: the
+    /// binder's slot in the call's solved arguments over the whole declared
+    /// list ([`Self::declared_call_arguments`]).
+    fn recorded_mutability_bindings(&self, span: &SourceSpan, callee: &Ty) -> Vec<(String, TyArg)> {
+        let Some(generic) = callee.as_generic_func() else {
+            return Vec::new();
+        };
+        let Some(arguments) = self
+            .fact(span, |facts| facts.generic_instantiation.as_ref())
+            .map(|instantiation| instantiation.arguments)
+            .filter(|arguments| arguments.len() == generic.decls.len())
+        else {
+            return Vec::new();
+        };
+        generic
+            .decls
+            .iter()
+            .zip(arguments)
+            .filter(|(decl, argument)| {
+                decl.is_origin_mutability_binder(&generic.decls)
+                    && matches!(argument, TyArg::Val(CtValue::Bool(_)))
+            })
+            .map(|(decl, argument)| (decl.name().to_string(), argument))
+            .collect()
     }
 
     /// The result of a builtin that builds the nominal `String` itself
@@ -1366,7 +1402,8 @@ impl Checker {
         )?;
         self.record_declared_attributes(span.clone(), &attributes);
         if let Some(signature) = origin_signatures.first() {
-            self.validate_erased_origin_constraint(name, signature, &bool_bindings)?;
+            let declared = self.recorded_mutability_bindings(&span, &ty);
+            self.validate_erased_origin_constraint(name, signature, &bool_bindings, &declared)?;
         }
         // Replay the callee's loan-transfer effects against the actuals.
         let bindings = self.call_bindings.borrow_mut().remove(&span);

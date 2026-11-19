@@ -672,11 +672,13 @@ fn candidate_parameters<'d>(
     // owner their source declaration gave them.
     if declaration.enclosing.is_some() || declaration.is_closure_method() {
         candidates.extend(declaration.argument_binders());
+        candidates.extend(declaration.mutability_binders());
         candidates.extend(&declaration.region_binders);
     } else {
         candidates.extend(
             declaration
                 .argument_binders()
+                .chain(declaration.mutability_binders())
                 .filter(|decl| mojito_symbol::symbol::owns_binder(name, &decl.id().owner)),
         );
     }
@@ -695,6 +697,7 @@ fn candidate_parameters<'d>(
     while let Some(enclosing) = link {
         for decl in enclosing
             .argument_binders()
+            .chain(enclosing.mutability_binders())
             .chain(&enclosing.region_binders)
         {
             if !candidates.iter().any(|seen| seen.id() == decl.id()) {
