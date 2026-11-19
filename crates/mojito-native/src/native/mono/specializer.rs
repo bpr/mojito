@@ -3,11 +3,12 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_hir::hir::VarId;
 use mojito_types::ct::FuncSymbolRef;
 use mojito_types::param_expr::ParamOp;
 use mojito_types::types::TyKind;
 use mojito_vm::runtime::RuntimeError;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl<'a> Specializer<'a> {
     /// The elaborator of `source`.
@@ -4683,34 +4684,108 @@ fn erase_dropped_argument_reads(function: &mut MirFunction, arguments: &HashSet<
 }
 
 /// Erase the definition of each generic callable value no instruction
-/// reads once its calls have folded to their callee's direct call: a
-/// generic function has no run-time value, and upstream's `kgen.call`
-/// names such a callee as an attribute, its symbol or the
-/// `#kgen.param.decl.ref` of the binder holding it, so the instance holds
-/// no register for one. A generic callable register still read is left for
-/// the concrete check to reject.
+/// reads once its calls have folded to their callee's direct call, and
+/// each slot that held one and is no longer read: a generic function has
+/// no run-time value, and upstream's `kgen.call` names such a callee as an
+/// attribute, its symbol or the `#kgen.param.decl.ref` of the binder
+/// holding it, so the instance holds no register or slot for one. A
+/// generic callable register or slot still read is left for the concrete
+/// check to reject.
 fn erase_folded_generic_callees(function: &mut MirFunction) {
-    let generic: HashSet<u32> = function
-        .reg_types
+    loop {
+        let generic: HashSet<u32> = function
+            .reg_types
+            .iter()
+            .filter(|(_, ty)| matches!(ty.kind(), TyKind::GenericFunc(_)))
+            .map(|(reg, _)| *reg)
+            .collect();
+        let mut reads = vec![0; function.n_regs as usize];
+        mojito_mir::mir::count_register_reads(&mut function.body, &mut reads);
+        let dead: HashSet<u32> = generic
+            .into_iter()
+            .filter(|reg| reads.get(*reg as usize) == Some(&0))
+            .collect();
+        let mut erased = HashSet::new();
+        erase_callee_definitions(&mut function.body, &dead, &mut erased);
+        for reg in &erased {
+            function.reg_types.remove(reg);
+            function.spans.0.remove(reg);
+        }
+        let slots = erase_unread_generic_slots(function);
+        if erased.is_empty() && !slots {
+            return;
+        }
+    }
+}
+
+/// Retire each local generic callable slot of `function` whose every
+/// mention stores, declares, or ends it, those mentions with it; whether
+/// one was.
+fn erase_unread_generic_slots(function: &mut MirFunction) -> bool {
+    let generic: HashSet<VarId> = function
+        .var_tys
         .iter()
-        .filter(|(_, ty)| matches!(ty.kind(), TyKind::GenericFunc(_)))
-        .map(|(reg, _)| *reg)
+        .filter(|(var, ty)| {
+            **var as usize >= function.n_params && matches!(ty.kind(), TyKind::GenericFunc(_))
+        })
+        .map(|(var, _)| *var)
         .collect();
     if generic.is_empty() {
-        return;
+        return false;
     }
-    let mut reads = vec![0; function.n_regs as usize];
-    mojito_mir::mir::count_register_reads(&mut function.body, &mut reads);
-    let dead: HashSet<u32> = generic
-        .into_iter()
-        .filter(|reg| reads.get(*reg as usize) == Some(&0))
-        .collect();
-    let mut erased = HashSet::new();
-    erase_callee_definitions(&mut function.body, &dead, &mut erased);
-    for reg in erased {
-        function.reg_types.remove(&reg);
-        function.spans.0.remove(&reg);
+    let mut read = HashSet::new();
+    generic_slot_reads(&function.body, &generic, &mut read);
+    let unread: BTreeSet<VarId> = generic.difference(&read).copied().collect();
+    if unread.is_empty() {
+        return false;
     }
+    erase_slot_mentions(&mut function.body, &unread);
+    retire_slots(function, &unread);
+    true
+}
+
+/// Record in `read` each of `generic` an instruction of `block`, its
+/// regions included, mentions other than to store, declare, or end it.
+fn generic_slot_reads(block: &MirBlock, generic: &HashSet<VarId>, read: &mut HashSet<VarId>) {
+    for instruction in &block.instrs {
+        for region in mojito_mir::mir::instruction_regions(instruction) {
+            generic_slot_reads(region, generic, read);
+        }
+        if !is_slot_bookkeeping(instruction) {
+            read.extend(
+                mojito_mir::mir::instruction_slots(instruction)
+                    .into_iter()
+                    .filter(|var| generic.contains(var)),
+            );
+        }
+    }
+}
+
+/// Remove each store, declaration, or end of one of `slots` in `block`,
+/// its regions included.
+fn erase_slot_mentions(block: &mut MirBlock, slots: &BTreeSet<VarId>) {
+    block.instrs.retain(|instruction| {
+        !is_slot_bookkeeping(instruction)
+            || !mojito_mir::mir::instruction_slots(instruction)
+                .iter()
+                .any(|var| slots.contains(var))
+    });
+    for instruction in &mut block.instrs {
+        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+            erase_slot_mentions(region, slots);
+        }
+    }
+}
+
+/// Whether `instruction` stores, declares, or ends a slot without reading it.
+const fn is_slot_bookkeeping(instruction: &MirInstr) -> bool {
+    matches!(
+        instruction,
+        MirInstr::DefVar { .. }
+            | MirInstr::DeclareVar { .. }
+            | MirInstr::DropVar { .. }
+            | MirInstr::ConsumeVar { .. }
+    )
 }
 
 /// Drop the types of `operands`, the registers a call passed for a
@@ -4747,11 +4822,17 @@ fn erase_constants(block: &mut MirBlock, dead: &HashSet<u32>, erased: &mut HashS
 }
 
 /// Remove each definition in `blocks`, their regions included, of one of
-/// `dead`, a generic callee's constant or its capture-free closure, recording
-/// its register in `erased`.
+/// `dead`, a generic callee's constant, its capture-free closure, or a read
+/// of the whole slot holding it, recording its register in `erased`.
 fn erase_callee_definitions(block: &mut MirBlock, dead: &HashSet<u32>, erased: &mut HashSet<u32>) {
     block.instrs.retain(|instruction| match instruction {
-        MirInstr::Const { dest, .. } if dead.contains(&dest.0) => {
+        MirInstr::Const { dest, .. } | MirInstr::UseVar { dest, .. } if dead.contains(&dest.0) => {
+            erased.insert(dest.0);
+            false
+        }
+        MirInstr::LoadPlace { dest, place }
+            if place.proj.is_empty() && place.through.is_none() && dead.contains(&dest.0) =>
+        {
             erased.insert(dest.0);
             false
         }

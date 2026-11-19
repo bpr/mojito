@@ -8598,8 +8598,11 @@ concrete verifier rejects a reference slot read as its handle.
   and upstream's `kgen.call` names it, or the `#kgen.param.decl.ref` of
   the binder holding it, as an attribute, so once the call through its
   register folds to the callee's direct call the elaborator erases the
-  register's definition (`erase_folded_generic_callees`), and a
-  `GenericFunc` register still read fails the concrete check.
+  register's definition (`erase_folded_generic_callees`), with the
+  whole-slot reads and the local slot a body without the pre-elaboration
+  pipeline spills the callee through, once only stores, declarations, and
+  drops mention it; a `GenericFunc` register or slot still read fails the
+  concrete check.
 
 - **CSE.** `cse` (`analysis::CSE`, `analysis/cse.rs`, R845) is MLIR's
   `CSE`: it walks each region's dominator tree, which for a region's one

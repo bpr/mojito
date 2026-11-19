@@ -803,6 +803,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic lambda called with its bracket at once
+  (`(lambda [N: Int](x: Int) {} -> Int: x + N)[5](3)`) elaborates again
+  with the pre-elaboration pipeline off: once its call folds, the elaborator
+  erases the local slot the callee was spilled through, as it erases the
+  callee's register, where R2292 had left the slot holding a `GenericFunc`
+  the concrete check rejected.
+
 - The MIR verifier now compares every operand a call binds against its
   parameter's type, keyword operands and the operands of defaulted and
   variadic calls included, as upstream's `lit.call` verifier checks every
