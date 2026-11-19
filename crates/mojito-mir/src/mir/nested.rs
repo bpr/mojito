@@ -186,6 +186,75 @@ pub(super) fn mir_nested_callable_ty(mut ty: Ty) -> Ty {
     ty
 }
 
+/// Give each call of `functions` that carries its callee's argument view,
+/// as an artifact before MIR 1.204 writes it, its callee's whole declared
+/// list: a method call's or subscript's declared target's, an indirect
+/// call's or a `def[...]` bound's generic contract's.
+pub(super) fn upgrade_call_parameter_lists(
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+) {
+    fn widen(param_decls: &mut Vec<ParamDecl>, declared: Option<&[ParamDecl]>) {
+        if let Some(declared) = declared
+            && *ParamDecl::argument_view(declared) == **param_decls
+        {
+            *param_decls = declared.to_vec();
+        }
+    }
+    fn generic_contract(ty: Option<&Ty>) -> Option<&[ParamDecl]> {
+        match ty.map(|ty| operand_value_ty(ty).kind()) {
+            Some(TyKind::GenericFunc(generic)) => Some(&generic.decls),
+            Some(TyKind::Param {
+                callable_bound: Some(bound),
+                ..
+            }) => generic_contract(Some(bound)),
+            _ => None,
+        }
+    }
+    fn upgrade(block: &mut MirBlock, function: &MirFunction, declarations: &MirDeclarations) {
+        for instruction in &mut block.instrs {
+            for region in instruction_regions_mut(instruction) {
+                upgrade(region, function, declarations);
+            }
+            match instruction {
+                MirInstr::MethodCall {
+                    recv,
+                    resolved: Some(callee),
+                    param_decls,
+                    ..
+                } => widen(
+                    param_decls,
+                    declarations
+                        .function(callee)
+                        .map(|declaration| declaration.param_decls.as_slice())
+                        .or_else(|| generic_contract(function.reg_types.get(&recv.0))),
+                ),
+                MirInstr::CallIndirect {
+                    callee,
+                    param_decls,
+                    ..
+                } => widen(
+                    param_decls,
+                    generic_contract(function.reg_types.get(&callee.0)),
+                ),
+                instruction => {
+                    if let Some(call) = instruction_subscript_call_mut(instruction) {
+                        let declared = declarations
+                            .function(&call.target)
+                            .map(|declaration| declaration.param_decls.as_slice());
+                        widen(&mut call.param_decls, declared);
+                    }
+                }
+            }
+        }
+    }
+    for (_, function) in functions.iter_mut() {
+        let mut body = std::mem::take(&mut function.body);
+        upgrade(&mut body, function, declarations);
+        function.body = body;
+    }
+}
+
 /// Where one [`lower_fn_nested`] began pushing: the functions, function
 /// declarations, and struct declarations it lowers lie past these.
 #[derive(Clone, Copy)]
@@ -355,7 +424,7 @@ fn follow_moved_contracts(
                 && moved.contains(callee)
                 && let Some(declaration) = declarations.function(callee)
             {
-                *param_decls = declaration.argument_view().into_owned();
+                param_decls.clone_from(&declaration.param_decls);
             }
             for region in instruction_regions_mut(instruction) {
                 follow(region, moved, declarations);
@@ -1163,7 +1232,7 @@ fn lower_storage_call_witness(
         receiver_convention: None,
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
-        param_decls: method.argument_view().into_owned(),
+        param_decls: method.param_decls.clone(),
         instantiated_args: method
             .argument_binders()
             .map(ParamDecl::own_argument)

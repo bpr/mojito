@@ -1234,6 +1234,20 @@ comparison's link carries the interior invalidations its own call makes
 (`CheckedCompareLink::interior_invalidations`); the MIR text schema is
 unchanged (R2322).
 
+Schema 1.204 gives every call its callee's whole declared parameter list,
+origin binders and their `mut=` binders in place, as upstream's call op
+holds one attribute per declared parameter: a `call.method`'s,
+`call.indirect`'s, and subscript call's `param_decls` is the selected
+callee's or generic callable contract's whole list, and the verifier
+compares it with that list (a `call`'s, which carries none, binds its
+declaration's). An explicit origin argument (`f[ImmStaticOrigin, 3]()`) is
+a `param_arg` named by its origin binder, with no register. A call's
+`instantiated_args` still bind the list's argument view (R2350). A call
+in an older artifact, whose `param_decls` is the argument view, is given
+its callee's whole list at load. The package format moves to
+`mojito-package 232`, a selected call's contract holding the whole list
+(`CheckedCallContract::param_decls`) (R2349).
+
 Schema 1.203 adds an optional `writes: true` to the
 `argument_convention` and `call_argument` records: the slot's declared
 contract writes through the caller's place — a `mut`, `var`, or `deinit`
@@ -1381,9 +1395,9 @@ every binder's `slot` is its declared position, origin parameters counted.
 A `generic_func` type's `decls` hold the whole declared list, an
 `origin_binder` per origin parameter (R2126), and so do the lists MIR
 lowers: a struct row's `param_decls`, a function's or method's, and an
-initializer's struct prefix (R2127). A call's `param_decls` stays its
+initializer's struct prefix (R2127). A call's `param_decls` stayed its
 callee's argument view, without the origin binders and their `mut=`
-binders, which a call infers from places; an artifact written before
+binders, until schema 1.204; an artifact written before
 R2127, whose declarations hold that view, still loads, since every
 positional reader takes the view of a declaration's list. The package
 format moves to `mojito-package 212`, and to `mojito-package 231` when

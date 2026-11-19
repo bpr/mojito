@@ -3382,7 +3382,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   methods' and functions' lists are projected from the lowered
   declarations and joined back from them (`DeclarationInterface::project`,
   `join`, `interface.rs`). MIR text spells the binder `origin_binder`
-  (schema 1.186).
+  (schema 1.186). A lowered call's `param_decls` and a selected
+  contract's `CheckedCallContract::param_decls` are the callee's whole
+  list (`MethodSig::declared`, `GenericFuncTy::decls`), an explicit origin
+  argument an erased `MirParamArg` named by its binder
+  (`Flatten::param_arg_regs_folding`, `mir.rs`); a reader pairs a declared
+  slot with the call's `instantiated_args`, which bind the argument view,
+  through `ParamDecl::argument_position` (`types.rs`), and
+  `nested::upgrade_call_parameter_lists` widens an artifact's call before
+  schema 1.204.
 - A type binder bounded by a trait-valued sibling (`T: Tr`, `*Ts: Tr`) is a
   `ParamDecl::Type` whose `trait_param` names that sibling (upstream's
   `ParamType`) and whose `bounds` hold the sibling's declared set, the

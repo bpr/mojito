@@ -2861,8 +2861,9 @@ fn production_tstrings_call_the_bundled_entry_point() {
 #[test]
 fn lowered_parameter_lists_declare_origin_binders_in_place() {
     // A struct row, its initializer's struct prefix, and a function's list
-    // hold every binder the check declares, origins in place, while a call
-    // binds the argument view; MIR text writes each origin binder.
+    // hold every binder the check declares, origins in place, while a call's
+    // solved arguments bind the argument view; MIR text writes each origin
+    // binder.
     let source = "struct View[mut: Bool, //, o: Origin[mut=mut]]:\n    var p: Pointer[Int, Self.o]\n    def __init__(out self, p: Pointer[Int, Self.o]):\n        self.p = p\n\ndef read[o: ImmOrigin, n: Int](p: Pointer[Int, o]) -> Int:\n    return p[] + n\n\ndef main():\n    var x = 3\n    var v = View(Pointer(to=x))\n    print(v.p[], read[n=1](Pointer(to=x)))\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
@@ -2897,6 +2898,109 @@ fn lowered_parameter_lists_declare_origin_binders_in_place() {
         );
     }
     assert_eq!(compiler.execute(&compiled).unwrap().output, "3 4\n");
+}
+
+#[test]
+fn lowered_calls_carry_their_callees_whole_parameter_lists() {
+    // A method call's parameter declarations are its callee's whole
+    // declared list, origin binders in place, and a free call's explicit
+    // origin argument is an erased slot named by its origin binder.
+    let source = "struct Holder:\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def read[o: ImmOrigin, n: Int](self, p: Pointer[Int, o]) -> Int:\n        return p[] + n + self.x\n\ndef free[o: ImmOrigin, k: Int](p: Pointer[Int, o]) -> Int:\n    return p[] + k\n\ndef main():\n    var v = 5\n    var h = Holder(2)\n    var p = Pointer(to=v)\n    var a = h.read[n=3](p)\n    var b = free[origin_of(v), 4](p)\n    print(a, b)\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile whole-list calls");
+    let mir = compiled.mir();
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    let method_decls = main
+        .body
+        .instrs
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method,
+                param_decls,
+                ..
+            } if method == "read" => Some(param_decls),
+            _ => None,
+        })
+        .expect("the method call is lowered");
+    let names: Vec<&str> = method_decls.iter().map(mojito::ParamDecl::name).collect();
+    assert_eq!(names, ["o", "n"]);
+    let origin_argument = main
+        .body
+        .instrs
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                func,
+                param_arg_regs,
+                ..
+            } if func.0.starts_with("free") => param_arg_regs
+                .iter()
+                .find(|argument| argument.name.as_deref() == Some("o")),
+            _ => None,
+        })
+        .expect("the free call names its origin argument by its binder");
+    assert!(origin_argument.value.is_none());
+    assert_eq!(compiler.execute(&compiled).unwrap().output, "10 9\n");
+    // A method call carrying only its callee's argument view is rejected.
+    let mut narrowed = mir.clone();
+    let main = &mut narrowed
+        .functions
+        .iter_mut()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    for instruction in &mut main.body.instrs {
+        if let MirInstr::MethodCall {
+            method,
+            param_decls,
+            ..
+        } = instruction
+            && method == "read"
+        {
+            *param_decls = mojito::ParamDecl::argument_decls(param_decls);
+        }
+    }
+    let errors = mojito::mir::verify::verify(&narrowed);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error
+                .contains("method-call compile-time parameter metadata does not match")),
+        "{errors:?}"
+    );
+    // An artifact before schema 1.204 writes the argument view, which the
+    // reader widens to the callee's whole list.
+    let text = mojito::mir::text::disassemble(mir).expect("disassemble");
+    let current = mojito::mir::text::version_header();
+    let origin = "origin_binder { owner: \"Holder.read\", slot: 0, name: o, origin: 0, mutability: mut_fixed(false), infer_only: false }, ";
+    let header = text.replacen(&current, "mojito-mir 1.203", 1);
+    let older = header
+        .lines()
+        .map(|line| {
+            if line.contains("call.method") && line.contains("\"Holder.read\"") {
+                line.replacen(&format!("param_decls: [{origin}"), "param_decls: [", 1)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(older, header.trim_end());
+    mojito::mir::text::load_artifact(older.as_bytes(), "older.mir")
+        .expect("an older artifact's calls are widened at load");
 }
 
 #[test]

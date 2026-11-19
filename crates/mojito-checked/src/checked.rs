@@ -120,9 +120,9 @@ pub enum CheckedCallArgumentSource {
 /// As [`CheckedParameter`] is to a checked call's op, and upstream's call
 /// op holds one attribute per declared parameter: the bracket arguments the
 /// call's binder bound to it, none for an omitted or inferred parameter and
-/// one per element for a pack. A contract's list is in its callee's
-/// declaration order; a bracket argument bound to no declaration follows
-/// the declared parameters.
+/// one per element for a pack. A contract's list is in the order of its
+/// callee's argument view; a bracket argument bound to no declaration
+/// follows those parameters.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallParameter {
     pub arguments: Vec<CheckedCallParameterArgument>,
@@ -241,9 +241,11 @@ pub struct CheckedCallContract {
     pub arguments: Vec<CheckedCallArgument>,
     pub captures: Vec<mojito_types::origin::CaptureOrigin>,
     pub reference_result: Option<mojito_types::origin::RefTy>,
-    /// The call's compile-time parameters, one per declaration of
-    /// `param_decls` ([`CheckedCallParameter`]).
+    /// The call's compile-time parameters, one per binder of the argument
+    /// view of `param_decls` ([`CheckedCallParameter`]), as the method
+    /// binder binds them.
     pub parameter_arguments: Vec<CheckedCallParameter>,
+    /// The selected callee's whole declared list, origin binders in place.
     pub param_decls: Vec<mojito_types::types::ParamDecl>,
     pub boundary: CheckedCallBoundary,
     /// The bound a call through an archetype receiver was selected by when

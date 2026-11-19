@@ -148,6 +148,11 @@ impl Decoder {
                 &legacy,
             );
         }
+        // Schema 1.204 gives a call its callee's whole declared list; an
+        // older call carries the argument view.
+        if self.minor < 204 {
+            crate::mir::nested::upgrade_call_parameter_lists(&mut functions, &declarations);
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {

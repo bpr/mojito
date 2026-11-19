@@ -1287,13 +1287,15 @@ impl<'a> Flatten<'a> {
                     })
             })
             .collect();
+        // The contract's parameters follow its binder, which binds the
+        // argument view of the declared list.
+        let argument_view = ParamDecl::argument_view(&contract.param_decls);
         let param_arg_regs = contract
             .parameter_arguments
             .iter()
             .enumerate()
             .flat_map(|(index, parameter)| {
-                let declaration = contract
-                    .param_decls
+                let declaration = argument_view
                     .get(index)
                     .map(|decl| mojito_ast::call::CompileTimeParam::keyword(decl).to_string());
                 parameter

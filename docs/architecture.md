@@ -2271,8 +2271,14 @@ declaration's binders with its arguments reads that view: in the check
 `StructInfo::decls`, `MethodSig::decls`, and
 `GenericFuncTy::argument_view`; below it
 `FunctionDeclaration::argument_view` and `StructDeclaration::argument_view`
-(`declaration.rs`), which a call's `param_decls`, the verifier, the MIR
-passes, and the elaborator read. The shared `CtValue` model carries integers, booleans,
+(`declaration.rs`), which the verifier, the MIR passes, and the elaborator
+read. A lowered call's `param_decls` (a method call's, an indirect call's,
+a subscript's, and the selected contract's
+`CheckedCallContract::param_decls`) is the callee's whole declared list,
+and an explicit origin argument is an erased `MirParamArg` named by its
+origin binder; the call's `instantiated_args` bind that list's argument
+view, so a reader maps a declared slot to its solved argument through
+`ParamDecl::argument_position` (R2350). The shared `CtValue` model carries integers, booleans,
 strings, tuples/lists, types, residual parameter expressions, and zero-sized
 reflection handles. The check and the elaborator below MIR fold through
 `param_expr::fold`.

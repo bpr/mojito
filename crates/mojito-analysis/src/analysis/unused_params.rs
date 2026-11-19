@@ -92,7 +92,7 @@ use mojito_mir::mir::{
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamId, ParamKind};
-use mojito_types::types::{Ty, TyArg, TyKind};
+use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub const REMOVE_UNUSED_PARAMS: CallGraphPass = CallGraphPass {
@@ -450,7 +450,7 @@ fn self_forwards(
                 ..
             } if func.0 == name => declarations.function(name).map(|callee| {
                 (
-                    callee.argument_view(),
+                    std::borrow::Cow::Borrowed(callee.param_decls.as_slice()),
                     param_arg_regs.as_slice(),
                     instantiated_args.as_slice(),
                     receiver.as_ref(),
@@ -513,10 +513,10 @@ fn self_forwards(
                 })
                 .map(|(decl, _)| decl.id().clone())
                 .collect();
-            if instantiated.len() == decls.len() {
+            let view = ParamDecl::argument_view(&decls);
+            if instantiated.len() == view.len() {
                 itself.extend(
-                    decls
-                        .iter()
+                    view.iter()
                         .zip(instantiated)
                         .filter(|(decl, argument)| names_parameter(argument, decl.id()))
                         .map(|(decl, _)| decl.id().clone()),

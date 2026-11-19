@@ -1450,7 +1450,7 @@ impl Checker {
         {
             for element in &mut plan {
                 element.accessor = Some(format!("{name}.__getitem_param__"));
-                element.param_decls = accessor.decls().into_owned();
+                element.param_decls.clone_from(&accessor.declared);
                 let reference = match element.ty.kind() {
                     // A reference-valued element forwards its own handle.
                     TyKind::Ref(reference) => reference.clone(),

@@ -4317,7 +4317,7 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
             {
                 mojito_mir::mir::witness_arguments(
                     &bound,
-                    &declaration.argument_view(),
+                    &declaration.param_decls,
                     param_arg_regs,
                 );
             }
@@ -4344,15 +4344,16 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
                 ..
             } if result_adapter.as_ref().is_some_and(|adapter| {
                 adapter.kind == CheckedResultAdapter::CopyIteratorReference
-            }) && declaration.argument_view().len() == param_decls.len() =>
+            }) && declaration.argument_view().len()
+                == ParamDecl::argument_view(param_decls).len() =>
             {
                 *resolved = Some(member);
                 mojito_mir::mir::witness_arguments(
                     param_decls,
-                    &declaration.argument_view(),
+                    &declaration.param_decls,
                     param_arg_regs,
                 );
-                *param_decls = declaration.argument_view().into_owned();
+                param_decls.clone_from(&declaration.param_decls);
                 if !declaration.returns_reference {
                     *result_adapter = None;
                 }
@@ -4368,15 +4369,16 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
                 param_arg_regs,
                 ..
             } if declaration.returns_reference == reference_result.is_some()
-                && declaration.argument_view().len() == param_decls.len() =>
+                && declaration.argument_view().len()
+                    == ParamDecl::argument_view(param_decls).len() =>
             {
                 *resolved = Some(member);
                 mojito_mir::mir::witness_arguments(
                     param_decls,
-                    &declaration.argument_view(),
+                    &declaration.param_decls,
                     param_arg_regs,
                 );
-                *param_decls = declaration.argument_view().into_owned();
+                param_decls.clone_from(&declaration.param_decls);
             }
             // An operator through a bound is its member's call once
             // the receiver is a struct, as a struct operator is.
@@ -4406,15 +4408,16 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
             }
             instruction => {
                 if let Some(call) = instruction_subscript_call_mut(instruction)
-                    && declaration.argument_view().len() == call.param_decls.len()
+                    && declaration.argument_view().len()
+                        == ParamDecl::argument_view(&call.param_decls).len()
                 {
                     call.target = member;
                     mojito_mir::mir::witness_arguments(
                         &call.param_decls,
-                        &declaration.argument_view(),
+                        &declaration.param_decls,
                         &mut call.param_arg_regs,
                     );
-                    call.param_decls = declaration.argument_view().into_owned();
+                    call.param_decls.clone_from(&declaration.param_decls);
                 }
             }
         }
@@ -4463,10 +4466,9 @@ fn adopt_callee_binders(block: &mut MirBlock, function: &MirFunction) {
         else {
             continue;
         };
-        let witness = generic.argument_view();
-        if witness.len() == param_decls.len() {
-            mojito_mir::mir::witness_arguments(param_decls, &witness, param_arg_regs);
-            *param_decls = witness.into_owned();
+        if generic.argument_view().len() == ParamDecl::argument_view(param_decls).len() {
+            mojito_mir::mir::witness_arguments(param_decls, &generic.decls, param_arg_regs);
+            param_decls.clone_from(&generic.decls);
         }
     }
 }

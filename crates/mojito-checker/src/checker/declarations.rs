@@ -3239,7 +3239,7 @@ impl Checker {
                             ref_params: sig.ref_params.clone(),
                             ref_return: None,
                             param_types: params,
-                            param_decls: sig.decls().into_owned(),
+                            param_decls: sig.declared.clone(),
                             parametric_origin_writes: sig.parametric_origin_writes.clone(),
                             instantiation,
                             parameter_names: sig.names.clone(),
@@ -3269,7 +3269,7 @@ impl Checker {
                 self.record_construction_instantiation(
                     span,
                     name,
-                    (&selected.param_decls, param_args),
+                    (&ParamDecl::argument_view(&selected.param_decls), param_args),
                     &partitioned,
                     &selected.parameter_names,
                     selected.instantiation.clone().unwrap_or_default(),

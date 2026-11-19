@@ -1451,6 +1451,17 @@ to evolve under the `0.x` compatibility rules.
   still sees the argument view (R2348), and a lowered call's parameter
   declarations are that view (R2349) (R2345).
 
+- A lowered call now carries its callee's whole declared parameter list,
+  origin binders and their `mut=` binders in place, as upstream's call op
+  holds one attribute per declared parameter: a method call's, an indirect
+  call's, and a subscript call's `param_decls`, and a selected call's
+  contract, are the callee's whole list, which the verifier checks, and a
+  free call's explicit origin argument is an erased compile-time argument
+  named by its origin binder. A call's solved arguments still bind the
+  argument view (R2350). MIR text moves to schema 1.204, an older
+  artifact's calls widened at load, and the package format to
+  `mojito-package 232` (R2349).
+
 - The parameter lists MIR lowers now hold every binder the check declares,
   origin binders in place, as upstream's lists do: a struct row, an
   initializer's struct prefix, and a function's or method's declaration,

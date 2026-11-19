@@ -505,7 +505,7 @@ impl Checker {
                     ref_params: sig.ref_params.clone(),
                     ref_return,
                     param_types: params,
-                    param_decls: sig.decls().into_owned(),
+                    param_decls: sig.declared.clone(),
                     parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     instantiation: instantiation.clone(),
                     parameter_names: sig.names.clone(),
@@ -584,7 +584,11 @@ impl Checker {
                 });
             self.record_folded_bracket_attributes(
                 &span,
-                &folded_parameter_attributes(&selected.param_decls, param_args, arguments),
+                &folded_parameter_attributes(
+                    &ParamDecl::argument_view(&selected.param_decls),
+                    param_args,
+                    arguments,
+                ),
             );
         }
         // An explicit receiver instance (`Dict[String, Int].fromkeys(...)`)

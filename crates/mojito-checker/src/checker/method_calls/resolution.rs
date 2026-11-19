@@ -164,7 +164,11 @@ impl Checker {
                 });
             self.record_folded_bracket_attributes(
                 span,
-                &folded_parameter_attributes(&resolved.param_decls, param_args, arguments),
+                &folded_parameter_attributes(
+                    &ParamDecl::argument_view(&resolved.param_decls),
+                    param_args,
+                    arguments,
+                ),
             );
         }
         if let Some((sname, targs)) = obj_ty.kind().as_non_simd_struct()
@@ -386,7 +390,7 @@ impl Checker {
                     bracket_attributes,
                     refined_bound: None,
                     param_types: params,
-                    param_decls: sig.decls().into_owned(),
+                    param_decls: sig.declared.clone(),
                 });
             }
         }
@@ -569,7 +573,7 @@ impl Checker {
                 ref_params: sig.ref_params.clone(),
                 ref_return,
                 param_types: params,
-                param_decls: sig.decls().into_owned(),
+                param_decls: sig.declared.clone(),
                 parametric_origin_writes: sig.parametric_origin_writes.clone(),
                 instantiation: None,
                 parameter_names: Vec::new(),

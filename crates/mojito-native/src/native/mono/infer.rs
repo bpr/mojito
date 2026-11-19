@@ -311,7 +311,7 @@ impl Specializer<'_> {
         )?;
         let removed = self.removed_params(target, bindings.reduced);
         bind_explicit_value_arguments(
-            &declaration.argument_view(),
+            &declaration.param_decls,
             removed,
             param_args,
             &self.constant_values,

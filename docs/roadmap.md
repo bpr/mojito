@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2350**.
+Next free ID: **R2351**.
 
 ## Ordered Work
 
@@ -10641,6 +10641,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `GenericFuncTy::argument_view`, `MethodSig::decls`, and
     `Ty::generator_params` are the views each call path, a method's and a
     `#kgen.bind_params` included, binds against.
+  - Probe: a method or subscript call's
+    `CheckedCallContract::parameter_arguments` follows the argument view
+    and drops an origin argument (`checked_parameter_arguments`,
+    `method_calls/call_contract.rs`), so its lowered call names no origin
+    binder's slot, where a free call's does.
   - Probe: a construction the check synthesizes at struct level over
     `struct EntryIter[m: Bool, //, o: Origin[mut=m]]`
     (`assets/ok/pointer_field_wrapper_iterator_protocol.mojo`) holds its
@@ -10652,23 +10657,30 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2349 A lowered call's parameter declarations are its callee's
-  argument view, where the declaration MIR lowers is the whole list**
+- [ ] **R2350 A call's solved arguments bind its callee's argument view,
+  where upstream's call holds a value for every declared parameter,
+  origins included**
 
-  `MirInstr::Call`, `MethodCall`, `CallIndirect`, and a subscript call
-  carry `param_decls` without the callee's origin binders, and their
-  `param_args` skip the origin arguments the check records by declaration.
-  - Probe: the verifier (`verify/{calls,subscripts}.rs`) compares
-    `param_decls` with `FunctionDeclaration::argument_view`.
-  - Probe: `param_uses.rs`, `call_defaults.rs`, and the elaborator
-    (`native/mono/{infer,specializer}.rs`) bind a call's arguments by
-    position against the argument view.
-  - Probe: `param_arg_regs_folding` (`mir.rs`) drops an origin
-    attribute, though its `CheckedParameter` names the origin binder.
-  - The lever: lower a call's `param_decls` as the callee's declared list,
-    an origin binder's slot erased like any folded argument, and align
-    each reader with the declared list.
-  - Depends on nothing.
+  A lowered call's `param_decls` is its callee's whole declared list, but
+  its `instantiated_args` skip the origin binders and their `mut=`
+  binders, because the check records a call's instantiation over the
+  argument view.
+  - Probe: `GenericInstantiation::arguments` and
+    `MethodInstantiation::arguments` (`checker/call_inference.rs`,
+    `method_instantiation_arguments` in `checker/generics.rs`) list the
+    argument view's solutions only.
+  - Probe: each positional reader maps a declared slot through
+    `ParamDecl::argument_position` or binds `ParamDecl::argument_view`:
+    `verify_param_arguments` (`verify/subscripts.rs`),
+    `instantiate_generic_callable_contract` (`verify/intrinsics.rs`),
+    `drop_arguments` (`param_uses.rs`), `collect_through_requirement`
+    (`call_defaults.rs`), `self_forwards` (`unused_params.rs`), and
+    `erase_valueless_removed_arguments` and `bind_instantiated_arguments`
+    (`native/mono/{specializer,infer}.rs`).
+  - The lever: record each origin binder's solved origin and each `mut=`
+    binder's value in the instantiation, in declared order, and have each
+    reader bind the whole list.
+  - Depends on R2346.
   - Model: Opus, Not Planned.
 
 - [ ] **R2346 A call infers its callee's origin binders in a pass before
@@ -10696,14 +10708,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`checker/statements.rs`) hands the body `ParamDecl::argument_decls`,
     which drops the binder, so widening `declare_value_parameters`
     (`scopes.rs`) alone changes nothing.
-  - A lowered call's `param_decls`, the verifier, and the elaborator's
-    specializer align with the argument view, so the call has no slot to
-    carry the attribute until R2349 lowers the whole declared list.
-  - The lever: once R2349 lands, the call records the inferred origin's
+  - A lowered call's `param_decls` is the whole declared list, but its
+    solved arguments bind the argument view (R2350), so the elaborator
+    binds the binder no value from the call.
+  - The lever: once R2350 lands, the call records the inferred origin's
     mutability (the value a `where` clause already reads) as the binder's
     attribute, by its declaration, and the body declares the binder like
     any value binder.
-  - Depends on R2124, R2126, R2349.
+  - Depends on R2124, R2126, R2349, R2350.
   - Model: Opus, Not Planned.
 
 - [ ] **R762 A struct instance's origin arguments are a tail after its

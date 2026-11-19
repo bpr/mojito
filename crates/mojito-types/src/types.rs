@@ -3546,6 +3546,18 @@ impl ParamDecl {
         }
     }
 
+    /// The position in [`Self::argument_view`] of `decls[index]`, `None`
+    /// when it is no argument binder: where a list over the argument view
+    /// (a call's solved arguments) holds the declared binder's value.
+    pub fn argument_position(decls: &[Self], index: usize) -> Option<usize> {
+        decls.get(index)?.is_argument_binder(decls).then(|| {
+            decls[..index]
+                .iter()
+                .filter(|decl| decl.is_argument_binder(decls))
+                .count()
+        })
+    }
+
     /// This declaration with each unbound reference of its `where` clauses
     /// and its callable default bound in `scopes`
     /// ([`GenericConstraint::bind`]).

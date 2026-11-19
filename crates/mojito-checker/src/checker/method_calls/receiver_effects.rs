@@ -30,7 +30,9 @@ impl Checker {
         let bindings = resolved
             .instantiation
             .as_deref()
-            .map(|arguments| struct_subst(&resolved.param_decls, arguments))
+            .map(|arguments| {
+                struct_subst(&ParamDecl::argument_view(&resolved.param_decls), arguments)
+            })
             .unwrap_or_default();
         if let Some((struct_name, _)) = obj_ty.kind().as_non_simd_struct() {
             let method_key = format!("{struct_name}.{method}");
@@ -38,7 +40,7 @@ impl Checker {
             self.apply_transfer_effects(effect_key, Some(object), args, span, &bindings)?;
             self.apply_call_through_effects(
                 effect_key,
-                &resolved.param_decls,
+                &ParamDecl::argument_view(&resolved.param_decls),
                 Some(object),
                 param_args,
                 args,
@@ -56,7 +58,7 @@ impl Checker {
                 self.apply_transfer_effects(&key, Some(object), args, span, &bindings)?;
                 self.apply_call_through_effects(
                     &key,
-                    &resolved.param_decls,
+                    &ParamDecl::argument_view(&resolved.param_decls),
                     Some(object),
                     param_args,
                     args,

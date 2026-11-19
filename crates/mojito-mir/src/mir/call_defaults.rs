@@ -608,7 +608,7 @@ fn collect_through_requirement(
         variadic: requirement.variadic.as_ref(),
         variadic_convention: requirement.variadic_convention,
         kw_variadic: requirement.kw_variadic.as_ref(),
-        param_decls: std::borrow::Cow::Borrowed(param_decls),
+        param_decls: ParamDecl::argument_view(param_decls),
     };
     let mut site = Site {
         dest: *dest,
@@ -616,7 +616,8 @@ fn collect_through_requirement(
         leading: 0,
         args: args.clone(),
         kwargs: kwargs.clone(),
-        bound: param_decls
+        bound: shape
+            .param_decls
             .iter()
             .cloned()
             .zip(instantiated_args.iter().cloned())
@@ -798,7 +799,7 @@ fn build_keyword_collector(
     let insert = mojito_symbol::symbol::keyword_collector_insert_symbol();
     let insert_decls = declarations
         .function(&insert)
-        .map(|declaration| declaration.argument_view().into_owned())
+        .map(|declaration| declaration.param_decls.clone())
         .unwrap_or_default();
     for &index in &collected {
         let (keyword, value) = site.kwargs[index].clone();

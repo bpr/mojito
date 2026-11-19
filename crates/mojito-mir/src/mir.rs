@@ -4757,19 +4757,6 @@ impl<'a> Flatten<'a> {
         let mut registers = Vec::new();
         for parameter in call.parameters() {
             for argument in &parameter.arguments {
-                // An origin argument binds the callee's origin binder,
-                // which a lowered call's parameter declarations, the
-                // callee's argument view, do not list
-                // (`f[ImmStaticOrigin, 3]()`).
-                if matches!(
-                    argument,
-                    CheckedParamArg::Attribute {
-                        value: Some(TyArg::Origin(_)),
-                        ..
-                    }
-                ) {
-                    continue;
-                }
                 let value = if Self::param_arg_has_no_runtime_form(argument, folds) {
                     None
                 } else {
@@ -5163,7 +5150,7 @@ fn body_parameter_ty<P: DeclaredParam>(parameter: &P, ty: Ty) -> Ty {
 
 fn generic_callable_param_decls(callable: &Ty) -> Vec<ParamDecl> {
     match callable.kind() {
-        TyKind::GenericFunc(generic) => generic.argument_view().into_owned(),
+        TyKind::GenericFunc(generic) => generic.decls.clone(),
         TyKind::Param {
             callable_bound: Some(bound),
             ..

@@ -1188,7 +1188,7 @@ impl<'a> Specializer<'a> {
                     ..
                 } => (
                     target.as_str(),
-                    std::borrow::Cow::Borrowed(param_decls.as_slice()),
+                    ParamDecl::argument_view(param_decls),
                     instantiated_args,
                     None,
                 ),
@@ -3117,7 +3117,7 @@ impl<'a> Specializer<'a> {
                 if let Some(declaration) = self.declarations.get(func.0.as_str()) {
                     mojito_mir::mir::witness_arguments(
                         &bound,
-                        &declaration.argument_view(),
+                        &declaration.param_decls,
                         param_arg_regs,
                     );
                 }
@@ -3444,7 +3444,7 @@ impl<'a> Specializer<'a> {
                     {
                         mojito_mir::mir::witness_arguments(
                             param_decls,
-                            &declaration.argument_view(),
+                            &declaration.param_decls,
                             param_arg_regs,
                         );
                     }
@@ -3575,7 +3575,7 @@ impl<'a> Specializer<'a> {
                             if let Some(declaration) = self.declarations.get(target.as_str()) {
                                 mojito_mir::mir::witness_arguments(
                                     contract,
-                                    &declaration.argument_view(),
+                                    &declaration.param_decls,
                                     param_arg_regs,
                                 );
                             }

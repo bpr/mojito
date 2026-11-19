@@ -693,8 +693,8 @@ pub fn matched_parameter_arguments<'a>(
 /// Each supplied compile-time argument paired with the declaration of
 /// `decls` it names ([`MirParamArg::declaration_index`]).
 ///
-/// A closed value or type argument with no register is included; an
-/// argument naming no declaration (an erased origin argument) is dropped.
+/// A closed value or type argument with no register, and an erased origin
+/// argument, is included; an argument naming no declaration is dropped.
 pub fn supplied_parameter_arguments<'a>(
     decls: &'a [ParamDecl],
     arguments: &'a [MirParamArg],
@@ -1327,10 +1327,10 @@ pub struct Reg(pub u32);
 ///
 /// Upstream's call op holds one attribute per declared parameter, so no
 /// consumer binds an argument again: `name` is the declaration's (each
-/// element of a pack names the pack), `None` for an argument bound to no
-/// declaration (an erased origin argument). `value` is absent for a type
-/// argument and a folded one. Semantic Origin/OriginSet arguments do not
-/// enter this list.
+/// element of a pack names the pack, an origin argument its origin
+/// binder), `None` for an argument the check bound to no declaration.
+/// `value` is absent for a type argument, a folded one, and an origin
+/// argument, which is erased.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MirParamArg {
     pub name: Option<String>,
@@ -1360,17 +1360,21 @@ impl MirParamArg {
 ///
 /// Each takes the declaration in the same position of `decls`'s trailing
 /// own parameters, as a conformance maps a requirement's parameters to its
-/// witness's (`def[n: Int](Int)` answered by `__call__[k: Int]`). An
-/// argument naming no contract declaration keeps its name.
+/// witness's (`def[n: Int](Int)` answered by `__call__[k: Int]`), over
+/// each list's [`ParamDecl::argument_view`]. An argument naming no
+/// argument binder of the contract, an origin argument included, keeps
+/// its name.
 pub fn witness_arguments(
     contract: &[ParamDecl],
     decls: &[ParamDecl],
     arguments: &mut [MirParamArg],
 ) {
+    let contract = ParamDecl::argument_view(contract);
+    let decls = ParamDecl::argument_view(decls);
     let own = &decls[decls.len().saturating_sub(contract.len())..];
     for argument in arguments {
         if let Some(witness) = argument
-            .declaration_index(contract)
+            .declaration_index(&contract)
             .and_then(|index| own.get(index))
         {
             argument.name = Some(mojito_ast::call::CompileTimeParam::keyword(witness).to_string());
@@ -2346,8 +2350,8 @@ pub enum MirInstr {
         /// binds them from this type; a resolved call keeps none.
         receiver: Option<Ty>,
         /// The compile-time arguments the checker solved for a call of a
-        /// generic `def`, in declaration order and in the caller's binder
-        /// scope. A type argument no runtime parameter or result spells
+        /// generic `def`, over the argument view of its declared list
+        /// ([`ParamDecl::argument_view`]), in the caller's binder scope. A type argument no runtime parameter or result spells
         /// (`bytes[Int]()`) is bound from here by the elaborator; a resolved
         /// call keeps none.
         instantiated_args: Vec<TyArg>,
@@ -2382,7 +2386,8 @@ pub enum MirInstr {
         /// Compile-time arguments supplied while invoking a generic callable
         /// value, named by their declarations as `Call`'s are.
         param_arg_regs: Vec<MirParamArg>,
-        /// The generic callable contract selected by checking. Contract-side
+        /// The whole declared list of the generic callable contract selected
+        /// by checking, origin binders in place. Contract-side
         /// defaults govern omitted arguments even when the concrete function
         /// value declares different defaults.
         param_decls: Vec<ParamDecl>,
@@ -2391,7 +2396,8 @@ pub enum MirInstr {
         /// types. Generic callable storage may remain symbolic; executable
         /// operand verification uses this concrete view.
         instantiated_contract: Option<Ty>,
-        /// Complete checker-resolved generic arguments in declaration order.
+        /// Complete checker-resolved generic arguments over the argument
+        /// view of `param_decls`.
         /// This semantic-only substitution witness lets verification validate
         /// `instantiated_contract` without inspecting the instructions which
         /// materialized compile-time argument registers.
@@ -2450,11 +2456,13 @@ pub enum MirInstr {
         /// syntax, in source order. Callable/scalar value parameters retain a
         /// runtime register; type parameters occupy an erased slot.
         param_arg_regs: Vec<MirParamArg>,
-        /// Checker-selected generic method contract. This prevents lowering
-        /// from reconstructing a bound-method type from the source member.
+        /// Checker-selected method's whole declared list, origin binders in
+        /// place. This prevents lowering from reconstructing a bound-method
+        /// type from the source member.
         param_decls: Vec<ParamDecl>,
-        /// The method's own compile-time arguments the checker solved, in
-        /// declaration order, as `Call::instantiated_args` carries a `def`'s:
+        /// The method's own compile-time arguments the checker solved, over
+        /// the argument view of `param_decls`, as `Call::instantiated_args`
+        /// carries a `def`'s:
         /// symbolic only over the caller's own binders. A binder no runtime
         /// argument spells (`s.name[Int]()`) is bound from here by the
         /// elaborator; a resolved call keeps none.

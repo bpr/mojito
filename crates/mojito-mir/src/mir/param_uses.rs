@@ -862,7 +862,7 @@ fn drop_removed_arguments<'a>(
                 }
                 (
                     &func.0,
-                    callee.argument_view(),
+                    callee.param_decls.as_slice(),
                     param_arg_regs,
                     (spellings == Spellings::Drop).then_some(instantiated_args),
                 )
@@ -900,7 +900,7 @@ fn drop_removed_arguments<'a>(
             _ => continue,
         };
         if let Some(ids) = removed(target)
-            && drop_arguments(target, &decls, ids, param_arg_regs, instantiated_args).is_some()
+            && drop_arguments(target, decls, ids, param_arg_regs, instantiated_args).is_some()
         {
             discounted.insert(target.clone());
         }
@@ -1074,11 +1074,16 @@ fn drop_arguments(
         let argument = &mut param_arg_regs[index];
         changed |= argument.value.take().is_some() | argument.expr.take().is_some();
     }
+    // The solved arguments bind the argument view of `decls`.
     if let Some(instantiated_args) = instantiated_args
-        && instantiated_args.len() == decls.len()
+        && instantiated_args.len() == ParamDecl::argument_view(decls).len()
     {
-        for &index in dropped.iter().rev() {
-            instantiated_args.remove(index);
+        for position in dropped
+            .iter()
+            .rev()
+            .filter_map(|&index| ParamDecl::argument_position(decls, index))
+        {
+            instantiated_args.remove(position);
             changed = true;
         }
     }
