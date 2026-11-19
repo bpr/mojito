@@ -7,7 +7,7 @@ use super::*;
 use mojito_ast::ast::DeclaredParam;
 use mojito_types::ct::FuncSymbolRef;
 use mojito_types::types::{FuncTy, GenericFuncTy};
-use mojito_types::types::{TyKind, nominal_parts};
+use mojito_types::types::{LitOriginMut, TyKind, nominal_parts};
 
 /// A method body as its check binds and walks it, whether the method was
 /// spelled or is a struct's wrapper of a trait default it inherits.
@@ -451,6 +451,39 @@ fn marks_initialized(expr: &Expr, field: &str) -> bool {
             || matches!(&place.kind, ExprKind::Member { object, field: marked }
                 if marked == field && is_self(object))
     })
+}
+
+/// The mutability the `mut` argument among an `Origin` application's
+/// `args` (`mut=` or the first positional one) spells: a literal's, or the
+/// binder it names, else one left to inference.
+fn origin_mut_argument(args: &[mojito_ast::ast::ParamArg]) -> OriginMutability {
+    use mojito_ast::ast::ParamArg;
+    let argument = args
+        .iter()
+        .find_map(|argument| match argument {
+            ParamArg::Named { name, value } if name == "mut" => Some(value.as_ref()),
+            _ => None,
+        })
+        .or_else(|| {
+            args.first()
+                .filter(|argument| !matches!(argument, ParamArg::Named { .. }))
+        });
+    match argument {
+        Some(ParamArg::Value(expression)) => match &expression.kind {
+            ExprKind::Bool(fixed) => OriginMutability::Fixed(*fixed),
+            ExprKind::Identifier(binder) => OriginMutability::Binder(ParamRef::unbound(binder)),
+            _ => OriginMutability::Binder(ParamRef::unbound("_")),
+        },
+        _ => OriginMutability::Binder(ParamRef::unbound("_")),
+    }
+}
+
+/// The type an origin binder declares: the `Origin` struct (or an
+/// `OriginSet`), or the raw `!lit.origin<m>` attribute upstream's `Origin`
+/// holds as `_mlir_origin`.
+enum OriginBinderType {
+    Origin(OriginMutability),
+    Lit(OriginMutability),
 }
 
 #[derive(Clone, Copy)]
@@ -1230,7 +1263,7 @@ impl Checker {
         let mutability = match tp.bounds.as_slice() {
             // A builtin identity until it is declared as upstream's
             // `!lit.origin.set` type (R2343).
-            [only] if only == "OriginSet" => OriginMutability::Set,
+            [only] if only == "OriginSet" => OriginBinderType::Origin(OriginMutability::Set),
             [only] if tp.value_type.is_none() && self.check_trait_name(only).is_ok() => {
                 return Ok(None);
             }
@@ -1238,11 +1271,15 @@ impl Checker {
                 let Some(annotation) = tp.annotation() else {
                     return Ok(None);
                 };
-                let Some(mutability) = self.origin_annotation_mutability(&annotation)? else {
+                let Some(binder) = self.origin_annotation_mutability(&annotation)? else {
                     return Ok(None);
                 };
-                mutability
+                binder
             }
+        };
+        let (mutability, lit) = match mutability {
+            OriginBinderType::Origin(mutability) => (mutability, false),
+            OriginBinderType::Lit(mutability) => (mutability, true),
         };
         Ok(Some(ParamDecl::Origin {
             id,
@@ -1250,52 +1287,63 @@ impl Checker {
             origin: mojito_types::origin::OriginParamId(u32::try_from(index).unwrap_or(u32::MAX)),
             mutability,
             infer_only: tp.infer_only,
+            lit,
         }))
     }
 
-    /// The mutability of the library `Origin` type `annotation` resolves
-    /// to, its `mut` argument fixed, naming a binder, or left unbound
-    /// (`o: Origin`, `o: Origin[mut=_]`), as upstream's partial
-    /// `#kgen.bind_params` leaves it; `None` when it resolves to another
-    /// type or to none. A `mut` argument of another type than `Bool` is
-    /// the binding's type mismatch.
+    /// The origin binder type `annotation` resolves to: the library
+    /// `Origin` struct, its `mut` argument fixed, naming a binder, or left
+    /// unbound (`o: Origin`, `o: Origin[mut=_]`), as upstream's partial
+    /// `#kgen.bind_params` leaves it, or the raw `!lit.origin<m>` attribute
+    /// (`_mlir_origin: _lit_origin_type_of_mut[mut]`); `None` when it
+    /// resolves to another type or to none. A `mut` argument of another
+    /// type than `Bool` is the binding's type mismatch.
     fn origin_annotation_mutability(
         &self,
         annotation: &SourceType,
-    ) -> Result<Option<OriginMutability>, TypeError> {
-        let mutability = if let Ok(ty) = self.ty_from_anno(annotation) {
-            let TyKind::Struct(name, args) = ty.kind() else {
-                return Ok(None);
-            };
-            if !self.is_library_origin(name) {
-                return Ok(None);
-            }
-            args.first().cloned()
-        } else {
-            let SourceType::Named(name, args) = annotation else {
-                return Ok(None);
-            };
-            let Some(info) = self
-                .structs
-                .get(name)
-                .filter(|_| self.is_library_origin(name))
-            else {
-                return Ok(None);
-            };
-            // A `mut` argument naming a binder this scope does not hold
-            // (an enclosing declaration's, read after it closed) leaves the
-            // mutability symbolic: the type is still `Origin`.
-            if args.is_empty() {
-                None
-            } else {
-                match self.resolve_partial_use_params(name, &info.params, args) {
-                    Ok((bound, _)) => bound.into_iter().next().flatten(),
-                    Err(error @ TypeError::TypeMismatch { .. }) => return Err(error),
-                    Err(_) => None,
+    ) -> Result<Option<OriginBinderType>, TypeError> {
+        let mutability = match self.ty_from_anno(annotation) {
+            Ok(ty) => {
+                let (name, args) = match ty.kind() {
+                    TyKind::Struct(name, args) => (name, args),
+                    TyKind::LitOrigin(LitOriginMut::Known(fixed)) => {
+                        return Ok(Some(OriginBinderType::Lit(OriginMutability::Fixed(*fixed))));
+                    }
+                    TyKind::LitOrigin(LitOriginMut::Expr(mutability)) => {
+                        return Ok(mutability.as_decl_ref().map(|binder| {
+                            OriginBinderType::Lit(OriginMutability::Binder(ParamRef::unbound(
+                                &binder.name,
+                            )))
+                        }));
+                    }
+                    _ => return Ok(None),
+                };
+                if !self.is_library_origin(name) {
+                    return Ok(None);
                 }
+                self.origin_mut_slot()
+                    .and_then(|slot| args.get(slot))
+                    .cloned()
+            }
+            Err(error) => {
+                let SourceType::Named(name, args) = annotation else {
+                    return Ok(None);
+                };
+                if !self.is_library_origin(name) {
+                    return Ok(None);
+                }
+                // A `mut` argument of another type than `Bool` is the
+                // binding's mismatch; one naming a binder this scope does
+                // not hold (an enclosing declaration's, read after it
+                // closed) leaves the mutability symbolic: the type is still
+                // `Origin`.
+                if matches!(error, TypeError::TypeMismatch { .. }) {
+                    return Err(error);
+                }
+                return Ok(Some(OriginBinderType::Origin(origin_mut_argument(args))));
             }
         };
-        Ok(Some(match &mutability {
+        Ok(Some(OriginBinderType::Origin(match &mutability {
             Some(TyArg::Val(CtValue::Bool(fixed))) => OriginMutability::Fixed(*fixed),
             Some(TyArg::Val(CtValue::Expr(mutability)))
                 if let Some(binder) = mutability.as_decl_ref() =>
@@ -1305,7 +1353,15 @@ impl Checker {
             // A mutability left to inference, spelled as upstream spells an
             // unbound parameter.
             _ => OriginMutability::Binder(ParamRef::unbound("_")),
-        }))
+        })))
+    }
+
+    /// The slot of the library `Origin`'s `mut` binder in its declared
+    /// list.
+    fn origin_mut_slot(&self) -> Option<usize> {
+        self.structs
+            .get("Origin")
+            .and_then(|info| info.params.iter().position(|decl| decl.name() == "mut"))
     }
 
     /// Whether the struct `name` names is `std.origin`'s `Origin`.

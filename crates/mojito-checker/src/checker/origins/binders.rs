@@ -256,6 +256,9 @@ impl Checker {
         use mojito_ast::ast::ParamArg;
         use mojito_types::origin::Origin;
 
+        if let Some(base) = super::raw_origin_argument(argument) {
+            return self.explicit_origin_argument(&base);
+        }
         let expression = match argument {
             ParamArg::Value(expression) => expression,
             ParamArg::Named { value, .. } => return self.explicit_origin_argument(value),
@@ -381,6 +384,9 @@ impl Checker {
         use mojito_ast::ast::ParamArg;
         use mojito_types::origin::{Mutability, Origin};
 
+        if let Some(base) = super::raw_origin_argument(argument) {
+            return self.resolve_origin_param_arg(&base);
+        }
         // A bare origin name spelled as a type argument is an origin name in
         // an origin slot.
         let type_arg_name = match argument {

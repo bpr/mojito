@@ -1029,6 +1029,7 @@ mod tests {
                     origin,
                     mutability: mojito_types::types::OriginMutability::Fixed(false),
                     infer_only: false,
+                    lit: false,
                 })
                 .collect(),
             explicit_destructors: HashMap::new(),

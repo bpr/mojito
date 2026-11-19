@@ -2168,7 +2168,7 @@ impl Checker {
             _ => match ty.kind() {
                 struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                     self.structs.get(name).is_some_and(|info| {
-                        info.decls().iter().any(|decl| decl.name() == field)
+                        info.params.iter().any(|decl| decl.name() == field)
                             && !info.fields.iter().any(|(name, _)| name == field)
                     })
                 }

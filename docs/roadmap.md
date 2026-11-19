@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2377**.
+Next free ID: **R2380**.
 
 ## Ordered Work
 
@@ -1379,6 +1379,23 @@ change that needs a new `MJRT_ABI_VERSION`.
 Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R2379 A subscript through a `ref` field read off a collection
+  element passes the VM a value where it wants a reference**
+
+  `print(sink[0].value[0])` over `struct RefBox[origin:
+  Origin[mut=True]]` holding `var value: ref[origin] List[Int]`, with
+  `sink: List[RefBox[origin_of(view)]]`, fails with "vm: the mut/ref
+  argument 0 to 'List$mono$TInt.__getitem__$ov$Int' must be a
+  reference", where the extension fixtures expect the element.
+  - The ref field's stored handle is not chased before the
+    `__getitem__` receiver is passed.
+  - Probe: `assets/extensions/ok/reference_element_chained_read.mojo`.
+  - Probe: `assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo`.
+  - Found while landing R2370 (2026-11-19); both already fail at
+    `3a322a838`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2094 A loan named only inside a type argument does not follow a
   move or copy of its holder**
@@ -2883,6 +2900,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     yields, `binder_scope`, and `closure_uses`' `BinderScope` read
     `CheckedSignature::argument_binders`, so no MIR body names an origin
     binder as a value.
+  - Probe: `comptime r = Self.o._mlir_origin` over `struct S[o:
+    ImmOrigin]` is rejected ("a raw origin of type 'LITImmOrigin' as a
+    compile-time value (R2344)"); the pin accepts it. A raw origin needs
+    the same in-scope value node, so `Origin[_mlir_origin=r]` can then
+    read it back.
   - Planned in R2139 (2026-11-18).
   - Depends on R2343.
   - Model: Fable, Planned.
@@ -2913,6 +2935,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 Track: `calls`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R2378 A thin function value bound to a callable parameter is not
+  callable in the VM**
+
+  `fs[0]()` over `def run_all[*fs: def() thin -> None, n: Int]()`, called
+  as `run_all[hi, bye, n=3]()`, fails at run time with "'hi' is not
+  callable" (`RuntimeError::NotCallable`), where the pin prints `hi`.
+  - Every probe calls a function symbol through a callable parameter or
+    pack element, so the concrete MIR hands the VM a symbol it does not
+    resolve to a function.
+  - Probe: `assets/ok/value_pack_callable_before_parameter.mojo`.
+  - Probe: `assets/ok/callable_pack_cases.mojo` ("'a' is not callable").
+  - Probe: `assets/ok/template_method_callable_parameter.mojo`
+    ("'show_int' is not callable").
+  - Found while landing R2370 (2026-11-19); all three already fail at
+    `3a322a838`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2194 A `ref.make` of a call argument claims a permission its source lacks**
 
@@ -10237,8 +10277,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A `Pointer[...]` application still builds `TyKind::Pointer` (the
     bridge), and the checker's member rules still win.
   - A member with no checker rule resolves to the declared body.
-  - The `_mlir_lit_ref` comptime keeps Mojito's rule until R2370 gives
-    `Origin` its `_mlir_origin`.
+  - `Origin` declares `_mlir_origin` (R2370), so the `_mlir_lit_ref`
+    comptime takes upstream's body (`!lit.ref<…, Self.origin._mlir_origin,
+    …>`) in place of Mojito's rule.
   - Probe: `p.as_imm()[]` is rejected; the pin prints the pointee.
   - Probe: R1463's `print(p)`.
   - Probe: a bare `UnsafePointer[Int, _]` parameter type with no import
@@ -10333,38 +10374,31 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2370 `Origin` declares no `_mlir_origin` parameter**
+- [ ] **R2377 A construction call binds a struct's origin `mut=` slot
+  from its constructor argument, not its explicit origin argument**
 
-  Upstream's header is `struct Origin[mut: Bool, _mlir_origin:
-  _lit_origin_type_of_mut[mut], //]`, where Mojito's `Origin` declares
-  only `mut`, so a `TyArg::Origin` is no struct argument a program can
-  name.
-  - `_lit_origin_type_of_mut` is declared and `!lit.origin<mut>` is
-    `TyKind::LitOrigin`; what remains is the header.
-  - Classify `_mlir_origin` as a `ParamDecl::Origin` whose mutability is
-    the `mut` binder (`origin_binder_decl` over an annotation resolving to
-    `TyKind::LitOrigin`), so `Origin`'s list has `Span`'s shape.
-  - `Origin[mut=m]`, `ImmOrigin`, `MutOrigin`, and bare `Origin` in type
-    position leave `_mlir_origin` unbound instead of failing with
-    `CannotInferTypeParam` (`resolve_partial_use_params`).
-  - `origin_annotation_mutability` reads `mut` by its declared slot, not
-    `args.first()`: an instance holds every declared parameter since
-    R2372, so `Origin[mut=True]` keeps its argument.
-  - Re-check every reader of `Origin`'s arguments: `immutable_origin_cast`
-    (`origins/sig.rs`), `fold_origin_alias_bounds` (`comptime/synth.rs`),
-    the parser's `Origin[mut=…]` case, `is_erased_origin_param`
-    (`mojito-ast`), `symbol.rs`, `module.rs`, and the `Origin[...]`
-    displays; the std build finds the rest loudly.
-  - Probe: `comptime O = Origin[_mlir_origin=origin_of(x)._mlir_origin]`,
-    then `O.mut`, prints `True` at the pin; Mojito rejects it.
-  - Probe: `comptime v: Int = Self.o._mlir_origin` over `o: ImmOrigin`
-    reports "unsupported associated comptime member access", where the pin
-    reports
-    "cannot implicitly convert 'LITImmOrigin' value to 'Int'".
-  - Re-run every `assets/ok/origin_*` and `struct_origin_*` fixture, and
-    `scripts/smoke --suites`, since the change reaches many sites.
-  - Found while landing R2209 (2026-11-19).
-  - Depends on R2372.
+  Over `struct View[mut: Bool, //, o: Origin[mut=mut]]`,
+  `View[ImmOrigin(origin_of(x))](Pointer(to=x))` builds `View[True, …]`,
+  where the pin builds `View[False, …]`, and the checked MIR then fails
+  verification.
+  - The funnel is `infer_construction` (`checker/declarations.rs`):
+    `partition_struct_origin_args` collects the explicit origin's
+    mutability, but the `mut=` value `place_struct_origins`
+    (`checker/origins/construct.rs`) places comes from the constructor
+    argument (`Pointer(to=x)`, mutable).
+  - Probe: `assets/ok/immutable_origin_struct_cast_of_immutable_origin.mojo`
+    ("argument 0 of 'imm_binder' has type View[true], declared
+    View[false]").
+  - Probe: `assets/ok/origin_parameter_before_value_parameter.mojo`
+    (`StringSpan[true]` against `StringSpan[false]`).
+  - Probe: `assets/ok/copy_argument_destroys_owner_first.mojo`
+    (`Span[true, Int]` against `Span[false, Int]`).
+  - Probe: `print(reflect[type_of(View[ImmOrigin(origin_of(x))](Pointer(to=x)))].name())`
+    prints `View[True, {}]`; the pin prints `View[False, {}, {}]` (the
+    third `{}` is R2371's).
+  - Found while landing R2370 (2026-11-19); it already fails at
+    `3a322a838`, probably since R2372 put `mut` into every instance.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2371 A binder typed by an `Origin` with an unbound `_mlir_origin`
@@ -10382,6 +10416,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     AnyType]` prints `U[{}, SIMD[DType.int, 1]]`; the pin prints `U[{},
     {}, SIMD[DType.int, 1]]`.
   - It is R1680's second `{}` beside an origin.
+  - Probe: `def f[m: Bool, o: Origin[mut=m]]` (`m` not infer-only) is
+    accepted, where the pin rejects it ("inferred parameter of type
+    'LITOrigin[m]' cannot depend on non-inferred parameter 'm'"): the
+    implicit `_mlir_origin` binder is upstream's reason.
   - Found while planning R2369 (2026-11-19).
   - Depends on R2370.
   - Model: Fable, Not Planned.
@@ -10853,8 +10891,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     binder in it pairs through `ParamDecl::aligned_pairs`.
   - Probe: `struct V[mut: Bool, //, origin: Origin[mut=mut]]` with `def
     m(self) -> Bool: return Self.mut`, called on `V[origin_of(a)](3)`,
-    fails with "'Self.mut' is not a type parameter of the enclosing
-    struct", where the pin prints `True`.
+    fails with "'mut' is not a compile-time constant here", where the pin
+    prints `True`.
   - Add an `assets/ok` fixture with a `mut=True` and a `mut=False`
     instance, and keep `Self.nope` rejecting with `UnknownSelfParam`.
   - Found while landing R2362's readers (2026-11-19).

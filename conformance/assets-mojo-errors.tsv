@@ -33,12 +33,13 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1239
+# swept-count	1242
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
 assets/type_error/method_bracket_origin_mismatch_struct_parameter.mojo	compile-reject	agree	error: invalid call to 'view': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(b)]' to 'Pointer[Int, origin_of(a)]'
 assets/type_error/method_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
+assets/type_error/mlir_origin_to_origin_slot.mojo	compile-reject	agree	error: value passed to 'o' cannot be converted from 'LITMutOrigin' to 'ImmOrigin', it depends on an unresolved parameter '$0'
 assets/type_error/module_alias_bracket_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/mut_origin_binder_generic_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(anonymous*)]' to 'Pointer[T, o]'
 assets/type_error/none_equality.mojo	compile-reject	agree	error: 'None' does not implement the '__eq__' method
@@ -50,6 +51,7 @@ assets/type_error/none_value_not_writable.mojo	compile-reject	agree	error: inval
 assets/type_error/origin_mutability_binder_function_value.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
 assets/type_error/origin_mutability_binder_where_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'only_mutable': violated constraint
 assets/type_error/origin_mutability_rejects_non_bool_binder.mojo	compile-reject	agree	error: 'Origin' parameter 'mut' has 'Bool' type, but value has type 'Int'
+assets/type_error/origin_value_to_mlir_origin_slot.mojo	compile-reject	agree	error: value passed to '_mlir_origin' cannot be converted from 'MutOrigin' to 'LITOrigin[$0]', it depends on an unresolved parameter '$0'
 assets/type_error/overloaded_function_value_binding.mojo	compile-reject	agree	error: cannot form a reference to overloaded declaration of 'f'
 assets/type_error/parametric_function_callable_default.mojo	compile-reject	agree	error: cannot implicitly convert 'def h[b: Int = Int(3)](y: Int) thin -> Int' value to 'def(Int) thin -> Int' in default parameter
 assets/type_error/parametric_function_callable_parameter.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'f' has 'def(Int) thin -> Int' type, but value has type 'def h[b: Int = Int(3)](y: Int) thin -> Int'
@@ -59,6 +61,7 @@ assets/type_error/parametric_function_returned.mojo	compile-reject	agree	error: 
 assets/type_error/parametric_function_value_assignment.mojo	compile-reject	agree	error: cannot implicitly convert 'def h[b: Int = Int(3)](y: Int) thin -> Int' value to 'def(y: Int) thin -> Int' in assignment
 assets/type_error/parametric_function_value_binding.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
 assets/type_error/parametric_nested_function_value_binding.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
+assets/type_error/struct_comptime_mlir_origin_not_int.mojo	compile-reject	agree	error: cannot implicitly convert 'LITImmOrigin' value to 'Int'
 assets/type_error/struct_not_deinitable_reason_abandoned.mojo	compile-reject	agree	error: 's' abandoned without being explicitly destroyed: call close() instead
 assets/type_error/struct_origin_binder_interior_is_distinct.mojo	compile-reject	agree	error: cannot implicitly convert 'S[o]' value to 'S[origin_of(o["e"])]'
 assets/type_error/struct_origin_binder_subtree_to_base.mojo	compile-reject	agree	error: cannot implicitly convert 'S[origin_of(origin_of(o).subtree)]' value to 'S[o]'

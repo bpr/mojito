@@ -4,6 +4,43 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// The origin `X` a raw-origin argument `X._mlir_origin` reads: upstream's
+/// `!lit.origin` attribute the `Origin` value `X` holds, spelled as a value
+/// (`origin_of(x)._mlir_origin`) or a type projection (`o._mlir_origin`).
+pub(in crate::checker) fn raw_origin_argument(
+    argument: &mojito_ast::ast::ParamArg,
+) -> Option<mojito_ast::ast::ParamArg> {
+    use mojito_ast::ast::{ParamArg, SourceType};
+    /// The raw attribute an origin value holds, upstream's
+    /// `Origin._mlir_origin`.
+    const MLIR_ORIGIN_FIELD: &str = "_mlir_origin";
+    match argument {
+        ParamArg::Value(Expr {
+            kind: ExprKind::Member { object, field },
+            ..
+        }) if field == MLIR_ORIGIN_FIELD => Some(ParamArg::Value((**object).clone())),
+        ParamArg::Type(SourceType::Assoc { base, name, args })
+            if name == MLIR_ORIGIN_FIELD && args.is_empty() =>
+        {
+            Some(ParamArg::Type((**base).clone()))
+        }
+        _ => None,
+    }
+}
+
+/// The type of an origin value of mutability `fixed` (`None` when it is
+/// symbolic): the `Origin` struct's (`MutOrigin`, `ImmOrigin`), or the raw
+/// `!lit.origin`'s (`LITMutOrigin`, `LITImmOrigin`) when `lit`.
+pub(in crate::checker) fn origin_value_type(fixed: Option<bool>, lit: bool) -> String {
+    match (fixed, lit) {
+        (Some(fixed), true) => mojito_types::types::LitOriginMut::Known(fixed).to_string(),
+        (None, true) => "LITOrigin".to_string(),
+        (Some(true), false) => "MutOrigin".to_string(),
+        (Some(false), false) => "ImmOrigin".to_string(),
+        (None, false) => "Origin".to_string(),
+    }
+}
+
 /// Recognize the current-nightly origin-attribute spelling
 /// `base._get_owned_interior["tag"]`. It is accepted only in origin clauses;
 /// ordinary expression typing still has no runtime member by this name.

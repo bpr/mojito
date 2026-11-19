@@ -1100,6 +1100,7 @@ pub(super) mod tests {
                 origin: mojito_types::origin::OriginParamId(0),
                 mutability: mojito_types::types::OriginMutability::Fixed(false),
                 infer_only: false,
+                lit: false,
             },
             value_decl("B", 1, "n", Ty::int()),
         ]

@@ -4440,6 +4440,7 @@ impl Checker {
                     reference.mutability == mojito_types::origin::Mutability::Mutable,
                 ),
                 infer_only: false,
+                lit: false,
             })
             .collect();
         let fields = storage

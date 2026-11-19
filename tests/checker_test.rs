@@ -10759,6 +10759,54 @@ fn struct_param_list_declares_origin_binders_in_place() {
 }
 
 #[test]
+fn raw_origin_binders_classify_as_lit_origins() {
+    // A binder typed by upstream's `!lit.origin<m>` (`_lit_origin_type_of_mut`)
+    // is an origin binder holding the raw attribute, its mutability the
+    // `Bool` binder it names, as `Origin`'s `_mlir_origin` is; a non-`Bool`
+    // mutability is the binding's mismatch, as at the pin.
+    let source = "from std.origin import _lit_origin_type_of_mut\n\nstruct R[mut: Bool, raw: _lit_origin_type_of_mut[mut], //]:\n    def __init__(out self):\n        pass\n\ndef main():\n    var x = 1\n    comptime T = R[raw=origin_of(x)._mlir_origin]\n    print(T.mut)\n";
+    let checked = checked_source_with_std(source, "raw_origin_binders.mojo").expect("check");
+    let module = checked
+        .statements()
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Struct { name, .. } if name == "R" => {
+                Some(statement.module.clone())
+            }
+            _ => None,
+        })
+        .expect("R");
+    let decls = checked
+        .checked()
+        .generic_parameters_at(&mojito::checked::GenericSite::Struct {
+            module,
+            declaration: "R".to_string(),
+        })
+        .expect("R's binders");
+    let [
+        mutability @ mojito::types::ParamDecl::Value { .. },
+        mojito::types::ParamDecl::Origin {
+            mutability: mojito::types::OriginMutability::Binder(binder),
+            lit: true,
+            ..
+        },
+    ] = decls
+    else {
+        panic!("mut, then a raw origin binder: {decls:?}");
+    };
+    assert_eq!(binder.id, *mutability.id());
+
+    let rejected = "from std.origin import _lit_origin_type_of_mut\n\nstruct R[n: Int, raw: _lit_origin_type_of_mut[n], //]:\n    def __init__(out self):\n        pass\n\ndef main():\n    print(1)\n";
+    let error = checked_source_with_std(rejected, "raw_origin_non_bool.mojo")
+        .map(|_| ())
+        .expect_err("a non-Bool raw origin mutability");
+    assert!(
+        error.to_string().contains("expected Bool, found Int"),
+        "{error}"
+    );
+}
+
+#[test]
 fn alias_typed_origin_binders_classify_as_origins() {
     // A binder typed by an alias of `Origin` is an origin binder, as
     // upstream resolves the alias like any other type: an imported alias,

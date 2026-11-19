@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Origin` now declares upstream's header, `struct Origin[mut: Bool,
+  _mlir_origin: _lit_origin_type_of_mut[mut], //]`, its `_mlir_origin` an
+  origin binder holding the raw `!lit.origin` (`ParamDecl::Origin`'s
+  `lit`). `Origin[_mlir_origin=origin_of(x)._mlir_origin]` binds it and
+  infers `mut`; an `Origin` value in that slot, a raw origin in an `Origin`
+  binder's slot, and `comptime v: Int = Self.o._mlir_origin` are the pin's
+  mismatches; and a type's `mut=` binder reads back as a member
+  (`ImmOrigin.mut`, `Span[Int, origin_of(x)].mut`). The package format
+  moves to `mojito-package 238` (R2370).
 - A struct instance now holds an argument for each of its origins' `mut=`
   binders in place, as upstream's does, so `Span[mut=True, Int, _]` and
   `Span[mut=False, Int, _]` are distinct types, a mutable span converts to

@@ -1898,21 +1898,9 @@ impl Checker {
         &self,
         origin: &mojito_ast::ast::ParamArg,
     ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-        use mojito_ast::ast::ParamArg;
-        match origin {
-            ParamArg::Value(Expr {
-                kind: ExprKind::Member { object, field },
-                ..
-            }) if field == MLIR_ORIGIN_FIELD => {
-                self.pointer_origin_arg(&ParamArg::Value((**object).clone()))
-            }
-            ParamArg::Type(SourceType::Assoc { base, name, args })
-                if name == MLIR_ORIGIN_FIELD && args.is_empty() =>
-            {
-                self.pointer_origin_arg(&ParamArg::Type((**base).clone()))
-            }
-            _ => Err(unsupported_mlir_type()),
-        }
+        super::raw_origin_argument(origin)
+            .ok_or_else(unsupported_mlir_type)
+            .and_then(|base| self.pointer_origin_arg(&base))
     }
 
     /// The elements of a type list's raw `values` (`Self.Ts.values`,
@@ -2338,6 +2326,16 @@ impl Checker {
                 &partitioned.explicit_origins,
             )?;
             let value = self.origin_mutability_argument_value(binder, argument);
+            if let CtValue::Expr(read) = &value
+                && let Some(found) = read.meta().as_value()
+                && !found.kind().is_bool()
+            {
+                return Err(TypeError::TypeMismatch {
+                    expected: "Bool".to_string(),
+                    found: found.to_string(),
+                    context: format!("parameter '{}' of '{name}'", binder.name()),
+                });
+            }
             kept.bind(slot, position, Some(TyArg::Val(value.clone())));
             partitioned.mutabilities.push((binder.id().clone(), value));
         }
@@ -2796,6 +2794,37 @@ impl Checker {
         let mut value = argument;
         while let mojito_ast::ast::ParamArg::Named { value: inner, .. } = value {
             value = inner;
+        }
+        // The raw `!lit.origin` an `X._mlir_origin` reads and the `Origin`
+        // value `X` are distinct types: each binder takes only its own.
+        if let ParamDecl::Origin {
+            mutability: declared,
+            lit,
+            ..
+        } = decl
+            && !origin_placeholder(value)
+            && super::raw_origin_argument(value).is_some() != *lit
+        {
+            use mojito_types::origin::Mutability;
+            // The argument's own mutability, before an immutable slot
+            // narrowed it.
+            let own = self
+                .resolve_origin_param_arg(value)
+                .map_or(mutability, |(_, own)| own);
+            let fixed = match own {
+                Some(Mutability::Mutable) => Some(true),
+                Some(Mutability::Immutable) => Some(false),
+                _ => None,
+            };
+            let expected = match declared {
+                OriginMutability::Fixed(fixed) => super::origin_value_type(Some(*fixed), *lit),
+                other => other.binder_type(*lit),
+            };
+            return Err(TypeError::TypeMismatch {
+                expected,
+                found: super::origin_value_type(fixed, !*lit),
+                context: format!("value passed to '{}' of '{struct_name}'", decl.name()),
+            });
         }
         let attribute = TyArg::Origin(origin);
         Ok(match value {
@@ -5804,10 +5833,6 @@ fn project_pointer_origin(
         })
 }
 
-/// The raw attribute an origin value holds, upstream's
-/// `Origin._mlir_origin`.
-const MLIR_ORIGIN_FIELD: &str = "_mlir_origin";
-
 fn unsupported_mlir_type() -> TypeError {
     TypeError::Unsupported(
         "this MLIR type spelling is outside the supported subset; only \
@@ -6046,8 +6071,8 @@ fn check_origin_mutability_argument(
         ParamArg::Value(expression) => match &expression.kind {
             ExprKind::Bool(literal) => Some(*literal),
             ExprKind::Identifier(_) | ExprKind::Member { .. } => None,
-            ExprKind::Int(_) => return Err(mismatch("Int")),
-            ExprKind::Float(_) => return Err(mismatch("Float64")),
+            ExprKind::Int(_) => return Err(mismatch("IntLiteral")),
+            ExprKind::Float(_) => return Err(mismatch("FloatLiteral")),
             ExprKind::Str(_) => return Err(mismatch("StringLiteral")),
             _ => None,
         },

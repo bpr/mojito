@@ -2543,17 +2543,21 @@ fn param_decl(value: &ParamDecl) -> String {
             origin,
             mutability,
             infer_only,
-        } => record(
-            "origin_binder",
-            &[
+            lit,
+        } => {
+            let mut fields = vec![
                 ("owner", quote(&id.owner)),
                 ("slot", id.slot.to_string()),
                 ("name", symbol(name)),
                 ("origin", origin.0.to_string()),
                 ("mutability", origin_mutability(mutability)),
                 ("infer_only", infer_only.to_string()),
-            ],
-        ),
+            ];
+            if *lit {
+                fields.push(("lit", "true".into()));
+            }
+            record("origin_binder", &fields)
+        }
     }
 }
 

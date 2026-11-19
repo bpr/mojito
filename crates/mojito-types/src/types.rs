@@ -3126,6 +3126,12 @@ pub enum ParamDecl {
         origin: crate::origin::OriginParamId,
         mutability: OriginMutability,
         infer_only: bool,
+        /// Whether the binder holds the raw `!lit.origin<m>` attribute
+        /// (`_mlir_origin: _lit_origin_type_of_mut[mut]`) rather than the
+        /// `Origin` struct value; both fill the slot with one
+        /// [`TyArg::Origin`], and only the argument check and the binder's
+        /// displayed type (`LITOrigin[m]`) tell them apart.
+        lit: bool,
     },
 }
 
@@ -3138,6 +3144,19 @@ pub enum OriginMutability {
     Binder(ParamRef),
     /// An `OriginSet`, the origins a capturing callable's environment holds.
     Set,
+}
+
+impl OriginMutability {
+    /// The type a binder of this mutability declares: `Origin[mut=m]`, or
+    /// upstream's `LITOrigin[m]` (`LITImmOrigin`, `LITMutOrigin`) for a
+    /// binder holding the raw `!lit.origin<m>` attribute.
+    pub fn binder_type(&self, lit: bool) -> String {
+        match self {
+            Self::Fixed(fixed) if lit => LitOriginMut::Known(*fixed).to_string(),
+            Self::Binder(binder) if lit => format!("LITOrigin[{}]", binder.name),
+            _ => self.to_string(),
+        }
+    }
 }
 
 impl fmt::Display for OriginMutability {
@@ -3585,7 +3604,9 @@ impl ParamDecl {
                 bounds_text(bounds)
             }
             Self::Value { ty, .. } => decl.value_element_ty().unwrap_or(ty).to_string(),
-            Self::Origin { mutability, .. } => mutability.to_string(),
+            Self::Origin {
+                mutability, lit, ..
+            } => mutability.binder_type(*lit),
         };
         Some((decl.name().to_string(), declared))
     }
@@ -5045,8 +5066,11 @@ pub fn write_param_decls(f: &mut fmt::Formatter<'_>, decls: &[ParamDecl]) -> fmt
                 write!(f, "{name}: {}", decl.value_element_ty().unwrap_or(ty))?;
             }
             ParamDecl::Origin {
-                name, mutability, ..
-            } => write!(f, "{name}: {mutability}")?,
+                name,
+                mutability,
+                lit,
+                ..
+            } => write!(f, "{name}: {}", mutability.binder_type(*lit))?,
         }
     }
     write!(f, "]")
@@ -6154,6 +6178,7 @@ pub fn canonical_generic_signature(
                 origin,
                 mutability,
                 infer_only: _,
+                lit,
             } => {
                 let canonical_name = format!("${index}");
                 let canonical_id = ParamId::new(CONTRACT_BINDER_OWNER, index);
@@ -6179,6 +6204,7 @@ pub fn canonical_generic_signature(
                     origin: *origin,
                     mutability,
                     infer_only: false,
+                    lit: *lit,
                 }
             }
         })
@@ -10066,6 +10092,7 @@ mod instance_layout_tests {
                 origin: OriginParamId(1),
                 mutability: OriginMutability::Binder(m),
                 infer_only: true,
+                lit: false,
             },
             ParamDecl::Type {
                 id: ParamId::new("S", 2),

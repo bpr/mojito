@@ -367,6 +367,20 @@ impl Checker {
                 if member.params.is_empty() {
                     // A call is the application of its callee over the
                     // struct's parameters, which each instance evaluates.
+                    if let Some(found) = self.raw_origin_read(&member.value) {
+                        return Err(match &requirement {
+                            Some(CtMemberReq::Value(declared))
+                                if !matches!(declared.kind(), TyKind::LitOrigin(_)) =>
+                            {
+                                TypeError::TypeMismatch {
+                                    expected: declared.to_string(),
+                                    found,
+                                    context: format!("comptime member '{}'", member.name),
+                                }
+                            }
+                            _ => raw_origin_value_unsupported(&found),
+                        });
+                    }
                     let _lifting = self.lifting_position();
                     let mut value = self.eval_associated_ct(&member.value)?;
                     if let Some(CtMemberReq::Value(declared)) = &requirement {
@@ -628,6 +642,20 @@ impl Checker {
         let mut body = value.clone();
         body.kind = applied.kind;
         Ok(Some((generator_params, body)))
+    }
+
+    /// The type of the raw origin `body` reads (`Self.o._mlir_origin`),
+    /// upstream's `LITImmOrigin`, `LITMutOrigin`, or `LITOrigin[m]`; `None`
+    /// when `body` reads no origin's `_mlir_origin`.
+    fn raw_origin_read(&self, body: &Expr) -> Option<String> {
+        let base = super::raw_origin_argument(&mojito_ast::ast::ParamArg::Value(body.clone()))?;
+        let (_, mutability) = self.resolve_origin_param_arg(&base).ok()?;
+        let fixed = match mutability {
+            Some(mojito_types::origin::Mutability::Mutable) => Some(true),
+            Some(mojito_types::origin::Mutability::Immutable) => Some(false),
+            _ => None,
+        };
+        Some(super::origin_value_type(fixed, true))
     }
 
     /// The value of a `comptime` member whose body `body` evaluated to
@@ -3446,6 +3474,9 @@ impl Checker {
                     func: function.to_string(),
                     reason: "cannot call raising function in type parameter".to_string(),
                 },
+                (None, ExprKind::Member { .. }) if let Some(found) = self.raw_origin_read(expr) => {
+                    raw_origin_value_unsupported(&found)
+                }
                 (None, ExprKind::Member { object, field }) => self
                     .undeclared_struct_member(object, field)
                     .unwrap_or_else(|| {
@@ -4379,8 +4410,9 @@ impl Checker {
         let (owner, arguments) = mojito_types::types::nominal_parts(base.meta().as_value()?)?;
         let owner = mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner);
         let info = self.structs.get(owner)?;
-        let index = info.decls().iter().position(|decl| decl.name() == field)?;
-        match info.view_arguments(&arguments).get(index)? {
+        let (_, argument) = ParamDecl::aligned_pairs(&info.params, &arguments)
+            .find(|(decl, _)| decl.name() == field)?;
+        match argument {
             TyArg::Val(CtValue::Expr(argument)) => Some(argument.clone()),
             TyArg::Val(value) => self.param_context.constant(value.clone()).ok(),
             TyArg::Ty(ty) => Some(self.param_context.type_shape(ty.clone())),
@@ -4545,7 +4577,7 @@ impl Checker {
                 let (name, arguments) = mojito_types::types::nominal_parts(&subject)?;
                 let info = self.structs.get(name)?;
                 let declared = info.associated_value_types.get(field).or_else(|| {
-                    info.argument_binders().find_map(|decl| match decl {
+                    info.params.iter().find_map(|decl| match decl {
                         ParamDecl::Value { name, ty, .. } if name == field => Some(ty),
                         _ => None,
                     })
@@ -6733,16 +6765,19 @@ impl Checker {
         arguments: &[TyArg],
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
-        let slot = info.decls().iter().position(|decl| {
-            matches!(decl, ParamDecl::Value { .. }) && decl.name().trim_start_matches('*') == field
-        })?;
-        let TyArg::Val(value) = info.view_arguments(arguments).get(slot)?.clone() else {
+        let (decl, TyArg::Val(value)) =
+            ParamDecl::aligned_pairs(&info.params, arguments).find(|(decl, _)| {
+                matches!(decl, ParamDecl::Value { .. })
+                    && decl.name().trim_start_matches('*') == field
+            })?
+        else {
             return None;
         };
+        let value = value.clone();
         let context = &self.param_context;
         // A function symbol holds no signature: it is a value of the
         // parameter's declared callable type.
-        if let (CtValue::FuncSymbol(_), ParamDecl::Value { ty, .. }) = (&value, &info.decls()[slot])
+        if let (CtValue::FuncSymbol(_), ParamDecl::Value { ty, .. }) = (&value, decl)
             && !mojito_types::types::is_symbolic(ty)
         {
             return Some(context.constant_as(value.clone(), ty).map_err(param_error));
@@ -7297,6 +7332,14 @@ fn type_list_receiver(list: ParamExpr) -> TypeListReceiver {
 fn derived_list_query(list: &ParamExpr, query: &str) -> TypeError {
     TypeError::Unsupported(format!(
         "TypeList.{query} over the computed list '{list}' whose packs are still parameters"
+    ))
+}
+
+/// A raw origin of type `found` read as a compile-time value, which needs
+/// an origin binder to be a value in scope (R2344).
+fn raw_origin_value_unsupported(found: &str) -> TypeError {
+    TypeError::Unsupported(format!(
+        "a raw origin of type '{found}' as a compile-time value (R2344)"
     ))
 }
 

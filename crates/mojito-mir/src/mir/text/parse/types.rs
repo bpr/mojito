@@ -501,6 +501,10 @@ impl Decoder {
                 let origin = self.req(value, fields, "origin", Self::uint32)?;
                 let mutability = self.req(value, fields, "mutability", Self::origin_mutability)?;
                 let infer_only = self.req(value, fields, "infer_only", Self::boolean)?;
+                let lit = match self.field(fields, "lit") {
+                    Ok(lit) => self.boolean(lit)?,
+                    Err(()) => false,
+                };
                 self.unknown(
                     fields,
                     &[
@@ -510,6 +514,7 @@ impl Decoder {
                         "origin",
                         "mutability",
                         "infer_only",
+                        "lit",
                     ],
                 );
                 let id = self.binder_id(value, fields, &name)?;
@@ -519,6 +524,7 @@ impl Decoder {
                     origin: OriginParamId(origin),
                     mutability,
                     infer_only,
+                    lit,
                 })])
             }
             other => {
