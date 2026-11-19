@@ -912,18 +912,16 @@ impl Checker {
             if !seen.insert(tp.name.clone()) {
                 return Err(TypeError::Redeclaration(tp.name.clone()));
             }
-            // An `Origin` or `OriginSet` parameter is declared in place, as
-            // upstream declares it, and so is the infer-only `Bool` binding
-            // a sibling origin's `mut=`, an ordinary value binder. Instances
-            // and calls infer both from places rather than binding them by
-            // position ([`ParamDecl::is_argument_binder`]).
-            if let Some(origin) = origin_param_decl(tp, enclosing + index, binder_id(decls.len())) {
+            // An origin binder is a value parameter whose type resolves to
+            // `std.origin`'s `Origin`, as upstream resolves its annotation,
+            // declared in place; the infer-only `Bool` binding a sibling
+            // origin's `mut=` is an ordinary scalar value binder below.
+            // Instances and calls infer both from places rather than binding
+            // them by position ([`ParamDecl::is_argument_binder`]).
+            if let Some(origin) =
+                self.origin_binder_decl(tp, enclosing + index, binder_id(decls.len()))
+            {
                 decls.push(origin);
-                continue;
-            }
-            if tp.is_origin_mutability_binder(tps) {
-                let decl = self.value_param_decl(tp, binder_id(decls.len()), Ty::bool())?;
-                decls.push(decl);
                 continue;
             }
             if let Some(value_type) = &tp.value_type {
@@ -1206,6 +1204,90 @@ impl Checker {
         self.ty_from_anno(&SourceType::Named(only.clone(), Vec::new()))
             .ok()
             .filter(|ty| !matches!(ty.kind(), TyKind::Trait(_) | TyKind::AnyTrait(_)))
+    }
+
+    /// The origin binder `tp`, numbered `index` (its slot in its source
+    /// list, past any enclosing binders), declares at the identity `id`: a
+    /// binder whose annotation resolves to `std.origin`'s `Origin` (`o:
+    /// Origin[mut=m]`, `o: ImmOrigin`, `o: O[True]`), with the mutability
+    /// its `mut` argument fixes or names, or an `OriginSet` one. `None` for
+    /// any other parameter, a trait-bounded one included.
+    fn origin_binder_decl(
+        &self,
+        tp: &mojito_ast::ast::TypeParam,
+        index: usize,
+        id: ParamId,
+    ) -> Option<ParamDecl> {
+        if tp.callable_bound.is_some() || tp.name.starts_with('*') {
+            return None;
+        }
+        let mutability = match tp.bounds.as_slice() {
+            // A builtin identity until it is declared as upstream's
+            // `!lit.origin.set` type (R2343).
+            [only] if only == "OriginSet" => OriginMutability::Set,
+            [only] if tp.value_type.is_none() && self.check_trait_name(only).is_ok() => {
+                return None;
+            }
+            _ => self.origin_annotation_mutability(&tp.annotation()?)?,
+        };
+        Some(ParamDecl::Origin {
+            id,
+            name: tp.name.clone(),
+            origin: mojito_types::origin::OriginParamId(u32::try_from(index).unwrap_or(u32::MAX)),
+            mutability,
+            infer_only: tp.infer_only,
+        })
+    }
+
+    /// The mutability of the library `Origin` type `annotation` resolves
+    /// to, its `mut` argument fixed, naming a binder, or left unbound
+    /// (`o: Origin`, `o: Origin[mut=_]`), as upstream's partial
+    /// `#kgen.bind_params` leaves it; `None` when it resolves to another
+    /// type or to none.
+    fn origin_annotation_mutability(&self, annotation: &SourceType) -> Option<OriginMutability> {
+        let mutability = if let Ok(ty) = self.ty_from_anno(annotation) {
+            let TyKind::Struct(name, args) = ty.kind() else {
+                return None;
+            };
+            if !self.is_library_origin(name) {
+                return None;
+            }
+            args.first().cloned()
+        } else {
+            let SourceType::Named(name, args) = annotation else {
+                return None;
+            };
+            if !self.is_library_origin(name) {
+                return None;
+            }
+            if args.is_empty() {
+                None
+            } else {
+                let decls = &self.structs.get(name)?.params;
+                let (bound, _) = self.resolve_partial_use_params(name, decls, args).ok()?;
+                bound.into_iter().next().flatten()
+            }
+        };
+        Some(match &mutability {
+            Some(TyArg::Val(CtValue::Bool(fixed))) => OriginMutability::Fixed(*fixed),
+            Some(TyArg::Val(CtValue::Expr(mutability)))
+                if let Some(binder) = mutability.as_decl_ref() =>
+            {
+                OriginMutability::Binder(ParamRef::unbound(&binder.name))
+            }
+            // A mutability left to inference, spelled as upstream spells an
+            // unbound parameter.
+            _ => OriginMutability::Binder(ParamRef::unbound("_")),
+        })
+    }
+
+    /// Whether the struct `name` names is `std.origin`'s `Origin`.
+    fn is_library_origin(&self, name: &str) -> bool {
+        name == "Origin"
+            && self
+                .structs
+                .get(name)
+                .is_some_and(|info| info.module == ORIGIN_MODULE)
     }
 
     /// The trait-valued binder `name` names where a list being classified
@@ -5942,42 +6024,8 @@ fn fieldwise_arguments(
         .collect())
 }
 
-/// The origin binder `tp`, numbered `index` (its slot in its source list,
-/// past any enclosing binders),
-/// declares (`o: Origin[mut=m]`, `o: OriginSet`) at the identity `id`;
-/// `None` for any other parameter.
-fn origin_param_decl(
-    tp: &mojito_ast::ast::TypeParam,
-    index: usize,
-    id: ParamId,
-) -> Option<ParamDecl> {
-    let mutability = match tp.bounds.as_slice() {
-        [only] if only == "OriginSet" => OriginMutability::Set,
-        [only] if only == "Origin" => match tp.origin_mutability.as_ref().map(|expr| &expr.kind) {
-            Some(ExprKind::Bool(fixed)) => OriginMutability::Fixed(*fixed),
-            Some(ExprKind::Identifier(binder)) => {
-                OriginMutability::Binder(ParamRef::unbound(binder))
-            }
-            // A binder of the enclosing declaration (`mut=Self.mut`).
-            Some(ExprKind::Member { object, field })
-                if let ExprKind::Identifier(base) = &object.kind =>
-            {
-                OriginMutability::Binder(ParamRef::unbound(&format!("{base}.{field}")))
-            }
-            // A mutability left to inference, spelled as upstream spells
-            // an unbound parameter.
-            _ => OriginMutability::Binder(ParamRef::unbound("_")),
-        },
-        _ => return None,
-    };
-    Some(ParamDecl::Origin {
-        id,
-        name: tp.name.clone(),
-        origin: mojito_types::origin::OriginParamId(u32::try_from(index).unwrap_or(u32::MAX)),
-        mutability,
-        infer_only: tp.infer_only,
-    })
-}
+/// The module declaring the library `Origin` an origin binder's type resolves to.
+const ORIGIN_MODULE: &str = "std.origin";
 
 /// The `TyKind::Param` of the earlier, non-variadic type binder `name` names in a
 /// list being classified.

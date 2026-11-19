@@ -2821,52 +2821,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2339 A binder typed by a parameterized origin alias is not an
-  origin binder**
-
-  `comptime O[m: Bool] = Origin[mut=m]` with `def f[o: O[True]](ref[o] x:
-  Int)` is rejected ("Undefined variable 'o'"), where the pin runs it.
-  - Cause: the check classifies an origin binder by its bound's spelling
-    (`origin_param_decl`, `checker/declarations.rs`, matching
-    `bounds == ["Origin"]` and reading `TypeParam::origin_mutability`).
-  - `fold_origin_alias_bounds` (`comptime/synth.rs`) rewrites only an
-    unparameterized alias to that spelling, so `O[True]` stays unfolded.
-  - Upstream's origin binder is an ordinary value parameter whose type is
-    the library's `Origin[mut=m]`, resolved as any other type.
-  - Lever: add `TypeParam::annotation` (`mojito-ast`), the binder's type
-    as written: its `value_type`, else `Origin[mut=e]` rebuilt from
-    `origin_mutability`, else its lone bound.
-  - Resolve it with `ty_from_anno`, with the list's earlier binders in
-    scope, before `classify_params_in_scope`'s other branches.
-  - `TyKind::Struct("Origin", [mut])` from `std.origin` gives
-    `ParamDecl::Origin`, and the `OriginSet` identity gives the set kind.
-  - Map the `mut` argument: a fixed bool is `Fixed`, a sibling binder is
-    `Binder`, an unbound slot is `Binder("_")`.
-  - The mutability-binder test there reads the classified sibling
-    (`ParamDecl::is_origin_mutability_binder`), not the AST predicate.
-  - Unverified: that `ty_from_anno` maps a sibling `mut` binder to a
-    `TyArg` naming it. Check it first.
-  - Unverified: whether `auto_parameterize` mistakes the unfolded
-    `O[True]` binder for a value parameter. If it does, also fold a
-    parameterized alias there, since pre-check consumers keep the
-    spelling until R2342.
-  - The parser keeps its `Origin[mut=…]` special case.
-  - Stop: the probe prints `2`, and with the fold disabled locally
-    `assets/ok/origin_comptime_alias.mojo`,
-    `assets/ok/imm_origin_binders.mojo`, and
-    `assets/type_error/origin_alias_binder_rejects_immutable_pointer.mojo`
-    keep their verdicts. Restore the fold afterwards.
-  - Add the probe as `assets/ok/origin_parameterized_alias_binder.mojo`,
-    plus a checker test that an imported, an own, and a parameterized
-    alias classify to `ParamDecl::Origin`.
-  - Probe:
-    `comptime O[m: Bool] = Origin[mut=m]` /
-    `def f[o: O[True]](ref[o] x: Int): x += 1` /
-    `def main(): var a = 1; f(a); print(a)`.
-  - Planned in R2139 (2026-11-18).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2340 Checker sites holding a classified parameter list still
   read the origin binder's AST bound**
 
@@ -2913,6 +2867,23 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     re-read the bound.
   - Stop: the R2340 `rg` finds only R2339's resolution and the builtin
     origin-name reads R2343 owns.
+  - Stop, moved from R2339: with `fold_origin_alias_bounds` disabled
+    locally, `assets/ok/origin_comptime_alias.mojo`,
+    `assets/ok/imm_origin_binders.mojo`,
+    `assets/ok/origin_parameterized_alias_binder.mojo`, and
+    `assets/type_error/origin_alias_binder_rejects_immutable_pointer.mojo`
+    keep their verdicts. Restore the fold afterwards.
+    - Today the fold-off build fails packaging std ("'Self.o' is not a
+      type parameter of the enclosing struct", R2340's
+      `enclosing_origin_type_param`), then at
+      `validate_origin_signature` (`origins/interior.rs`).
+    - If pre-check readers still misclassify then, this check moves to
+      R2342.
+  - Probe: `def f[o: Origin[mut=_]](ref[o] x: Int) -> Int: return x` /
+    `def main(): var a = 1; print(f(a))` prints `1` at the pin; Mojito
+    rejects it ("origin mutability for 'o' must be Bool or a Bool
+    parameter", `validate_origin_signature` reading the spelled `_`),
+    though the check classifies the binder as unbound.
   - Planned in R2139 (2026-11-18).
   - Depends on R2340.
   - Model: Fable, Planned.
@@ -9490,7 +9461,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   which matches `bounds == ["Origin"]`, because they run on AST before the
   check, where upstream has one elaborator resolving the binder's type.
   - `fold_origin_alias_bounds` (`comptime/synth.rs`) exists only to give
-    these phases that spelling for an alias-typed binder.
+    these phases that spelling for an alias-typed binder, a parameterized
+    alias applied to its arguments (`[o: O[True]]`) included; it goes
+    with the rest.
   - Other readers: `module.rs` (two), `trait_defaults.rs`,
     `constraints.rs`, `comptime_validation.rs`, and
     `type_resolution.rs` through the same predicate.

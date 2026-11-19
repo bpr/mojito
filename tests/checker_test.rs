@@ -10741,6 +10741,54 @@ fn struct_param_list_declares_origin_binders_in_place() {
 }
 
 #[test]
+fn alias_typed_origin_binders_classify_as_origins() {
+    // A binder typed by an alias of `Origin` is an origin binder, as
+    // upstream resolves the alias like any other type: an imported alias,
+    // the program's own, and a parameterized one applied to a fixed
+    // mutability or to a sibling `mut` binder.
+    let source = "comptime M = Origin[mut=True]\ncomptime O[m: Bool] = Origin[mut=m]\n\ndef f[o1: ImmOrigin, o2: M, o3: O[False], mm: Bool, //, o4: O[mm]](a: Pointer[Int, o1], b: Pointer[Int, o2], c: Pointer[Int, o3], d: Pointer[Int, o4]) -> Int:\n    return a[] + b[] + c[] + d[]\n\ndef main():\n    var x = 1\n    var y = 2\n    var z = 3\n    var w = 4\n    print(f(Pointer(to=x), Pointer(to=y), Pointer(to=z), Pointer(to=w)))\n";
+    let checked = checked_source_with_std(source, "alias_origin_binders.mojo").expect("check");
+    let statement = checked
+        .statements()
+        .iter()
+        .find(|statement| {
+            matches!(&statement.kind, mojito::ast::StmtKind::Def { name, .. } if name == "f")
+        })
+        .expect("def 'f'");
+    let site = mojito::checked::GenericSite::Function {
+        module: statement.module.clone(),
+        declaration: statement.span,
+        syntax: statement.syntax_id,
+    };
+    let decls = checked
+        .checked()
+        .generic_parameters_at(&site)
+        .expect("f's binders");
+    let mutability = |wanted: &str| {
+        decls
+            .iter()
+            .find_map(|decl| match decl {
+                mojito::types::ParamDecl::Origin {
+                    name, mutability, ..
+                } if name == wanted => Some(mutability.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("'{wanted}' is an origin binder: {decls:?}"))
+    };
+    use mojito::types::OriginMutability::{Binder, Fixed};
+    assert_eq!(mutability("o1"), Fixed(false));
+    assert_eq!(mutability("o2"), Fixed(true));
+    assert_eq!(mutability("o3"), Fixed(false));
+    let mm = decls.iter().find(|decl| decl.name() == "mm").expect("mm");
+    assert!(matches!(mm, mojito::types::ParamDecl::Value { .. }));
+    assert!(mm.is_origin_mutability_binder(decls));
+    let Binder(binder) = mutability("o4") else {
+        panic!("o4's mutability is a binder");
+    };
+    assert_eq!(&binder.id, mm.id());
+}
+
+#[test]
 fn function_and_method_param_lists_declare_origin_binders_in_place() {
     // A function's and a method's checked lists hold their origin binders
     // in declared order, as a struct's does; a call binds only the

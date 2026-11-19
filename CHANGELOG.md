@@ -861,6 +861,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A binder typed by a parameterized alias of `Origin` (`comptime O[m:
+  Bool] = Origin[mut=m]` with `def f[o: O[True]](ref[o] x: Int)`, `[mm:
+  Bool, //, o: O[mm]]`, or a struct's `[o: O[False]]`) is now an origin
+  binder, as at the pin, where it was rejected ("Undefined variable 'o'").
+  The check now classifies an origin binder by its annotation's resolved
+  type, `std.origin`'s `Origin`, as upstream resolves it, rather than by
+  its bound's spelling (R2339).
+
 - A construction whose arguments infer a struct's `Origin[mut=False]`
   slot (`ItemIter(self.value, False)`) now binds the inferred origin's
   `ImmOrigin(o)` cast, as upstream's conversion to the slot's type does,

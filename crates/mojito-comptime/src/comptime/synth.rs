@@ -477,19 +477,23 @@ pub(super) fn fold_simd_alias_bounds(
 }
 
 /// Fold a binder whose type is an alias of an origin type (`[o: MutOrigin]`,
-/// `comptime O = Origin[mut=True]` with `[o: O]`) into the spelling the
-/// parser gives `[o: Origin[mut=True]]`: the `Origin` bound with the alias's
-/// mutability, none for a bare `Origin`. Upstream resolves the alias as
-/// any other type spelling; the specialization registry classifies an
-/// origin binder by its bound, so the alias resolves here, before it does.
-/// The program's own module aliases resolve through chains of other
-/// aliases, and an imported package's aliases, as its build checked them,
-/// by the bound's name.
+/// `comptime O = Origin[mut=True]` with `[o: O]`), or a parameterized one
+/// applied to its arguments (`comptime O[m: Bool] = Origin[mut=m]` with
+/// `[o: O[True]]`), into the spelling the parser gives
+/// `[o: Origin[mut=True]]`: the `Origin` bound with the alias's mutability,
+/// none for a bare `Origin`. Upstream resolves the alias as any other type
+/// spelling, and the check classifies the binder by that resolved type; the
+/// pre-check readers (the specialization registry, auto-parameterization,
+/// mangling) still classify an origin binder by its bound, so the alias
+/// resolves here, before they run, until they read the resolved type
+/// (R2342). The program's own module aliases resolve through chains of
+/// other aliases, and an imported package's aliases, as its build checked
+/// them, by the bound's name.
 pub(super) fn fold_origin_alias_bounds(
     program: &mut [Stmt],
     installed: Option<&InstalledInterfaces>,
 ) {
-    let aliases: HashMap<String, Expr> = program
+    let aliases: HashMap<String, (Vec<TypeParam>, Expr)> = program
         .iter()
         .filter_map(|statement| match &statement.kind {
             StmtKind::Comptime {
@@ -497,7 +501,7 @@ pub(super) fn fold_origin_alias_bounds(
                 type_params,
                 value,
                 ..
-            } if type_params.is_empty() => Some((name.clone(), value.clone())),
+            } => Some((name.clone(), (type_params.clone(), value.clone()))),
             _ => None,
         })
         .collect();
@@ -744,11 +748,11 @@ impl mojito_ast::visit::MutVisitor for KgenTypeFold<'_> {
     }
 }
 
-/// The [`fold_origin_alias_bounds`] walk: the program's own module aliases,
-/// the imported package, and the span of the statement being walked, which
-/// an imported alias's mutability is spelled at.
+/// The [`fold_origin_alias_bounds`] walk: the program's own module aliases
+/// with their binders, the imported package, and the span of the statement
+/// being walked, which an imported alias's mutability is spelled at.
 struct OriginAliasFold<'a> {
-    aliases: HashMap<String, Expr>,
+    aliases: HashMap<String, (Vec<TypeParam>, Expr)>,
     installed: Option<&'a InstalledInterfaces>,
     span: Span,
 }
@@ -761,43 +765,73 @@ enum AliasedOrigin {
 }
 
 impl OriginAliasFold<'_> {
-    /// The origin type the alias `name` names, if it names one.
-    fn aliased_origin(&self, name: &str) -> Option<AliasedOrigin> {
-        let mut name = name;
+    /// The origin type the alias `name` applied to `args` names, if it names
+    /// one: each alias's binders bound to the arguments supplied to it, and
+    /// its value read with them substituted, through chains of aliases.
+    fn aliased_origin(&self, name: &str, args: &[ParamArg]) -> Option<AliasedOrigin> {
+        let mut name = name.to_string();
+        let mut args = args.to_vec();
         for _ in 0..=self.aliases.len() {
-            let Some(value) = self.aliases.get(name) else {
-                return self.imported_aliased_origin(name);
+            let Some((binders, value)) = self.aliases.get(&name) else {
+                return self.imported_aliased_origin(&name, &args);
             };
+            let mut value = value.clone();
+            mojito_ast::visit::walk_expr_mut(
+                &mut SubstituteBinders(bind_alias_arguments(binders, &args)?),
+                &mut value,
+            );
             match &value.kind {
                 ExprKind::Identifier(next) if next == "Origin" => {
                     return Some(AliasedOrigin::Open);
                 }
-                ExprKind::Identifier(next) => name = next,
+                ExprKind::Identifier(next) => {
+                    name.clone_from(next);
+                    args.clear();
+                }
                 _ => {
-                    let (applied, args) = value.bracket_application()?;
-                    if applied != "Origin" {
-                        return None;
+                    let (applied, applied_args) = value.bracket_application()?;
+                    if applied == "Origin" {
+                        return origin_mut_argument(&applied_args).map(AliasedOrigin::Mutability);
                     }
-                    return origin_mut_argument(&args).map(AliasedOrigin::Mutability);
+                    name = applied.to_string();
+                    args = applied_args.into_owned();
                 }
             }
         }
         None
     }
 
-    /// [`Self::aliased_origin`] of the imported package's alias `name`.
-    fn imported_aliased_origin(&self, name: &str) -> Option<AliasedOrigin> {
-        let ty = self.installed?.type_alias(name)?;
-        let (applied, args) = mojito_types::types::nominal_parts(ty)?;
+    /// [`Self::aliased_origin`] of the imported package's alias `name`: an
+    /// unparameterized one by its checked type, a parameterized one by its
+    /// application with its binders' holes filled from `args` in order.
+    fn imported_aliased_origin(&self, name: &str, args: &[ParamArg]) -> Option<AliasedOrigin> {
+        let installed = self.installed?;
+        if args.is_empty() {
+            let ty = installed.type_alias(name)?;
+            let (applied, args) = mojito_types::types::nominal_parts(ty)?;
+            if applied != "Origin" {
+                return None;
+            }
+            return match args.first() {
+                Some(TyArg::Val(value)) => {
+                    Some(AliasedOrigin::Mutability(value.materialize(self.span)?))
+                }
+                _ => None,
+            };
+        }
+        let (applied, applied_args) = installed.alias_application(name)?;
         if applied != "Origin" {
             return None;
         }
-        match args.first() {
-            Some(TyArg::Val(value)) => {
-                Some(AliasedOrigin::Mutability(value.materialize(self.span)?))
-            }
-            _ => None,
+        let mut supplied = args.iter();
+        let filled: Vec<ParamArg> = applied_args
+            .iter()
+            .map(|argument| fill_alias_hole(argument, &mut supplied))
+            .collect();
+        if supplied.next().is_some() {
+            return None;
         }
+        origin_mut_argument(&filled).map(AliasedOrigin::Mutability)
     }
 }
 
@@ -807,10 +841,7 @@ impl mojito_ast::visit::MutVisitor for OriginAliasFold<'_> {
     }
 
     fn visit_type_param_mut(&mut self, parameter: &mut TypeParam) {
-        if parameter.value_type.is_some()
-            || parameter.callable_bound.is_some()
-            || parameter.origin_mutability.is_some()
-        {
+        if parameter.callable_bound.is_some() || parameter.origin_mutability.is_some() {
             return;
         }
         let [only] = parameter.bounds.as_slice() else {
@@ -819,13 +850,81 @@ impl mojito_ast::visit::MutVisitor for OriginAliasFold<'_> {
         if only == "Origin" {
             return;
         }
-        if let Some(origin) = self.aliased_origin(only) {
+        let origin = match &parameter.value_type {
+            None => self.aliased_origin(only, &[]),
+            Some(Type::Named(name, args)) if !args.is_empty() && name == only => {
+                self.aliased_origin(name, args)
+            }
+            Some(_) => return,
+        };
+        if let Some(origin) = origin {
             parameter.bounds = vec!["Origin".to_string()];
+            parameter.value_type = None;
             parameter.origin_mutability = match origin {
                 AliasedOrigin::Open => None,
                 AliasedOrigin::Mutability(mutability) => Some(mutability),
             };
         }
+    }
+}
+
+/// Replaces each alias binder named in its map by the argument bound to it.
+struct SubstituteBinders(HashMap<String, Expr>);
+
+impl mojito_ast::visit::MutVisitor for SubstituteBinders {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        if let ExprKind::Identifier(name) = &expr.kind
+            && let Some(argument) = self.0.get(name)
+        {
+            *expr = argument.clone();
+        }
+    }
+}
+
+/// The value each of an alias's `binders` takes from the `args` it is
+/// applied to: positional ones in order, keyword ones by name, else the
+/// binder's default. `None` when an argument is not a value, names no
+/// binder, or a binder stays unbound.
+fn bind_alias_arguments(binders: &[TypeParam], args: &[ParamArg]) -> Option<HashMap<String, Expr>> {
+    let mut bound: HashMap<String, Expr> = HashMap::new();
+    let mut positional = binders.iter();
+    for argument in args {
+        let (binder, value) = match argument {
+            ParamArg::Named { name, value } => (
+                binders.iter().find(|binder| &binder.name == name)?,
+                value.as_ref(),
+            ),
+            argument => (positional.next()?, argument),
+        };
+        let ParamArg::Value(value) = value else {
+            return None;
+        };
+        bound.insert(binder.name.clone(), value.clone());
+    }
+    for binder in binders {
+        if !bound.contains_key(&binder.name) {
+            bound.insert(binder.name.clone(), binder.default.clone()?);
+        }
+    }
+    Some(bound)
+}
+
+/// `argument` of an imported alias's application with its `_` binder hole
+/// filled by the next of `supplied`, as [`own_simd_alias`] fills `SIMD`'s.
+fn fill_alias_hole<'a>(
+    argument: &ParamArg,
+    supplied: &mut impl Iterator<Item = &'a ParamArg>,
+) -> ParamArg {
+    match argument {
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(hole),
+            ..
+        }) if hole == "_" => supplied.next().cloned().unwrap_or_else(|| argument.clone()),
+        ParamArg::Named { name, value } => ParamArg::Named {
+            name: name.clone(),
+            value: Box::new(fill_alias_hole(value, supplied)),
+        },
+        _ => argument.clone(),
     }
 }
 

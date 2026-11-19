@@ -365,9 +365,9 @@ pub struct TypeParam {
     /// semantic decision; the parser preserves the complete function type.
     pub callable_bound: Option<Type>,
     /// `Some(expr)` for `Origin[mut=expr]`; `None` for type/value parameters.
-    /// A bound naming an alias of an origin type (`ImmOrigin`, `MutOrigin`)
-    /// records as spelled until preparation resolves it to the `Origin` bound
-    /// and the alias's mutability.
+    /// A bound naming an alias of an origin type (`ImmOrigin`, `MutOrigin`,
+    /// a parameterized `O[True]`) records as spelled until preparation
+    /// resolves it to the `Origin` bound and the alias's mutability.
     pub origin_mutability: Option<Expr>,
     /// Whether this parameter precedes the `//` infer-only marker.
     pub infer_only: bool,
@@ -414,6 +414,28 @@ impl TypeParam {
                     }) if name == &self.name
                 )
             })
+    }
+
+    /// This binder's type as written: its value type, else the
+    /// `Origin[mut=e]` the parser read into [`Self::origin_mutability`],
+    /// else its lone bound. `None` for several bounds.
+    pub fn annotation(&self) -> Option<Type> {
+        if let Some(value_type) = &self.value_type {
+            return Some(value_type.clone());
+        }
+        if let Some(mutability) = &self.origin_mutability {
+            return Some(Type::Named(
+                "Origin".to_string(),
+                vec![ParamArg::Named {
+                    name: "mut".to_string(),
+                    value: Box::new(ParamArg::Value(mutability.clone())),
+                }],
+            ));
+        }
+        match self.bounds.as_slice() {
+            [only] => Some(Type::Named(only.clone(), Vec::new())),
+            _ => None,
+        }
     }
 }
 
