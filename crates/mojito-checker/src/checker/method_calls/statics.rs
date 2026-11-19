@@ -666,7 +666,11 @@ impl Checker {
                 sig,
                 &bound_slots,
                 &arg_tys,
-                explicit_origins,
+                crate::checker::origins::StructApplication {
+                    origins: explicit_origins,
+                    mutabilities: &[],
+                    own: &[],
+                },
             )?;
             declared = declared
                 .iter()

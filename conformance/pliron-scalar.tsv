@@ -1183,6 +1183,7 @@ assets/ok/repr_library_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_sized_scalars.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_type_names.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/result_initializer.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/result_initializer_origin_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/runtime_pack_dunder_len.mojo	-	ineligible	no-scalar-entry-shape

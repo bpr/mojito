@@ -945,6 +945,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An explicit construction through a result-form initializer now binds the
+  struct's origin and `mut=` slots its declared result names, so `var d =
+  ImmOrigin(MutUntrackedOrigin)` (and `Origin[mut=False](…)`, `Origin(…)`,
+  a `comptime` one, or a user struct of the same shape) has `d.mut ==
+  False` where `d.mut` was "not a compile-time constant", and
+  `Origin[mut=True](o)` and `MutOrigin(o)` match no initializer, as at the
+  pin, where they were accepted (R2388).
 - An origin binder whose `mut` is left unbound (`def f[o: Origin[mut=_]](ref[o]
   x: Int)`) is now accepted, as at the pin, where it was rejected ("origin
   mutability for 'o' must be Bool or a Bool parameter"). A callable's

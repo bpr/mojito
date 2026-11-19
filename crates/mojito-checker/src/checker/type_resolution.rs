@@ -553,6 +553,23 @@ pub(super) struct PartitionedStructArgs {
 }
 
 impl PartitionedStructArgs {
+    /// The application a construction's origin binding checks the selected
+    /// initializer against, beside `own`, the initializer's own origin
+    /// binders its instantiation bound.
+    pub(super) fn application<'a>(
+        &'a self,
+        own: &'a [(
+            mojito_types::origin::OriginParamId,
+            mojito_types::origin::Origin,
+        )],
+    ) -> super::origins::StructApplication<'a> {
+        super::origins::StructApplication {
+            origins: &self.explicit_origins,
+            mutabilities: &self.mutabilities,
+            own,
+        }
+    }
+
     /// The application's attributes over the struct's whole declared list:
     /// `bound`, the origin-erased binder's over `forwarded`, each in its
     /// binder's declared slot, beside the kept-back origin arguments in

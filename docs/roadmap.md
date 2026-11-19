@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2390**.
+Next free ID: **R2391**.
 
 ## Ordered Work
 
@@ -2845,33 +2845,30 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2388 An explicit construction through a result-form initializer
-  of a struct with an origin binder leaves the struct's parameters
-  unsolved**
+- [ ] **R2390 A refined initializer's own origin binders are never
+  solved when its struct also has argument binders**
 
-  `var d = ImmOrigin(MutUntrackedOrigin)` fails MIR verification ("value
-  parameter 'mut' has no runtime register"), where the pin prints `False`
-  for `d.mut`.
-  - The selected initializer is `Origin`'s `@implicit __init__(v: Origin)
-    -> ImmOrigin[_mlir_origin=v._mlir_origin]`. Its call carries the
-    struct's `mut` as `Deferred` and `_mlir_origin` as `Unbound`, so the
-    refinement never binds them.
-  - The same call as an implicit conversion (`def h(v: ImmOrigin)` called
-    as `h(MutUntrackedOrigin)`) runs, and so does an explicit result-form
-    construction of a struct with no origin binder
-    (`assets/ok/result_initializer.mojo`).
-  - The construction never reaches `solve_refined_construction`
-    (`checker/declarations.rs`), which binds a refinement's parameters.
-  - Probe: `var d = ImmOrigin(MutUntrackedOrigin); print(d.mut)`, and the
-    same through `Origin[mut=False](...)` and `Origin(...)`.
-  - Probe: `comptime c = ImmOrigin(MutUntrackedOrigin); print(c.mut)` is
-    "'mut' is not a compile-time constant here".
-  - Probe: a user copy of `Origin`, `struct O2[mut: Bool, _mlir_origin:
-    _lit_origin_type_of_mut[mut], //]` declaring `@implicit def
-    __init__(v: O2) -> O2[mut=False, _mlir_origin=v._mlir_origin]`,
-    constructed as `O2(O2[mut=True, _mlir_origin=
-    MutUntrackedOrigin._mlir_origin]())`.
-  - Found while landing R2386 (2026-11-19).
+  `solve_refined_construction` (`checker/declarations.rs`) solves an
+  initializer's own type and value binders against the arguments, but not
+  its own origin binders, so a refinement naming one (`-> P[v.o, v.n +
+  1]`, `_mlir_origin=v._mlir_origin`) leaves that slot unbound; the pin's
+  result is the declared result with every own binder solved.
+  - `bind_refined_origins` (`checker/origins/construct.rs`) substitutes
+    the own binders a `StructApplication::own` carries; the empty-view
+    branch fills it from `MethodInstantiation`, the generic loop passes
+    none.
+  - Probe: `struct P[o: ImmOrigin, n: Int]` with `def __init__(v: P) ->
+    P[v.o, v.n + 1]`, constructed as `P(P[ImmStaticOrigin, 2]())`, is
+    "explicit callable origin specialization: expected origin_of(place)
+    or a builtin Origin value, found a runtime value".
+  - Probe: `struct P[mut: Bool, _mlir_origin: _lit_origin_type_of_mut[mut],
+    //, n: Int]` with `def __init__(v: P) -> P[mut=False,
+    _mlir_origin=v._mlir_origin, n=v.n + 1]`, constructed from `P[mut=True,
+    _mlir_origin=MutUntrackedOrigin._mlir_origin, n=2]()`, fails MIR
+    verification ("required compile-time value parameter 'n' is missing").
+  - Probe: the same with `mut=v.mut` in the result prints nothing and fails
+    with "'mut' is not a compile-time constant here" on `print(d.mut)`.
+  - Found while landing R2388 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -10486,6 +10483,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     accepted, where the pin rejects it ("inferred parameter of type
     'LITOrigin[m]' cannot depend on non-inferred parameter 'm'"): the
     implicit `_mlir_origin` binder is upstream's reason.
+  - Probe: `def __init__(v: P[_]) -> P[mut=False, _mlir_origin=
+    v._mlir_origin, n=v.n + 1]` over `struct P[mut: Bool, _mlir_origin:
+    _lit_origin_type_of_mut[mut], //, n: Int]`: `P[_]` declares no own
+    `_mlir_origin` binder, so the result's origin is unbound and
+    `print(d.mut)` is "'mut' is not a compile-time constant here".
   - Found while planning R2369 (2026-11-19).
   - Depends on R2370.
   - Model: Fable, Not Planned.

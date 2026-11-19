@@ -3460,6 +3460,8 @@ impl Checker {
                         kw_variadic,
                         arguments: method_arguments,
                         attributes: bracket_attributes,
+                        origin_bindings: own_bindings,
+                        bracket_origins,
                         ..
                     }) = self.instantiate_method_generics(
                         &format!("{name}.__init__"),
@@ -3477,11 +3479,18 @@ impl Checker {
                     // A `Pointer` parameter over the struct's own origin
                     // binder binds that binder from its argument before
                     // scoring.
+                    // The initializer's own origin binders its bracket and
+                    // arguments bound, those of its bracket first, as
+                    // `MethodInstantiation::bound_result` orders them.
+                    let own: Vec<_> = bracket_origins
+                        .into_iter()
+                        .chain(own_bindings.into_iter().flat_map(|bound| bound.origins))
+                        .collect();
                     let (params, origin_bindings) = match self.bind_constructor_pointer_params(
                         name,
                         sig,
                         params,
-                        &partitioned.explicit_origins,
+                        partitioned.application(&own),
                         args,
                         kwargs,
                     )? {
@@ -3704,7 +3713,7 @@ impl Checker {
                     sig,
                     &bound_slots,
                     &arg_tys,
-                    &partitioned.explicit_origins,
+                    partitioned.application(&[]),
                 )?;
                 self.record_at(span.clone()).overload_target = Some(constructor_symbol(
                     name,
@@ -4001,7 +4010,7 @@ impl Checker {
                         sig,
                         &bound_slots,
                         &arg_tys[..bound_slots.len()],
-                        &partitioned.explicit_origins,
+                        partitioned.application(&[]),
                     ) {
                         Ok(bindings) => bindings,
                         Err(error) => {
@@ -5521,7 +5530,7 @@ impl Checker {
         name: &str,
         sig: &MethodSig,
         params: Vec<Ty>,
-        explicit: &[super::type_resolution::ExplicitStructOrigin],
+        application: super::origins::StructApplication<'_>,
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<BoundConstructorParams, TypeError> {
@@ -5556,7 +5565,7 @@ impl Checker {
         {
             let mut bindings = ConstructorOriginBindings::default();
             return Ok(self
-                .bind_refined_origins(name, sig, explicit, &mut bindings)
+                .bind_refined_origins(name, sig, application, &mut bindings)
                 .map(|()| (params, bindings))
                 .map_err(Some));
         }
@@ -5599,7 +5608,7 @@ impl Checker {
             sig,
             &bound_slots,
             &arg_tys,
-            explicit,
+            application,
         ) {
             Ok(bindings) => bindings,
             Err(error) => return Ok(Err(Some(error))),

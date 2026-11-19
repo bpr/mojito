@@ -44,6 +44,18 @@ impl CalleeBinders {
     }
 }
 
+/// What a construction supplies beside the arguments its selected
+/// initializer binds: the application's explicit origins and `mut=`
+/// keywords (`Span[Byte, origin_of(s)](…)`, `Origin[mut=False](…)`), and
+/// the initializer's own origin binders its instantiation already bound
+/// (`v: Origin` binding `v`'s `_mlir_origin`).
+#[derive(Clone, Copy)]
+pub(in crate::checker) struct StructApplication<'a> {
+    pub(in crate::checker) origins: &'a [super::super::type_resolution::ExplicitStructOrigin],
+    pub(in crate::checker) mutabilities: &'a [(mojito_types::param_expr::ParamId, CtValue)],
+    pub(in crate::checker) own: &'a [(OriginParamId, Origin)],
+}
+
 /// The origin binders `decls`, a callee's whole declared list, declares
 /// for its call to bind from the arguments' places: every `Origin` binder,
 /// an `OriginSet` left alone.
@@ -444,8 +456,9 @@ impl Checker {
         sig: &MethodSig,
         bound: &[(usize, &Expr, &Ty)],
         arg_tys: &[Ty],
-        explicit: &[super::super::type_resolution::ExplicitStructOrigin],
+        application: StructApplication<'_>,
     ) -> Result<ConstructorOriginBindings, TypeError> {
+        let explicit = application.origins;
         let mut bindings = ConstructorOriginBindings::default();
         for ((index, expression, pattern), actual) in bound.iter().zip(arg_tys) {
             let parameter = sig.names.get(*index).map_or("?", String::as_str);
@@ -484,56 +497,105 @@ impl Checker {
                 })?;
             }
         }
-        self.bind_refined_origins(struct_name, sig, explicit, &mut bindings)?;
+        self.bind_refined_origins(struct_name, sig, application, &mut bindings)?;
         Ok(bindings)
     }
 
     /// Bind the struct origin slots an initializer's `out self` refines to
-    /// a concrete origin (`out self: StaticString` on `StringSpan[origin]`
-    /// binds `origin` to the static origin). An explicitly applied origin
-    /// naming different storage conflicts.
+    /// the origin the refinement spells (`out self: StaticString` on
+    /// `StringSpan[origin]` binds `origin` to the static origin), as the
+    /// pin's call result is its declared result with the call's solutions
+    /// substituted: an initializer's own binder (`-> ImmOrigin[_mlir_origin=
+    /// v._mlir_origin]`) takes what the call bound it to, and a known `mut=`
+    /// slot the refinement spells casts the slot's origin to it. An
+    /// explicitly applied origin naming different storage, or an explicit
+    /// `mut=` naming a different mutability, makes the initializer no
+    /// candidate.
     pub(in crate::checker) fn bind_refined_origins(
         &self,
         struct_name: &str,
         sig: &MethodSig,
-        explicit: &[super::super::type_resolution::ExplicitStructOrigin],
+        application: StructApplication<'_>,
         bindings: &mut ConstructorOriginBindings,
     ) -> Result<(), TypeError> {
-        let (Some(refined), Some(instance)) =
-            (&sig.refined_self, self.self_instance_ty(struct_name))
-        else {
+        let (Some(refined), Some(info)) = (&sig.refined_self, self.structs.get(struct_name)) else {
             return Ok(());
         };
-        let arguments = |ty: &Ty| {
-            mojito_types::types::nominal_parts(ty)
-                .map(|(_, arguments)| arguments.into_owned())
-                .unwrap_or_default()
-        };
-        for (defined, binder) in arguments(refined).iter().zip(&arguments(&instance)) {
-            if let (TyArg::Origin(origin), TyArg::Origin(Origin::Param(id))) = (defined, binder)
-                && !matches!(origin, Origin::Param(_) | Origin::SelfParam)
+        let refined = mojito_types::types::nominal_parts(refined)
+            .map(|(_, arguments)| arguments.into_owned())
+            .unwrap_or_default();
+        let own: Vec<OriginParamId> = declared_origin_binders(&sig.declared).collect();
+        for (defined, decl) in refined.iter().zip(&info.params) {
+            let (
+                TyArg::Origin(origin),
+                ParamDecl::Origin {
+                    origin: id,
+                    mutability,
+                    ..
+                },
+            ) = (defined, decl)
+            else {
+                continue;
+            };
+            // A struct binder or `Self` leaves the slot unrefined.
+            if matches!(origin, Origin::SelfParam)
+                || matches!(origin, Origin::Param(param) if !own.contains(param))
             {
-                // The constructor's own binders the arguments solved
-                // (`out self: V[Self.T, ImmOrigin(src)]`) are the call's.
-                let origin = &super::substitute_origin_params(origin.clone(), &|own| {
-                    bindings.origins.get(&own).cloned()
-                });
-                let conflict = || {
-                    let slot = self
-                        .structs
-                        .get(struct_name)
-                        .and_then(|info| info.origin_decl(*id))
-                        .map_or("?", ParamDecl::name);
-                    conflicting_binding(struct_name, slot)
-                };
-                if explicit
-                    .iter()
-                    .any(|applied| applied.id == *id && !origin.coerces_to(&applied.origin))
-                {
-                    return Err(conflict());
-                }
-                bindings.bind_origin(*id, origin, conflict)?;
+                continue;
             }
+            // The constructor's own binders the arguments or its bracket
+            // solved (`out self: V[Self.T, ImmOrigin(src)]`) are the call's.
+            let mut origin = super::substitute_origin_params(origin.clone(), &|binder| {
+                bindings.origins.get(&binder).cloned().or_else(|| {
+                    application
+                        .own
+                        .iter()
+                        .find(|(candidate, _)| *candidate == binder)
+                        .map(|(_, origin)| origin.clone())
+                })
+            });
+            if matches!(origin, Origin::Param(param) if own.contains(&param)) {
+                continue;
+            }
+            if let mojito_types::types::OriginMutability::Binder(binder) = mutability
+                && let Some(TyArg::Val(CtValue::Bool(mutable))) = info
+                    .params
+                    .iter()
+                    .position(|candidate| *candidate.id() == binder.id)
+                    .and_then(|slot| refined.get(slot))
+            {
+                if let Some((_, spelled)) = application
+                    .mutabilities
+                    .iter()
+                    .find(|(candidate, _)| *candidate == binder.id)
+                    .filter(|(_, spelled)| *spelled != CtValue::Bool(*mutable))
+                {
+                    return Err(TypeError::TypeMismatch {
+                        expected: spelled.to_string(),
+                        found: mutable.to_string(),
+                        context: format!(
+                            "parameter '{}' of the return type '{}'",
+                            binder.name,
+                            sig.refined_self
+                                .as_ref()
+                                .map_or_else(String::new, Ty::to_string)
+                        ),
+                    });
+                }
+                origin = self.fold_origin_mut_cast(&Origin::mut_cast(
+                    origin,
+                    mojito_types::types::LitOriginMut::Known(*mutable),
+                ));
+            }
+            let conflict = || conflicting_binding(struct_name, decl.name());
+            if application
+                .origins
+                .iter()
+                .any(|applied| applied.id == *id && !origin.coerces_to(&applied.origin))
+            {
+                return Err(conflict());
+            }
+            bindings.bind_origin(*id, &origin, conflict)?;
         }
         Ok(())
     }

@@ -143,6 +143,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `types::nominal_parts`), so `Ty::new`'s `SIMD` canonicalization folds a
   bracket's `SIMDLength(1)` as the refinement holds it. `refinement_admits` filters `@implicit` conversions
   (`implicit_conversion_constructor`) and `empty_constructor` by it.
+  The refinement's origin and `mut=` slots, outside the argument view, are
+  bound by `Checker::bind_refined_origins` (`checker/origins/construct.rs`):
+  an origin slot takes the origin the refinement spells, an initializer's
+  own binder substituted from its solution, and a known `mut=` slot casts it
+  to that mutability, so `ImmOrigin(MutUntrackedOrigin)` is
+  `Origin[False, …]`; an explicit `mut=` or origin argument disagreeing with
+  it makes the initializer no candidate. Its `StructApplication` carries the
+  application's explicit origins and `mut=` keywords
+  (`PartitionedStructArgs::application`) and the initializer's own solved
+  origins, which `infer_construction_of`'s empty-view branch takes from its
+  `MethodInstantiation` (the generic loop's are R2390).
 - `checker/statements.rs` owns `check_program`, block scoping, and the
   `check_stmt` statement dispatcher, including generic comptime alias lowering
   (`check_generic_comptime_alias` fills the `Checker.comptime_aliases`
