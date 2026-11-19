@@ -1005,9 +1005,7 @@ impl Checker {
         if !raw || decls.len() != arguments.len() {
             return None;
         }
-        let spelled = decls
-            .iter()
-            .zip(arguments)
+        let spelled = ParamDecl::aligned_pairs(decls, arguments)
             .map(|(decl, argument)| {
                 let value = match (decl, argument) {
                     (_, TyArg::Origin(_))

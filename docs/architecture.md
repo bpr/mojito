@@ -762,7 +762,7 @@ policy or data-model responsibilities to focused children:
   struct's members take it at its own parameters (`ClosureStorage::ty`).
   The check registers that struct with those origin slots and fields, so
   argument exclusivity reads the closure's captured places from its
-  origin tail as from any struct's (`record_carried_places`), and a
+  origin arguments as from any struct's (`record_carried_places`), and a
   closure's loans and a call's capture accesses are its fields' at its
   arguments (`capture_origins_in_type`, `concrete_callable_captures`); a
   user's member access does not reach those fields. The check declares those fields, with
@@ -1271,7 +1271,7 @@ value binders and records each such `_`'s attribute as the origin it bound;
 a method call's bracket binds
 its method's whole declared list (`MethodSig::declared`) the same way in
 `instantiate_method_generics`, which substitutes the bound origins into the
-method's parameters and result through `bind_origin_tails` and binds the
+method's parameters and result through `bind_struct_origins` and binds the
 origin binders its bracket left open in `resolve_call_params`'s one solve,
 as a free call's: a method's declared origin binder is numbered past its
 struct's parameters, as its signature names it
@@ -3243,18 +3243,34 @@ and the dependent application `Self.IteratorType[origin_of(self)]` parse, check,
 and arity-validate.
 
 A struct's own origin arguments are part of its checked identity: `TyKind::Struct`
-carries its declared type and value arguments first and then an **origin tail**,
-one `TyArg::Origin` per declared `Origin`/`OriginSet` source parameter, infer-only
-ones included (bound by keyword, `VariadicList[origin=o, T, owned]`, or left
-unbound), in source order (`P[origin_of(xs)]` and `P[origin_of(ys)]` are different types, as
-upstream). `Origin::Unbound` marks a slot the use site infers (a bare or `_`
-parameter or initialized-local annotation, an alias body); `Origin::Param` in a
-tail is the struct's own binder, rigid inside its methods. `Origin::coerces_to`
-is the tail rule: unbound accepts anything, everything else demands identity or
-containment. The tail erases below the checker exactly like a pointer origin —
-mangling emits nothing for it, MIR verification compares struct prefixes only,
+carries one argument per declared parameter in declared order, each
+`Origin`/`OriginSet` binder's `TyArg::Origin` **in place**, infer-only ones
+included (bound by keyword, `VariadicList[origin=o, T, owned]`, or left
+unbound), as upstream's `!kgen.struct` attributes sit
+(`ParamDecl::instance_binders`; `P[origin_of(xs)]` and `P[origin_of(ys)]` are
+different types, as upstream). An origin's `mut=` binder holds no slot yet
+(R2362), and a closure storage's captured origins follow its binders, its
+declared list naming no binder for them (R2365). The checker builds an instance
+through `ParamDecl::place_origins` (`StructInfo::place_origins`), and every
+reader below it pairs a list of binders with an instance's arguments by kind
+(`ParamDecl::aligned_pairs`, `aligned_arguments`, `aligned_argument`): an
+argument view, which declares no origin binder, skips the instance's origins,
+and a list that declares them in place reads them where they sit. The MIR
+verifier rejects an instance of a struct declaring an origin binder that holds
+other than one argument per instance binder, each origin at its binder's
+position (`verify/scope.rs`, `misplaced_instance_argument`), an erased
+spelling, a closure storage, and a static call's spelled receiver, whose
+instance drops the arguments of the parameters its callee removed, aside.
+`Origin::Unbound` marks a slot the use site infers (a bare or `_`
+parameter or initialized-local annotation, an alias body); `Origin::Param` in an
+instance is the struct's own binder, rigid inside its methods. `Origin::coerces_to`
+is the instance rule: unbound accepts anything, everything else demands identity or
+containment. An instance's origins erase below the checker exactly like a pointer
+origin — the type mangler and the specialization encoder emit one `O` marker at
+each origin's position and the `ast_raw` spelling none, MIR verification compares
+struct arguments with their origins set aside,
 monomorphization treats origin-differing instances as one (the native instance
-key erases its arguments' origin tails, since the instance symbol spells none —
+key erases its arguments' origins, since the instance symbol spells none —
 keying on them would mint a second instance under the first one's symbol), and
 the checker's
 instantiation records reset it to unbound so a place origin (a per-check owner
@@ -3270,7 +3286,7 @@ binders and its body's own places stay symbolic, as upstream keeps an
 instance's origin parameters unspecialized (`$0`, `$1`), so concrete MIR
 admits `Origin::Param`. A method instance's bare `Self` is likewise its
 owner's instance over the owner's own origin binders
-(`Bindings::name_owner_origins`, from `MirStructDeclaration::origin_params`),
+(`Bindings::name_owner_origins`, from the declaration's origin binders),
 as upstream spells it `::Span[$0, $1, $2, $3]`, the same type an explicit
 `Span[T, origin]` names.
 
@@ -3290,7 +3306,7 @@ mangling marker). A conforming struct then resolves the origin-parameterized
 member concretely, so a requirement returning `Self.IteratorType[origin_of(self)]`
 is satisfiable and conformance succeeds. The borrowed `Iterable` proof protocol
 uses this origin-parameterized member, and the bundled List/Set iterator
-carries its origin in its origin tail (with an infer-only `Bool` binding its
+carries its origin in place (with an infer-only `Bool` binding its
 `mut=`, which erases), iterates itself through upstream's
 `IteratorType[...] = Self` alias, borrows its source through a `ref` field, and
 yields element references whose mutability the checker resolves from the
@@ -4644,7 +4660,7 @@ The member itself is found once, by `StructDeclaration::associated_member`
 `StructDeclaration::associated_type` uses too, as upstream's substitution
 finds the alias in the conformance's witness: it picks the row, checks
 the application's arity, binds the application's origin arguments and the
-struct's own origins (`StructDeclaration::origin_params`) into the
+struct's own origins (each origin binder's argument in the instance) into the
 template (`mojito_types::types::substitute_origin_params`, which the
 checker's `substitute_assoc` shares), and returns its type parameters
 beside their arguments (`AssociatedMember`), a value parameter being an
@@ -5201,7 +5217,7 @@ the positional segment available before required suffix parameters, while a
 named Origin may follow the pack and remains on the rewritten call. Origins,
 OriginSets, and callable-value parameters stay symbolic on generated
 specializations instead of shifting the evaluated type/value arguments; a
-checked type's origin tail spells as its binder where the clone has one in
+checked type's origin argument spells as its binder where the clone has one in
 scope and as upstream's `_` placeholder otherwise. An
 overloaded function value requires an expected `def(...)` type; the checker
 specializes every candidate, retains the unique compatible lowered symbol, and rejects an
@@ -7552,10 +7568,9 @@ point where a slot declared in a loop is uninitialized again.
   reads, a type member parameter included), as upstream's substitution
   resolves the alias from the conformance's witness. A template naming
   the struct's own origin (`Span`'s `IteratorType` is `_SpanIter[T,
-  Self.origin]`) binds it from the instance's origin arguments, which
-  `StructDeclaration::origin_params` keys by id (MIR text 1.168; the
-  checker fills `CheckedProgram::struct_origin_params` from each struct's
-  origin slots), beside the member's own origins, through
+  Self.origin]`) binds it from the instance's origin arguments, each
+  keyed by the id of the origin binder whose position it holds
+  (`ParamDecl::instance_origins`), beside the member's own origins, through
   `types::substitute_origin_params`, as upstream's substitution binds a
   struct's origin parameters like any other. A projection over an origin
   the arguments leave unbound (an erased spelling), an argument only the

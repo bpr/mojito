@@ -412,7 +412,7 @@ impl Checker {
     /// origin tail: `h.view()` over `-> View[origin_of(self)]` is a
     /// `View[origin_of(h)]` at the call site. A slot the contract did not
     /// resolve keeps its declared entry.
-    pub(in crate::checker) fn bind_call_result_tail(&self, span: &SourceSpan, ty: Ty) -> Ty {
+    pub(in crate::checker) fn bind_call_result_origins(&self, span: &SourceSpan, ty: Ty) -> Ty {
         let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
             return ty;
         };
@@ -426,8 +426,10 @@ impl Checker {
             let Some(position) = origin_slots.iter().position(|(id, _)| id == slot) else {
                 continue;
             };
-            if let Some(argument @ TyArg::Origin(_)) =
-                arguments.get_mut(info.decls().len() + position)
+            if let Some(argument) = arguments
+                .iter_mut()
+                .filter(|argument| matches!(argument, TyArg::Origin(_)))
+                .nth(position)
             {
                 *argument = TyArg::Origin(origin.clone());
             }
@@ -830,8 +832,10 @@ impl Checker {
                     ))
                     .filter(is_abstract);
                 }
-                let mut origin =
-                    instantiate_sig_origin(&declared.origin, &info.tail_origin_bindings(arguments));
+                let mut origin = instantiate_sig_origin(
+                    &declared.origin,
+                    &info.instance_origin_bindings(arguments),
+                );
                 // Origin arguments erase from struct type identity, so the
                 // callee's origin binder usually stays symbolic in its own
                 // namespace; remap it through the field application's
@@ -955,7 +959,7 @@ impl Checker {
         // `Span[T, Self.iterable_origin]`) names that binder. An unbound slot,
         // or a call result's not-yet-resolved `origin_of(self)`, falls back to
         // the aggregate's construction-time facts.
-        let tail = info.tail_origin_bindings(arguments);
+        let tail = info.instance_origin_bindings(arguments);
         let field_origins = self.aggregate_field_origins(object);
         let flat = self.aggregate_origins(object);
         // The concrete origin(s) the receiver's field carrying origin parameter

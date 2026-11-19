@@ -36,13 +36,6 @@ pub struct StructDeclaration {
     pub fields: Vec<(String, Ty)>,
     pub fieldwise_init: bool,
     pub param_decls: Vec<ParamDecl>,
-    /// The id of each of the struct's explicit origin parameters, in the
-    /// order an instance's origin arguments follow its
-    /// `param_decls`-aligned prefix, so a template naming `Self.o` binds it
-    /// from an instance; empty for a concrete instance. Upstream's struct
-    /// parameters hold their origins in place, which origin `ParamDecl`s
-    /// will carry instead.
-    pub origin_params: Vec<OriginParamId>,
     /// The struct's named destructors (`deinit self` methods), beside
     /// whether each raises.
     #[serde(serialize_with = "sorted_map")]
@@ -203,6 +196,17 @@ impl StructDeclaration {
         ParamDecl::argument_view(&self.param_decls)
     }
 
+    /// The binders an instance of the struct holds an argument for, origin
+    /// binders in place ([`ParamDecl::instance_binders`]).
+    pub fn instance_binders(&self) -> impl Iterator<Item = &ParamDecl> {
+        ParamDecl::instance_binders(&self.param_decls)
+    }
+
+    /// [`Self::instance_binders`] as a list.
+    pub fn instance_view(&self) -> std::borrow::Cow<'_, [ParamDecl]> {
+        ParamDecl::instance_view(&self.param_decls)
+    }
+
     /// The symbol of the struct's member keyed `member`, when it owns one:
     /// the first, for a generic member with several instances.
     pub fn member(&self, member: &str) -> Option<&str> {
@@ -293,8 +297,8 @@ impl StructDeclaration {
     ///
     /// `None` when the struct declares no member `name` taking `args.len()`
     /// arguments. The member's own origin parameters and the struct's own
-    /// origins (by [`Self::origin_params`], from the instance's origin
-    /// arguments) are substituted into the template; a struct origin the
+    /// origins (each origin binder's, from the instance's argument at its
+    /// position) are substituted into the template; a struct origin the
     /// arguments leave unbound stays an `Origin::Param`. The member's type
     /// parameters come back paired with their arguments, for the caller's
     /// substituter to bind beside the struct's parameters.
@@ -309,15 +313,10 @@ impl StructDeclaration {
         name: &str,
         args: &[TyArg],
     ) -> Option<Result<AssociatedMember, AssociatedLookupError>> {
-        let mut origins: HashMap<u32, Origin> = self
-            .origin_params
-            .iter()
-            .zip(arguments.iter().filter_map(|argument| match argument {
-                TyArg::Origin(origin) => Some(origin),
-                _ => None,
-            }))
-            .map(|(id, origin)| (id.0, origin.clone()))
-            .collect();
+        let mut origins: HashMap<u32, Origin> =
+            ParamDecl::instance_origins(&self.param_decls, arguments)
+                .map(|(id, origin)| (id.0, origin.clone()))
+                .collect();
         let mut types = Vec::new();
         let template = if args.is_empty()
             && let Some((_, member)) = self
@@ -363,7 +362,7 @@ impl StructDeclaration {
     /// arguments: an argument only the elaborator binds (a pack, a deferred
     /// value, an omitted default), a value member parameter, or a member
     /// over one of the struct's own origin parameters that the arguments
-    /// leave unbound (an erased spelling with no origin tail).
+    /// leave unbound (an erased spelling, which carries no origin).
     pub fn associated_type(&self, arguments: &[TyArg], name: &str, args: &[TyArg]) -> Option<Ty> {
         let context = ParamContext::detached();
         let mut bindings = ParamBindings::new();
@@ -1013,8 +1012,16 @@ mod tests {
             module: String::new(),
             fields: Vec::new(),
             fieldwise_init: false,
-            param_decls: Vec::new(),
-            origin_params,
+            param_decls: origin_params
+                .into_iter()
+                .map(|origin| ParamDecl::Origin {
+                    id: mojito_types::param_expr::ParamId::new("Bag", origin.0 as usize),
+                    name: format!("o{}", origin.0),
+                    origin,
+                    mutability: mojito_types::types::OriginMutability::Fixed(false),
+                    infer_only: false,
+                })
+                .collect(),
             explicit_destructors: HashMap::new(),
             explicit_destroy: None,
             conformances: Vec::new(),

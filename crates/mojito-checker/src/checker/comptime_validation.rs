@@ -4430,9 +4430,7 @@ impl Checker {
         arguments: &[TyArg],
         resolve: impl Fn(&Ty) -> Option<Ty>,
     ) -> Option<Vec<ParamExpr>> {
-        decls
-            .iter()
-            .zip(arguments)
+        ParamDecl::aligned_pairs(decls, arguments)
             .map(|(decl, argument)| {
                 Some(match (decl, argument) {
                     (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
@@ -7166,6 +7164,9 @@ pub(super) fn positional_pack_arguments<'a>(
     decls: &[ParamDecl],
     arguments: &'a [TyArg],
 ) -> std::borrow::Cow<'a, [TyArg]> {
+    if let std::borrow::Cow::Owned(aligned) = ParamDecl::aligned_arguments(decls, arguments) {
+        return std::borrow::Cow::Owned(positional_pack_arguments(decls, &aligned).into_owned());
+    }
     // A type pack's visible binder is its zero-sized `TypeList`.
     let declared = |list: TyArg| {
         let mut declared = vec![list];
@@ -7196,6 +7197,7 @@ pub(super) fn positional_pack_binding(
     arguments: &[TyArg],
 ) -> Option<(String, TyArg)> {
     let list = ParamDecl::sole_type_pack(decls)?;
+    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
     if mojito_types::types::pack_spread_argument(arguments).is_some()
         || mojito_types::types::list_spread_argument(arguments).is_some()
     {
@@ -7593,9 +7595,7 @@ fn respelled_struct_value(
 /// or by a pack query the replacement did not resolve: such a fold is no
 /// value of the call, which stays its application.
 fn reads_rebound_binder(folded: &ParamExpr, decls: &[ParamDecl], arguments: &[TyArg]) -> bool {
-    let rebound: HashSet<&ParamId> = decls
-        .iter()
-        .zip(arguments)
+    let rebound: HashSet<&ParamId> = ParamDecl::aligned_pairs(decls, arguments)
         .filter(|(decl, argument)| match argument {
             TyArg::Val(CtValue::Expr(value)) => {
                 !matches!(value.kind(), ParamKind::DeclRef(reference) if reference.id == *decl.id())

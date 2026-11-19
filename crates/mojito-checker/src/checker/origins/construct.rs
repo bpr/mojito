@@ -62,7 +62,7 @@ impl ConstructorOriginBindings {
     /// Substitute the bound binders into a parameter or field type: pointer
     /// binders through their provenance, struct tails through their origin.
     pub(in crate::checker) fn substitute(&self, ty: &Ty) -> Ty {
-        substitute_struct_origin_tails(
+        substitute_struct_origins(
             &substitute_pointer_origin_params(ty, &self.pointers),
             &self.origins,
         )
@@ -72,7 +72,7 @@ impl ConstructorOriginBindings {
     /// only through a struct argument's origin tail (`v: View[o]` over
     /// `-> Pointer[T, o]`) rebinds the result's pointer provenances too,
     /// taking a parametric binder's mutability from `binder_mutability`
-    /// ([`bind_pointer_origin_tails`]).
+    /// ([`bind_pointer_origins`]).
     /// The tail binding goes in first, so a caller binder the pointer
     /// bindings substitute is never captured.
     pub(in crate::checker) fn substitute_result(
@@ -86,11 +86,7 @@ impl ConstructorOriginBindings {
             .filter(|(id, _)| !self.pointers.contains_key(id))
             .map(|(id, origin)| (*id, origin.clone()))
             .collect();
-        self.substitute(&bind_pointer_origin_tails(
-            ty,
-            &tails,
-            Some(binder_mutability),
-        ))
+        self.substitute(&bind_pointer_origins(ty, &tails, Some(binder_mutability)))
     }
 
     /// [`Self::substitute`] over a parameter list.
@@ -136,7 +132,7 @@ impl ConstructorOriginBindings {
     /// The constructed value's origin tail: each slot's explicit origin where
     /// the application supplied one, else the origin its binder bound, else
     /// unbound.
-    pub(in crate::checker) fn bind_tail(
+    pub(in crate::checker) fn bind_origins(
         &self,
         slots: &[(OriginParamId, &mojito_ast::ast::TypeParam)],
         tail: &[Origin],
@@ -315,24 +311,23 @@ impl Checker {
             .collect()
     }
 
-    /// The checked type of a construction: the solved binder prefix followed
-    /// by the origin tail the application and the arguments bound.
+    /// The checked type of a construction: the solved argument view with
+    /// the origins the application and the arguments bound in place.
     pub(in crate::checker) fn constructed_type(
         &self,
         name: &str,
-        prefix: Vec<TyArg>,
+        view: Vec<TyArg>,
         tail: &[Origin],
         bindings: &ConstructorOriginBindings,
     ) -> Ty {
-        let mut arguments = prefix;
-        if let Some(info) = self.structs.get(name) {
-            arguments.extend(
-                bindings
-                    .bind_tail(&info.origin_slots(), tail)
-                    .into_iter()
-                    .map(TyArg::Origin),
-            );
-        }
+        let arguments = match self.structs.get(name) {
+            Some(info) => info.place_origins(
+                view.into_iter()
+                    .filter(|argument| !matches!(argument, TyArg::Origin(_))),
+                bindings.bind_origins(&info.origin_slots(), tail),
+            ),
+            None => view,
+        };
         Self::struct_instance_type(name, arguments)
     }
 

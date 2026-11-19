@@ -273,7 +273,7 @@ impl Checker {
             .filter(|(struct_name, info, _)| {
                 let implementation = Ty::new(TyKind::Struct(
                     (*struct_name).clone(),
-                    params_as_args(&info.decls()),
+                    info.self_arguments(),
                 ));
                 bounds
                     .iter()
@@ -296,10 +296,8 @@ impl Checker {
         self.structs_declaring(method)
             .filter_map(|(name, info)| Some((name, info, info.methods.get(method)?)))
             .filter(|(name, info, _)| {
-                let implementation = Ty::new(TyKind::Struct(
-                    (*name).clone(),
-                    params_as_args(&info.decls()),
-                ));
+                let implementation =
+                    Ty::new(TyKind::Struct((*name).clone(), info.self_arguments()));
                 bounds
                     .iter()
                     .all(|bound| self.conforms_to(&implementation, bound))

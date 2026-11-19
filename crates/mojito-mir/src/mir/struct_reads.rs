@@ -156,7 +156,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
         else {
             return LayoutReads::All;
         };
-        if structure.argument_binders().any(is_variadic) || visiting.iter().any(|seen| seen == name)
+        if structure.instance_binders().any(is_variadic) || visiting.iter().any(|seen| seen == name)
         {
             return LayoutReads::All;
         }
@@ -265,7 +265,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
         visiting: &mut Vec<String>,
     ) -> MemberNeeds {
         let structure = self.declarations.structure(name)?;
-        if structure.argument_binders().any(is_variadic) {
+        if structure.instance_binders().any(is_variadic) {
             return None;
         }
         if let Some(symbol) = structure.member(member) {
@@ -460,7 +460,6 @@ mod tests {
             declared: Vec::new(),
             register_passable: false,
             associated_types: Vec::new(),
-            origin_params: Vec::new(),
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
             parameterized_associated_values: Vec::new(),

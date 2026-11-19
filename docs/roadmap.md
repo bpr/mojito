@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2362**.
+Next free ID: **R2367**.
 
 ## Ordered Work
 
@@ -10444,7 +10444,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `reflect[Pointer[Int, origin_of(x)]].name()` prints
     `Pointer[Int, origin@…]`; the pin prints
     `std.memory.pointer.Pointer[True, {}, SIMD[DType.int, 1], {}, 0]`
-    (R1679's display probe, with R1680 and R762 for the spelling).
+    (R1679's display probe, with R1680 and R2362 for the spelling).
   - Probe: `reflect[type_of(p)].field_count()` fails with "requires a
     struct type"; the pin prints `1`.
   - Re-probe R1502.
@@ -10798,76 +10798,126 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R762 A struct instance's origin arguments are a tail after its
-  type and value arguments, numbered by source position, where upstream's
-  are positional in the declared list**
+- [ ] **R2362 A struct instance holds no argument for an origin's `mut=`
+  binder, where upstream's carries its `Bool` in place
+  (`Span[mut=True, T, o]`)**
 
-  `TyKind::Struct`'s arguments put origins after the `ParamDecl`-aligned
-  prefix, which `StructInfo::{origin_slots, origin_tail}`,
-  `struct_origin_slots`, and `tail_origin_bindings` maintain.
-  - The lever: order a struct's arguments by its declared parameter list,
-    origins in place, and delete the tail machinery.
-  - Sites: `checker/origins/{subst,solve,actuals,construct,exclusivity}.rs`,
-    `generics.rs`, `declarations.rs`, `type_resolution.rs`; check whether
-    mangling, layout, MIR verification, or mono index arguments by
-    position.
-  - Split into a checker half and a mono/verify half if it does not fit
-    one session.
-  - Probe: `It[Self.element_type, Self.origin, origin_of(self),
-    Self.is_owned](0, self)` over `struct It[m: Bool, //, T: AnyType, o:
-    Origin[mut=m], l: ImmOrigin, owned: Bool]` fails MIR verification
-    ("value parameter 'is_owned' has no runtime register"): MIR aligns a
-    call's compile-time slots positionally against `ParamDecl`s that hold
-    no origins (`verify/subscripts.rs`), so the bundled
-    `VariadicList.__iter__` names the iterator's origin arguments by
-    keyword.
-  - Probe: every consumer below the check reads a struct row through
-    `StructDeclaration::argument_view` (`native/mono`, `mir/verify`,
-    `param_uses.rs`, `struct_reads.rs`, `inline_parametric.rs`), since an
-    instance's arguments are that view plus the tail; a closure storage
-    struct's row (`CheckedClosureUses::binders`) holds the view alone.
-  - Probe: a call MIR synthesizes from an instance type (a copy or
-    default construction, a default argument's conversion, a keyword
-    collector) maps the instance's prefix and tail onto the constructor's
-    whole list (`ParamDecl::instance_arguments`, `types.rs`), and a
-    construction's checked arguments rebind the struct's origin slots from
-    the constructed tail (`bind_constructed_origins`); a closure storage's
-    type carries origins its list declares no binder for, which
-    `build_closure_storage` (`mir/lower_stmt.rs`) and `restated_arguments`
-    (`mir/copy_calls.rs`) drop from its constructor's arguments.
-  - Probe: such a call's `mut=` slot is `ct_deferred` wherever its
-    origin's storage decides the value (an `_ArrayIter` instance's
-    `__moveinit__` the elaborator names), as the instance type spells no
-    `mut=` argument, so the concrete verifier (`verify/concrete.rs`)
-    admits a deferred value in a call's solved arguments.
-  - `StructDeclaration::origin_params` (MIR text 1.168) is the tail's
-    handoff, keying each origin argument to the id a member template
-    names; it goes away once origins are `ParamDecl`s in place.
-  - Probe: an erased spelling (a method's `self` typed `BagIter` with no
-    arguments) carries no tail, so `StructDeclaration::associated_type`
-    leaves a template naming `Self.o` open there, where upstream's
-    `Self` carries every parameter.
-  - The instance's prefix also lacks the `mut=` binder's `Bool`
-    argument, which upstream's carries in place (`Span[mut=True, T, o]`).
-  - A collector's `VariadicPack` lacks its `elt_is_mutable` the same way;
-    once it is in place, `types::variadic_pack_owned` must read the
-    `is_owned` position rather than scan for any `Bool(true)` argument.
+  `ParamDecl::instance_binders` leaves out each origin's `mut=` binder,
+  so an instance carries every declared parameter but those.
+  - The lever: make `instance_binders` the whole declared list, then
+    delete `ParamDecl::instance_arguments` and `instance_view`, which only
+    fill or skip that slot.
+  - The checker writes each `mut=` slot where it builds an instance: the
+    origin storage's mutability (`origin_mutability`,
+    `origins/construct.rs`), the binder's own read for an
+    `Origin::Param` whose mutability is a binder, `CtValue::Deferred`
+    for `Origin::Unbound`.
+  - `types::coerces` must admit a deferred slot against any value, as
+    `Origin::coerces_to` admits `Unbound`.
+  - Specialization identity then keeps `mut`, so `Span[mut=True]` and
+    `Span[mut=False]` become two instances, as at the pin; expect symbol
+    and manifest churn.
+  - MIR text sets an older instance's `mut=` slot to `ct_deferred`.
+  - Probe: a call MIR synthesizes from an instance type gets a
+    `ct_deferred` `mut=` slot wherever its origin's storage decides the
+    value (an `_ArrayIter` instance's `__moveinit__`), so the concrete
+    verifier (`verify/concrete.rs`) admits a deferred value in a call's
+    solved arguments.
   - Probe: `Self.mut` in a method of `struct V[mut: Bool, //, origin:
     Origin[mut=mut]]` is rejected ("'Self.mut' is not a type parameter of
     the enclosing struct"), where the pin reads it.
   - Probe: `repr(Span(xs))` fails ("vm: Pointer has no method
     'write_repr_to'"), where the pin prints `Span[mut=True, SIMD[DType.int,
     1]]([Int(1), Int(2)])`: the bundled `Span` cannot spell its `mut`.
-  - Found while landing R631 (2026-10-13).
-  - Depends on R2127.
+  - Probe: `reflect[A[origin_of(a)]].name()` over `struct A[mut: Bool, //,
+    o: Origin[mut=mut]]` prints `A[{}]`, where the pin prints `A[True, {},
+    {}]` (the doubled `{}` is R1679/R1680's).
+  - Found while landing R762 (2026-11-19).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2363 A collector's `VariadicPack` holds no `elt_is_mutable`
+  argument, so `types::variadic_pack_owned` scans for any `True`
+  argument instead of reading `is_owned`**
+
+  `types::variadic_pack_over` spells the pack's `origin`, trait, pack,
+  `is_owned`, and `TypeList`, but no `elt_is_mutable`, as every instance
+  lacks its `mut=` slot (R2362).
+  - The lever: spell `elt_is_mutable` in place, and read `is_owned` by its
+    binder's position in `variadic_pack_owned`.
+  - Sites: `types.rs` (`variadic_pack_over`, `variadic_pack_owned`) and the
+    `VariadicPack` builders in `mir/variadics.rs`.
+  - Pinned by `conformance/probes/variadic_pack_owned_iteration.mojo`.
+  - Re-probe the mutable-loan collector entries that cite
+    `elt_is_mutable`.
+  - Found while landing R762 (2026-11-19).
+  - Depends on R2362.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2364 A method's erased `Self` spelling carries none of its
+  struct's arguments, where upstream's `Self` carries every parameter**
+
+  A method's `self` typed `BagIter` with no arguments is an erased
+  instance, so `StructDeclaration::associated_type` leaves a member
+  template naming `Self.o` open there.
+  - The lever: type a bare `Self` or own-name receiver as the struct at
+    its own parameters (`StructInfo::self_arguments`), not as an erased
+    instance.
+  - Then `associated_type` needs no erased-spelling exit, and the
+    elaborator's `Bindings::name_owner_origins` (`native/mono.rs`), which
+    names the owner's origin binders in a bare `Self`, goes.
+  - Found while landing R762 (2026-11-19).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2365 A closure storage's declared list names no binder for the
+  origins its type carries, so they still follow its binders as a tail**
+
+  `CheckedClosureUses::binders` (`mojito-checked/src/closure_uses.rs`)
+  holds the enclosing binders alone, while the storage's type carries one
+  origin per captured reference after them
+  (`CheckedClosureStorage::origin_arguments`).
+  - The lever: give the storage an origin `ParamDecl` per captured
+    origin, in place, so its declared list matches its instance.
+  - Then delete the special cases: `ParamDecl::place_origins` appending
+    origins no binder takes, `ParamDecl::aligned_arguments` skipping them,
+    `StructInfo::instance_origin_bindings` reading the source parameters,
+    the verifier's closure-storage exemption
+    (`misplaced_instance_argument`, `verify/scope.rs`), and the
+    `instantiated_args` truncation in `build_closure_storage`
+    (`mir/lower_stmt.rs`).
+  - Pinned by `assets/ok/capturing_lambda_storage.mojo`, whose capture
+    access disappears when the storage's origins are misread.
+  - Found while landing R762 (2026-11-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2366 A static call's spelled receiver drops the arguments of the
+  parameters its callee removed, where upstream's instance spells each
+  as `_REMOVED_ARG`**
+
+  `param_uses::drop_receiver_arguments` (`mir/param_uses.rs`) rebuilds
+  `S[…]` without the removed binders' arguments, so the receiver's
+  instance no longer holds one argument per binder.
+  - The MIR verifier's instance rule exempts a call's spelled receiver
+    for it (`misplaced_instance_argument`, `verify/scope.rs`).
+  - The lever: write `CtValue::RemovedArg` in each removed slot, as an
+    erased instance does elsewhere, read it in the elaborator's
+    `bind_static_receiver` (`native/mono/infer.rs`), and delete the
+    exemption.
+  - Probe: `VariadicPack.__len__(self)` calls `Self.__len__()`, whose
+    receiver after `remove-unused-params` holds 3 of its 5 arguments.
+  - Found while landing R762 (2026-11-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R763 The checker keeps a struct's parameter syntax to validate
   origin arguments, where upstream binds them against the checked
   parameter list**
 
   `StructInfo::source_params` holds the struct's `TypeParam`s so direct
-  applications can check explicit origin arguments, and
+  applications can check explicit origin arguments and place them among
+  the instance's arguments (`partition_struct_origin_args`), and
   `is_origin_type_param` and `type_resolution::is_origin_parameter`
   repeat one predicate over that syntax.
   - The lever: bind and validate origin arguments from the checked

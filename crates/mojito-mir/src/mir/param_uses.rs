@@ -728,7 +728,7 @@ fn method_struct<'a>(
     let (owner, _) = mojito_symbol::symbol::split_method_symbol(root)?;
     declarations
         .structure(owner)
-        .map(|structure| (owner, structure.argument_binders().collect()))
+        .map(|structure| (owner, structure.instance_binders().collect()))
 }
 
 /// The slots of `function` that a callable value parameter among `decls`
@@ -927,24 +927,31 @@ fn drop_receiver_arguments(
     };
     let Some(decls) = declarations
         .structure(name)
-        .map(|structure| structure.argument_view())
+        .map(|structure| structure.instance_view())
         .filter(|decls| arguments.len() >= decls.len())
     else {
         return false;
     };
-    let kept: Vec<bool> = decls.iter().map(|decl| !ids.contains(decl.id())).collect();
+    let kept: Vec<bool> = decls
+        .iter()
+        .map(|decl| decl.is_origin() || !ids.contains(decl.id()))
+        .collect();
     if kept.iter().all(|kept| *kept) {
         return false;
     }
-    *receiver = kept.contains(&true).then(|| {
-        let arguments = arguments
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| kept.get(*index).is_none_or(|kept| *kept))
-            .map(|(_, argument)| argument.clone())
-            .collect();
-        TyKind::Struct(name.clone(), arguments).into()
-    });
+    *receiver = kept
+        .iter()
+        .zip(decls.iter())
+        .any(|(kept, decl)| *kept && !decl.is_origin())
+        .then(|| {
+            let arguments = arguments
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| kept.get(*index).is_none_or(|kept| *kept))
+                .map(|(_, argument)| argument.clone())
+                .collect();
+            TyKind::Struct(name.clone(), arguments).into()
+        });
     true
 }
 
@@ -1732,7 +1739,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         let Some(decls) = mojito_symbol::symbol::split_method_symbol(callee)
             .filter(|(owner, _)| owner == name)
             .and_then(|_| declarations.structure(name))
-            .map(|structure| structure.argument_view())
+            .map(|structure| structure.instance_view())
             .filter(|decls| decls.len() == arguments.len())
         else {
             return false;

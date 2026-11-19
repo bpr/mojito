@@ -340,7 +340,7 @@ impl Checker {
             .and_then(|(name, arguments)| {
                 self.structs
                     .get(name)
-                    .map(|info| info.tail_origin_bindings(arguments))
+                    .map(|info| info.instance_origin_bindings(arguments))
             })
             .and_then(|tails| {
                 tails

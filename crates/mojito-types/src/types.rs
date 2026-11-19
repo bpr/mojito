@@ -2211,16 +2211,16 @@ pub const SPAN_TYPE_NAME: &str = "Span";
 /// `VariadicList[origin=origin, element, is_owned]`, a `*xs: element`
 /// collector's type in its callee's body.
 ///
-/// It is owned for a `var` collector, and its origin tail holds `origin`,
-/// the struct's infer-only `origin` parameter: the callable's implicit
-/// pack origin in the body.
+/// It is owned for a `var` collector, and its infer-only `origin`
+/// parameter, in place before `element`, holds `origin`: the callable's
+/// implicit pack origin in the body.
 pub fn variadic_list_type(element: Ty, is_owned: bool, origin: crate::origin::Origin) -> Ty {
     TyKind::Struct(
         VARIADIC_LIST_TYPE_NAME.to_string(),
         vec![
+            TyArg::Origin(origin),
             TyArg::Ty(element),
             TyArg::Val(CtValue::Bool(is_owned)),
-            TyArg::Origin(origin),
         ],
     )
     .into()
@@ -2234,10 +2234,10 @@ pub const VARIADIC_PACK_TYPE_NAME: &str = "VariadicPack";
 /// the type pack `pack` (`*Ts`), a `read` heterogeneous collector's type in
 /// its body.
 ///
-/// It is spelled as the checker resolves that spelling: the infer-only
-/// element trait and pack list, the ownership flag, and the pack's
-/// zero-sized `TypeList` binder, then the origin tail holding `origin`,
-/// the struct's infer-only `origin` parameter. The trait is the pack
+/// It is spelled as the checker resolves that spelling: the struct's
+/// infer-only `origin` parameter holding `origin`, the infer-only element
+/// trait and pack list, the ownership flag, and the pack's zero-sized
+/// `TypeList` binder. The trait is the pack
 /// binder's bound.
 pub fn variadic_pack_type(pack: Ty, is_owned: bool, origin: crate::origin::Origin) -> Ty {
     let traits = pack_traits(&pack);
@@ -2360,7 +2360,10 @@ pub fn variadic_list_element(ty: &TyKind) -> Option<&Ty> {
     if struct_template(name) != VARIADIC_LIST_TYPE_NAME {
         return None;
     }
-    match arguments.first() {
+    match arguments
+        .iter()
+        .find(|argument| !matches!(argument, TyArg::Origin(_)))
+    {
         Some(TyArg::Ty(element)) => Some(element),
         _ => None,
     }
@@ -3581,65 +3584,50 @@ impl ParamDecl {
         if arguments.len() != decls.len() {
             return arguments.to_vec();
         }
-        decls
-            .iter()
-            .zip(arguments)
+        Self::aligned_pairs(decls, arguments)
             .filter(|(decl, _)| decl.is_argument_binder(decls))
             .map(|(_, argument)| argument.clone())
             .collect()
     }
 
     /// The arguments a call of a constructor declaring `decls` binds when
-    /// it builds the struct instance whose arguments are `instance` (its
-    /// argument view's, then its origin tail): a value for every declared
-    /// parameter, as upstream's call holds one. Each argument binder takes
-    /// the instance's next argument and each origin binder the tail's next
-    /// origin; a `mut=` binder takes that origin's mutability where the
-    /// origin alone decides it ([`crate::origin::Origin::static_mutability`]),
-    /// and a binder the instance does not spell (the constructor's own,
-    /// which its arguments solve, or a mutability the caller's binders
-    /// decide) is [`CtValue::Deferred`], its value arriving with the
-    /// elaborated call. `instance` is returned as it stands when its
-    /// argument view does not match `decls`'.
+    /// it builds the struct instance whose arguments are `instance` (one per
+    /// instance binder of the struct, [`Self::instance_binders`]): a value
+    /// for every declared parameter, as upstream's call holds one. Each
+    /// binder but a `mut=` one takes the instance's next argument; a `mut=`
+    /// binder takes its origin's mutability where the origin alone decides
+    /// it ([`crate::origin::Origin::static_mutability`]), and a binder the
+    /// instance does not spell (the constructor's own, which its arguments
+    /// solve, or a mutability the caller's binders decide) is
+    /// [`CtValue::Deferred`], its value arriving with the elaborated call.
+    /// `instance` is returned as it stands when it does not line up with
+    /// `decls`' binders.
     pub fn instance_arguments(decls: &[Self], instance: &[TyArg]) -> Vec<TyArg> {
-        let split = instance
-            .iter()
-            .position(|argument| matches!(argument, TyArg::Origin(_)))
-            .unwrap_or(instance.len());
-        let (view, tail) = instance.split_at(split);
+        let binders: Vec<&Self> = Self::instance_binders(decls).collect();
         if decls.len() == instance.len()
-            || view.len() > Self::argument_binders(decls).count()
-            || tail.len() > decls.iter().filter(|decl| decl.is_origin()).count()
+            || instance.len() > binders.len()
+            || binders
+                .iter()
+                .zip(instance)
+                .any(|(decl, argument)| decl.is_origin() != matches!(argument, TyArg::Origin(_)))
         {
             return instance.to_vec();
         }
-        let origins: Vec<(&ParamId, &crate::origin::Origin)> = decls
-            .iter()
-            .filter_map(|decl| match decl {
-                Self::Origin { id, .. } => Some(id),
-                _ => None,
-            })
-            .zip(tail.iter().filter_map(|argument| match argument {
-                TyArg::Origin(origin) => Some(origin),
-                _ => None,
-            }))
-            .collect();
         let origin_of = |id: &ParamId| {
-            origins
+            binders
                 .iter()
-                .find(|(declared, _)| *declared == id)
-                .map(|(_, origin)| *origin)
+                .zip(instance)
+                .find(|(decl, _)| decl.is_origin() && decl.id() == id)
+                .and_then(|(_, argument)| match argument {
+                    TyArg::Origin(origin) => Some(origin),
+                    _ => None,
+                })
         };
         let deferred = |decl: &Self| TyArg::Val(CtValue::Deferred(decl.binder()));
-        let mut solved = view.iter();
+        let mut solved = instance.iter();
         decls
             .iter()
             .map(|decl| match decl {
-                Self::Origin { id, .. } => TyArg::Origin(
-                    origin_of(id)
-                        .cloned()
-                        .unwrap_or(crate::origin::Origin::Unbound),
-                ),
                 _ if decl.is_origin_mutability_binder(decls) => decls
                     .iter()
                     .find_map(|candidate| match candidate {
@@ -3655,9 +3643,140 @@ impl ParamDecl {
                         || deferred(decl),
                         |mutable| TyArg::Val(CtValue::Bool(mutable)),
                     ),
+                Self::Origin { .. } => solved
+                    .next()
+                    .cloned()
+                    .unwrap_or(TyArg::Origin(crate::origin::Origin::Unbound)),
                 _ => solved.next().cloned().unwrap_or_else(|| deferred(decl)),
             })
             .collect()
+    }
+
+    /// The binders of `decls` a struct instance holds an argument for, in
+    /// declared order: each but an origin's `mut=` binder, so an origin
+    /// binder's argument sits at its declared position, as upstream's
+    /// `!kgen.struct` attributes do.
+    pub fn instance_binders(decls: &[Self]) -> impl Iterator<Item = &Self> + '_ {
+        decls
+            .iter()
+            .filter(move |decl| !decl.is_origin_mutability_binder(decls))
+    }
+
+    /// [`Self::instance_binders`] as a list, borrowing `decls` when every
+    /// binder is one.
+    pub fn instance_view(decls: &[Self]) -> std::borrow::Cow<'_, [Self]> {
+        if decls
+            .iter()
+            .any(|decl| decl.is_origin_mutability_binder(decls))
+        {
+            std::borrow::Cow::Owned(Self::instance_binders(decls).cloned().collect())
+        } else {
+            std::borrow::Cow::Borrowed(decls)
+        }
+    }
+
+    /// The instance of a struct declaring `decls` whose argument binders
+    /// ([`Self::argument_binders`]) take `view` and whose origin binders
+    /// take `origins`, each argument at its binder's position among
+    /// [`Self::instance_binders`]. An origin binder `origins` leaves out is
+    /// [`Origin::Unbound`](crate::origin::Origin::Unbound), and an origin
+    /// `decls` declares no binder for (a closure storage's) follows the
+    /// rest. `view` followed by `origins` when `view` is not one argument
+    /// per argument binder (a struct keyed on its lone pack, applied
+    /// element by element).
+    pub fn place_origins(
+        decls: &[Self],
+        view: impl IntoIterator<Item = TyArg>,
+        origins: impl IntoIterator<Item = crate::origin::Origin>,
+    ) -> Vec<TyArg> {
+        let view: Vec<TyArg> = view.into_iter().collect();
+        let mut origins = origins.into_iter();
+        if view.len() != Self::argument_binders(decls).count() {
+            return view.into_iter().chain(origins.map(TyArg::Origin)).collect();
+        }
+        let mut view = view.into_iter();
+        let mut placed: Vec<TyArg> = Self::instance_binders(decls)
+            .filter_map(|decl| {
+                if decl.is_origin() {
+                    Some(TyArg::Origin(
+                        origins.next().unwrap_or(crate::origin::Origin::Unbound),
+                    ))
+                } else {
+                    view.next()
+                }
+            })
+            .collect();
+        placed.extend(origins.map(TyArg::Origin));
+        placed
+    }
+
+    /// `arguments` aligned with `decls` position by position: as they stand
+    /// when `decls` declares its origin binders in place or `arguments`
+    /// carry no origin, and otherwise without their origins, which no
+    /// binder of an argument view ([`Self::argument_view`]) takes.
+    pub fn aligned_arguments<'a>(
+        decls: &[Self],
+        arguments: &'a [TyArg],
+    ) -> std::borrow::Cow<'a, [TyArg]> {
+        if decls.iter().any(Self::is_origin)
+            || !arguments
+                .iter()
+                .any(|argument| matches!(argument, TyArg::Origin(_)))
+        {
+            std::borrow::Cow::Borrowed(arguments)
+        } else {
+            std::borrow::Cow::Owned(
+                arguments
+                    .iter()
+                    .filter(|argument| !matches!(argument, TyArg::Origin(_)))
+                    .cloned()
+                    .collect(),
+            )
+        }
+    }
+
+    /// `decls` paired with their arguments among `arguments` position by
+    /// position, as [`Self::aligned_arguments`] aligns them.
+    pub fn aligned_pairs<'d, 'a>(
+        decls: &'d [Self],
+        arguments: &'a [TyArg],
+    ) -> impl Iterator<Item = (&'d Self, &'a TyArg)> + use<'d, 'a> {
+        let skip_origins = !decls.iter().any(Self::is_origin);
+        decls.iter().zip(
+            arguments
+                .iter()
+                .filter(move |argument| !(skip_origins && matches!(argument, TyArg::Origin(_)))),
+        )
+    }
+
+    /// The origins among an instance's `arguments`, in declared order (none
+    /// for an erased spelling, which carries none).
+    pub fn origin_arguments(
+        arguments: &[TyArg],
+    ) -> impl Iterator<Item = &crate::origin::Origin> + '_ {
+        arguments.iter().filter_map(|argument| match argument {
+            TyArg::Origin(origin) => Some(origin),
+            _ => None,
+        })
+    }
+
+    /// Each origin binder of `decls` paired with the origin an instance's
+    /// `arguments` bind it to, by declared order: the instance's origin
+    /// arguments wherever they sit.
+    pub fn instance_origins<'a>(
+        decls: &'a [Self],
+        arguments: &'a [TyArg],
+    ) -> impl Iterator<Item = (crate::origin::OriginParamId, &'a crate::origin::Origin)> + 'a {
+        decls
+            .iter()
+            .filter_map(|decl| match decl {
+                Self::Origin { origin, .. } => Some(*origin),
+                _ => None,
+            })
+            .zip(arguments.iter().filter_map(|argument| match argument {
+                TyArg::Origin(origin) => Some(origin),
+                _ => None,
+            }))
     }
 
     /// This declaration with each unbound reference of its `where` clauses
@@ -3932,9 +4051,21 @@ impl ParamDecl {
             decls
                 .iter()
                 .position(|decl| *decl.id() == list.id)
-                .and_then(|slot| arguments.get(slot))
+                .and_then(|slot| Self::aligned_argument(decls, arguments, slot))
         });
-        list.or_else(|| arguments.get(index))
+        list.or_else(|| Self::aligned_argument(decls, arguments, index))
+    }
+
+    /// The argument of `arguments` aligned with `decls[index]`, as
+    /// [`Self::aligned_arguments`] aligns them.
+    pub fn aligned_argument<'a>(
+        decls: &[Self],
+        arguments: &'a [TyArg],
+        index: usize,
+    ) -> Option<&'a TyArg> {
+        Self::aligned_pairs(decls, arguments)
+            .nth(index)
+            .map(|(_, argument)| argument)
     }
 
     /// Whether this is a pack's implicit list binder (`vs.values`,
@@ -5881,9 +6012,8 @@ pub fn own_parameter_bindings(decls: &[ParamDecl], own: &[ParamDecl]) -> ParamBi
 /// binds them too, for a value binder a field's lane slot or value
 /// argument names. Empty for a non-generic struct.
 pub fn struct_argument_substitution(decls: &[ParamDecl], arguments: &[TyArg]) -> TySubst {
-    decls
-        .iter()
-        .zip(arguments)
+    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
+    ParamDecl::aligned_pairs(decls, arguments)
         .filter_map(|(decl, argument)| match (decl, argument) {
             (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => Some((id.clone(), ty.clone())),
             _ => None,
@@ -5913,6 +6043,7 @@ pub fn struct_field_types<'a>(
     arguments: &[TyArg],
     fields: &'a [(String, Ty)],
 ) -> Option<std::borrow::Cow<'a, [(String, Ty)]>> {
+    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
     let binders: Vec<ParamRef> = decls.iter().map(ParamDecl::binder).collect();
     let names_own_binder = |ty: &Ty| binders.iter().any(|binder| names_binder(ty, binder));
     if is_identity_application(decls, arguments)
@@ -5950,8 +6081,9 @@ pub fn struct_argument_bindings(
     decls: &[ParamDecl],
     arguments: &[TyArg],
 ) -> ParamBindings {
+    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
     let mut bindings = ParamBindings::new();
-    for (decl, argument) in decls.iter().zip(arguments) {
+    for (decl, argument) in ParamDecl::aligned_pairs(decls, arguments) {
         match (decl, argument) {
             (
                 ParamDecl::Type {
@@ -8051,9 +8183,8 @@ fn write_callable(
 /// element tuple or runtime pack, to types none of which spreads another
 /// pack. A struct applied element by element (`Tuple[A, B]`) binds none.
 fn struct_pack_arguments(decls: &[ParamDecl], arguments: &[TyArg]) -> HashMap<ParamId, Vec<Ty>> {
-    decls
-        .iter()
-        .zip(arguments)
+    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
+    ParamDecl::aligned_pairs(decls, arguments)
         .filter_map(|(decl, argument)| {
             let ParamDecl::Type { variadic: true, .. } = decl else {
                 return None;
@@ -8530,11 +8661,11 @@ fn variadic_pack_over(
     TyKind::Struct(
         VARIADIC_PACK_TYPE_NAME.to_string(),
         vec![
+            TyArg::Origin(origin),
             TyArg::Val(CtValue::Trait(traits)),
             pack,
             TyArg::Val(CtValue::Bool(is_owned)),
             TyArg::Val(ParamDecl::type_list_value()),
-            TyArg::Origin(origin),
         ],
     )
     .into()
@@ -8554,10 +8685,8 @@ fn pack_traits(pack: &Ty) -> Vec<String> {
 fn is_identity_application(decls: &[ParamDecl], arguments: &[TyArg]) -> bool {
     !decls.is_empty()
         && decls.len() == arguments.len()
-        && decls
-            .iter()
-            .zip(arguments)
-            .all(|(decl, argument)| match (decl, argument) {
+        && ParamDecl::aligned_pairs(decls, arguments).all(|(decl, argument)| {
+            match (decl, argument) {
                 (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
                     matches!(ty.kind(), TyKind::Param { binder, .. } if binder.id == *id)
                 }
@@ -8565,7 +8694,8 @@ fn is_identity_application(decls: &[ParamDecl], arguments: &[TyArg]) -> bool {
                     matches!(expr.kind(), ParamKind::DeclRef(reference) if reference.id == *id)
                 }
                 _ => false,
-            })
+            }
+        })
 }
 
 /// Each type binder of `from` renamed to the binder at its position in
@@ -9620,5 +9750,77 @@ mod generic_callable_identity_tests {
         let bool_result = signature("max_fn", "width", Ty::int(), Ty::bool());
         assert!(!same_generic_callable(&add, &bool_result));
         assert!(!same_generic_callable(&Ty::int(), &Ty::int()));
+    }
+}
+
+#[cfg(test)]
+mod instance_layout_tests {
+    use super::*;
+    use crate::origin::{Origin, OriginParamId};
+
+    /// `S[m: Bool, o: Origin[mut=m], //, T: AnyType]`'s declared list.
+    fn origin_before_type() -> Vec<ParamDecl> {
+        let m = ParamRef {
+            id: ParamId::new("S", 0),
+            name: "m".into(),
+        };
+        vec![
+            ParamDecl::Value {
+                id: m.id.clone(),
+                name: "m".into(),
+                ty: Ty::bool(),
+                default: None,
+                callable_default: None,
+                infer_only: true,
+                variadic: false,
+                constraints: Vec::new(),
+            },
+            ParamDecl::Origin {
+                id: ParamId::new("S", 1),
+                name: "o".into(),
+                origin: OriginParamId(1),
+                mutability: OriginMutability::Binder(m),
+                infer_only: true,
+            },
+            ParamDecl::Type {
+                id: ParamId::new("S", 2),
+                name: "T".into(),
+                bounds: Vec::new(),
+                trait_param: None,
+                callable_bound: None,
+                default: None,
+                infer_only: false,
+                variadic: false,
+                constraints: Vec::new(),
+            },
+        ]
+    }
+
+    #[test]
+    fn an_instance_places_its_origins_in_declared_order() {
+        let decls = origin_before_type();
+        let placed = ParamDecl::place_origins(&decls, [TyArg::Ty(Ty::int())], [Origin::Static]);
+        assert_eq!(
+            placed,
+            vec![TyArg::Origin(Origin::Static), TyArg::Ty(Ty::int())]
+        );
+        assert_eq!(
+            ParamDecl::instance_origins(&decls, &placed)
+                .map(|(id, origin)| (id, origin.clone()))
+                .collect::<Vec<_>>(),
+            vec![(OriginParamId(1), Origin::Static)]
+        );
+        assert_eq!(
+            ParamDecl::aligned_arguments(&ParamDecl::argument_view(&decls), &placed).into_owned(),
+            vec![TyArg::Ty(Ty::int())]
+        );
+        assert_eq!(
+            ParamDecl::instance_arguments(&decls, &placed),
+            vec![
+                TyArg::Val(CtValue::Bool(false)),
+                TyArg::Origin(Origin::Static),
+                TyArg::Ty(Ty::int()),
+            ]
+        );
     }
 }

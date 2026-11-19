@@ -239,7 +239,7 @@ impl Checker {
                     };
                     let subst = struct_subst(&info.decls(), arguments);
                     let own: Bindings = info
-                        .tail_origin_bindings(arguments)
+                        .instance_origin_bindings(arguments)
                         .into_iter()
                         .map(|(id, origin)| (id, bound(origin, origins)))
                         .collect();

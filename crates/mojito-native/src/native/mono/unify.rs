@@ -382,7 +382,7 @@ pub(super) fn bind_ty_args(
             bindings,
         );
     }
-    for (decl, arg) in decls.iter().zip(args) {
+    for (decl, arg) in ParamDecl::aligned_pairs(decls, args) {
         match (decl, arg) {
             // An erased argument binds nothing: its parameter is one the
             // instance's identity does not hold.

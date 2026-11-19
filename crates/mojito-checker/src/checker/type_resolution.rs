@@ -167,7 +167,7 @@ impl DependentValues {
         arguments: &[TyArg],
     ) -> Self {
         let mut values = Self::default();
-        for (decl, argument) in decls.iter().zip(arguments) {
+        for (decl, argument) in ParamDecl::aligned_pairs(decls, arguments) {
             let TyArg::Val(value) = argument else {
                 continue;
             };
@@ -532,13 +532,13 @@ pub(in crate::checker) struct ExplicitStructOrigin {
 
 /// A struct application's compile-time arguments with the origin slots
 /// partitioned out: `forwarded` is exactly what the origin-erased binder
-/// sees, `explicit_origins` the validated origin arguments, and `tail` the
-/// application's origin tail — one origin per slot, `Origin::Unbound` where
-/// the application left the slot to inference.
+/// sees, `explicit_origins` the validated origin arguments, and `origins`
+/// the application's origin arguments — one per origin binder, in declared
+/// order, `Origin::Unbound` where the application left it to inference.
 pub(super) struct PartitionedStructArgs {
     pub(super) forwarded: Vec<mojito_ast::ast::ParamArg>,
     pub(super) explicit_origins: Vec<ExplicitStructOrigin>,
-    pub(super) tail: Vec<mojito_types::origin::Origin>,
+    pub(super) origins: Vec<mojito_types::origin::Origin>,
     /// The source position of each `forwarded` argument.
     positions: Vec<usize>,
     /// The arguments kept back from the binder, each bound in its source
@@ -555,11 +555,6 @@ pub(super) struct PartitionedStructArgs {
 }
 
 impl PartitionedStructArgs {
-    /// The tail as struct type arguments, to append after the binder prefix.
-    pub(super) fn tail_arguments(&self) -> impl Iterator<Item = TyArg> + '_ {
-        self.tail.iter().cloned().map(TyArg::Origin)
-    }
-
     /// The application's attributes over the struct's whole declared list:
     /// `bound`, the origin-erased binder's over `forwarded`, each in its
     /// binder's declared slot, beside the kept-back origin arguments in
@@ -2135,7 +2130,7 @@ impl Checker {
     /// accepting origin arguments in the slots the declaration's raw
     /// parameter list spells (`decls` erases Origin parameters, so
     /// `resolve_use_params` alone cannot see them). The resolved arguments
-    /// are the binder prefix followed by the origin tail: origin arguments
+    /// hold each origin argument at its binder's position: origin arguments
     /// are part of the struct's checked identity, and a slot the application
     /// leaves to inference is `Origin::Unbound`. An application supplying
     /// exactly the non-origin explicit count omits the origin slots entirely.
@@ -2151,11 +2146,15 @@ impl Checker {
         let partitioned = self.partition_struct_origin_args(name, source_params, args)?;
         let BoundParameters {
             subst,
-            mut arguments,
+            arguments,
             attributes,
             ..
         } = self.resolve_use_params(name, decls, &partitioned.forwarded, patterns, actuals)?;
-        arguments.extend(partitioned.tail_arguments());
+        let arguments = ParamDecl::place_origins(
+            self.structs.get(name).map_or(decls, |info| &info.params),
+            arguments,
+            partitioned.origins.iter().cloned(),
+        );
         Ok(BoundParameters {
             subst,
             arguments,
@@ -2276,7 +2275,7 @@ impl Checker {
             if let Some(entry) = tail_ids
                 .iter()
                 .position(|id| *id == origin.id)
-                .and_then(|at| partitioned.tail.get_mut(at))
+                .and_then(|at| partitioned.origins.get_mut(at))
             {
                 *entry = origin.origin.clone();
             }
@@ -2341,7 +2340,7 @@ impl Checker {
             kept: DeclaredAttributes::default(),
             slots: slots.clone(),
             explicit_origins: Vec::new(),
-            tail: vec![Origin::Unbound; tail_len],
+            origins: vec![Origin::Unbound; tail_len],
         };
         let strict = self.application_strictness();
         // No origin slots — or a variadic explicit list, whose positional
@@ -2468,11 +2467,11 @@ impl Checker {
                 .filter(|(param, _)| !is_origin(param))
                 .map(|(_, argument)| argument.clone())
                 .collect();
-            let tail = tail_of(&explicit_origins);
+            let origins = tail_of(&explicit_origins);
             return Ok(PartitionedStructArgs {
                 forwarded,
                 explicit_origins,
-                tail,
+                origins,
                 positions,
                 kept,
                 slots,
@@ -2540,11 +2539,11 @@ impl Checker {
                 param: omitted.name.clone(),
             });
         }
-        let tail = tail_of(&explicit_origins);
+        let origins = tail_of(&explicit_origins);
         Ok(PartitionedStructArgs {
             forwarded,
             explicit_origins,
-            tail,
+            origins,
             positions,
             kept,
             slots,

@@ -1852,7 +1852,7 @@ impl Checker {
         arguments: &[TyArg],
     ) -> Result<(), TypeError> {
         let subst = struct_subst(decls, arguments);
-        for (decl, argument) in decls.iter().zip(arguments) {
+        for (decl, argument) in ParamDecl::aligned_pairs(decls, arguments) {
             let ParamDecl::Type {
                 name,
                 callable_bound: Some(bound),
@@ -1920,7 +1920,7 @@ impl Checker {
         decls: &[ParamDecl],
         arguments: &[TyArg],
     ) -> Result<(), TypeError> {
-        for (decl, argument) in decls.iter().zip(arguments) {
+        for (decl, argument) in ParamDecl::aligned_pairs(decls, arguments) {
             let ParamDecl::Type {
                 trait_param: Some(binder),
                 ..
@@ -2094,8 +2094,10 @@ impl Checker {
         }) else {
             return Vec::new();
         };
-        let arguments = comptime_validation::positional_pack_arguments(&info.decls(), arguments);
-        let solved: Vec<TyArg> = arguments[..info.decls().len().min(arguments.len())]
+        let decls = info.decls();
+        let arguments = ParamDecl::aligned_arguments(&decls, arguments);
+        let arguments = comptime_validation::positional_pack_arguments(&decls, &arguments);
+        let solved: Vec<TyArg> = arguments[..decls.len().min(arguments.len())]
             .iter()
             .cloned()
             .chain(own_arguments)
@@ -3241,32 +3243,50 @@ impl StructInfo {
         struct_origin_slots(&self.source_params)
     }
 
-    /// The arguments of the struct's own `Self` type: each declared parameter
-    /// as itself, then each origin slot as its own binder.
+    /// The arguments of the struct's own `Self` type: each parameter an
+    /// instance holds ([`ParamDecl::instance_binders`]) as itself, an origin
+    /// binder in place.
     fn self_arguments(&self) -> Vec<TyArg> {
-        self_struct_arguments(&self.decls(), &self.source_params)
+        self_struct_arguments(&self.params, &self.source_params)
     }
 
-    /// The origin tail of an instance's arguments (empty for an erased
-    /// spelling that carries none).
-    fn origin_tail<'a>(&self, arguments: &'a [TyArg]) -> &'a [TyArg] {
-        arguments.get(self.decls().len()..).unwrap_or_default()
-    }
-
-    /// The binder-to-origin map an instance's tail binds, for substituting
-    /// the struct's own origin binders (`Self.o`) in member signatures.
-    fn tail_origin_bindings(
+    /// The binder-to-origin map an instance's arguments bind, for
+    /// substituting the struct's own origin binders (`Self.o`) in member
+    /// signatures.
+    fn instance_origin_bindings(
         &self,
         arguments: &[TyArg],
     ) -> HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin> {
         self.origin_slots()
             .into_iter()
-            .zip(self.origin_tail(arguments))
-            .filter_map(|((id, _), argument)| match argument {
-                TyArg::Origin(origin) => Some((id, origin.clone())),
-                TyArg::Ty(_) | TyArg::Val(_) => None,
-            })
+            .zip(ParamDecl::origin_arguments(arguments))
+            .map(|((id, _), origin)| (id, origin.clone()))
             .collect()
+    }
+
+    /// The origins of `instance`, an instance of the struct, when there is
+    /// one, and else `fallback`.
+    fn instance_origins_or(
+        instance: Option<&Ty>,
+        fallback: &[mojito_types::origin::Origin],
+    ) -> Vec<mojito_types::origin::Origin> {
+        instance
+            .and_then(|instance| instance.kind().as_non_simd_struct())
+            .map_or_else(
+                || fallback.to_vec(),
+                |(_, arguments)| ParamDecl::origin_arguments(arguments).cloned().collect(),
+            )
+    }
+
+    /// `view`, the arguments of the struct's argument binders, with
+    /// `origins` placed at their binders' positions
+    /// ([`ParamDecl::place_origins`]).
+    fn place_origins(
+        &self,
+        view: impl IntoIterator<Item = TyArg>,
+        origins: impl IntoIterator<Item = mojito_types::origin::Origin>,
+    ) -> Vec<TyArg> {
+        ParamDecl::place_origins(&self.params, view, origins)
     }
 }
 
@@ -3305,7 +3325,7 @@ fn explicit_destroy_types(
         .own()
         .iter()
         .filter_map(|(name, info)| {
-            let self_ty = Ty::new(TyKind::Struct(name.clone(), params_as_args(&info.decls())));
+            let self_ty = Ty::new(TyKind::Struct(name.clone(), info.self_arguments()));
             (!checker.is_deinitable(&self_ty)).then(|| {
                 (
                     name.clone(),
@@ -3463,17 +3483,16 @@ fn struct_origin_slots(
 
 /// See [`StructInfo::self_arguments`].
 fn self_struct_arguments(
-    decls: &[ParamDecl],
+    params: &[ParamDecl],
     source_params: &[mojito_ast::ast::TypeParam],
 ) -> Vec<TyArg> {
-    params_as_args(decls)
-        .into_iter()
-        .chain(
-            struct_origin_slots(source_params)
-                .into_iter()
-                .map(|(id, _)| TyArg::Origin(mojito_types::origin::Origin::Param(id))),
-        )
-        .collect()
+    ParamDecl::place_origins(
+        params,
+        ParamDecl::argument_binders(params).map(ParamDecl::own_argument),
+        struct_origin_slots(source_params)
+            .into_iter()
+            .map(|(id, _)| mojito_types::origin::Origin::Param(id)),
+    )
 }
 
 /// How a body's `return` meets its result.
@@ -4080,7 +4099,7 @@ impl MethodInstantiation {
     /// The declared result with the method's bound origin binders
     /// substituted, those its bracket bound first.
     fn bound_result(&self, checker: &Checker, ty: &Ty) -> Ty {
-        let ty = generics::bind_origin_tails(ty, &self.bracket_origins);
+        let ty = generics::bind_struct_origins(ty, &self.bracket_origins);
         match &self.origin_bindings {
             Some(bindings) => bindings
                 .substitute_result(&ty, &|_, origin| checker.bound_origin_mutability(origin)),

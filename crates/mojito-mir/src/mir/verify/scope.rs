@@ -136,6 +136,7 @@ pub(super) fn verify_scope(
         head: &head,
         errors,
         erasable: 0,
+        spelled_receiver: false,
         callee_removed_params: &function.callee_removed_params,
         family: Family::Other,
         callee: None,
@@ -319,6 +320,10 @@ struct ScopeCx<'a> {
     /// The callee the instruction names, whose scope its contract's
     /// declarations are spelled in.
     callee: Option<String>,
+    /// Whether the walk is at a static call's spelled receiver, whose
+    /// instance drops the arguments of the parameters the callee removed
+    /// (R2366).
+    spelled_receiver: bool,
 }
 
 impl ScopeCx<'_> {
@@ -363,7 +368,19 @@ impl ScopeCx<'_> {
                 let declared = self
                     .declarations
                     .structure(name)
-                    .map(|declaration| declaration.argument_view());
+                    .map(|declaration| declaration.instance_view());
+                // A closure storage's origins follow its binders, which
+                // name none of them (R2365).
+                if let Some(binders) = declared.as_deref()
+                    && !std::mem::take(&mut self.spelled_receiver)
+                    && !mojito_symbol::symbol::is_closure_storage_name(name)
+                    && let Some(misplaced) = misplaced_instance_argument(binders, args)
+                {
+                    self.errors.push(format!(
+                        "{} {role} type `{name}` holds {misplaced}",
+                        self.head
+                    ));
+                }
                 self.erasable += 1;
                 self.arguments(role, declared.as_deref(), args, nested);
                 self.erasable -= 1;
@@ -831,11 +848,13 @@ impl TypeVisitor for ScopeCx<'_> {
     }
 
     fn visit_ty(&mut self, ty: &Ty, site: TySite) -> Result<(), Self::Error> {
+        self.spelled_receiver = site == TySite::Receiver;
         self.walk(&self.family.ty_role(site), ty);
         Ok(())
     }
 
     fn visit_ty_arg(&mut self, arg: &TyArg) -> Result<(), Self::Error> {
+        self.spelled_receiver = false;
         let role = self.family.argument_role();
         match arg {
             TyArg::Ty(ty) => self.walk(role, ty),
@@ -1068,6 +1087,33 @@ pub(super) mod tests {
         }
     }
 
+    /// `B[o: ImmOrigin, n: Int]`'s instance binders.
+    fn origin_first() -> Vec<ParamDecl> {
+        vec![
+            ParamDecl::Origin {
+                id: ParamId::new("B", 0),
+                name: "o".into(),
+                origin: mojito_types::origin::OriginParamId(0),
+                mutability: mojito_types::types::OriginMutability::Fixed(false),
+                infer_only: false,
+            },
+            value_decl("B", 1, "n", Ty::int()),
+        ]
+    }
+
+    #[test]
+    fn an_instance_holds_its_origin_at_its_binders_position() {
+        let origin = TyArg::Origin(mojito_types::origin::Origin::Static);
+        let n = TyArg::Val(mojito_types::ct::CtValue::Int(1));
+        assert_eq!(
+            misplaced_instance_argument(&origin_first(), &[origin.clone(), n.clone()]),
+            None
+        );
+        assert_eq!(misplaced_instance_argument(&origin_first(), &[]), None);
+        assert!(misplaced_instance_argument(&origin_first(), &[n.clone(), origin]).is_some());
+        assert!(misplaced_instance_argument(&origin_first(), &[n]).is_some());
+    }
+
     fn value_decl(owner: &str, slot: usize, name: &str, ty: Ty) -> ParamDecl {
         ParamDecl::Value {
             id: ParamId::new(owner, slot),
@@ -1219,7 +1265,6 @@ pub(super) mod tests {
             declared: Vec::new(),
             register_passable: false,
             associated_types: Vec::new(),
-            origin_params: Vec::new(),
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
             parameterized_associated_values: Vec::new(),
@@ -1438,7 +1483,6 @@ pub(super) mod tests {
             declared: Vec::new(),
             register_passable: false,
             associated_types: Vec::new(),
-            origin_params: Vec::new(),
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
             parameterized_associated_values: Vec::new(),
@@ -1602,4 +1646,32 @@ pub(super) mod tests {
         let found = findings_of(method_call(Ty::int(), Vec::new(), decls(foreign_param())));
         assert!(unbound_in(&found, "method contract"), "{found:?}");
     }
+}
+
+/// Why `args`, the arguments of an instance of a struct whose instance
+/// binders are `binders` ([`ParamDecl::instance_binders`]), are not one per
+/// binder with each origin at its binder's position: `None` when they are,
+/// when they are none (an erased spelling), or when the struct declares no
+/// origin binder (an elaborated instance's declaration keeps none).
+fn misplaced_instance_argument(binders: &[ParamDecl], args: &[TyArg]) -> Option<String> {
+    if args.is_empty() || !binders.iter().any(ParamDecl::is_origin) {
+        return None;
+    }
+    if args.len() != binders.len() {
+        return Some(format!(
+            "{} arguments where its struct declares {} instance binders",
+            args.len(),
+            binders.len()
+        ));
+    }
+    binders
+        .iter()
+        .zip(args)
+        .position(|(decl, argument)| decl.is_origin() != matches!(argument, TyArg::Origin(_)))
+        .map(|position| {
+            format!(
+                "an argument out of place at position {position}, its binder `{}`",
+                binders[position].name()
+            )
+        })
 }

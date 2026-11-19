@@ -3023,10 +3023,7 @@ impl Checker {
             );
             return Some(if holds { always() } else { Vec::new() });
         }
-        let self_ty = Ty::new(TyKind::Struct(
-            name.to_string(),
-            params_as_args(&info.decls()),
-        ));
+        let self_ty = Ty::new(TyKind::Struct(name.to_string(), info.self_arguments()));
         if mojito_types::types::uninit_storage_element(&self_ty).is_some() {
             return None;
         }

@@ -269,7 +269,10 @@ pub(super) fn upgrade_instantiated_arguments(
             && arguments.len() != declared.len()
             && arguments.len() == ParamDecl::argument_binders(declared).count()
         {
-            *arguments = ParamDecl::instance_arguments(declared, arguments);
+            *arguments = ParamDecl::instance_arguments(
+                declared,
+                &ParamDecl::place_origins(declared, arguments.drain(..), []),
+            );
         }
     }
     fn upgrade(block: &mut MirBlock, declarations: &MirDeclarations) {
@@ -1037,7 +1040,6 @@ fn lower_closure_storage(
         fields: storage.fields.clone(),
         fieldwise_init: true,
         param_decls: storage.param_decls.clone(),
-        origin_params: Vec::new(),
         explicit_destructors: HashMap::new(),
         explicit_destroy: None,
         conformances: [
@@ -1976,4 +1978,185 @@ fn analyze_root_children(
         .into_iter()
         .map(|site| analyze_node(checked, site))
         .collect()
+}
+
+/// Move the origin tail of every struct instance `functions` and
+/// `declarations` spell, as an artifact before MIR 1.206 writes them after
+/// the instance's type and value arguments, to its binders' positions
+/// ([`ParamDecl::place_origins`]), as the struct's declared list orders
+/// them.
+pub(super) fn upgrade_struct_instance_arguments(
+    functions: &mut [(String, MirFunction)],
+    declarations: &mut MirDeclarations,
+) {
+    let mut placing = OriginTails {
+        decls: declarations
+            .structs
+            .iter()
+            .filter(|structure| structure.param_decls.iter().any(ParamDecl::is_origin))
+            .map(|structure| (structure.name.clone(), structure.param_decls.clone()))
+            .collect(),
+    };
+    if placing.decls.is_empty() {
+        return;
+    }
+    for (_, function) in functions.iter_mut() {
+        let Ok(()) = crate::mir::visit::walk_function_mut(&mut placing, function);
+    }
+    for structure in &mut declarations.structs {
+        for (_, field) in &mut structure.fields {
+            *field = placing.placed(field);
+        }
+    }
+    for function in &mut declarations.functions {
+        for ty in function
+            .param_types
+            .iter_mut()
+            .chain(&mut function.variadic)
+            .chain(&mut function.kw_variadic)
+            .chain(std::iter::once(&mut function.ret_ty))
+            .chain(&mut function.error_ty)
+        {
+            *ty = placing.placed(ty);
+        }
+    }
+}
+
+/// [`upgrade_struct_instance_arguments`]'s rewrite: the declared list of
+/// each struct that declares an origin binder.
+struct OriginTails {
+    decls: HashMap<String, Vec<ParamDecl>>,
+}
+
+impl OriginTails {
+    fn placed(&mut self, ty: &Ty) -> Ty {
+        mojito_types::types::rewrite_ty(ty, self).unwrap_or_else(|_| ty.clone())
+    }
+
+    fn placed_argument(&mut self, argument: &TyArg) -> TyArg {
+        match argument {
+            TyArg::Ty(ty) => TyArg::Ty(self.placed(ty)),
+            other => other.clone(),
+        }
+    }
+}
+
+impl mojito_types::types::TyRewrite for OriginTails {
+    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        let (name, arguments) = ty.kind().as_non_simd_struct()?;
+        let arguments: Vec<TyArg> = arguments
+            .iter()
+            .map(|argument| self.placed_argument(argument))
+            .collect();
+        let placed = match self.decls.get(name) {
+            Some(decls)
+                if !arguments.is_empty()
+                    && arguments
+                        .iter()
+                        .skip_while(|argument| !matches!(argument, TyArg::Origin(_)))
+                        .all(|argument| matches!(argument, TyArg::Origin(_))) =>
+            {
+                let (view, tail): (Vec<TyArg>, Vec<TyArg>) = arguments
+                    .into_iter()
+                    .partition(|argument| !matches!(argument, TyArg::Origin(_)));
+                ParamDecl::place_origins(
+                    decls,
+                    view,
+                    tail.into_iter().filter_map(|argument| match argument {
+                        TyArg::Origin(origin) => Some(origin),
+                        _ => None,
+                    }),
+                )
+            }
+            _ => arguments,
+        };
+        Some(ty.reusing(TyKind::Struct(name.clone(), placed)))
+    }
+
+    fn expr(
+        &mut self,
+        expr: &mojito_types::param_expr::ParamExpr,
+    ) -> Result<mojito_types::param_expr::ParamExpr, mojito_types::param_expr::ParamError> {
+        Ok(expr.clone())
+    }
+
+    fn visits_closed(&self) -> bool {
+        true
+    }
+}
+
+impl crate::mir::visit::MutTypeVisitor for OriginTails {
+    type Error = std::convert::Infallible;
+
+    fn visit_ty(&mut self, ty: &mut Ty, _: crate::mir::visit::TySite) -> Result<(), Self::Error> {
+        *ty = self.placed(ty);
+        Ok(())
+    }
+
+    fn visit_ty_arg(&mut self, arg: &mut TyArg) -> Result<(), Self::Error> {
+        *arg = self.placed_argument(arg);
+        Ok(())
+    }
+
+    fn visit_variant_alternatives(
+        &mut self,
+        alternatives: &mut Vec<Ty>,
+    ) -> Result<(), Self::Error> {
+        for ty in alternatives {
+            *ty = self.placed(ty);
+        }
+        Ok(())
+    }
+
+    fn visit_variant_index(
+        &mut self,
+        _: &mut mojito_types::types::VariantIndex,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_field_step(&mut self, _: &mut Proj, _: Option<&Ty>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_lane_mask(
+        &mut self,
+        _: &mut mojito_types::types::LaneMask,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_param_arg(
+        &mut self,
+        _: &mut MirParamArg,
+        _: crate::mir::visit::ParamArgSite,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_param_decls(
+        &mut self,
+        _: &mut [ParamDecl],
+        _: crate::mir::visit::ParamDeclSite,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_constant(&mut self, _: &mut Const) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_param_ref(
+        &mut self,
+        _: &mut mojito_types::param_expr::ParamRef,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_sequence(
+        &mut self,
+        _: &mut mojito_checked::checked::ComptimeSequence,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }

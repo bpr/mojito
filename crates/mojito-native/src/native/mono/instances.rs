@@ -24,10 +24,11 @@ impl Specializer<'_> {
         {
             return None;
         }
-        let position = struct_decl
-            .argument_binders()
+        let view = struct_decl.argument_view();
+        let position = view
+            .iter()
             .position(|decl| matches!(decl, ParamDecl::Value { name, .. } if name == field))?;
-        let TyArg::Val(value) = type_args.get(position)? else {
+        let TyArg::Val(value) = ParamDecl::aligned_argument(&view, type_args, position)? else {
             return None;
         };
         match value {

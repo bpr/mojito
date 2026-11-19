@@ -406,7 +406,7 @@ impl<'a> Specializer<'a> {
         let Some(decls) = self
             .structs
             .get(owner.as_str())
-            .map(|owner| owner.argument_view())
+            .map(|owner| owner.instance_view())
         else {
             return Ok(());
         };
@@ -4178,7 +4178,6 @@ impl<'a> Specializer<'a> {
         declaration.fields = fields;
         declaration.name = name.to_string();
         declaration.param_decls.clear();
-        declaration.origin_params.clear();
         declaration.associated_types.clear();
         declaration.parameterized_associated_types.clear();
         declaration.associated_values.clear();

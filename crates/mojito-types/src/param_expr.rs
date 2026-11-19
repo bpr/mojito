@@ -5400,7 +5400,7 @@ impl ParamBindings {
         decls: &[crate::types::ParamDecl],
         arguments: &[crate::types::TyArg],
     ) {
-        for (decl, argument) in decls.iter().zip(arguments) {
+        for (decl, argument) in crate::types::ParamDecl::aligned_pairs(decls, arguments) {
             if let (crate::types::ParamDecl::Value { id, .. }, crate::types::TyArg::Val(value)) =
                 (decl, argument)
                 && let Some(value) = match value {

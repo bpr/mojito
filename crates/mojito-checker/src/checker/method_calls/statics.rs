@@ -158,7 +158,10 @@ impl Checker {
                             &partitioned.declared(bound.attributes),
                         );
                     }
-                    Self::struct_instance_type(sname, bound.arguments)
+                    Self::struct_instance_type(
+                        sname,
+                        info.place_origins(bound.arguments, partitioned.origins.iter().cloned()),
+                    )
                 })
         };
         let compatible = match (actual.kind(), expected.as_ref().map(Ty::kind)) {
@@ -256,7 +259,7 @@ impl Checker {
             ..
         } = self.resolve_use_params(sname, &info.decls(), &partitioned.forwarded, &[], &[])?;
         let receiver = StaticReceiver {
-            arguments,
+            arguments: info.place_origins(arguments, partitioned.origins.iter().cloned()),
             attributes: partitioned.declared(attributes),
         };
         if record {
@@ -373,11 +376,8 @@ impl Checker {
             // origin binders in the member's signature, as a receiver's
             // type does (`View[origin_of(x)].same(p)` over `p: Pointer[T,
             // Self.o]`).
-            let instance: Vec<TyArg> = tyargs
-                .iter()
-                .cloned()
-                .chain(partitioned.tail_arguments())
-                .collect();
+            let instance: Vec<TyArg> =
+                info.place_origins(tyargs.iter().cloned(), partitioned.origins.iter().cloned());
             let receiver_params: Vec<Ty> = sig
                 .params
                 .iter()
@@ -547,7 +547,10 @@ impl Checker {
             .position(|(_, params)| *params == selected.param_types)
             .map(|index| candidate_struct_args.swap_remove(index))
             .map_or_else(StaticReceiver::default, |bound| StaticReceiver {
-                arguments: bound.arguments,
+                arguments: info.place_origins(
+                    bound.arguments,
+                    crate::checker::StructInfo::instance_origins_or(receiver, &partitioned.origins),
+                ),
                 attributes: partitioned.declared(bound.attributes),
             });
         self.record_declared_attributes(span.clone(), &selected.bracket_attributes);

@@ -1875,11 +1875,10 @@ fn bindings_of(
                     .map(|decl| (decl.clone(), decl.own_argument())),
             );
         } else {
+            let view = owner.argument_view();
             bound.extend(
-                owner
-                    .argument_binders()
-                    .cloned()
-                    .zip(arguments.iter().cloned()),
+                ParamDecl::aligned_pairs(&view, arguments)
+                    .map(|(decl, argument)| (decl.clone(), argument.clone())),
             );
         }
     }

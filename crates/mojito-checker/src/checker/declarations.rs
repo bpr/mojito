@@ -3167,9 +3167,7 @@ impl Checker {
         else {
             return;
         };
-        let view: Vec<TyArg> = decls
-            .iter()
-            .zip(&recorded.arguments)
+        let view: Vec<TyArg> = ParamDecl::aligned_pairs(decls, &recorded.arguments)
             .filter(|(decl, _)| decl.is_argument_binder(decls))
             .map(|(_, argument)| argument.clone())
             .collect();
@@ -3193,15 +3191,7 @@ impl Checker {
         else {
             return HashMap::new();
         };
-        let tail = instance.get(info.decls().len()..).unwrap_or_default();
-        info.origin_slots()
-            .into_iter()
-            .zip(tail)
-            .filter_map(|((id, _), argument)| match argument {
-                TyArg::Origin(origin) => Some((id, origin.clone())),
-                _ => None,
-            })
-            .collect()
+        info.instance_origin_bindings(instance)
     }
 
     /// [`Self::infer_construction_of`] inside its argument memo.
@@ -3337,7 +3327,7 @@ impl Checker {
                             return_type: self.constructed_type(
                                 name,
                                 Vec::new(),
-                                &partitioned.tail,
+                                &partitioned.origins,
                                 &origin_bindings,
                             ),
                             result_adapter: None,
@@ -3613,7 +3603,7 @@ impl Checker {
                 }
                 let slots = (0..args.len()).map(ArgSlot::Positional).collect::<Vec<_>>();
                 let constructed =
-                    self.constructed_type(name, tyargs, &partitioned.tail, &pointer_origins);
+                    self.constructed_type(name, tyargs, &partitioned.origins, &pointer_origins);
                 let exclusivity = ConstructorExclusivity {
                     callee: constructed.to_string(),
                     parameter_names: &sig.names,
@@ -4112,7 +4102,7 @@ impl Checker {
                 let resolve =
                     |element: &Ty| Ok(expected_at(packed).unwrap_or_else(|| element.clone()));
                 let constructed =
-                    self.constructed_type(name, tyargs, &partitioned.tail, &pointer_origins);
+                    self.constructed_type(name, tyargs, &partitioned.origins, &pointer_origins);
                 let exclusivity = ConstructorExclusivity {
                     callee: constructed.to_string(),
                     parameter_names: &sig.names,
@@ -4298,7 +4288,8 @@ impl Checker {
             // position.
             self.check_consuming(&args[i], aty, &format!("field {} of '{}'", i + 1, name))?;
         }
-        let constructed = self.constructed_type(name, tyargs, &partitioned.tail, &origin_bindings);
+        let constructed =
+            self.constructed_type(name, tyargs, &partitioned.origins, &origin_bindings);
         let conventions = self.fieldwise_conventions(&info.fields);
         let ref_params = Self::fieldwise_ref_params(info);
         let slots: Vec<ArgSlot> = (0..args.len()).map(ArgSlot::Positional).collect();
@@ -5171,10 +5162,15 @@ impl Checker {
             };
             // The instance's origin tail is the one the bracket's origin
             // arguments bound (`W[Self.o](copy=self)`).
-            let with_tail = |mut arguments: Vec<TyArg>| {
-                arguments.truncate(info.decls().len());
-                arguments.extend(partitioned.tail_arguments());
-                Self::struct_instance_type(name, arguments)
+            let with_tail = |arguments: Vec<TyArg>| {
+                let view = arguments
+                    .into_iter()
+                    .filter(|argument| !matches!(argument, TyArg::Origin(_)))
+                    .take(info.decls().len());
+                Self::struct_instance_type(
+                    name,
+                    info.place_origins(view, partitioned.origins.iter().cloned()),
+                )
             };
             let instance = match constructed {
                 Some(instance) => Some(instance.clone()),
@@ -5267,7 +5263,10 @@ impl Checker {
                 },
             )
         } else {
-            Self::struct_instance_type(name, tyargs.clone())
+            Self::struct_instance_type(
+                name,
+                info.place_origins(tyargs.clone(), partitioned.origins.iter().cloned()),
+            )
         };
         let own = self.solve_constructor_own_params(
             name,
@@ -5302,18 +5301,17 @@ impl Checker {
                 .chain(own.arguments)
                 .collect::<Vec<_>>(),
         );
-        // A copy keeps the source's origin tail.
-        let mut arguments = tyargs;
-        match arg_ty.kind() {
-            struct_ty
-                if let Some((actual, actual_arguments)) = struct_ty.as_non_simd_struct()
-                    && actual == name =>
-            {
-                arguments.extend_from_slice(info.origin_tail(actual_arguments));
-            }
-            _ => arguments.extend(partitioned.tail_arguments()),
-        }
-        Ok(Self::struct_instance_type(name, arguments))
+        // A copy keeps the source's origins.
+        let origins = super::StructInfo::instance_origins_or(
+            nominal_parts(&arg_ty)
+                .filter(|(actual, _)| *actual == name)
+                .map(|_| &arg_ty),
+            &partitioned.origins,
+        );
+        Ok(Self::struct_instance_type(
+            name,
+            info.place_origins(tyargs, origins),
+        ))
     }
 
     /// Bind a hand-written constructor's struct origin binders named by its
@@ -5575,9 +5573,7 @@ impl Checker {
             .map(|(index, _)| binders.get(index) != refinement.get(index))
             .collect();
         let defining = |arguments: &[TyArg]| AssocBindings {
-            types: decls
-                .iter()
-                .zip(arguments)
+            types: ParamDecl::aligned_pairs(decls, arguments)
                 .zip(&defined)
                 .filter_map(|((decl, argument), defined)| match (decl, argument) {
                     (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) if *defined => {
@@ -5586,9 +5582,7 @@ impl Checker {
                     _ => None,
                 })
                 .collect(),
-            values: decls
-                .iter()
-                .zip(arguments)
+            values: ParamDecl::aligned_pairs(decls, arguments)
                 .zip(&defined)
                 .filter_map(|((decl, argument), defined)| match (decl, argument) {
                     (ParamDecl::Value { name, .. }, TyArg::Val(value)) if *defined => {
@@ -5657,8 +5651,9 @@ impl Checker {
         // parameter uninferred.
         let spelled_own =
             bracket_bindings(&format!("{name}.__init__"), &sig.decls(), explicit, None)?;
-        for (index, ((decl, argument), defined)) in
-            decls.iter().zip(&refinement).zip(&defined).enumerate()
+        for (index, ((decl, argument), defined)) in ParamDecl::aligned_pairs(decls, &refinement)
+            .zip(&defined)
+            .enumerate()
         {
             let spelled = known
                 .as_ref()
@@ -6721,7 +6716,7 @@ fn bind_instance_origins(
                 origin: origin.clone(),
                 mutability: None,
             });
-        if let Some(entry) = partitioned.tail.get_mut(tail) {
+        if let Some(entry) = partitioned.origins.get_mut(tail) {
             *entry = origin.clone();
         }
     }

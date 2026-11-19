@@ -195,7 +195,7 @@ impl Checker {
         // additionally rejects mutating the carrier while the reference
         // lives).
         let receiver_fallback = parameter_rooted.then_some(&receiver);
-        let receiver_tail = info.tail_origin_bindings(receiver_args);
+        let receiver_tail = info.instance_origin_bindings(receiver_args);
         let origin = map_delegated_sig_origin(
             &callee_ref.origin,
             &receiver_tail,

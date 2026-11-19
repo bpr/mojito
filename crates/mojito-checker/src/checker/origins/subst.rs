@@ -6,7 +6,7 @@ use super::*;
 use mojito_types::types::TyKind;
 
 /// The mutability a parametric (`Origin[mut=mut]`) origin binder takes when
-/// bound to an origin ([`bind_pointer_origin_tails`]); `None` leaves the
+/// bound to an origin ([`bind_pointer_origins`]); `None` leaves the
 /// binder unbound.
 pub(in crate::checker) type BinderMutability<'a> =
     &'a dyn Fn(
@@ -465,13 +465,13 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
 /// `binder_mutability` gives the bound origin, as upstream infers the
 /// binder's `mut` with its origin; without a resolver it stays unbound, as
 /// does every binder bound to a caller's own binder.
-pub(in crate::checker) fn bind_pointer_origin_tails(
+pub(in crate::checker) fn bind_pointer_origins(
     ty: &Ty,
     tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
     binder_mutability: Option<BinderMutability<'_>>,
 ) -> Ty {
     use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
-    let recur = |ty: &Ty| bind_pointer_origin_tails(ty, tails, binder_mutability);
+    let recur = |ty: &Ty| bind_pointer_origins(ty, tails, binder_mutability);
     let bind = |origin: &PointerOrigin| -> Option<PointerOrigin> {
         let PointerOrigin::Param {
             id,
@@ -553,14 +553,14 @@ pub(in crate::checker) fn bind_pointer_origin_tails(
 /// pointer elements, and reference referents. Pointer and reference origins
 /// themselves are left alone: those bind through
 /// [`substitute_pointer_origin_params`] and the reference solver.
-pub(in crate::checker) fn substitute_struct_origin_tails(
+pub(in crate::checker) fn substitute_struct_origins(
     ty: &Ty,
     bindings: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 ) -> Ty {
     if bindings.is_empty() {
         return ty.clone();
     }
-    let recur = |ty: &Ty| substitute_struct_origin_tails(ty, bindings);
+    let recur = |ty: &Ty| substitute_struct_origins(ty, bindings);
     match ty.kind() {
         struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
             ty.reusing(TyKind::Struct(

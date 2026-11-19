@@ -2789,7 +2789,7 @@ impl Checker {
                         )
                         .then(|| self.body_return_type())
                         .flatten();
-                        self.reconcile_return_origin_tails(
+                        self.reconcile_return_origins(
                             &self.infer_in_context(
                                 e,
                                 contextual.as_ref().unwrap_or(expected),

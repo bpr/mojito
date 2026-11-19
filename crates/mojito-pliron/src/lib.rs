@@ -1377,7 +1377,6 @@ mod tests {
                     declared: Vec::new(),
                     register_passable: false,
                     associated_types: Vec::new(),
-                    origin_params: Vec::new(),
                     parameterized_associated_types: Vec::new(),
                     associated_values: Vec::new(),
                     parameterized_associated_values: Vec::new(),

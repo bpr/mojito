@@ -58,7 +58,6 @@ impl CheckedProgram {
             explicit_destroy_types: _,
             struct_destructors: _,
             struct_modules: _,
-            struct_origin_params: _,
             conformances,
             declaration_effects,
             overloads: _,

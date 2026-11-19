@@ -787,7 +787,7 @@ impl Checker {
                 reference,
                 referent.clone(),
                 &semantic_arguments,
-                &info.tail_origin_bindings(receiver_arguments),
+                &info.instance_origin_bindings(receiver_arguments),
                 signature.self_convention == Some(mojito_ast::ast::ArgConvention::Mut),
             )
         });

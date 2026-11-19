@@ -1879,7 +1879,6 @@ mod held_struct_tests {
             }],
             register_passable: trait_name == "TrivialRegisterPassable",
             associated_types: Vec::new(),
-            origin_params: Vec::new(),
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
             parameterized_associated_values: Vec::new(),

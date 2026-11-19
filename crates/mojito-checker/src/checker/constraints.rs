@@ -6755,7 +6755,7 @@ impl Checker {
         decls: &[ParamDecl],
         arguments: &[TyArg],
     ) -> Result<(), TypeError> {
-        for (decl, argument) in decls.iter().zip(arguments) {
+        for (decl, argument) in ParamDecl::aligned_pairs(decls, arguments) {
             if let Some(list) = self.forwarded_type_pack(decl, argument) {
                 bindings.bind(decl.id().clone(), list);
             }
@@ -7058,9 +7058,7 @@ impl<'a> ConstraintEnvironment<'a> {
 
     pub(super) fn bind_declared(&mut self, decls: &[ParamDecl], arguments: &'a [TyArg]) {
         self.bound.extend(
-            decls
-                .iter()
-                .zip(arguments)
+            ParamDecl::aligned_pairs(decls, arguments)
                 .map(|(decl, argument)| (decl.id().clone(), argument)),
         );
     }

@@ -43,7 +43,7 @@ impl Checker {
     /// the declared signature origin, so the ordinary return coercion sees
     /// the signature's spelling; one that does not is rejected with
     /// upstream's text. Every non-tail part of the type stays as found.
-    pub(in crate::checker) fn reconcile_return_origin_tails(
+    pub(in crate::checker) fn reconcile_return_origins(
         &self,
         found: &Ty,
         declared: &Ty,
@@ -97,7 +97,7 @@ impl Checker {
                 }
         };
         let mut mismatch = false;
-        let reconciled = reconcile_origin_tails(found, declared, &bound, &fits, &mut mismatch);
+        let reconciled = reconcile_origins(found, declared, &bound, &fits, &mut mismatch);
         if mismatch {
             return Err(TypeError::OriginIdentityMismatch {
                 found: self.display_ty_with_origin_names(found),
@@ -654,11 +654,11 @@ fn spelled_origin(expression: &Expr) -> Option<String> {
     place_text(expression).map(|text| format!("origin_of({text})"))
 }
 
-/// See [`Checker::reconcile_return_origin_tails`]: walk `found`, `declared`,
+/// See [`Checker::reconcile_return_origins`]: walk `found`, `declared`,
 /// and the body-resolved `bound` in parallel. A found tail origin that
 /// `fits` the bound one takes the declared origin, a tail still left to
 /// inference stays as found, and any other tail sets `mismatch`.
-fn reconcile_origin_tails(
+fn reconcile_origins(
     found: &Ty,
     declared: &Ty,
     bound: &Ty,
@@ -679,7 +679,7 @@ fn reconcile_origin_tails(
         {
             found.reusing(TyKind::Struct(
                 found_name.clone(),
-                reconcile_tail_arguments(found_args, declared_args, bound_args, fits, mismatch),
+                reconcile_origin_arguments(found_args, declared_args, bound_args, fits, mismatch),
             ))
         }
         // An associated application's origin is part of the projection's
@@ -709,15 +709,9 @@ fn reconcile_origin_tails(
         {
             let same = |actual: &Origin, bound: &Origin| actual == bound;
             found.reusing(TyKind::Assoc {
-                base: reconcile_origin_tails(
-                    found_base,
-                    declared_base,
-                    bound_base,
-                    &same,
-                    mismatch,
-                ),
+                base: reconcile_origins(found_base, declared_base, bound_base, &same, mismatch),
                 name: found_name.clone(),
-                args: reconcile_tail_arguments(
+                args: reconcile_origin_arguments(
                     found_args,
                     declared_args,
                     bound_args,
@@ -739,7 +733,7 @@ fn reconcile_origin_tails(
                     .zip(declared_elements)
                     .zip(bound_elements)
                     .map(|((found, declared), bound)| {
-                        reconcile_origin_tails(found, declared, bound, fits, mismatch)
+                        reconcile_origins(found, declared, bound, fits, mismatch)
                     })
                     .collect(),
             )
@@ -760,7 +754,7 @@ fn reconcile_origin_tails(
                 .zip(declared_elements)
                 .zip(bound_elements)
                 .map(|((found, declared), bound)| {
-                    reconcile_origin_tails(found, declared, bound, fits, mismatch)
+                    reconcile_origins(found, declared, bound, fits, mismatch)
                 })
                 .collect();
             let mut elements = reconciled.into_iter();
@@ -779,8 +773,8 @@ fn reconcile_origin_tails(
     }
 }
 
-/// [`reconcile_origin_tails`] over one application's arguments.
-fn reconcile_tail_arguments(
+/// [`reconcile_origins`] over one application's arguments.
+fn reconcile_origin_arguments(
     found_args: &[TyArg],
     declared_args: &[TyArg],
     bound_args: &[TyArg],
@@ -794,9 +788,9 @@ fn reconcile_tail_arguments(
         .zip(bound_args)
         .map(
             |((found, declared), bound)| match (found, declared, bound) {
-                (TyArg::Ty(found), TyArg::Ty(declared), TyArg::Ty(bound)) => TyArg::Ty(
-                    reconcile_origin_tails(found, declared, bound, fits, mismatch),
-                ),
+                (TyArg::Ty(found), TyArg::Ty(declared), TyArg::Ty(bound)) => {
+                    TyArg::Ty(reconcile_origins(found, declared, bound, fits, mismatch))
+                }
                 (TyArg::Origin(Origin::Unbound), TyArg::Origin(_), TyArg::Origin(_)) => {
                     found.clone()
                 }

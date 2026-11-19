@@ -739,7 +739,7 @@ impl TypeVisitor for ConcreteCx<'_> {
             TyArg::Ty(ty) => require_concrete(self.head, role, ty, self.errors),
             // A call's `mut=` slot whose value its origin's storage
             // decides is erased with that origin, as the instance type
-            // spells no `mut=` argument to close it from (R762).
+            // spells no `mut=` argument to close it from (R2362).
             TyArg::Val(CtValue::Deferred(_))
                 if matches!(self.family, Family::Call | Family::Method) => {}
             TyArg::Val(value) if mojito_types::types::ct_value_is_elaborated_symbolic(value) => {

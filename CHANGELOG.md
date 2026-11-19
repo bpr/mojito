@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct instance's compile-time arguments now follow its declared
+  parameter list, each origin argument at its binder's position, as
+  upstream's struct attributes do, where origins were a tail after the type
+  and value arguments: `B[o: ImmOrigin, T: Copyable]` at `origin_of(a),
+  Int` holds its origin first, and its reflected name lists it there. The
+  MIR verifier rejects an instance holding its origins out of place; MIR
+  text moves to schema 1.206, a struct record drops `origin_params`, and an
+  older artifact's instances move their origins into place at load; the
+  package format moves to `mojito-package 234` (R762).
 - A function's or method's origin `mut=` binder (`def g[mut: Bool, //, o:
   Origin[mut=mut]](x: Pointer[Int, o])`) is now a value in its body and in
   the functions nested in it, as at the pin: each call binds it to the

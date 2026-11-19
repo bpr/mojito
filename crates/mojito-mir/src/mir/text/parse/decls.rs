@@ -158,6 +158,15 @@ impl Decoder {
         if self.minor < 205 {
             crate::mir::nested::upgrade_instantiated_arguments(&mut functions, &declarations);
         }
+        // Schema 1.206 orders a struct instance's arguments by its declared
+        // list, each origin in place; an older instance carries its origins
+        // as a tail after its type and value arguments.
+        if self.minor < 206 {
+            crate::mir::nested::upgrade_struct_instance_arguments(
+                &mut functions,
+                &mut declarations,
+            );
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {
@@ -235,7 +244,41 @@ impl Decoder {
             self.required(value, fields, "mut_self_methods")?;
         }
         let fieldwise_init = self.req(value, fields, "fieldwise_init", Self::boolean)?;
-        let param_decls = self.req(value, fields, "param_decls", |d, v| Some(d.param_decls(v)))?;
+        let mut param_decls =
+            self.req(value, fields, "param_decls", |d, v| Some(d.param_decls(v)))?;
+        // Schema 1.168 through 1.205 list the struct's origin parameter ids
+        // beside a declared list that may hold no binder for them; each
+        // becomes an origin binder after the rest, where the instance's
+        // origin tail sat.
+        if self.minor < 206
+            && let Ok(ids) = self.field(fields, "origin_params")
+            && let Ok(ids) = self.list(ids)
+        {
+            for id in ids {
+                let origin = match &id.kind {
+                    ValueKind::Positional(tag, inner) if tag == "origin_param" => {
+                        self.uint32(inner).map(OriginParamId)
+                    }
+                    _ => {
+                        self.error(id.span, "expected `origin_param(N)`");
+                        None
+                    }
+                };
+                if let Some(origin) = origin
+                    && !param_decls.iter().any(|decl| {
+                        matches!(decl, ParamDecl::Origin { origin: declared, .. } if *declared == origin)
+                    })
+                {
+                    param_decls.push(ParamDecl::Origin {
+                        id: mojito_types::param_expr::ParamId::new(&name, origin.0 as usize),
+                        name: format!("origin{}", origin.0),
+                        origin,
+                        mutability: mojito_types::types::OriginMutability::Fixed(false),
+                        infer_only: true,
+                    });
+                }
+            }
+        }
         let explicit_destroy_message =
             self.req(value, fields, "explicit_destroy_message", |d, v| {
                 Some(d.option_string(Some(v)))
@@ -412,26 +455,6 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
-        // Schema 1.168 carries the struct's origin parameter ids; an older
-        // artifact has none.
-        let origin_params = self
-            .field(fields, "origin_params")
-            .ok()
-            .and_then(|ids| self.list(ids).ok())
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| match &id.kind {
-                        ValueKind::Positional(tag, inner) if tag == "origin_param" => {
-                            self.uint32(inner).map(OriginParamId)
-                        }
-                        _ => {
-                            self.error(id.span, "expected `origin_param(N)`");
-                            None
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
         // Schema 1.175 says whether the struct declares register-passability
         // unconditionally, written only when it does; an older artifact's
         // answer is decided from its declared rows once its traits are read.
@@ -473,6 +496,7 @@ impl Decoder {
             .iter()
             .copied()
             .filter(|field| self.minor < 199 || *field != "mut_self_methods")
+            .filter(|field| self.minor < 206 || *field != "origin_params")
             .collect();
         self.unknown(fields, &known);
         Some(MirStructDeclaration {
@@ -481,7 +505,6 @@ impl Decoder {
             fields: struct_fields,
             fieldwise_init,
             param_decls,
-            origin_params,
             explicit_destructors,
             explicit_destroy,
             conformances,

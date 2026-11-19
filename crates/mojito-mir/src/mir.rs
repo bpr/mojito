@@ -1993,11 +1993,6 @@ fn struct_declaration(
             })
             .map(<[ParamDecl]>::to_vec)
             .unwrap_or_default(),
-        origin_params: checked
-            .struct_origin_params()
-            .get(name)
-            .cloned()
-            .unwrap_or_default(),
         explicit_destructors: checked
             .struct_destructors()
             .get(name)
@@ -2096,7 +2091,6 @@ fn inflated_function_declarations(checked: &CheckedProgram) -> Vec<MirStructDecl
             module: String::new(),
             fields: Vec::new(),
             fieldwise_init: false,
-            origin_params: Vec::new(),
             explicit_destructors: HashMap::new(),
             explicit_destroy: None,
             conformances: [

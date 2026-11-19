@@ -269,9 +269,7 @@ pub(super) fn expand_bound_pack(ty: &Ty, decls: &[ParamDecl], targs: &[TyArg]) -
 /// Bool]`. A pack still open, or forwarded from the caller's, keeps its
 /// spread.
 pub(super) fn expand_solved_packs(ty: &Ty, decls: &[ParamDecl], tyargs: &[TyArg]) -> Ty {
-    decls
-        .iter()
-        .zip(tyargs)
+    ParamDecl::aligned_pairs(decls, tyargs)
         .filter_map(|(decl, argument)| match (decl, argument) {
             (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(values))) => values
                 .iter()
@@ -299,16 +297,15 @@ pub(super) fn bound_pack_elements(
 ) -> Option<(String, Vec<Ty>)> {
     let solved = (decls.len() == targs.len())
         .then(|| {
-            decls
-                .iter()
-                .zip(targs)
-                .find_map(|(decl, argument)| match (decl, argument) {
+            ParamDecl::aligned_pairs(decls, targs).find_map(|(decl, argument)| {
+                match (decl, argument) {
                     (
                         ParamDecl::Type { variadic: true, .. },
                         TyArg::Val(binding @ CtValue::Tuple(_)),
                     ) => Some((decl.spelling().to_string(), binding.clone())),
                     _ => None,
-                })
+                }
+            })
         })
         .flatten();
     let (pack, binding) = match solved {
@@ -342,9 +339,7 @@ pub(super) fn solved_value_bindings(
 ) -> HashMap<String, CtValue> {
     // A type pack's list binder is keyed as the pack, `*Ts`, whose
     // visible binder's `TypeList` binds nothing a type reads.
-    decls
-        .iter()
-        .zip(tyargs)
+    ParamDecl::aligned_pairs(decls, tyargs)
         .filter(|(decl, _)| !decl.is_type_pack())
         .filter_map(|(decl, argument)| match (decl, argument) {
             (
@@ -710,12 +705,12 @@ pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
 
 /// `ty` with every struct origin tail naming an explicitly bound origin
 /// binder rebound to that origin, and every pointer nested in it too.
-pub(super) fn bind_origin_tails(
+pub(super) fn bind_struct_origins(
     ty: &Ty,
     tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 ) -> Ty {
-    super::origins::bind_pointer_origin_tails(
-        &super::origins::substitute_struct_origin_tails(ty, tails),
+    super::origins::bind_pointer_origins(
+        &super::origins::substitute_struct_origins(ty, tails),
         tails,
         None,
     )
@@ -817,7 +812,7 @@ fn forwarded_pack_lists(
 ) -> mojito_types::param_expr::ParamBindings {
     let context = ParamContext::detached();
     let mut bindings = mojito_types::param_expr::ParamBindings::new();
-    for (decl, argument) in decls.iter().zip(targs) {
+    for (decl, argument) in ParamDecl::aligned_pairs(decls, targs) {
         if let (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(spread)) = (decl, argument)
             && let Some(TyKind::Param { binder, .. }) =
                 mojito_types::types::pack_spread(std::slice::from_ref(spread)).map(Ty::kind)
@@ -1113,7 +1108,7 @@ impl Checker {
                 })
                 .collect::<Vec<_>>()
         });
-        bind_callable_origin_tails(bind_callable_ref_origins(callable, &references), &tails)
+        bind_callable_origins(bind_callable_ref_origins(callable, &references), &tails)
     }
 
     /// Materialize the monomorphic checked view of an explicitly specialized
@@ -1553,12 +1548,12 @@ impl Checker {
             .collect();
         let bracket_params: Vec<Ty> = params
             .iter()
-            .map(|ty| bind_origin_tails(ty, &bracket_origins))
+            .map(|ty| bind_struct_origins(ty, &bracket_origins))
             .collect();
         let params = bracket_params.as_slice();
-        let bracket_variadic = variadic.map(|ty| bind_origin_tails(ty, &bracket_origins));
+        let bracket_variadic = variadic.map(|ty| bind_struct_origins(ty, &bracket_origins));
         let variadic = bracket_variadic.as_ref();
-        let kw_variadic = kw_variadic.map(|ty| bind_origin_tails(ty, &bracket_origins));
+        let kw_variadic = kw_variadic.map(|ty| bind_struct_origins(ty, &bracket_origins));
         let kw_variadic = kw_variadic.as_ref();
         if signature.declared.is_empty() {
             let BoundParameters { attributes, .. } = self.resolve_explicit_use_params(
@@ -2298,10 +2293,10 @@ fn substitute_at_with(
     // before the type arguments go in: a caller's origin binder inside a type
     // argument (`Span[Span[Int, o], _]`) shares the id space of the struct's
     // own slots, and must not be captured by them.
-    let tails = info.tail_origin_bindings(targs);
-    let mut bound = substitute_struct_origin_tails(&expanded, &tails);
+    let tails = info.instance_origin_bindings(targs);
+    let mut bound = substitute_struct_origins(&expanded, &tails);
     if binder_mutability.is_some() {
-        bound = super::origins::bind_pointer_origin_tails(&bound, &tails, binder_mutability);
+        bound = super::origins::bind_pointer_origins(&bound, &tails, binder_mutability);
     }
     substitute_assoc(
         &bound,
@@ -2346,7 +2341,7 @@ fn bind_callable_ref_origins(
 /// and result types that names an explicitly bound origin binder rebound to
 /// that origin (`g[origin_of(xs)]` over `-> Pointer[Span[Int, o], …]`), and
 /// every pointer nested in them (`-> Pointer[Pointer[Int, o], …]`) too.
-fn bind_callable_origin_tails(
+fn bind_callable_origins(
     mut callable: Ty,
     tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 ) -> Ty {
@@ -2367,7 +2362,7 @@ fn bind_callable_origin_tails(
         else {
             return;
         };
-        let bind = |ty: &mut Ty| *ty = bind_origin_tails(ty, tails);
+        let bind = |ty: &mut Ty| *ty = bind_struct_origins(ty, tails);
         params.iter_mut().for_each(bind);
         variadic
             .iter_mut()

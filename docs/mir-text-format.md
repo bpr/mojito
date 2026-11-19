@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.205
+mojito-mir 1.206
 ```
 
-The writer emits 1.205. The reader accepts 1.0 through 1.205; *Schema 1.0*
+The writer emits 1.206. The reader accepts 1.0 through 1.206; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1234,6 +1234,25 @@ comparison's link carries the interior invalidations its own call makes
 (`CheckedCompareLink::interior_invalidations`); the MIR text schema is
 unchanged (R2322).
 
+Schema 1.206 orders a struct instance's arguments by its declared
+parameter list, as upstream's `!kgen.struct` attributes are: each origin
+binder's `origin_arg` sits at its binder's position among the binders an
+instance holds, every declared parameter but an origin's `mut=` binder,
+where an older instance carries its origins as a tail after its type and
+value arguments (`B[o: ImmOrigin, T: Copyable]` at `Int` is `B[origin_arg(…),
+type_arg(Int)]`, not `B[type_arg(Int), origin_arg(…)]`). A closure
+storage's captured origins still follow its binders, its declared list
+naming no binder for them. The verifier rejects an instance of a struct
+declaring an origin binder that holds other than one argument per such
+binder, each origin in place; an erased spelling (no arguments) and a static
+call's spelled receiver stay exempt. A struct record no longer carries
+`origin_params`: an instance's origins are keyed by its declared origin
+binders. A 1.168–1.205 artifact's `origin_params` naming an id its
+`param_decls` declares no origin binder for reads as an infer-only origin
+binder after the rest, and every older instance's origin tail moves into
+place at load (`nested::upgrade_struct_instance_arguments`). The package
+format moves to `mojito-package 234` (R762).
+
 Schema 1.205 gives a call's `instantiated_args` a value for every
 parameter its callee declares, as upstream's call op holds one attribute per
 declared parameter: each origin binder's solved origin (`origin_arg`) and
@@ -1572,7 +1591,8 @@ member template naming the struct's own origin (`Span`'s `IteratorType` is
 `_SpanIter[T, origin_arg(origin_param(2))]`) binds it from an instance's
 arguments, as upstream's substitution binds a struct's origin parameters.
 It is written only when the struct has one; an older artifact reads as
-having none. The package format moves to `mojito-package 194`.
+having none. The package format moves to `mojito-package 194`. Schema
+1.206 retires the field (see above).
 
 Schema 1.167 withdraws the constraint a compile-time test carried beside
 its `Bool` value (R1905): `comptime.if` holds `values: [<constant>...]`,
@@ -1752,10 +1772,11 @@ undeclared with no obligated field. `associated_types` contains
 `associated_type { name: symbol, type: type }` records sorted by name,
 `parameterized_associated_types` the minor-46 records sorted by name, and
 `associated_values` contains `associated_value { name: symbol, value:
-param-expr }` records sorted by name. `origin_params` (schema 1.168, written only
-when non-empty) lists the id of each explicit origin parameter as
-`origin_param(N)`, in the order of an instance's origin arguments after
-its `param_decls`-aligned prefix. `register_passable: true` (schema
+param-expr }` records sorted by name. `origin_params` (schemas 1.168
+through 1.205 only, written only when non-empty) lists the id of each
+explicit origin parameter as `origin_param(N)`, in the order of an
+instance's origin tail after its `param_decls`-aligned prefix.
+`register_passable: true` (schema
 1.175, written only when true) says the struct declares
 `RegisterPassable` or `TrivialRegisterPassable` with no condition,
 directly or through a refining trait: upstream's declaration-level

@@ -473,7 +473,7 @@ impl Checker {
             struct_ty if let Some((sname, targs)) = struct_ty.as_non_simd_struct() => {
                 match self.structs.get(sname) {
                     Some(info) => (
-                        info.tail_origin_bindings(targs),
+                        info.instance_origin_bindings(targs),
                         TyKind::Struct(sname.clone(), info.self_arguments()).into(),
                     ),
                     None => (HashMap::new(), obj_ty.clone()),
@@ -481,11 +481,11 @@ impl Checker {
             }
             _ => (HashMap::new(), obj_ty.clone()),
         };
-        let self_declared = substitute_struct_origin_tails(&self_declared, &tail_bindings);
+        let self_declared = substitute_struct_origins(&self_declared, &tail_bindings);
         let declared: Vec<Ty> = resolved
             .declared_params
             .iter()
-            .map(|parameter| substitute_struct_origin_tails(parameter, &tail_bindings))
+            .map(|parameter| substitute_struct_origins(parameter, &tail_bindings))
             .collect();
         let collected = self.method_collected_arguments(resolved, args);
         self.check_argument_origin_exclusivity(

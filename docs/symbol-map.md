@@ -757,10 +757,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `bind_constructor_origins` and `bind_fieldwise_origins` bind a struct's
   origin binders from a `Pointer[Self.T, Self.origin]` argument, a
   `ref [Self.origin]` argument, or a struct-typed argument carrying the binder
-  in its origin tail, check an explicitly applied origin, and return
+  among its arguments, check an explicitly applied origin, and return
   `ConstructorOriginBindings`, whose `substitute` rewrites the parameter types
-  and whose `bind_tail` fills the constructed value's origin tail
-  (`constructed_type`); `bind_callee_origins` does the same for a callee's
+  and whose `bind_origins` fills the constructed value's origin arguments,
+  each at its binder's position (`constructed_type`, over
+  `StructInfo::place_origins`); `bind_callee_origins` does the same for a callee's
   own binders: a generic call and a method or static call bind their
   declared list's open origin binders in their one solve,
   `resolve_call_params` (`call_inference.rs`, `CalleeBinders::Declared`
@@ -784,14 +785,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::nested_origins_read_only_functions` for a free function), an
   `ExclusivityReceiver` the receiver; `infer_pointer_method` runs the rule
   for `Pointer.unsafe_write`; reporting upstream's
-  `AliasingArguments`), the return-tail check
-  (`origins/solve.rs`: `reconcile_return_origin_tails` judges a returned
-  struct's origin tail against the body's `return_annotations` entry resolved
+  `AliasingArguments`), the return-origin check
+  (`origins/solve.rs`: `reconcile_return_origins` judges a returned
+  struct's origin arguments against the body's `return_annotations` entry resolved
   over the body's own places, so `origin_of(self.items)` stays a field, and
-  rewrites a fitting tail to the signature origin the declared return names),
-  the call-result tail (`origins/actuals.rs`:
-  `bind_call_result_tail` writes the `call_result_origins` a view-returning
-  call resolved into the result's origin tail),
+  rewrites a fitting origin to the signature origin the declared return names),
+  the call-result origins (`origins/actuals.rs`:
+  `bind_call_result_origins` writes the `call_result_origins` a view-returning
+  call resolved into the result's origin arguments),
   the annotation-demand verdict for locals (`check_storage_origin_demands`,
   replayed on reassignment from the per-binding
   `storage_origin_demand_scopes` table),
@@ -1807,7 +1808,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   origin slot per reference field and its fields (which a user's member
   access does not reach, `Checker::infer_member`), so argument
   exclusivity (`record_carried_places`), a closure's loans
-  (`capture_origins_in_type`, which binds any struct's origin tail in its
+  (`capture_origins_in_type`, which binds any struct's origin arguments in its
   fields), and a call's capture accesses (`concrete_callable_captures`,
   over `Checker::is_callable_struct`) read its origin arguments, at the
   closure's finalization and again for each closure of a carried body
@@ -1827,7 +1828,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   program by the lifted storage struct applied to its uses
   (`CheckedProgram::type_closures_by_storage` in
   `closure_uses.rs`, over `ClosureStorageTypes`, a `TyRewrite` keeping
-  each occurrence's origin tail, and
+  each occurrence's origin arguments, and
   `CheckedProgram::rewrite_types`), pointing each call through a storage
   at its witness, a `__call__` method call on it included
   (`CheckedTables::storage_calls`,
@@ -2112,13 +2113,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `AssociatedLookupError`, the one member lookup `associated_type` shares;
   the template's origins, the struct's own included, bind through
   `mojito_types::types::substitute_origin_params`).
-  `StructDeclaration::origin_params` (MIR text 1.168) keys a struct's own
-  origin binders to an instance's origin arguments, so
+  A struct's origin binders, in place in its `param_decls`
+  (`ParamDecl::instance_origins`), key an instance's origin arguments, so
   `StructDeclaration::associated_type` binds a member template's
-  `Self.o` with the member's own origins; the checker hands it over as
-  `CheckedProgram::struct_origin_params`, filled in
-  `checker/body_carry.rs` from `StructInfo::origin_slots`, and MIR
-  lowering copies it onto the struct row. `checker/origins/transfer.rs` owns the
+  `Self.o` with the member's own origins. A struct instance's layout is
+  owned by `ParamDecl` (`types.rs`): `instance_binders`/`instance_view`
+  (the binders an instance holds an argument for, each origin in place),
+  `place_origins` (the one builder from an argument view and origins),
+  and `aligned_pairs`/`aligned_arguments`/`aligned_argument` (a list of
+  binders paired with an instance's arguments by kind); MIR text 1.206's
+  `nested::upgrade_struct_instance_arguments` moves an older artifact's
+  origin tail into place. `checker/origins/transfer.rs` owns the
   carried source (`SigOrigin::Carried`, recorded by
   `record_transfer_effect` and closed by `replay_transfer_effects` with the
   receiver's arguments and the call's own bindings, `call_closed`).
@@ -3408,7 +3413,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   construction (`record_construction_instantiation`,
   `bind_constructed_origins`, `construction_arguments`), and a conversion
   (`conversion_instantiation`); `ParamDecl::instance_arguments`
-  (`types.rs`) maps an instance type's arguments onto a constructor's list
+  (`types.rs`) maps an instance type's arguments, origins in place, onto a
+  constructor's list
   for the calls MIR synthesizes (`struct_arguments`, `restated_arguments`,
   `constructed_arguments`, `build_variadic_list`), and
   `ParamDecl::argument_view_arguments` takes the view's solutions for a

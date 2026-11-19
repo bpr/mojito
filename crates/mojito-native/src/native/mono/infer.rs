@@ -578,14 +578,17 @@ impl Specializer<'_> {
             // An erased argument (`S[_REMOVED_ARG]`, spelled where the body
             // removed the parameter it named) binds nothing and names the
             // erased instance.
-            let owner_arguments = struct_decl
-                .argument_binders()
+            let view = struct_decl.argument_view();
+            let owner_arguments = view
+                .iter()
                 .enumerate()
-                .map(|(position, decl)| match arguments.get(position) {
-                    Some(TyArg::Val(CtValue::RemovedArg)) => {
-                        Ok(InstanceArg::Value(CtValue::RemovedArg))
+                .map(|(position, decl)| {
+                    match ParamDecl::aligned_argument(&view, &arguments, position) {
+                        Some(TyArg::Val(CtValue::RemovedArg)) => {
+                            Ok(InstanceArg::Value(CtValue::RemovedArg))
+                        }
+                        _ => bound_argument(decl, bindings, template),
                     }
-                    _ => bound_argument(decl, bindings, template),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let ty_arguments = owner_arguments
@@ -790,7 +793,7 @@ impl Specializer<'_> {
         instantiated: &[TyArg],
         bindings: &mut Bindings,
     ) -> Result<(), MonoError> {
-        for (decl, argument) in decls.iter().zip(instantiated) {
+        for (decl, argument) in ParamDecl::aligned_pairs(decls, instantiated) {
             match (decl, argument) {
                 // A pack the caller forwarded whole (`show(*args)`) was
                 // recorded as the caller's own pack, which substitution has

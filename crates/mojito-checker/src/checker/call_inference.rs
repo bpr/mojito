@@ -1283,7 +1283,7 @@ impl Checker {
                             )?;
                         }
                         self.record_view_result_borrow(&span, &ret);
-                        Ok(self.bind_call_result_tail(&span, ret))
+                        Ok(self.bind_call_result_origins(&span, ret))
                     }
                     Err(OverloadSelect::NoMatch) => {
                         // The stdlib scalar `range` family: upstream's overloads
@@ -1480,7 +1480,7 @@ impl Checker {
                     });
             }
         }
-        let ret = self.bind_call_result_tail(&span, ret);
+        let ret = self.bind_call_result_origins(&span, ret);
         if let Some(error) = error.filter(|ty| *ty != TyKind::Never) {
             self.require_call_error(span, format!("call to raising function '{name}'"), error)?;
         }
@@ -2409,7 +2409,7 @@ impl Checker {
             return None;
         }
         let mut values = Vec::new();
-        for (decl, argument) in decls.iter().zip(arguments) {
+        for (decl, argument) in ParamDecl::aligned_pairs(decls, arguments) {
             match (decl, argument) {
                 (ParamDecl::Type { variadic: true, .. }, _) => return None,
                 // A deferred callable-value slot is not part of the key; a
@@ -2580,15 +2580,14 @@ impl Checker {
         arg_tys: &[Ty],
         arg_exprs: &[&Expr],
     ) -> Result<(), TypeError> {
-        let solved = decls
-            .iter()
-            .zip(tyargs)
-            .find_map(|(decl, argument)| match (decl, argument) {
+        let solved = ParamDecl::aligned_pairs(decls, tyargs).find_map(|(decl, argument)| {
+            match (decl, argument) {
                 (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
                     Some(elements)
                 }
                 _ => None,
-            });
+            }
+        });
         let Some(elements) = solved else {
             return Ok(());
         };

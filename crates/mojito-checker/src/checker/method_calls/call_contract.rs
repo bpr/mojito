@@ -86,7 +86,7 @@ impl Checker {
         if reference_result.is_none() && captures.is_empty() {
             self.record_view_result(site, resolved, &return_type);
         }
-        let return_type = self.bind_call_result_tail(span, return_type);
+        let return_type = self.bind_call_result_origins(span, return_type);
         self.call_parameters.borrow_mut().insert(
             span.clone(),
             resolved

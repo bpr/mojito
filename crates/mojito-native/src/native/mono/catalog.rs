@@ -132,7 +132,6 @@ impl StructCatalog {
                                 variadic: false,
                                 constraints: Vec::new(),
                             }],
-                            origin_params: Vec::new(),
                             explicit_destructors: HashMap::new(),
                             explicit_destroy: None,
                             conformances: Vec::new(),

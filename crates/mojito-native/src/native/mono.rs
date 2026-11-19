@@ -509,9 +509,9 @@ impl Bindings {
         self.name_owner_origins();
     }
 
-    /// Name the owner's own origin parameters in the origin tail of the
-    /// instance a bare `Self` stands for, as upstream spells a method's
-    /// `Self` over its owner's unspecialized parameters
+    /// Name the owner's own origin parameters in the instance a bare `Self`
+    /// stands for, each at its binder's position, as upstream spells a
+    /// method's `Self` over its owner's unspecialized parameters
     /// (`::Span[$0, $1, $2, $3]`): an explicit `Span[T, origin]` keeps its
     /// `Origin::Param` likewise.
     fn name_owner_origins(&mut self) {
@@ -521,24 +521,28 @@ impl Bindings {
         let Some(declaration) = self.structs.declaration(owner) else {
             return;
         };
-        let prefix = declaration.argument_view().len();
         let TyKind::Struct(name, arguments) = instance.kind() else {
             return;
         };
-        if declaration.origin_params.is_empty()
-            || arguments.len() != prefix + declaration.origin_params.len()
+        let binders: Vec<&ParamDecl> = declaration.instance_binders().collect();
+        if !binders.iter().any(|decl| decl.is_origin())
+            || arguments.len() != binders.len()
+            || binders
+                .iter()
+                .zip(arguments)
+                .any(|(decl, argument)| decl.is_origin() != matches!(argument, TyArg::Origin(_)))
         {
             return;
         }
-        let arguments = arguments[..prefix]
+        let arguments = binders
             .iter()
-            .cloned()
-            .chain(
-                declaration
-                    .origin_params
-                    .iter()
-                    .map(|id| TyArg::Origin(mojito_types::origin::Origin::Param(*id))),
-            )
+            .zip(arguments)
+            .map(|(decl, argument)| match decl {
+                ParamDecl::Origin { origin, .. } => {
+                    TyArg::Origin(mojito_types::origin::Origin::Param(*origin))
+                }
+                _ => argument.clone(),
+            })
             .collect();
         *instance = instance.reusing(TyKind::Struct(name.clone(), arguments));
     }
