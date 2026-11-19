@@ -306,8 +306,7 @@ pub(super) fn verify_place(
                         // A value parameter reads through field syntax; its
                         // declaration lives in `param_decls`, not the layout.
                         None if declaration
-                            .param_decls
-                            .iter()
+                            .argument_binders()
                             .any(|decl| {
                                 matches!(decl, mojito_types::types::ParamDecl::Value { name, .. } if name == field)
                             }) => {}

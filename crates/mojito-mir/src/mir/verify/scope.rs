@@ -294,7 +294,7 @@ impl Scope {
         }
     }
 
-    fn declare(&mut self, decls: &[ParamDecl]) {
+    fn declare<'d>(&mut self, decls: impl IntoIterator<Item = &'d ParamDecl>) {
         for decl in decls {
             self.kinds.insert(decl.id().clone(), decl.binder_meta());
         }
@@ -363,9 +363,9 @@ impl ScopeCx<'_> {
                 let declared = self
                     .declarations
                     .structure(name)
-                    .map(|declaration| &declaration.param_decls[..]);
+                    .map(|declaration| declaration.argument_view());
                 self.erasable += 1;
-                self.arguments(role, declared, args, nested);
+                self.arguments(role, declared.as_deref(), args, nested);
                 self.erasable -= 1;
             }
             TyKind::GenericFunc(generic) => {
@@ -748,7 +748,7 @@ impl ScopeCx<'_> {
             else {
                 return;
             };
-            for (arg, decl) in args.iter().zip(&declaration.param_decls) {
+            for (arg, decl) in args.iter().zip(declaration.argument_binders()) {
                 if removed.1.contains(decl.id()) {
                     arg.visit(&mut |inner| {
                         if let ParamKind::DeclRef(reference) = inner.kind() {

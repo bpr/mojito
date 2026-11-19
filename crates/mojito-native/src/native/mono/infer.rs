@@ -98,8 +98,7 @@ impl Specializer<'_> {
         let result = Some(&call.result_ty);
         let callable_parameter =
             self.declarations[target.as_str()]
-                .param_decls
-                .iter()
+                .argument_binders()
                 .any(|decl| {
                     matches!(
                         decl,
@@ -189,7 +188,7 @@ impl Specializer<'_> {
             )?;
             (target, bindings, arguments)
         };
-        let declared = &self.declarations[target.as_str()].param_decls;
+        let declared = self.declarations[target.as_str()].argument_view();
         for (binder, value) in explicit {
             if bindings.values.contains_key(&binder) {
                 continue;
@@ -306,13 +305,13 @@ impl Specializer<'_> {
         self.bind_instantiated_arguments(
             owner,
             target,
-            &declaration.param_decls[instantiated_start..],
+            &declaration.argument_view()[instantiated_start..],
             instantiated,
             &mut bindings,
         )?;
         let removed = self.removed_params(target, bindings.reduced);
         bind_explicit_value_arguments(
-            &declaration.param_decls,
+            &declaration.argument_view(),
             removed,
             param_args,
             &self.constant_values,
@@ -320,7 +319,7 @@ impl Specializer<'_> {
             target,
             &self.enclosing,
         )?;
-        apply_defaults(&declaration.param_decls, removed, &mut bindings)?;
+        apply_defaults(&declaration.argument_view(), removed, &mut bindings)?;
         let names = &declaration.param_names;
         let required = &declaration.required;
         let slots = match_call_slots(
@@ -361,8 +360,7 @@ impl Specializer<'_> {
                 // recover. The declaration still carries that spelling;
                 // bind the (unique) callable type parameter from the actual.
                 let unresolved_callable_decls = declaration
-                    .param_decls
-                    .iter()
+                    .argument_binders()
                     .filter(|decl| {
                         matches!(
                             decl,
@@ -432,7 +430,7 @@ impl Specializer<'_> {
                 if !bindings.types.contains_key(binder) {
                     let elements = overflow.iter().map(materialize_nested_literals).collect();
                     bind_pack(binder, elements, &mut bindings);
-                    bind_pack_values(&declaration.param_decls, &mut bindings);
+                    bind_pack_values(&declaration.argument_view(), &mut bindings);
                 }
             }
             Some(element)
@@ -494,8 +492,10 @@ impl Specializer<'_> {
             let concrete = substitute_ty(peel_refs(receiver_pattern), &bindings)?;
             bindings.self_instance = Some((nominal_template(template).to_string(), concrete));
             if let Some(struct_decl) = self.structs.get(nominal_template(template)) {
-                owner_covered =
-                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+                owner_covered = owner_covered_prefix(
+                    &struct_decl.argument_view(),
+                    &declaration.argument_view(),
+                );
             }
         }
         if bindings.self_instance.is_none()
@@ -505,18 +505,18 @@ impl Specializer<'_> {
                 .kind()
                 .as_non_simd_struct()
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
-            && !struct_decl.param_decls.is_empty()
+            && struct_decl.argument_binders().next().is_some()
         {
             bindings.self_instance = Some((
                 nominal_template(receiver_name).to_string(),
                 owner_instance_ty(
                     nominal_template(receiver_name),
-                    &struct_decl.param_decls,
+                    &struct_decl.argument_view(),
                     &bindings,
                 )?,
             ));
             owner_covered =
-                owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+                owner_covered_prefix(&struct_decl.argument_view(), &declaration.argument_view());
         }
         let mut arguments = inherited_arguments;
         arguments.extend(match receiver {
@@ -532,7 +532,7 @@ impl Specializer<'_> {
         // `param_decls`) is already carried by the instance's `owner`
         // identity; keep only the method's own parameters.
         arguments.extend(self.own_arguments(
-            &declaration.param_decls,
+            &declaration.argument_view(),
             &bindings,
             target,
             owner_covered,
@@ -558,10 +558,10 @@ impl Specializer<'_> {
         let Some(struct_decl) = self.structs.get(template) else {
             return Ok(());
         };
-        if struct_decl.param_decls.is_empty() {
+        if struct_decl.argument_binders().next().is_none() {
             return Ok(());
         }
-        bind_ty_args(&struct_decl.param_decls, &arguments, bindings).map_err(|e| {
+        bind_ty_args(&struct_decl.argument_view(), &arguments, bindings).map_err(|e| {
             self.error(
                 Some(owner),
                 format!("monomorphizing receiver for `{target}`: {e}"),
@@ -573,8 +573,7 @@ impl Specializer<'_> {
             // removed the parameter it named) binds nothing and names the
             // erased instance.
             let owner_arguments = struct_decl
-                .param_decls
-                .iter()
+                .argument_binders()
                 .enumerate()
                 .map(|(position, decl)| match arguments.get(position) {
                     Some(TyArg::Val(CtValue::RemovedArg)) => {
@@ -623,8 +622,7 @@ impl Specializer<'_> {
         bindings.reduced = self.reduces(target, &bindings);
         for (binder, value) in demand.explicit {
             if declaration
-                .param_decls
-                .iter()
+                .argument_binders()
                 .any(|decl| decl.binder() == *binder)
             {
                 bindings.values.insert(binder.clone(), value.clone());
@@ -634,7 +632,7 @@ impl Specializer<'_> {
         if let Some((receiver_name, arguments)) = mojito_types::types::nominal_parts(receiver)
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
         {
-            bind_ty_args(&struct_decl.param_decls, &arguments, &mut bindings).map_err(|e| {
+            bind_ty_args(&struct_decl.argument_view(), &arguments, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing receiver for `{target}`: {e}"),
@@ -645,8 +643,10 @@ impl Specializer<'_> {
                     nominal_template(receiver_name).to_string(),
                     receiver.clone(),
                 ));
-                owner_covered =
-                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+                owner_covered = owner_covered_prefix(
+                    &struct_decl.argument_view(),
+                    &declaration.argument_view(),
+                );
             }
         }
         let receiver_pattern = self
@@ -716,7 +716,7 @@ impl Specializer<'_> {
             })?;
         }
         apply_defaults(
-            &declaration.param_decls,
+            &declaration.argument_view(),
             self.removed_params(target, bindings.reduced),
             &mut bindings,
         )?;
@@ -728,25 +728,27 @@ impl Specializer<'_> {
             let concrete = substitute_ty(peel_refs(receiver_pattern), &bindings)?;
             bindings.self_instance = Some((nominal_template(template).to_string(), concrete));
             if let Some(struct_decl) = self.structs.get(nominal_template(template)) {
-                owner_covered =
-                    owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+                owner_covered = owner_covered_prefix(
+                    &struct_decl.argument_view(),
+                    &declaration.argument_view(),
+                );
             }
         }
         if bindings.self_instance.is_none()
             && let Some((receiver_name, _)) = receiver.kind().as_non_simd_struct()
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
-            && !struct_decl.param_decls.is_empty()
+            && struct_decl.argument_binders().next().is_some()
         {
             bindings.self_instance = Some((
                 nominal_template(receiver_name).to_string(),
                 owner_instance_ty(
                     nominal_template(receiver_name),
-                    &struct_decl.param_decls,
+                    &struct_decl.argument_view(),
                     &bindings,
                 )?,
             ));
             owner_covered =
-                owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+                owner_covered_prefix(&struct_decl.argument_view(), &declaration.argument_view());
         }
         let mut arguments = if bindings.self_instance.is_none() {
             self.uninstanced_owner_arguments(peel_refs(receiver), &bindings, target)?
@@ -754,7 +756,7 @@ impl Specializer<'_> {
             Vec::new()
         };
         arguments.extend(self.own_arguments(
-            &declaration.param_decls,
+            &declaration.argument_view(),
             &bindings,
             target,
             owner_covered,
@@ -887,7 +889,9 @@ impl Specializer<'_> {
             })
             .and_then(|(name, _)| self.structs.get(name))
         {
-            Some(struct_decl) => self.own_arguments(&struct_decl.param_decls, bindings, target, 0),
+            Some(struct_decl) => {
+                self.own_arguments(&struct_decl.argument_view(), bindings, target, 0)
+            }
             None => Ok(Vec::new()),
         }
     }
@@ -1025,8 +1029,9 @@ impl Specializer<'_> {
             mojito_types::types::nominal_parts(actual_receiver)
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
         {
-            own_start = owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
-            bind_ty_args(&struct_decl.param_decls, &arguments, bindings).map_err(|e| {
+            own_start =
+                owner_covered_prefix(&struct_decl.argument_view(), &declaration.argument_view());
+            bind_ty_args(&struct_decl.argument_view(), &arguments, bindings).map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing receiver for `{target}`: {e}"),

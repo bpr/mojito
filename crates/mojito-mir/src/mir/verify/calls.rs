@@ -85,12 +85,12 @@ pub(super) fn verify_call_instruction(
                 verify_param_arguments(
                     prefix,
                     cx.function,
-                    &declaration.param_decls,
+                    &declaration.argument_view(),
                     param_arg_regs,
                     instantiated_args,
                     owner
                         .as_ref()
-                        .map(|(decls, arguments)| (*decls, arguments.as_ref())),
+                        .map(|(decls, arguments)| (decls.as_ref(), arguments.as_ref())),
                     errors,
                 );
             }
@@ -224,7 +224,7 @@ pub(super) fn verify_call_instruction(
                         declaration.lowered_name
                     ));
                 }
-                if &declaration.param_decls != param_decls {
+                if *declaration.argument_view() != **param_decls {
                     errors.push(format!(
                         "{prefix}: method-call compile-time parameter metadata does not match '{}'",
                         declaration.lowered_name
@@ -236,12 +236,12 @@ pub(super) fn verify_call_instruction(
                 verify_param_arguments(
                     prefix,
                     cx.function,
-                    &declaration.param_decls,
+                    &declaration.argument_view(),
                     param_arg_regs,
                     instantiated_args,
                     owner
                         .as_ref()
-                        .map(|(decls, arguments)| (*decls, arguments.as_ref())),
+                        .map(|(decls, arguments)| (decls.as_ref(), arguments.as_ref())),
                     errors,
                 );
             } else if !callable_bound
@@ -300,16 +300,13 @@ pub(super) fn verify_call_instruction(
 fn owner_arguments<'a>(
     declarations: &'a MirDeclarations,
     receiver: &'a Ty,
-) -> Option<(
-    &'a [mojito_types::types::ParamDecl],
-    std::borrow::Cow<'a, [TyArg]>,
-)> {
+) -> Option<OwnerArguments<'a>> {
     let receiver = match receiver.kind() {
         TyKind::Ref(reference) => &reference.referent,
         _ => receiver,
     };
     let (name, arguments) = mojito_types::types::nominal_parts(receiver)?;
-    Some((&declarations.structure(name)?.param_decls, arguments))
+    Some((declarations.structure(name)?.argument_view(), arguments))
 }
 
 /// The operand a call passes its callee's positional collector as: the
@@ -898,14 +895,14 @@ pub(super) fn validate_dependent_bindings_in(
 fn enclosing_binders(name: &str, declarations: &MirDeclarations) -> HashSet<String> {
     let own = declarations
         .function(name)
-        .map_or(&[][..], |declaration| &declaration.param_decls);
-    let owner = name.split_once('.').and_then(|(owner, _)| {
-        declarations
-            .structure(owner)
-            .map(|declaration| &declaration.param_decls[..])
-    });
-    own.iter()
-        .chain(owner.unwrap_or(&[]))
+        .into_iter()
+        .flat_map(mojito_checked::declaration::FunctionDeclaration::argument_binders);
+    let owner = name
+        .split_once('.')
+        .and_then(|(owner, _)| declarations.structure(owner))
+        .into_iter()
+        .flat_map(mojito_checked::declaration::StructDeclaration::argument_binders);
+    own.chain(owner)
         .map(|declaration| declaration.name().trim_start_matches('*').to_string())
         .collect()
 }
@@ -1487,3 +1484,10 @@ fn owned_receiver(
         )
     })
 }
+
+/// A receiver's struct binders, as an instance binds them by position,
+/// beside its arguments ([`owner_arguments`]).
+type OwnerArguments<'a> = (
+    std::borrow::Cow<'a, [mojito_types::types::ParamDecl]>,
+    std::borrow::Cow<'a, [TyArg]>,
+);

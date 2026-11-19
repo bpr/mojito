@@ -546,8 +546,8 @@ struct CallShape<'a> {
     variadic: Option<&'a Ty>,
     variadic_convention: Option<ArgConvention>,
     kw_variadic: Option<&'a Ty>,
-    /// The callee's own compile-time parameters.
-    param_decls: &'a [ParamDecl],
+    /// The callee's own compile-time parameters a call binds by position.
+    param_decls: std::borrow::Cow<'a, [ParamDecl]>,
 }
 
 impl<'a> From<&'a MirFunctionDeclaration> for CallShape<'a> {
@@ -560,7 +560,7 @@ impl<'a> From<&'a MirFunctionDeclaration> for CallShape<'a> {
             variadic: declaration.variadic.as_ref(),
             variadic_convention: declaration.variadic_convention,
             kw_variadic: declaration.kw_variadic.as_ref(),
-            param_decls: &declaration.param_decls,
+            param_decls: declaration.argument_view(),
         }
     }
 }
@@ -608,7 +608,7 @@ fn collect_through_requirement(
         variadic: requirement.variadic.as_ref(),
         variadic_convention: requirement.variadic_convention,
         kw_variadic: requirement.kw_variadic.as_ref(),
-        param_decls,
+        param_decls: std::borrow::Cow::Borrowed(param_decls),
     };
     let mut site = Site {
         dest: *dest,
@@ -683,7 +683,7 @@ fn collect_through_contract(
         variadic: contract.variadic.as_ref(),
         variadic_convention: None,
         kw_variadic: contract.kw_variadic.as_ref(),
-        param_decls: &[],
+        param_decls: std::borrow::Cow::Borrowed(&[]),
     };
     let mut site = Site {
         dest: *dest,
@@ -756,7 +756,7 @@ fn build_keyword_collector(
     {
         return Ok(false);
     }
-    let ty = keyword_collector_type(shape.param_decls, element, &collected, site, function)
+    let ty = keyword_collector_type(&shape.param_decls, element, &collected, site, function)
         .ok_or_else(|| "its element names a binder the call binds no argument for".to_string())?;
     let place = MirPlace::root(
         u32::try_from(function.n_vars).expect("variable count fits a VarId"),
@@ -798,7 +798,7 @@ fn build_keyword_collector(
     let insert = mojito_symbol::symbol::keyword_collector_insert_symbol();
     let insert_decls = declarations
         .function(&insert)
-        .map(|declaration| declaration.param_decls.clone())
+        .map(|declaration| declaration.argument_view().into_owned())
         .unwrap_or_default();
     for &index in &collected {
         let (keyword, value) = site.kwargs[index].clone();
@@ -964,7 +964,7 @@ fn build_collector(
         .iter()
         .map(|&index| site.args[index])
         .collect();
-    let Some(ty) = collector_type(shape.param_decls, element, &elements, site, function) else {
+    let Some(ty) = collector_type(&shape.param_decls, element, &elements, site, function) else {
         return;
     };
     let homogeneous = match ty.kind() {
@@ -1848,7 +1848,7 @@ fn bindings_of(
     caller: &Caller<'_>,
 ) -> Vec<(ParamDecl, TyArg)> {
     let declarations = caller.declarations;
-    let own = declaration.param_decls.iter().cloned();
+    let own = declaration.argument_binders().cloned();
     let mut bound: Vec<(ParamDecl, TyArg)> = own.zip(instantiated.iter().cloned()).collect();
     if let Some(enclosing) = declaration.enclosing.as_deref()
         && declared_within(caller.name, enclosing, declarations)
@@ -1868,15 +1868,13 @@ fn bindings_of(
         if arguments.is_empty() {
             bound.extend(
                 owner
-                    .param_decls
-                    .iter()
+                    .argument_binders()
                     .map(|decl| (decl.clone(), decl.own_argument())),
             );
         } else {
             bound.extend(
                 owner
-                    .param_decls
-                    .iter()
+                    .argument_binders()
                     .cloned()
                     .zip(arguments.iter().cloned()),
             );
@@ -1897,12 +1895,12 @@ fn scope_binders(
     let mut scope = Some((name, callee));
     while let Some((name, declaration)) = scope {
         if !std::ptr::eq(declaration, callee) {
-            binders.extend(declaration.param_decls.iter().cloned());
+            binders.extend(declaration.argument_binders().cloned());
         }
         if let Some(owner) = mojito_symbol::symbol::split_method_symbol(name)
             .and_then(|(owner, _)| declarations.structure(owner))
         {
-            binders.extend(owner.param_decls.iter().cloned());
+            binders.extend(owner.argument_binders().cloned());
         }
         scope = declaration.enclosing.as_deref().and_then(|enclosing| {
             declarations
@@ -1998,8 +1996,7 @@ fn omitted_argument(
             }
             let closed = if arguments.is_empty() {
                 thunk
-                    .param_decls
-                    .iter()
+                    .argument_binders()
                     .map(|decl| {
                         site.bound
                             .iter()

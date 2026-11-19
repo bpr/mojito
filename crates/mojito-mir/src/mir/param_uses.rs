@@ -137,7 +137,11 @@ pub fn unread_parameters_of<'a>(
     let mut bodies: Vec<&str> = owners
         .iter()
         .copied()
-        .filter(|owner| structure.is_none_or(|(spelled, _)| spelled != *owner))
+        .filter(|owner| {
+            structure
+                .as_ref()
+                .is_none_or(|(spelled, _)| spelled != owner)
+        })
         .collect();
     // A function the check lifts from a body calls that body's nested
     // functions (`W.go$mk` from `$comptime$W.go$c0`), which read the
@@ -168,7 +172,7 @@ pub fn unread_parameters_of<'a>(
         walker.self_type = Some(
             TyKind::Struct(
                 spelled.to_string(),
-                decls.iter().map(ParamDecl::own_argument).collect(),
+                decls.iter().map(|decl| decl.own_argument()).collect(),
             )
             .into(),
         );
@@ -302,8 +306,8 @@ pub fn named_lifted_bodies(
 pub fn method_owner_params<'a>(
     name: &'a str,
     declarations: &'a MirDeclarations,
-) -> &'a [ParamDecl] {
-    method_struct(name, declarations).map_or(&[], |(_, decls)| decls)
+) -> Vec<&'a ParamDecl> {
+    method_struct(name, declarations).map_or_else(Vec::new, |(_, decls)| decls)
 }
 
 /// A compiler-known scalar, whose drop runs no code.
@@ -661,19 +665,18 @@ fn candidate_parameters<'d>(
     declarations: &'d MirDeclarations,
 ) -> Vec<&'d ParamDecl> {
     if mojito_symbol::symbol::lifted_owner(name).is_some() {
-        return declaration.param_decls.iter().collect();
+        return declaration.argument_binders().collect();
     }
     let mut candidates: Vec<&ParamDecl> = Vec::new();
     // A nested body's own parameters, and a closure method's, keep the
     // owner their source declaration gave them.
     if declaration.enclosing.is_some() || declaration.is_closure_method() {
-        candidates.extend(&declaration.param_decls);
+        candidates.extend(declaration.argument_binders());
         candidates.extend(&declaration.region_binders);
     } else {
         candidates.extend(
             declaration
-                .param_decls
-                .iter()
+                .argument_binders()
                 .filter(|decl| mojito_symbol::symbol::owns_binder(name, &decl.id().owner)),
         );
     }
@@ -691,8 +694,7 @@ fn candidate_parameters<'d>(
         .and_then(|enclosing| declarations.function(enclosing));
     while let Some(enclosing) = link {
         for decl in enclosing
-            .param_decls
-            .iter()
+            .argument_binders()
             .chain(&enclosing.region_binders)
         {
             if !candidates.iter().any(|seen| seen.id() == decl.id()) {
@@ -712,7 +714,7 @@ fn candidate_parameters<'d>(
 fn method_struct<'a>(
     name: &'a str,
     declarations: &'a MirDeclarations,
-) -> Option<(&'a str, &'a [ParamDecl])> {
+) -> Option<(&'a str, Vec<&'a ParamDecl>)> {
     let mut root = name;
     while let Some(enclosing) = declarations
         .function(root)
@@ -723,7 +725,7 @@ fn method_struct<'a>(
     let (owner, _) = mojito_symbol::symbol::split_method_symbol(root)?;
     declarations
         .structure(owner)
-        .map(|structure| (owner, structure.param_decls.as_slice()))
+        .map(|structure| (owner, structure.argument_binders().collect()))
 }
 
 /// The slots of `function` that a callable value parameter among `decls`
@@ -791,7 +793,7 @@ fn removed_forwards_view<'a>(
     }
     let callables = declarations
         .function(name)
-        .map(|declaration| callable_parameter_slots(function, &declaration.param_decls))
+        .map(|declaration| callable_parameter_slots(function, declaration.argument_binders()))
         .unwrap_or_default();
     erase_forward_chains(
         &mut view,
@@ -860,7 +862,7 @@ fn drop_removed_arguments<'a>(
                 }
                 (
                     &func.0,
-                    callee.param_decls.as_slice(),
+                    callee.argument_view(),
                     param_arg_regs,
                     (spellings == Spellings::Drop).then_some(instantiated_args),
                 )
@@ -898,7 +900,7 @@ fn drop_removed_arguments<'a>(
             _ => continue,
         };
         if let Some(ids) = removed(target)
-            && drop_arguments(target, decls, ids, param_arg_regs, instantiated_args).is_some()
+            && drop_arguments(target, &decls, ids, param_arg_regs, instantiated_args).is_some()
         {
             discounted.insert(target.clone());
         }
@@ -922,7 +924,7 @@ fn drop_receiver_arguments(
     };
     let Some(decls) = declarations
         .structure(name)
-        .map(|structure| structure.param_decls.as_slice())
+        .map(|structure| structure.argument_view())
         .filter(|decls| arguments.len() >= decls.len())
     else {
         return false;
@@ -1404,7 +1406,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         }
         let layout = std::mem::replace(&mut self.layout, false);
         self.visit(&declaration.availability);
-        for decl in &declaration.param_decls {
+        for decl in declaration.argument_binders() {
             match decl {
                 ParamDecl::Type {
                     callable_bound,
@@ -1726,7 +1728,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         let Some(decls) = mojito_symbol::symbol::split_method_symbol(callee)
             .filter(|(owner, _)| owner == name)
             .and_then(|_| declarations.structure(name))
-            .map(|structure| structure.param_decls.as_slice())
+            .map(|structure| structure.argument_view())
             .filter(|decls| decls.len() == arguments.len())
         else {
             return false;
@@ -1735,8 +1737,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             .function(callee)
             .map(|declaration| {
                 declaration
-                    .param_decls
-                    .iter()
+                    .argument_binders()
                     .filter(|decl| {
                         mojito_symbol::symbol::owns_binder(callee, &decl.id().owner)
                             && !removed.contains(decl.id())
@@ -1929,8 +1930,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         };
         let removed = (self.nested)(name).unwrap_or_default();
         for id in declaration
-            .param_decls
-            .iter()
+            .argument_binders()
             .map(ParamDecl::id)
             .filter(|id| !removed.contains(id))
         {
@@ -1950,8 +1950,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         let declaration = self.declarations?.function(name)?;
         Some(LayoutReads::Positions(
             declaration
-                .param_decls
-                .iter()
+                .argument_binders()
                 .enumerate()
                 .filter(|(_, decl)| !removed.contains(decl.id()))
                 .map(|(position, _)| position)

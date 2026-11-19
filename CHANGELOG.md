@@ -1437,6 +1437,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The parameter lists MIR lowers now hold every binder the check declares,
+  origin binders in place, as upstream's lists do: a struct row, an
+  initializer's struct prefix, and a function's or method's declaration,
+  each origin an `origin_binder` in MIR text. Code below the check that
+  binds arguments by position reads the declaration's argument view, and
+  a package now projects every struct row and rebuilds its functions' and
+  methods' lists, origins included, from its lowered declarations
+  (`mojito-package 231`, R2127).
+
 - A function's, method's, and callable type's checked parameter list now
   declares its origin parameters in place, each an origin binder and its
   `mut=` an infer-only `Bool` binder, as a struct's already did and as

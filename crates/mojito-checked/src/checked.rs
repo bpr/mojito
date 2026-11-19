@@ -3039,9 +3039,9 @@ pub struct CheckedDef {
 /// as a broken invariant.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CheckedSignature {
-    /// Its own compile-time parameters a call binds by position: the
-    /// argument view ([`mojito_types::types::ParamDecl::argument_decls`]) of
-    /// its [`GenericSite`] row, which declares its origin binders in place.
+    /// Its own compile-time parameters, its [`GenericSite`] row: the whole
+    /// declared list, its origin binders in place. A call binds
+    /// [`Self::argument_binders`] by position.
     pub parameters: Vec<mojito_types::types::ParamDecl>,
     /// Each declared parameter's checked type, in declaration order (the
     /// receiver excluded), aligned with the declaration's parameters.
@@ -3051,6 +3051,13 @@ pub struct CheckedSignature {
 }
 
 impl CheckedSignature {
+    /// The parameters a call binds by position
+    /// ([`mojito_types::types::ParamDecl::argument_binders`]): a call
+    /// infers the origins from places.
+    pub fn argument_binders(&self) -> impl Iterator<Item = &mojito_types::types::ParamDecl> {
+        mojito_types::types::ParamDecl::argument_binders(&self.parameters)
+    }
+
     /// The checked type of the declared parameter at `index`.
     pub fn param(&self, index: usize) -> Option<&Ty> {
         self.params.get(index)?.as_ref()
@@ -5791,7 +5798,7 @@ impl Signatures<'_> {
                     declaration,
                     syntax,
                 })
-                .map(|parameters| mojito_types::types::ParamDecl::argument_decls(parameters))
+                .cloned()
                 .unwrap_or_default(),
             params: (0..arity)
                 .map(|param| {
@@ -5832,7 +5839,7 @@ impl Signatures<'_> {
                     declaration: declaration.to_string(),
                     method,
                 })
-                .map(|parameters| mojito_types::types::ParamDecl::argument_decls(parameters))
+                .cloned()
                 .unwrap_or_default(),
             params: (0..arity)
                 .map(|param| {

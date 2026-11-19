@@ -1082,8 +1082,7 @@ fn push_bound_sugar(
         if let TyKind::Param { binder, .. } = peel_refs(ty).kind()
             && joins(binder)
             && !declaration
-                .param_decls
-                .iter()
+                .argument_binders()
                 .any(|decl| *decl.id() == binder.id)
             && let Some(bound) = bindings.types.get(binder)
             && !bound.is_string_literal()

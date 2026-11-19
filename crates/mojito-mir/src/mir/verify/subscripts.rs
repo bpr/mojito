@@ -404,7 +404,7 @@ pub(super) fn verify_subscript_call(
                     call.target
                 ));
             }
-            if declaration.param_decls != call.param_decls {
+            if *declaration.argument_view() != *call.param_decls {
                 errors.push(format!(
                     "{prefix}: subscript generic declaration metadata does not match '{}'",
                     call.target

@@ -521,7 +521,7 @@ impl Bindings {
         let Some(declaration) = self.structs.declaration(owner) else {
             return;
         };
-        let prefix = declaration.param_decls.len();
+        let prefix = declaration.argument_view().len();
         let TyKind::Struct(name, arguments) = instance.kind() else {
             return;
         };

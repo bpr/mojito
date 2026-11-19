@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2347**.
+Next free ID: **R2348**.
 
 ## Ordered Work
 
@@ -1379,6 +1379,27 @@ change that needs a new `MJRT_ABI_VERSION`.
 Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R2347 A `ref self` method's field origin at a struct's `ImmOrigin`
+  slot does not convert to its own annotation**
+
+  `def it(ref self) -> ItemIter[origin_of(self.value)]: return
+  ItemIter(self.value, False)` over `struct ItemIter[o: Origin[mut=False]]`
+  is rejected ("cannot implicitly convert 'ItemIter[origin_of(self.value)]'
+  value to 'ItemIter[origin_of(self.value)]'"), where the pin runs it.
+  - The annotation binds the slot to the `ImmOrigin(o)` cast of the
+    receiver's mut-parametric field origin, which the construction's
+    inferred, uncast origin does not convert to.
+  - The same shapes over a `read self` receiver, over a `ref` argument
+    (`def make(ref w: Item) -> ItemIter[origin_of(w)]`), and through a
+    local `ref v = self.value` under `self` check and run.
+  - Probe: `conformance/fixtures/reference_iteration_binding_modes.mojo`,
+    a `scripts/smoke` fixture, fails with it.
+  - It predates R2126; d5a7e631c, which made an explicit origin at an
+    `ImmOrigin` slot bind its cast, is the likely cause.
+  - Found while landing R2127 (2026-11-18).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2094 A loan named only inside a type argument does not follow a
   move or copy of its holder**
@@ -2972,6 +2993,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     since `_mlir_origin` is unbound). Fix it here, or file it on the
     `divergences` track if out of reach.
   - Probes: the two shapes above, and `reflect[MutOrigin]`.
+  - Probe: a body's binder scope below the check still takes the argument
+    view: `EnclosingBinders` (`mir.rs`), the lifted thunks' lists it
+    yields, `binder_scope`, and `closure_uses`' `BinderScope` read
+    `CheckedSignature::argument_binders`, so no MIR body names an origin
+    binder as a value.
   - Planned in R2139 (2026-11-18).
   - Depends on R2343.
   - Model: Fable, Planned.
@@ -10616,6 +10642,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     declared ones.
   - Probe: `GenericFuncTy::argument_view`, `MethodSig::decls`, and
     `Ty::generator_params` are the views each call path reads.
+  - Probe: a lowered call's `param_decls` (`MirInstr::Call`,
+    `MethodCall`, `CallIndirect`, a subscript call) is the callee's
+    argument view, which the verifier (`verify/{calls,subscripts}.rs`),
+    `param_uses.rs`, `call_defaults.rs`, and the elaborator
+    (`native/mono/{infer,specializer}.rs`) align with
+    `FunctionDeclaration::argument_view`, not with the declared list MIR
+    now lowers.
+  - Probe: a construction the check synthesizes at struct level over
+    `struct EntryIter[m: Bool, //, o: Origin[mut=m]]`
+    (`assets/ok/pointer_field_wrapper_iterator_protocol.mojo`) holds its
+    `m=` and origin arguments in parameters naming no declaration
+    (`CheckedParameter::declaration` is `None`), so a bracket bound against
+    the whole list would bind them nothing.
   - The lever: bind a bracket against the whole list, an origin argument
     in its binder's slot, recorded by its declaration as other arguments
     are.
@@ -10637,35 +10676,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     binders from places beside its type and value binders, and delete the
     pre-pass and `CalleeOriginArguments::own_binders`.
   - Depends on R2345.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2127 The parameter lists MIR lowers are argument views without
-  the origin binders the check declares**
-
-  MIR's struct row (`param_decls`), an initializer's struct prefix, and
-  `closure_uses`' struct scope take `ParamDecl::argument_decls` of the
-  struct's `GenericSite` (`mir.rs`), and the package interface keeps a
-  struct's own list beside its lowered row
-  (`DeclarationInterface::project`).
-  - The lever: lower the whole list, and have each positional consumer
-    below the check read `ParamDecl::argument_binders`:
-    `native/mono/{specializer,unify}.rs`, `mir/verify/{subscripts,
-    intrinsics,scope,calls}.rs`, `mir/param_uses.rs`,
-    `mir/call_defaults.rs`.
-  - Probe: a construction the check synthesizes at struct level over
-    `struct EntryIter[m: Bool, //, o: Origin[mut=m]]`
-    (`assets/ok/pointer_field_wrapper_iterator_protocol.mojo`) holds its
-    `m=` and origin arguments in parameters naming no declaration
-    (`CheckedParameter::declaration` is `None`), so once origins lower
-    they would bind nothing.
-  - Probe: the package interface rebuilds a function's `GenericFuncTy`
-    and a method's `MethodSig::declared` from the lowered argument view
-    (`ProjectedBinding::ty`, `sig`, `checker/interface.rs`), so a
-    package's function lacks the origin binders a source one declares
-    (R2126).
-  - Done when the interface projects every struct row again and MIR text
-    writes an `origin_binder` record for each declared origin.
-  - Depends on R2126.
   - Model: Opus, Not Planned.
 
 - [ ] **R2128 A function's origin mutability binder has no value in its
@@ -10705,6 +10715,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     no origins (`verify/subscripts.rs`), so the bundled
     `VariadicList.__iter__` names the iterator's origin arguments by
     keyword.
+  - Probe: every consumer below the check reads a struct row through
+    `StructDeclaration::argument_view` (`native/mono`, `mir/verify`,
+    `param_uses.rs`, `struct_reads.rs`, `inline_parametric.rs`), since an
+    instance's arguments are that view plus the tail; a closure storage
+    struct's row (`CheckedClosureUses::binders`) holds the view alone.
   - `StructDeclaration::origin_params` (MIR text 1.168) is the tail's
     handoff, keying each origin argument to the id a member template
     names; it goes away once origins are `ParamDecl`s in place.

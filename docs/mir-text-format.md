@@ -1378,11 +1378,17 @@ origin parameter (`o: Origin[mut=m]`, `o: OriginSet`) declared in place in
 its list (R761). The check's struct parameter list holds one per origin
 parameter, its `mut=` binder an ordinary infer-only `value_param`, and
 every binder's `slot` is its declared position, origin parameters counted.
-The lists MIR lowers (a struct row's `param_decls`, a function's) are still
-their argument views, without the origin binders, until instances and calls
-bind origins in declared order; a `generic_func` type's `decls` hold the
-whole declared list, an `origin_binder` per origin parameter (R2126). The package format moves to
-`mojito-package 212`.
+A `generic_func` type's `decls` hold the whole declared list, an
+`origin_binder` per origin parameter (R2126), and so do the lists MIR
+lowers: a struct row's `param_decls`, a function's or method's, and an
+initializer's struct prefix (R2127). A call's `param_decls` stays its
+callee's argument view, without the origin binders and their `mut=`
+binders, which a call infers from places; an artifact written before
+R2127, whose declarations hold that view, still loads, since every
+positional reader takes the view of a declaration's list. The package
+format moves to `mojito-package 212`, and to `mojito-package 231` when
+its declarations hold the whole lists and every struct row is projected
+from its lowered declaration (R2127).
 
 Schema 1.185 withdraws the compile-time value `ct_marker` (an elaborator
 classification of a name: `marker_local`, `marker_type`,

@@ -358,9 +358,9 @@ fn has_parameters(declaration: &MirFunctionDeclaration, declarations: &MirDeclar
     declaration.has_receiver
         || !declaration.param_names.is_empty()
         || declaration.enclosing.is_some()
-        || (!declaration.param_decls.is_empty()
+        || (declaration.argument_binders().next().is_some()
             && mojito_symbol::symbol::lifted_owner(&declaration.lowered_name).is_some())
-        || declaration.param_decls.iter().any(|decl| {
+        || declaration.argument_binders().any(|decl| {
             mojito_symbol::symbol::owns_binder(&declaration.lowered_name, &decl.id().owner)
         })
         || !method_owner_params(&declaration.lowered_name, declarations).is_empty()
@@ -450,7 +450,7 @@ fn self_forwards(
                 ..
             } if func.0 == name => declarations.function(name).map(|callee| {
                 (
-                    callee.param_decls.as_slice(),
+                    callee.argument_view(),
                     param_arg_regs.as_slice(),
                     instantiated_args.as_slice(),
                     receiver.as_ref(),
@@ -466,7 +466,7 @@ fn self_forwards(
             } if target == name => {
                 let receiver = receiver_type(function, addresses, instruction, *recv);
                 Some((
-                    param_decls.as_slice(),
+                    std::borrow::Cow::Borrowed(param_decls.as_slice()),
                     param_arg_regs.as_slice(),
                     instantiated_args.as_slice(),
                     receiver,
@@ -477,9 +477,12 @@ fn self_forwards(
                 a,
                 resolved: Some(target),
                 ..
-            } if target == name && operator_method(*op).is_some() => {
-                Some((&[][..], &[][..], &[][..], function.reg_types.get(&a.0)))
-            }
+            } if target == name && operator_method(*op).is_some() => Some((
+                std::borrow::Cow::Borrowed(&[][..]),
+                &[][..],
+                &[][..],
+                function.reg_types.get(&a.0),
+            )),
             MirInstr::Index {
                 base: object,
                 call: Some(call),
@@ -492,7 +495,7 @@ fn self_forwards(
             } if call.target == name => {
                 let receiver = receiver_type(function, addresses, instruction, *object);
                 Some((
-                    call.param_decls.as_slice(),
+                    std::borrow::Cow::Borrowed(call.param_decls.as_slice()),
                     call.param_arg_regs.as_slice(),
                     &[][..],
                     receiver,
@@ -501,7 +504,7 @@ fn self_forwards(
             _ => None,
         };
         if let Some((decls, arguments, instantiated, receiver)) = call {
-            let mut itself: Vec<ParamId> = supplied_parameter_arguments(decls, arguments)
+            let mut itself: Vec<ParamId> = supplied_parameter_arguments(&decls, arguments)
                 .into_iter()
                 .filter(|(decl, argument)| {
                     argument.expr.as_ref().is_some_and(|expr| {

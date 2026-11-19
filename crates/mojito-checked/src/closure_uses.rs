@@ -433,7 +433,7 @@ impl CheckedProgram {
                         &def.body,
                         defaults(&def.params),
                         &def.symbol,
-                        &BinderScope::of(&def.signature.parameters),
+                        &BinderScope::of(def.signature.argument_binders()),
                         &HashMap::new(),
                     );
                 }
@@ -455,7 +455,7 @@ impl CheckedProgram {
                     &BinderScope::of(
                         struct_parameters(&node.module, &declaration.name)
                             .iter()
-                            .chain(&method.signature.parameters),
+                            .chain(method.signature.argument_binders()),
                     ),
                     &HashMap::new(),
                 );
@@ -467,7 +467,7 @@ impl CheckedProgram {
                 &BinderScope::of(
                     struct_parameters(&wrapper.module, &wrapper.declaration)
                         .iter()
-                        .chain(&wrapper.signature.parameters),
+                        .chain(wrapper.signature.argument_binders()),
                 ),
                 &HashMap::new(),
             ),
@@ -789,7 +789,7 @@ impl Collector<'_> {
                 &def.body,
                 defaults(&def.params),
                 &body,
-                &enclosing.with(&def.signature.parameters),
+                &enclosing.with(def.signature.argument_binders()),
                 &registry,
             );
         }
@@ -1047,8 +1047,7 @@ fn binder_uses(tables: &CheckedTables, def: &CheckedDef, in_scope: &BinderScope)
     let ids = mentioned.into_inner();
     for own in def
         .signature
-        .parameters
-        .iter()
+        .argument_binders()
         .map(ParamDecl::name)
         .chain(def.params.iter().map(|param| param.name.as_str()))
     {

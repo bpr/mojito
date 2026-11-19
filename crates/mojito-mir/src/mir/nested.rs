@@ -355,7 +355,7 @@ fn follow_moved_contracts(
                 && moved.contains(callee)
                 && let Some(declaration) = declarations.function(callee)
             {
-                param_decls.clone_from(&declaration.param_decls);
+                *param_decls = declaration.argument_view().into_owned();
             }
             for region in instruction_regions_mut(instruction) {
                 follow(region, moved, declarations);
@@ -1163,10 +1163,9 @@ fn lower_storage_call_witness(
         receiver_convention: None,
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
-        param_decls: method.param_decls.clone(),
+        param_decls: method.argument_view().into_owned(),
         instantiated_args: method
-            .param_decls
-            .iter()
+            .argument_binders()
             .map(ParamDecl::own_argument)
             .collect(),
         spread,
@@ -1331,7 +1330,7 @@ fn lower_nested_node(
     let enclosing_binders = &enclosing
         .binders
         .with_loops(&node.loop_indices)
-        .with(&param_decls);
+        .with(signature.argument_binders());
     let registry = scope_registry(&node.children, enclosing.registry, invariant_errors);
     let captures = &node.captures;
     let mangled = &symbol;
@@ -1442,7 +1441,7 @@ fn lower_nested_node(
     let return_ty = signature.result.clone().unwrap_or_else(Ty::none);
     let effect = signature.effect.clone().unwrap_or_default();
     let capture_count = if method { 0 } else { leading };
-    let binders = enclosing_binders.with(&param_decls);
+    let binders = enclosing_binders.with(signature.argument_binders());
     let defaults: Vec<_> = std::iter::repeat_n(None, capture_count)
         .chain(regular.iter().enumerate().map(|(slot, (i, parameter))| {
             lower_default(

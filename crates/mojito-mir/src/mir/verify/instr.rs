@@ -839,7 +839,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                     "{prefix}: closure refers to undeclared lifted function '{target}'"
                 )),
                 Some(declaration) => {
-                    if !arguments.is_empty() && declaration.param_decls.is_empty() {
+                    if !arguments.is_empty() && declaration.argument_binders().next().is_none() {
                         errors.push(format!(
                             "{prefix}: closure binds compile-time arguments of '{target}', which declares no parameters"
                         ));

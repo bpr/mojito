@@ -3368,12 +3368,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   a body's scope binds and every consumer aligning binders with arguments
   reads: `StructInfo::decls`, `MethodSig::decls`,
   `GenericFuncTy::{argument_view, argument_binders}`, `Ty::generator_params`,
-  `CheckedSignature::parameters` (`checked.rs`), and MIR lowering's
-  struct rows. A `where` clause
+  and `CheckedSignature::argument_binders` (`checked.rs`). A `where` clause
   attaches to the last argument binder (`ParamDecl::clause_constraints`).
-  A package's struct row keeps its own list when it differs from the
-  lowered row (`DeclarationInterface::project`, `interface.rs`). MIR text
-  spells the binder `origin_binder` (schema 1.186).
+  MIR lowers the whole lists (`CheckedSignature::parameters`, a struct
+  row, an initializer's struct prefix); code below the check that aligns
+  a declaration's binders with arguments reads
+  `FunctionDeclaration::{argument_view, argument_binders}` and
+  `StructDeclaration::{argument_view, argument_binders}`
+  (`mojito-checked`, `declaration.rs`). A package's struct row and its
+  methods' and functions' lists are projected from the lowered
+  declarations and joined back from them (`DeclarationInterface::project`,
+  `join`, `interface.rs`). MIR text spells the binder `origin_binder`
+  (schema 1.186).
 - A type binder bounded by a trait-valued sibling (`T: Tr`, `*Ts: Tr`) is a
   `ParamDecl::Type` whose `trait_param` names that sibling (upstream's
   `ParamType`) and whose `bounds` hold the sibling's declared set, the

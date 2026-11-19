@@ -479,7 +479,7 @@ impl Specializer<'_> {
                             .all(|binder| iteration.values.contains_key(binder))
                 })
                 .and_then(|_| self.declarations.get(target.as_str()))
-                .map(|declaration| !declaration.param_decls.is_empty())
+                .map(|declaration| declaration.argument_binders().next().is_some())
             else {
                 continue;
             };

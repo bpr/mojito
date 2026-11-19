@@ -176,7 +176,7 @@ impl<'a> Specializer<'a> {
                     format!("entry function `{entry}` (not found in the MIR program)"),
                 )
             })?;
-            if decl.is_some_and(|decl| !decl.param_decls.is_empty()) {
+            if decl.is_some_and(|decl| decl.argument_binders().next().is_some()) {
                 return Err(self.error(
                     Some(entry),
                     format!("generic entry `{entry}` has unresolved parameters"),
@@ -381,7 +381,7 @@ impl<'a> Specializer<'a> {
                         self.structs
                             .get(&id.owner)
                             .into_iter()
-                            .flat_map(|owner| &owner.param_decls),
+                            .flat_map(mojito_mir::mir::MirStructDeclaration::argument_binders),
                     )
                     .find(|decl| decl.id() == id)
                     .map_or_else(
@@ -406,7 +406,7 @@ impl<'a> Specializer<'a> {
         let Some(decls) = self
             .structs
             .get(owner.as_str())
-            .map(|owner| &owner.param_decls)
+            .map(|owner| owner.argument_view())
         else {
             return Ok(());
         };
@@ -497,7 +497,8 @@ impl<'a> Specializer<'a> {
                 let decls = self
                     .structs
                     .get(owner_template.as_str())
-                    .map_or(&[][..], |owner| owner.param_decls.as_slice());
+                    .map(|owner| owner.argument_view())
+                    .unwrap_or_default();
                 arguments = decls
                     .iter()
                     .filter(|decl| !removed.contains(decl.id()))
@@ -523,7 +524,8 @@ impl<'a> Specializer<'a> {
                 let decls = self
                     .structs
                     .get(owner_template.as_str())
-                    .map_or(&[][..], |owner| owner.param_decls.as_slice());
+                    .map(|owner| owner.argument_view())
+                    .unwrap_or_default();
                 arguments = decls
                     .iter()
                     .map(|decl| bound_argument(decl, &bindings, template))
@@ -694,8 +696,7 @@ impl<'a> Specializer<'a> {
         let arguments = self
             .structs
             .get(owner)?
-            .param_decls
-            .iter()
+            .argument_binders()
             .map(|decl| bindings.values.get(&decl.binder()).cloned().map(TyArg::Val))
             .collect::<Option<Vec<_>>>()?;
         let ty = Ty::new(TyKind::Struct(owner.to_string(), arguments));
@@ -1175,7 +1176,7 @@ impl<'a> Specializer<'a> {
                     };
                     (
                         func.0.as_str(),
-                        declaration.param_decls.as_slice(),
+                        declaration.argument_view(),
                         instantiated_args,
                         receiver.as_mut(),
                     )
@@ -1187,7 +1188,7 @@ impl<'a> Specializer<'a> {
                     ..
                 } => (
                     target.as_str(),
-                    param_decls.as_slice(),
+                    std::borrow::Cow::Borrowed(param_decls.as_slice()),
                     instantiated_args,
                     None,
                 ),
@@ -1209,7 +1210,7 @@ impl<'a> Specializer<'a> {
                 }
             };
             if instantiated_args.len() == decls.len() {
-                erase(decls, instantiated_args);
+                erase(&decls, instantiated_args);
             }
             if let Some(receiver) = receiver
                 && let Some((name, arguments)) = receiver.kind().as_non_simd_struct()
@@ -1217,7 +1218,7 @@ impl<'a> Specializer<'a> {
                 && substitute_ty(receiver, &probe).is_err()
             {
                 let mut arguments = arguments.clone();
-                erase(&owner.param_decls, &mut arguments);
+                erase(&owner.argument_view(), &mut arguments);
                 *receiver = TyKind::Struct(name.clone(), arguments).into();
             }
         }
@@ -1531,8 +1532,8 @@ impl<'a> Specializer<'a> {
             .filter(|_| scope.is_none())
             .and_then(|(name, _)| self.structs.get(name).map(|owner| (name, owner)))
             .filter(|(name, owner)| {
-                !owner.param_decls.is_empty()
-                    || (takes(&declaration.param_decls, args.len().saturating_sub(1))
+                owner.argument_binders().next().is_some()
+                    || (takes(&declaration.argument_view(), args.len().saturating_sub(1))
                         && args.first().is_some_and(|arg| names_instance_of(arg, name)))
             })
             .map(|(_, owner)| owner);
@@ -1543,8 +1544,8 @@ impl<'a> Specializer<'a> {
         // A generic struct's `__init__` restates its struct's parameters
         // first, which the instance binds and names, as a construction's
         // receiver does: no argument carries them.
-        let own_decls = &declaration.param_decls[instance.map_or(0, |(owner, _)| {
-            owner_covered_prefix(&owner.param_decls, &declaration.param_decls)
+        let own_decls = &declaration.argument_view()[instance.map_or(0, |(owner, _)| {
+            owner_covered_prefix(&owner.argument_view(), &declaration.argument_view())
         })..];
         let parameters = arity(own_decls);
         if !takes(own_decls, args.len()) {
@@ -1628,7 +1629,7 @@ impl<'a> Specializer<'a> {
             let Some((name, arguments)) = mojito_types::types::nominal_parts(&ty) else {
                 return Err(unresolved("an instance that is no struct", instance));
             };
-            bind_ty_args(&owner.param_decls, &arguments, &mut instance_bindings)
+            bind_ty_args(&owner.argument_view(), &arguments, &mut instance_bindings)
                 .map_err(|error| self.error(Some(template), error))?;
             let template_name = nominal_template(name).to_string();
             instance_bindings.self_instance = Some((template_name, ty));
@@ -1808,13 +1809,13 @@ impl<'a> Specializer<'a> {
         }
         let owner = mojito_symbol::symbol::split_method_symbol(root)
             .and_then(|(owner, _)| self.structs.get(owner))
-            .map(|owner| owner.param_decls.clone())
+            .map(|owner| owner.argument_view().into_owned())
             .unwrap_or_default();
         let mut scope = self.binder_scope(function);
         let own = self
             .declarations
             .get(function)
-            .map_or(0, |declaration| declaration.param_decls.len());
+            .map_or(0, |declaration| declaration.argument_view().len());
         scope.truncate(scope.len().saturating_sub(own));
         let mut seen = std::collections::HashSet::new();
         owner
@@ -2059,7 +2060,7 @@ impl<'a> Specializer<'a> {
         let shadowed = self
             .structs
             .get(declaration.name.as_str())
-            .is_some_and(|source| source.param_decls.is_empty());
+            .is_some_and(|source| source.argument_binders().next().is_none());
         if !shadowed {
             self.layout_structs.borrow_mut().insert(
                 declaration.name.clone(),
@@ -2692,7 +2693,7 @@ impl<'a> Specializer<'a> {
                     .get(target.as_str())
                     .is_some_and(|declaration| {
                         declaration.enclosing.as_deref() == Some(owner)
-                            && declaration.param_decls.is_empty()
+                            && declaration.argument_binders().next().is_none()
                     }) =>
                 {
                     let (bindings, arguments) =
@@ -2758,7 +2759,7 @@ impl<'a> Specializer<'a> {
         let decls = self
             .declarations
             .get(target)
-            .map(|declaration| declaration.param_decls.clone())
+            .map(|declaration| declaration.argument_view().into_owned())
             .ok_or_else(|| {
                 self.error(
                     Some(owner),
@@ -2800,7 +2801,7 @@ impl<'a> Specializer<'a> {
             .get(target)
             .map(|declaration| {
                 (
-                    declaration.param_decls.clone(),
+                    declaration.argument_view().into_owned(),
                     declaration.enclosing.is_some(),
                 )
             })
@@ -2939,7 +2940,7 @@ impl<'a> Specializer<'a> {
         let own = self
             .declarations
             .get(target)
-            .map_or(0, |declaration| declaration.param_decls.len());
+            .map_or(0, |declaration| declaration.argument_view().len());
         scope.truncate(scope.len().saturating_sub(own));
         let removed = self.removed_params(target, reduced);
         let mut arguments = scope
@@ -3036,7 +3037,7 @@ impl<'a> Specializer<'a> {
             root = enclosing;
         }
         let (owner, _) = mojito_symbol::symbol::split_method_symbol(root)?;
-        let decls = &self.structs.get(owner)?.param_decls;
+        let decls = &self.structs.get(owner)?.argument_view();
         if decls.is_empty() {
             return None;
         }
@@ -3116,7 +3117,7 @@ impl<'a> Specializer<'a> {
                 if let Some(declaration) = self.declarations.get(func.0.as_str()) {
                     mojito_mir::mir::witness_arguments(
                         &bound,
-                        &declaration.param_decls,
+                        &declaration.argument_view(),
                         param_arg_regs,
                     );
                 }
@@ -3443,7 +3444,7 @@ impl<'a> Specializer<'a> {
                     {
                         mojito_mir::mir::witness_arguments(
                             param_decls,
-                            &declaration.param_decls,
+                            &declaration.argument_view(),
                             param_arg_regs,
                         );
                     }
@@ -3574,7 +3575,7 @@ impl<'a> Specializer<'a> {
                             if let Some(declaration) = self.declarations.get(target.as_str()) {
                                 mojito_mir::mir::witness_arguments(
                                     contract,
-                                    &declaration.param_decls,
+                                    &declaration.argument_view(),
                                     param_arg_regs,
                                 );
                             }
@@ -3916,7 +3917,7 @@ impl<'a> Specializer<'a> {
             || self
                 .declarations
                 .get(target.as_str())
-                .is_some_and(|declaration| !declaration.param_decls.is_empty())
+                .is_some_and(|declaration| declaration.argument_binders().next().is_some())
         {
             return Ok(());
         }
@@ -4062,7 +4063,7 @@ impl<'a> Specializer<'a> {
             return Ok(());
         };
         let mut bindings = self.base_bindings();
-        bind_ty_args(&template.param_decls, &arguments, &mut bindings).map_err(|e| {
+        bind_ty_args(&template.argument_view(), &arguments, &mut bindings).map_err(|e| {
             self.error(
                 Some(owner),
                 format!("monomorphizing struct `{}`: {e}", template.name),
@@ -4106,7 +4107,7 @@ impl<'a> Specializer<'a> {
             return Ok(());
         };
         let mut bindings = self.base_bindings();
-        bind_ty_args(&template.param_decls, &arguments, &mut bindings).map_err(|e| {
+        bind_ty_args(&template.argument_view(), &arguments, &mut bindings).map_err(|e| {
             self.error(
                 Some(owner),
                 format!("monomorphizing struct `{}`: {e}", template.name),
@@ -4346,8 +4347,7 @@ impl<'a> Specializer<'a> {
             _ => &[],
         };
         let erased: Vec<&mojito_types::param_expr::ParamId> = template
-            .param_decls
-            .iter()
+            .argument_binders()
             .enumerate()
             .filter(|(position, decl)| {
                 bindings
@@ -4383,12 +4383,12 @@ impl<'a> Specializer<'a> {
         // An instance applied element by element binds its lone pack to
         // every argument, of which the empty tuple has none.
         let elementwise =
-            name != template_name && ParamDecl::sole_type_pack(&template.param_decls).is_some();
-        if arguments.len() < template.param_decls.len() && !elementwise {
+            name != template_name && ParamDecl::sole_type_pack(&template.argument_view()).is_some();
+        if arguments.len() < template.argument_view().len() && !elementwise {
             return Ok(None);
         }
         let mut bindings = self.base_bindings();
-        bind_ty_args(&template.param_decls, arguments, &mut bindings).map_err(|e| {
+        bind_ty_args(&template.argument_view(), arguments, &mut bindings).map_err(|e| {
             self.error(
                 Some(owner),
                 format!("monomorphizing struct `{template_name}`: {e}"),
@@ -4445,13 +4445,16 @@ impl<'a> Specializer<'a> {
                 continue;
             }
             let covered = if bindings.self_instance.is_some() {
-                owner_covered_prefix(&template.param_decls, &function_decl.param_decls)
+                owner_covered_prefix(&template.argument_view(), &function_decl.argument_view())
             } else {
                 0
             };
-            let Ok(method_arguments) =
-                self.own_arguments(&function_decl.param_decls, bindings, &candidate, covered)
-            else {
+            let Ok(method_arguments) = self.own_arguments(
+                &function_decl.argument_view(),
+                bindings,
+                &candidate,
+                covered,
+            ) else {
                 continue;
             };
             // A member whose `where` clause the instance disproves

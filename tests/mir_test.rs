@@ -2859,6 +2859,47 @@ fn production_tstrings_call_the_bundled_entry_point() {
 }
 
 #[test]
+fn lowered_parameter_lists_declare_origin_binders_in_place() {
+    // A struct row, its initializer's struct prefix, and a function's list
+    // hold every binder the check declares, origins in place, while a call
+    // binds the argument view; MIR text writes each origin binder.
+    let source = "struct View[mut: Bool, //, o: Origin[mut=mut]]:\n    var p: Pointer[Int, Self.o]\n    def __init__(out self, p: Pointer[Int, Self.o]):\n        self.p = p\n\ndef read[o: ImmOrigin, n: Int](p: Pointer[Int, o]) -> Int:\n    return p[] + n\n\ndef main():\n    var x = 3\n    var v = View(Pointer(to=x))\n    print(v.p[], read[n=1](Pointer(to=x)))\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile origin binders");
+    let mir = compiled.mir();
+    let names = |decls: &[mojito::ParamDecl]| {
+        decls
+            .iter()
+            .map(|decl| decl.name().to_string())
+            .collect::<Vec<_>>()
+    };
+    let view = mir.declarations.structure("View").expect("View declared");
+    assert_eq!(names(&view.param_decls), ["mut", "o"]);
+    assert!(view.argument_binders().next().is_none());
+    let function = |prefix: &str| {
+        mir.declarations
+            .functions
+            .iter()
+            .find(|declaration| declaration.lowered_name.starts_with(prefix))
+            .unwrap_or_else(|| panic!("{prefix} declared"))
+    };
+    assert_eq!(names(&function("View.__init__").param_decls), ["mut", "o"]);
+    let read = function("read");
+    assert_eq!(names(&read.param_decls), ["o", "n"]);
+    assert_eq!(names(&read.argument_view()), ["n"]);
+    let text = mojito::mir::text::disassemble(mir).expect("disassemble");
+    for owner in ["View", "read"] {
+        assert!(
+            text.contains(&format!("origin_binder {{ owner: \"{owner}\"")),
+            "{owner}'s origin binder is written"
+        );
+    }
+    assert_eq!(compiler.execute(&compiled).unwrap().output, "3 4\n");
+}
+
+#[test]
 fn inferred_generic_method_calls_retain_parameter_declarations() {
     let source = "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(counter.size(left=1, right=2))\n";
     let compiler = Compiler::default().with_snippet_module_scope();

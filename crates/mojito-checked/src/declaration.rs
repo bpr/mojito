@@ -191,6 +191,18 @@ pub struct StructMember {
 }
 
 impl StructDeclaration {
+    /// The binders an instance binds by position, in declared order
+    /// ([`ParamDecl::argument_binders`]): an instance carries its origins
+    /// as a tail after them.
+    pub fn argument_binders(&self) -> impl Iterator<Item = &ParamDecl> {
+        ParamDecl::argument_binders(&self.param_decls)
+    }
+
+    /// [`Self::argument_binders`] as a list.
+    pub fn argument_view(&self) -> std::borrow::Cow<'_, [ParamDecl]> {
+        ParamDecl::argument_view(&self.param_decls)
+    }
+
     /// The symbol of the struct's member keyed `member`, when it owns one:
     /// the first, for a generic member with several instances.
     pub fn member(&self, member: &str) -> Option<&str> {
@@ -359,10 +371,10 @@ impl StructDeclaration {
             .iter()
             .filter(|argument| !matches!(argument, TyArg::Origin(_)))
             .collect();
-        if declared.len() != self.param_decls.len() {
+        if declared.len() != self.argument_binders().count() {
             return None;
         }
-        for (decl, argument) in self.param_decls.iter().zip(declared) {
+        for (decl, argument) in self.argument_binders().zip(declared) {
             match (decl, argument) {
                 (
                     ParamDecl::Type {
@@ -631,6 +643,18 @@ pub struct FunctionDeclaration {
 }
 
 impl FunctionDeclaration {
+    /// The binders a call binds by position, in declared order
+    /// ([`ParamDecl::argument_binders`]): a call infers the origins from
+    /// places.
+    pub fn argument_binders(&self) -> impl Iterator<Item = &ParamDecl> {
+        ParamDecl::argument_binders(&self.param_decls)
+    }
+
+    /// [`Self::argument_binders`] as a list.
+    pub fn argument_view(&self) -> std::borrow::Cow<'_, [ParamDecl]> {
+        ParamDecl::argument_view(&self.param_decls)
+    }
+
     /// Whether the compiler synthesized the function for a struct that
     /// declares none ([`FunctionProvenance::Synthesized`]).
     pub fn is_synthesized(&self) -> bool {

@@ -235,7 +235,7 @@ fn constructor_argument(
     let [name] = declaration.param_names.as_slice() else {
         return None;
     };
-    let struct_arguments = restated_arguments(&declaration.param_decls, ty)?;
+    let struct_arguments = restated_arguments(&declaration.argument_view(), ty)?;
     initializer.then(|| ConstructorArgument {
         name: name.clone(),
         keyword: declaration.keyword_only == Some(0),

@@ -338,7 +338,7 @@ fn struct_arguments(ty: &Ty, declarations: &MirDeclarations) -> Vec<TyArg> {
     declarations
         .structure(mojito_types::types::struct_template(name))
         .and_then(|declaration| {
-            mojito_types::types::lone_pack_arguments(&declaration.param_decls, arguments)
+            mojito_types::types::lone_pack_arguments(&declaration.argument_view(), arguments)
         })
         .unwrap_or_else(|| arguments.clone())
 }

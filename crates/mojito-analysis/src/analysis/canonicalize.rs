@@ -675,7 +675,7 @@ fn folded_callee<'c, 'd>(
         (captures_bind, known.captures.len())
     };
     let binds = captures_bind
-        && declaration.param_decls.is_empty()
+        && declaration.argument_binders().next().is_none()
         && param_arg_regs.is_empty()
         && instantiated_args.is_empty()
         && spread.is_none()

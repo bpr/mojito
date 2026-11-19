@@ -25,8 +25,7 @@ impl Specializer<'_> {
             return None;
         }
         let position = struct_decl
-            .param_decls
-            .iter()
+            .argument_binders()
             .position(|decl| matches!(decl, ParamDecl::Value { name, .. } if name == field))?;
         let TyArg::Val(value) = type_args.get(position)? else {
             return None;

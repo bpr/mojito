@@ -156,7 +156,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
         else {
             return LayoutReads::All;
         };
-        if structure.param_decls.iter().any(is_variadic) || visiting.iter().any(|seen| seen == name)
+        if structure.argument_binders().any(is_variadic) || visiting.iter().any(|seen| seen == name)
         {
             return LayoutReads::All;
         }
@@ -171,8 +171,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
         visiting.pop();
         let reads = LayoutReads::Positions(
             structure
-                .param_decls
-                .iter()
+                .argument_binders()
                 .enumerate()
                 .filter(|(_, decl)| parts.iter().any(|part| names(part, decl)))
                 .map(|(position, _)| position)
@@ -266,7 +265,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
         visiting: &mut Vec<String>,
     ) -> MemberNeeds {
         let structure = self.declarations.structure(name)?;
-        if structure.param_decls.iter().any(is_variadic) {
+        if structure.argument_binders().any(is_variadic) {
             return None;
         }
         if let Some(symbol) = structure.member(member) {
@@ -274,8 +273,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
             self.consulted.borrow_mut().insert(symbol.to_string());
             return Some(
                 structure
-                    .param_decls
-                    .iter()
+                    .argument_binders()
                     .map(|decl| (!removed.contains(decl.id())).then_some(Need::Whole))
                     .collect(),
             );
@@ -296,8 +294,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
         visiting.pop();
         let needs = Some(
             structure
-                .param_decls
-                .iter()
+                .argument_binders()
                 .map(|decl| {
                     parts
                         .iter()

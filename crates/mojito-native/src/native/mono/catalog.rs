@@ -166,7 +166,7 @@ impl StructCatalog {
         let reached = mojito_mir::mir::reached_struct_fields(ty, |name| {
             index.borrow().get(name).map(<[Ty]>::to_vec).or_else(|| {
                 self.declaration(name)
-                    .filter(|declaration| declaration.param_decls.is_empty())
+                    .filter(|declaration| declaration.argument_binders().next().is_none())
                     .map(|declaration| {
                         declaration
                             .fields
@@ -188,6 +188,6 @@ impl StructCatalog {
     /// renames a concrete application of to its instance symbol.
     pub(super) fn is_generic(&self, name: &str) -> bool {
         self.declaration(name)
-            .is_some_and(|declaration| !declaration.param_decls.is_empty())
+            .is_some_and(|declaration| declaration.argument_binders().next().is_some())
     }
 }

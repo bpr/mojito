@@ -492,7 +492,7 @@ impl MirDeclarations {
     pub fn field_types(&self, ty: &Ty) -> Option<Cow<'_, [(String, Ty)]>> {
         let (declaration, arguments) = self.struct_instance(ty)?;
         mojito_types::types::struct_field_types(
-            &declaration.param_decls,
+            &declaration.argument_view(),
             arguments,
             &declaration.fields,
         )
@@ -637,7 +637,7 @@ impl MirDeclarations {
                                 [GenericConstraint::Bool(true)]
                             ) || row_holds_at(
                                 &row.conditions,
-                                &declaration.param_decls,
+                                &declaration.argument_view(),
                                 arguments,
                                 &|ty, trait_name| self.passability_conformance(ty, trait_name),
                             ) == Some(true))
@@ -685,7 +685,7 @@ impl MirDeclarations {
             .map_or(Some(false), |row| {
                 row_holds_at(
                     &row.conditions,
-                    &declaration.param_decls,
+                    &declaration.argument_view(),
                     arguments,
                     &|ty, trait_name| self.passability_conformance(ty, trait_name),
                 )
@@ -776,7 +776,7 @@ impl MirDeclarations {
                 row.trait_name == "IsTriviallyCopyable"
                     && row_holds_at(
                         &row.conditions,
-                        &declaration.param_decls,
+                        &declaration.argument_view(),
                         arguments,
                         &|_, _| None,
                     ) == Some(true)
@@ -818,7 +818,7 @@ impl MirDeclarations {
                 if let Some(holds) = row.and_then(|row| {
                     row_holds_at(
                         &row.conditions,
-                        &declaration.param_decls,
+                        &declaration.argument_view(),
                         arguments,
                         &|_, _| None,
                     )
@@ -1071,11 +1071,11 @@ pub fn binder_scope<'a>(
     lookup: impl Fn(&str) -> Option<&'a MirFunctionDeclaration>,
     structs: impl Fn(&str) -> Option<&'a MirStructDeclaration>,
 ) -> Vec<&'a ParamDecl> {
-    let mut chain = Vec::new();
+    let mut chain: Vec<Vec<&ParamDecl>> = Vec::new();
     let mut link = lookup(name);
     while let Some(declaration) = link {
-        chain.push(&declaration.param_decls);
-        chain.push(&declaration.region_binders);
+        chain.push(declaration.argument_binders().collect());
+        chain.push(declaration.region_binders.iter().collect());
         link = declaration.enclosing.as_deref().and_then(&lookup);
         if link.is_none()
             && declaration.is_closure_method()
@@ -1083,7 +1083,7 @@ pub fn binder_scope<'a>(
                 mojito_symbol::symbol::split_method_symbol(&declaration.lowered_name)
             && let Some(storage) = structs(owner)
         {
-            chain.push(&storage.param_decls);
+            chain.push(storage.argument_binders().collect());
         }
     }
     chain.into_iter().rev().flatten().collect()
@@ -1212,7 +1212,7 @@ pub fn lower_unit(
                         module: node.module.clone(),
                         declaration: declaration.name.clone(),
                     })
-                    .map(ParamDecl::argument_decls)
+                    .map(<[ParamDecl]>::to_vec)
                     .unwrap_or_default();
                 lower_fieldwise_constructor(declaration, &parameters, functions, declarations);
             }
@@ -1245,7 +1245,7 @@ pub fn lower_unit(
                         module: node.module.clone(),
                         declaration: declaration.name.clone(),
                     })
-                    .map(ParamDecl::argument_decls)
+                    .map(<[ParamDecl]>::to_vec)
                     .unwrap_or_default();
                 lower_synthesized_member(
                     (&declaration.name, &parameters),
@@ -1986,13 +1986,12 @@ fn struct_declaration(
             })
             .collect(),
         fieldwise_init: *fieldwise_init,
-        // The argument view: an instance carries its origins as a tail.
         param_decls: checked
             .generic_parameters_at(&GenericSite::Struct {
                 module: s.module.clone(),
                 declaration: name.clone(),
             })
-            .map(ParamDecl::argument_decls)
+            .map(<[ParamDecl]>::to_vec)
             .unwrap_or_default(),
         origin_params: checked
             .struct_origin_params()
@@ -2202,7 +2201,7 @@ fn lower_function(
         names.push(result.name.clone());
     }
     let param_decls = signature.parameters.clone();
-    let enclosing_binders = EnclosingBinders::of(&param_decls);
+    let enclosing_binders = EnclosingBinders::of(signature.argument_binders());
     let ptys = caller_params
         .iter()
         .map(|p| {
@@ -2440,7 +2439,7 @@ fn lower_struct_member<P: DeclaredParam>(
                 module: module.clone(),
                 declaration: name.to_string(),
             })
-            .map(ParamDecl::argument_decls)
+            .map(<[ParamDecl]>::to_vec)
             .unwrap_or_default();
         param_decls = struct_decls.into_iter().chain(param_decls).collect();
     }
@@ -2452,7 +2451,7 @@ fn lower_struct_member<P: DeclaredParam>(
         .map(ParamDecl::argument_decls)
         .unwrap_or_default();
     let enclosing_binders =
-        EnclosingBinders::of(struct_parameters.iter().chain(&signature.parameters));
+        EnclosingBinders::of(struct_parameters.iter().chain(signature.argument_binders()));
     let defaults = regular
         .iter()
         .map(|param| {
@@ -5740,13 +5739,13 @@ fn member_defaults(
             }) if arguments.is_empty() => {
                 let binders = declarations
                     .function(function)
-                    .map_or(&[][..], |thunk| &thunk.param_decls[..]);
+                    .map(|thunk| thunk.argument_view())
+                    .unwrap_or_default();
                 let arguments = binders
                     .iter()
                     .map(|binder| {
                         member
-                            .param_decls
-                            .iter()
+                            .argument_binders()
                             .position(|own| own.id() == binder.id())
                             .and_then(|position| instantiation.get(position))
                             .cloned()

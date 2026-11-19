@@ -896,7 +896,7 @@ struct OwnerInstance<'c> {
     template: String,
     /// The call's receiver or result type, an application of `template`.
     ty: Ty,
-    decls: &'c [ParamDecl],
+    decls: std::borrow::Cow<'c, [ParamDecl]>,
     /// The struct's fields, which a member read of the same spelling names
     /// rather than a binder.
     fields: &'c [(String, Ty)],
@@ -1073,8 +1073,7 @@ impl<'c> Inliner<'_, 'c> {
             if let Some(scope) = scope {
                 caller_scope.extend(
                     scope
-                        .param_decls
-                        .iter()
+                        .argument_binders()
                         .chain(&scope.region_binders)
                         .map(ParamDecl::id),
                 );
@@ -1486,8 +1485,7 @@ impl<'c> Inliner<'_, 'c> {
         owner: Option<&OwnerInstance<'_>>,
     ) -> Option<Instantiated<'c>> {
         let callables: Vec<Option<CallableArgument>> = declaration
-            .param_decls
-            .iter()
+            .argument_binders()
             .map(|decl| {
                 let name = mojito_ast::call::CompileTimeParam::keyword(decl);
                 let argument = param_arg_regs
@@ -1729,7 +1727,7 @@ impl<'c> Inliner<'_, 'c> {
         }
         let (template, _) = nominal_parts(callee.param_types.first()?)?;
         let structure = self.declarations.structure(template)?;
-        let decls = &structure.param_decls;
+        let decls = structure.argument_view();
         if decls.is_empty() {
             return Some(Owner::Unbound);
         }
@@ -1743,7 +1741,7 @@ impl<'c> Inliner<'_, 'c> {
                     && name == template
                     && arguments.is_empty()
                     && (self.is_member_of(template)
-                        || ParamDecl::sole_type_pack(decls).is_none()) =>
+                        || ParamDecl::sole_type_pack(&decls).is_none()) =>
             {
                 Some(Owner::Unbound)
             }
@@ -3329,8 +3327,7 @@ fn existential_arguments(
         TyKind::Param { binder, .. }
             if binder.name.starts_with("Some[")
                 && !declaration
-                    .param_decls
-                    .iter()
+                    .argument_binders()
                     .any(|decl| *decl.id() == binder.id) =>
         {
             Some(binder.clone())
@@ -4244,7 +4241,10 @@ fn instantiated<'c>(
     arguments: &Arguments<'_>,
     declarations: &MirDeclarations,
 ) -> Option<Instantiated<'c>> {
-    if owner.is_none() && declaration.param_decls.is_empty() && arguments.existentials.is_empty() {
+    if owner.is_none()
+        && declaration.argument_binders().next().is_none()
+        && arguments.existentials.is_empty()
+    {
         return arguments.binding().is_empty().then_some(Instantiated {
             body: Cow::Borrowed(callee),
             closures: Vec::new(),
@@ -4317,7 +4317,7 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
             {
                 mojito_mir::mir::witness_arguments(
                     &bound,
-                    &declaration.param_decls,
+                    &declaration.argument_view(),
                     param_arg_regs,
                 );
             }
@@ -4344,15 +4344,15 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
                 ..
             } if result_adapter.as_ref().is_some_and(|adapter| {
                 adapter.kind == CheckedResultAdapter::CopyIteratorReference
-            }) && declaration.param_decls.len() == param_decls.len() =>
+            }) && declaration.argument_view().len() == param_decls.len() =>
             {
                 *resolved = Some(member);
                 mojito_mir::mir::witness_arguments(
                     param_decls,
-                    &declaration.param_decls,
+                    &declaration.argument_view(),
                     param_arg_regs,
                 );
-                param_decls.clone_from(&declaration.param_decls);
+                *param_decls = declaration.argument_view().into_owned();
                 if !declaration.returns_reference {
                     *result_adapter = None;
                 }
@@ -4368,15 +4368,15 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
                 param_arg_regs,
                 ..
             } if declaration.returns_reference == reference_result.is_some()
-                && declaration.param_decls.len() == param_decls.len() =>
+                && declaration.argument_view().len() == param_decls.len() =>
             {
                 *resolved = Some(member);
                 mojito_mir::mir::witness_arguments(
                     param_decls,
-                    &declaration.param_decls,
+                    &declaration.argument_view(),
                     param_arg_regs,
                 );
-                param_decls.clone_from(&declaration.param_decls);
+                *param_decls = declaration.argument_view().into_owned();
             }
             // An operator through a bound is its member's call once
             // the receiver is a struct, as a struct operator is.
@@ -4387,7 +4387,7 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
                 b,
                 raises,
                 ..
-            } if declaration.param_decls.is_empty()
+            } if declaration.argument_binders().next().is_none()
                 && let Some(method) = operator_method(*op) =>
             {
                 let mut call =
@@ -4401,20 +4401,20 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
                 }
                 *instruction = call;
             }
-            MirInstr::BinOp { resolved, .. } if declaration.param_decls.is_empty() => {
+            MirInstr::BinOp { resolved, .. } if declaration.argument_binders().next().is_none() => {
                 *resolved = Some(member);
             }
             instruction => {
                 if let Some(call) = instruction_subscript_call_mut(instruction)
-                    && declaration.param_decls.len() == call.param_decls.len()
+                    && declaration.argument_view().len() == call.param_decls.len()
                 {
                     call.target = member;
                     mojito_mir::mir::witness_arguments(
                         &call.param_decls,
-                        &declaration.param_decls,
+                        &declaration.argument_view(),
                         &mut call.param_arg_regs,
                     );
-                    call.param_decls.clone_from(&declaration.param_decls);
+                    call.param_decls = declaration.argument_view().into_owned();
                 }
             }
         }
@@ -4771,8 +4771,8 @@ impl<'d> Instantiation<'d> {
         arguments: &Arguments<'_>,
         declarations: &'d MirDeclarations,
     ) -> Option<Self> {
-        let decls = &declaration.param_decls;
-        let covered = owner.map_or(0, |owner| restated_owner_binders(owner.decls, decls));
+        let decls = &declaration.argument_view();
+        let covered = owner.map_or(0, |owner| restated_owner_binders(&owner.decls, decls));
         let own = &decls[covered..];
         let existentials = arguments.existentials;
         let arguments = arguments.binding();
@@ -4794,7 +4794,7 @@ impl<'d> Instantiation<'d> {
         };
         if let Some(owner) = owner {
             let (_, owner_arguments) = nominal_parts(&owner.ty)?;
-            let owner_arguments = owner_binder_arguments(owner.decls, &owner_arguments)?;
+            let owner_arguments = owner_binder_arguments(&owner.decls, &owner_arguments)?;
             for (decl, argument) in owner.decls.iter().zip(owner_arguments.iter()) {
                 match instantiation.bind(decl, argument, None)? {
                     Bound::Value(value)
@@ -5354,9 +5354,9 @@ fn binder_rebinds(
     declaration: &MirFunctionDeclaration,
     owner: Option<&OwnerInstance<'_>>,
 ) -> usize {
-    let owner_decls = owner.map_or(&[][..], |owner| owner.decls);
-    let own =
-        &declaration.param_decls[restated_owner_binders(owner_decls, &declaration.param_decls)..];
+    let owner_decls = owner.map_or(&[][..], |owner| &owner.decls);
+    let decls = declaration.argument_view();
+    let own = &decls[restated_owner_binders(owner_decls, &decls)..];
     let names =
         |ty: &Ty, decls: &[ParamDecl]| decls.iter().any(|decl| names_binder(ty, &decl.binder()));
     let signature = || declaration.param_types.iter().chain([&declaration.ret_ty]);
