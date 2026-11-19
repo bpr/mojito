@@ -1123,19 +1123,31 @@ impl Checker {
                     ));
                 };
                 let origin_name = origin_name.to_string();
-                if origin_name.ends_with("UnsafeAnyOrigin") {
-                    return Err(TypeError::Unsupported(
-                        "an UnsafeAnyOrigin reference cannot be hidden in a stored reference                          field"
-                            .to_string(),
-                    ));
-                }
-                if origin_name == "ImmUntrackedOrigin" {
-                    return Ok(TyKind::Ref(mojito_types::origin::RefTy {
-                        referent: self.resolve_ty_from_anno(referent)?,
-                        origin: mojito_types::origin::Origin::Untracked { mutable: false },
-                        mutability: mojito_types::origin::Mutability::Immutable,
-                    })
-                    .into());
+                let declared = self
+                    .origin_binder(&self.enclosing_type_params, &origin_name)
+                    .is_none()
+                    .then(|| self.origin_value_of(origin_expr))
+                    .flatten();
+                match declared {
+                    Some((mojito_types::origin::Origin::UnsafeAny { .. }, _)) => {
+                        return Err(TypeError::Unsupported(
+                            "an UnsafeAnyOrigin reference cannot be hidden in a stored reference \
+                             field"
+                                .to_string(),
+                        ));
+                    }
+                    Some((
+                        origin @ mojito_types::origin::Origin::Untracked { mutable: false },
+                        _,
+                    )) => {
+                        return Ok(TyKind::Ref(mojito_types::origin::RefTy {
+                            referent: self.resolve_ty_from_anno(referent)?,
+                            origin,
+                            mutability: mojito_types::origin::Mutability::Immutable,
+                        })
+                        .into());
+                    }
+                    _ => {}
                 }
                 let (decl, id) = self
                     .origin_binder(&self.enclosing_type_params, &origin_name)
@@ -1992,7 +2004,7 @@ impl Checker {
     /// The `i1` mutability operand of a `!lit.origin`, a `Bool`'s
     /// `_mlir_value` (`mut._mlir_value`, `True._mlir_value`), as upstream's
     /// `_lit_origin_type_of_mut` spells it.
-    fn mlir_bool_operand(
+    pub(in crate::checker) fn mlir_bool_operand(
         &self,
         arg: &mojito_ast::ast::ParamArg,
     ) -> Result<mojito_types::types::LitOriginMut, TypeError> {
@@ -2550,10 +2562,13 @@ impl Checker {
                             kept.bind(slot, position, attribute);
                             continue;
                         }
-                        // An origin-shaped argument that does not resolve is
-                        // an origin diagnostic, never an arity mismatch
-                        // against the origin-erased binder.
-                        if syntactic_origin_argument(argument) {
+                        // An origin-shaped argument that does not resolve,
+                        // or a named origin's use, is an origin diagnostic,
+                        // never an arity mismatch against the origin-erased
+                        // binder.
+                        if syntactic_origin_argument(argument)
+                            || self.named_origin_value(argument).is_some()
+                        {
                             return Err(error);
                         }
                         return Ok(forward_all());
@@ -2803,7 +2818,7 @@ impl Checker {
             ..
         } = decl
             && !origin_placeholder(value)
-            && super::raw_origin_argument(value).is_some() != *lit
+            && super::reads_raw_origin(value) != *lit
         {
             use mojito_types::origin::Mutability;
             // The argument's own mutability, before an immutable slot
@@ -3319,7 +3334,7 @@ impl Checker {
                     "'{name}' is a Bool-valued comptime alias, not a type"
                 )));
             }
-            AliasBody::Value(_) => {
+            AliasBody::Value(_) | AliasBody::OriginValue => {
                 return Err(TypeError::Unsupported(format!(
                     "'{name}' is a value comptime alias, not a type"
                 )));
@@ -4459,8 +4474,14 @@ impl Checker {
         &self,
         argument: &mojito_ast::ast::ParamArg,
     ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-        use mojito_types::origin::PointerOrigin;
+        use mojito_types::origin::{Mutability, PointerOrigin};
 
+        if let Some(read) = self.named_origin_value(argument) {
+            let (origin, mutable) = read?;
+            return PointerOrigin::from_parts(origin, Mutability::of(mutable)).ok_or_else(|| {
+                TypeError::Unsupported("this origin value as a pointer's origin".to_string())
+            });
+        }
         let constant = match argument {
             mojito_ast::ast::ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(name),
@@ -4483,11 +4504,6 @@ impl Checker {
             }
         };
         match constant {
-            "MutUntrackedOrigin" => Ok(PointerOrigin::Untracked { mutable: true }),
-            "ImmUntrackedOrigin" => Ok(PointerOrigin::Untracked { mutable: false }),
-            "MutUnsafeAnyOrigin" => Ok(PointerOrigin::UnsafeAny { mutable: true }),
-            "ImmUnsafeAnyOrigin" => Ok(PointerOrigin::UnsafeAny { mutable: false }),
-            "ImmStaticOrigin" => Ok(PointerOrigin::Static),
             // The pre-rename alias spellings were removed upstream (2026-08);
             // give them targeted migration diagnostics.
             "ImmutUntrackedOrigin" | "ImmutExternalOrigin" => Err(TypeError::Unsupported(format!(
@@ -5752,6 +5768,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::PopIntLiteral
         | TyKind::PopFloatLiteral
         | TyKind::KgenDeferred
+        | TyKind::LitOriginSet
         | TyKind::KgenTarget
         | TyKind::Index
         | TyKind::I1

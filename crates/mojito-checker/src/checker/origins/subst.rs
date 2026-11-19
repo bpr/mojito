@@ -780,8 +780,14 @@ pub(in crate::checker) fn origin_is_declared(
 pub(in crate::checker) fn ref_parameter_is_writable(
     parameter: &FnParam,
     decls: &[ParamDecl],
+    values: OriginValues<'_>,
 ) -> bool {
-    ref_binding_is_writable(parameter.convention, parameter.origin.as_deref(), decls)
+    ref_binding_is_writable(
+        parameter.convention,
+        parameter.origin.as_deref(),
+        decls,
+        values,
+    )
 }
 
 /// Whether a parameter/receiver may be mutated while its generic body is
@@ -795,22 +801,26 @@ pub(in crate::checker) fn ref_binding_is_writable(
     convention: Option<ArgConvention>,
     origin: Option<&[Expr]>,
     decls: &[ParamDecl],
+    values: OriginValues<'_>,
 ) -> bool {
     if convention != Some(ArgConvention::Ref) {
         return parameter_is_writable(&convention);
     }
-    let Some(origin_name) = origin.and_then(|expressions| match expressions {
-        [expression] => origin_binder_name(expression),
+    let Some(expression) = origin.and_then(|expressions| match expressions {
+        [expression] => Some(expression),
         _ => None,
     }) else {
         return false;
     };
-    if origin_name == "MutUnsafeAnyOrigin" || origin_name == "MutUntrackedOrigin" {
-        return true;
+    let Some(origin_name) = origin_binder_name(expression) else {
+        return values(expression).is_some_and(|(_, mutable)| mutable);
+    };
+    match origin_decl(decls, origin_name) {
+        Some((decl, _)) => {
+            origin_decl_mutability(decl, decls) == mojito_types::origin::SigMutability::Mutable
+        }
+        None => values(expression).is_some_and(|(_, mutable)| mutable),
     }
-    origin_decl(decls, origin_name).is_some_and(|(decl, _)| {
-        origin_decl_mutability(decl, decls) == mojito_types::origin::SigMutability::Mutable
-    })
 }
 
 /// Translate a concrete callable's effects through a recorded call-through

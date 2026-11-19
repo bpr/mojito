@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2380**.
+Next free ID: **R2386**.
 
 ## Ordered Work
 
@@ -2838,40 +2838,68 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2343 `std.origin` lacks upstream's origin values, `OriginSet`,
-  and the struct's members**
+- [ ] **R2380 `Origin` declares no `@implicit` immutable conversion and
+  no `unsafe_mut_cast`**
 
-  The untracked, static, and unsafe origin names and `OriginSet` are
-  builtin identities (`BUILTIN_MODULE_EXPORTS`, `mojito-module`), so
-  `type_of(ImmStaticOrigin)` is "unknown type 'ImmStaticOrigin'", where
-  the pin prints `std.origin.__init__.Origin[False, {}]`.
-  - Upstream declares `ImmStaticOrigin`, `UntrackedOrigin[*, mut]`,
-    `Imm/MutUntrackedOrigin`, `AnyOrigin[*, mut]`, `ImmutAnyOrigin`,
-    `MutAnyOrigin`, `UnsafeAnyOrigin[*, mut]`, and
-    `Imm/MutUnsafeAnyOrigin` as comptime values
-    `Origin[_mlir_origin=__mlir_attr[...]]()`. Mojito lacks the `Any`
-    names entirely.
-  - `OriginSet` is ``__mlir_type.`!lit.origin.set` ``, an MLIR type
-    alias, not an alias of `Origin`.
-  - The struct lacks upstream's builtin `__init__`, the `@implicit`
-    immutable conversion, `unsafe_mut_cast`, `equals`, and `contains`.
-  - Every read of those names by spelling then resolves through the
-    declared value: `origins/binders.rs`, `origins/sig.rs`,
-    `origins/subst.rs`, `origins/solve.rs`, `type_resolution.rs`,
-    `operators.rs`, `comptime.rs`, `symbol.rs`
-    (`syntactic_origin_argument`), and the `types.rs`/`origin.rs`
-    displays.
-  - Split this if it does not fit: values and `OriginSet` first, members
-    second.
-  - Probe: `var b: S[o.unsafe_mut_cast[False]()] = S[o]()` over
-    `struct S[o: Origin]` is rejected as "type 'S' expects 0 type
-    argument(s), got 1"; the pin rejects the conversion instead.
-  - Probe: `comptime S = ImmStaticOrigin` /
-    `print(String(reflect[type_of(S)].name()))`.
-  - Re-probe R1299 (`unsafe_mut_cast` in a result origin).
-  - Planned in R2139 (2026-11-18).
-  - Depends on R2370, which gives `Origin` its `_mlir_origin`.
-  - Model: Fable, Planned.
+  `std.origin`'s `Origin` declares only upstream's builtin `__init__`, so
+  `var b: S[o.unsafe_mut_cast[False]()] = S[o]()` over `struct S[o:
+  Origin]` is rejected as "type 'S' expects 0 type argument(s), got 1",
+  where the pin rejects the conversion ("cannot implicitly convert 'S[o]'
+  value to 'S[origin_of(o)]'").
+  - Upstream's conversion is `@implicit def __init__(v: Origin) ->
+    ImmOrigin[_mlir_origin=v._mlir_origin]`. No bundled constructor uses
+    the `-> T` result form yet, and its result reads an argument's binder.
+  - `unsafe_mut_cast[dest_mut]()` builds `#lit.origin.mutcast<…>`, which
+    needs its own origin-lattice node, distinct from `Origin::Immutable`,
+    threaded through `SigOrigin`, solve, subst, MIR text, and mono.
+  - `ImmOrigin(o)` and `MutOrigin(o)` are matched by name today
+    (`origins/sig.rs::immutable_origin_cast`); the declared conversion
+    replaces that match.
+  - Probe: the line above.
+  - Probe: `conformance/probes/variadic_list_getitem_origin.mojo` (R1299)
+    is "unsupported origin contract"; the pin prints `3`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2381 `Origin` declares no `equals` or `contains` predicate**
+
+  Upstream's `Origin.equals[rhs]` and `Origin.contains[element]` are
+  `#lit.origin.eq` predicates, legal only in `where` clauses, and
+  `std.origin` declares neither.
+  - Upstream's `Pointer._OriginCastType … where O.contains[Self.origin]`
+    uses them.
+  - Probe: `def k[o: Origin[mut=False]]() -> Bool: return o.equals[o]`
+    (R2344's probe once a binder is a value).
+  - Depends on R2344, which makes a binder a value in scope.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2384 A named origin whose `mut` is symbolic is rejected**
+
+  `S[UntrackedOrigin[mut=m]]()` inside `def f[m: Bool]()` is rejected ("a
+  raw origin attribute whose mutability is symbolic"), where the pin
+  accepts it.
+  - `Origin::Untracked` and `Origin::UnsafeAny` (`mojito-types/origin.rs`)
+    hold a closed `bool`, so the attribute `Checker::named_origin_value`
+    reads cannot keep a binder's mutability.
+  - Every use in upstream's std applies a literal `mut=`, so nothing
+    bundled needs it yet.
+  - Lever: the mutability becomes a `LitOriginMut`-like slot, substituted
+    as `Origin::Param` is.
+  - Probe: the line above.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2383 An `OriginSet` binder supplied explicitly is rejected with
+  the wrong words**
+
+  `f[origin_of(x)]()` over `def f[os: OriginSet]()` is rejected as
+  "semantic parameter 'os' is inferred and cannot be supplied
+  explicitly".
+  - The pin says "'f' parameter 'os' has 'OriginSet' type, but value has
+    type 'MutOrigin'", noting "'OriginSet' is aka 'LITOriginSet'".
+  - The verdict is right. Only the diagnostic differs.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2344 An origin binder is not a value of its `Origin` type in
   scope**
@@ -2893,7 +2921,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     value of type `Origin`.
   - Probe: `comptime c = ImmOrigin(o); print(c.mut)` in
     `def f[o: MutOrigin](ref[o] x: Int)` is rejected ("struct 'Origin'
-    has no constructor"); the pin prints `False`. It needs R2343's
+    has no constructor"); the pin prints `False`. It needs R2380's
     `@implicit __init__` too.
   - Probe: a body's binder scope below the check still takes the argument
     view: `EnclosingBinders` (`mir.rs`), the lifted thunks' lists it
@@ -2906,7 +2934,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     the same in-scope value node, so `Origin[_mlir_origin=r]` can then
     read it back.
   - Planned in R2139 (2026-11-18).
-  - Depends on R2343.
+  - Depends on R2343 and R2380.
   - Model: Fable, Planned.
 
 - [ ] **R2357 A call bracket's origin argument is not checked against its
@@ -7025,6 +7053,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     the infer-only origin and writer parameters are omitted.
   - The module paths in these probes are R1679's.
   - Found while landing R1669 (2026-10-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2382 A reflected name drops a package's `__init__` segment**
+
+  `reflect[P].name()` for `struct P` in `mypkg/__init__.mojo` prints
+  `mypkg.P`, where the pin prints `mypkg.__init__.P`.
+  - The same gap makes `type_of(ImmStaticOrigin)` print
+    `std.origin.Origin[False, {}]` against the pin's
+    `std.origin.__init__.Origin[False, {}]`.
+  - Probe: the package above, and `comptime S = ImmStaticOrigin` with
+    `print(reflect[type_of(S)].name())`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2385 A parameter read through a value fails when the callee's
+  binder shares the struct parameter's name**
+
+  `print(s.mut)` in `def k[mut: Bool, //, o: Origin[mut=mut]](s: S[o])`
+  over `struct S[mut: Bool, //, o: Origin[mut=mut]]` fails with "'mut'
+  is not a compile-time constant here", where the pin prints the binder.
+  - The same body with the binder named `m` runs, so the read resolves
+    the struct's argument by name in the wrong scope.
+  - Probe: the line above, called on `S[MutUntrackedOrigin]()`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

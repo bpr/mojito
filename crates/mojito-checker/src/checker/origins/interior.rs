@@ -14,6 +14,7 @@ pub(in crate::checker) fn validate_origin_signature(
     decls: &[ParamDecl],
     params: &[mojito_ast::ast::FnParam],
     self_origin: Option<&mojito_ast::ast::OriginSpec>,
+    values: OriginValues<'_>,
 ) -> Result<(), TypeError> {
     let origin_params: HashSet<&str> = decls
         .iter()
@@ -23,7 +24,7 @@ pub(in crate::checker) fn validate_origin_signature(
     let value_params: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
     let validate = |spec: &mojito_ast::ast::OriginSpec| {
         for expr in spec {
-            validate_origin_expr(expr, &origin_params, &value_params)?;
+            validate_origin_expr(expr, &origin_params, &value_params, values)?;
         }
         Ok::<(), TypeError>(())
     };

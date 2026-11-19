@@ -1251,11 +1251,9 @@ impl<'p> Linker<'p> {
                 exports.insert(name, target);
             }
         }
-        // The canonical `std.traits`/`std.origin` module homes export compiler
-        // builtins that have no source declaration. Bind them as identities:
-        // the checker resolves these names structurally, and bound-string
-        // comparisons (`bounds == ["OriginSet"]`) require the unqualified
-        // spelling to survive `rewrite_program`/`rewrite_type_param`.
+        // A canonical module home (`std.traits`, `std.reflection`, …) exports
+        // compiler builtins that have no source declaration. Bind them as
+        // identities: the checker resolves these names structurally.
         if let Some(builtin_names) = builtin_module_exports(canon) {
             for name in builtin_names {
                 exports
@@ -2233,18 +2231,6 @@ const BUILTIN_MODULE_EXPORTS: &[(&str, &[&str])] = &[
             "IsTriviallyDeinitable",
         ],
     ),
-    (
-        "std/origin.mojo",
-        &[
-            "OriginSet",
-            "ImmStaticOrigin",
-            "UntrackedOrigin",
-            "MutUntrackedOrigin",
-            "ImmUntrackedOrigin",
-            "MutUnsafeAnyOrigin",
-            "ImmUnsafeAnyOrigin",
-        ],
-    ),
     ("std/reflection/reflect.mojo", &["reflect"]),
     ("std/reflection/type_info.mojo", &["_unqualified_type_name"]),
     ("std/ffi/__init__.mojo", &["external_call"]),
@@ -2332,6 +2318,17 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "Origin",
     "ImmOrigin",
     "MutOrigin",
+    "AnyOrigin",
+    "ImmutAnyOrigin",
+    "MutAnyOrigin",
+    "OriginSet",
+    "ImmStaticOrigin",
+    "UntrackedOrigin",
+    "ImmUntrackedOrigin",
+    "MutUntrackedOrigin",
+    "UnsafeAnyOrigin",
+    "MutUnsafeAnyOrigin",
+    "ImmUnsafeAnyOrigin",
     "debug_assert",
     "Absable",
     "Roundable",
@@ -2930,6 +2927,17 @@ fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static 
         ("std.origin", "Origin") => Some("Origin"),
         ("std.origin", "ImmOrigin") => Some("ImmOrigin"),
         ("std.origin", "MutOrigin") => Some("MutOrigin"),
+        ("std.origin", "AnyOrigin") => Some("AnyOrigin"),
+        ("std.origin", "ImmutAnyOrigin") => Some("ImmutAnyOrigin"),
+        ("std.origin", "MutAnyOrigin") => Some("MutAnyOrigin"),
+        ("std.origin", "OriginSet") => Some("OriginSet"),
+        ("std.origin", "ImmStaticOrigin") => Some("ImmStaticOrigin"),
+        ("std.origin", "UntrackedOrigin") => Some("UntrackedOrigin"),
+        ("std.origin", "ImmUntrackedOrigin") => Some("ImmUntrackedOrigin"),
+        ("std.origin", "MutUntrackedOrigin") => Some("MutUntrackedOrigin"),
+        ("std.origin", "UnsafeAnyOrigin") => Some("UnsafeAnyOrigin"),
+        ("std.origin", "MutUnsafeAnyOrigin") => Some("MutUnsafeAnyOrigin"),
+        ("std.origin", "ImmUnsafeAnyOrigin") => Some("ImmUnsafeAnyOrigin"),
         ("std.builtin.value", "Defaultable") => Some("Defaultable"),
         ("std.builtin.value", "RegisterPassable") => Some("RegisterPassable"),
         ("std.builtin.value", "TrivialRegisterPassable") => Some("TrivialRegisterPassable"),

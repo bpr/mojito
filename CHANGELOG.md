@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.origin` declares upstream's named origins as `Origin` values built
+  from a raw `!lit.origin` attribute (`ImmStaticOrigin`,
+  `UntrackedOrigin[*, mut]`, `AnyOrigin[*, mut]`, `UnsafeAnyOrigin[*,
+  mut]`, and their `Imm`/`Mut` aliases, `ImmutAnyOrigin` and `MutAnyOrigin`
+  new), `OriginSet` as the `!lit.origin.set` type, and `Origin`'s builtin
+  `__init__`, in upstream's package layout (`std/origin/__init__.mojo`).
+  Every origin slot, `ref[...]` clause, and pointer reads a named origin
+  through its declaration, so an alias of one and a generic one applied
+  resolve, `ImmStaticOrigin.mut` and `type_of(ImmStaticOrigin)` read back,
+  and an unapplied generic one is rejected as at the pin. MIR text moves to
+  schema 1.210 (`lit_origin_set`) and the package format to
+  `mojito-package 239` (R2343).
 - `Origin` now declares upstream's header, `struct Origin[mut: Bool,
   _mlir_origin: _lit_origin_type_of_mut[mut], //]`, its `_mlir_origin` an
   origin binder holding the raw `!lit.origin` (`ParamDecl::Origin`'s

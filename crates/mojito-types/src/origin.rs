@@ -186,6 +186,59 @@ pub enum Origin {
 }
 
 impl Origin {
+    /// The origin a raw `!lit.origin` attribute names, and its mutability:
+    /// `shape` is the attribute's whitespace-free spelling, its one `{}`
+    /// hole the `i1` mutability `operand` holds. Upstream's named origins
+    /// are these attributes: `#lit.any.origin` (`AnyOrigin`,
+    /// `UnsafeAnyOrigin`), the empty `#lit.origin.union<>`
+    /// (`UntrackedOrigin`), and the static constants' field of
+    /// `#lit.static.origin` (`ImmStaticOrigin`). `None` for any other
+    /// attribute.
+    #[must_use]
+    pub fn from_lit_attribute(shape: &str, operand: Option<bool>) -> Option<(Self, bool)> {
+        let (head, mutable) = match operand {
+            Some(mutable) => (shape.strip_suffix(":!lit.origin<{}>")?, mutable),
+            None => shape
+                .strip_suffix(":!lit.origin<true>")
+                .map(|head| (head, true))
+                .or_else(|| {
+                    shape
+                        .strip_suffix(":!lit.origin<false>")
+                        .map(|head| (head, false))
+                })?,
+        };
+        let origin = match head {
+            "#lit.any.origin" => Self::UnsafeAny { mutable },
+            "#lit.origin.union<>" => Self::Untracked { mutable },
+            head if !mutable
+                && head
+                    == STATIC_CONSTANTS_ORIGIN
+                        .split_whitespace()
+                        .collect::<String>() =>
+            {
+                Self::Static
+            }
+            _ => return None,
+        };
+        Some((origin, mutable))
+    }
+
+    /// The raw `!lit.origin` attribute this origin is at mutability
+    /// `mutable`, as [`Origin::from_lit_attribute`] reads it: `None` for an
+    /// origin no named origin is.
+    #[must_use]
+    pub fn lit_attribute(&self, mutable: bool) -> Option<String> {
+        let head = match self {
+            Self::UnsafeAny { .. } => "#lit.any.origin",
+            Self::Untracked { .. } => "#lit.origin.union<>",
+            Self::Static => {
+                return Some(format!("{STATIC_CONSTANTS_ORIGIN} : !lit.origin<false>"));
+            }
+            _ => return None,
+        };
+        Some(format!("{head} : !lit.origin<{mutable}>"))
+    }
+
     /// Upstream's `_get_owned_interior[tag]`: the interior-generation
     /// projection `tag` below this origin, through unions and an
     /// `ImmOrigin(...)` cast. `None` for an origin naming no tracked storage
@@ -524,6 +577,18 @@ pub enum Mutability {
     Immutable,
     Mutable,
     Param(OriginParamId),
+}
+
+impl Mutability {
+    /// The closed mutability `mutable` says.
+    #[must_use]
+    pub const fn of(mutable: bool) -> Self {
+        if mutable {
+            Self::Mutable
+        } else {
+            Self::Immutable
+        }
+    }
 }
 
 /// Provenance retained by an origin-bearing unsafe pointer type.
@@ -1156,6 +1221,11 @@ impl Origin {
     }
 }
 
+/// Upstream's `ImmStaticOrigin` attribute, the static constants' field of
+/// the static origin.
+const STATIC_CONSTANTS_ORIGIN: &str =
+    "#lit.origin.field<#lit.static.origin : !lit.origin<false>, \"__constants__\">";
+
 fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
     const fn tag(origin: &Origin) -> u8 {
         match origin {
@@ -1256,6 +1326,43 @@ mod tests {
             root: OwnerId(root),
             path: path.to_vec(),
         })
+    }
+
+    #[test]
+    fn named_origin_attributes_round_trip() {
+        // Upstream's named origins are these raw attributes: the
+        // mutability is the operand a `{}` hole holds, or the spelled one.
+        for (origin, mutable) in [
+            (Origin::UnsafeAny { mutable: true }, true),
+            (Origin::Untracked { mutable: false }, false),
+            (Origin::Static, false),
+        ] {
+            let attribute = origin.lit_attribute(mutable).expect("a named origin");
+            let shape: String = attribute.split_whitespace().collect();
+            assert_eq!(
+                Origin::from_lit_attribute(&shape, None),
+                Some((origin.clone(), mutable))
+            );
+        }
+        assert_eq!(
+            Origin::from_lit_attribute("#lit.origin.union<>:!lit.origin<{}>", Some(true)),
+            Some((Origin::Untracked { mutable: true }, true))
+        );
+        // The static constants' origin is immutable, and another field of
+        // the static origin is no named origin.
+        let static_shape: String = STATIC_CONSTANTS_ORIGIN.split_whitespace().collect();
+        assert_eq!(
+            Origin::from_lit_attribute(&format!("{static_shape}:!lit.origin<{{}}>"), Some(true)),
+            None
+        );
+        assert_eq!(
+            Origin::from_lit_attribute(
+                "#lit.origin.field<#lit.static.origin:!lit.origin<false>,\"x\">:!lit.origin<false>",
+                None
+            ),
+            None
+        );
+        assert_eq!(Origin::Param(OriginParamId(0)).lit_attribute(true), None);
     }
 
     #[test]

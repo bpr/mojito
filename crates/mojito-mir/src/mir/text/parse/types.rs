@@ -45,6 +45,7 @@ impl Decoder {
                 "PopIntLiteral" => TyKind::PopIntLiteral.into(),
                 "PopFloatLiteral" => TyKind::PopFloatLiteral.into(),
                 "KgenDeferred" => TyKind::KgenDeferred.into(),
+                "lit_origin_set" => TyKind::LitOriginSet.into(),
                 "KgenTarget" => TyKind::KgenTarget.into(),
                 "index" => Ty::index(),
                 "i1" => Ty::i1(),

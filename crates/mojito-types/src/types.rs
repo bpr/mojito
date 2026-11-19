@@ -878,6 +878,10 @@ pub enum TyKind {
     /// `LITMutOrigin`, `LITOrigin[m]`). It is compile-time only: no
     /// register holds one, it has no members, and it conforms to no trait.
     LitOrigin(LitOriginMut),
+    /// Upstream's `!lit.origin.set` (`std.origin`'s `OriginSet`), the type
+    /// of a binder holding a set of origins, displayed as the pin does
+    /// (`LITOriginSet`). Compile-time only, as `LitOrigin` is.
+    LitOriginSet,
     /// Internal checked ABI type for a compile-time-specialized heterogeneous
     /// runtime parameter pack. Unlike a source `Tuple[...]` used as the element
     /// type of an ordinary homogeneous `*args`, each entry describes one
@@ -1944,6 +1948,7 @@ pub fn mlir_type_named(name: &str) -> Option<Ty> {
         "!kgen.deferred" => Some(TyKind::KgenDeferred.into()),
         "!kgen.target" => Some(TyKind::KgenTarget.into()),
         "!kgen.none" => Some(Ty::none()),
+        "!lit.origin.set" => Some(TyKind::LitOriginSet.into()),
         _ => name
             .strip_prefix("!kgen.scalar<")
             .and_then(|rest| rest.strip_suffix('>'))
@@ -4599,6 +4604,7 @@ impl fmt::Display for TyKind {
             }
             Self::PopArray { size, element } => write!(f, "!pop.array<{size}, {element}>"),
             Self::LitOrigin(mutability) => write!(f, "{mutability}"),
+            Self::LitOriginSet => f.write_str("LITOriginSet"),
             Self::RuntimePack(elems) => {
                 write!(f, "$pack[")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -6835,6 +6841,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::PopIntLiteral
         | TyKind::PopFloatLiteral
         | TyKind::KgenDeferred
+        | TyKind::LitOriginSet
         | TyKind::KgenTarget
         | TyKind::Index
         | TyKind::I1
@@ -7608,6 +7615,7 @@ fn symbolic_in(ty: &Ty, keyed: bool) -> bool {
         | TyKind::PopIntLiteral
         | TyKind::PopFloatLiteral
         | TyKind::KgenDeferred
+        | TyKind::LitOriginSet
         | TyKind::KgenTarget
         | TyKind::Index
         | TyKind::I1

@@ -2412,8 +2412,9 @@ fn parameter_raw(name: &str, type_bounds: &HashMap<String, BinderSpelling>) -> S
 }
 
 /// Whether an annotation argument spells an origin: the `_`/`...` placeholder,
-/// an `origin_of(...)`/`ImmOrigin(...)`/`MutOrigin(...)` value, a builtin
-/// origin name, or a parameter the signature binds by `Origin`/`OriginSet`.
+/// an `origin_of(...)`/`ImmOrigin(...)`/`MutOrigin(...)` value, one of
+/// `std.origin`'s named origins, or a parameter the signature binds by
+/// `Origin`/`OriginSet`.
 fn syntactic_origin_argument(
     arg: &ParamArg,
     type_bounds: &HashMap<String, BinderSpelling>,
@@ -2438,15 +2439,20 @@ fn syntactic_origin_argument(
                 "_" | "..."
                     | "ImmStaticOrigin"
                     | "ImmUntrackedOrigin"
+                    | "MutUntrackedOrigin"
                     | "ImmUnsafeAnyOrigin"
                     | "MutUnsafeAnyOrigin"
-                    | "MutUntrackedOrigin"
+                    | "ImmutAnyOrigin"
+                    | "MutAnyOrigin"
             ) || is_origin_binder(name)
         }
         ExprKind::Call { name, .. } => {
             matches!(name.as_str(), "origin_of" | "ImmOrigin" | "MutOrigin")
         }
-        _ => false,
+        // A generic named origin's application (`UntrackedOrigin[mut=True]`).
+        _ => value.bracket_application().is_some_and(|(name, _)| {
+            matches!(name, "UntrackedOrigin" | "AnyOrigin" | "UnsafeAnyOrigin")
+        }),
     }
 }
 

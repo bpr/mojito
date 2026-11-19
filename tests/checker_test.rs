@@ -10807,6 +10807,72 @@ fn raw_origin_binders_classify_as_lit_origins() {
 }
 
 #[test]
+fn named_origins_are_declared_origin_values() {
+    // Upstream's named origins are `std.origin` values built from a raw
+    // attribute: a value read, an origin slot, an alias of one, and a
+    // generic one applied all resolve through the declaration, and an
+    // `OriginSet` binder is classified by its declared `!lit.origin.set`
+    // type.
+    let source = "comptime MyO = MutUntrackedOrigin\n\nstruct S[mut: Bool, //, o: Origin[mut=mut]]:\n    def __init__(out self):\n        pass\n\ndef f[os: OriginSet]():\n    pass\n\ndef main():\n    var a = S[MyO]()\n    var b = S[UntrackedOrigin[mut=False]]()\n    var c = S[MutAnyOrigin]()\n    print(ImmStaticOrigin.mut, AnyOrigin[mut=True].mut)\n";
+    let checked = checked_source_with_std(source, "named_origins.mojo").expect("check");
+    let statement = checked
+        .statements()
+        .iter()
+        .find(|statement| {
+            matches!(&statement.kind, mojito::ast::StmtKind::Def { name, .. } if name == "f")
+        })
+        .expect("def 'f'");
+    let decls = checked
+        .checked()
+        .generic_parameters_at(&mojito::checked::GenericSite::Function {
+            module: statement.module.clone(),
+            declaration: statement.span,
+            syntax: statement.syntax_id,
+        })
+        .expect("f's binders");
+    assert!(
+        matches!(
+            decls,
+            [mojito::types::ParamDecl::Origin {
+                mutability: mojito::types::OriginMutability::Set,
+                ..
+            }]
+        ),
+        "{decls:?}"
+    );
+}
+
+#[test]
+fn origin_values_outside_the_named_ones_are_rejected() {
+    // Another raw origin attribute, a generic named origin left unapplied,
+    // and one whose `mut` is symbolic are each rejected explicitly.
+    let rejected = |body: &str, file: &str, expected: &str| {
+        let source = format!(
+            "struct S[mut: Bool, //, o: Origin[mut=mut]]:\n    def __init__(out self):\n        pass\n\n{body}"
+        );
+        let error = checked_source_with_std(&source, file)
+            .map(|_| ())
+            .expect_err(file);
+        assert!(error.to_string().contains(expected), "{file}: {error}");
+    };
+    rejected(
+        "comptime A = Origin[_mlir_origin=__mlir_attr[`#lit.origin.field<#lit.static.origin : !lit.origin<false>, \"other\"> : !lit.origin<false>`]]()\n\ndef main():\n    print(A.mut)\n",
+        "other_origin_attribute.mojo",
+        "is outside the subset",
+    );
+    rejected(
+        "def main():\n    var s = S[UntrackedOrigin]()\n",
+        "unapplied_named_origin.mojo",
+        "a generator over [mut] that is not applied",
+    );
+    rejected(
+        "def f[m: Bool]():\n    var s = S[UntrackedOrigin[mut=m]]()\n\ndef main():\n    f[True]()\n",
+        "symbolic_named_origin.mojo",
+        "whose mutability is symbolic",
+    );
+}
+
+#[test]
 fn alias_typed_origin_binders_classify_as_origins() {
     // A binder typed by an alias of `Origin` is an origin binder, as
     // upstream resolves the alias like any other type: an imported alias,

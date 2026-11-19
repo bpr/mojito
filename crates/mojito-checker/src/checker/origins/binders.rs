@@ -246,6 +246,96 @@ impl Checker {
         }
     }
 
+    /// The origin a raw `!lit.origin` attribute names, and whether it is
+    /// mutable: upstream's `Origin[_mlir_origin=__mlir_attr[…]]()`, the
+    /// value every named origin in `std.origin` is. `None` when `expr` is
+    /// no bracketed `__mlir_attr`.
+    pub(in crate::checker) fn lit_origin_attribute(
+        &self,
+        expr: &Expr,
+    ) -> Option<Result<(mojito_types::origin::Origin, bool), TypeError>> {
+        self.lit_origin_attribute_in(expr, &[])
+    }
+
+    /// The origin the declared origin value `argument` uses names, and
+    /// whether it is mutable, read from its declaration as upstream's named
+    /// origins are `Origin` values built from a raw attribute:
+    /// `ImmStaticOrigin`, `UntrackedOrigin[mut=True]`, and an alias of one
+    /// (`comptime MyO = MutUntrackedOrigin`). `None` when `argument` names
+    /// no declared origin value, or names an origin binder in scope.
+    pub(in crate::checker) fn named_origin_value(
+        &self,
+        argument: &mojito_ast::ast::ParamArg,
+    ) -> Option<Result<(mojito_types::origin::Origin, bool), TypeError>> {
+        self.origin_value_in(argument, &[], 0)
+    }
+
+    /// The origin the generic origin value `name` applied to `args` names
+    /// (`AnyOrigin[mut=True]`), and whether it is mutable.
+    pub(in crate::checker) fn origin_value_application(
+        &self,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(mojito_types::origin::Origin, bool), TypeError> {
+        self.named_origin_value(&mojito_ast::ast::ParamArg::Type(
+            mojito_ast::ast::Type::Named(name.to_string(), args.to_vec()),
+        ))
+        .unwrap_or_else(|| Err(TypeError::UnknownType(name.to_string())))
+    }
+
+    /// [`Self::named_origin_value`] as a free resolver, for the signature
+    /// lowerings that hold no checker.
+    pub(in crate::checker) fn origin_value_of(
+        &self,
+        expr: &Expr,
+    ) -> Option<(mojito_types::origin::Origin, bool)> {
+        self.named_origin_value(&mojito_ast::ast::ParamArg::Value(expr.clone()))?
+            .ok()
+    }
+
+    /// Record every module `comptime` whose value is an origin before any
+    /// declaration reads one: an `Origin` built from a raw attribute, or a
+    /// use of an origin value already recorded, here or in an imported
+    /// package.
+    pub(in crate::checker) fn declare_origin_values(&mut self, stmts: &[Stmt]) {
+        let mut pending: Vec<(&String, OriginValueDecl)> = stmts
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Comptime {
+                    name,
+                    type_params,
+                    value,
+                    ..
+                } => Some((
+                    name,
+                    OriginValueDecl {
+                        binders: type_params
+                            .iter()
+                            .map(|param| param.name.clone())
+                            .filter(|name| !name.starts_with('*'))
+                            .collect(),
+                        value: value.clone(),
+                    },
+                )),
+                _ => None,
+            })
+            .collect();
+        loop {
+            let (ready, rest): (Vec<_>, Vec<_>) = pending.into_iter().partition(|(_, decl)| {
+                origin_construction_attribute(&decl.value).is_some()
+                    || origin_value_use(&mojito_ast::ast::ParamArg::Value(decl.value.clone()))
+                        .is_some_and(|(head, _)| self.origin_values.contains_key(head))
+            });
+            if ready.is_empty() {
+                break;
+            }
+            for (name, decl) in ready {
+                self.origin_values.insert(name.clone(), decl);
+            }
+            pending = rest;
+        }
+    }
+
     /// Resolve the compile-time value accepted by an `Origin` parameter at a
     /// function-value specialization site. `origin_of` observes checked places
     /// (including reference-valued places) and never evaluates at runtime.
@@ -270,6 +360,9 @@ impl Checker {
                 });
             }
         };
+        if let Some(read) = self.lit_origin_attribute(expression) {
+            return read.map(|(origin, _)| origin);
+        }
         // `ImmOrigin(o)` names `o`'s provenance; origin arguments carry no
         // capability, so the cast erases here.
         if let Some(inner) = super::immutable_origin_cast(expression) {
@@ -326,18 +419,8 @@ impl Checker {
                     .collect::<Result<Vec<_>, _>>()
                     .map(Origin::union)
             }
-            ExprKind::Identifier(name) if name == "ImmStaticOrigin" => Ok(Origin::Static),
-            ExprKind::Identifier(name) if name == "ImmUntrackedOrigin" => {
-                Ok(Origin::Untracked { mutable: false })
-            }
-            ExprKind::Identifier(name) if name == "MutUnsafeAnyOrigin" => {
-                Ok(Origin::UnsafeAny { mutable: true })
-            }
-            ExprKind::Identifier(name) if name == "MutUntrackedOrigin" => {
-                Ok(Origin::Untracked { mutable: true })
-            }
-            ExprKind::Identifier(name) if name == "ImmUnsafeAnyOrigin" => {
-                Ok(Origin::UnsafeAny { mutable: false })
+            _ if let Some(read) = self.named_origin_value(argument) => {
+                read.map(|(origin, _)| origin)
             }
             // A bare name (or `Self.name`) may spell an in-scope Origin
             // parameter directly, mirroring the `ref[o]` annotation channel:
@@ -395,38 +478,24 @@ impl Checker {
             }
             _ => None,
         };
+        if let Some(name) = type_arg_name
+            && let Some((index, decl)) = self.enclosing_origin_type_param(name)
+        {
+            let id = mojito_types::origin::OriginParamId(index);
+            return Ok((
+                Origin::Param(id),
+                Some(super::super::generics::origin_binder_mutability(&decl, id)),
+            ));
+        }
+        if let Some(read) = self.named_origin_value(argument) {
+            return read.map(|(origin, mutable)| (origin, Some(Mutability::of(mutable))));
+        }
         if let Some(name) = type_arg_name {
-            if let Some((index, decl)) = self.enclosing_origin_type_param(name) {
-                let id = mojito_types::origin::OriginParamId(index);
-                return Ok((
-                    Origin::Param(id),
-                    Some(super::super::generics::origin_binder_mutability(&decl, id)),
-                ));
-            }
-            return match name.as_str() {
-                "ImmStaticOrigin" => Ok((Origin::Static, Some(Mutability::Immutable))),
-                "ImmUntrackedOrigin" => Ok((
-                    Origin::Untracked { mutable: false },
-                    Some(Mutability::Immutable),
-                )),
-                "MutUntrackedOrigin" => Ok((
-                    Origin::Untracked { mutable: true },
-                    Some(Mutability::Mutable),
-                )),
-                "MutUnsafeAnyOrigin" => Ok((
-                    Origin::UnsafeAny { mutable: true },
-                    Some(Mutability::Mutable),
-                )),
-                "ImmUnsafeAnyOrigin" => Ok((
-                    Origin::UnsafeAny { mutable: false },
-                    Some(Mutability::Immutable),
-                )),
-                _ => Err(TypeError::TypeMismatch {
-                    expected: "origin_of(place) or a builtin Origin value".to_string(),
-                    found: format!("'{name}', which names no in-scope Origin parameter"),
-                    context: "explicit origin argument".to_string(),
-                }),
-            };
+            return Err(TypeError::TypeMismatch {
+                expected: "origin_of(place) or a builtin Origin value".to_string(),
+                found: format!("'{name}', which names no in-scope Origin parameter"),
+                context: "explicit origin argument".to_string(),
+            });
         }
         let expression = match argument {
             ParamArg::Value(expression) => expression,
@@ -439,6 +508,9 @@ impl Checker {
                 });
             }
         };
+        if let Some(read) = self.lit_origin_attribute(expression) {
+            return read.map(|(origin, mutable)| (origin, Some(Mutability::of(mutable))));
+        }
         // `ImmOrigin(o)`: `o`'s provenance as an `Origin[mut=False]` value,
         // so an `Origin[mut=True]` slot rejects it and the slot's `mut`
         // binds `False`. An origin already immutable is its own cast.
@@ -457,13 +529,13 @@ impl Checker {
                 &decl,
                 mojito_types::origin::OriginParamId(index),
             )),
-            None => match name {
-                "ImmStaticOrigin" | "ImmUntrackedOrigin" | "ImmUnsafeAnyOrigin" => {
-                    Some(Mutability::Immutable)
-                }
-                "MutUnsafeAnyOrigin" | "MutUntrackedOrigin" => Some(Mutability::Mutable),
-                _ => None,
-            },
+            None => self
+                .named_origin_value(&ParamArg::Value(Expr::new(
+                    ExprKind::Identifier(name.to_string()),
+                    expression.span,
+                )))
+                .and_then(Result::ok)
+                .map(|(_, mutable)| Mutability::of(mutable)),
         };
         let mutability = match &expression.kind {
             ExprKind::Identifier(name) => named_param_mutability(name),
@@ -638,5 +710,246 @@ impl Checker {
         let own = self.callable_type_params.borrow().last().cloned();
         own.and_then(|own| find(&own))
             .or_else(|| find(&self.enclosing_type_params))
+    }
+}
+
+/// The `Origin` construction whose raw attribute is `origin` at
+/// mutability `mutable` (`Origin[_mlir_origin=__mlir_attr[`#lit.any.origin
+/// : !lit.origin<true>`]]()`): the value an application of a generic origin
+/// value is, located at the use's argument `at`.
+pub(in crate::checker) fn origin_construction(
+    origin: &mojito_types::origin::Origin,
+    mutable: bool,
+    at: Option<&Expr>,
+) -> Result<Expr, TypeError> {
+    use mojito_ast::ast::ParamArg;
+    let attribute = origin.lit_attribute(mutable).ok_or_else(|| {
+        TypeError::Unsupported(format!("the origin '{origin}' as an origin value"))
+    })?;
+    let node = |kind| Expr {
+        source: at.and_then(|at| at.source.clone()),
+        ..Expr::new(kind, at.map(|at| at.span).unwrap_or_default())
+    };
+    let attribute = node(ExprKind::Index {
+        object: Box::new(node(ExprKind::Identifier("__mlir_attr".to_string()))),
+        index: Box::new(node(ExprKind::Identifier(attribute))),
+    });
+    Ok(node(ExprKind::Call {
+        name: "Origin".to_string(),
+        param_args: vec![ParamArg::Named {
+            name: "_mlir_origin".to_string(),
+            value: Box::new(ParamArg::Value(attribute)),
+        }],
+        args: Vec::new(),
+        kwargs: Vec::new(),
+    }))
+}
+
+impl Checker {
+    /// [`Self::named_origin_value`] under `bindings`, the arguments an
+    /// enclosing generic origin value's binders took.
+    fn origin_value_in(
+        &self,
+        argument: &mojito_ast::ast::ParamArg,
+        bindings: &[(String, mojito_ast::ast::ParamArg)],
+        depth: usize,
+    ) -> Option<Result<(mojito_types::origin::Origin, bool), TypeError>> {
+        use mojito_ast::ast::ParamArg;
+        /// Alias chains deeper than this are cyclic.
+        const MAX_DEPTH: usize = 32;
+        let (name, args) = origin_value_use(argument)?;
+        if depth > MAX_DEPTH || self.enclosing_origin_type_param(name).is_some() {
+            return None;
+        }
+        let decl = self.origin_values.get(name)?;
+        Some((|| {
+            let unapplied = || TypeError::TypeMismatch {
+                expected: "an Origin value".to_string(),
+                found: format!(
+                    "'{name}', a generator over [{}] that is not applied",
+                    decl.binders.join(", ")
+                ),
+                context: "origin argument".to_string(),
+            };
+            if args.len() != decl.binders.len() {
+                return Err(unapplied());
+            }
+            let mut own = Vec::with_capacity(args.len());
+            for (position, argument) in args.iter().enumerate() {
+                let (binder, value) = match argument {
+                    ParamArg::Named { name, value } => (name.clone(), value.as_ref().clone()),
+                    positional => (decl.binders[position].clone(), positional.clone()),
+                };
+                if !decl.binders.contains(&binder) {
+                    return Err(unapplied());
+                }
+                own.push((binder, substitute_binding(value, bindings)));
+            }
+            match origin_construction_attribute(&decl.value) {
+                Some(attribute) => self
+                    .lit_origin_attribute_in(attribute, &own)
+                    .unwrap_or_else(|| Err(unapplied())),
+                None => self
+                    .origin_value_in(&ParamArg::Value(decl.value.clone()), &own, depth + 1)
+                    .unwrap_or_else(|| Err(unapplied())),
+            }
+        })())
+    }
+
+    /// [`Self::lit_origin_attribute`] under `bindings`.
+    fn lit_origin_attribute_in(
+        &self,
+        expr: &Expr,
+        bindings: &[(String, mojito_ast::ast::ParamArg)],
+    ) -> Option<Result<(mojito_types::origin::Origin, bool), TypeError>> {
+        let (name, args) = expr.bracket_application()?;
+        if name != "__mlir_attr" || self.lookup(name).is_some() {
+            return None;
+        }
+        let (text, operands) = mojito_types::types::mlir_attribute_spelling(&args);
+        let shape: String = text.split_whitespace().collect();
+        let unsupported = || {
+            TypeError::Unsupported(format!(
+                "the origin attribute '{shape}' is outside the subset; only \
+                 '#lit.any.origin', '#lit.origin.union<>', and the static \
+                 constants' origin are supported"
+            ))
+        };
+        Some((|| {
+            let operand = match operands.as_slice() {
+                [] => None,
+                [operand] => Some(self.lit_origin_mutability(operand, bindings)?),
+                _ => return Err(unsupported()),
+            };
+            mojito_types::origin::Origin::from_lit_attribute(&shape, operand)
+                .ok_or_else(unsupported)
+        })())
+    }
+
+    /// The `i1` mutability operand of a raw origin attribute
+    /// (`+mut._mlir_value`, `True._mlir_value`) under `bindings`, once it
+    /// folds: the named origins hold a closed mutability, which a symbolic
+    /// one cannot give.
+    fn lit_origin_mutability(
+        &self,
+        operand: &mojito_ast::ast::ParamArg,
+        bindings: &[(String, mojito_ast::ast::ParamArg)],
+    ) -> Result<bool, TypeError> {
+        use mojito_ast::ast::{ParamArg, PrefixOp};
+        let operand = match operand {
+            ParamArg::Value(Expr {
+                kind: ExprKind::Prefix(PrefixOp::Pos, inner),
+                ..
+            }) => ParamArg::Value((**inner).clone()),
+            operand => operand.clone(),
+        };
+        let operand = match mojito_types::types::mlir_value_operand(&operand) {
+            Some(base) => match substitute_binding(base, bindings) {
+                ParamArg::Value(Expr {
+                    kind: ExprKind::Bool(literal),
+                    ..
+                }) => return Ok(literal),
+                ParamArg::Type(mojito_ast::ast::Type::Named(name, args))
+                    if args.is_empty() && (name == "True" || name == "False") =>
+                {
+                    return Ok(name == "True");
+                }
+                ParamArg::Value(base) => ParamArg::Value(Expr::new(
+                    ExprKind::Member {
+                        object: Box::new(base),
+                        field: mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
+                    },
+                    operand_span(&operand),
+                )),
+                _ => operand,
+            },
+            None => operand,
+        };
+        match self.mlir_bool_operand(&operand)? {
+            mojito_types::types::LitOriginMut::Known(mutable) => Ok(mutable),
+            mojito_types::types::LitOriginMut::Expr(_) => Err(TypeError::Unsupported(
+                "a raw origin attribute whose mutability is symbolic".to_string(),
+            )),
+        }
+    }
+}
+
+/// The raw attribute an `Origin` construction (`Origin[_mlir_origin=
+/// __mlir_attr[…]]()`) builds its value from; `None` for any other
+/// expression.
+fn origin_construction_attribute(value: &Expr) -> Option<&Expr> {
+    use mojito_ast::ast::ParamArg;
+    let ExprKind::Call {
+        name,
+        param_args,
+        args,
+        kwargs,
+    } = &value.kind
+    else {
+        return None;
+    };
+    if name != "Origin" || !args.is_empty() || !kwargs.is_empty() {
+        return None;
+    }
+    param_args.iter().find_map(|argument| match argument {
+        ParamArg::Named { name, value: inner } if name == "_mlir_origin" => match inner.as_ref() {
+            ParamArg::Value(attribute)
+                if attribute
+                    .bracket_application()
+                    .is_some_and(|(head, _)| head == "__mlir_attr") =>
+            {
+                Some(attribute)
+            }
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// The name and arguments of a use of a declared origin value: a bare name
+/// (`ImmStaticOrigin`) or an application (`UntrackedOrigin[mut=True]`),
+/// spelled as a value or as a type argument.
+fn origin_value_use(
+    argument: &mojito_ast::ast::ParamArg,
+) -> Option<(&str, Vec<mojito_ast::ast::ParamArg>)> {
+    use mojito_ast::ast::{ParamArg, Type};
+    match argument {
+        ParamArg::Type(Type::Named(name, args)) => Some((name, args.clone())),
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) => Some((name, Vec::new())),
+        ParamArg::Value(expr) => expr
+            .bracket_application()
+            .map(|(name, args)| (name, args.into_owned())),
+        ParamArg::Named { .. } | ParamArg::Type(_) => None,
+    }
+}
+
+/// `argument` with a bare name `bindings` binds replaced by its argument.
+fn substitute_binding(
+    argument: mojito_ast::ast::ParamArg,
+    bindings: &[(String, mojito_ast::ast::ParamArg)],
+) -> mojito_ast::ast::ParamArg {
+    use mojito_ast::ast::{ParamArg, Type};
+    let name = match &argument {
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) => name,
+        ParamArg::Type(Type::Named(name, args)) if args.is_empty() => name,
+        _ => return argument,
+    };
+    bindings
+        .iter()
+        .find(|(binder, _)| binder == name)
+        .map_or(argument, |(_, bound)| bound.clone())
+}
+
+/// The span an operand's expression covers, for one synthesized over it.
+fn operand_span(operand: &mojito_ast::ast::ParamArg) -> mojito_common::token::Span {
+    match operand {
+        mojito_ast::ast::ParamArg::Value(expr) => expr.span,
+        _ => mojito_common::token::Span::default(),
     }
 }

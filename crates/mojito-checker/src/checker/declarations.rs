@@ -753,6 +753,7 @@ impl Checker {
                 &self.enclosing_param_decls,
                 &regular_params,
                 self.enclosing_struct_type_params.get(),
+                &|expr| self.origin_value_of(expr),
             )?,
             ref_return: match &method.ret {
                 Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
@@ -1261,9 +1262,6 @@ impl Checker {
             return Ok(None);
         }
         let mutability = match tp.bounds.as_slice() {
-            // A builtin identity until it is declared as upstream's
-            // `!lit.origin.set` type (R2343).
-            [only] if only == "OriginSet" => OriginBinderType::Origin(OriginMutability::Set),
             [only] if tp.value_type.is_none() && self.check_trait_name(only).is_ok() => {
                 return Ok(None);
             }
@@ -1308,6 +1306,9 @@ impl Checker {
                     TyKind::Struct(name, args) => (name, args),
                     TyKind::LitOrigin(LitOriginMut::Known(fixed)) => {
                         return Ok(Some(OriginBinderType::Lit(OriginMutability::Fixed(*fixed))));
+                    }
+                    TyKind::LitOriginSet => {
+                        return Ok(Some(OriginBinderType::Origin(OriginMutability::Set)));
                     }
                     TyKind::LitOrigin(LitOriginMut::Expr(mutability)) => {
                         return Ok(mutability.as_decl_ref().map(|binder| {
@@ -2064,6 +2065,7 @@ impl Checker {
             &self.enclosing_param_decls,
             &m.params,
             m.self_origin.as_ref(),
+            &|expr| self.origin_value_of(expr),
         )?;
         if is_legacy_bare_move_constructor(m) {
             return Err(TypeError::Unsupported(
@@ -2255,6 +2257,7 @@ impl Checker {
             m.self_convention,
             m.self_origin.as_deref(),
             &self.enclosing_param_decls,
+            &|expr| self.origin_value_of(expr),
         );
         // An initializer's `out self` follows the arguments its refined
         // annotation may read (`origin_of(iterable)`).
@@ -2299,7 +2302,9 @@ impl Checker {
                 mojito_ast::ast::ParamKind::Regular => pty,
             };
             param_tys.push(pty.clone());
-            let writable = ref_parameter_is_writable(p, &self.enclosing_param_decls);
+            let writable = ref_parameter_is_writable(p, &self.enclosing_param_decls, &|expr| {
+                self.origin_value_of(expr)
+            });
             let binder = matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Ref))
                 .then(|| self.reference_parameter_struct_binder(p.origin.as_deref()))
                 .flatten();

@@ -36,6 +36,9 @@ impl Checker {
                 self.module_def_owner(name, statement.source_span());
             }
         }
+        // A named origin is read from its declaration wherever an origin
+        // slot names it, ahead of every signature that does.
+        self.declare_origin_values(stmts);
         // A function a constant names is typed before the constant folds.
         self.declare_functions_comptime_reads(stmts);
         // A module integer constant folds once, ahead of every declaration
@@ -3477,7 +3480,11 @@ impl Checker {
                                 param.convention,
                                 Some(mojito_ast::ast::ArgConvention::Out)
                             )
-                            || ref_parameter_is_writable(param, &self.enclosing_param_decls),
+                            || ref_parameter_is_writable(
+                                param,
+                                &self.enclosing_param_decls,
+                                &|expr| self.origin_value_of(expr),
+                            ),
                     );
                     if result.is_ok() {
                         self.record_owned_pack(&param.name, param.kind, param.convention);
@@ -3490,7 +3497,11 @@ impl Checker {
                         self.register_reference_parameter(
                             &param.name,
                             bind_ty.clone(),
-                            ref_parameter_is_writable(param, &self.enclosing_param_decls),
+                            ref_parameter_is_writable(
+                                param,
+                                &self.enclosing_param_decls,
+                                &|expr| self.origin_value_of(expr),
+                            ),
                             binder,
                         );
                         self.register_reference_binder(
@@ -4081,7 +4092,9 @@ impl Checker {
             named_result,
             ..
         } = shape;
-        super::origins::validate_origin_signature(&decls, params, None)?;
+        super::origins::validate_origin_signature(&decls, params, None, &|expr| {
+            self.origin_value_of(expr)
+        })?;
         let pos_only = regular_marker_index(params, *positional_only);
         let kw_only = effective_keyword_only_index(params, *keyword_only, *variadic_idx);
         // The clauses a compile-time application already emitted are the
@@ -4158,7 +4171,9 @@ impl Checker {
             },
             decls.clone(),
         );
-        let ref_params = lower_ref_param_sigs(&decls, caller_regular, 0)?;
+        let ref_params = lower_ref_param_sigs(&decls, caller_regular, 0, &|expr| {
+            self.origin_value_of(expr)
+        })?;
         let ref_return = match ret_anno {
             Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                 origin.as_ref().ok_or_else(|| {
@@ -4734,7 +4749,13 @@ impl Checker {
         // accepts. A body that is not a proposition is a value, lowered to
         // its template over the alias's binders, as is any body a value
         // annotation declares.
+        // A generic origin value's attribute holds its binder, which only
+        // an application closes.
+        let origin_value = !decls.is_empty() && self.origin_values.contains_key(name);
         let body = (|| -> Result<AliasBody, TypeError> {
+            if origin_value {
+                return Ok(AliasBody::OriginValue);
+            }
             Ok(
                 match (super::constraints::assoc_body_source_type(value), &declared) {
                     // A `Bool` annotation admits a proposition as well as a value.

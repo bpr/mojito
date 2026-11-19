@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.209
+mojito-mir 1.210
 ```
 
-The writer emits 1.209. The reader accepts 1.0 through 1.209; *Schema 1.0*
+The writer emits 1.210. The reader accepts 1.0 through 1.210; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1250,6 +1250,11 @@ read (`upgrade_struct_instance_mutability`): the origin's static mutability,
 else `ct_deferred`. The package format moves to `mojito-package 237`
 (R2372).
 
+Schema 1.210 adds upstream's `!lit.origin.set` type, `lit_origin_set`,
+the type of `std.origin`'s `OriginSet`. The package format moves to
+`mojito-package 239`, whose checker interface carries the module
+`comptime` declarations whose value is an origin (R2343).
+
 Schema 1.207 adds two origin spellings a struct's origin argument can
 hold, as upstream's `_mlir_origin` attribute can: `origin_projected { base,
 path }`, an interior or subtree projection over an origin binder or the
@@ -2234,7 +2239,7 @@ kgen_address_simd { width }
 comptime_list(type) param_list(type) any_trait([trait...]) any_struct(type) trait_type([trait...])
 tuple([type...]) runtime_pack([type...])
 pop_array { size, element } variadic_pack(type) variant([type...])
-lit_origin { mutable }
+lit_origin { mutable } lit_origin_set
 pointer { element, origin }
 kgen_pointer { element }
 lit_ref { element, origin }

@@ -2741,6 +2741,22 @@ fn kgen_deferred_attribute_round_trips() {
     assert!(text.contains("KgenDeferred") && text.contains("ct_mlir_attr(\"#pop.fmf<fast>\")"));
 }
 
+/// Schema 1.210 spells upstream's `!lit.origin.set` type, `std.origin`'s
+/// `OriginSet`, `lit_origin_set`.
+#[test]
+fn lit_origin_set_round_trips() {
+    let ty = Ty::new(TyKind::LitOriginSet);
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![ty.clone()],
+            vec![MirInstr::ConstructType { dest: Reg(0), ty }],
+        ),
+    )]);
+    assert_reprints(&program);
+    assert!(write::program(&program).contains("lit_origin_set"));
+}
+
 /// Schema 1.151 spells upstream's `!pop.int_literal` and
 /// `!pop.float_literal` types `PopIntLiteral` and `PopFloatLiteral`, and
 /// their attributes `ct_pop_int_literal(…)` and `ct_pop_float_literal(…)`.

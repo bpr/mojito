@@ -1020,6 +1020,30 @@ impl Checker {
         let alias = self.comptime_aliases.get(name)?;
         let body = match &alias.body {
             AliasBody::Value(body) => body.clone(),
+            AliasBody::OriginValue => {
+                return Some(self.origin_value_application(name, args).and_then(
+                    |(origin, mutable)| {
+                        let construction = super::origins::origin_construction(
+                            &origin,
+                            mutable,
+                            args.iter().find_map(|argument| match argument {
+                                mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
+                                    mojito_ast::ast::ParamArg::Value(expr) => Some(expr),
+                                    _ => None,
+                                },
+                                mojito_ast::ast::ParamArg::Value(expr) => Some(expr),
+                                mojito_ast::ast::ParamArg::Type(_) => None,
+                            }),
+                        )?;
+                        self.infer(&construction)?;
+                        self.called_application(&construction).ok_or_else(|| {
+                            TypeError::NotComptime(format!(
+                                "the origin value '{name}' before 'Origin' is declared"
+                            ))
+                        })
+                    },
+                ));
+            }
             AliasBody::Type(ty)
                 if mojito_ast::call::bracket_unbound_slots(&alias.decls, args)
                     .is_ok_and(|unbound| unbound.any_open()) =>
@@ -1056,7 +1080,7 @@ impl Checker {
             AliasBody::Value(body) => body.clone(),
             AliasBody::Predicate(_) => alias.predicate_value.clone()?,
             AliasBody::Type(ty) => self.param_context.type_shape(ty.clone()),
-            AliasBody::Generator => return None,
+            AliasBody::Generator | AliasBody::OriginValue => return None,
         };
         self.generator_constant(alias.decls.clone(), body).ok()
     }
@@ -1067,10 +1091,9 @@ impl Checker {
             return false;
         };
         self.lookup(name).is_none()
-            && self
-                .comptime_aliases
-                .get(name)
-                .is_some_and(|alias| matches!(alias.body, AliasBody::Value(_)))
+            && self.comptime_aliases.get(name).is_some_and(|alias| {
+                matches!(alias.body, AliasBody::Value(_) | AliasBody::OriginValue)
+            })
     }
 
     /// The parameterized member `field` of the struct `object` names, its
@@ -5554,7 +5577,10 @@ impl Checker {
         let alias = self.comptime_aliases.get(name)?;
         match &alias.body {
             AliasBody::Predicate(constraint) => Some((&alias.decls, constraint)),
-            AliasBody::Type(_) | AliasBody::Value(_) | AliasBody::Generator => None,
+            AliasBody::Type(_)
+            | AliasBody::Value(_)
+            | AliasBody::Generator
+            | AliasBody::OriginValue => None,
         }
     }
 

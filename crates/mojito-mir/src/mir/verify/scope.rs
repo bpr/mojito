@@ -367,7 +367,7 @@ impl ScopeCx<'_> {
             TyKind::LitOrigin(mojito_types::types::LitOriginMut::Expr(expr)) => {
                 self.expr(role, "mutability", expr, &MetaTy::value(Ty::bool()), nested);
             }
-            TyKind::LitOrigin(_) => {}
+            TyKind::LitOrigin(_) | TyKind::LitOriginSet => {}
             TyKind::Struct(name, args) => {
                 let declared = self
                     .declarations

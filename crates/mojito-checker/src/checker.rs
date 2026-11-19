@@ -852,6 +852,10 @@ pub struct Checker {
     /// Generic top-level type aliases declared by `comptime NAME[params] = Type`,
     /// expanded per application during type resolution. See [`ComptimeAlias`].
     comptime_aliases: declaration_table::DeclarationTable<ComptimeAlias>,
+    /// The module `comptime` declarations whose value is an origin, as
+    /// upstream's `std.origin` declares its named origins: what
+    /// [`Checker::named_origin_value`] reads a use of one from.
+    origin_values: declaration_table::DeclarationTable<OriginValueDecl>,
     /// Whether `self` is writable in the method body being checked — set while
     /// checking a `mut self` method's body (so `self.x = e` is allowed there).
     self_mutable: bool,
@@ -1268,6 +1272,7 @@ impl Checker {
             comptime_applied: declaration_table::DeclarationTable::default(),
             comptime_dtypes: vec![HashMap::new()],
             comptime_aliases: declaration_table::DeclarationTable::default(),
+            origin_values: declaration_table::DeclarationTable::default(),
             self_mutable: false,
             self_initializing: false,
             parametric_write_frames: RefCell::new(Vec::new()),
@@ -1625,7 +1630,9 @@ impl Checker {
     ) -> Result<mojito_types::origin::RefSig, TypeError> {
         use mojito_types::origin::{Mutability, RefSig, SigMutability, SigOrigin};
 
-        if let Ok(signature) = lower_ref_sig(spec, decls, params, 0) {
+        if let Ok(signature) =
+            lower_ref_sig(spec, decls, params, 0, &|expr| self.origin_value_of(expr))
+        {
             return Ok(signature);
         }
         let mut members = Vec::new();
@@ -3644,6 +3651,17 @@ struct ComptimeAlias {
     generator: Option<String>,
 }
 
+/// A module `comptime` whose value is an origin: an `Origin` built from a
+/// raw `!lit.origin` attribute (`comptime ImmStaticOrigin =
+/// Origin[_mlir_origin=__mlir_attr[…]]()`), or another origin value's use
+/// (`comptime MutAnyOrigin = AnyOrigin[mut=True]`), over the declaration's
+/// own binders (`AnyOrigin[*, mut: Bool]`).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct OriginValueDecl {
+    binders: Vec<String>,
+    value: Expr,
+}
+
 /// The `@implicit` converting constructor selected for one conversion.
 struct SelectedConversion {
     /// The constructor's lowered symbol.
@@ -3691,6 +3709,10 @@ enum AliasBody {
     /// include an origin): every read is the struct's
     /// ([`ComptimeAlias::generator`]).
     Generator,
+    /// A generic origin value (`AnyOrigin[*, mut: Bool]`), whose raw
+    /// attribute holds its binder: each application is read from the
+    /// declaration ([`Checker::named_origin_value`]).
+    OriginValue,
 }
 
 /// The body of a [`ParameterizedMember`]: upstream's generator over the

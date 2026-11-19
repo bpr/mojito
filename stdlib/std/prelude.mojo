@@ -69,7 +69,22 @@ from std.simd import (
 from std.builtin.string_literal import StringLiteral
 from std.builtin.int_literal import IntLiteral
 from std.builtin.float_literal import FloatLiteral
-from std.origin import ImmOrigin, MutOrigin, Origin
+from std.origin import (
+    AnyOrigin,
+    ImmutAnyOrigin,
+    ImmOrigin,
+    MutAnyOrigin,
+    MutOrigin,
+    Origin,
+    OriginSet,
+    ImmStaticOrigin,
+    UntrackedOrigin,
+    ImmUntrackedOrigin,
+    MutUntrackedOrigin,
+    UnsafeAnyOrigin,
+    MutUnsafeAnyOrigin,
+    ImmUnsafeAnyOrigin,
+)
 from std.math import (
     Absable,
     Roundable,

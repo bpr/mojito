@@ -560,8 +560,10 @@ fn source_type_from_ty_with_origins(
         TyKind::Ref(reference) => {
             let origin_name = match &reference.origin {
                 mojito_types::origin::Origin::Param(id) => origin_names.get(id)?.clone(),
-                mojito_types::origin::Origin::Untracked { mutable: false } => {
-                    "UntrackedOrigin".to_string()
+                // A named origin is spelled by the `std.origin` value
+                // declaring it (`ImmUntrackedOrigin`).
+                origin @ mojito_types::origin::Origin::Untracked { mutable: false } => {
+                    origin.to_string()
                 }
                 _ => return None,
             };

@@ -44,6 +44,7 @@ mod solve;
 mod subst;
 mod transfer;
 
+pub(in crate::checker) use binders::origin_construction;
 pub(in crate::checker) use construct::{
     CalleeBinders, ConstructorOriginBindings, declared_origin_binders, names_origin_binder,
 };

@@ -2208,6 +2208,7 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::PopIntLiteral => "PopIntLiteral".into(),
         TyKind::PopFloatLiteral => "PopFloatLiteral".into(),
         TyKind::KgenDeferred => "KgenDeferred".into(),
+        TyKind::LitOriginSet => "lit_origin_set".into(),
         TyKind::KgenTarget => "KgenTarget".into(),
         TyKind::Index => "index".into(),
         TyKind::I1 => "i1".into(),

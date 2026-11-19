@@ -442,7 +442,10 @@ impl Checker {
                 .filter(|alias| alias.decls.is_empty())
                 .and_then(|alias| match &alias.body {
                     AliasBody::Type(ty) => Some((ty, &alias.value)),
-                    AliasBody::Predicate(_) | AliasBody::Value(_) | AliasBody::Generator => None,
+                    AliasBody::Predicate(_)
+                    | AliasBody::Value(_)
+                    | AliasBody::Generator
+                    | AliasBody::OriginValue => None,
                 });
         };
         Some((

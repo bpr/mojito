@@ -508,7 +508,12 @@ impl Checker {
         owner: &str,
     ) -> Result<MethodSig, TypeError> {
         let declared = self.classify_param_list(owner, &m.type_params)?;
-        super::origins::validate_origin_signature(&declared, &m.params, m.self_origin.as_ref())?;
+        super::origins::validate_origin_signature(
+            &declared,
+            &m.params,
+            m.self_origin.as_ref(),
+            &|expr| self.origin_value_of(expr),
+        )?;
         let decls = ParamDecl::argument_decls(&declared);
         self.push_param_scope(&decls);
         let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
@@ -576,10 +581,13 @@ impl Checker {
                 &declared,
                 &regular_params,
                 0,
+                &|expr| self.origin_value_of(expr),
             )?),
             _ => None,
         };
-        let ref_params = lower_ref_param_sigs(&declared, &regular_params, 0)?;
+        let ref_params = lower_ref_param_sigs(&declared, &regular_params, 0, &|expr| {
+            self.origin_value_of(expr)
+        })?;
         let sig = MethodSig {
             declared,
             availability: Vec::new(),

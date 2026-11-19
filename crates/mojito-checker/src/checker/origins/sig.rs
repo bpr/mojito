@@ -28,6 +28,21 @@ pub(in crate::checker) fn raw_origin_argument(
     }
 }
 
+/// The declared origin values a signature lowering reads a named origin
+/// through ([`Checker::origin_value_of`]): the origin a use names and
+/// whether it is mutable, or `None` for a name that is no origin value.
+pub(in crate::checker) type OriginValues<'a> =
+    &'a dyn Fn(&Expr) -> Option<(mojito_types::origin::Origin, bool)>;
+
+/// Whether `argument` is a raw `!lit.origin` rather than an `Origin`
+/// value: an `X._mlir_origin` read ([`raw_origin_argument`]) or a
+/// bracketed `__mlir_attr[…]` attribute.
+pub(in crate::checker) fn reads_raw_origin(argument: &mojito_ast::ast::ParamArg) -> bool {
+    raw_origin_argument(argument).is_some()
+        || matches!(argument, mojito_ast::ast::ParamArg::Value(expr)
+            if expr.bracket_application().is_some_and(|(name, _)| name == "__mlir_attr"))
+}
+
 /// The type of an origin value of mutability `fixed` (`None` when it is
 /// symbolic): the `Origin` struct's (`MutOrigin`, `ImmOrigin`), or the raw
 /// `!lit.origin`'s (`LITMutOrigin`, `LITImmOrigin`) when `lit`.
@@ -203,12 +218,13 @@ pub(in crate::checker) fn validate_origin_expr(
     expr: &Expr,
     origin_params: &HashSet<&str>,
     value_params: &HashSet<&str>,
+    values: OriginValues<'_>,
 ) -> Result<(), TypeError> {
     if let Some(inner) = immutable_origin_cast(expr) {
-        return validate_origin_expr(inner?, origin_params, value_params);
+        return validate_origin_expr(inner?, origin_params, value_params, values);
     }
     if let Some((base, _)) = interior_origin_syntax(expr) {
-        return validate_origin_expr(base, origin_params, value_params);
+        return validate_origin_expr(base, origin_params, value_params, values);
     }
     if subtree_origin_syntax(expr).is_some() {
         return Err(reject_subtree_origin_here("a reference origin clause"));
@@ -217,16 +233,12 @@ pub(in crate::checker) fn validate_origin_expr(
         ExprKind::Identifier(name)
             if name == "_"
                 || name == "self"
-                || name == "ImmStaticOrigin"
-                || name == "ImmUntrackedOrigin"
-                || name == "MutUntrackedOrigin"
-                || name == "MutUnsafeAnyOrigin"
-                || name == "ImmUnsafeAnyOrigin"
                 || origin_params.contains(name.as_str())
                 || value_params.contains(name.as_str()) =>
         {
             Ok(())
         }
+        _ if values(expr).is_some() => Ok(()),
         ExprKind::Call {
             name,
             args,
@@ -325,6 +337,7 @@ pub(in crate::checker) fn lower_ref_param_sigs(
     decls: &[ParamDecl],
     params: &[&FnParam],
     struct_params: usize,
+    values: OriginValues<'_>,
 ) -> Result<Vec<Option<mojito_types::origin::RefSig>>, TypeError> {
     params
         .iter()
@@ -333,7 +346,7 @@ pub(in crate::checker) fn lower_ref_param_sigs(
                 return Ok(None);
             }
             match &param.origin {
-                Some(spec) => lower_ref_sig(spec, decls, params, struct_params).map(Some),
+                Some(spec) => lower_ref_sig(spec, decls, params, struct_params, values).map(Some),
                 None => Ok(Some(mojito_types::origin::RefSig {
                     origin: mojito_types::origin::SigOrigin::Infer,
                     mutability: mojito_types::origin::SigMutability::Infer,
@@ -538,7 +551,9 @@ impl Checker {
                 continue;
             }
             let spec: mojito_ast::ast::OriginSpec = vec![expression.clone()];
-            let Ok(mut sig) = lower_ref_sig(&spec, decls, params, struct_params) else {
+            let Ok(mut sig) = lower_ref_sig(&spec, decls, params, struct_params, &|expr| {
+                self.origin_value_of(expr)
+            }) else {
                 continue;
             };
             if sig.mutability == SigMutability::Infer
@@ -599,8 +614,9 @@ pub(in crate::checker) fn lower_ref_sig(
     decls: &[ParamDecl],
     params: &[&FnParam],
     struct_params: usize,
+    values: OriginValues<'_>,
 ) -> Result<mojito_types::origin::RefSig, TypeError> {
-    use mojito_types::origin::{RefSig, SigMutability, SigOrigin};
+    use mojito_types::origin::{Origin, RefSig, SigMutability, SigOrigin};
     let mut members = Vec::new();
     let mut mutability = SigMutability::Infer;
     let mut cast_immutable = false;
@@ -636,25 +652,21 @@ pub(in crate::checker) fn lower_ref_sig(
         match &expression.kind {
             ExprKind::Identifier(name) if name == "_" => members.push(SigOrigin::Infer),
             ExprKind::Identifier(name) if name == "self" => members.push(SigOrigin::Self_),
-            ExprKind::Identifier(name) if name == "ImmStaticOrigin" => {
-                members.push(SigOrigin::Static);
-                mutability = SigMutability::Immutable;
-            }
-            ExprKind::Identifier(name) if name == "ImmUntrackedOrigin" => {
-                members.push(SigOrigin::Untracked { mutable: false });
-                mutability = SigMutability::Immutable;
-            }
-            ExprKind::Identifier(name) if name == "MutUntrackedOrigin" => {
-                members.push(SigOrigin::Untracked { mutable: true });
-                mutability = SigMutability::Mutable;
-            }
-            ExprKind::Identifier(name) if name == "MutUnsafeAnyOrigin" => {
-                members.push(SigOrigin::UnsafeAny { mutable: true });
-                mutability = SigMutability::Mutable;
-            }
-            ExprKind::Identifier(name) if name == "ImmUnsafeAnyOrigin" => {
-                members.push(SigOrigin::UnsafeAny { mutable: false });
-                mutability = SigMutability::Immutable;
+            _ if let Some((origin, mutable)) = values(expression).filter(|_| {
+                origin_binder_name(expression).is_none_or(|name| origin_decl(decls, name).is_none())
+            }) =>
+            {
+                members.push(match origin {
+                    Origin::Static => SigOrigin::Static,
+                    Origin::Untracked { mutable } => SigOrigin::Untracked { mutable },
+                    Origin::UnsafeAny { mutable } => SigOrigin::UnsafeAny { mutable },
+                    other => SigOrigin::Bound(other),
+                });
+                mutability = if mutable {
+                    SigMutability::Mutable
+                } else {
+                    SigMutability::Immutable
+                };
             }
             ExprKind::Identifier(name) => {
                 if let Some(index) = params.iter().position(|param| param.name == *name) {

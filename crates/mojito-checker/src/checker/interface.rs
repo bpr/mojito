@@ -596,6 +596,8 @@ pub(super) struct DeclarationInterface {
     comptime_parameters: Vec<(String, (usize, ParamExpr))>,
     #[serde(with = "keyless")]
     comptime_values: Vec<(String, Expr)>,
+    #[serde(with = "keyless")]
+    origin_values: Vec<(String, OriginValueDecl)>,
     /// The structs whose declared parameters, fields, fieldwise
     /// initializer, and explicit-destruction facts the record leaves to
     /// their lowered declarations, sorted by name.
@@ -759,6 +761,12 @@ impl Checker {
             module_values
         );
         export_map!(
+            self.origin_values,
+            builtin.origin_values,
+            Table::OriginValues,
+            origin_values
+        );
+        export_map!(
             self.comptime_applied,
             builtin.comptime_applied,
             Table::ComptimeApplied,
@@ -898,6 +906,10 @@ impl Checker {
         self.module_values
             .attach(installed, Table::ModuleValues, |record| {
                 &record.module_values
+            });
+        self.origin_values
+            .attach(installed, Table::OriginValues, |record| {
+                &record.origin_values
             });
         self.comptime_applied
             .attach(installed, Table::ComptimeApplied, |record| {
@@ -1289,7 +1301,7 @@ impl DeclarationInterface {
     }
 
     /// Each column of names the encoded residue leaves to the directory.
-    fn key_columns(&mut self) -> [(KeyColumn, Vec<&mut String>); 18] {
+    fn key_columns(&mut self) -> [(KeyColumn, Vec<&mut String>); 19] {
         fn keys<V>(entries: &mut [(String, V)]) -> Vec<&mut String> {
             entries.iter_mut().map(|(key, _)| key).collect()
         }
@@ -1353,6 +1365,10 @@ impl DeclarationInterface {
                 keys(&mut self.comptime_values),
             ),
             (
+                KeyColumn::Table(Table::OriginValues),
+                keys(&mut self.origin_values),
+            ),
+            (
                 KeyColumn::ProjectedStructs,
                 self.projected_structs
                     .iter_mut()
@@ -1385,6 +1401,7 @@ impl DeclarationInterface {
         by_name(&mut self.comptime_dtypes);
         by_name(&mut self.comptime_parameters);
         by_name(&mut self.comptime_values);
+        by_name(&mut self.origin_values);
         self.bindings
             .sort_by(|left, right| left.name.cmp(&right.name));
         self.projected_structs

@@ -238,10 +238,12 @@ pub enum InterfaceTable {
     ComptimeDtypes,
     ComptimeParameters,
     ComptimeValues,
+    /// The module `comptime` declarations whose value is an origin.
+    OriginValues,
 }
 
 impl InterfaceTable {
-    pub const COUNT: usize = Self::ComptimeValues as usize + 1;
+    pub const COUNT: usize = Self::OriginValues as usize + 1;
     const ALL: [Self; Self::COUNT] = [
         Self::Structs,
         Self::Traits,
@@ -262,6 +264,7 @@ impl InterfaceTable {
         Self::ComptimeDtypes,
         Self::ComptimeParameters,
         Self::ComptimeValues,
+        Self::OriginValues,
     ];
 
     /// The table numbered `index`.
