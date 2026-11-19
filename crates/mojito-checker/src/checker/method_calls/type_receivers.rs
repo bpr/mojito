@@ -671,7 +671,7 @@ impl Checker {
                     method,
                     selected,
                     &candidate_sigs,
-                    &info.source_params,
+                    &info.params,
                     &[],
                     args,
                     kwargs,

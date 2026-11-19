@@ -568,7 +568,10 @@ impl Checker {
         let mut generator_params = Vec::new();
         for (index, keeps_default, _) in &open {
             let param = explicit[*index];
-            if param.name.starts_with('*') || param.is_erased_origin_param(declared) {
+            let erased = info.explicit_params().nth(*index).is_none_or(|decl| {
+                decl.is_origin() || decl.is_origin_mutability_binder(&info.params)
+            });
+            if param.name.starts_with('*') || erased {
                 return Ok(None);
             }
             if read.contains(&param.name) {

@@ -489,15 +489,16 @@ impl Checker {
                 // what it views, where the bundled one keeps a `mut`
                 // parameter (R1916).
                 let read_only = mojito_types::types::is_stdlib_string_span_struct(name);
-                for ((_, param), origin) in info
-                    .origin_slots()
-                    .into_iter()
+                for ((_, decl), origin) in info
+                    .origin_decls()
                     .zip(ParamDecl::origin_arguments(arguments))
                 {
-                    let mutable = match param.origin_mutability.as_ref().map(|e| &e.kind) {
+                    let mutable = match decl {
                         _ if read_only => Some(false),
-                        Some(ExprKind::Bool(true)) => Some(true),
-                        Some(ExprKind::Bool(false)) => Some(false),
+                        ParamDecl::Origin {
+                            mutability: mojito_types::types::OriginMutability::Fixed(fixed),
+                            ..
+                        } => Some(*fixed),
                         _ => None,
                     };
                     self.record_origin_places(access, origin, mutable);

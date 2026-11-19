@@ -639,7 +639,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   comptime alias expansion via `resolve_comptime_alias`), partitions a struct
   application's origin slots out of its arguments
   (`partition_struct_origin_args`, the funnel shared by annotations and
-  `infer_construction`; `resolve_storage_annotation_with_origins` reports the
+  `infer_construction`, which binds and validates each origin argument
+  against the struct's checked `StructInfo::params` — its
+  `ParamDecl::Origin` slot and declared mutability — never its parameter
+  syntax; `resolve_storage_annotation_with_origins` reports the
   explicit origins a local's annotation demands), and resolves the bare
   `Pointer[T, _]` parameter placeholder as the immutable alias. It also owns pointer
   origin arguments (`pointer_origin_arg`/`pointer_origin_expr`: origin
@@ -755,7 +758,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   owns origin/reference-handle derivation, constructor origin binding
   (`origins/construct.rs`:
   `bind_constructor_origins` and `bind_fieldwise_origins` bind a struct's
-  origin binders from a `Pointer[Self.T, Self.origin]` argument, a
+  origin binders, read off its checked `ParamDecl::Origin`s
+  (`StructInfo::origin_decls`), from a `Pointer[Self.T, Self.origin]` argument, a
   `ref [Self.origin]` argument, or a struct-typed argument carrying the binder
   among its arguments, check an explicitly applied origin, and return
   `ConstructorOriginBindings`, whose `substitute` rewrites the parameter types

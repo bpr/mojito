@@ -167,9 +167,8 @@ impl Checker {
         // one origin binder, the field application can only have bound the
         // caller's binder to the callee's.
         let callee_origin_binders = info
-            .source_params
-            .iter()
-            .filter(|param| param.bounds.as_slice() == ["Origin"])
+            .origin_decls()
+            .filter(|(_, decl)| !is_origin_set(decl))
             .count();
         let mut caller_binders = type_params
             .iter()
@@ -555,21 +554,16 @@ impl Checker {
         match annotation {
             SourceType::Named(name, args) => {
                 let info = self.structs.get(name)?;
-                let explicit: Vec<(usize, &mojito_ast::ast::TypeParam)> = info
-                    .source_params
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, parameter)| !parameter.infer_only)
-                    .collect();
+                let explicit: Vec<&ParamDecl> = info.explicit_params().collect();
                 if args.len() != explicit.len() {
                     return None;
                 }
-                for ((full_index, parameter), argument) in explicit.iter().zip(args) {
-                    if !is_origin(parameter) {
+                for (decl, argument) in explicit.iter().zip(args) {
+                    let ParamDecl::Origin { origin, .. } = decl else {
                         continue;
-                    }
+                    };
                     if let Some(binder) = applied_binder(argument) {
-                        out.push((*full_index as u32, binder));
+                        out.push((origin.0, binder));
                     }
                 }
                 Some(())

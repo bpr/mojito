@@ -3212,10 +3212,9 @@ impl Checker {
         // every binder below sees origin-free arguments, and the explicit
         // origins are checked against the arguments binding those slots
         // once a constructor is selected.
-        let mut partitioned =
-            self.partition_struct_origin_args(name, &info.source_params, param_args)?;
+        let mut partitioned = self.partition_struct_origin_args(name, param_args)?;
         if let Some(instance) = constructed {
-            bind_instance_origins(&mut partitioned, &info.source_params, instance);
+            bind_instance_origins(&mut partitioned, info, instance);
         }
         let param_args: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
         // The initializer's own list of an explicit `T.__init__[ks](…)`:
@@ -3506,7 +3505,7 @@ impl Checker {
                 let pointer_origins = self.bind_constructor_origins(
                     name,
                     "__init__",
-                    &info.source_params,
+                    &info.params,
                     sig,
                     &bound_slots,
                     &arg_tys,
@@ -3803,7 +3802,7 @@ impl Checker {
                     let pointer_origins = match self.bind_constructor_origins(
                         name,
                         "__init__",
-                        &info.source_params,
+                        &info.params,
                         sig,
                         &bound_slots,
                         &arg_tys[..bound_slots.len()],
@@ -4229,7 +4228,7 @@ impl Checker {
         );
         let origin_bindings = self.bind_fieldwise_origins(
             name,
-            &info.source_params,
+            &info.params,
             &info.fields,
             args,
             &arg_tys,
@@ -5150,16 +5149,8 @@ impl Checker {
                     reason: "no matching copy constructor".to_string(),
                 });
             }
-            let resolve = || {
-                self.resolve_struct_use_args(
-                    name,
-                    &info.decls(),
-                    &info.source_params,
-                    param_args,
-                    &[],
-                    &[],
-                )
-            };
+            let resolve =
+                || self.resolve_struct_use_args(name, &info.decls(), param_args, &[], &[]);
             // The instance's origin tail is the one the bracket's origin
             // arguments bound (`W[Self.o](copy=self)`).
             let with_tail = |arguments: Vec<TyArg>| {
@@ -5329,10 +5320,10 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<BoundConstructorParams, TypeError> {
-        let source_params = self
+        let struct_params = self
             .structs
             .get(name)
-            .map(|info| info.source_params.as_slice())
+            .map(|info| info.params.as_slice())
             .unwrap_or_default();
         // A parameter naming one of the struct's own origin binders: a
         // pointer or reference over it, or a struct carrying it in its tail.
@@ -5399,7 +5390,7 @@ impl Checker {
         let bindings = match self.bind_constructor_origins(
             name,
             "__init__",
-            source_params,
+            struct_params,
             sig,
             &bound_slots,
             &arg_tys,
@@ -6684,10 +6675,10 @@ struct ConstructorExclusivity<'a> {
 /// bind, as it names no place of its own.
 fn bind_instance_origins(
     partitioned: &mut super::type_resolution::PartitionedStructArgs,
-    source_params: &[mojito_ast::ast::TypeParam],
+    info: &StructInfo,
     instance: &Ty,
 ) {
-    use mojito_types::origin::{Origin, OriginParamId};
+    use mojito_types::origin::Origin;
     let Some((_, arguments)) = instance.kind().as_non_simd_struct() else {
         return;
     };
@@ -6695,12 +6686,7 @@ fn bind_instance_origins(
         TyArg::Origin(origin) => Some(origin),
         _ => None,
     });
-    let slots = source_params
-        .iter()
-        .enumerate()
-        .filter(|(_, param)| super::is_origin_type_param(param));
-    for (tail, ((slot, _), origin)) in slots.zip(origins).enumerate() {
-        let id = OriginParamId(u32::try_from(slot).unwrap_or(u32::MAX));
+    for (tail, ((id, _), origin)) in info.origin_decls().zip(origins).enumerate() {
         if matches!(origin, Origin::Unbound | Origin::SelfParam)
             || partitioned
                 .explicit_origins

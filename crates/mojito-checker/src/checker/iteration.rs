@@ -1023,12 +1023,11 @@ fn names_iteration_decl(ty: &Ty, name: &str) -> bool {
 /// arguments are erased from checked identity, so the declaration decides: an
 /// `Origin`/`OriginSet` parameter, or a reference or pointer field.
 fn struct_may_refer_elsewhere(info: &StructInfo) -> bool {
-    info.source_params.iter().any(|parameter| {
-        matches!(parameter.bounds.as_slice(), [bound] if bound == "Origin" || bound == "OriginSet")
-    }) || info
-        .fields
-        .iter()
-        .any(|(_, ty)| ty.is_pointer() || matches!(ty.kind(), TyKind::Ref(_)))
+    info.params.iter().any(ParamDecl::is_origin)
+        || info
+            .fields
+            .iter()
+            .any(|(_, ty)| ty.is_pointer() || matches!(ty.kind(), TyKind::Ref(_)))
 }
 
 fn instantiate_iterator_reference(

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2367**.
+Next free ID: **R2368**.
 
 ## Ordered Work
 
@@ -2894,19 +2894,15 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   After R2339 the check classifies an origin binder by type, but about
   thirty checker sites holding `StructInfo::params` or a classified list
   re-test `bounds == ["Origin"]` or `TypeParam::origin_mutability`.
-  - Sites: `checker.rs` (`is_origin_type_param`, `struct_origin_slots`),
-    `iteration.rs` (`struct_may_refer_elsewhere`), `constraints.rs`
+  - Sites: `constraints.rs`
     (four, including `assoc_param_kind`), `statements.rs` (three),
     `generics.rs` (`bound_origin_mutability` and one more),
-    `type_resolution.rs` (about ten, including `is_origin_parameter` and
-    `check_origin_mutability_argument`), `traits.rs`,
+    `type_resolution.rs` (including `is_origin_parameter`), `traits.rs`,
     `trait_defaults.rs` (two), and `comptime_validation.rs`.
   - Lever: one lookup in `checker/generics.rs` returning a name's
     `ParamDecl::Origin` and its `OriginParamId`, used by every site.
-  - Delete `is_origin_type_param`, `is_origin_parameter`, and the origin
-    arm of `assoc_param_kind`.
-  - `StructInfo::source_params` stays for explicit origin arguments; its
-    doc stops claiming it classifies.
+  - Delete `is_origin_parameter` and the origin arm of `assoc_param_kind`.
+  - `StructInfo::source_params` no longer serves origin arguments (R763).
   - Stop: `rg '"Origin"|"OriginSet"|origin_mutability'
     crates/mojito-checker/src` finds nothing outside `checker/origins/`
     and R2339's resolution.
@@ -5999,6 +5995,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     name the bound argument reads.
   - Upstream binds the open slots on the type itself, never in the alias
     body's scope: a struct type with open slots that an application fills.
+  - The generator clones the struct's `StructInfo::source_params` into
+    its own binders, one of the two readers keeping that syntax field
+    alive (R2342 holds the other); binding the open slots from the
+    checked `ParamDecl`s retires it here.
   - Found while landing R296 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9515,6 +9515,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Other readers: `module.rs` (two), `trait_defaults.rs`,
     `constraints.rs`, `comptime_validation.rs`, and
     `type_resolution.rs` through the same predicate.
+  - `InstalledInterfaces::struct_parameters` (`checker/interface.rs`)
+    hands a package struct's `StructInfo::source_params` to
+    `auto_parameterize` for the same reason. Once this and R1649 land,
+    nothing reads that field, and it goes.
   - Withdrawn when these phases move behind the check
     (`docs/parametric-mir-plan.md`, the AST cloner's retirement). The
     parser then drops its `Origin[mut=…]` special case and
@@ -10911,19 +10915,36 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R763 The checker keeps a struct's parameter syntax to validate
-  origin arguments, where upstream binds them against the checked
-  parameter list**
+- [ ] **R2367 A struct application partitions its origin arguments in a
+  pre-pass, where upstream binds its whole bracket in one solve**
 
-  `StructInfo::source_params` holds the struct's `TypeParam`s so direct
-  applications can check explicit origin arguments and place them among
-  the instance's arguments (`partition_struct_origin_args`), and
-  `is_origin_type_param` and `type_resolution::is_origin_parameter`
-  repeat one predicate over that syntax.
-  - The lever: bind and validate origin arguments from the checked
-    `ParamDecl`s, then delete `source_params` and the duplicate predicate.
-  - Found while landing R631 (2026-10-13).
-  - Depends on R762.
+  `PartitionedStructArgs` (`checker/type_resolution.rs`) pulls a struct
+  application's origin arguments out of its bracket and hands the rest to
+  `resolve_use_params` over the argument view, where upstream binds every
+  declared parameter in one solve, as Mojito's calls already do
+  (`bind_bracket_params`, `bound_bracket_origins`).
+  - Probe: `P[o=origin_of(x)](Pointer(to=x))` over `struct P[*Ts:
+    AnyType, o: ImmOrigin]` is rejected ("cannot infer type parameter
+    'Ts'"), where the pin binds `Ts` empty: once every argument is kept
+    back, the binder sees no bracket.
+  - Probe: `H[Int, origin_of(x), mut=True]` over `struct H[mut: Bool, //,
+    T: AnyType, o: Origin[mut=mut]]`, and `H[Int, o=origin_of(x)]` over
+    `struct H[o: ImmOrigin, //, T: AnyType]`, run, where the pin rejects
+    both ("unexpected keyword parameter"):
+    `partition_struct_origin_args_uncollected` keeps back a keyword
+    naming an infer-only binder wherever it sits, where the pin binds one
+    only ahead of the positional arguments (`H[o=origin_of(x), Int]`
+    runs there).
+  - The lever: pass the struct's whole `StructInfo::params` to
+    `resolve_use_params`, and move the struct-only policies into
+    `bound_bracket_origins`: the `CannotInferParam`/`NotConcrete`
+    strictness for an omitted or `_` origin, signature leniency, the
+    `ImmOrigin` slot cast, and the mutable-slot check. Then delete
+    `PartitionedStructArgs`, `StructSlots`, and the three partition
+    functions.
+  - It changes diagnostics on the `assets/type_error` origin fixtures.
+  - Found while landing R763 (2026-11-19).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R764 The check keeps its facts in an occurrence-keyed map, not on

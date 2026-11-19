@@ -861,6 +861,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct application's origin arguments are now bound and validated
+  against the struct's checked parameter list, each at its `ParamDecl`'s
+  slot and declared mutability, as upstream binds them, where the checker
+  read the struct's parameter syntax. A keyword origin after a pack now
+  binds its own slot (`P[Int, String, o=origin_of(x)]` over `struct
+  P[*Ts: AnyType, o: ImmOrigin]`), where it was rejected as naming no
+  parameter. A closure's storage struct now declares its origin binders in
+  its checked list (R763).
+
 - A `Pointer[T, o](_mlir_value=k)` construction now records its bracket's
   binding, each argument keyed by `Pointer`'s declared `T` or `origin`, as
   a declared struct's construction does, where each argument named no

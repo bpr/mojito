@@ -3135,10 +3135,11 @@ struct StructInfo {
     /// Compile-time parameters in declared order, origin binders and their
     /// mutability binders among them; empty for a non-generic struct.
     params: Vec<ParamDecl>,
-    /// Raw source parameter list as declared, including Origin/OriginSet
-    /// parameters and their `mut=` Bool binders.
-    /// Direct applications consult it to accept, validate, and erase explicit
-    /// origin arguments (`EntryIter[K, V, some_origin]`).
+    /// The declared parameter spelling, read only where new AST is cloned
+    /// from it: a partially bound alias's generator
+    /// ([`Checker::partially_bound_generator`]) and a package's pre-check
+    /// auto-parameterization (`InstalledInterfaces::struct_parameters`).
+    /// Every semantic question, origin arguments included, reads `params`.
     source_params: Vec<mojito_ast::ast::TypeParam>,
     /// The dotted path of the declaring module, which qualifies the
     /// struct's name in `reflect[T].name()`.
@@ -3230,24 +3231,40 @@ impl StructInfo {
         self.fields.len() == self.declared_field_names.len()
     }
 
-    /// The struct's origin tail slots — every `Origin`/`OriginSet` source
-    /// parameter, infer-only ones included, with its full-index binder id, in
-    /// source order, as upstream binds every declared origin. A struct instance's `TyKind::Struct` arguments carry one
-    /// `TyArg::Origin` per slot after the `decls`-aligned prefix.
-    fn origin_slots(
+    /// The struct's origin binders — every `Origin`/`OriginSet` binder its
+    /// checked list declares, infer-only ones included, with its
+    /// `OriginParamId`, in declared order, as upstream binds every declared
+    /// origin. A struct instance's `TyKind::Struct` arguments carry one
+    /// `TyArg::Origin` per binder, at its declared position.
+    fn origin_decls(
         &self,
-    ) -> Vec<(
-        mojito_types::origin::OriginParamId,
-        &mojito_ast::ast::TypeParam,
-    )> {
-        struct_origin_slots(&self.source_params)
+    ) -> impl Iterator<Item = (mojito_types::origin::OriginParamId, &ParamDecl)> {
+        struct_origin_decls(&self.params)
+    }
+
+    /// The origin binder the struct declares as `id`.
+    fn origin_decl(&self, id: mojito_types::origin::OriginParamId) -> Option<&ParamDecl> {
+        struct_origin_decl(&self.params, id)
+    }
+
+    /// The binders an application's bracket spells, in declared order: each
+    /// but the infer-only ones, a pack's implicit list binder among them.
+    fn explicit_params(&self) -> impl Iterator<Item = &ParamDecl> {
+        self.params
+            .iter()
+            .filter(|decl| !mojito_ast::call::CompileTimeParam::infer_only(*decl))
     }
 
     /// The arguments of the struct's own `Self` type: each parameter an
     /// instance holds ([`ParamDecl::instance_binders`]) as itself, an origin
     /// binder in place.
     fn self_arguments(&self) -> Vec<TyArg> {
-        self_struct_arguments(&self.params, &self.source_params)
+        ParamDecl::place_origins(
+            &self.params,
+            ParamDecl::argument_binders(&self.params).map(ParamDecl::own_argument),
+            self.origin_decls()
+                .map(|(id, _)| mojito_types::origin::Origin::Param(id)),
+        )
     }
 
     /// The binder-to-origin map an instance's arguments bind, for
@@ -3257,8 +3274,7 @@ impl StructInfo {
         &self,
         arguments: &[TyArg],
     ) -> HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin> {
-        self.origin_slots()
-            .into_iter()
+        self.origin_decls()
             .zip(ParamDecl::origin_arguments(arguments))
             .map(|((id, _), origin)| (id, origin.clone()))
             .collect()
@@ -3460,39 +3476,35 @@ fn converts_one_argument(sig: &MethodSig) -> bool {
     }
 }
 
-/// Whether a struct parameter is an origin slot (`o: Origin[mut=m]`, an
-/// `OriginSet`), which `classify_params` erases from the declared binders.
-fn is_origin_type_param(param: &mojito_ast::ast::TypeParam) -> bool {
-    matches!(param.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-}
-
-/// See [`StructInfo::origin_slots`].
-fn struct_origin_slots(
-    source_params: &[mojito_ast::ast::TypeParam],
-) -> Vec<(
-    mojito_types::origin::OriginParamId,
-    &mojito_ast::ast::TypeParam,
-)> {
-    source_params
-        .iter()
-        .enumerate()
-        .filter(|(_, param)| is_origin_type_param(param))
-        .map(|(index, param)| (mojito_types::origin::OriginParamId(index as u32), param))
-        .collect()
-}
-
-/// See [`StructInfo::self_arguments`].
-fn self_struct_arguments(
+/// The origin binders of `params`, a struct's checked list, with their
+/// `OriginParamId`s ([`StructInfo::origin_decls`]).
+fn struct_origin_decls(
     params: &[ParamDecl],
-    source_params: &[mojito_ast::ast::TypeParam],
-) -> Vec<TyArg> {
-    ParamDecl::place_origins(
-        params,
-        ParamDecl::argument_binders(params).map(ParamDecl::own_argument),
-        struct_origin_slots(source_params)
-            .into_iter()
-            .map(|(id, _)| mojito_types::origin::Origin::Param(id)),
+) -> impl Iterator<Item = (mojito_types::origin::OriginParamId, &ParamDecl)> {
+    params.iter().filter_map(|decl| match decl {
+        ParamDecl::Origin { origin, .. } => Some((*origin, decl)),
+        _ => None,
+    })
+}
+
+/// Whether `decl` is an `OriginSet` binder, the origins a capturing
+/// callable's environment holds, rather than one origin.
+const fn is_origin_set(decl: &ParamDecl) -> bool {
+    matches!(
+        decl,
+        ParamDecl::Origin {
+            mutability: mojito_types::types::OriginMutability::Set,
+            ..
+        }
     )
+}
+
+/// The origin binder `params`, a struct's checked list, declares as `id`.
+fn struct_origin_decl(
+    params: &[ParamDecl],
+    id: mojito_types::origin::OriginParamId,
+) -> Option<&ParamDecl> {
+    struct_origin_decls(params).find_map(|(origin, decl)| (origin == id).then_some(decl))
 }
 
 /// How a body's `return` meets its result.

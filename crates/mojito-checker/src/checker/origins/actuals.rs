@@ -421,9 +421,8 @@ impl Checker {
             return ty;
         };
         let mut arguments = arguments.clone();
-        let origin_slots = info.origin_slots();
         for (slot, origin, _) in slots {
-            let Some(position) = origin_slots.iter().position(|(id, _)| id == slot) else {
+            let Some(position) = info.origin_decls().position(|(id, _)| id == *slot) else {
                 continue;
             };
             if let Some(argument) = arguments
@@ -861,9 +860,8 @@ impl Checker {
                 });
                 if unmapped.get() {
                     let callee_binders = info
-                        .source_params
-                        .iter()
-                        .filter(|param| param.bounds.as_slice() == ["Origin"])
+                        .origin_decls()
+                        .filter(|(_, decl)| !is_origin_set(decl))
                         .count();
                     let mut enclosing = self
                         .enclosing_type_params
@@ -1001,11 +999,9 @@ impl Checker {
                 }
                 if retained.is_empty() {
                     let origin_params = info
-                        .source_params
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, parameter)| parameter.bounds.as_slice() == ["Origin"])
-                        .map(|(index, _)| mojito_types::origin::OriginParamId(index as u32))
+                        .origin_decls()
+                        .filter(|(_, decl)| !is_origin_set(decl))
+                        .map(|(id, _)| id)
                         .collect::<Vec<_>>();
                     if origin_params.as_slice() == [id] {
                         retained.extend(flat.clone());

@@ -2935,13 +2935,9 @@ impl Checker {
                         SigOrigin::union(members)
                     };
                     let mutability = info
-                        .source_params
-                        .get(binder.0 as usize)
-                        .map_or(SigMutability::Infer, |parameter| {
-                            super::origins::origin_param_mutability(
-                                parameter,
-                                &info.source_params,
-                            )
+                        .origin_decl(*binder)
+                        .map_or(SigMutability::Infer, |decl| {
+                            super::origins::origin_decl_mutability(decl, &info.params)
                         });
                     return Some(RefSig { origin, mutability });
                 }

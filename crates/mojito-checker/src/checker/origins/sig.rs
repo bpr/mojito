@@ -428,21 +428,18 @@ impl Checker {
         struct_params: usize,
         self_convention: Option<ArgConvention>,
     ) -> Vec<ViewReturnOrigin> {
-        use mojito_types::origin::{OriginParamId, SigMutability, SigOrigin};
+        use mojito_types::origin::{SigMutability, SigOrigin};
         let Some(SourceType::Named(name, arguments)) = ret else {
             return Vec::new();
         };
         let Some(info) = self.structs.get(name) else {
             return Vec::new();
         };
-        let is_origin =
-            |parameter: &mojito_ast::ast::TypeParam| parameter.bounds.as_slice() == ["Origin"];
-        let explicit: Vec<(usize, &mojito_ast::ast::TypeParam)> = info
-            .source_params
-            .iter()
-            .enumerate()
-            .filter(|(_, parameter)| !parameter.infer_only)
-            .collect();
+        let origin_id = |decl: &ParamDecl| match decl {
+            ParamDecl::Origin { origin, .. } if !is_origin_set(decl) => Some(*origin),
+            _ => None,
+        };
+        let explicit: Vec<&ParamDecl> = info.explicit_params().collect();
         // The capability the callee itself holds over the place a lowered
         // origin names.
         let place_mutability = |origin: &SigOrigin| -> Option<SigMutability> {
@@ -466,25 +463,26 @@ impl Checker {
         for argument in arguments {
             let (slot, expression) = match argument {
                 mojito_ast::ast::ParamArg::Named { name, value } => {
-                    let Some((slot, _)) = explicit
+                    let Some(slot) = explicit
                         .iter()
-                        .find(|(_, parameter)| parameter.name == *name && is_origin(parameter))
+                        .filter(|decl| decl.name() == name)
+                        .find_map(|decl| origin_id(decl))
                     else {
                         continue;
                     };
                     match value.as_ref() {
-                        mojito_ast::ast::ParamArg::Value(expression) => (*slot, expression),
+                        mojito_ast::ast::ParamArg::Value(expression) => (slot, expression),
                         _ => continue,
                     }
                 }
                 mojito_ast::ast::ParamArg::Value(expression) => {
-                    let Some((slot, parameter)) = positional.next() else {
+                    let Some(decl) = positional.next() else {
                         break;
                     };
-                    if !is_origin(parameter) {
+                    let Some(slot) = origin_id(decl) else {
                         continue;
-                    }
-                    (*slot, expression)
+                    };
+                    (slot, expression)
                 }
                 mojito_ast::ast::ParamArg::Type(_) => {
                     positional.next();
@@ -507,10 +505,7 @@ impl Checker {
             {
                 sig.mutability = mutability;
             }
-            slots.push(ViewReturnOrigin {
-                slot: OriginParamId(slot as u32),
-                sig,
-            });
+            slots.push(ViewReturnOrigin { slot, sig });
         }
         slots
     }
@@ -765,6 +760,38 @@ pub(in crate::checker) fn origin_param_mutability(
                 .expect("validated Origin mutability names a Bool parameter"),
         ),
         _ => SigMutability::Infer,
+    }
+}
+
+/// The declared mutability of `decl`, an origin binder of `decls`, as a
+/// signature reads it: `Fixed` as `Mutable`/`Immutable`, a sibling `Bool`
+/// binder as `SigMutability::BoolParam` by its source index (the
+/// `OriginParamId` domain, which no pack's implicit list binder takes a
+/// slot in), and anything else as `Infer`.
+pub(in crate::checker) fn origin_decl_mutability(
+    decl: &ParamDecl,
+    decls: &[ParamDecl],
+) -> mojito_types::origin::SigMutability {
+    use mojito_types::origin::SigMutability;
+    use mojito_types::types::OriginMutability;
+    let ParamDecl::Origin { mutability, .. } = decl else {
+        return SigMutability::Infer;
+    };
+    match mutability {
+        OriginMutability::Fixed(true) => SigMutability::Mutable,
+        OriginMutability::Fixed(false) => SigMutability::Immutable,
+        OriginMutability::Binder(binder) => decls
+            .iter()
+            .position(|sibling| *sibling.id() == binder.id)
+            .map_or(SigMutability::Infer, |slot| {
+                SigMutability::BoolParam(
+                    decls[..slot]
+                        .iter()
+                        .filter(|earlier| !earlier.is_pack_list())
+                        .count(),
+                )
+            }),
+        OriginMutability::Set => SigMutability::Infer,
     }
 }
 

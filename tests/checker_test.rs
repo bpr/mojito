@@ -1417,6 +1417,25 @@ fn parametric_mut_origin_binder_is_erased_from_struct_parameters() {
 }
 
 #[test]
+fn struct_origin_keyword_after_a_pack_binds_its_declared_slot() {
+    // A struct's origin binders bind against its checked list, where a
+    // pack's implicit list binder shifts every later slot: `o=` after
+    // `*Ts` binds `o`'s slot, and its declared mutability judges the
+    // argument, as at the pin.
+    const P: &str = "struct P[*Ts: AnyType, o: ImmOrigin]:\n    var p: Pointer[Int, Self.o]\n\n    def __init__(out self, p: Pointer[Int, Self.o]):\n        self.p = p\n\n";
+    ok_std(&format!(
+        "{P}def main():\n    var x = 3\n    var q = P[Int, String, o=origin_of(x)](Pointer(to=x))\n    print(q.p[])\n"
+    ));
+    let error = err_std(
+        "struct M[*Ts: AnyType, o: MutOrigin]:\n    var n: Int\n\n    def __init__(out self, n: Int):\n        self.n = n\n\ndef show(x: Int):\n    var m = M[Int, o=origin_of(x)](5)\n    print(m.n)\n\ndef main():\n    show(1)\n",
+    );
+    assert!(
+        matches!(&error, TypeError::TypeMismatch { context, .. } if context == "explicit origin argument"),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn symbolic_origin_pointer_write_is_judged_per_binding() {
     // A pointer field whose origin binder has symbolic mutability
     // (`Origin[mut=m]`) resolves the binder through the holder's

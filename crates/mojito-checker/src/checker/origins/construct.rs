@@ -134,14 +134,13 @@ impl ConstructorOriginBindings {
     /// unbound.
     pub(in crate::checker) fn bind_origins(
         &self,
-        slots: &[(OriginParamId, &mojito_ast::ast::TypeParam)],
+        slots: impl Iterator<Item = OriginParamId>,
         tail: &[Origin],
     ) -> Vec<Origin> {
         slots
-            .iter()
             .zip(tail)
-            .map(|((id, _), explicit)| match explicit {
-                Origin::Unbound => self.origins.get(id).cloned().unwrap_or(Origin::Unbound),
+            .map(|(id, explicit)| match explicit {
+                Origin::Unbound => self.origins.get(&id).cloned().unwrap_or(Origin::Unbound),
                 bound => bound.clone(),
             })
             .collect()
@@ -324,7 +323,7 @@ impl Checker {
             Some(info) => info.place_origins(
                 view.into_iter()
                     .filter(|argument| !matches!(argument, TyArg::Origin(_))),
-                bindings.bind_origins(&info.origin_slots(), tail),
+                bindings.bind_origins(info.origin_decls().map(|(id, _)| id), tail),
             ),
             None => view,
         };
@@ -346,7 +345,7 @@ impl Checker {
         &self,
         struct_name: &str,
         callee: &str,
-        source_params: &[mojito_ast::ast::TypeParam],
+        params: &[ParamDecl],
         sig: &MethodSig,
         bound: &[(usize, &Expr, &Ty)],
         arg_tys: &[Ty],
@@ -359,7 +358,7 @@ impl Checker {
             Self::bind_origin_pattern(
                 struct_name,
                 &context,
-                source_params,
+                params,
                 pattern,
                 actual,
                 explicit,
@@ -370,24 +369,23 @@ impl Checker {
             // enclosing signature) carries its declared origin, any other
             // place its own.
             if let Some(Some(PointerOrigin::Param { id, .. })) = sig.origin_binders.get(*index)
-                && (id.0 as usize) < source_params.len()
+                && let Some(slot) = super::super::struct_origin_decl(params, *id)
                 && let Some(actual) = self.reference_argument_origin(expression)
             {
                 if let Some(explicit) = explicit.iter().find(|origin| origin.id == *id)
                     && !origin_is_within(&actual, &explicit.origin)
                 {
-                    let slot = &source_params[id.0 as usize];
                     return Err(TypeError::TypeMismatch {
                         expected: format!(
                             "a reference whose origin lies within the supplied '{}' argument",
-                            slot.name
+                            slot.name()
                         ),
                         found: format!("a reference of origin {actual:?}"),
                         context: context(),
                     });
                 }
                 bindings.bind_origin(*id, &actual, || {
-                    conflicting_binding(struct_name, &source_params[id.0 as usize].name)
+                    conflicting_binding(struct_name, slot.name())
                 })?;
             }
         }
@@ -429,8 +427,8 @@ impl Checker {
                     let slot = self
                         .structs
                         .get(struct_name)
-                        .and_then(|info| info.source_params.get(id.0 as usize))
-                        .map_or("?", |slot| slot.name.as_str());
+                        .and_then(|info| info.origin_decl(*id))
+                        .map_or("?", ParamDecl::name);
                     conflicting_binding(struct_name, slot)
                 };
                 if explicit
@@ -452,7 +450,7 @@ impl Checker {
     pub(in crate::checker) fn bind_fieldwise_origins(
         &self,
         struct_name: &str,
-        source_params: &[mojito_ast::ast::TypeParam],
+        params: &[ParamDecl],
         fields: &[(String, Ty)],
         args: &[Expr],
         arg_tys: &[Ty],
@@ -482,7 +480,7 @@ impl Checker {
             Self::bind_origin_pattern(
                 struct_name,
                 &context,
-                source_params,
+                params,
                 pattern,
                 actual,
                 explicit,
@@ -644,13 +642,13 @@ impl Checker {
     fn bind_origin_pattern(
         struct_name: &str,
         context: &dyn Fn() -> String,
-        source_params: &[mojito_ast::ast::TypeParam],
+        params: &[ParamDecl],
         pattern: &Ty,
         actual: &Ty,
         explicit: &[super::super::type_resolution::ExplicitStructOrigin],
         bindings: &mut ConstructorOriginBindings,
     ) -> Result<(), TypeError> {
-        let slot_of = |id: &OriginParamId| source_params.get(id.0 as usize);
+        let slot_of = |id: &OriginParamId| super::super::struct_origin_decl(params, *id);
         match (pattern.kind(), actual.kind()) {
             (pattern_kind, actual_kind)
                 if let (
@@ -670,14 +668,17 @@ impl Checker {
                     return Ok(());
                 };
                 let requires_mut = matches!(
-                    slot.origin_mutability.as_ref().map(|e| &e.kind),
-                    Some(ExprKind::Bool(true))
+                    slot,
+                    ParamDecl::Origin {
+                        mutability: mojito_types::types::OriginMutability::Fixed(true),
+                        ..
+                    }
                 );
                 if requires_mut && actual_origin.statically_mutable() == Some(false) {
                     return Err(TypeError::TypeMismatch {
                         expected: format!(
                             "a mutable-origin pointer for parameter '{}' of '{struct_name}'",
-                            slot.name
+                            slot.name()
                         ),
                         found: "an immutable-origin pointer".to_string(),
                         context: context(),
@@ -696,7 +697,7 @@ impl Checker {
                         return Err(TypeError::TypeMismatch {
                             expected: format!(
                                 "a pointer whose origin lies within the supplied '{}' argument",
-                                slot.name
+                                slot.name()
                             ),
                             found: format!("a pointer of origin {actual_origin:?}"),
                             context: context(),
@@ -709,7 +710,7 @@ impl Checker {
                     return Ok(());
                 }
                 bindings.bind_pointer(id, &actual_origin, || {
-                    conflicting_binding(struct_name, &slot.name)
+                    conflicting_binding(struct_name, slot.name())
                 })
             }
             (TyKind::Ref(declared), TyKind::Ref(reference)) => {
@@ -725,14 +726,14 @@ impl Checker {
                     return Err(TypeError::TypeMismatch {
                         expected: format!(
                             "a reference whose origin lies within the supplied '{}' argument",
-                            slot.name
+                            slot.name()
                         ),
                         found: format!("a reference of origin {:?}", reference.origin),
                         context: context(),
                     });
                 }
                 bindings.bind_origin(*id, &reference.origin, || {
-                    conflicting_binding(struct_name, &slot.name)
+                    conflicting_binding(struct_name, slot.name())
                 })
             }
             (
@@ -747,7 +748,7 @@ impl Checker {
                         (TyArg::Ty(pattern), TyArg::Ty(actual)) => Self::bind_origin_pattern(
                             struct_name,
                             context,
-                            source_params,
+                            params,
                             pattern,
                             actual,
                             explicit,
@@ -771,14 +772,14 @@ impl Checker {
                                 return Err(TypeError::TypeMismatch {
                                     expected: format!(
                                         "a value whose origin lies within the supplied '{}' argument",
-                                        slot.name
+                                        slot.name()
                                     ),
                                     found: format!("a value of origin {actual:?}"),
                                     context: context(),
                                 });
                             }
                             bindings.bind_origin(*id, actual, || {
-                                conflicting_binding(struct_name, &slot.name)
+                                conflicting_binding(struct_name, slot.name())
                             })?;
                         }
                         _ => {}
@@ -793,7 +794,7 @@ impl Checker {
                     Self::bind_origin_pattern(
                         struct_name,
                         context,
-                        source_params,
+                        params,
                         pattern,
                         actual,
                         explicit,

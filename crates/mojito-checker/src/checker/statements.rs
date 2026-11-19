@@ -4413,27 +4413,21 @@ impl Checker {
             }
         }
         mojito_types::closure_trait::declare_closure_trait(&name, &contract);
-        let span = site.span;
         let reference_fields = || {
             storage
                 .fields
                 .iter()
                 .filter_map(|field| Some((field, field.reference?)))
         };
-        let source_params = reference_fields()
-            .map(|(field, reference)| mojito_ast::ast::TypeParam {
+        let params = reference_fields()
+            .map(|(field, reference)| ParamDecl::Origin {
+                id: mojito_types::param_expr::ParamId::new(&name, reference.origin.0 as usize),
                 name: format!("__origin_{}", field.name),
-                bounds: vec!["Origin".to_string()],
-                value_type: None,
-                callable_bound: None,
-                origin_mutability: Some(Expr::new(
-                    ExprKind::Bool(
-                        reference.mutability == mojito_types::origin::Mutability::Mutable,
-                    ),
-                    span,
-                )),
+                origin: reference.origin,
+                mutability: mojito_types::types::OriginMutability::Fixed(
+                    reference.mutability == mojito_types::origin::Mutability::Mutable,
+                ),
                 infer_only: false,
-                default: None,
             })
             .collect();
         let fields = storage
@@ -4470,8 +4464,8 @@ impl Checker {
         self.structs.insert(
             name.clone(),
             super::StructInfo {
-                params: Vec::new(),
-                source_params,
+                params,
+                source_params: Vec::new(),
                 module: site.source.clone().unwrap_or_default(),
                 conforms,
                 callable_target: super::callable_contract_target(&contract),
@@ -4825,7 +4819,7 @@ impl Checker {
             && self
                 .structs
                 .get(name)
-                .is_some_and(|info| !info.source_params.is_empty()))
+                .is_some_and(|info| !info.params.is_empty()))
         .then(|| name.clone())
     }
 }

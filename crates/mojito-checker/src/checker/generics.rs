@@ -1443,10 +1443,10 @@ impl Checker {
                 )
             })
             && info.decls().len() == arguments.len()
-            && !info.source_params.iter().any(|parameter| {
-                matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-                    || parameter.is_origin_mutability_binder(&info.source_params)
-            })
+            && !info
+                .params
+                .iter()
+                .any(|decl| decl.is_origin() || decl.is_origin_mutability_binder(&info.params))
             && arguments.iter().all(|argument| match argument {
                 TyArg::Ty(ty) => !mojito_types::types::contains_string_literal(ty),
                 TyArg::Val(value) => mojito_symbol::symbol::specialization_value_is_closed(value),

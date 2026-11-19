@@ -147,8 +147,7 @@ impl Checker {
                 .is_empty()
                 .then(|| Self::struct_instance_type(sname, Vec::new()))
         } else {
-            let partitioned =
-                self.partition_struct_origin_args(sname, &info.source_params, struct_targs)?;
+            let partitioned = self.partition_struct_origin_args(sname, struct_targs)?;
             self.resolve_use_params(sname, &info.decls(), &partitioned.forwarded, &[], &[])
                 .ok()
                 .map(|bound| {
@@ -251,8 +250,7 @@ impl Checker {
         let info = self.structs.get(sname).ok_or_else(|| {
             TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
         })?;
-        let partitioned =
-            self.partition_struct_origin_args(sname, &info.source_params, struct_targs)?;
+        let partitioned = self.partition_struct_origin_args(sname, struct_targs)?;
         let BoundParameters {
             arguments,
             attributes,
@@ -308,8 +306,7 @@ impl Checker {
         // every binder below sees origin-free arguments, and the explicit
         // origins are checked against the arguments binding those slots
         // once a static is selected.
-        let partitioned =
-            self.partition_struct_origin_args(sname, &info.source_params, struct_targs)?;
+        let partitioned = self.partition_struct_origin_args(sname, struct_targs)?;
         let forwarded: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
         let receiver_spelling = || {
             if struct_targs.is_empty() {
@@ -617,7 +614,7 @@ impl Checker {
             method,
             selected,
             &candidate_sigs,
-            &info.source_params,
+            &info.params,
             &partitioned.explicit_origins,
             args,
             kwargs,
@@ -640,7 +637,7 @@ impl Checker {
         method: &str,
         selected: MethodCallResolution,
         candidate_sigs: &[(&MethodSig, Vec<Ty>)],
-        source_params: &[mojito_ast::ast::TypeParam],
+        struct_params: &[ParamDecl],
         explicit_origins: &[crate::checker::type_resolution::ExplicitStructOrigin],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
@@ -665,7 +662,7 @@ impl Checker {
             let bindings = self.bind_constructor_origins(
                 sname,
                 method,
-                source_params,
+                struct_params,
                 sig,
                 &bound_slots,
                 &arg_tys,
