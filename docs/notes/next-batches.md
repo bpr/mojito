@@ -139,7 +139,7 @@ the struct.
 - R2207 moves the address and memory members into the struct. R2208
   moves `Pointer(to=)` and `p[]`.
 - R2209 makes a pointer's origin an `Origin` value. It waits on R2139's
-  slices from batch 2, which `--task` runs first.
+  classification slices (R2339, R2340, R2341), which `--task` runs first.
 - R2210 deletes `TyKind::Pointer`, with schema and package bumps. It may
   split in two.
 - R2211 plans folding `TyKind::Ref` and `TyKind::LitRef` into one type,

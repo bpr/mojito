@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2339**.
+Next free ID: **R2345**.
 
 ## Ordered Work
 
@@ -2821,31 +2821,159 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2139 An origin binder is classified by its bound's spelling, not by
-  its type being the `Origin` struct**
+- [ ] **R2339 A binder typed by a parameterized origin alias is not an
+  origin binder**
 
-  Upstream's origin parameter is a value parameter whose type is the
-  library's `Origin[mut=m]`. Mojito's `Origin` is now that library struct
-  (`stdlib/std/origin.mojo`), but every origin site still classifies a
-  binder by `bounds == ["Origin"]` and `TypeParam::origin_mutability`.
-  - A binder typed by an alias of an origin type is readable only because
-    `fold_origin_alias_bounds` (`comptime/synth.rs`) rewrites it to that
-    spelling before the check. Ordinary type resolution should do it.
-  - The struct declares only `mut`: upstream's `_mlir_origin` parameter, its
-    implicit immutable conversion, `unsafe_mut_cast`, `equals`, and
-    `contains` are absent.
-  - `OriginSet` and the untracked, static, and unsafe origin names are
-    builtin identities (`BUILTIN_MODULE_EXPORTS`), where upstream declares
-    them as source aliases of `Origin`.
-  - `auto_parameterize` skips an origin binder by name
-    (`TypeParam::is_erased_origin_param`) rather than by its type.
-  - The migration spans the checker, symbol, and MIR layers. This entry's
-    session plans it and files the slices as entries chained by Depends
-    bullets, replacing this one.
-  - R2209 depends on this entry: repoint its Depends bullet at the last
-    slice, so the slices run before it.
-  - Found while landing R2113 (2026-11-12).
+  `comptime O[m: Bool] = Origin[mut=m]` with `def f[o: O[True]](ref[o] x:
+  Int)` is rejected ("Undefined variable 'o'"), where the pin runs it.
+  - Cause: the check classifies an origin binder by its bound's spelling
+    (`origin_param_decl`, `checker/declarations.rs`, matching
+    `bounds == ["Origin"]` and reading `TypeParam::origin_mutability`).
+  - `fold_origin_alias_bounds` (`comptime/synth.rs`) rewrites only an
+    unparameterized alias to that spelling, so `O[True]` stays unfolded.
+  - Upstream's origin binder is an ordinary value parameter whose type is
+    the library's `Origin[mut=m]`, resolved as any other type.
+  - Lever: add `TypeParam::annotation` (`mojito-ast`), the binder's type
+    as written: its `value_type`, else `Origin[mut=e]` rebuilt from
+    `origin_mutability`, else its lone bound.
+  - Resolve it with `ty_from_anno`, with the list's earlier binders in
+    scope, before `classify_params_in_scope`'s other branches.
+  - `TyKind::Struct("Origin", [mut])` from `std.origin` gives
+    `ParamDecl::Origin`, and the `OriginSet` identity gives the set kind.
+  - Map the `mut` argument: a fixed bool is `Fixed`, a sibling binder is
+    `Binder`, an unbound slot is `Binder("_")`.
+  - The mutability-binder test there reads the classified sibling
+    (`ParamDecl::is_origin_mutability_binder`), not the AST predicate.
+  - Unverified: that `ty_from_anno` maps a sibling `mut` binder to a
+    `TyArg` naming it. Check it first.
+  - Unverified: whether `auto_parameterize` mistakes the unfolded
+    `O[True]` binder for a value parameter. If it does, also fold a
+    parameterized alias there, since pre-check consumers keep the
+    spelling until R2342.
+  - The parser keeps its `Origin[mut=…]` special case.
+  - Stop: the probe prints `2`, and with the fold disabled locally
+    `assets/ok/origin_comptime_alias.mojo`,
+    `assets/ok/imm_origin_binders.mojo`, and
+    `assets/type_error/origin_alias_binder_rejects_immutable_pointer.mojo`
+    keep their verdicts. Restore the fold afterwards.
+  - Add the probe as `assets/ok/origin_parameterized_alias_binder.mojo`,
+    plus a checker test that an imported, an own, and a parameterized
+    alias classify to `ParamDecl::Origin`.
+  - Probe:
+    `comptime O[m: Bool] = Origin[mut=m]` /
+    `def f[o: O[True]](ref[o] x: Int): x += 1` /
+    `def main(): var a = 1; f(a); print(a)`.
+  - Planned in R2139 (2026-11-18).
   - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2340 Checker sites holding a classified parameter list still
+  read the origin binder's AST bound**
+
+  After R2339 the check classifies an origin binder by type, but about
+  thirty checker sites holding `StructInfo::params` or a classified list
+  re-test `bounds == ["Origin"]` or `TypeParam::origin_mutability`.
+  - Sites: `checker.rs` (`is_origin_type_param`, `struct_origin_slots`),
+    `iteration.rs` (`struct_may_refer_elsewhere`), `constraints.rs`
+    (four, including `assoc_param_kind`), `statements.rs` (three),
+    `generics.rs` (`bound_origin_mutability` and one more),
+    `type_resolution.rs` (about ten, including `is_origin_parameter` and
+    `check_origin_mutability_argument`), `traits.rs`,
+    `trait_defaults.rs` (two), and `comptime_validation.rs`.
+  - Lever: one lookup in `checker/generics.rs` returning a name's
+    `ParamDecl::Origin` and its `OriginParamId`, used by every site.
+  - Delete `is_origin_type_param`, `is_origin_parameter`, and the origin
+    arm of `assoc_param_kind`.
+  - `StructInfo::source_params` stays for explicit origin arguments; its
+    doc stops claiming it classifies.
+  - Stop: `rg '"Origin"|"OriginSet"|origin_mutability'
+    crates/mojito-checker/src` finds nothing outside `checker/origins/`
+    and R2339's resolution.
+  - Probe: `assets/ok/imm_origin_binders.mojo`,
+    `assets/ok/origin_comptime_alias.mojo`, and the struct-origin
+    fixtures `rg -l 'Origin\[mut=' assets/ok` lists.
+  - Planned in R2139 (2026-11-18).
+  - Depends on R2339.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2341 An origin signature counts the callee's origin binders by
+  their AST bound**
+
+  `callable_origin_signature` (`checker/origins/sig.rs`) and its readers
+  number a callee's origin binders by recounting `bounds == ["Origin"]`
+  in its raw `type_params`, not from its classified `ParamDecl::Origin`.
+  - Sites: `origins/sig.rs` (about twelve), `origins/binders.rs` (six),
+    `origins/actuals.rs` (three), `origins/interior.rs` (three),
+    `origins/subst.rs`, `origins/ref_params.rs`,
+    `origins/exclusivity.rs`, `origins/construct.rs`, and
+    `method_calls/receiver_effects.rs`.
+  - Lever: pass the callee's classified list beside `type_params`, and
+    take `OriginParamId` from `ParamDecl::Origin::origin`.
+  - The classifying callers already hold it: `statements.rs`,
+    `declarations.rs` (four), `traits.rs` (two), and
+    `comptime_validation.rs`.
+  - Unverified: whether a reader runs before the callee's list is
+    classified (shell registration). If so, classify earlier rather than
+    re-read the bound.
+  - Stop: the R2340 `rg` finds only R2339's resolution and the builtin
+    origin-name reads R2343 owns.
+  - Planned in R2139 (2026-11-18).
+  - Depends on R2340.
+  - Model: Fable, Planned.
+
+- [ ] **R2343 `std.origin` lacks upstream's origin values, `OriginSet`,
+  and the struct's members**
+
+  The untracked, static, and unsafe origin names and `OriginSet` are
+  builtin identities (`BUILTIN_MODULE_EXPORTS`, `mojito-module`), so
+  `type_of(ImmStaticOrigin)` is "unknown type 'ImmStaticOrigin'", where
+  the pin prints `std.origin.__init__.Origin[False, {}]`.
+  - Upstream declares `ImmStaticOrigin`, `UntrackedOrigin[*, mut]`,
+    `Imm/MutUntrackedOrigin`, `AnyOrigin[*, mut]`, `ImmutAnyOrigin`,
+    `MutAnyOrigin`, `UnsafeAnyOrigin[*, mut]`, and
+    `Imm/MutUnsafeAnyOrigin` as comptime values
+    `Origin[_mlir_origin=__mlir_attr[...]]()`. Mojito lacks the `Any`
+    names entirely.
+  - `OriginSet` is ``__mlir_type.`!lit.origin.set` ``, an MLIR type
+    alias, not an alias of `Origin`.
+  - The struct lacks upstream's builtin `__init__`, the `@implicit`
+    immutable conversion, `unsafe_mut_cast`, `equals`, and `contains`.
+  - Every read of those names by spelling then resolves through the
+    declared value: `origins/binders.rs`, `origins/sig.rs`,
+    `origins/subst.rs`, `origins/solve.rs`, `type_resolution.rs`,
+    `operators.rs`, `comptime.rs`, `symbol.rs`
+    (`syntactic_origin_argument`), and the `types.rs`/`origin.rs`
+    displays.
+  - Gap: a parameterized `__mlir_type[...]` alias is not accepted as a
+    value-parameter type, so `_lit_origin_type_of_mut[mut]` cannot be
+    declared ("unknown type '_lit_origin_type_of_mut'"). If R2209 does
+    not close it, file it as an entry this one depends on.
+  - If R2209 did not make `_mlir_origin` resolvable, split this: values
+    and `OriginSet` first, members second.
+  - Probe: `comptime S = ImmStaticOrigin` /
+    `print(String(reflect[type_of(S)].name()))`.
+  - Re-probe R1299 (`unsafe_mut_cast` in a result origin).
+  - Planned in R2139 (2026-11-18).
+  - Depends on R2209, which gives `Origin` its `_mlir_origin`.
+  - Model: Fable, Planned.
+
+- [ ] **R2344 An origin binder is not a value of its `Origin` type in
+  scope**
+
+  `def k[o: Origin[mut=False]]() -> Bool: return o.equals[o]` and
+  `comptime T = type_of(o)` are rejected ("Undefined variable 'o'"),
+  where the pin accepts both and prints `True` for `k[ImmStaticOrigin]()`.
+  - Upstream's binder is a value parameter, so it enters scope with type
+    `Origin[mut=m, _mlir_origin=<binder>]`.
+  - Lever: a binder classified `ParamDecl::Origin` also enters the value
+    scope with that type.
+  - `reflect[MutOrigin].name()` prints `std.origin.Origin[True]`, where
+    the pin rejects it ("'AnyStruct[MutOrigin]' is not 'AnyType'",
+    since `_mlir_origin` is unbound). Fix it here, or file it on the
+    `divergences` track if out of reach.
+  - Probes: the two shapes above, and `reflect[MutOrigin]`.
+  - Planned in R2139 (2026-11-18).
+  - Depends on R2343.
   - Model: Fable, Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
@@ -9321,6 +9449,26 @@ new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R2342 Pre-check phases classify an origin binder by its folded
+  bound spelling**
+
+  `auto_parameterize`, `comptime/params.rs`, and `symbol.rs`'s annotation
+  mangling recognize an origin binder by `TypeParam::is_erased_origin_param`,
+  which matches `bounds == ["Origin"]`, because they run on AST before the
+  check, where upstream has one elaborator resolving the binder's type.
+  - `fold_origin_alias_bounds` (`comptime/synth.rs`) exists only to give
+    these phases that spelling for an alias-typed binder.
+  - Other readers: `module.rs` (two), `trait_defaults.rs`,
+    `constraints.rs`, `comptime_validation.rs`, and
+    `type_resolution.rs` through the same predicate.
+  - Withdrawn when these phases move behind the check
+    (`docs/parametric-mir-plan.md`, the AST cloner's retirement). The
+    parser then drops its `Origin[mut=…]` special case and
+    `TypeParam::origin_mutability`, and the fold goes.
+  - Planned in R2139 (2026-11-18).
+  - Depends on R2341.
+  - Model: Fable, Planned.
+
 - [ ] **R867 A conditional's literal arm reaches its carrier
   unmaterialized**
 
@@ -10244,7 +10392,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     constructor").
   - Needs a MIR text schema bump.
   - Found while planning R1681 (2026-11-14).
-  - Depends on R2139.
+  - Depends on R2341.
   - Model: Fable, Not Planned.
 
 - [ ] **R2210 A `Pointer` application is `TyKind::Pointer`, not the

@@ -1429,6 +1429,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The migration of origin-binder classification from its bound's spelling
+  to its resolved `Origin` type is planned and filed as chained roadmap
+  entries: the check classifies by type (R2339), checker sites and origin
+  signatures read the classified list (R2340, R2341), and after R2209,
+  `std.origin` declares upstream's origin values and members (R2343) and an
+  origin binder becomes a value in scope (R2344). The pre-check readers
+  are a filed shortcut (R2342) (R2139).
+
 - A call through a generic callable (a `def[...]` binder such as `F[3]()`, a
   generic lambda, an expression callee, or a value of a `def[...]` bound)
   now carries the check's solution, spelled or inferred, as its
