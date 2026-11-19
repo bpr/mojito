@@ -3875,6 +3875,26 @@ fn parses_an_initializer_receiver_after_other_arguments() {
 }
 
 #[test]
+fn parses_an_initializer_result_as_its_out_self() {
+    // An `__init__` with no `self` that declares its result is the
+    // initializer whose `out self` is that result, after every parameter;
+    // any other method keeps its result.
+    let stmts = parse(
+        "struct W[n: Int]:\n    def __init__(x: W[_], *, k: Int) -> W[x.n + 1]:\n        return {}\n    @staticmethod\n    def make(x: Int) -> W[1]:\n        return {}\n",
+    );
+    let StmtKind::Struct { methods, .. } = &stmts[0].kind else {
+        panic!("expected a struct");
+    };
+    assert!(methods[0].has_self);
+    assert_eq!(methods[0].self_convention, Some(ArgConvention::Out));
+    assert!(matches!(&methods[0].self_type, Some(Type::Named(name, _)) if name == "W"));
+    assert_eq!(methods[0].receiver_index, 2);
+    assert!(methods[0].ret.is_none());
+    assert!(!methods[1].has_self);
+    assert!(methods[1].ret.is_some());
+}
+
+#[test]
 fn rejects_an_initializer_receiver_after_other_arguments_unless_out() {
     let mut parser = Parser::new(Lexer::new(
         "struct W:\n    def __init__(n: Int, mut self: Self):\n        pass\n",

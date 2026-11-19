@@ -1,8 +1,8 @@
 # A literal operator is typed by the attribute its dunder's signature
 # computes — the declared `IntLiteral.__neg__`'s `type_of(0 - self)`,
 # `__invert__`'s `type_of(self ^ -1)`, `FloatLiteral.__neg__`'s
-# `type_of(self * -1)`, or the signature a missing dunder would have (`/`,
-# an `IntLiteral` beside a `FloatLiteral`) — so over a symbolic
+# `type_of(self * -1)`, or `IntLiteral`'s `FloatLiteral`-taking `+ - *`
+# and `/`'s `type_of(FloatLiteral(self) OP rhs)` — so over a symbolic
 # `IntLiteral[_]` or `FloatLiteral[_]` argument the type keeps it:
 # `type_of(-x)` is `IntLiteral[0 - x.value]`, and `{}` at it builds the
 # negated value.

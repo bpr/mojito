@@ -826,6 +826,28 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             positional_only,
             keyword_only,
         } = list;
+        self.expect(&Token::RParen, "Expected ')' after the parameters")?;
+
+        let (raises, raises_type) = self.parse_callable_effects()?;
+        let mut ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
+            self.next_token()?;
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        // An initializer's declared result is its `out self`, following
+        // every parameter: `def __init__(x: W[_]) -> W[x.n + 1]` is `def
+        // __init__(x: W[_], out self: W[x.n + 1])`, as upstream's result is
+        // the initializer's `self` argument.
+        let receiver = match receiver {
+            None if is_initializer => ret.take().map(|ty| Receiver {
+                convention: Some(ArgConvention::Out),
+                origin: None,
+                ty: Some(ty),
+                index: params.len(),
+            }),
+            receiver => receiver,
+        };
         let (has_self, self_convention, self_origin, self_type, receiver_index) =
             receiver.map_or((false, None, None, None, 0), |receiver| {
                 (
@@ -836,15 +858,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     receiver.index,
                 )
             });
-        self.expect(&Token::RParen, "Expected ')' after the parameters")?;
-
-        let (raises, raises_type) = self.parse_callable_effects()?;
-        let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
-            self.next_token()?;
-            Some(self.parse_type()?)
-        } else {
-            None
-        };
 
         let where_clauses = self.parse_where_clauses()?;
 

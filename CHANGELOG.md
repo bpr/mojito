@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An `__init__` without `out self` that declares its result type (`def
+  __init__(x: W[_]) -> W[x.n + 1]`) is the initializer whose `out self`
+  is that result, following its parameters, as upstream's is: a
+  construction infers the struct's parameters from the result, and an
+  `@implicit` one converts. `FloatLiteral` declares upstream's `@implicit
+  __init__(IntLiteral[_])`, and `IntLiteral` its `FloatLiteral`-taking
+  `__add__`, `__sub__`, and `__mul__` and its `__truediv__`, so an integer
+  literal reaches a `FloatLiteral` through that call rather than by a
+  coercion rule, `y.__radd__(x)` over a symbolic `x: IntLiteral[_]` binds,
+  and `var f: type_of(4.0) = 4` runs natively. The checker's literal
+  operator rule, the folder's `IntLiteral`-by-`FloatLiteral` arm, and the
+  MIR verifier's `IntLiteral`-at-`FloatLiteral` arm are gone. An `out
+  self` initializer of a struct with no fields that returns a value no
+  longer drops its receiver on entry (R1784).
 - `Origin` declares upstream's `unsafe_mut_cast[dest_mut]()`, whose
   `#lit.origin.mutcast` is one origin-lattice node (`Origin::MutCast`)
   that `ImmOrigin(o)` is at `False`, as the pin compares them. The cast

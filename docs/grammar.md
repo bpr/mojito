@@ -762,7 +762,13 @@ least one member; fields and methods may interleave.
   iterable: IterableType, out self: List[IterableType.IteratorType[
   origin_of(iterable)].Element])`); it is no parameter, so the `/` and `*`
   markers keep indexing the parameters, and a `self` after other parameters
-  with any other convention is rejected, as at the pin. By default `self` is **read-only** (a method may read `self.field`
+  with any other convention is rejected, as at the pin. An initializer with
+  no `self` that declares its result (`def __init__(x: W[_]) -> W[x.n +
+  1]`) is the initializer whose `out self` is that result, following every
+  parameter, as upstream's result is the initializer's `self` argument: the
+  parser builds that receiver, so the construction infers the struct's
+  parameters from the result and a result that is no instance of the struct
+  is rejected as an annotated `out self`'s is. By default `self` is **read-only** (a method may read `self.field`
   and call `self.method(...)` but not assign a field). Declaring the receiver **`mut self`**
   makes `self` writable: the method may do `self.field = e` (and call other `mut self`
   methods), and those mutations are **written back** to the receiver — so `c.increment()`

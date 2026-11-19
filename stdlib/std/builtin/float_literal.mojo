@@ -1,11 +1,11 @@
 # Upstream's `std/builtin/float_literal.mojo`, in part: the
-# `FloatLiteral[value]` struct with its default initializer, `is_nan`,
+# `FloatLiteral[value]` struct with its default initializer, the implicit
+# initializer from `IntLiteral[_]`, `is_nan`,
 # `is_neg_zero`, `_is_normal`, `__int_literal__`, `__int__`, `__float__`,
 # `write_to`, `write_repr_to`, `__bool__`, `__neg__`, the arithmetic
 # dunders, the reflected arithmetic dunders, and the comparison dunders. A literal `2.5` is its application
 # `FloatLiteral[2.5]`, as is an explicit one (`FloatLiteral[(2.5).value]()`).
-# Not ported: the implicit initializer from `IntLiteral[_]`, whose
-# declaration has no `out self` (R1784); the `nan`, `infinity`,
+# Not ported: the `nan`, `infinity`,
 # `negative_infinity`, and `negative_zero` members, whose attributes the
 # compiler's exact rational cannot hold (R1783).
 """Implements the FloatLiteral class.
@@ -41,6 +41,24 @@ struct FloatLiteral[value: __mlir_type.`!pop.float_literal`](
     def __init__(out self):
         """Create a FloatLiteral for any parameter value."""
         pass
+
+    @always_inline("builtin")
+    @implicit
+    def __init__(
+        _value: IntLiteral[_],
+    ) -> FloatLiteral[
+        __mlir_attr[
+            `#pop<int_to_float_literal<`,
+            _value.value,
+            `>> : !pop.float_literal`,
+        ]
+    ]:
+        """Convert an IntLiteral to a FloatLiteral value.
+
+        Args:
+            _value: The IntLiteral value.
+        """
+        return {}
 
     @always_inline("builtin")
     def is_nan(self) -> Bool:

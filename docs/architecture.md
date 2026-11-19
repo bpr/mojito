@@ -2394,8 +2394,12 @@ folds its operators through the shared folder (`folds_as_struct`,
 (`owns_droppable_storage`, `may_alias_owned_storage`, by
 `types::copy_is_identity`); and a read its use materializes is the
 conversion's value, never a borrowed place (`lower_borrowed_name_read`).
-The checker's literal rule types the operators whose dunders are not
-ported yet (R1784).
+An `IntLiteral` reaches a `FloatLiteral` through the declared `@implicit
+FloatLiteral.__init__(IntLiteral[_])`, an initializer declaring its result
+(`-> FloatLiteral[…]`), which the parser reads as an `out self` of that type
+following its parameters, so `IntLiteral`'s `FloatLiteral`-taking `+ - *`
+and `/` are its declared dunders too (`type_of(FloatLiteral(self) OP
+rhs)`).
 
 A runtime scalar meets a multi-lane vector of its dtype through the
 declared `@implicit SIMD.__init__(Scalar[Self.dtype])`, and a `SIMDLength`

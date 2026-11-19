@@ -457,6 +457,7 @@ assets/ok/file_descriptor_stdout_order.mojo	main	exe-differential	sanitized
 assets/ok/file_handle_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/float16_display.mojo	main	exe-differential	sanitized
 assets/ok/float16_semantics.mojo	main	exe-differential	sanitized
+assets/ok/float_literal_from_int_literal.mojo	main	exe-differential	sanitized
 assets/ok/float_literal_parameter_overload.mojo	main	exe-differential	sanitized
 assets/ok/float_literal_reflected_dunders.mojo	main	exe-differential	sanitized
 assets/ok/for_destructuring_closure_capture.mojo	main	exe-differential	sanitized
@@ -1181,6 +1182,7 @@ assets/ok/replaced_field_read_through_register.mojo	main	exe-differential	saniti
 assets/ok/repr_library_function.mojo	main	exe-differential	sanitized
 assets/ok/repr_sized_scalars.mojo	main	exe-differential	sanitized
 assets/ok/repr_type_names.mojo	main	exe-differential	sanitized
+assets/ok/result_initializer.mojo	main	exe-differential	sanitized
 assets/ok/reversed_iteration.mojo	main	exe-differential	sanitized
 assets/ok/reversed_list.mojo	main	exe-differential	sanitized
 assets/ok/runtime_pack_dunder_len.mojo	main	exe-differential	sanitized

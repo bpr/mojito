@@ -209,9 +209,8 @@ impl Checker {
         // dunder, `a.__add__(b)`, as upstream's `emitBinOpCall` resolves
         // it, so its type carries the value the dunder's attribute folds
         // (`2 + 3` is `IntLiteral[5]`).
-        // An operator neither literal declares (`2 / 3`) falls through to
-        // the literal rule below. In a compile-time position its
-        // value is the shared folder's (`infix_value`).
+        // In a compile-time position its value is the shared folder's
+        // (`infix_value`).
         if let Some(span) = &span
             && let Some(ty) = self.infer_literal_operator(span, op, left, right, &lt, &rt)?
         {
@@ -319,9 +318,6 @@ impl Checker {
             return self
                 .infer_operator_call(span, op, left, right, &receiver, Some(&rt))?
                 .ok_or_else(|| bad_infix_operator(op, &receiver, &rt));
-        }
-        if let Some(ty) = self.literal_rule(op, &lt, &rt)? {
-            return Ok(ty);
         }
         // A literal pair no dunder takes (`2 < 2.5`, `7 // 2.5`) materializes
         // its left operand to its default type and calls that type's dunder,
@@ -786,80 +782,6 @@ impl Checker {
             self.record_at(span.clone()).reflected_operator = true;
         }
         Ok(ty)
-    }
-
-    /// The literal rule's type of `op` over two numeric literals, for an
-    /// operator whose upstream `IntLiteral` dunder the bundled library does
-    /// not declare yet: the literal that dunder's signature computes,
-    /// through [`Self::literal_rule_type`]. `IntLiteral.__truediv__` (`/`)
-    /// and the `FloatLiteral`-taking `+ - *` overloads are R1784's. `None`
-    /// for any other operator or operands, which the declared dunders and
-    /// the left operand's materialization answer.
-    fn literal_rule(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Option<Ty>, TypeError> {
-        use InfixOp::{Add, Div, Mul, Sub};
-        if !numeric_literals(lt, rt) || !lt.is_int_literal() {
-            return Ok(None);
-        }
-        match op {
-            Div => self.literal_rule_type(op, lt, rt).map(Some),
-            Add | Sub | Mul if rt.is_float_literal() => {
-                self.literal_rule_type(op, lt, rt).map(Some)
-            }
-            _ => Ok(None),
-        }
-    }
-
-    /// `IntLiteral[#pop<int_literal_bin<op l, r>>]` over the two literals'
-    /// slots, or the `FloatLiteral` of `#pop<float_literal_bin<…>>` when
-    /// either is a float or `op` is `/`, each integer slot first converted
-    /// by `#pop<int_to_float_literal>`, as upstream's
-    /// `IntLiteral.__truediv__` (`type_of(FloatLiteral(self) / rhs)`) and
-    /// its implicit `FloatLiteral` conversion type them. Closed slots fold;
-    /// a symbolic slot, or a closed fold that fails (`1 / 0`), keeps the
-    /// attribute.
-    fn literal_rule_type(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
-        let float = op == InfixOp::Div || lt.is_float_literal() || rt.is_float_literal();
-        let slot = |ty: &Ty| -> Result<ParamExpr, TypeError> {
-            let Some(slot) = ty.kind().numeric_literal_slot() else {
-                return Err(bad_infix_operator(op, lt, rt));
-            };
-            let slot = self
-                .param_context
-                .constant(slot.clone())
-                .map_err(param_error)?;
-            if float && ty.is_int_literal() {
-                self.param_context
-                    .op(ParamOp::IntToFloatLiteral, &[slot])
-                    .map_err(param_error)
-            } else {
-                Ok(slot)
-            }
-        };
-        let param_op = match op {
-            InfixOp::Add => ParamOp::Add,
-            InfixOp::Sub => ParamOp::Sub,
-            InfixOp::Mul => ParamOp::Mul,
-            InfixOp::Div => ParamOp::Div,
-            InfixOp::FloorDiv => ParamOp::FloorDiv,
-            InfixOp::Mod => ParamOp::Mod,
-            InfixOp::Pow => ParamOp::Pow,
-            InfixOp::Shl => ParamOp::Shl,
-            InfixOp::Shr => ParamOp::Shr,
-            InfixOp::BitAnd => ParamOp::BitAnd,
-            InfixOp::BitOr => ParamOp::BitOr,
-            InfixOp::BitXor => ParamOp::BitXor,
-            _ => return Err(bad_infix_operator(op, lt, rt)),
-        };
-        let value = self
-            .param_context
-            .op(param_op, &[slot(lt)?, slot(rt)?])
-            .map_err(param_error)?
-            .into_value();
-        Ok(if float {
-            Ty::float_literal_at(value)
-        } else {
-            Ty::int_literal_at(value)
-        })
     }
 
     /// `StringLiteral[#pop.string_concat<l, r>]` over the two literals'

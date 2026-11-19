@@ -5414,12 +5414,26 @@ pub fn scalar_simd_dtype(ty: &TyKind) -> Option<Dtype> {
 /// float literal pattern: upstream's `@implicit
 /// FloatLiteral.__init__(IntLiteral[_])` (`#pop<int_to_float_literal>`)
 /// applied before deduction, so `g(3)` over `def g(x: FloatLiteral)` solves
-/// `x.value = 3.0`. `None` for any other type, a symbolic value included.
+/// `x.value = 3.0`, and a symbolic `IntLiteral[x.value]` solves the
+/// attribute `#pop<int_to_float_literal<x.value>>`. `None` for any other
+/// type.
 pub fn int_literal_as_float(actual: &Ty) -> Option<CtValue> {
-    actual
-        .kind()
-        .int_literal_value()
-        .map(|value| CtValue::PopFloatLiteral(FloatLiteral::from_int(value)))
+    match actual.kind().int_literal_slot()? {
+        CtValue::Expr(slot) => {
+            let context = ParamContext::detached();
+            context
+                .op(
+                    crate::param_expr::ParamOp::IntToFloatLiteral,
+                    std::slice::from_ref(slot),
+                )
+                .ok()
+                .map(ParamExpr::into_value)
+        }
+        _ => actual
+            .kind()
+            .int_literal_value()
+            .map(|value| CtValue::PopFloatLiteral(FloatLiteral::from_int(value))),
+    }
 }
 
 /// The runtime type an exact literal materializes to when no context selects
@@ -5456,8 +5470,10 @@ pub fn default_literal(ty: &Ty) -> Ty {
 
 /// Whether a value of type `from` can be used where `to` is required.
 ///
-/// Only the literal types coerce (to the concrete numeric types, or
-/// `IntLiteral` up to `FloatLiteral`); everything else must match exactly.
+/// Only the literal types coerce (to the concrete numeric types); an
+/// `IntLiteral` reaches a `FloatLiteral` through the declared `@implicit
+/// FloatLiteral.__init__(IntLiteral[_])` call instead; everything else must
+/// match exactly.
 ///
 /// # Panics
 ///
@@ -5472,18 +5488,6 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
     }
     match (from.kind(), to.kind()) {
         (TyKind::Param { binder: a, .. }, TyKind::Param { binder: b, .. }) => a == b,
-        // Two carried values agree only when equal, and an integer carries
-        // over to the float its `#pop<int_to_float_literal>` is, upstream's
-        // `@implicit FloatLiteral.__init__(IntLiteral[_])`.
-        (from_kind, to_kind) if from_kind.is_int_literal() && to_kind.is_float_literal() => {
-            match (
-                from.kind().int_literal_value(),
-                to.kind().float_literal_value(),
-            ) {
-                (Some(int), Some(float)) => FloatLiteral::from_int(int) == *float,
-                _ => false,
-            }
-        }
         (TyKind::Struct(an, aargs), TyKind::Struct(bn, bargs)) => {
             an == bn
                 && aargs.len() == bargs.len()

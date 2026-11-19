@@ -456,6 +456,7 @@ assets/ok/file_descriptor_stdout_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/file_handle_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/float16_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/float16_semantics.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/float_literal_from_int_literal.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/float_literal_parameter_overload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/float_literal_reflected_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/for_destructuring_closure_capture.mojo	-	ineligible	no-scalar-entry-shape
@@ -1180,6 +1181,7 @@ assets/ok/replaced_field_read_through_register.mojo	-	ineligible	no-scalar-entry
 assets/ok/repr_library_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_sized_scalars.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_type_names.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/result_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/runtime_pack_dunder_len.mojo	-	ineligible	no-scalar-entry-shape

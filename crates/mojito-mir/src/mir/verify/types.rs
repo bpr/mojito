@@ -33,16 +33,10 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // texts are two types, and a numeric conversion is an explicit
     // `literal.materialize` (`#pop.int_literal_convert`). A side mentioning
     // a parameter is the instance's to bind, possibly to the literal
-    // itself. An `IntLiteral` reaching a `FloatLiteral` stays the checker's
-    // coercion until the implicit initializer that converts it is declared
-    // (R1784).
+    // itself.
     let is_literal = |ty: &Ty| ty.is_numeric_literal() || ty.is_string_literal();
     if is_literal(found) || is_literal(expected) {
-        return contains_type_param(found)
-            || contains_type_param(expected)
-            || (found.is_int_literal()
-                && expected.is_float_literal()
-                && mojito_types::types::value_coerces(found, expected));
+        return contains_type_param(found) || contains_type_param(expected);
     }
     if let (Some(found), Some(expected)) =
         (callable_environment(found), callable_environment(expected))

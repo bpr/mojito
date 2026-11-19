@@ -107,11 +107,15 @@ pub(super) fn elaborate_drops(
     // destroys an unused `deinit self`'s fields before the first statement
     // runs, so it drops at the function's entry; so does a parameter's part
     // the body redefines before reading it (upstream's `scanFunction`).
+    // An initializer's `out self` holds nothing on entry, so it never dies
+    // there, even when its struct has no field to leave uninitialized.
     let entry_dead: Vec<Death> = Some(&blocks)
         .and_then(|entry| {
             let live = splice.plan.blocks.get(&std::ptr::from_ref(entry))?;
             let live = splice.effective(&live.live_in, facts.entry(entry));
-            let parameters = (0..function.n_params).map(|v| v as VarId);
+            let parameters = (0..function.n_params)
+                .map(|v| v as VarId)
+                .filter(|v| receiver != Some(*v));
             let dying: DenseSet = parameters
                 .clone()
                 .flat_map(|v| values.range(v))

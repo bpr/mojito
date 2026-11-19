@@ -1,16 +1,15 @@
 # Upstream's `std/builtin/int_literal.mojo`, in part: the
 # `IntLiteral[value]` struct with its default initializer, the comparison
-# dunders, `__pos__`, `__neg__`, `__invert__`, the `IntLiteral[_]`-taking
-# `__add__`, `__sub__`, and `__mul__`, `__floordiv__`, `__mod__`, the
+# dunders, `__pos__`, `__neg__`, `__invert__`, `__add__`, `__sub__`,
+# `__mul__`, `__truediv__`, `__floordiv__`, `__mod__`, the
 # shifts and bitwise dunders, `__bool__`, `__int__`, `__ceil__`,
 # `__floor__`, `__trunc__`, `write_to`, `write_repr_to`, `__ceildiv__`,
 # `__mlir_index__`, and the non-negative-exponent `__pow__`. A literal `4`
 # is its application `IntLiteral[4]`, as is an explicit one
 # (`IntLiteral[(4).value]()`), and a bare `IntLiteral` parameter is
-# upstream's per-call `IntLiteral[_]`. Not ported: the `FloatLiteral`-taking
-# `__add__`, `__sub__`, and `__mul__` and `__truediv__`, which construct a
-# `FloatLiteral` from `self` (R1784); and the negative-exponent `__pow__`,
-# which differs from the other only in its `where` clause (R1821).
+# upstream's per-call `IntLiteral[_]`. Not ported: the negative-exponent
+# `__pow__`, which differs from the other only in its `where` clause
+# (R1821).
 """Implements the IntLiteral class."""
 
 from std.math import Ceilable, Floorable, Truncable
@@ -212,6 +211,18 @@ struct IntLiteral[value: __mlir_type.`!pop.int_literal`](
         return {}
 
     @always_inline("builtin")
+    def __add__(self, rhs: FloatLiteral) -> type_of(FloatLiteral(self) + rhs):
+        """Return `self + rhs`.
+
+        Args:
+            rhs: The value to add.
+
+        Returns:
+            `self + rhs` value.
+        """
+        return {}
+
+    @always_inline("builtin")
     def __sub__(
         self, rhs: IntLiteral[_]
     ) -> IntLiteral[
@@ -223,6 +234,18 @@ struct IntLiteral[value: __mlir_type.`!pop.int_literal`](
             `>> : !pop.int_literal`,
         ]
     ]:
+        """Return `self - rhs`.
+
+        Args:
+            rhs: The value to subtract.
+
+        Returns:
+            `self - rhs` value.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __sub__(self, rhs: FloatLiteral) -> type_of(FloatLiteral(self) - rhs):
         """Return `self - rhs`.
 
         Args:
@@ -252,6 +275,32 @@ struct IntLiteral[value: __mlir_type.`!pop.int_literal`](
 
         Returns:
             `self * rhs` value.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __mul__(self, rhs: FloatLiteral) -> type_of(FloatLiteral(self) * rhs):
+        """Return `self * rhs`.
+
+        Args:
+            rhs: The value to multiply with.
+
+        Returns:
+            `self * rhs` value.
+        """
+        return {}
+
+    @always_inline("builtin")
+    def __truediv__(
+        self, rhs: FloatLiteral
+    ) -> type_of(FloatLiteral(self) / rhs):
+        """Return `self / rhs`.
+
+        Args:
+            rhs: The value to divide with.
+
+        Returns:
+            `self / rhs` value.
         """
         return {}
 
