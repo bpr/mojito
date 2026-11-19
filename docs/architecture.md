@@ -3249,13 +3249,18 @@ included (bound by keyword, `VariadicList[origin=o, T, owned]`, or left
 unbound), as upstream's `!kgen.struct` attributes sit
 (`ParamDecl::instance_binders`; `P[origin_of(xs)]` and `P[origin_of(ys)]` are
 different types, as upstream). An origin's `mut=` binder holds no slot yet
-(R2362), and a closure storage's captured origins follow its binders, its
+(R2372), and a closure storage's captured origins follow its binders, its
 declared list naming no binder for them (R2365). The checker builds an instance
 through `ParamDecl::place_origins` (`StructInfo::place_origins`), and every
 reader below it pairs a list of binders with an instance's arguments by kind
 (`ParamDecl::aligned_pairs`, `aligned_arguments`, `aligned_argument`): an
 argument view, which declares no origin binder, skips the instance's origins,
-and a list that declares them in place reads them where they sit. The MIR
+and a list that declares them in place reads them where they sit. The whole
+declared list pairs with an instance of any shape, an erased one (no origin)
+or one holding no `mut=` slot, so a reader keyed by the argument view takes
+an instance's arguments through `ParamDecl::instance_argument_view`
+(`StructInfo::view_arguments`, `StructDeclaration::view_arguments`) rather
+than skipping arguments by kind, and holds once instances carry the slot. The MIR
 verifier rejects an instance of a struct declaring an origin binder that holds
 other than one argument per instance binder, each origin at its binder's
 position (`verify/scope.rs`, `misplaced_instance_argument`), an erased

@@ -249,13 +249,16 @@ pub(super) fn declared_struct_instance<'b>(
         applications: bindings.applications.clone(),
         ..Bindings::default()
     };
-    bind_ty_args(&declaration.argument_view(), &struct_args, &mut instance).map_err(
-        |construct| MonoError {
-            kind: MonoErrorKind::Unsupported,
-            function: None,
-            construct,
-        },
-    )?;
+    bind_ty_args(
+        &declaration.argument_view(),
+        &declaration.view_arguments(&struct_args),
+        &mut instance,
+    )
+    .map_err(|construct| MonoError {
+        kind: MonoErrorKind::Unsupported,
+        function: None,
+        construct,
+    })?;
     apply_defaults(&declaration.argument_view(), &[], &mut instance)?;
     Ok(Some(StructInstance {
         template,

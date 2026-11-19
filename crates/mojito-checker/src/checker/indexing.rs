@@ -1688,7 +1688,7 @@ impl Checker {
                     && self.conforms_to(ty, "Indexer") =>
             {
                 let info = self.structs.get(name)?;
-                let substitution = struct_subst(&info.decls(), arguments);
+                let substitution = struct_subst(&info.params, arguments);
                 let methods = info.methods.get("__mlir_index__")?;
                 let selected = methods.iter().find(|method| {
                     method.has_self
@@ -1768,7 +1768,7 @@ impl Checker {
         let Some(signatures) = info.methods.get(method) else {
             return Ok(());
         };
-        let substitution = struct_subst(&info.decls(), arguments);
+        let substitution = struct_subst(&info.params, arguments);
         let mut accepts_source = false;
         let mut accepts_int = false;
         for signature in signatures.iter().filter(|signature| signature.has_self) {
@@ -2431,9 +2431,12 @@ impl Checker {
         let Some(constructors) = info.methods.get("__init__") else {
             return Ok(None);
         };
-        let substitution = struct_subst(&info.decls(), arguments);
-        let struct_arguments =
-            super::comptime_validation::positional_pack_arguments(&info.decls(), arguments);
+        let substitution = struct_subst(&info.params, arguments);
+        let struct_arguments = super::comptime_validation::positional_pack_arguments(
+            &info.decls(),
+            &info.view_arguments(arguments),
+        )
+        .into_owned();
         let mut viable = Vec::new();
         for signature in constructors.iter().filter(|signature| {
             signature.decls().is_empty()

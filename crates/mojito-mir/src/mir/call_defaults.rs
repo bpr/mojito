@@ -1877,7 +1877,7 @@ fn bindings_of(
         } else {
             let view = owner.argument_view();
             bound.extend(
-                ParamDecl::aligned_pairs(&view, arguments)
+                ParamDecl::aligned_pairs(&view, &owner.view_arguments(arguments))
                     .map(|(decl, argument)| (decl.clone(), argument.clone())),
             );
         }

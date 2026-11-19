@@ -183,6 +183,20 @@ impl<'d, 'a> StructReads<'d, 'a> {
         reads
     }
 
+    /// The arguments an instance of the struct `name` gives its argument
+    /// binders, whose positions the reads count.
+    fn view_arguments<'t>(
+        &self,
+        name: &str,
+        arguments: &'t [TyArg],
+    ) -> std::borrow::Cow<'t, [TyArg]> {
+        self.declarations
+            .structure(name)
+            .map_or(std::borrow::Cow::Borrowed(arguments), |structure| {
+                structure.view_arguments(arguments)
+            })
+    }
+
     /// The parts of the field type `ty` its layout reads in full.
     fn layout_parts(&self, ty: &Ty, visiting: &mut Vec<String>) -> Vec<TyArg> {
         match ty.kind() {
@@ -191,7 +205,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
                     && !arguments.is_empty() =>
             {
                 let reads = self.layout_in(name, visiting);
-                arguments
+                self.view_arguments(name, arguments)
                     .iter()
                     .enumerate()
                     .filter(|(position, _)| reads.reads(*position))
@@ -338,7 +352,8 @@ impl<'d, 'a> StructReads<'d, 'a> {
                         .iter()
                         .map(|argument| (argument.clone(), Need::Whole))
                         .collect(),
-                    Some(needs) => arguments
+                    Some(needs) => self
+                        .view_arguments(name, arguments)
                         .iter()
                         .enumerate()
                         .flat_map(|(position, argument)| {

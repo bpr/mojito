@@ -283,9 +283,12 @@ impl Checker {
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             let declared_instantiation =
                 method_declared_arguments(sig, &method_arguments, &declared_arguments);
-            if let Err(failure) =
-                self.method_constraint_result(sig, &method_arguments, &info.decls(), targs)
-            {
+            if let Err(failure) = self.method_constraint_result(
+                sig,
+                &method_arguments,
+                &info.decls(),
+                &info.view_arguments(targs),
+            ) {
                 // A candidate the arguments would have
                 // selected reports its failed availability
                 // clause even among overloads (the
@@ -345,7 +348,10 @@ impl Checker {
                                 (&sig.decls(), &method_arguments),
                                 (
                                     &info.decls(),
-                                    &positional_pack_arguments(&info.decls(), targs),
+                                    &positional_pack_arguments(
+                                        &info.decls(),
+                                        &info.view_arguments(targs),
+                                    ),
                                 ),
                             ],
                         ),

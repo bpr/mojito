@@ -1835,10 +1835,7 @@ impl Checker {
             struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                 let info = self.structs.get(name)?;
                 let contract = info.callable_conformance.as_ref()?;
-                Some(substitute(
-                    contract,
-                    &struct_subst(&info.decls(), arguments),
-                ))
+                Some(substitute(contract, &struct_subst(&info.params, arguments)))
             }
             _ => None,
         }
@@ -2094,7 +2091,7 @@ impl Checker {
             return Vec::new();
         };
         let decls = info.decls();
-        let arguments = ParamDecl::aligned_arguments(&decls, arguments);
+        let arguments = info.view_arguments(arguments);
         let arguments = comptime_validation::positional_pack_arguments(&decls, &arguments);
         let solved: Vec<TyArg> = arguments[..decls.len().min(arguments.len())]
             .iter()
@@ -2165,11 +2162,11 @@ impl Checker {
         if args.len() < info.decls().len() {
             return Ok(None);
         }
-        let subst = struct_subst(&info.decls(), args);
+        let subst = struct_subst(&info.params, args);
         // The value binders (`SIMD`'s `dtype` and `length`) bind too, so a
         // parameter spelled over them (`Scalar[Self.dtype]`) is the target's.
         let bindings =
-            mojito_types::types::struct_argument_bindings(&self.param_context, &info.decls(), args);
+            mojito_types::types::struct_argument_bindings(&self.param_context, &info.params, args);
         let Some(constructors) = info.methods.get("__init__") else {
             return Ok(None);
         };
@@ -3216,6 +3213,13 @@ impl StructInfo {
     /// as a tail after them instead.
     fn decls(&self) -> std::borrow::Cow<'_, [ParamDecl]> {
         ParamDecl::argument_view(&self.params)
+    }
+
+    /// The arguments `arguments`, an instance of the struct, give its
+    /// argument binders ([`Self::decls`]), position by position
+    /// ([`ParamDecl::instance_argument_view`]).
+    fn view_arguments<'a>(&self, arguments: &'a [TyArg]) -> std::borrow::Cow<'a, [TyArg]> {
+        ParamDecl::instance_argument_view(&self.params, arguments)
     }
 
     /// [`Self::decls`], borrowed binder by binder.

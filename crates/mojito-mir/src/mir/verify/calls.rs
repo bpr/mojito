@@ -306,7 +306,9 @@ fn owner_arguments<'a>(
         _ => receiver,
     };
     let (name, arguments) = mojito_types::types::nominal_parts(receiver)?;
-    Some((declarations.structure(name)?.argument_view(), arguments))
+    let owner = declarations.structure(name)?;
+    let arguments = std::borrow::Cow::Owned(owner.view_arguments(&arguments).into_owned());
+    Some((owner.argument_view(), arguments))
 }
 
 /// The operand a call passes its callee's positional collector as: the

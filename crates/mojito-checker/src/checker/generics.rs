@@ -69,7 +69,10 @@ pub(super) fn unify(
                     }
                 }
             } else if is_span_struct_name(pn)
-                && let Some(TyArg::Ty(element_pattern)) = pargs.first()
+                && let Some(element_pattern) = pargs.iter().find_map(|argument| match argument {
+                    TyArg::Ty(element) => Some(element),
+                    _ => None,
+                })
                 && let Some(element) = list_element(actual)
             {
                 // The checked analogue of `Span`'s `@implicit` constructor from
@@ -237,7 +240,8 @@ pub(super) fn substitute_variadic_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]
             });
         }
     };
-    if let Some((_, mut elements)) = bound_pack_elements(&info.decls(), targs) {
+    if let Some((_, mut elements)) = bound_pack_elements(&info.decls(), &info.view_arguments(targs))
+    {
         if let [element] = elements.as_mut_slice() {
             retyped(element);
         }
@@ -1931,8 +1935,9 @@ impl Checker {
         {
             return None;
         }
-        let owner_values = owner_value_bindings(&info.decls(), targs);
-        let pack = positional_pack_arguments(&info.decls(), targs);
+        let view = info.view_arguments(targs);
+        let owner_values = owner_value_bindings(&info.decls(), &view);
+        let pack = positional_pack_arguments(&info.decls(), &view);
         let mut rewrite = CloseElements {
             checker: self,
             decls: &info.decls(),
@@ -2405,7 +2410,8 @@ fn substitute_at_with(
     targs: &[TyArg],
     binder_mutability: Option<super::origins::BinderMutability<'_>>,
 ) -> Ty {
-    let expanded = expand_bound_pack(ty, &info.decls(), targs);
+    let view = info.view_arguments(targs);
+    let expanded = expand_bound_pack(ty, &info.decls(), &view);
     // The receiver's origin tail binds the struct's own origin binders in
     // struct-typed positions (`other: Self`, `-> Self`, a `RefBox[Self.o]`
     // parameter), so a member instantiated on `P[origin_of(xs)]` names that
@@ -2421,9 +2427,9 @@ fn substitute_at_with(
     substitute_assoc(
         &bound,
         &AssocBindings {
-            types: struct_subst(&info.decls(), targs),
-            values: solved_value_bindings(&info.decls(), targs),
-            ids: forwarded_pack_lists(&info.decls(), targs),
+            types: struct_subst(&info.params, &view),
+            values: solved_value_bindings(&info.decls(), &view),
+            ids: forwarded_pack_lists(&info.decls(), &view),
             origins: HashMap::new(),
         },
     )

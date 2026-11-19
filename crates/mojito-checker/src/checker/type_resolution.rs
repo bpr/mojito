@@ -1023,16 +1023,26 @@ impl Checker {
             })
     }
 
+    /// The arguments the enclosing struct's `Self` gives its argument
+    /// binders (`self_decls`), position by position.
+    pub(super) fn self_view_arguments(&self) -> Option<std::borrow::Cow<'_, [TyArg]>> {
+        let (owner, arguments) = self.self_ty.as_ref()?.kind().as_non_simd_struct()?;
+        Some(
+            self.structs
+                .get(owner)
+                .map_or(std::borrow::Cow::Borrowed(arguments.as_slice()), |info| {
+                    info.view_arguments(arguments)
+                }),
+        )
+    }
+
     /// The type the enclosing struct's type parameter at `index` denotes
     /// as `Self` binds it: the argument a concrete `Self` supplies (`Self.T`
     /// is `Int` while `Self` is `Optional[Int]`), else the parameter itself.
     pub(super) fn self_type_parameter(&self, index: usize) -> Option<Ty> {
         let decl = self.self_decls.get(index)?;
         if matches!(decl, ParamDecl::Type { .. })
-            && let Some((_, arguments)) = self
-                .self_ty
-                .as_ref()
-                .and_then(|ty| ty.kind().as_non_simd_struct())
+            && let Some(arguments) = self.self_view_arguments()
             && arguments.len() >= self.self_decls.len()
             && let Some(TyArg::Ty(bound)) = arguments.get(index)
             && !matches!(bound.kind(), TyKind::Param { .. })
@@ -2792,7 +2802,7 @@ impl Checker {
                 member: name.clone(),
             });
         };
-        let substitution = struct_subst(&info.decls(), arguments);
+        let substitution = struct_subst(&info.params, arguments);
         values
             .iter()
             .map(|value| match value {
@@ -3153,7 +3163,8 @@ impl Checker {
         if let Some(member) = info.parameterized_associated.get(name) {
             let member = member.clone();
             let decls = info.decls().into_owned();
-            return self.resolve_parameterized_member(base, name, &member, &decls, targs, args);
+            let targs = info.view_arguments(targs).into_owned();
+            return self.resolve_parameterized_member(base, name, &member, &decls, &targs, args);
         }
         // A type parameter of the struct is a member of its application
         // (`List[Int].T`).
@@ -3162,9 +3173,12 @@ impl Checker {
                 .decls()
                 .iter()
                 .position(|decl| decl.name() == name)
-                .and_then(|index| ParamDecl::source_argument(&info.decls(), targs, index))
+                .and_then(|index| {
+                    ParamDecl::source_argument(&info.decls(), &info.view_arguments(targs), index)
+                        .cloned()
+                })
         {
-            return Ok(argument.clone());
+            return Ok(argument);
         }
         let value = info
             .associated
@@ -3174,7 +3188,8 @@ impl Checker {
                 member: name.to_string(),
             })?;
         if let Some(constraints) = info.associated_constraints.get(name) {
-            let environment = ConstraintEnvironment::declared(&info.decls(), targs);
+            let view = info.view_arguments(targs);
+            let environment = ConstraintEnvironment::declared(&info.decls(), &view);
             if !environment.arguments().any(tyarg_is_symbolic) {
                 for constraint in constraints {
                     self.validate_constraint_in_environment(

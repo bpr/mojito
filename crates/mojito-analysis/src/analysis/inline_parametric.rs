@@ -897,6 +897,8 @@ struct OwnerInstance<'c> {
     /// The call's receiver or result type, an application of `template`.
     ty: Ty,
     decls: std::borrow::Cow<'c, [ParamDecl]>,
+    /// The struct's whole declared list, which `ty`'s arguments follow.
+    declared: &'c [ParamDecl],
     /// The struct's fields, which a member read of the same spelling names
     /// rather than a binder.
     fields: &'c [(String, Ty)],
@@ -1750,6 +1752,7 @@ impl<'c> Inliner<'_, 'c> {
                     template: template.to_string(),
                     ty: ty.clone(),
                     decls,
+                    declared: &structure.param_decls,
                     fields: &structure.fields,
                 }))
             }
@@ -4814,6 +4817,8 @@ impl<'d> Instantiation<'d> {
         };
         if let Some(owner) = owner {
             let (_, owner_arguments) = nominal_parts(&owner.ty)?;
+            let owner_arguments =
+                ParamDecl::instance_argument_view(owner.declared, &owner_arguments);
             let owner_arguments = owner_binder_arguments(&owner.decls, &owner_arguments)?;
             for (decl, argument) in owner.decls.iter().zip(owner_arguments.iter()) {
                 match instantiation.bind(decl, argument, None)? {

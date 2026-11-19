@@ -1575,6 +1575,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every reader of a struct instance's compile-time arguments now pairs them
+  with the struct's whole declared list, or takes them for its argument
+  binders through `ParamDecl::instance_argument_view`, instead of skipping
+  origin arguments by kind, so a reader no longer misplaces an argument of a
+  struct whose origin is declared first (`VariadicList`, `VariadicPack`) and
+  holds once an instance carries its origin's `mut=` argument (R2372). A
+  `VariadicPack`'s `is_owned` is read as its last `Bool` argument, and a
+  `VariadicList`'s element as its first type argument (R2362).
+
 - The checker's sites outside its origin analysis — stored reference
   fields, `Pointer` origin arguments, parameterized members' and generic
   aliases' origin parameters, and a parametric origin's bound mutability —

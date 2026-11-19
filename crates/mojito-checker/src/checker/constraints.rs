@@ -1096,7 +1096,7 @@ impl Checker {
         let label = format!("{subject}.{field}");
         Some((|| {
             let mut outer = mojito_types::param_expr::ParamBindings::new();
-            self.bind_declared(&mut outer, &info.decls(), arguments)?;
+            self.bind_declared(&mut outer, &info.decls(), &info.view_arguments(arguments))?;
             let (value, bound) = self.apply_parametric_value(&label, decls, body, args, outer)?;
             // A partial binding's `where` clauses wait for its application.
             if let Some(bound) = bound.into_iter().collect::<Option<Vec<_>>>() {
@@ -1104,7 +1104,7 @@ impl Checker {
                     &label,
                     &member.availability,
                     &info.decls(),
-                    arguments,
+                    &info.view_arguments(arguments),
                     decls,
                     decls.iter().map(ParamDecl::name).zip(&bound),
                 )?;
@@ -1927,17 +1927,14 @@ impl Checker {
     /// per-instantiation clone, else the template's own symbolic binder
     /// ([`Self::self_param_ct_value`]).
     pub(super) fn self_param_value(&self, name: &str) -> Option<CtValue> {
-        if let Some((_, arguments)) = self
-            .self_ty
-            .as_ref()
-            .and_then(|ty| ty.kind().as_non_simd_struct())
+        if let Some(arguments) = self.self_view_arguments()
             && arguments.len() >= self.self_decls.len()
             && let Some(index) = self
                 .self_decls
                 .iter()
                 .position(|d| d.name() == name && matches!(d, ParamDecl::Value { .. }))
             && let Some(TyArg::Val(bound)) =
-                ParamDecl::source_argument(&self.self_decls, arguments, index)
+                ParamDecl::source_argument(&self.self_decls, &arguments, index)
             && !matches!(bound, CtValue::Expr(_))
         {
             return Some(bound.clone());
@@ -4381,9 +4378,9 @@ impl Checker {
     fn value_type_argument(&self, base: &ParamExpr, field: &str) -> Option<ParamExpr> {
         let (owner, arguments) = mojito_types::types::nominal_parts(base.meta().as_value()?)?;
         let owner = mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner);
-        let decls = &self.structs.get(owner)?.decls();
-        let index = decls.iter().position(|decl| decl.name() == field)?;
-        match arguments.get(index)? {
+        let info = self.structs.get(owner)?;
+        let index = info.decls().iter().position(|decl| decl.name() == field)?;
+        match info.view_arguments(&arguments).get(index)? {
             TyArg::Val(CtValue::Expr(argument)) => Some(argument.clone()),
             TyArg::Val(value) => self.param_context.constant(value.clone()).ok(),
             TyArg::Ty(ty) => Some(self.param_context.type_shape(ty.clone())),
@@ -4656,7 +4653,7 @@ impl Checker {
         };
         Some((|| {
             let mut outer = mojito_types::param_expr::ParamBindings::new();
-            self.bind_declared(&mut outer, &info.decls(), arguments)?;
+            self.bind_declared(&mut outer, &info.decls(), &info.view_arguments(arguments))?;
             let context = &self.param_context;
             let body = context
                 .replace(body, &outer)
@@ -6714,7 +6711,11 @@ impl Checker {
     ) -> Result<ParamExpr, TypeError> {
         let context = &self.param_context;
         let mut bindings = mojito_types::param_expr::ParamBindings::new();
-        self.bind_declared(&mut bindings, &info.decls(), arguments)?;
+        self.bind_declared(
+            &mut bindings,
+            &info.decls(),
+            &info.view_arguments(arguments),
+        )?;
         let value = context.constant(value.clone()).map_err(param_error)?;
         context
             .replace(&value, &bindings)
@@ -6735,20 +6736,20 @@ impl Checker {
         let slot = info.decls().iter().position(|decl| {
             matches!(decl, ParamDecl::Value { .. }) && decl.name().trim_start_matches('*') == field
         })?;
-        let TyArg::Val(value) = arguments.get(slot)? else {
+        let TyArg::Val(value) = info.view_arguments(arguments).get(slot)?.clone() else {
             return None;
         };
         let context = &self.param_context;
         // A function symbol holds no signature: it is a value of the
         // parameter's declared callable type.
-        if let (CtValue::FuncSymbol(_), ParamDecl::Value { ty, .. }) = (value, &info.decls()[slot])
+        if let (CtValue::FuncSymbol(_), ParamDecl::Value { ty, .. }) = (&value, &info.decls()[slot])
             && !mojito_types::types::is_symbolic(ty)
         {
             return Some(context.constant_as(value.clone(), ty).map_err(param_error));
         }
         Some(
             context
-                .constant(value.clone())
+                .constant(value)
                 .and_then(|value| context.fold(&value))
                 .map_err(param_error),
         )

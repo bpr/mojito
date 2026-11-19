@@ -567,7 +567,12 @@ impl Specializer<'_> {
         if struct_decl.argument_binders().next().is_none() {
             return Ok(());
         }
-        bind_ty_args(&struct_decl.argument_view(), &arguments, bindings).map_err(|e| {
+        bind_ty_args(
+            &struct_decl.argument_view(),
+            &struct_decl.view_arguments(&arguments),
+            bindings,
+        )
+        .map_err(|e| {
             self.error(
                 Some(owner),
                 format!("monomorphizing receiver for `{target}`: {e}"),
@@ -579,6 +584,7 @@ impl Specializer<'_> {
             // removed the parameter it named) binds nothing and names the
             // erased instance.
             let view = struct_decl.argument_view();
+            let arguments = struct_decl.view_arguments(&arguments);
             let owner_arguments = view
                 .iter()
                 .enumerate()
@@ -641,7 +647,12 @@ impl Specializer<'_> {
         if let Some((receiver_name, arguments)) = mojito_types::types::nominal_parts(receiver)
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
         {
-            bind_ty_args(&struct_decl.argument_view(), &arguments, &mut bindings).map_err(|e| {
+            bind_ty_args(
+                &struct_decl.argument_view(),
+                &struct_decl.view_arguments(&arguments),
+                &mut bindings,
+            )
+            .map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing receiver for `{target}`: {e}"),
@@ -1043,7 +1054,12 @@ impl Specializer<'_> {
                 owner_covered_prefix(&struct_decl.argument_view(), &declaration.argument_view());
             declared_start =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
-            bind_ty_args(&struct_decl.argument_view(), &arguments, bindings).map_err(|e| {
+            bind_ty_args(
+                &struct_decl.argument_view(),
+                &struct_decl.view_arguments(&arguments),
+                bindings,
+            )
+            .map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing receiver for `{target}`: {e}"),

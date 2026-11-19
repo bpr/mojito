@@ -800,11 +800,14 @@ impl Checker {
         if name != refined_name {
             return Err(not_an_instance());
         }
-        let decls = self
-            .structs
-            .get(name)
-            .map(|info| info.decls().into_owned())
-            .unwrap_or_default();
+        let (decls, own, arguments) = match self.structs.get(name) {
+            Some(info) => (
+                info.decls().into_owned(),
+                info.view_arguments(&own).into_owned(),
+                info.view_arguments(&arguments).into_owned(),
+            ),
+            None => (Vec::new(), own.into_owned(), arguments.into_owned()),
+        };
         for ((binder, argument), decl) in own.iter().zip(arguments.iter()).zip(&decls) {
             if argument == binder {
                 continue;
@@ -3060,7 +3063,12 @@ impl Checker {
                 )
                 .is_ok()
                     && self
-                        .method_constraint_result(sig, &[], &info.decls(), arguments)
+                        .method_constraint_result(
+                            sig,
+                            &[],
+                            &info.decls(),
+                            &info.view_arguments(arguments),
+                        )
                         .is_ok()
                     && sig.refined_self.as_ref().is_none_or(|refined| {
                         self.self_instance_ty(name).is_some_and(|instance| {
@@ -5671,18 +5679,20 @@ impl Checker {
         let unregistered = || {
             TypeError::InvariantViolation(format!("refined initializer of unregistered '{name}'"))
         };
-        let decls = &self.structs.get(name).ok_or_else(unregistered)?.decls();
+        let info = self.structs.get(name).ok_or_else(unregistered)?;
+        let decls = &info.decls();
         let instance = self.self_instance_ty(name).ok_or_else(unregistered)?;
         let binders = mojito_types::types::nominal_parts(&instance)
-            .map(|(_, arguments)| arguments.into_owned())
+            .map(|(_, arguments)| info.view_arguments(&arguments).into_owned())
             .unwrap_or_default();
         let refinement = mojito_types::types::nominal_parts(refined)
             .map(|(_, arguments)| arguments.into_owned())
             .unwrap_or_default();
+        let refinement_view = info.view_arguments(&refinement).into_owned();
         let defined: Vec<bool> = decls
             .iter()
             .enumerate()
-            .map(|(index, _)| binders.get(index) != refinement.get(index))
+            .map(|(index, _)| binders.get(index) != refinement_view.get(index))
             .collect();
         let defining = |arguments: &[TyArg]| AssocBindings {
             types: ParamDecl::aligned_pairs(decls, arguments)
@@ -5742,7 +5752,7 @@ impl Checker {
             .iter()
             .map(|(pattern, actual)| {
                 (
-                    substitute_assoc(pattern, &defining(&refinement)),
+                    substitute_assoc(pattern, &defining(&refinement_view)),
                     actual.clone(),
                 )
             })
@@ -5763,9 +5773,10 @@ impl Checker {
         // parameter uninferred.
         let spelled_own =
             bracket_bindings(&format!("{name}.__init__"), &sig.decls(), explicit, None)?;
-        for (index, ((decl, argument), defined)) in ParamDecl::aligned_pairs(decls, &refinement)
-            .zip(&defined)
-            .enumerate()
+        for (index, ((decl, argument), defined)) in
+            ParamDecl::aligned_pairs(decls, &refinement_view)
+                .zip(&defined)
+                .enumerate()
         {
             let spelled = known
                 .as_ref()

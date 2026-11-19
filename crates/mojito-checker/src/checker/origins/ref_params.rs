@@ -164,7 +164,7 @@ impl Checker {
             match ty.kind() {
                 struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                     self.structs.get(name).is_some_and(|info| {
-                        let subst = struct_subst(&info.decls(), arguments);
+                        let subst = struct_subst(&info.params, arguments);
                         info.fields
                             .iter()
                             .any(|(_, field)| contains_type_parameter(&substitute(field, &subst)))
@@ -235,7 +235,7 @@ impl Checker {
                     let Some(info) = checker.structs.get(name) else {
                         return;
                     };
-                    let subst = struct_subst(&info.decls(), arguments);
+                    let subst = struct_subst(&info.params, arguments);
                     let own: Bindings = info
                         .instance_origin_bindings(arguments)
                         .into_iter()
@@ -350,7 +350,7 @@ impl Checker {
                         return false;
                     }
                     let result = checker.structs.get(name).is_some_and(|info| {
-                        let subst = struct_subst(&info.decls(), args);
+                        let subst = struct_subst(&info.params, args);
                         info.fields
                             .iter()
                             .map(|(_, field)| substitute(field, &subst))

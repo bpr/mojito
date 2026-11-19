@@ -493,7 +493,7 @@ impl MirDeclarations {
         let (declaration, arguments) = self.struct_instance(ty)?;
         mojito_types::types::struct_field_types(
             &declaration.argument_view(),
-            arguments,
+            &declaration.view_arguments(arguments),
             &declaration.fields,
         )
     }
@@ -638,7 +638,7 @@ impl MirDeclarations {
                             ) || row_holds_at(
                                 &row.conditions,
                                 &declaration.argument_view(),
-                                arguments,
+                                &declaration.view_arguments(arguments),
                                 &|ty, trait_name| self.passability_conformance(ty, trait_name),
                             ) == Some(true))
                     })
@@ -686,7 +686,7 @@ impl MirDeclarations {
                 row_holds_at(
                     &row.conditions,
                     &declaration.argument_view(),
-                    arguments,
+                    &declaration.view_arguments(arguments),
                     &|ty, trait_name| self.passability_conformance(ty, trait_name),
                 )
             })
@@ -777,7 +777,7 @@ impl MirDeclarations {
                     && row_holds_at(
                         &row.conditions,
                         &declaration.argument_view(),
-                        arguments,
+                        &declaration.view_arguments(arguments),
                         &|_, _| None,
                     ) == Some(true)
             })
@@ -819,7 +819,7 @@ impl MirDeclarations {
                     row_holds_at(
                         &row.conditions,
                         &declaration.argument_view(),
-                        arguments,
+                        &declaration.view_arguments(arguments),
                         &|_, _| None,
                     )
                 }) {

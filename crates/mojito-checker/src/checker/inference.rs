@@ -2691,8 +2691,11 @@ impl Checker {
             .get("__init__")?
             .iter()
             .find(|sig| is_literal(&sig.names, sig.variadic.is_some()))?;
-        let struct_arguments =
-            super::comptime_validation::positional_pack_arguments(&info.decls(), arguments);
+        let struct_arguments = super::comptime_validation::positional_pack_arguments(
+            &info.decls(),
+            &info.view_arguments(arguments),
+        )
+        .into_owned();
         let mut environment = ConstraintEnvironment::declared(&sig.decls(), &[]);
         environment.bind_declared(&info.decls(), &struct_arguments);
         let available = sig.availability.iter().try_for_each(|constraint| {

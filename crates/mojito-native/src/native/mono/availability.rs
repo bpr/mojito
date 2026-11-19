@@ -338,7 +338,11 @@ impl Specializer<'_> {
                 StructTraitRule::Always => return Some(true),
             };
         let mut bindings = self.base_bindings();
-        bind_struct_arguments(&template.argument_view(), &arguments, &mut bindings)?;
+        bind_struct_arguments(
+            &template.argument_view(),
+            &template.view_arguments(&arguments),
+            &mut bindings,
+        )?;
         // A conformance that depends on itself proves nothing.
         let key = (name.to_string(), trait_name.to_string());
         if !visiting.insert(key.clone()) {

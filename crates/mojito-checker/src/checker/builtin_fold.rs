@@ -933,8 +933,12 @@ impl Checker {
         }
         let (owner, arguments) = mojito_types::types::nominal_parts(&refined)?;
         let owner = mojito_symbol::symbol::specialization_template(owner).unwrap_or(owner);
-        let decls = &self.structs.get(owner)?.decls();
-        let fields = mojito_types::types::struct_field_types(decls, &arguments, &declared)?;
+        let info = self.structs.get(owner)?;
+        let fields = mojito_types::types::struct_field_types(
+            &info.decls(),
+            &info.view_arguments(&arguments),
+            &declared,
+        )?;
         Some((refined.clone(), fields.into_owned()))
     }
 

@@ -3979,8 +3979,10 @@ impl Checker {
                     return BuiltinFold::Unbound;
                 };
                 let decls = info.decls().into_owned();
+                let instance_args = info.view_arguments(instance_args);
                 let declared =
-                    mojito_types::types::declared_pack_arguments(owner, &decls, instance_args);
+                    mojito_types::types::declared_pack_arguments(owner, &decls, &instance_args)
+                        .into_owned();
                 if self
                     .bind_declared(&mut bindings, &decls, &declared)
                     .is_err()
@@ -4096,9 +4098,12 @@ impl Checker {
             Some(struct_ty)
                 if let Some((owner, instance_args)) = struct_ty.as_non_simd_struct() =>
             {
-                let decls = self.structs.get(template_name(owner))?.decls().into_owned();
+                let info = self.structs.get(template_name(owner))?;
+                let decls = info.decls().into_owned();
+                let instance_args = info.view_arguments(instance_args);
                 let declared =
-                    mojito_types::types::declared_pack_arguments(owner, &decls, instance_args);
+                    mojito_types::types::declared_pack_arguments(owner, &decls, &instance_args)
+                        .into_owned();
                 Some((decls, declared))
             }
             _ => None,
@@ -4398,7 +4403,10 @@ impl Checker {
                         (&decls, &bound.arguments),
                         (
                             &info.decls(),
-                            &positional_pack_arguments(&info.decls(), &instance_args),
+                            &positional_pack_arguments(
+                                &info.decls(),
+                                &info.view_arguments(&instance_args),
+                            ),
                         ),
                     ],
                 )

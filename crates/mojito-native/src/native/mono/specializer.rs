@@ -1653,8 +1653,12 @@ impl<'a> Specializer<'a> {
             let Some((name, arguments)) = mojito_types::types::nominal_parts(&ty) else {
                 return Err(unresolved("an instance that is no struct", instance));
             };
-            bind_ty_args(&owner.argument_view(), &arguments, &mut instance_bindings)
-                .map_err(|error| self.error(Some(template), error))?;
+            bind_ty_args(
+                &owner.argument_view(),
+                &owner.view_arguments(&arguments),
+                &mut instance_bindings,
+            )
+            .map_err(|error| self.error(Some(template), error))?;
             let template_name = nominal_template(name).to_string();
             instance_bindings.self_instance = Some((template_name, ty));
         }
@@ -4103,7 +4107,12 @@ impl<'a> Specializer<'a> {
             return Ok(());
         };
         let mut bindings = self.base_bindings();
-        bind_ty_args(&template.argument_view(), &arguments, &mut bindings).map_err(|e| {
+        bind_ty_args(
+            &template.argument_view(),
+            &template.view_arguments(&arguments),
+            &mut bindings,
+        )
+        .map_err(|e| {
             self.error(
                 Some(owner),
                 format!("monomorphizing struct `{}`: {e}", template.name),
@@ -4147,7 +4156,12 @@ impl<'a> Specializer<'a> {
             return Ok(());
         };
         let mut bindings = self.base_bindings();
-        bind_ty_args(&template.argument_view(), &arguments, &mut bindings).map_err(|e| {
+        bind_ty_args(
+            &template.argument_view(),
+            &template.view_arguments(&arguments),
+            &mut bindings,
+        )
+        .map_err(|e| {
             self.error(
                 Some(owner),
                 format!("monomorphizing struct `{}`: {e}", template.name),
@@ -4427,7 +4441,12 @@ impl<'a> Specializer<'a> {
             return Ok(None);
         }
         let mut bindings = self.base_bindings();
-        bind_ty_args(&template.argument_view(), arguments, &mut bindings).map_err(|e| {
+        bind_ty_args(
+            &template.argument_view(),
+            &template.view_arguments(arguments),
+            &mut bindings,
+        )
+        .map_err(|e| {
             self.error(
                 Some(owner),
                 format!("monomorphizing struct `{template_name}`: {e}"),

@@ -1819,7 +1819,7 @@ impl Checker {
             let Some(info) = checker.structs.get(current_name) else {
                 return Ok(());
             };
-            let subst = struct_subst(&info.decls(), args);
+            let subst = struct_subst(&info.params, args);
             for (_, field_ty) in info.fields.clone() {
                 visit_field(checker, root, &substitute(&field_ty, &subst), visiting)?;
             }
@@ -2258,7 +2258,9 @@ impl Checker {
                     // Copyable proof strong enough to change a method ABI.
                     return false;
                 };
-                let arguments = positional_pack_arguments(&info.decls(), arguments);
+                let arguments =
+                    positional_pack_arguments(&info.decls(), &info.view_arguments(arguments))
+                        .into_owned();
                 let environment = ConstraintEnvironment::declared(&info.decls(), &arguments);
                 if let Some(methods) = info.methods.get("__copyinit__") {
                     // A declared copy initializer suppresses the fieldwise copy
@@ -2423,7 +2425,8 @@ impl Checker {
                 let Ok(condition) = condition.compiled() else {
                     return false;
                 };
-                let args = positional_pack_arguments(&info.decls(), args);
+                let args = positional_pack_arguments(&info.decls(), &info.view_arguments(args))
+                    .into_owned();
                 let environment = ConstraintEnvironment::declared(&info.decls(), &args);
                 self.eval_constraint_under_assumption(condition, &environment, assumption, visiting)
             })
@@ -3238,7 +3241,8 @@ impl Checker {
         };
         // A sole variadic parameter binds every positional argument as one
         // pack.
-        let arguments = positional_pack_arguments(&info.decls(), args);
+        let arguments =
+            positional_pack_arguments(&info.decls(), &info.view_arguments(args)).into_owned();
         let environment = ConstraintEnvironment::declared(&info.decls(), &arguments);
         match self.constraint_verdict(condition, &environment) {
             Ok(ConstraintVerdict::Proven) => Conformance::Proven,

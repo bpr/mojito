@@ -2132,7 +2132,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (the binders an instance holds an argument for, each origin in place),
   `place_origins` (the one builder from an argument view and origins),
   and `aligned_pairs`/`aligned_arguments`/`aligned_argument` (a list of
-  binders paired with an instance's arguments by kind); MIR text 1.206's
+  binders paired with an instance's arguments by kind, a struct's whole
+  declared list with an instance of any shape, an erased one or one
+  without its `mut=` slots included); `instance_argument_view` is an
+  instance's arguments for its argument binders, which the checker reads
+  through `StructInfo::view_arguments` and MIR and the elaborator through
+  `StructDeclaration::view_arguments`; MIR text 1.206's
   `nested::upgrade_struct_instance_arguments` moves an older artifact's
   origin tail into place. `checker/origins/transfer.rs` owns the
   carried source (`SigOrigin::Carried`, recorded by

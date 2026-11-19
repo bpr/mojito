@@ -28,7 +28,8 @@ impl Specializer<'_> {
         let position = view
             .iter()
             .position(|decl| matches!(decl, ParamDecl::Value { name, .. } if name == field))?;
-        let TyArg::Val(value) = ParamDecl::aligned_argument(&view, type_args, position)? else {
+        let type_args = struct_decl.view_arguments(type_args);
+        let TyArg::Val(value) = ParamDecl::aligned_argument(&view, &type_args, position)? else {
             return None;
         };
         match value {

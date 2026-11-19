@@ -196,6 +196,13 @@ impl StructDeclaration {
         ParamDecl::argument_view(&self.param_decls)
     }
 
+    /// The arguments `arguments`, an instance of the struct, give its
+    /// argument binders ([`Self::argument_view`]), position by position
+    /// ([`ParamDecl::instance_argument_view`]).
+    pub fn view_arguments<'a>(&self, arguments: &'a [TyArg]) -> std::borrow::Cow<'a, [TyArg]> {
+        ParamDecl::instance_argument_view(&self.param_decls, arguments)
+    }
+
     /// The binders an instance of the struct holds an argument for, origin
     /// binders in place ([`ParamDecl::instance_binders`]).
     pub fn instance_binders(&self) -> impl Iterator<Item = &ParamDecl> {
@@ -366,14 +373,26 @@ impl StructDeclaration {
     pub fn associated_type(&self, arguments: &[TyArg], name: &str, args: &[TyArg]) -> Option<Ty> {
         let context = ParamContext::detached();
         let mut bindings = ParamBindings::new();
-        let declared: Vec<_> = arguments
+        let pairs: Vec<_> = ParamDecl::aligned_pairs(&self.param_decls, arguments)
+            .filter(|(decl, _)| !decl.is_origin())
+            .collect();
+        let bound = pairs
+            .iter()
+            .filter(|(decl, _)| decl.is_argument_binder(&self.param_decls))
+            .count();
+        let spelled = arguments
             .iter()
             .filter(|argument| !matches!(argument, TyArg::Origin(_)))
-            .collect();
-        if declared.len() != self.argument_binders().count() {
+            .count();
+        if bound != self.argument_binders().count() || pairs.len() != spelled {
             return None;
         }
-        for (decl, argument) in self.argument_binders().zip(declared) {
+        for (decl, argument) in pairs {
+            if decl.is_origin_mutability_binder(&self.param_decls)
+                && matches!(argument, TyArg::Val(CtValue::Deferred(_)))
+            {
+                continue;
+            }
             match (decl, argument) {
                 (
                     ParamDecl::Type {

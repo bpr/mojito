@@ -997,7 +997,9 @@ impl Checker {
     ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
         use mojito_ast::ast::ParamArg;
         let (target, arguments) = ty.kind().as_non_simd_struct()?;
-        let decls = &self.structs.get(target)?.decls();
+        let info = self.structs.get(target)?;
+        let decls = &info.decls();
+        let arguments = &*info.view_arguments(arguments);
         let raw = decls.iter().any(|decl| {
             matches!(decl, ParamDecl::Value { ty, variadic: false, .. }
                 if matches!(ty.kind(), TyKind::ParamList(_)))

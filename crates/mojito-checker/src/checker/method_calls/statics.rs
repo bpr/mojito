@@ -429,9 +429,12 @@ impl Checker {
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             let declared_instantiation =
                 method_declared_arguments(sig, &method_arguments, &declared_arguments);
-            if let Err(failure) =
-                self.method_constraint_result(sig, &method_arguments, &info.decls(), tyargs)
-            {
+            if let Err(failure) = self.method_constraint_result(
+                sig,
+                &method_arguments,
+                &info.decls(),
+                &info.view_arguments(tyargs),
+            ) {
                 if single_candidate
                     && availability_failure.is_none()
                     && self
