@@ -1212,7 +1212,7 @@ impl Checker {
     /// Origin[mut=m]`, `o: ImmOrigin`, `o: O[True]`), with the mutability
     /// its `mut` argument fixes or names, or an `OriginSet` one. `None` for
     /// any other parameter, a trait-bounded one included.
-    fn origin_binder_decl(
+    pub(super) fn origin_binder_decl(
         &self,
         tp: &mojito_ast::ast::TypeParam,
         index: usize,
@@ -1260,13 +1260,14 @@ impl Checker {
             if !self.is_library_origin(name) {
                 return None;
             }
-            if args.is_empty() {
-                None
-            } else {
-                let decls = &self.structs.get(name)?.params;
-                let (bound, _) = self.resolve_partial_use_params(name, decls, args).ok()?;
-                bound.into_iter().next().flatten()
-            }
+            // A `mut` argument naming a binder this scope does not hold
+            // (an enclosing declaration's, read after it closed) leaves the
+            // mutability symbolic: the type is still `Origin`.
+            let decls = &self.structs.get(name)?.params;
+            (!args.is_empty())
+                .then(|| self.resolve_partial_use_params(name, decls, args).ok())
+                .flatten()
+                .and_then(|(bound, _)| bound.into_iter().next().flatten())
         };
         Some(match &mutability {
             Some(TyArg::Val(CtValue::Bool(fixed))) => OriginMutability::Fixed(*fixed),

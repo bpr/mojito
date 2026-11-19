@@ -1124,27 +1124,14 @@ impl Checker {
                     })
                     .into());
                 }
-                let (index, parameter) = self
-                    .enclosing_type_params
-                    .iter()
-                    .enumerate()
-                    .find(|(_, parameter)| {
-                        parameter.name == *origin_name && parameter.bounds.as_slice() == ["Origin"]
-                    })
+                let (decl, id) = self
+                    .origin_binder(&self.enclosing_type_params, &origin_name)
+                    .filter(|(decl, _)| !decl.is_origin_set())
                     .ok_or_else(|| TypeError::UndefinedVariable(origin_name.clone()))?;
-                let mutability = match parameter.origin_mutability.as_ref().map(|e| &e.kind) {
-                    Some(ExprKind::Bool(true)) => mojito_types::origin::Mutability::Mutable,
-                    Some(ExprKind::Bool(false)) => mojito_types::origin::Mutability::Immutable,
-                    _ => mojito_types::origin::Mutability::Param(
-                        mojito_types::origin::OriginParamId(index as u32),
-                    ),
-                };
                 TyKind::Ref(mojito_types::origin::RefTy {
                     referent: self.resolve_ty_from_anno(referent)?,
-                    origin: mojito_types::origin::Origin::Param(
-                        mojito_types::origin::OriginParamId(index as u32),
-                    ),
-                    mutability,
+                    origin: mojito_types::origin::Origin::Param(id),
+                    mutability: super::generics::origin_binder_mutability(&decl, id),
                 })
                 .into()
             }
@@ -1352,10 +1339,17 @@ impl Checker {
         // place; it lowers to the symbolic `Origin::SelfParam`, resolved to the
         // concrete receiver origin once the base is a conforming struct. Concrete
         // substitution and per-kind argument validation happen there.
+        let origins: Vec<bool> = params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| !param.infer_only)
+            .map(|(index, _)| self.origin_binder_at(&params, index).is_some())
+            .collect();
         let arguments = explicit
             .iter()
+            .zip(origins)
             .zip(args)
-            .map(|(param, arg)| match (arg, &declared) {
+            .map(|((param, origin), arg)| match (arg, &declared) {
                 (mojito_ast::ast::ParamArg::Value(value), Some(decls))
                     if decls.iter().any(|decl| {
                         decl.name() == param.name && matches!(decl, ParamDecl::Value { .. })
@@ -1363,7 +1357,7 @@ impl Checker {
                 {
                     self.eval_associated_ct(value).map(TyArg::Val)
                 }
-                _ => self.lower_assoc_application_arg(param, arg),
+                _ => self.lower_assoc_application_arg(param, origin, arg),
             })
             .collect::<Result<Vec<_>, _>>()?;
         // A concrete struct base instantiates the member here and now (a conformer
@@ -1534,25 +1528,22 @@ impl Checker {
         self.structs
             .get(struct_name)
             .and_then(|info| info.parameterized_associated.get(name))
-            .is_some_and(|member| {
-                !member
-                    .params
-                    .iter()
-                    .any(|param| param.is_erased_origin_param(&member.params))
-            })
+            .is_some_and(|member| !self.declares_origin_metadata(&member.params))
     }
 
     /// Lower one application argument of a parameterized associated type into a
     /// checked `TyArg`, dispatched by the declared parameter's kind: an origin
     /// parameter takes an `origin_of(...)`/builtin origin, a value parameter a
-    /// compile-time value, and a type parameter a type.
+    /// compile-time value, and a type parameter a type. `origin` tells
+    /// whether `param` is an origin binder ([`Self::origin_binder_at`]).
     fn lower_assoc_application_arg(
         &self,
         param: &mojito_ast::ast::TypeParam,
+        origin: bool,
         argument: &mojito_ast::ast::ParamArg,
     ) -> Result<TyArg, TypeError> {
         use mojito_ast::ast::ParamArg;
-        if is_origin_parameter(param) {
+        if origin {
             return match self.explicit_origin_argument(argument) {
                 Ok(origin) => Ok(TyArg::Origin(origin)),
                 // A signature may name a parameter's place only the body can
@@ -4440,20 +4431,15 @@ impl Checker {
         &self,
         name: &str,
     ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-        use mojito_types::origin::{Mutability, OriginParamId, PointerOrigin};
+        use mojito_types::origin::{OriginParamId, PointerOrigin};
 
-        let (index, parameter) = self
+        let (index, decl) = self
             .enclosing_origin_type_param(name)
             .ok_or_else(|| TypeError::UnknownSelfParam(name.to_string()))?;
         let id = OriginParamId(index);
-        let mutability = match parameter.origin_mutability.as_ref().map(|e| &e.kind) {
-            Some(ExprKind::Bool(true)) => Mutability::Mutable,
-            Some(ExprKind::Bool(false)) => Mutability::Immutable,
-            _ => Mutability::Param(id),
-        };
         Ok(PointerOrigin::Param {
             id,
-            mutability,
+            mutability: super::generics::origin_binder_mutability(&decl, id),
             interior: Vec::new(),
             subtree: false,
         })
@@ -5622,15 +5608,6 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         TyKind::LitRefPack { elements, .. } => elements.iter().any(type_is_symbolic),
         TyKind::Ref(reference) => type_is_symbolic(&reference.referent),
     }
-}
-
-/// Append an interior-generation tag to a tracked pointer origin — the
-/// resolution of a `._get_owned_interior["tag"]` projection in a `Pointer`
-/// origin argument. Untracked provenances have no place to project into.
-/// Whether a parameterized member's own parameter is an origin
-/// (`o: Origin[mut=m]`).
-pub(super) fn is_origin_parameter(param: &mojito_ast::ast::TypeParam) -> bool {
-    matches!(param.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
 }
 
 /// Whether a parameterized member's own parameter is a value (`n: Int`).

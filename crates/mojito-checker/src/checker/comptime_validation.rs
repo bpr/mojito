@@ -7424,10 +7424,7 @@ impl ApplicableShape<'_> {
             .type_params
             .iter()
             .filter(|binder| !binder.is_erased_origin_param(self.type_params))
-            .map(|binder| {
-                (binder.callable_bound.is_none() && binder.origin_mutability.is_none())
-                    .then(|| binder.name.clone())
-            })
+            .map(|binder| binder.callable_bound.is_none().then(|| binder.name.clone()))
             .collect::<Option<_>>()?;
         let slot = |ty: &SourceType| match ty {
             SourceType::SelfType => Some(SlotType::Owner),

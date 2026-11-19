@@ -2821,31 +2821,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2340 Checker sites holding a classified parameter list still
-  read the origin binder's AST bound**
-
-  After R2339 the check classifies an origin binder by type, but about
-  thirty checker sites holding `StructInfo::params` or a classified list
-  re-test `bounds == ["Origin"]` or `TypeParam::origin_mutability`.
-  - Sites: `constraints.rs`
-    (four, including `assoc_param_kind`), `statements.rs` (three),
-    `generics.rs` (`bound_origin_mutability` and one more),
-    `type_resolution.rs` (including `is_origin_parameter`), `traits.rs`,
-    `trait_defaults.rs` (two), and `comptime_validation.rs`.
-  - Lever: one lookup in `checker/generics.rs` returning a name's
-    `ParamDecl::Origin` and its `OriginParamId`, used by every site.
-  - Delete `is_origin_parameter` and the origin arm of `assoc_param_kind`.
-  - `StructInfo::source_params` no longer serves origin arguments (R763).
-  - Stop: `rg '"Origin"|"OriginSet"|origin_mutability'
-    crates/mojito-checker/src` finds nothing outside `checker/origins/`
-    and R2339's resolution.
-  - Probe: `assets/ok/imm_origin_binders.mojo`,
-    `assets/ok/origin_comptime_alias.mojo`, and the struct-origin
-    fixtures `rg -l 'Origin\[mut=' assets/ok` lists.
-  - Planned in R2139 (2026-11-18).
-  - Depends on R2339.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2341 An origin signature counts the callee's origin binders by
   their AST bound**
 
@@ -9464,9 +9439,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     these phases that spelling for an alias-typed binder, a parameterized
     alias applied to its arguments (`[o: O[True]]`) included; it goes
     with the rest.
-  - Other readers: `module.rs` (two), `trait_defaults.rs`,
-    `constraints.rs`, `comptime_validation.rs`, and
-    `type_resolution.rs` through the same predicate.
+  - Other readers: `module.rs` (two), and the checker's prescan in
+    `check_program`, which runs before any struct registers, so
+    `Checker::origin_binder` cannot resolve `std.origin`'s `Origin` while
+    std itself is checked.
+  - Probe: `default_shapes` and `unforwardable` (`trait_defaults.rs`)
+    shape a trait default's forwarding through the predicate.
+  - Probe: `ApplicableShape::applicable` (`comptime_validation.rs`)
+    erases a compile-time-applicable function's origin binders through
+    it.
   - `InstalledInterfaces::struct_parameters` (`checker/interface.rs`)
     hands a package struct's `StructInfo::source_params` to
     `auto_parameterize` for the same reason. Once this and R1649 land,

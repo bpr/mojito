@@ -3510,6 +3510,18 @@ impl ParamDecl {
         matches!(self, Self::Origin { .. })
     }
 
+    /// Whether this is an `OriginSet` binder, the origins a capturing
+    /// callable's environment holds, rather than one `Origin`.
+    pub const fn is_origin_set(&self) -> bool {
+        matches!(
+            self,
+            Self::Origin {
+                mutability: OriginMutability::Set,
+                ..
+            }
+        )
+    }
+
     /// Whether this is the `Bool` binder a sibling origin binder among
     /// `decls` names as its mutability (`mut: Bool, //, o: Origin[mut=mut]`).
     pub fn is_origin_mutability_binder(&self, decls: &[Self]) -> bool {

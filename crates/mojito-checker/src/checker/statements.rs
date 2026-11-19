@@ -4108,16 +4108,14 @@ impl Checker {
             // slot, so a clause reads it by name and a call binds it to the
             // mutability inferred for its origin.
             if let Some(scope) = this.param_scopes.borrow_mut().values.last_mut() {
-                for parameter in type_params
-                    .iter()
-                    .filter(|parameter| parameter.is_origin_mutability_binder(type_params))
-                {
-                    let reference = ParamRef::unbound(&parameter.name);
+                for parameter in ParamDecl::mutability_binders(&decls) {
+                    let name = parameter.name();
+                    let reference = ParamRef::unbound(name);
                     scope.insert(
-                        parameter.name.clone(),
+                        name.to_string(),
                         ParamContext::detached().decl_ref(
                             reference.id,
-                            &parameter.name,
+                            name,
                             MetaTy::Value(Ty::bool()),
                         ),
                     );
@@ -4671,10 +4669,7 @@ impl Checker {
         // The registry binds application arguments through classified
         // `ParamDecl`s, which erase origin parameters; reject them instead of
         // silently dropping a binder the template could still mention.
-        if type_params.iter().any(|parameter| {
-            matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-                || parameter.is_origin_mutability_binder(type_params)
-        }) {
+        if self.declares_origin_metadata(type_params) {
             return Err(TypeError::Unsupported(
                 "origin parameters on a generic comptime alias".to_string(),
             ));

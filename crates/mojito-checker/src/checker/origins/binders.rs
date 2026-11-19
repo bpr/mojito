@@ -390,15 +390,11 @@ impl Checker {
             _ => None,
         };
         if let Some(name) = type_arg_name {
-            if let Some((index, parameter)) = self.enclosing_origin_type_param(name) {
-                let mutability = match parameter.origin_mutability.as_ref().map(|e| &e.kind) {
-                    Some(ExprKind::Bool(true)) => Mutability::Mutable,
-                    Some(ExprKind::Bool(false)) => Mutability::Immutable,
-                    _ => Mutability::Param(mojito_types::origin::OriginParamId(index)),
-                };
+            if let Some((index, decl)) = self.enclosing_origin_type_param(name) {
+                let id = mojito_types::origin::OriginParamId(index);
                 return Ok((
-                    Origin::Param(mojito_types::origin::OriginParamId(index)),
-                    Some(mutability),
+                    Origin::Param(id),
+                    Some(super::super::generics::origin_binder_mutability(&decl, id)),
                 ));
             }
             return match name.as_str() {
@@ -447,13 +443,10 @@ impl Checker {
             return Ok((origin, Some(Mutability::Immutable)));
         }
         let named_param_mutability = |name: &str| match self.enclosing_origin_type_param(name) {
-            Some((index, parameter)) => Some(
-                match parameter.origin_mutability.as_ref().map(|e| &e.kind) {
-                    Some(ExprKind::Bool(true)) => Mutability::Mutable,
-                    Some(ExprKind::Bool(false)) => Mutability::Immutable,
-                    _ => Mutability::Param(mojito_types::origin::OriginParamId(index)),
-                },
-            ),
+            Some((index, decl)) => Some(super::super::generics::origin_binder_mutability(
+                &decl,
+                mojito_types::origin::OriginParamId(index),
+            )),
             None => match name {
                 "ImmStaticOrigin" | "ImmUntrackedOrigin" | "ImmUnsafeAnyOrigin" => {
                     Some(Mutability::Immutable)
@@ -614,28 +607,24 @@ impl Checker {
         }
     }
 
-    /// The in-scope `Origin`-bounded binder `name` with its index in the
-    /// list that declares it, the `OriginParamId` domain of `ref[o]`
-    /// annotations: the innermost function type being lowered declares its
-    /// own binders over its own signature, before the enclosing
-    /// declaration's ([`Checker::callable_type_params`]).
+    /// The in-scope origin binder `name` (an `Origin`, never an
+    /// `OriginSet`) with its index in the list that declares it, the
+    /// `OriginParamId` domain of `ref[o]` annotations, classified by its
+    /// annotation's type ([`Checker::origin_binder`]): the innermost
+    /// function type being lowered declares its own binders over its own
+    /// signature, before the enclosing declaration's
+    /// ([`Checker::callable_type_params`]).
     pub(in crate::checker) fn enclosing_origin_type_param(
         &self,
         name: &str,
-    ) -> Option<(u32, mojito_ast::ast::TypeParam)> {
+    ) -> Option<(u32, ParamDecl)> {
         let find = |params: &[mojito_ast::ast::TypeParam]| {
-            params
-                .iter()
-                .enumerate()
-                .find(|(_, parameter)| {
-                    parameter.name == name && parameter.bounds.as_slice() == ["Origin"]
-                })
-                .map(|(index, parameter)| (index as u32, parameter.clone()))
+            self.origin_binder(params, name)
+                .filter(|(decl, _)| !decl.is_origin_set())
+                .map(|(decl, id)| (id.0, decl))
         };
-        self.callable_type_params
-            .borrow()
-            .last()
-            .and_then(|own| find(own))
+        let own = self.callable_type_params.borrow().last().cloned();
+        own.and_then(|own| find(&own))
             .or_else(|| find(&self.enclosing_type_params))
     }
 }

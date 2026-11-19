@@ -1548,6 +1548,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker's sites outside its origin analysis — stored reference
+  fields, `Pointer` origin arguments, parameterized members' and generic
+  aliases' origin parameters, and a parametric origin's bound mutability —
+  now find an origin binder by its annotation's resolved type, as the
+  check classifies it, instead of re-reading its `Origin` bound spelling.
+  The prescan of trait defaults and compile-time-applicable functions
+  still reads the spelling (R2342) (R2340).
+
 - A call's or function value's bracket now binds an explicit origin
   argument in its binder's slot of the callee's whole declared list, and the
   call substitutes the bound origin into the signature after binding, as

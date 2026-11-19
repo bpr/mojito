@@ -3644,10 +3644,12 @@ impl ParameterizedMember {
     /// The member as the checked declaration fact names it: its explicit
     /// parameters keyed exactly as `resolve_parameterized_member` binds an
     /// application's arguments. `None` for a value member, which is
-    /// [`Self::checked_value_fact`].
+    /// [`Self::checked_value_fact`]. `is_origin` tells whether a parameter
+    /// of a list is an origin binder ([`Checker::origin_binder_at`]).
     fn checked_fact(
         &self,
         name: &str,
+        is_origin: impl Fn(&[mojito_ast::ast::TypeParam], usize) -> bool,
     ) -> Option<mojito_checked::declaration::ParameterizedAssociatedType> {
         use mojito_checked::declaration::AssociatedParameter;
 
@@ -3660,7 +3662,7 @@ impl ParameterizedMember {
             .enumerate()
             .filter(|(_, param)| !param.infer_only)
             .map(|(index, param)| {
-                if type_resolution::is_origin_parameter(param) {
+                if is_origin(&self.params, index) {
                     AssociatedParameter::Origin(mojito_types::origin::OriginParamId(
                         (self.param_base + index) as u32,
                     ))

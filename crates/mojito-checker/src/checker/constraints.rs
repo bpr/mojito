@@ -336,7 +336,10 @@ impl Checker {
             // symbolic body cannot be checked until application. This keeps
             // associated `comptime NAME: Type where ... = ...` declarations
             // from silently discarding an invalid declared type.
-            self.push_param_scope_as(&own_decls, member_type_scope(&member_owner, &member.params));
+            let member_scope = member_type_scope(&member_owner, &member.params, |slot| {
+                self.origin_binder_at(&member.params, slot).is_some()
+            });
+            self.push_param_scope_as(&own_decls, member_scope.clone());
             let requirement = member
                 .ty
                 .as_ref()
@@ -348,11 +351,8 @@ impl Checker {
             // traits requiring it are assumed while its body resolves; every
             // application re-checks the clause (`availability`), and a
             // conditional conformance is verified to imply the member's clause.
-            let compiled = self.member_clauses(
-                &own_decls,
-                member_type_scope(&member_owner, &member.params),
-                &member.where_clauses,
-            )?;
+            let compiled =
+                self.member_clauses(&own_decls, member_scope.clone(), &member.where_clauses)?;
             let mut facts = Vec::new();
             for constraint in &compiled {
                 self.guaranteed_facts(constraint, &mut facts);
@@ -389,7 +389,7 @@ impl Checker {
                         let template = self.lower_parameterized_member(
                             &member_owner,
                             &decls,
-                            member_type_scope(&member_owner, &member.params),
+                            member_scope.clone(),
                             &member.params,
                             &member.value,
                             &source_ty,
@@ -409,10 +409,7 @@ impl Checker {
                         // one, unless its annotation declares a value.
                         let spelled_as_type =
                             declared.is_none() && assoc_body_source_type(&member.value).is_ok();
-                        if member.params.iter().any(|parameter| {
-                            parameter.is_origin_mutability_binder(&member.params)
-                                || matches!(assoc_param_kind(parameter), AssocParamKind::Origin)
-                        }) {
+                        if self.declares_origin_metadata(&member.params) {
                             return Err(if declared.is_some() {
                                 TypeError::Unsupported(
                                     "origin parameters on a parameterized comptime value"
@@ -7247,19 +7244,16 @@ pub(super) fn pack_values_projection(expression: &Expr) -> Option<&str> {
     }
 }
 
-/// The parameter kind of one associated-type parameter, classified from its raw
-/// declaration (origin parameters are erased by `classify_params`, so the arity
-/// and template lowering read the raw `TypeParam` directly).
+/// The parameter kind of one associated-type parameter that is not an origin
+/// binder ([`Checker::origin_binder_at`] classifies those), read from its raw
+/// declaration: the arity and template lowering read the raw `TypeParam`.
 pub(super) enum AssocParamKind {
-    Origin,
     Value,
     Type,
 }
 
 pub(super) fn assoc_param_kind(param: &mojito_ast::ast::TypeParam) -> AssocParamKind {
-    if matches!(param.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
-        AssocParamKind::Origin
-    } else if param.value_type.is_some()
+    if param.value_type.is_some()
         || matches!(param.bounds.as_slice(), [only] if scalar_type_name(only).is_some())
     {
         AssocParamKind::Value

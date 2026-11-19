@@ -198,12 +198,16 @@ impl Checker {
                     let mut propagated = Vec::new();
                     crate::checker::origins::collect_origin_params(&origin, &mut propagated);
                     if propagated.is_empty() {
-                        let enclosing = self
-                            .enclosing_type_params
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, parameter)| parameter.bounds.as_slice() == ["Origin"])
-                            .map(|(index, _)| mojito_types::origin::OriginParamId(index as u32))
+                        let enclosing = (0..self.enclosing_type_params.len())
+                            .filter(|index| {
+                                self.origin_binder_at(&self.enclosing_type_params, *index)
+                                    .is_some_and(|decl| !decl.is_origin_set())
+                            })
+                            .map(|index| {
+                                mojito_types::origin::OriginParamId(
+                                    u32::try_from(index).unwrap_or(u32::MAX),
+                                )
+                            })
                             .collect::<Vec<_>>();
                         if let [id] = enclosing.as_slice() {
                             propagated.push(*id);

@@ -270,18 +270,22 @@ pub(super) fn builtin_body_binder(symbol: &str, slot: usize, name: &str) -> Para
 
 /// The type-parameter scope a parameterized associated member's own
 /// `[params]` open while its body is lowered ([`member_binder`] numbering).
+/// `is_origin` tells whether a parameter (by its slot) is an origin binder
+/// ([`Checker::origin_binder_at`]), which opens no type.
 pub(super) fn member_type_scope(
     owner: &str,
     params: &[mojito_ast::ast::TypeParam],
+    is_origin: impl Fn(usize) -> bool,
 ) -> HashMap<String, Ty> {
     params
         .iter()
         .enumerate()
-        .filter(|(_, p)| {
-            matches!(
-                super::constraints::assoc_param_kind(p),
-                super::constraints::AssocParamKind::Type
-            )
+        .filter(|(slot, p)| {
+            !is_origin(*slot)
+                && matches!(
+                    super::constraints::assoc_param_kind(p),
+                    super::constraints::AssocParamKind::Type
+                )
         })
         .map(|(slot, p)| {
             (

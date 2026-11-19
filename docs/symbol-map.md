@@ -3384,7 +3384,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   callable type's own list over its signature through
   `Checker::callable_type_params`, read first by
   `enclosing_origin_type_param`, `origins/binders.rs`). A function whose
-  only binders are origins stays a `Func`.
+  only binders are origins stays a `Func`. A checker site holding a
+  declared AST list (`enclosing_type_params`, a parameterized member's or
+  generic alias's `params`) looks an origin binder up through
+  `Checker::origin_binder`/`origin_binder_at` (`generics.rs`), which
+  classify it through `origin_binder_decl` with its siblings in scope, and
+  `Checker::is_origin_metadata`/`declares_origin_metadata` add the `mut=`
+  binder one names; `generics::origin_binder_mutability` gives a
+  reference's mutability through it.
   `Checker::classify_params` returns the argument view
   (`ParamDecl::{argument_binders, argument_decls, argument_view}`), which
   every consumer aligning binders with arguments reads, while a body's

@@ -970,7 +970,124 @@ fn solve_simd_slot_values(
 }
 
 /// Callable specialization and method-generic instantiation moved from `checker.rs`.
+/// The mutability a reference through the origin binder `decl`
+/// ([`ParamDecl::Origin`], numbered `id`) carries: its fixed `mut`, else
+/// the binder's own symbolic mutability.
+pub(super) const fn origin_binder_mutability(
+    decl: &ParamDecl,
+    id: mojito_types::origin::OriginParamId,
+) -> mojito_types::origin::Mutability {
+    use mojito_types::origin::Mutability;
+    match decl {
+        ParamDecl::Origin {
+            mutability: OriginMutability::Fixed(true),
+            ..
+        } => Mutability::Mutable,
+        ParamDecl::Origin {
+            mutability: OriginMutability::Fixed(false),
+            ..
+        } => Mutability::Immutable,
+        _ => Mutability::Param(id),
+    }
+}
+
 impl Checker {
+    /// The origin binder `name` names in the declared list `params`,
+    /// classified by its annotation's resolved type as the check classifies
+    /// the list ([`Self::origin_binder_at`]): its [`ParamDecl::Origin`] and
+    /// the [`OriginParamId`](mojito_types::origin::OriginParamId) its
+    /// position in `params` is. An `OriginSet` binder is one too.
+    pub(super) fn origin_binder(
+        &self,
+        params: &[mojito_ast::ast::TypeParam],
+        name: &str,
+    ) -> Option<(ParamDecl, mojito_types::origin::OriginParamId)> {
+        params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| param.name == name)
+            .find_map(|(index, _)| {
+                self.origin_binder_at(params, index).map(|decl| {
+                    (
+                        decl,
+                        mojito_types::origin::OriginParamId(
+                            u32::try_from(index).unwrap_or(u32::MAX),
+                        ),
+                    )
+                })
+            })
+    }
+
+    /// The [`ParamDecl::Origin`] `params[index]` declares, `None` for any
+    /// other binder: its annotation resolves with its siblings in scope, so
+    /// an `Origin[mut=m]` names its list's `m` wherever the list is read.
+    pub(super) fn origin_binder_at(
+        &self,
+        params: &[mojito_ast::ast::TypeParam],
+        index: usize,
+    ) -> Option<ParamDecl> {
+        let param = params.get(index)?;
+        self.push_param_scope(&[]);
+        let unresolved: Vec<&str> = params
+            .iter()
+            .filter(|sibling| sibling.name != param.name && !sibling.name.starts_with('*'))
+            .map(|sibling| sibling.name.as_str())
+            .filter(|name| self.value_parameter_in_scope(name).is_none())
+            .collect();
+        if let Some(scope) = self.param_scopes.borrow_mut().values.last_mut() {
+            for name in unresolved {
+                scope.insert(
+                    name.to_string(),
+                    ParamContext::detached().decl_ref(
+                        ParamRef::unbound(name).id,
+                        name,
+                        MetaTy::Value(Ty::bool()),
+                    ),
+                );
+            }
+        }
+        let decl = self.origin_binder_decl(param, index, ParamId::new("$origin_binder", index));
+        self.pop_param_scope();
+        // Leave no dead value level behind: a caller writing into the
+        // innermost value scope writes into its own.
+        let mut scopes = self.param_scopes.borrow_mut();
+        let depth = scopes.types.len();
+        scopes.values.truncate(depth);
+        scopes.packs.truncate(depth);
+        decl
+    }
+
+    /// Whether `params[index]` is origin metadata, which instances and calls
+    /// infer from places rather than bind by position: an origin binder
+    /// ([`Self::origin_binder_at`]), or the value binder a sibling origin
+    /// binder names as its mutability (`m: Bool, //, o: Origin[mut=m]`), as
+    /// [`ParamDecl::is_argument_binder`] reads a classified list.
+    pub(super) fn is_origin_metadata(
+        &self,
+        params: &[mojito_ast::ast::TypeParam],
+        index: usize,
+    ) -> bool {
+        let Some(param) = params.get(index) else {
+            return false;
+        };
+        self.origin_binder_at(params, index).is_some()
+            || (0..params.len()).filter(|peer| *peer != index).any(|peer| {
+                matches!(
+                    self.origin_binder_at(params, peer),
+                    Some(ParamDecl::Origin {
+                        mutability: OriginMutability::Binder(binder),
+                        ..
+                    }) if *binder.name == *param.name
+                )
+            })
+    }
+
+    /// Whether any binder of `params` is origin metadata
+    /// ([`Self::is_origin_metadata`]).
+    pub(super) fn declares_origin_metadata(&self, params: &[mojito_ast::ast::TypeParam]) -> bool {
+        (0..params.len()).any(|index| self.is_origin_metadata(params, index))
+    }
+
     /// [`substitute_at`] for a member of the instance `targs` names (a
     /// receiver's type, or a static call's explicit `View[o]`): the
     /// instance's origin tail binds the struct's origin binders in pointer
@@ -1003,16 +1120,10 @@ impl Checker {
             // A collector's pack origin is `Origin[mut=elt_is_mutable]`, which
             // a `read` collector, the only `VariadicPack` one, binds `False`.
             Origin::Param(id) if id.is_pack_binder() => Some(Mutability::Immutable),
-            Origin::Param(id) => {
-                let binder = self.enclosing_type_params.get(id.0 as usize)?;
-                (binder.bounds.as_slice() == ["Origin"]).then(|| {
-                    match binder.origin_mutability.as_ref().map(|e| &e.kind) {
-                        Some(ExprKind::Bool(true)) => Mutability::Mutable,
-                        Some(ExprKind::Bool(false)) => Mutability::Immutable,
-                        _ => Mutability::Param(*id),
-                    }
-                })
-            }
+            Origin::Param(id) => self
+                .origin_binder_at(&self.enclosing_type_params, id.0 as usize)
+                .filter(|decl| !decl.is_origin_set())
+                .map(|decl| origin_binder_mutability(&decl, *id)),
             _ => None,
         }
     }

@@ -2032,23 +2032,32 @@ impl Checker {
                 let placeholders = parameterized
                     .params
                     .iter()
-                    .filter(|param| !param.infer_only)
-                    .map(|param| match constraints::assoc_param_kind(param) {
-                        constraints::AssocParamKind::Origin => {
-                            Some(TyArg::Origin(mojito_types::origin::Origin::Untracked {
-                                mutable: false,
-                            }))
-                        }
-                        constraints::AssocParamKind::Type => Some(TyArg::Ty(
-                            TyKind::Param {
-                                binder: synthetic_binder(&format!("$placeholder:{}", param.name)),
-                                bounds: param.bounds.clone(),
-                                callable_bound: None,
+                    .enumerate()
+                    .filter(|(_, param)| !param.infer_only)
+                    .map(
+                        |(index, param)| match constraints::assoc_param_kind(param) {
+                            _ if self
+                                .origin_binder_at(&parameterized.params, index)
+                                .is_some() =>
+                            {
+                                Some(TyArg::Origin(mojito_types::origin::Origin::Untracked {
+                                    mutable: false,
+                                }))
                             }
-                            .into(),
-                        )),
-                        constraints::AssocParamKind::Value => None,
-                    })
+                            constraints::AssocParamKind::Type => Some(TyArg::Ty(
+                                TyKind::Param {
+                                    binder: synthetic_binder(&format!(
+                                        "$placeholder:{}",
+                                        param.name
+                                    )),
+                                    bounds: param.bounds.clone(),
+                                    callable_bound: None,
+                                }
+                                .into(),
+                            )),
+                            constraints::AssocParamKind::Value => None,
+                        },
+                    )
                     .collect::<Option<Vec<_>>>();
                 if let Some(placeholders) = placeholders {
                     let instantiated =
@@ -2832,7 +2841,11 @@ impl Checker {
                 let mut members = info
                     .parameterized_associated
                     .iter()
-                    .filter_map(|(member, declared)| declared.checked_fact(member))
+                    .filter_map(|(member, declared)| {
+                        declared.checked_fact(member, |params, index| {
+                            self.origin_binder_at(params, index).is_some()
+                        })
+                    })
                     .collect::<Vec<_>>();
                 members.sort_by(|left, right| left.name.cmp(&right.name));
                 (name.clone(), members)
@@ -4385,13 +4398,7 @@ impl Checker {
         mut params: Vec<ParamDecl>,
         result: Ty,
     ) -> Result<(CtMemberReq, Vec<GenericConstraint>), TypeError> {
-        if member.params.iter().any(|parameter| {
-            parameter.is_origin_mutability_binder(&member.params)
-                || matches!(
-                    constraints::assoc_param_kind(parameter),
-                    constraints::AssocParamKind::Origin
-                )
-        }) {
+        if self.declares_origin_metadata(&member.params) {
             return Err(TypeError::Unsupported(
                 "origin parameters on a parameterized comptime value".to_string(),
             ));
