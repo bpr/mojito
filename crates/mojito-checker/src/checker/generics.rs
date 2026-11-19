@@ -1030,63 +1030,54 @@ impl Checker {
         mojito_types::types::map_origins(ty, &|origin| self.fold_immutable_origin_cast(origin))
     }
 
-    /// Bind the bracket `arguments` against `decls`, a callee's whole
-    /// declared list, as upstream's binder does: an origin argument binds
-    /// its origin binder's declared slot, and every other argument goes to
-    /// the binder of the argument view ([`ParamDecl::argument_binders`]),
-    /// which binds the list by the same rule
-    /// ([`mojito_ast::call::match_parameter_slots`]). An origin's `mut=`
-    /// binder and an `OriginSet` are inferred, never supplied.
-    pub(super) fn bind_origin_arguments(
+    /// The origin arguments among `bound`, a bracket's arguments bound
+    /// against `decls`, the callee's whole declared list, as upstream's
+    /// binder binds them: each in its origin binder's declared slot, read
+    /// back from `explicit` when it resolved them already. An origin's
+    /// `mut=` binder and an `OriginSet` are inferred, never supplied.
+    pub(super) fn bound_bracket_origins(
         &self,
-        name: &str,
         decls: &[ParamDecl],
-        arguments: &[mojito_ast::ast::ParamArg],
-    ) -> Result<OriginBracket, TypeError> {
-        use mojito_ast::ast::ParamArg;
-
-        let whole = !decls.iter().all(|decl| decl.is_argument_binder(decls));
-        if !whole || arguments.is_empty() {
-            return Ok(OriginBracket::view(arguments, whole));
-        }
-        let slots = mojito_ast::call::match_parameter_slots(
-            decls,
-            &mojito_ast::call::bracket_keywords(arguments),
-        )
-        .map_err(|error| error.into_type_error(name))?;
-        let mut bracket = OriginBracket::view(&[], true);
-        for (position, (argument, index)) in arguments.iter().zip(slots).enumerate() {
-            let decl = &decls[index];
-            match decl {
-                ParamDecl::Origin {
-                    origin: id,
-                    mutability,
-                    ..
-                } if *mutability != mojito_types::types::OriginMutability::Set => {
-                    let value = match argument {
-                        ParamArg::Named { value, .. } => value,
-                        other => other,
-                    };
-                    let origin = self.explicit_origin_argument(value)?;
-                    bracket.bind_origin(BoundOrigin {
-                        slot: index,
-                        binder: decl.name().to_string(),
-                        id: *id,
-                        position,
-                        attribute: bracket_attribute(value, &TyArg::Origin(origin.clone())),
-                        origin,
-                    });
-                }
-                _ if decl.is_argument_binder(decls) => bracket.bind(position, argument.clone()),
-                _ => {
-                    return Err(TypeError::Unsupported(format!(
-                        "semantic parameter '{}' is inferred and cannot be supplied explicitly",
-                        decl.name()
-                    )));
+        bound: &[Vec<(usize, &mojito_ast::ast::ParamArg)>],
+        explicit: &ExplicitTypes,
+    ) -> Result<Vec<BoundOrigin>, TypeError> {
+        let mut origins = Vec::new();
+        for (index, (decl, arguments)) in decls.iter().zip(bound).enumerate() {
+            if decl.is_argument_binder(decls) {
+                continue;
+            }
+            for &(position, argument) in arguments {
+                match decl {
+                    ParamDecl::Origin {
+                        origin: id,
+                        mutability,
+                        ..
+                    } if *mutability != mojito_types::types::OriginMutability::Set => {
+                        if let Some(resolved) = explicit.origin(index, position) {
+                            origins.push(resolved.clone());
+                            continue;
+                        }
+                        let origin = self.explicit_origin_argument(argument)?;
+                        origins.push(BoundOrigin {
+                            slot: index,
+                            binder: decl.name().to_string(),
+                            id: *id,
+                            position,
+                            attribute: bracket_attribute(argument, &TyArg::Origin(origin.clone())),
+                            origin,
+                        });
+                    }
+                    _ => {
+                        return Err(TypeError::Unsupported(format!(
+                            "semantic parameter '{}' is inferred and cannot be supplied \
+                             explicitly",
+                            decl.name()
+                        )));
+                    }
                 }
             }
         }
-        Ok(bracket)
+        Ok(origins)
     }
 
     /// `callable` with the origins its bracket bound substituted into its
@@ -1574,27 +1565,20 @@ impl Checker {
         let variadic = bound_variadic.as_ref().or(bracket_variadic.as_ref());
         let kw_variadic = kw_variadic.as_ref();
         if signature.decls().is_empty() {
-            let ordinary = explicit
-                .bracket()
-                .map_or(param_args, |bracket| bracket.ordinary.as_slice());
-            if !ordinary.is_empty() {
-                return Err(TypeError::WrongTypeArgCount {
-                    name: name.to_string(),
-                    expected: 0,
-                    got: ordinary.len(),
-                });
-            }
+            let BoundParameters { attributes, .. } = self.resolve_explicit_use_params(
+                name,
+                &signature.declared,
+                (param_args, &explicit),
+                &[],
+                &[],
+            )?;
             return Ok(MethodInstantiation {
                 params: params.to_vec(),
                 variadic: variadic.cloned(),
                 kw_variadic: kw_variadic.cloned(),
                 subst: HashMap::new(),
                 arguments: Vec::new(),
-                attributes: explicit
-                    .bracket()
-                    .map_or_else(DeclaredAttributes::default, |bracket| {
-                        bracket.declared(DeclaredAttributes::default(), &signature.declared)
-                    }),
+                attributes,
                 origin_bindings,
                 bracket_origins,
             });

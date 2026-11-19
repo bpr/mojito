@@ -719,7 +719,7 @@ policy or data-model responsibilities to focused children:
   Mojo binds one: positional arguments first, each to the next parameter
   that is not infer-only (a pack takes the rest), then each keyword by
   name, an infer-only binder included; the checker's `bracket_bindings`,
-  `bracket_argument_slots`, and `bind_origin_arguments` all use it.
+  `bracket_argument_slots`, and `bound_bracket_origins` all use it.
 - `checker.rs` holds the `Checker` state, constructors, and shared prelude
   types, and coordinates checking; the single `Checker` type's methods are split
   by responsibility across `impl Checker` blocks in the `checker/` submodules —
@@ -1257,12 +1257,13 @@ binder answers its attributes keyed by declaration (`DeclaredAttributes` on
 struct application placing each origin argument the partition kept back in
 its declared slot of the struct's checked list, which also declares a pack's
 implicit list binder (`PartitionedStructArgs::declared`), and an explicit
-specialization placing the generic binder's argument-view slots and each
-origin argument in their binders' slots of the callee's whole declared list
-(`OriginBracket::declared`, from `bind_origin_arguments`, which
-`resolve_explicit_use_params` runs over that list and whose bound origins
-`BoundParameters::origins` returns for the call or value to substitute into
-its signature through `bind_bracket_origins`; a method call's bracket binds
+specialization binding the callee's whole declared list in one pass, each
+origin argument in its origin binder's declared slot and every other in its
+binder's (`bind_bracket_params`, which `resolve_explicit_use_params` runs
+over that list: `bound_bracket_origins` binds the origin arguments, the
+argument view's binders solve to the call's arguments, and the bound
+origins `BoundParameters::origins` returns are substituted into the call's
+or value's signature through `bind_bracket_origins`; a method call's bracket binds
 its method's whole declared list (`MethodSig::declared`) the same way in
 `instantiate_method_generics`, which substitutes the bound origins into the
 method's parameters and result through `bind_origin_tails` before the

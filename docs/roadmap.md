@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2358**.
+Next free ID: **R2359**.
 
 ## Ordered Work
 
@@ -3009,14 +3009,14 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   MutOrigin](p: Pointer[Int, o])` runs, where the pin rejects it ("value
   passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'").
   - `explicit_origin_argument` (`checker/origins/binders.rs`) erases an
-    `ImmOrigin(o)` cast to `o`, so `bind_origin_arguments`
+    `ImmOrigin(o)` cast to `o`, so `bound_bracket_origins`
     (`checker/generics.rs`) binds a `MutOrigin` binder without the
     capability check `accept_origin_argument`
     (`checker/type_resolution.rs`) gives a struct application.
   - Probe: the free call above, and the method call `s.put[ImmOrigin(
     origin_of(a))](Pointer(to=a))` over `def put[o: MutOrigin](self, p:
     Pointer[Int, o])`, which binds through the same binder.
-  - The lever: have `bind_origin_arguments` convert the argument to the
+  - The lever: have `bound_bracket_origins` convert the argument to the
     binder's declared `Origin[mut=…]` type, rejecting an immutable origin
     for a `mut=True` binder as upstream's conversion does.
   - Found while landing R2353 (2026-11-19).
@@ -10695,27 +10695,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2346.
   - Model: Opus, Not Planned.
 
-- [ ] **R2348 A call's bracket binder sees its callee's argument view,
-  where upstream's binds the whole declared list, origin parameters in
-  place**
+- [ ] **R2358 A `#kgen.bind_params` cannot bind an origin binder, where
+  upstream's binds a generator's whole declared list**
 
-  `resolve_explicit_use_params` (`checker/declarations.rs`) takes the
-  whole declared list, but `bind_origin_arguments` (`checker/generics.rs`)
-  binds only the origin arguments there and hands the rest to a binder
-  over `ParamDecl::argument_binders`, whose attributes
-  `OriginBracket::declared` (`checker/type_resolution.rs`) moves to their
-  declared slots afterwards.
-  - Probe: `GenericFuncTy::argument_view`, `MethodSig::decls`, and
-    `Ty::generator_params` are the views each call path, a method's and a
-    `#kgen.bind_params` included, binds against.
-  - The method-call, origin-only-callee, and synthesized-construction
-    causes are R2353, R2351, and R2354; once they land, what remains is
-    `Ty::generator_params`' `#kgen.bind_params` view and the split's
-    deletion.
-  - The lever: have `bind_bracket_params` bind the whole declared list,
-    an origin argument in its binder's slot, and delete `OriginBracket`'s
-    ordinary sub-list.
-  - Depends on R2351, R2353, R2354.
+  A `ParamExpr` has no origin value, so `bind_generator`
+  (`checker/constraints.rs`) rejects an origin argument ("origin
+  parameters on a parameterized comptime value"), and
+  `Ty::generator_params` gives a generic function's argument view.
+  - Probe: `comptime g = f[ImmStaticOrigin, 3]` over a callable parameter
+    `f: def[o: ImmOrigin, n: Int](Pointer[Int, o]) thin -> Int` is
+    rejected ("type 'f' expects 1 type argument(s), got 2"), where the
+    pin binds it.
+  - Probe: `comptime Twice[o: ImmOrigin, n: Int] = n * 2` is rejected
+    ("origin parameters on a generic comptime alias"), where the pin
+    prints `Twice[ImmStaticOrigin, 3]` as `6`.
+  - The lever: give `ParamExpr` an origin attribute
+    (`ParamContext::argument_expr`), have `generator_params` and
+    `generator_shape` (`mojito-types/src/param_expr.rs`) return the whole
+    declared list, and have `resolve_partial_use_params` return its
+    arguments over that list, as `bind_bracket_params` already binds it.
+  - Found while landing R2348 (2026-11-19).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R2350 A call's solved arguments bind its callee's argument view,
@@ -10751,6 +10751,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   (`checker/call_inference.rs`) bind the callee's own origin binders from
   its argument types before `resolve_explicit_use_params` solves the
   rest, on every call path.
+  - Probe: a `_` in a call's bracket for an origin binder (`first[_,
+    7](Pointer(to=y))` over `def first[o: ImmOrigin, n: Int](p:
+    Pointer[Int, o])`) is rejected ("found '_', which names no in-scope
+    Origin parameter"), where the pin prints `9`: the bracket's binder
+    has no inferred origin to record as the slot's attribute. The
+    partial binding `comptime k = first[_, 6]` binds.
   - The lever: have the one solver bind the declared list's origin
     binders from places beside its type and value binders, and delete the
     pre-pass and `CalleeOriginArguments::own_binders`.

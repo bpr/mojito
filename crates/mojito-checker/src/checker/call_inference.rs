@@ -29,23 +29,6 @@ type InferredCall = (
 );
 
 impl Checker {
-    /// [`folded_parameter_attributes`] of a method call's bracket
-    /// `param_args` over its method's whole declared list `decls`, each in
-    /// its declared slot, as a free call's ([`folded_bracket_attributes`]).
-    pub(super) fn folded_declared_attributes(
-        &self,
-        name: &str,
-        decls: &[ParamDecl],
-        param_args: &[mojito_ast::ast::ParamArg],
-        arguments: &[TyArg],
-    ) -> DeclaredAttributes {
-        let mut explicit = ExplicitTypes::default();
-        if let Ok(bracket) = self.bind_origin_arguments(name, decls, param_args) {
-            explicit.set_bracket(bracket);
-        }
-        folded_bracket_attributes(&explicit, decls, param_args, arguments)
-    }
-
     /// Reject a reference to the module function `name` as a value when
     /// it is `@unavailable`, as a call selecting it is.
     pub(super) fn reject_unavailable_reference(&self, name: &str) -> Result<(), TypeError> {
@@ -2283,9 +2266,7 @@ impl Checker {
         self.call_bindings
             .borrow_mut()
             .insert(span.clone(), subst.clone());
-        attributes.merge(folded_bracket_attributes(
-            &explicit, binders, param_args, &tyargs,
-        ));
+        attributes.merge(folded_parameter_attributes(binders, param_args, &tyargs));
         // An overload candidate's write here is undone with its probe; the
         // selected candidate's re-run is the only one kept.
         self.record_generic_application(span, name, generic, (param_args, decls), tyargs);
@@ -2866,8 +2847,10 @@ impl Checker {
 /// The attributes of the bracket arguments `param_args` supplies to a
 /// non-variadic value parameter of `decls` solved to a closed value
 /// ([`CtValue::is_parameter_attribute`]), each that value keyed by its
-/// declaration. Mojo's call carries such an argument as a parameter
-/// attribute alone, so it has no run-time form at the call site.
+/// declaration. `decls` is the whole declared list and `arguments` the
+/// values its argument view's binders solved to. Mojo's call carries such
+/// an argument as a parameter attribute alone, so it has no run-time form
+/// at the call site.
 pub(super) fn folded_parameter_attributes(
     decls: &[ParamDecl],
     param_args: &[mojito_ast::ast::ParamArg],
@@ -2888,7 +2871,9 @@ pub(super) fn folded_parameter_attributes(
         else {
             continue;
         };
-        let Some(value @ TyArg::Val(closed)) = arguments.get(index) else {
+        let Some(value @ TyArg::Val(closed)) =
+            ParamDecl::argument_position(decls, index).and_then(|index| arguments.get(index))
+        else {
             continue;
         };
         let is_value = match argument {
@@ -2903,25 +2888,6 @@ pub(super) fn folded_parameter_attributes(
         }
     }
     folded
-}
-
-/// [`folded_parameter_attributes`] of a call's bracket `param_args` over
-/// its callee's whole declared list `decls`, the argument view's binder
-/// having bound `arguments` from the bracket's ordinary arguments.
-fn folded_bracket_attributes(
-    explicit: &ExplicitTypes,
-    decls: &[ParamDecl],
-    param_args: &[mojito_ast::ast::ParamArg],
-    arguments: &[TyArg],
-) -> DeclaredAttributes {
-    let view = ParamDecl::argument_view(decls);
-    match explicit.bracket() {
-        Some(bracket) => bracket.declared(
-            folded_parameter_attributes(&view, &bracket.ordinary, arguments),
-            decls,
-        ),
-        None => folded_parameter_attributes(&view, param_args, arguments),
-    }
 }
 
 /// The arguments of a call whose callee's origin binders bind: the regular

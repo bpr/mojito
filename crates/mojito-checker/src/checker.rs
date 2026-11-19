@@ -4165,8 +4165,8 @@ mod iteration;
 mod type_resolution;
 use type_resolution::{
     BoundOrigin, BoundParameters, DeclaredAttributes, DependentValues, EXTERNAL_CALL_PARAMS,
-    ExplicitTypes, OriginBracket, T_PARAMS, TYPE_PARAMS, U_PARAMS, VALUE_PACK_PARAMS,
-    VARIANT_REPLACE_PARAMS, bracket_attribute, tyarg_is_symbolic, types_attributes,
+    ExplicitTypes, T_PARAMS, TYPE_PARAMS, U_PARAMS, VALUE_PACK_PARAMS, VARIANT_REPLACE_PARAMS,
+    bracket_attribute, tyarg_is_symbolic, types_attributes,
 };
 
 mod constraints;

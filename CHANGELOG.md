@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call's bracket now binds its callee's whole declared list in one pass,
+  each origin argument in its origin binder's slot, where the origin
+  arguments were split off and the rest bound against the argument view.
+  A partial binding's `_` now leaves an origin binder open, so `comptime k
+  = first[_, 6]` over `def first[o: ImmOrigin, n: Int](p: Pointer[Int, o])`
+  binds as at the pin, where it was rejected ("found '_'")
+  (`assets/ok/function_bracket_unbound_origin_marker.mojo`, R2348).
+
 - A concrete function whose inlined body stops reading an argument now
   takes none, as the pin's `DeadArgumentElimination` does at its default
   level: `dead-argument-elimination` runs before the last

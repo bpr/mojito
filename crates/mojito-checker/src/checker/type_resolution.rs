@@ -60,31 +60,31 @@ pub(super) struct BoundParameters {
     pub(super) origins: Vec<BoundOrigin>,
 }
 
-/// The explicit type arguments of a call's bracket, resolved once before
-/// its run-time arguments are typed: the substitution an argument display
+/// The explicit arguments of a call's bracket, resolved once before its
+/// run-time arguments are typed: the substitution an argument display
 /// solves under, the bracket's origin arguments bound in their declared
-/// slots, and each resolved argument, which the call's binder
+/// slots, and each resolved type argument, which the call's binder
 /// ([`Checker::resolve_explicit_use_params`]) reads instead of resolving
 /// it again, as upstream binds each bracket argument once.
 #[derive(Default)]
 pub(super) struct ExplicitTypes {
     pub(super) subst: TySubst,
-    /// Each resolved argument with its index in the argument view and its
-    /// position in the bracket's [`OriginBracket::ordinary`] arguments.
+    /// Each resolved argument with its declared slot and its source
+    /// position in the bracket.
     resolved: Vec<(usize, usize, BoundArgument)>,
-    /// The bracket bound against a declared list wider than its argument
-    /// view; `None` when the view is the whole list.
-    bracket: Option<OriginBracket>,
+    /// The origin arguments, each bound in its binder's declared slot.
+    origins: Vec<BoundOrigin>,
 }
 
 impl ExplicitTypes {
     /// Record `argument`, the bracket argument at `position`, bound to the
-    /// parameter at `index`.
+    /// parameter declared at `index`.
     pub(super) fn insert(&mut self, index: usize, position: usize, argument: BoundArgument) {
         self.resolved.push((index, position, argument));
     }
 
-    /// The argument at `position` resolved for the parameter at `index`.
+    /// The argument at `position` resolved for the parameter declared at
+    /// `index`.
     pub(super) fn resolved(&self, index: usize, position: usize) -> Option<BoundArgument> {
         self.resolved
             .iter()
@@ -92,21 +92,22 @@ impl ExplicitTypes {
             .map(|(_, _, argument)| argument.clone())
     }
 
-    /// The bracket bound against the whole declared list, when it is wider
-    /// than its argument view.
-    pub(super) const fn bracket(&self) -> Option<&OriginBracket> {
-        self.bracket.as_ref()
-    }
-
-    /// Keep `bracket`, bound against the whole declared list, when that
-    /// list is wider than its argument view.
-    pub(super) fn set_bracket(&mut self, bracket: OriginBracket) {
-        self.bracket = bracket.whole.then_some(bracket);
+    /// The origin argument at `position` bound to the origin binder
+    /// declared at `slot`.
+    pub(super) fn origin(&self, slot: usize, position: usize) -> Option<&BoundOrigin> {
+        self.origins
+            .iter()
+            .find(|bound| (bound.slot, bound.position) == (slot, position))
     }
 
     /// The origin arguments the bracket bound.
     pub(super) fn origins(&self) -> &[BoundOrigin] {
-        self.bracket.as_ref().map_or(&[], OriginBracket::origins)
+        &self.origins
+    }
+
+    /// Record the origin arguments the bracket bound.
+    pub(super) fn set_origins(&mut self, origins: Vec<BoundOrigin>) {
+        self.origins = origins;
     }
 }
 
@@ -501,89 +502,6 @@ pub(super) const EXTERNAL_CALL_PARAMS: &[BuiltinParam] = &[
 ];
 /// A value pack: the compiler-private `__param_list_address[*values]`.
 pub(super) const VALUE_PACK_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("*values")];
-
-/// A bracket bound against a callee's whole declared list, as upstream's
-/// binder binds it ([`Checker::bind_origin_arguments`]): each origin
-/// argument in its origin binder's declared slot, and the arguments the
-/// argument view's binder binds ([`ParamDecl::argument_binders`]), each at
-/// its source position.
-#[derive(Clone, Default)]
-pub(super) struct OriginBracket {
-    /// The arguments the argument view's binder binds, in source order.
-    pub(super) ordinary: Vec<mojito_ast::ast::ParamArg>,
-    /// The source position of each `ordinary` argument.
-    positions: Vec<usize>,
-    /// The origin arguments, in source order.
-    origins: Vec<BoundOrigin>,
-    /// Whether the declared list holds binders its argument view drops, so
-    /// attributes bound over the view move to their declared slots.
-    whole: bool,
-}
-
-impl OriginBracket {
-    /// A bracket every argument of which the argument view binds; `whole`
-    /// when the declared list is nonetheless wider than its view.
-    pub(super) fn view(arguments: &[mojito_ast::ast::ParamArg], whole: bool) -> Self {
-        Self {
-            ordinary: arguments.to_vec(),
-            positions: (0..arguments.len()).collect(),
-            origins: Vec::new(),
-            whole,
-        }
-    }
-
-    /// The argument at source `position` goes to the argument view's
-    /// binder.
-    pub(super) fn bind(&mut self, position: usize, argument: mojito_ast::ast::ParamArg) {
-        self.positions.push(position);
-        self.ordinary.push(argument);
-    }
-
-    /// The argument at source `position` binds the origin binder `origin`.
-    pub(super) fn bind_origin(&mut self, origin: BoundOrigin) {
-        self.origins.push(origin);
-    }
-
-    /// The origin arguments, each bound in its binder's declared slot.
-    pub(super) fn origins(&self) -> &[BoundOrigin] {
-        &self.origins
-    }
-
-    /// The bracket's attributes over the callee's whole declared list
-    /// `decls`, as upstream's binder fills it: `bound`, the argument view
-    /// binder's over [`Self::ordinary`], each in its binder's declared
-    /// slot, beside each origin argument in its origin binder's.
-    pub(super) fn declared(
-        &self,
-        bound: DeclaredAttributes,
-        decls: &[ParamDecl],
-    ) -> DeclaredAttributes {
-        let bound = bound.relocated(&self.positions);
-        if !self.whole {
-            return bound;
-        }
-        let binders: Vec<usize> = decls
-            .iter()
-            .enumerate()
-            .filter(|(_, decl)| decl.is_argument_binder(decls))
-            .map(|(index, _)| index)
-            .collect();
-        let mut declared = DeclaredAttributes::new(decls);
-        for (index, slot) in bound.slots.into_iter().enumerate() {
-            let slot_index = binders.get(index).copied().unwrap_or(decls.len() + index);
-            if let Some(Some(name)) = bound.declarations.get(index) {
-                declared.declare(slot_index, name);
-            }
-            for attribute in slot {
-                declared.bind(slot_index, attribute.position, attribute.attribute);
-            }
-        }
-        for origin in &self.origins {
-            declared.bind(origin.slot, origin.position, origin.attribute.clone());
-        }
-        declared
-    }
-}
 
 /// One origin argument a bracket binds: its origin binder's declared slot
 /// and the [`Origin::Param`](mojito_types::origin::Origin::Param) id a

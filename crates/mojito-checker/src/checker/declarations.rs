@@ -4262,46 +4262,11 @@ impl Checker {
         patterns: &[Ty],
         actuals: &[Ty],
     ) -> Result<BoundParameters, TypeError> {
-        let bracket = match explicit.bracket() {
-            Some(bracket) => std::borrow::Cow::Borrowed(bracket),
-            None => std::borrow::Cow::Owned(self.bind_origin_arguments(name, decls, param_args)?),
-        };
-        let mut bound = self.resolve_view_params(
-            name,
-            &ParamDecl::argument_view(decls),
-            (&bracket.ordinary, explicit),
-            patterns,
-            actuals,
-        )?;
-        bound.attributes = bracket.declared(bound.attributes, decls);
-        bound.origins = bracket.origins().to_vec();
-        Ok(bound)
-    }
-
-    /// [`Self::resolve_explicit_use_params`] over the argument view
-    /// `decls`, binding the bracket's ordinary arguments `param_args`.
-    fn resolve_view_params(
-        &self,
-        name: &str,
-        decls: &[ParamDecl],
-        (param_args, explicit): (&[mojito_ast::ast::ParamArg], &ExplicitTypes),
-        patterns: &[Ty],
-        actuals: &[Ty],
-    ) -> Result<BoundParameters, TypeError> {
-        let mut subst: TySubst = TySubst::new();
-        if decls.is_empty() {
-            if !param_args.is_empty() {
-                return Err(TypeError::WrongTypeArgCount {
-                    name: name.to_string(),
-                    expected: 0,
-                    got: param_args.len(),
-                });
-            }
-            return Ok(BoundParameters {
-                subst,
-                arguments: Vec::new(),
-                attributes: DeclaredAttributes::default(),
-                origins: Vec::new(),
+        if decls.is_empty() && !param_args.is_empty() {
+            return Err(TypeError::WrongTypeArgCount {
+                name: name.to_string(),
+                expected: 0,
+                got: param_args.len(),
             });
         }
         if !param_args.is_empty() {
@@ -4319,6 +4284,28 @@ impl Checker {
                 patterns,
                 actuals,
             );
+        }
+        self.infer_use_params(name, &ParamDecl::argument_view(decls), patterns, actuals)
+    }
+
+    /// [`Self::resolve_explicit_use_params`] of an empty bracket: every
+    /// binder of the argument view `decls` inferred from `patterns` against
+    /// `actuals`.
+    fn infer_use_params(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        patterns: &[Ty],
+        actuals: &[Ty],
+    ) -> Result<BoundParameters, TypeError> {
+        let mut subst: TySubst = TySubst::new();
+        if decls.is_empty() {
+            return Ok(BoundParameters {
+                subst,
+                arguments: Vec::new(),
+                attributes: DeclaredAttributes::default(),
+                origins: Vec::new(),
+            });
         }
         // Inference: type parameters (and value parameters occupying a solved
         // argument slot, `Array[T, length]` against `Array[Int, 3]`) from the
@@ -4609,14 +4596,9 @@ impl Checker {
         if param_args.is_empty() || decls.is_empty() {
             return Ok(explicit);
         }
-        let bracket = self.bind_origin_arguments(name, decls, param_args)?;
-        let view = ParamDecl::argument_view(decls);
-        let param_args = bracket.ordinary.as_slice();
-        for (index, (decl, arguments)) in view
-            .iter()
-            .zip(bracket_bindings(name, &view, param_args, None)?)
-            .enumerate()
-        {
+        let bound = bracket_bindings(name, decls, param_args, None)?;
+        explicit.set_origins(self.bound_bracket_origins(decls, &bound, &explicit)?);
+        for (index, (decl, arguments)) in decls.iter().zip(bound).enumerate() {
             if let (
                 ParamDecl::Type {
                     id,
@@ -4634,7 +4616,6 @@ impl Checker {
                 explicit.insert(index, *position, resolved);
             }
         }
-        explicit.set_bracket(bracket);
         Ok(explicit)
     }
 
@@ -6103,15 +6084,20 @@ fn omitted_callable_value(decl: &ParamDecl, environment: &HashMap<String, CtValu
 
 impl Checker {
     /// The explicit-bracket binding [`Self::resolve_use_params`] and
-    /// [`Self::resolve_partial_use_params`] share: `unbound`, when given,
-    /// names the arguments that bind and the slots the list leaves open,
-    /// each read as its own binder, or, with its flag set, solved from
-    /// `patterns` against `actuals` as a construction's are.
+    /// [`Self::resolve_partial_use_params`] share, over `declared`, the
+    /// use's whole declared list, as upstream's binder binds it: an origin
+    /// argument binds its origin binder's declared slot and comes back in
+    /// [`BoundParameters::origins`], the argument view's binders
+    /// ([`ParamDecl::argument_binders`]) solve to the bound arguments, and
+    /// every attribute is keyed by its declared slot. `unbound`, when
+    /// given, names the arguments that bind and the slots the list leaves
+    /// open, each read as its own binder, or, with its flag set, solved
+    /// from `patterns` against `actuals` as a construction's are.
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     fn bind_bracket_params(
         &self,
         name: &str,
-        decls: &[ParamDecl],
+        declared: &[ParamDecl],
         (param_args, explicit): (&[mojito_ast::ast::ParamArg], &ExplicitTypes),
         unbound: Option<(&mojito_ast::call::UnboundSlots, bool)>,
         patterns: &[Ty],
@@ -6120,9 +6106,24 @@ impl Checker {
         let mut subst: TySubst = TySubst::new();
         let (unbound, solve_open) =
             unbound.map_or((None, false), |(slots, solve)| (Some(slots), solve));
-        let bound = bracket_bindings(name, decls, param_args, unbound)?;
-        let open = |index: usize| unbound.is_some_and(|slots| slots.open[index].is_some());
-        let mut attributes = DeclaredAttributes::new(decls);
+        let mut bound = bracket_bindings(name, declared, param_args, unbound)?;
+        let origins = self.bound_bracket_origins(declared, &bound, explicit)?;
+        let mut attributes = DeclaredAttributes::new(declared);
+        for origin in &origins {
+            attributes.bind(origin.slot, origin.position, origin.attribute.clone());
+        }
+        // The argument view's binders solve; `slots` maps each to its
+        // declared slot.
+        let slots: Vec<usize> = (0..declared.len())
+            .filter(|&index| declared[index].is_argument_binder(declared))
+            .collect();
+        let view = ParamDecl::argument_view(declared);
+        let decls = &*view;
+        let bound: Vec<_> = slots
+            .iter()
+            .map(|&slot| std::mem::take(&mut bound[slot]))
+            .collect();
+        let open = |index: usize| unbound.is_some_and(|open| open.open[slots[index]].is_some());
         // Infer parameters hidden before `//` even when later parameters
         // were supplied explicitly (`hash[Fnv1a](value)` infers `T` from
         // `value` while binding the explicit hasher argument). A pack
@@ -6235,7 +6236,7 @@ impl Checker {
                     // The spread construction is compile-time only: the
                     // list it binds is its attribute.
                     attributes.bind(
-                        index,
+                        slots[index],
                         *position,
                         match argument {
                             mojito_ast::ast::ParamArg::Value(_) => Some(value.clone()),
@@ -6277,7 +6278,7 @@ impl Checker {
                         continue;
                     }
                     let resolved = self.resolve_param_arg(element, argument)?;
-                    attributes.bind(index, position, resolved.bracket_attribute(argument));
+                    attributes.bind(slots[index], position, resolved.bracket_attribute(argument));
                     values.push(resolved.value.ct_value().ok_or_else(|| {
                         TypeError::Unsupported(
                             "an origin argument cannot bind a type or value parameter".to_string(),
@@ -6321,9 +6322,13 @@ impl Checker {
             }
             let tyarg = if let Some((position, argument)) = arguments.first() {
                 let resolved = explicit
-                    .resolved(index, *position)
+                    .resolved(slots[index], *position)
                     .map_or_else(|| self.resolve_param_arg(decl, argument), Ok)?;
-                attributes.bind(index, *position, resolved.bracket_attribute(argument));
+                attributes.bind(
+                    slots[index],
+                    *position,
+                    resolved.bracket_attribute(argument),
+                );
                 resolved.value
             } else if let Some(solved) = trait_solutions.get(decl.id()) {
                 TyArg::Val(solved.clone())
@@ -6380,14 +6385,17 @@ impl Checker {
             }
         }
         // A `_` the arguments solved is the attribute of what it binds.
-        if solve_open && let Some(slots) = unbound {
-            let listed = &param_args[..slots.listed];
+        if solve_open && let Some(unbound) = unbound {
+            let listed = &param_args[..unbound.listed];
             let keywords = mojito_ast::call::bracket_keywords(listed);
-            let matched = mojito_ast::call::match_parameter_slots(decls, &keywords)
+            let matched = mojito_ast::call::match_parameter_slots(declared, &keywords)
                 .map_err(|error| error.into_type_error(name))?;
-            for (position, index) in matched.into_iter().enumerate() {
-                if !slots.kept.contains(&position) {
-                    attributes.bind(index, position, tyargs.get(index).cloned());
+            for (position, slot) in matched.into_iter().enumerate() {
+                if !unbound.kept.contains(&position) {
+                    let solved = ParamDecl::argument_position(declared, slot)
+                        .and_then(|index| tyargs.get(index))
+                        .cloned();
+                    attributes.bind(slot, position, solved);
                 }
             }
         }
@@ -6402,7 +6410,7 @@ impl Checker {
             subst,
             arguments: tyargs,
             attributes,
-            origins: Vec::new(),
+            origins,
         })
     }
 }

@@ -649,8 +649,7 @@ impl Checker {
                     });
                 self.record_folded_bracket_attributes(
                     span,
-                    &self.folded_declared_attributes(
-                        source_method,
+                    &crate::checker::call_inference::folded_parameter_attributes(
                         &selected.param_decls,
                         param_args,
                         arguments,
