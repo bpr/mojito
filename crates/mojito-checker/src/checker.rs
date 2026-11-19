@@ -2173,7 +2173,6 @@ impl Checker {
         // function type: upstream selects the constructor and rejects the
         // argument as a runtime closure.
         let parametric_parameter = std::cell::Cell::new(false);
-        let own_origins_from = info.method_origin_binders();
         let matches = constructors
             .iter()
             .filter(|sig| {
@@ -2185,7 +2184,8 @@ impl Checker {
                                 refined,
                                 &instance,
                                 &sig.decls(),
-                                Some(own_origins_from),
+                                &origins::declared_origin_binders(&sig.declared)
+                                    .collect::<Vec<_>>(),
                                 to,
                             )
                         })
@@ -2209,7 +2209,9 @@ impl Checker {
                     &sig.names,
                     std::slice::from_ref(&parameter),
                     &[(0, from)],
-                    origins::CalleeBinders::From(own_origins_from),
+                    origins::CalleeBinders::Declared(
+                        origins::declared_origin_binders(&sig.declared).collect(),
+                    ),
                 )
                 .ok()?;
                 let parameter = origins.substitute(&parameter);
@@ -3229,12 +3231,6 @@ impl StructInfo {
         &mojito_ast::ast::TypeParam,
     )> {
         struct_origin_slots(&self.source_params)
-    }
-
-    /// The first origin binder id a method of this struct declares itself:
-    /// a method's signature resolves its binders past the struct's.
-    const fn method_origin_binders(&self) -> u32 {
-        self.source_params.len() as u32
     }
 
     /// The arguments of the struct's own `Self` type: each declared parameter

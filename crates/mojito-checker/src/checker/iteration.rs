@@ -754,7 +754,6 @@ impl Checker {
                 &[],
                 &[],
                 &[],
-                info.method_origin_binders(),
             )
             .ok()?;
         // Iterator dunders have no explicit runtime arguments. A variadic or

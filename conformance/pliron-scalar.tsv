@@ -709,6 +709,7 @@ assets/ok/memory_bitcast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/memory_only_read_temporary_address.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/merge_common_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_bracket_origin_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/method_bracket_unbound_origin_inferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_call_callee_binder_spelling.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_capturing_callable_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_mut_param.mojo	-	ineligible	no-scalar-entry-shape

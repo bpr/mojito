@@ -360,7 +360,6 @@ impl Checker {
                             param_args,
                             args,
                             kwargs,
-                            info.method_origin_binders(),
                         ) {
                             Err(dynamic @ TypeError::DynamicParameterValue) => dynamic,
                             _ => error,
@@ -407,7 +406,6 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
-                info.method_origin_binders(),
             ) {
                 Ok(instantiation) => instantiation,
                 Err(error) if single_candidate => return Err(error),

@@ -19,34 +19,43 @@ use mojito_types::types::TyKind;
 pub(in crate::checker) struct ConstructorOriginBindings {
     pub(in crate::checker) pointers: HashMap<OriginParamId, PointerOrigin>,
     pub(in crate::checker) origins: HashMap<OriginParamId, Origin>,
-    /// The binders this binding binds: a method's own binders follow its
-    /// struct's, which its receiver or construction binds instead.
+    /// The binders this binding binds.
     binders: CalleeBinders,
 }
 
 /// The origin binders a callee's call binds from its arguments: every one
-/// numbered from a first (a method's follow its struct's), or exactly those
-/// a declared list declares.
-#[derive(Clone)]
+/// its parameters name (a function value's contract), or exactly those a
+/// declared list declares, a method's numbered past its struct's, which its
+/// receiver or construction binds instead.
+#[derive(Clone, Default)]
 pub(in crate::checker) enum CalleeBinders {
-    From(u32),
+    #[default]
+    Every,
     Declared(Vec<OriginParamId>),
-}
-
-impl Default for CalleeBinders {
-    fn default() -> Self {
-        Self::From(0)
-    }
 }
 
 impl CalleeBinders {
     /// Whether the call binds the binder `id`.
     pub(in crate::checker) fn binds(&self, id: OriginParamId) -> bool {
         match self {
-            Self::From(first) => id.0 >= *first,
+            Self::Every => true,
             Self::Declared(declared) => declared.contains(&id),
         }
     }
+}
+
+/// The origin binders `decls`, a callee's whole declared list, declares
+/// for its call to bind from the arguments' places: every `Origin` binder,
+/// an `OriginSet` left alone.
+pub(in crate::checker) fn declared_origin_binders(
+    decls: &[ParamDecl],
+) -> impl Iterator<Item = OriginParamId> + '_ {
+    decls.iter().filter_map(|decl| match decl {
+        ParamDecl::Origin {
+            origin, mutability, ..
+        } if *mutability != mojito_types::types::OriginMutability::Set => Some(*origin),
+        _ => None,
+    })
 }
 
 impl ConstructorOriginBindings {

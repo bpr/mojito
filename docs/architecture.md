@@ -1271,9 +1271,11 @@ value binders and records each such `_`'s attribute as the origin it bound;
 a method call's bracket binds
 its method's whole declared list (`MethodSig::declared`) the same way in
 `instantiate_method_generics`, which substitutes the bound origins into the
-method's parameters and result through `bind_origin_tails` before the
-remaining origin binders bind from the arguments in a pass before its solve,
-under the signature's numbering, past the struct's parameters (R2359)); a
+method's parameters and result through `bind_origin_tails` and binds the
+origin binders its bracket left open in `resolve_call_params`'s one solve,
+as a free call's: a method's declared origin binder is numbered past its
+struct's parameters, as its signature names it
+(`classify_param_list_after`)); a
 compiler builtin's binder
 (`applied_type`'s collection, pointer, `SIMD`, and storage types,
 `external_call`, `reflect`, the `Variant` storage methods, the

@@ -9298,6 +9298,13 @@ retained on purpose and re-probed rather than fixed; they are listed in
     call to 'm': value passed to 'x' cannot be converted from type value
     'Int' to an instance of 'Int'; did you mean to instantiate 'Int'?" at
     the pin.
+  - Probe: `s.f[_, 3](1)` over a single `def f[o: ImmOrigin, n:
+    Int](self, x: Int)` reports "no overload matches", where the pin
+    reports "failed to infer parameter 'origin_of(_mlir_origin)'"
+    (`assets/type_error/method_bracket_unbound_origin_uninferred.mojo`),
+    and `g.view[origin_of(a)](Pointer(to=b))` reports it where the pin
+    reports the conversion of `p`
+    (`method_bracket_origin_mismatch_struct_parameter.mojo`).
   - The `assets/type_error` fixtures that expect "no overload matches"
     move to the pin's words with the fix.
   - Found while landing R2115 (2026-11-12).
@@ -10751,34 +10758,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     binder's value in the instantiation, in declared order, and have each
     reader bind the whole list.
   - Depends on R2346, R2359.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2359 A method's declared origin binder numbers its slot in the
-  method's own list, while its signature numbers it past its struct's
-  parameters**
-
-  `ParamDecl::Origin::origin` of an ordinary method's binder is its index
-  in the method's list, but `enclosing_origin_type_param` resolves the
-  signature's `Origin::Param` past `StructInfo::method_origin_binders`,
-  so a method call cannot bind its declared origin binders in
-  `resolve_call_params` (`checker/call_inference.rs`) as a free call
-  does.
-  - Probe: `s.get[_, 5](Pointer(to=a))` over `def get[o: ImmOrigin, n:
-    Int](self, p: Pointer[Int, o])` is rejected
-    (`reject_unbound_method_origin`, `checker/generics.rs`), where the
-    pin prints `16`.
-  - Probe: on a struct with a parameter (`struct G[T: ...]`),
-    `g.view[origin_of(a)](Pointer(to=b))` over `def view[o:
-    ImmOrigin](self, p: Pointer[Int, o]) -> Pointer[Int, o]` is
-    accepted, because the bracket's origin binds the declared id the
-    signature does not name, where the pin rejects it as `S.view` already
-    is.
-  - The lever: number a method's declared origin binders as its signature
-    does, have `instantiate_method_generics` bind them in
-    `resolve_call_params`, and delete `bind_method_origins`,
-    `CalleeOriginArguments::own_binders`, and `CalleeBinders::From`.
-  - Found while landing R2346 (2026-11-19).
-  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R2128 A function's origin mutability binder has no value in its

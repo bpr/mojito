@@ -761,14 +761,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ConstructorOriginBindings`, whose `substitute` rewrites the parameter types
   and whose `bind_tail` fills the constructed value's origin tail
   (`constructed_type`); `bind_callee_origins` does the same for a callee's
-  own binders: a generic call binds its declared list's open origin
-  binders in its one solve, `resolve_call_params` (`call_inference.rs`,
-  `CalleeBinders::Declared`), beside its type and value binders, while a
+  own binders: a generic call and a method or static call bind their
+  declared list's open origin binders in their one solve,
+  `resolve_call_params` (`call_inference.rs`, `CalleeBinders::Declared`
+  over `declared_origin_binders`; methods through
+  `instantiate_method_generics`, whose declared origin binders
+  `classify_param_list_after` numbers past the struct's parameters, as the
+  signature names them), beside their type and value binders, while a
   concrete call (a function value whose open parameters are only origins)
-  and a method or static call still bind them in a pass before the
-  arguments check, `substitute_callee_pointer_origins` (methods through
-  `instantiate_method_generics`, binding only binders past the struct's,
-  `CalleeBinders::From(StructInfo::method_origin_binders)`), and
+  still binds every binder its parameters name in a pass before the
+  arguments check, `substitute_callee_pointer_origins`
+  (`CalleeBinders::Every`), and
   `ConstructorOriginBindings::substitute_ref_sig` carries the bindings, and
   a mut-parametric binder's mutability, into the `ref` result), the argument exclusivity rule
   (`origins/exclusivity.rs`: `check_argument_origin_exclusivity` judges every

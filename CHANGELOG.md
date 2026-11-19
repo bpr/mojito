@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method call now binds its method's origin binders in the same solve as
+  its type and value parameters, as a free call does, and a method's
+  declared origin binder is numbered past its struct's parameters, as its
+  signature names it. So `s.get[_, 5](Pointer(to=a))` over `def get[o:
+  ImmOrigin, n: Int](self, p: Pointer[Int, o])` infers `o` where it was
+  rejected, and on a parametric struct `g.view[origin_of(a)](Pointer(to=b))`
+  is rejected where it was accepted, both as at the pin
+  (`assets/ok/method_bracket_unbound_origin_inferred.mojo`,
+  `assets/type_error/method_bracket_unbound_origin_uninferred.mojo`,
+  `method_bracket_origin_mismatch_struct_parameter.mojo`, R2359).
+
 - A generic call now binds its callee's origin binders in the same solve as
   its type and value parameters, keyed by its declared list, where a pass
   bound them from the arguments first. A `_` in the call's bracket for an

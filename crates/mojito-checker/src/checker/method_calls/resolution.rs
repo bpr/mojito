@@ -238,7 +238,6 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
-                info.method_origin_binders(),
             ) {
                 Ok(instantiated) => instantiated,
                 // A runtime value where a subscript accessor takes a
@@ -465,7 +464,6 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
-                0,
             ) {
                 Ok(instantiated) => instantiated,
                 Err(failure) => {

@@ -44,7 +44,7 @@ mod subst;
 mod transfer;
 
 pub(in crate::checker) use construct::{
-    CalleeBinders, ConstructorOriginBindings, names_origin_binder,
+    CalleeBinders, ConstructorOriginBindings, declared_origin_binders, names_origin_binder,
 };
 pub(in crate::checker) use exclusivity::{
     CollectedArguments, ExclusivityCallee, ExclusivityReceiver, NestedOrigins,

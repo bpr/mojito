@@ -496,7 +496,6 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
-                info.method_origin_binders(),
             ) {
                 Ok(instantiation) => instantiation,
                 Err(error) => {

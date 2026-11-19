@@ -853,8 +853,21 @@ impl Checker {
         owner: &str,
         tps: &[mojito_ast::ast::TypeParam],
     ) -> Result<Vec<ParamDecl>, TypeError> {
+        self.classify_param_list_after(owner, tps, 0)
+    }
+
+    /// [`Self::classify_param_list`] for a list declared inside `enclosing`
+    /// binders (a method's, inside its struct's): each origin binder is
+    /// numbered past them, as the signature the list declares resolves it
+    /// ([`Self::enclosing_origin_type_param`]).
+    pub(super) fn classify_param_list_after(
+        &self,
+        owner: &str,
+        tps: &[mojito_ast::ast::TypeParam],
+        enclosing: usize,
+    ) -> Result<Vec<ParamDecl>, TypeError> {
         self.push_param_scope(&[]);
-        let classified = self.classify_params_in_scope(owner, tps);
+        let classified = self.classify_params_in_scope(owner, tps, enclosing);
         self.pop_param_scope();
         classified.map(|decls| {
             let arguments = ParamDecl::argument_decls(&decls);
@@ -872,6 +885,7 @@ impl Checker {
         &self,
         owner: &str,
         tps: &[mojito_ast::ast::TypeParam],
+        enclosing: usize,
     ) -> Result<Vec<ParamDecl>, TypeError> {
         let mut decls = Vec::new();
         let mut seen = HashSet::new();
@@ -903,7 +917,7 @@ impl Checker {
             // a sibling origin's `mut=`, an ordinary value binder. Instances
             // and calls infer both from places rather than binding them by
             // position ([`ParamDecl::is_argument_binder`]).
-            if let Some(origin) = origin_param_decl(tp, index, binder_id(decls.len())) {
+            if let Some(origin) = origin_param_decl(tp, enclosing + index, binder_id(decls.len())) {
                 decls.push(origin);
                 continue;
             }
@@ -2911,7 +2925,7 @@ impl Checker {
                         .is_ok()
                     && sig.refined_self.as_ref().is_none_or(|refined| {
                         self.self_instance_ty(name).is_some_and(|instance| {
-                            refinement_admits(refined, &instance, &sig.decls(), None, target)
+                            refinement_admits(refined, &instance, &sig.decls(), &[], target)
                         })
                     })
             })
@@ -3169,7 +3183,6 @@ impl Checker {
                         &own_args,
                         args,
                         kwargs,
-                        info.method_origin_binders(),
                     )
                     else {
                         continue;
@@ -5695,14 +5708,13 @@ fn collector_takes_bound_pack(
 /// `instance`: every position the refinement defines is `target`'s, is an
 /// origin slot `target` leaves unbound (`write_string(string: StringSpan)`
 /// infers it from the refinement), or names one of the initializer's own
-/// parameters (`own`), or one of its own origin binders (those from
-/// `own_origins_from`, when its arguments can solve them), which a call
-/// solves and then checks.
+/// parameters (`own`), or one of its own origin binders (`own_origins`,
+/// when its arguments can solve them), which a call solves and then checks.
 pub(super) fn refinement_admits(
     refined: &Ty,
     instance: &Ty,
     own: &[ParamDecl],
-    own_origins_from: Option<u32>,
+    own_origins: &[mojito_types::origin::OriginParamId],
     target: &Ty,
 ) -> bool {
     let arguments =
@@ -5724,23 +5736,23 @@ pub(super) fn refinement_admits(
                     TyArg::Origin(mojito_types::origin::Origin::Unbound)
                 )
                 || mentioned_binder(defined, own).is_some()
-                || matches!(
-                    (defined, own_origins_from),
-                    (TyArg::Origin(origin), Some(from)) if names_origin_binder_from(origin, from)
-                )
+                || matches!(defined, TyArg::Origin(origin)
+                    if names_own_origin_binder(origin, own_origins))
         })
 }
 
-/// Whether `origin` names an origin binder numbered `from` or above: a
-/// method's own binders follow its struct's.
-fn names_origin_binder_from(origin: &mojito_types::origin::Origin, from: u32) -> bool {
+/// Whether `origin` names one of the origin binders `own`.
+fn names_own_origin_binder(
+    origin: &mojito_types::origin::Origin,
+    own: &[mojito_types::origin::OriginParamId],
+) -> bool {
     use mojito_types::origin::Origin;
     match origin {
-        Origin::Param(id) => id.0 >= from,
-        Origin::Immutable(inner) => names_origin_binder_from(inner, from),
+        Origin::Param(id) => own.contains(id),
+        Origin::Immutable(inner) => names_own_origin_binder(inner, own),
         Origin::Union(members) => members
             .iter()
-            .any(|member| names_origin_binder_from(member, from)),
+            .any(|member| names_own_origin_binder(member, own)),
         _ => false,
     }
 }
@@ -5832,7 +5844,8 @@ fn fieldwise_arguments(
         .collect())
 }
 
-/// The origin binder `tp`, the parameter at `index` of its source list,
+/// The origin binder `tp`, numbered `index` (its slot in its source list,
+/// past any enclosing binders),
 /// declares (`o: Origin[mut=m]`, `o: OriginSet`) at the identity `id`;
 /// `None` for any other parameter.
 fn origin_param_decl(
