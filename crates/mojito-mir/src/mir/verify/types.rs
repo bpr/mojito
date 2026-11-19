@@ -254,7 +254,13 @@ fn values_compatible(found: &CtValue, expected: &CtValue) -> bool {
                     .zip(expected)
                     .all(|(found, expected)| values_compatible(found, expected))
         }
-        (found, expected) => found == expected,
+        // A deferred value (an unbound origin's `mut=`) agrees with any,
+        // as an unbound origin does.
+        (found, expected) => {
+            found == expected
+                || matches!(found, CtValue::Deferred(_))
+                || matches!(expected, CtValue::Deferred(_))
+        }
     }
 }
 

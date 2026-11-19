@@ -268,9 +268,8 @@ impl Checker {
                 .or_else(|| bindings.and_then(|bindings| bindings.origins.get(&id)))
                 .cloned()
         };
-        let mutability = |id: OriginParamId| match bracket.get(&id) {
-            Some(origin) => self.bound_origin_mutability(origin),
-            None => bindings?.bound_mutability(id, &|owner| self.owner_reference_mutability(owner)),
+        let bound = |id: OriginParamId| {
+            bindings?.bound_mutability(id, &|owner| self.owner_reference_mutability(owner))
         };
         let mut solved = arguments.iter();
         decls
@@ -288,14 +287,17 @@ impl Checker {
                         } if binder.id == *decl.id() => Some(*origin),
                         _ => None,
                     });
-                    TyArg::Val(match governed.and_then(mutability) {
-                        Some(Mutability::Mutable) => CtValue::Bool(true),
-                        Some(Mutability::Immutable) => CtValue::Bool(false),
-                        Some(Mutability::Param(id)) => self
-                            .origin_mutability_binder_read(id)
-                            .map_or_else(|| CtValue::Deferred(decl.binder()), CtValue::Expr),
-                        None => CtValue::Deferred(decl.binder()),
-                    })
+                    TyArg::Val(governed.map_or_else(
+                        || CtValue::Deferred(decl.binder()),
+                        |id| match bracket.get(&id) {
+                            Some(origin) => self.call_mutability_argument(decl, origin, None),
+                            None => self.call_mutability_argument(
+                                decl,
+                                &origin(id).unwrap_or(Origin::Unbound),
+                                bound(id),
+                            ),
+                        },
+                    ))
                 }
                 _ => solved
                     .next()
@@ -303,6 +305,74 @@ impl Checker {
                     .unwrap_or(TyArg::Origin(Origin::Unbound)),
             })
             .collect()
+    }
+
+    /// The value an origin's `mut=` binder `decl` holds where its governed
+    /// origin is `origin`, as upstream's instance and call carry it in
+    /// place: `bound`, the mutability a construction's arguments bound,
+    /// when there is one, else the origin's own (a place's owner's, a
+    /// cast's or a static origin's `False`). A mutability nothing decides
+    /// yet (an unbound origin's) or a binder decides (an origin binder's,
+    /// a `ref` parameter's) is [`CtValue::Deferred`], following its origin
+    /// as `Origin::Unbound` and `Origin::Param` do.
+    pub(in crate::checker) fn origin_mutability_slot(
+        &self,
+        decl: &ParamDecl,
+        origin: &Origin,
+        bound: Option<Mutability>,
+    ) -> CtValue {
+        match bound.or_else(|| self.decided_origin_mutability(origin)) {
+            Some(Mutability::Mutable) => CtValue::Bool(true),
+            Some(Mutability::Immutable) => CtValue::Bool(false),
+            Some(Mutability::Param(_)) | None => CtValue::Deferred(decl.binder()),
+        }
+    }
+
+    /// The value each origin `mut=` binder among `decls`, a callee's whole
+    /// declared list, takes from the origin `bindings` bound its origin to.
+    pub(in crate::checker) fn own_origin_mutabilities(
+        &self,
+        decls: &[ParamDecl],
+        bindings: &ConstructorOriginBindings,
+    ) -> Vec<(mojito_types::param_expr::ParamId, CtValue)> {
+        ParamDecl::mutability_binders(decls)
+            .filter_map(|decl| {
+                let governed = decls.iter().find_map(|candidate| match candidate {
+                    ParamDecl::Origin {
+                        origin,
+                        mutability: mojito_types::types::OriginMutability::Binder(binder),
+                        ..
+                    } if binder.id == *decl.id() => Some(*origin),
+                    _ => None,
+                })?;
+                let origin = bindings.origins.get(&governed)?;
+                let bound = bindings
+                    .bound_mutability(governed, &|owner| self.owner_reference_mutability(owner));
+                Some((
+                    decl.id().clone(),
+                    self.origin_mutability_slot(decl, origin, bound),
+                ))
+            })
+            .collect()
+    }
+
+    /// The instance of the struct `info` whose argument binders take `view`
+    /// and whose origin binders take `origins`, each origin's `mut=` binder
+    /// holding its [`Self::origin_mutability_slot`] value, or the value an
+    /// explicit `mut=` keyword gave it (`explicit`).
+    pub(in crate::checker) fn place_struct_origins(
+        &self,
+        decls: &[ParamDecl],
+        view: impl IntoIterator<Item = TyArg>,
+        origins: impl IntoIterator<Item = Origin>,
+        explicit: &[(mojito_types::param_expr::ParamId, CtValue)],
+    ) -> Vec<TyArg> {
+        ParamDecl::place_origins_with(decls, view, origins, |decl, origin| {
+            explicit.iter().find(|(id, _)| id == decl.id()).map_or_else(
+                || self.origin_mutability_slot(decl, origin, None),
+                |(_, value)| value.clone(),
+            )
+        })
     }
 
     /// The checked type of a construction: the solved argument view with
@@ -322,10 +392,29 @@ impl Checker {
                     .zip(info.origin_decls())
                     .map(|(origin, (_, decl))| self.slot_converted_origin(decl, origin))
                     .collect::<Vec<_>>();
-                info.place_origins(
+                ParamDecl::place_origins_with(
+                    &info.params,
                     view.into_iter()
                         .filter(|argument| !matches!(argument, TyArg::Origin(_))),
                     origins,
+                    |decl, origin| {
+                        let bound = info
+                            .origin_decls()
+                            .find(|(_, candidate)| match candidate {
+                                ParamDecl::Origin {
+                                    mutability:
+                                        mojito_types::types::OriginMutability::Binder(binder),
+                                    ..
+                                } => binder.id == *decl.id(),
+                                _ => false,
+                            })
+                            .and_then(|(id, _)| {
+                                bindings.bound_mutability(id, &|owner| {
+                                    self.owner_reference_mutability(owner)
+                                })
+                            });
+                        self.origin_mutability_slot(decl, origin, bound)
+                    },
                 )
             }
             None => view,
@@ -611,6 +700,36 @@ impl Checker {
                 ..
             } => self.fold_immutable_origin_cast(&Origin::immutable(origin)),
             _ => origin,
+        }
+    }
+
+    /// The value a call passes an origin's `mut=` binder `decl` whose
+    /// governed origin it binds to `origin`: the
+    /// [`Self::origin_mutability_slot`] value, or, where the caller's own
+    /// `mut=` binder decides it, a read of that binder, which the caller's
+    /// instance closes.
+    fn call_mutability_argument(
+        &self,
+        decl: &ParamDecl,
+        origin: &Origin,
+        bound: Option<Mutability>,
+    ) -> CtValue {
+        match bound.or_else(|| self.decided_origin_mutability(origin)) {
+            Some(Mutability::Param(id)) => self
+                .origin_mutability_binder_read(id)
+                .map_or_else(|| CtValue::Deferred(decl.binder()), CtValue::Expr),
+            _ => self.origin_mutability_slot(decl, origin, bound),
+        }
+    }
+
+    /// The mutability `origin` decides by itself: a place's owner's, a
+    /// static or cast origin's, a projection's base's, or an enclosing
+    /// binder's ([`Self::bound_origin_mutability`]).
+    fn decided_origin_mutability(&self, origin: &Origin) -> Option<Mutability> {
+        match origin {
+            Origin::Projected(base, _) => self.decided_origin_mutability(base),
+            Origin::Param(_) => self.bound_origin_mutability(origin),
+            _ => origin_mutability(origin, &|owner| self.owner_reference_mutability(owner)),
         }
     }
 

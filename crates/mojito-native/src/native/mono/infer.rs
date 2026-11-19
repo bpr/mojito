@@ -567,6 +567,7 @@ impl Specializer<'_> {
         if struct_decl.argument_binders().next().is_none() {
             return Ok(());
         }
+        bind_mutability_args(&struct_decl.param_decls, &arguments, bindings);
         bind_ty_args(
             &struct_decl.argument_view(),
             &struct_decl.view_arguments(&arguments),
@@ -647,6 +648,7 @@ impl Specializer<'_> {
         if let Some((receiver_name, arguments)) = mojito_types::types::nominal_parts(receiver)
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
         {
+            bind_mutability_args(&struct_decl.param_decls, &arguments, &mut bindings);
             bind_ty_args(
                 &struct_decl.argument_view(),
                 &struct_decl.view_arguments(&arguments),
@@ -1054,6 +1056,7 @@ impl Specializer<'_> {
                 owner_covered_prefix(&struct_decl.argument_view(), &declaration.argument_view());
             declared_start =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
+            bind_mutability_args(&struct_decl.param_decls, &arguments, bindings);
             bind_ty_args(
                 &struct_decl.argument_view(),
                 &struct_decl.view_arguments(&arguments),

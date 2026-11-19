@@ -158,7 +158,7 @@ impl Checker {
             "add" => {
                 self.check_place(object)?;
                 let values = self.builtin_args("Set.add", 1, args)?;
-                if !coerces(&values[0], element) {
+                if !self.coerces_by_origins(&values[0], element) {
                     return Err(TypeError::TypeMismatch {
                         expected: element.to_string(),
                         found: values[0].to_string(),
@@ -188,7 +188,7 @@ impl Checker {
         match method {
             "or_else" => {
                 let types = self.builtin_args("Optional.or_else", 1, args)?;
-                if coerces(&types[0], &Ty::int()) {
+                if self.coerces_by_origins(&types[0], &Ty::int()) {
                     Ok(Ty::int())
                 } else {
                     Err(TypeError::TypeMismatch {

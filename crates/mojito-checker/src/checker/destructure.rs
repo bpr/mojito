@@ -655,7 +655,7 @@ impl Checker {
         }
         let target_ty = self.check_place(place)?;
         self.record_place_write_invalidation(place.source_span(), place);
-        if !coerces(elem, &target_ty) {
+        if !self.coerces_by_origins(elem, &target_ty) {
             if let Some(mismatch) = self.struct_origin_mismatch(elem, &target_ty) {
                 return Err(mismatch);
             }
@@ -686,7 +686,7 @@ impl Checker {
         element: &Ty,
         value_name: &str,
     ) -> Result<(), TypeError> {
-        if !coerces(elem, element) {
+        if !self.coerces_by_origins(elem, element) {
             return Err(TypeError::TypeMismatch {
                 expected: element.to_string(),
                 found: elem.to_string(),
@@ -719,7 +719,7 @@ impl Checker {
         if !self.is_binding_mutable(name) {
             return Err(TypeError::ImmutableBinding(name.to_string()));
         }
-        if !coerces(elem, &existing) {
+        if !self.coerces_by_origins(elem, &existing) {
             return Err(TypeError::TypeMismatch {
                 expected: existing.to_string(),
                 found: elem.to_string(),

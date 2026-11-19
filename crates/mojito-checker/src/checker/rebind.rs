@@ -226,9 +226,17 @@ impl Checker {
     /// between two closed types compares, as upstream's `processRebindOp`
     /// compares them once lowered: a register-passable struct of one field
     /// is that field's type, unwrapped again while the field is such a
-    /// struct (`NoneType` is its `!kgen.none`).
+    /// struct (`NoneType` is its `!kgen.none`). No origin's `mut=` value
+    /// changes a layout, so each is deferred.
     fn rebind_translated_ty(&self, ty: &Ty) -> Ty {
-        let mut translated = ty.clone();
+        let mut translated = mojito_types::types::map_struct_arguments(ty, &|name, arguments| {
+            self.structs.get(name).map_or_else(
+                || arguments.clone(),
+                |info| {
+                    mojito_types::types::defer_mutability_arguments(&info.params, arguments.clone())
+                },
+            )
+        });
         while let Some((name, args)) = translated.kind().as_non_simd_struct()
             && let Some(info) = self.structs.get(name)
             && let [(_, field)] = info.fields.as_slice()

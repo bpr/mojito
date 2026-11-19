@@ -183,6 +183,35 @@ impl StructCatalog {
         }
     }
 
+    /// `arguments`, an instance of the struct `name`, without the `mut=`
+    /// argument of each of its origins: an elaborated instance is keyed on
+    /// neither an origin nor the `mut=` value that follows it. `arguments`
+    /// as they stand when they hold no such argument.
+    pub(super) fn without_mutability<'a>(
+        &self,
+        name: &str,
+        arguments: &'a [TyArg],
+    ) -> std::borrow::Cow<'a, [TyArg]> {
+        match self.declaration(name).filter(|declaration| {
+            declaration.param_decls.len() == arguments.len()
+                && declaration
+                    .param_decls
+                    .iter()
+                    .any(|decl| decl.is_origin_mutability_binder(&declaration.param_decls))
+        }) {
+            Some(declaration) => std::borrow::Cow::Owned(
+                declaration
+                    .param_decls
+                    .iter()
+                    .zip(arguments)
+                    .filter(|(decl, _)| !decl.is_origin_mutability_binder(&declaration.param_decls))
+                    .map(|(_, argument)| argument.clone())
+                    .collect(),
+            ),
+            None => std::borrow::Cow::Borrowed(arguments),
+        }
+    }
+
     /// Whether the struct `name` is a generic template, which substitution
     /// renames a concrete application of to its instance symbol.
     pub(super) fn is_generic(&self, name: &str) -> bool {

@@ -244,8 +244,8 @@ fn constructor_argument(
 }
 
 /// The arguments of the value type `ty` for the struct parameters `decls`
-/// a constructor restates, a value for every one, origins in place
-/// ([`ParamDecl::instance_arguments`]). A type argument spreading a pack
+/// a constructor restates, a value for every one, origins and their
+/// `mut=` values in place, as the instance holds them. A type argument spreading a pack
 /// (`Tuple[*Ts.reverse()]`) is a list of types, not one: a constructor
 /// restating a pack takes none, its owner's type binding them, unless it
 /// also restates a value parameter the call must then carry. `None` when
@@ -262,13 +262,12 @@ fn restated_arguments(decls: &[ParamDecl], ty: &Ty) -> Option<Vec<TyArg>> {
             .all(|decl| variadic(decl) || matches!(decl, ParamDecl::Type { .. }))
             .then(Vec::new);
     }
-    let binders = ParamDecl::instance_binders(decls).count();
     let arguments: Vec<TyArg> = match ty.kind() {
         struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
             // A closure storage's type carries origins its list declares
             // no binder for.
             let aligned = ParamDecl::aligned_arguments(decls, arguments);
-            ParamDecl::instance_arguments(decls, aligned.get(..binders)?)
+            aligned.get(..decls.len())?.to_vec()
         }
         _ => Vec::new(),
     };

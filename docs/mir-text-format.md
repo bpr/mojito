@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.208
+mojito-mir 1.209
 ```
 
-The writer emits 1.208. The reader accepts 1.0 through 1.208; *Schema 1.0*
+The writer emits 1.209. The reader accepts 1.0 through 1.209; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1239,6 +1239,16 @@ mutable }`, the type of an origin's raw `_mlir_origin` attribute and of a
 value parameter an `_lit_origin_type_of_mut[mut]` alias annotates. `mutable`
 is a boolean, or `ct_expr(<param-expr>)` for a `Bool` a template's
 parameter spells. The package format moves to `mojito-package 236` (R2369).
+
+Schema 1.209 gives a struct instance an argument for each of its origins'
+`mut=` binders, at the binder's declared position, as upstream's instance
+holds an attribute for every declared parameter (`Span[True, Int, {o}]`):
+the origin's mutability where it decides one, and `ct_deferred(<binder>)`
+where nothing does yet (an unbound origin's, or one an origin binder or a
+`ref` parameter decides). An older artifact's instances gain the slot on
+read (`upgrade_struct_instance_mutability`): the origin's static mutability,
+else `ct_deferred`. The package format moves to `mojito-package 237`
+(R2372).
 
 Schema 1.207 adds two origin spellings a struct's origin argument can
 hold, as upstream's `_mlir_origin` attribute can: `origin_projected { base,

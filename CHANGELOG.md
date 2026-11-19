@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct instance now holds an argument for each of its origins' `mut=`
+  binders in place, as upstream's does, so `Span[mut=True, Int, _]` and
+  `Span[mut=False, Int, _]` are distinct types, a mutable span converts to
+  an immutable one through the implicit immutable-view constructor (which
+  the bundled `StringSpan` now declares too), a collector's
+  `VariadicList`/`VariadicPack` holds `elt_is_mutable`, and reflected names
+  spell the value (`reflect.A[True, {}]`). A `mut=` value a binder decides
+  stays deferred and elaborated instances erase it with their origins
+  (R2375, R2376). MIR text moves to schema 1.209 and the package format to
+  `mojito-package 237` (R2372, R2363).
 - Upstream's `!lit.origin<mut>` type and `std.origin`'s
   `_lit_origin_type_of_mut[mut]` alias, which types a value parameter over
   a fixed or symbolic mutability, and the bracketed ``__mlir_type[`!lit.ref<`,

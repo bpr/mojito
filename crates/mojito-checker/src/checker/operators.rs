@@ -934,13 +934,13 @@ impl Checker {
                     && !self.structs.contains_key(name) =>
             {
                 if let Some(element) = list_element(rt).or_else(|| set_element(rt)) {
-                    coerces(lt, element) && self.is_list_equatable(element)
+                    self.coerces_by_origins(lt, element) && self.is_list_equatable(element)
                 } else if let Some((key, _)) = dict_elements(rt) {
-                    coerces(lt, key) && self.is_list_equatable(key)
+                    self.coerces_by_origins(lt, key) && self.is_list_equatable(key)
                 } else if let Some(elements) = tuple_elements(rt) {
-                    elements
-                        .into_iter()
-                        .any(|element| coerces(lt, element) && self.is_list_equatable(element))
+                    elements.into_iter().any(|element| {
+                        self.coerces_by_origins(lt, element) && self.is_list_equatable(element)
+                    })
                 } else {
                     false
                 }

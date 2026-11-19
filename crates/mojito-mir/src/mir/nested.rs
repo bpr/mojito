@@ -258,8 +258,9 @@ pub(super) fn upgrade_call_parameter_lists(
 /// Give each call of `functions` whose `instantiated_args` bind its
 /// callee's argument view, as an artifact before MIR 1.205 writes them, a
 /// value for every declared parameter: each origin binder's left unbound
-/// and each `mut=` binder's deferred to the elaborated call
-/// ([`ParamDecl::instance_arguments`]), as an older call solved neither.
+/// and each `mut=` binder's its origin's static mutability, or deferred to
+/// the elaborated call ([`ParamDecl::place_origins`]), as an older call
+/// solved neither.
 pub(super) fn upgrade_instantiated_arguments(
     functions: &mut [(String, MirFunction)],
     declarations: &MirDeclarations,
@@ -269,10 +270,7 @@ pub(super) fn upgrade_instantiated_arguments(
             && arguments.len() != declared.len()
             && arguments.len() == ParamDecl::argument_binders(declared).count()
         {
-            *arguments = ParamDecl::instance_arguments(
-                declared,
-                &ParamDecl::place_origins(declared, arguments.drain(..), []),
-            );
+            *arguments = ParamDecl::place_origins(declared, arguments.drain(..), []);
         }
     }
     fn upgrade(block: &mut MirBlock, declarations: &MirDeclarations) {
@@ -1989,14 +1987,50 @@ pub(super) fn upgrade_struct_instance_arguments(
     functions: &mut [(String, MirFunction)],
     declarations: &mut MirDeclarations,
 ) {
-    let mut placing = OriginTails {
+    let placing = OriginTails {
         decls: declarations
             .structs
             .iter()
             .filter(|structure| structure.param_decls.iter().any(ParamDecl::is_origin))
             .map(|structure| (structure.name.clone(), structure.param_decls.clone()))
             .collect(),
+        in_place: false,
     };
+    place_struct_origins(placing, functions, declarations);
+}
+
+/// Give every struct instance `functions` and `declarations` spell, as an
+/// artifact before MIR 1.209 writes it without its origins' `mut=`
+/// arguments, each of them at its binder's position: its origin's static
+/// mutability, or [`CtValue::Deferred`] ([`ParamDecl::place_origins`]).
+pub(super) fn upgrade_struct_instance_mutability(
+    functions: &mut [(String, MirFunction)],
+    declarations: &mut MirDeclarations,
+) {
+    let placing = OriginTails {
+        decls: declarations
+            .structs
+            .iter()
+            .filter(|structure| {
+                structure
+                    .param_decls
+                    .iter()
+                    .any(|decl| decl.is_origin_mutability_binder(&structure.param_decls))
+            })
+            .map(|structure| (structure.name.clone(), structure.param_decls.clone()))
+            .collect(),
+        in_place: true,
+    };
+    place_struct_origins(placing, functions, declarations);
+}
+
+/// Rewrite every struct instance `functions` and `declarations` spell by
+/// `placing`.
+fn place_struct_origins(
+    mut placing: OriginTails,
+    functions: &mut [(String, MirFunction)],
+    declarations: &mut MirDeclarations,
+) {
     if placing.decls.is_empty() {
         return;
     }
@@ -2022,10 +2056,14 @@ pub(super) fn upgrade_struct_instance_arguments(
     }
 }
 
-/// [`upgrade_struct_instance_arguments`]'s rewrite: the declared list of
-/// each struct that declares an origin binder.
+/// [`upgrade_struct_instance_arguments`]'s and
+/// [`upgrade_struct_instance_mutability`]'s rewrite: the declared list of
+/// each struct it rewrites the instances of.
 struct OriginTails {
     decls: HashMap<String, Vec<ParamDecl>>,
+    /// Whether the instances hold their origins in place, and lack only
+    /// their `mut=` arguments, rather than as a tail.
+    in_place: bool,
 }
 
 impl OriginTails {
@@ -2051,10 +2089,15 @@ impl mojito_types::types::TyRewrite for OriginTails {
         let placed = match self.decls.get(name) {
             Some(decls)
                 if !arguments.is_empty()
-                    && arguments
-                        .iter()
-                        .skip_while(|argument| !matches!(argument, TyArg::Origin(_)))
-                        .all(|argument| matches!(argument, TyArg::Origin(_))) =>
+                    && if self.in_place {
+                        arguments.len() + ParamDecl::mutability_binders(decls).count()
+                            == decls.len()
+                    } else {
+                        arguments
+                            .iter()
+                            .skip_while(|argument| !matches!(argument, TyArg::Origin(_)))
+                            .all(|argument| matches!(argument, TyArg::Origin(_)))
+                    } =>
             {
                 let (view, tail): (Vec<TyArg>, Vec<TyArg>) = arguments
                     .into_iter()

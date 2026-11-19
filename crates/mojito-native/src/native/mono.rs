@@ -524,7 +524,7 @@ impl Bindings {
         let TyKind::Struct(name, arguments) = instance.kind() else {
             return;
         };
-        let binders: Vec<&ParamDecl> = declaration.instance_binders().collect();
+        let binders: Vec<&ParamDecl> = declaration.param_decls.iter().collect();
         if !binders.iter().any(|decl| decl.is_origin())
             || arguments.len() != binders.len()
             || binders

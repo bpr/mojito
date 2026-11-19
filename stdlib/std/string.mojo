@@ -1515,6 +1515,18 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         ]()
         self._size = src.size
 
+    # Upstream's implicit immutable view of any string span (upstream:
+    # `other: StringSpan, out self: StringSpan[ImmOrigin(other.origin)]`).
+    @inline(.always)
+    @implicit
+    def __init__[
+        other_mut: Bool, //, other_origin: Origin[mut=other_mut]
+    ](
+        other: StringSpan[other_origin],
+        out self: StringSpan[ImmOrigin(other_origin)],
+    ):
+        self = rebind[StringSpan[ImmOrigin(other_origin)]](other)
+
     @inline(.always)
     def __init__(out self, *, unsafe_from_utf8: Span[Byte, Self.origin]):
         """Construct a new `StringSpan` from a sequence of UTF-8 encoded bytes.

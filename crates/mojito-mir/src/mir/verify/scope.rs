@@ -372,10 +372,10 @@ impl ScopeCx<'_> {
                 let declared = self
                     .declarations
                     .structure(name)
-                    .map(|declaration| declaration.instance_view());
+                    .map(|declaration| declaration.param_decls.as_slice());
                 // A closure storage's origins follow its binders, which
                 // name none of them (R2365).
-                if let Some(binders) = declared.as_deref()
+                if let Some(binders) = declared
                     && !std::mem::take(&mut self.spelled_receiver)
                     && !mojito_symbol::symbol::is_closure_storage_name(name)
                     && let Some(misplaced) = misplaced_instance_argument(binders, args)
@@ -386,7 +386,7 @@ impl ScopeCx<'_> {
                     ));
                 }
                 self.erasable += 1;
-                self.arguments(role, declared.as_deref(), args, nested);
+                self.arguments(role, declared, args, nested);
                 self.erasable -= 1;
             }
             TyKind::GenericFunc(generic) => {
@@ -1091,7 +1091,7 @@ pub(super) mod tests {
         }
     }
 
-    /// `B[o: ImmOrigin, n: Int]`'s instance binders.
+    /// `B[o: ImmOrigin, n: Int]`'s declared list.
     fn origin_first() -> Vec<ParamDecl> {
         vec![
             ParamDecl::Origin {
@@ -1652,18 +1652,19 @@ pub(super) mod tests {
     }
 }
 
-/// Why `args`, the arguments of an instance of a struct whose instance
-/// binders are `binders` ([`ParamDecl::instance_binders`]), are not one per
-/// binder with each origin at its binder's position: `None` when they are,
-/// when they are none (an erased spelling), or when the struct declares no
-/// origin binder (an elaborated instance's declaration keeps none).
+/// Why `args`, the arguments of an instance of a struct declaring
+/// `binders`, are not one per declared parameter with each origin at its
+/// binder's position, each origin's `mut=` value at its own: `None` when
+/// they are, when they are none (an erased spelling), or when the struct
+/// declares no origin binder (an elaborated instance's declaration keeps
+/// none).
 fn misplaced_instance_argument(binders: &[ParamDecl], args: &[TyArg]) -> Option<String> {
     if args.is_empty() || !binders.iter().any(ParamDecl::is_origin) {
         return None;
     }
     if args.len() != binders.len() {
         return Some(format!(
-            "{} arguments where its struct declares {} instance binders",
+            "{} arguments where its struct declares {} parameters",
             args.len(),
             binders.len()
         ));

@@ -2909,7 +2909,7 @@ impl Checker {
             [] => {}
             [initializer] => {
                 let found = self.infer(initializer)?;
-                if !coerces(&found, &element) {
+                if !self.coerces_by_origins(&found, &element) {
                     return Err(TypeError::TypeMismatch {
                         expected: element.to_string(),
                         found: found.to_string(),
@@ -3168,8 +3168,10 @@ impl Checker {
             let factory = self.infer(&kwarg.value)?;
             let factory_ret = placement_factory_result(&factory);
             let selected = factory_ret.and_then(|ret| {
-                self.variant_index(alternatives, ret, |alternative| coerces(ret, alternative))
-                    .map(|index| (index, ret.clone()))
+                self.variant_index(alternatives, ret, |alternative| {
+                    self.coerces_by_origins(ret, alternative)
+                })
+                .map(|index| (index, ret.clone()))
             });
             let Some((index, payload)) = selected else {
                 return Err(TypeError::TypeMismatch {

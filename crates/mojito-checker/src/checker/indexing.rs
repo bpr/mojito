@@ -302,7 +302,7 @@ impl Checker {
                     }
                     if let Some((key, value)) = dict_elements(&obj_ty) {
                         let idx_ty = self.infer(index)?;
-                        if !coerces(&idx_ty, key) {
+                        if !self.coerces_by_origins(&idx_ty, key) {
                             return Err(TypeError::TypeMismatch {
                                 expected: key.to_string(),
                                 found: idx_ty.to_string(),
@@ -1401,7 +1401,7 @@ impl Checker {
             }
             if let Some((key, value)) = dict_elements(&obj_ty) {
                 let idx_ty = self.infer(index)?;
-                if !coerces(&idx_ty, key) {
+                if !self.coerces_by_origins(&idx_ty, key) {
                     return Err(TypeError::TypeMismatch {
                         expected: key.to_string(),
                         found: idx_ty.to_string(),
@@ -1673,7 +1673,7 @@ impl Checker {
     /// struct supplies `__mlir_index__() -> __mlir_type.index`, which
     /// upstream's `index()` casts to `Int`.
     pub(super) fn is_index_type(&self, ty: &Ty) -> bool {
-        coerces(ty, &Ty::int())
+        self.coerces_by_origins(ty, &Ty::int())
             || (ty.is_non_simd_struct() || matches!(ty.kind(), TyKind::Param { .. }))
                 && self.conforms_to(ty, "Indexer")
     }
@@ -1750,7 +1750,7 @@ impl Checker {
         position: usize,
     ) -> Result<(), TypeError> {
         let actual = self.infer(expression)?;
-        if coerces(&actual, &Ty::int()) {
+        if self.coerces_by_origins(&actual, &Ty::int()) {
             return Ok(());
         }
         let Some(target) = self.index_normalization_target(&actual) else {

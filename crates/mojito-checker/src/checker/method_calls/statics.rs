@@ -60,7 +60,7 @@ impl Checker {
                 }
                 for argument in args {
                     let aty = self.infer(argument)?;
-                    if !coerces(&aty, &Ty::int()) {
+                    if !self.coerces_by_origins(&aty, &Ty::int()) {
                         return Err(TypeError::TypeMismatch {
                             expected: "Int".to_string(),
                             found: aty.to_string(),
@@ -159,7 +159,7 @@ impl Checker {
                     }
                     Self::struct_instance_type(
                         sname,
-                        info.place_origins(bound.arguments, partitioned.origins.iter().cloned()),
+                        self.place_partitioned(info, bound.arguments, None, &partitioned),
                     )
                 })
         };
@@ -257,7 +257,7 @@ impl Checker {
             ..
         } = self.resolve_use_params(sname, &info.decls(), &partitioned.forwarded, &[], &[])?;
         let receiver = StaticReceiver {
-            arguments: info.place_origins(arguments, partitioned.origins.iter().cloned()),
+            arguments: self.place_partitioned(info, arguments, None, &partitioned),
             attributes: partitioned.declared(attributes),
         };
         if record {
@@ -374,7 +374,7 @@ impl Checker {
             // type does (`View[origin_of(x)].same(p)` over `p: Pointer[T,
             // Self.o]`).
             let instance: Vec<TyArg> =
-                info.place_origins(tyargs.iter().cloned(), partitioned.origins.iter().cloned());
+                self.place_partitioned(info, tyargs.iter().cloned(), None, &partitioned);
             let receiver_params: Vec<Ty> = sig
                 .params
                 .iter()
@@ -547,10 +547,7 @@ impl Checker {
             .position(|(_, params)| *params == selected.param_types)
             .map(|index| candidate_struct_args.swap_remove(index))
             .map_or_else(StaticReceiver::default, |bound| StaticReceiver {
-                arguments: info.place_origins(
-                    bound.arguments,
-                    crate::checker::StructInfo::instance_origins_or(receiver, &partitioned.origins),
-                ),
+                arguments: self.place_partitioned(info, bound.arguments, receiver, &partitioned),
                 attributes: partitioned.declared(bound.attributes),
             });
         self.record_declared_attributes(span.clone(), &selected.bracket_attributes);

@@ -2723,7 +2723,7 @@ impl Checker {
         }
         let found = compiled.meta().as_value()?;
         // A compile-time string is the `String` it materializes to.
-        if coerces(found, ty)
+        if self.coerces_by_origins(found, ty)
             || mojito_types::types::is_nominal_string(ty)
                 && matches!(compiled.as_constant(), Some(CtValue::Str(_)))
         {
@@ -5213,7 +5213,8 @@ impl Checker {
         };
         let expected =
             self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
-        if coerces(&found, &expected) || self.param_list_converts(&found, &expected) {
+        if self.coerces_by_origins(&found, &expected) || self.param_list_converts(&found, &expected)
+        {
             return Ok(());
         }
         Err(TypeError::TypeMismatch {
@@ -5241,7 +5242,7 @@ impl Checker {
         };
         let expected =
             self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
-        if coerces(&found, &expected) {
+        if self.coerces_by_origins(&found, &expected) {
             return Ok(());
         }
         Err(TypeError::TypeMismatch {

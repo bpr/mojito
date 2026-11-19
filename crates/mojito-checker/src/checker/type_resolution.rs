@@ -538,6 +538,9 @@ pub(super) struct PartitionedStructArgs {
     pub(super) forwarded: Vec<mojito_ast::ast::ParamArg>,
     pub(super) explicit_origins: Vec<ExplicitStructOrigin>,
     pub(super) origins: Vec<mojito_types::origin::Origin>,
+    /// The value an explicit `mut=` keyword gives an origin's mutability
+    /// binder, by the binder's identity.
+    pub(super) mutabilities: Vec<(mojito_types::param_expr::ParamId, CtValue)>,
     /// The source position of each `forwarded` argument.
     positions: Vec<usize>,
     /// The arguments kept back from the binder, each bound in its binder's
@@ -2206,10 +2209,11 @@ impl Checker {
             attributes,
             ..
         } = self.resolve_use_params(name, decls, &partitioned.forwarded, patterns, actuals)?;
-        let arguments = ParamDecl::place_origins(
+        let arguments = self.place_struct_origins(
             self.structs.get(name).map_or(decls, |info| &info.params),
             arguments,
             partitioned.origins.iter().cloned(),
+            &partitioned.mutabilities,
         );
         Ok(BoundParameters {
             subst,
@@ -2286,8 +2290,7 @@ impl Checker {
                 continue;
             };
             let ParamDecl::Origin { origin: id, .. } = decl else {
-                binders.push((decl, argument));
-                kept.bind(slot, position, None);
+                binders.push((decl, slot, position, argument));
                 continue;
             };
             let (origin, mutability) = if origin_placeholder(argument) {
@@ -2326,7 +2329,7 @@ impl Checker {
             }
             partitioned.explicit_origins.push(origin);
         }
-        for (binder, argument) in binders {
+        for (binder, slot, position, argument) in binders {
             check_origin_mutability_argument(
                 name,
                 params,
@@ -2334,6 +2337,9 @@ impl Checker {
                 argument,
                 &partitioned.explicit_origins,
             )?;
+            let value = self.origin_mutability_argument_value(binder, argument);
+            kept.bind(slot, position, Some(TyArg::Val(value.clone())));
+            partitioned.mutabilities.push((binder.id().clone(), value));
         }
         partitioned.positions = partitioned
             .positions
@@ -2343,6 +2349,52 @@ impl Checker {
         kept.merge(std::mem::take(&mut partitioned.kept).relocated(&carried_positions));
         partitioned.kept = kept;
         Ok(partitioned)
+    }
+
+    /// The instance of the struct `info` an application partitioned as
+    /// `partitioned` names, its argument binders taking `view` and its
+    /// origin binders the origins of `instance`, when there is one, else
+    /// the application's ([`Self::place_struct_origins`]).
+    pub(super) fn place_partitioned(
+        &self,
+        info: &super::StructInfo,
+        view: impl IntoIterator<Item = TyArg>,
+        instance: Option<&Ty>,
+        partitioned: &PartitionedStructArgs,
+    ) -> Vec<TyArg> {
+        self.place_struct_origins(
+            &info.params,
+            view,
+            super::StructInfo::instance_origins_or(instance, &partitioned.origins),
+            &partitioned.mutabilities,
+        )
+    }
+
+    /// The value an explicit `mut=` keyword `argument` gives the origin's
+    /// mutability binder `binder`: a literal's `Bool`, the read of a value
+    /// binder in scope, and [`CtValue::Deferred`] for `_` or a spelling
+    /// that names no binder in scope, which the slot then infers.
+    fn origin_mutability_argument_value(
+        &self,
+        binder: &ParamDecl,
+        argument: &mojito_ast::ast::ParamArg,
+    ) -> CtValue {
+        use mojito_ast::ast::ParamArg;
+        let mut value = argument;
+        while let ParamArg::Named { value: inner, .. } = value {
+            value = inner;
+        }
+        match value {
+            ParamArg::Value(expression) => match &expression.kind {
+                ExprKind::Bool(literal) => Some(CtValue::Bool(*literal)),
+                ExprKind::Identifier(name) if name != "_" => {
+                    self.value_parameter_in_scope(name).map(CtValue::Expr)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+        .unwrap_or_else(|| CtValue::Deferred(binder.binder()))
     }
 
     /// The checked parameter list of struct `name`, empty for a struct not
@@ -2391,6 +2443,7 @@ impl Checker {
             slots: slots.clone(),
             explicit_origins: Vec::new(),
             origins: vec![Origin::Unbound; tail_len],
+            mutabilities: Vec::new(),
         };
         let strict = self.application_strictness();
         // A variadic explicit list's positional alignment is the
@@ -2536,6 +2589,7 @@ impl Checker {
                 positions,
                 kept,
                 slots,
+                mutabilities: Vec::new(),
             });
         }
         // Keyword spellings: extract named origin arguments wherever they
@@ -2602,6 +2656,7 @@ impl Checker {
             positions,
             kept,
             slots,
+            mutabilities: Vec::new(),
         })
     }
 
@@ -3933,7 +3988,7 @@ impl Checker {
                         let lanes =
                             TyArg::Val(lanes.as_i64().map_or(CtValue::Expr(lanes), CtValue::Int));
                         return Ok(BoundArgument::attribute(lanes));
-                    } else if !coerces(&actual, ty) {
+                    } else if !self.coerces_by_origins(&actual, ty) {
                         // A struct parameter converts its argument through
                         // the `@implicit` constructor a run-time argument's
                         // own type selects (a literal its `IntLiteral` one).
@@ -3941,7 +3996,7 @@ impl Checker {
                         // "x"`) whose value folds to a literal converts from
                         // that literal, as its binding did.
                         let source = match self.argument_source_type(expr, &value, &actual) {
-                            declared if coerces(&declared, ty) => actual.clone(),
+                            declared if self.coerces_by_origins(&declared, ty) => actual.clone(),
                             declared => declared,
                         };
                         let mut slot = None;
@@ -5029,7 +5084,8 @@ impl Checker {
                             (
                                 TyArg::Origin(mojito_types::origin::Origin::Unbound),
                                 TyArg::Origin(_),
-                            ) => found.clone(),
+                            )
+                            | (TyArg::Val(CtValue::Deferred(_)), TyArg::Val(_)) => found.clone(),
                             _ => declared.clone(),
                         })
                         .collect(),
@@ -5064,14 +5120,18 @@ impl Checker {
         if found_name != expected_name || found_args.len() != expected_args.len() {
             return None;
         }
-        let only_tails_differ =
-            found_args
-                .iter()
-                .zip(expected_args)
-                .all(|(found, expected)| match (found, expected) {
-                    (TyArg::Origin(_), TyArg::Origin(_)) => true,
-                    _ => found == expected,
-                });
+        // An origin's `mut=` value differs with its origin.
+        let params = self.struct_params(found_name);
+        let mutability_slot = |index: usize| {
+            params.len() == found_args.len() && params[index].is_origin_mutability_binder(params)
+        };
+        let only_tails_differ = found_args.iter().zip(expected_args).enumerate().all(
+            |(index, (found, expected))| match (found, expected) {
+                (TyArg::Origin(_), TyArg::Origin(_)) => true,
+                (TyArg::Val(_), TyArg::Val(_)) if mutability_slot(index) => true,
+                _ => found == expected,
+            },
+        );
         only_tails_differ.then(|| TypeError::OriginIdentityMismatch {
             found: self.display_ty_with_origin_names(found),
             expected: self.display_ty_with_origin_names(expected),

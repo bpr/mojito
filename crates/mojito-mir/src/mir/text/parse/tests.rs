@@ -2961,6 +2961,78 @@ fn trait_types_and_trait_parameter_bounds_round_trip() {
     }
 }
 
+/// Schema 1.209 gives a struct instance an argument for each origin's
+/// `mut=` binder; a 1.208 artifact's instance gains it on read, its
+/// origin's static mutability or else deferred.
+#[test]
+fn older_struct_instances_gain_their_mutability_arguments() {
+    let owner = "V";
+    let mutability = ParamDecl::Value {
+        id: ParamId::new(owner, 0),
+        name: "mut".into(),
+        ty: Ty::bool(),
+        default: None,
+        callable_default: None,
+        infer_only: true,
+        variadic: false,
+        constraints: Vec::new(),
+    };
+    let origin = ParamDecl::Origin {
+        id: ParamId::new(owner, 1),
+        name: "o".into(),
+        origin: OriginParamId(1),
+        mutability: mojito_types::types::OriginMutability::Binder(mutability.binder()),
+        infer_only: false,
+    };
+    let structure = MirStructDeclaration {
+        name: owner.into(),
+        module: String::new(),
+        fields: Vec::new(),
+        fieldwise_init: false,
+        param_decls: vec![mutability.clone(), origin],
+        explicit_destructors: HashMap::new(),
+        explicit_destroy: None,
+        conformances: Vec::new(),
+        declared: Vec::new(),
+        register_passable: false,
+        associated_types: Vec::new(),
+        parameterized_associated_types: Vec::new(),
+        associated_values: Vec::new(),
+        parameterized_associated_values: Vec::new(),
+        witness_tables: Vec::new(),
+        members: Vec::new(),
+    };
+    let instance = |arguments: Vec<TyArg>| -> Ty { TyKind::Struct(owner.into(), arguments).into() };
+    let mut program = program_with(vec![(
+        "f".into(),
+        function_with(
+            vec![
+                instance(vec![TyArg::Origin(Origin::Static)]),
+                instance(vec![TyArg::Origin(Origin::Unbound)]),
+            ],
+            Vec::new(),
+        ),
+    )]);
+    program.declarations.structs.push(structure);
+    let older = legacy_text(&program, 208, &[]);
+    let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let reg_types = &parsed.program.functions[0].1.reg_types;
+    assert_eq!(
+        reg_types.get(&0),
+        Some(&instance(vec![
+            TyArg::Val(CtValue::Bool(false)),
+            TyArg::Origin(Origin::Static),
+        ]))
+    );
+    assert_eq!(
+        reg_types.get(&1),
+        Some(&instance(vec![
+            TyArg::Val(CtValue::Deferred(mutability.binder())),
+            TyArg::Origin(Origin::Unbound),
+        ]))
+    );
+}
+
 /// Schema 1.186 declares an origin binder in place, with the mutability
 /// its `mut=` names: a sibling `Bool` binder, a fixed value, or an
 /// `OriginSet`.

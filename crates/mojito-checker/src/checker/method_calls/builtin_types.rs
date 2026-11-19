@@ -167,7 +167,7 @@ impl Checker {
                     });
                 }
                 let offset = self.infer(&args[0])?;
-                if !coerces(&offset, &Ty::int()) {
+                if !self.coerces_by_origins(&offset, &Ty::int()) {
                     return Err(TypeError::TypeMismatch {
                         expected: "Int".to_string(),
                         found: offset.to_string(),
@@ -451,7 +451,7 @@ impl Checker {
             }));
         }
         for (arg, expected) in args.iter().zip(&params) {
-            if !coerces(arg, expected) {
+            if !self.coerces_by_origins(arg, expected) {
                 return Some(Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),
                     found: arg.to_string(),
@@ -530,7 +530,7 @@ impl Checker {
         }
         // Require the argument at position `i` to coerce to the element type.
         let expect_elem = |tys: &[Ty], i: usize| -> Result<(), TypeError> {
-            if coerces(&tys[i], elem) {
+            if self.coerces_by_origins(&tys[i], elem) {
                 Ok(())
             } else {
                 Err(TypeError::TypeMismatch {
@@ -548,7 +548,7 @@ impl Checker {
             }
             "insert" => {
                 let tys = self.builtin_args("insert", 2, args)?;
-                if !coerces(&tys[0], &Ty::int()) {
+                if !self.coerces_by_origins(&tys[0], &Ty::int()) {
                     return Err(TypeError::TypeMismatch {
                         expected: "Int".to_string(),
                         found: tys[0].to_string(),
@@ -574,7 +574,7 @@ impl Checker {
                 }
                 if let Some(a) = args.first() {
                     let ity = self.infer(a)?;
-                    if !coerces(&ity, &Ty::int()) {
+                    if !self.coerces_by_origins(&ity, &Ty::int()) {
                         return Err(TypeError::TypeMismatch {
                             expected: "Int".to_string(),
                             found: ity.to_string(),

@@ -4717,8 +4717,9 @@ struct Arguments<'a> {
 impl Arguments<'_> {
     /// The arguments that bind a binder of `decls`, the callee's whole
     /// declared list, each with its function: the call holds one for every
-    /// declared parameter, and its origin binders and their `mut=` binders
-    /// bind nothing an inlined body reads, their origins erased.
+    /// declared parameter, and its origin binders bind nothing an inlined
+    /// body reads, their origins erased; their `mut=` binders bind apart
+    /// ([`Self::mutabilities`]).
     fn binding(&self, decls: &[ParamDecl]) -> Vec<(&TyArg, Option<&CallableArgument>)> {
         let whole = self.compile_time.len() == decls.len();
         self.compile_time
@@ -4739,6 +4740,27 @@ impl Arguments<'_> {
                 )
             })
             .collect()
+    }
+
+    /// The value each origin `mut=` binder of `decls`, the callee's whole
+    /// declared list, takes, where the call decides it: a body's types
+    /// read it beside the origin.
+    fn mutabilities<'a>(
+        &'a self,
+        decls: &'a [ParamDecl],
+    ) -> impl Iterator<Item = (&'a ParamDecl, &'a TyArg)> + 'a {
+        (self.compile_time.len() == decls.len())
+            .then(|| {
+                decls
+                    .iter()
+                    .zip(self.compile_time.iter())
+                    .filter(move |(decl, argument)| {
+                        decl.is_origin_mutability_binder(decls)
+                            && !matches!(argument, TyArg::Val(CtValue::Deferred(_)))
+                    })
+            })
+            .into_iter()
+            .flatten()
     }
 }
 
@@ -4798,6 +4820,10 @@ impl<'d> Instantiation<'d> {
         let covered = owner.map_or(0, |owner| restated_owner_binders(&owner.decls, decls));
         let own = &decls[covered..];
         let existentials = arguments.existentials;
+        let mutabilities: Vec<(ParamDecl, TyArg)> = arguments
+            .mutabilities(&declaration.param_decls)
+            .map(|(decl, argument)| (decl.clone(), argument.clone()))
+            .collect();
         let arguments = arguments.binding(&declaration.param_decls);
         let own_arguments = if arguments.len() == decls.len() {
             &arguments[covered..]
@@ -4816,10 +4842,16 @@ impl<'d> Instantiation<'d> {
             declarations,
         };
         if let Some(owner) = owner {
-            let (_, owner_arguments) = nominal_parts(&owner.ty)?;
-            let owner_arguments =
-                ParamDecl::instance_argument_view(owner.declared, &owner_arguments);
+            let (_, instance) = nominal_parts(&owner.ty)?;
+            let owner_arguments = ParamDecl::instance_argument_view(owner.declared, &instance);
             let owner_arguments = owner_binder_arguments(&owner.decls, &owner_arguments)?;
+            for (decl, argument) in ParamDecl::aligned_pairs(owner.declared, &instance) {
+                if decl.is_origin_mutability_binder(owner.declared)
+                    && !matches!(argument, TyArg::Val(CtValue::Deferred(_)))
+                {
+                    instantiation.bind(decl, argument, None);
+                }
+            }
             for (decl, argument) in owner.decls.iter().zip(owner_arguments.iter()) {
                 match instantiation.bind(decl, argument, None)? {
                     Bound::Value(value)
@@ -4837,6 +4869,9 @@ impl<'d> Instantiation<'d> {
                 let ty = decl.value_element_ty()?.clone();
                 instantiation.closures.push((decl.binder(), ty, closure));
             }
+        }
+        for (decl, argument) in &mutabilities {
+            instantiation.bind(decl, argument, None);
         }
         for (binder, ty) in existentials {
             instantiation.bindings.bind(

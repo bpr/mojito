@@ -292,7 +292,7 @@ impl Checker {
                     .clone();
                 for argument in args {
                     let actual = self.infer(argument)?;
-                    if !coerces(&actual, &element) {
+                    if !self.coerces_by_origins(&actual, &element) {
                         return Err(TypeError::TypeMismatch {
                             expected: element.to_string(),
                             found: actual.to_string(),
@@ -695,7 +695,11 @@ impl Checker {
         let instantiation = self.conversion_instantiation(
             &target,
             &selected.target,
-            (&selected.own_decls, selected.own_arguments),
+            (
+                &selected.own_decls,
+                selected.own_arguments,
+                &selected.own_mutabilities,
+            ),
         );
         // A view conversion already recorded at this span supersedes the
         // materialization; re-inferring the expression must not revert it.

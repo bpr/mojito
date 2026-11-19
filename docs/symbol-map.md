@@ -2128,18 +2128,33 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`ParamDecl::instance_origins`), key an instance's origin arguments, so
   `StructDeclaration::associated_type` binds a member template's
   `Self.o` with the member's own origins. A struct instance's layout is
-  owned by `ParamDecl` (`types.rs`): `instance_binders`/`instance_view`
-  (the binders an instance holds an argument for, each origin in place),
-  `place_origins` (the one builder from an argument view and origins),
-  and `aligned_pairs`/`aligned_arguments`/`aligned_argument` (a list of
-  binders paired with an instance's arguments by kind, a struct's whole
-  declared list with an instance of any shape, an erased one or one
-  without its `mut=` slots included); `instance_argument_view` is an
+  owned by `ParamDecl` (`types.rs`): an instance holds one argument per
+  declared parameter, each origin and each origin's `mut=` value in place;
+  `place_origins_with` is the one builder from an argument view and
+  origins, writing each `mut=` slot through a callback (the checker's
+  `Checker::origin_mutability_slot`, via `Checker::place_struct_origins`
+  and `place_partitioned`, an explicit `mut=` keyword's value kept in
+  `PartitionedStructArgs::mutabilities`), and `place_origins` its
+  below-the-checker form under `static_mutability_slot`;
+  `aligned_pairs`/`aligned_arguments`/`aligned_argument` pair a list of
+  binders with an instance's arguments by kind, a struct's whole declared
+  list with an instance of any shape, an erased one or an elaborated one
+  without its `mut=` slots included; `instance_argument_view` is an
   instance's arguments for its argument binders, which the checker reads
   through `StructInfo::view_arguments` and MIR and the elaborator through
-  `StructDeclaration::view_arguments`; MIR text 1.206's
+  `StructDeclaration::view_arguments`. The checker's comparisons leave a
+  `mut=` value both origins bind to them (`Checker::coerces_by_origins`,
+  `types::defer_origin_decided_mutability`); a layout ignores every one
+  (`types::defer_mutability_arguments`, read by
+  `MirDeclarations::translated_type` and the checker's rebind check); the
+  elaborator erases them with the origins (`StructCatalog::without_mutability`,
+  in `substitute_ty` and `unify`) and binds a member's read of one from its
+  owner instance (`unify::bind_mutability_args`), and `inline-parametric`
+  binds a callee's (`Arguments::mutabilities`). MIR text 1.206's
   `nested::upgrade_struct_instance_arguments` moves an older artifact's
-  origin tail into place. `checker/origins/transfer.rs` owns the
+  origin tail into place, and 1.209's
+  `nested::upgrade_struct_instance_mutability` gives its instances their
+  `mut=` slots. `checker/origins/transfer.rs` owns the
   carried source (`SigOrigin::Carried`, recorded by
   `record_transfer_effect` and closed by `replay_transfer_effects` with the
   receiver's arguments and the call's own bindings, `call_closed`).
@@ -3457,9 +3472,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`MethodInstantiation::declared`, `method_declared_arguments`), a
   construction (`record_construction_instantiation`,
   `bind_constructed_origins`, `construction_arguments`), and a conversion
-  (`conversion_instantiation`); `ParamDecl::instance_arguments`
-  (`types.rs`) maps an instance type's arguments, origins in place, onto a
-  constructor's list
+  (`conversion_instantiation`, its constructor's own `mut=` binders from
+  the origins the source binds, `Checker::own_origin_mutabilities`);
+  `ParamDecl::constructor_call_arguments` (`types.rs`) takes an instance
+  type's arguments, one per struct parameter, before a constructor's own
   for the calls MIR synthesizes (`struct_arguments`, `restated_arguments`,
   `constructed_arguments`, `build_variadic_list`), and
   `ParamDecl::argument_view_arguments` takes the view's solutions for a

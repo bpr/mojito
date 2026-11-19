@@ -167,6 +167,14 @@ impl Decoder {
                 &mut declarations,
             );
         }
+        // Schema 1.209 gives a struct instance an argument for each of its
+        // origins' `mut=` binders; an older instance holds none.
+        if self.minor < 209 {
+            crate::mir::nested::upgrade_struct_instance_mutability(
+                &mut functions,
+                &mut declarations,
+            );
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {

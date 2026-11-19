@@ -167,6 +167,7 @@ pub fn build_variadic_list(
     let list = tables.fresh_register(variadic_list_type(
         element.clone(),
         owned,
+        owned,
         mojito_types::origin::Origin::Unbound,
     ));
     before.push(MirInstr::Call {

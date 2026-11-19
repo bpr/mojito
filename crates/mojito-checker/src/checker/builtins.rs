@@ -360,7 +360,7 @@ impl Checker {
         }
         for (i, arg) in args.iter().enumerate() {
             let arg_ty = self.infer(arg)?;
-            if !coerces(&arg_ty, &Ty::int()) {
+            if !self.coerces_by_origins(&arg_ty, &Ty::int()) {
                 return Err(TypeError::TypeMismatch {
                     expected: "Int".to_string(),
                     found: arg_ty.to_string(),

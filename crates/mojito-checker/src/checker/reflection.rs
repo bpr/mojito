@@ -946,9 +946,10 @@ fn reflection_value_ty(
 fn static_string_ty() -> Ty {
     Ty::new(TyKind::Struct(
         mojito_types::types::STDLIB_STRING_SPAN_STRUCT.to_string(),
-        vec![mojito_types::types::TyArg::Origin(
-            mojito_types::origin::Origin::Static,
-        )],
+        vec![
+            mojito_types::types::TyArg::Val(mojito_types::ct::CtValue::Bool(false)),
+            mojito_types::types::TyArg::Origin(mojito_types::origin::Origin::Static),
+        ],
     ))
 }
 

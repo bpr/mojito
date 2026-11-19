@@ -2094,7 +2094,7 @@ impl Checker {
                     (target.clone(), Some(contract))
                 } else {
                     let result = self.infer_infix(None, *op, place, value)?;
-                    if !coerces(&result, &target) {
+                    if !self.coerces_by_origins(&result, &target) {
                         return Err(TypeError::TypeMismatch {
                             expected: target.to_string(),
                             found: result.to_string(),
@@ -3031,7 +3031,7 @@ impl Checker {
                             found: found.to_string(),
                             context: "reference field initialization".to_string(),
                         })?;
-                if !coerces(&actual.referent, &expected_reference.referent)
+                if !self.coerces_by_origins(&actual.referent, &expected_reference.referent)
                     || (expected_reference.mutability == mojito_types::origin::Mutability::Mutable
                         && actual.mutability != mojito_types::origin::Mutability::Mutable)
                 {
@@ -4379,7 +4379,9 @@ impl Checker {
             // binding and argument positions do (records the ctor target so
             // the omitted-arg default materializes it). A `None` default for
             // `Optional[T]` resolves here.
-            if !coerces(&dty, pty) && !self.record_constructor_conversion(d, &dty, pty)? {
+            if !self.coerces_by_origins(&dty, pty)
+                && !self.record_constructor_conversion(d, &dty, pty)?
+            {
                 return Err(TypeError::TypeMismatch {
                     expected: pty.to_string(),
                     found: dty.to_string(),

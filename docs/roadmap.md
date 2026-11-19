@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2375**.
+Next free ID: **R2377**.
 
 ## Ordered Work
 
@@ -10348,8 +10348,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     position leave `_mlir_origin` unbound instead of failing with
     `CannotInferTypeParam` (`resolve_partial_use_params`).
   - `origin_annotation_mutability` reads `mut` by its declared slot, not
-    `args.first()`, which needs R2372: `instance_binders` drops a `mut=`
-    binder, so `Origin[mut=True]` would lose its argument.
+    `args.first()`: an instance holds every declared parameter since
+    R2372, so `Origin[mut=True]` keeps its argument.
   - Re-check every reader of `Origin`'s arguments: `immutable_origin_cast`
     (`origins/sig.rs`), `fold_origin_alias_bounds` (`comptime/synth.rs`),
     the parser's `Origin[mut=…]` case, `is_erased_origin_param`
@@ -10376,7 +10376,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   implicit binder ahead of `o`.
   - With a bare `o: Origin`, both `mut` and `_mlir_origin` are
     auto-parameterized, so the pin prints `S[True, {}, {}]`.
-  - `ParamDecl::instance_binders` and the pre-check `auto_parameterize`
+  - `ParamDecl::place_origins_with` and the pre-check `auto_parameterize`
     (R2342) are where the implicit binder enters.
   - Probe: `U[origin_of(x), Int]` over `struct U[o: ImmOrigin, T:
     AnyType]` prints `U[{}, SIMD[DType.int, 1]]`; the pin prints `U[{},
@@ -10775,59 +10775,70 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2372 A struct instance holds no argument for an origin's `mut=`
-  binder, where upstream's carries its `Bool` in place
-  (`Span[mut=True, T, o]`)**
+- [ ] **R2375 A `mut=` value a binder decides is deferred in a checked
+  instance and erased from an elaborated one, where upstream's instance
+  carries the binder's value**
 
-  Every builder of a `TyKind::Struct` leaves out each origin's `mut=`
-  binder (`ParamDecl::instance_binders`), so `Span[mut=True]` and
-  `Span[mut=False]` are one type.
-  - Readers already pair a struct's whole declared list with either shape
-    (`ParamDecl::aligned_pairs`, `instance_argument_view`,
-    `StructInfo::view_arguments`, `StructDeclaration::view_arguments`).
-  - The lever: `ParamDecl::place_origins` writes the slot, from the
-    origin's static mutability, the binder's own read for an
-    `Origin::Param` whose mutability is a binder in scope, or
-    `CtValue::Deferred` (`declared_call_arguments` in
-    `origins/construct.rs` already computes this rule for calls).
-  - Builders to move: `StructInfo::self_arguments`, `constructed_type`,
-    `resolve_struct_use_args`, `partition_struct_origin_args_uncollected`
-    (which today discards an explicit `mut=` keyword),
-    `method_calls/statics.rs`, `declarations.rs` (`take(decls().len())`,
-    `infer_copy_construction`), `reflection.rs`'s `static_string_ty`,
-    `types::variadic_list_type` and `variadic_pack_over`.
-  - Mono builders must agree with `substitute_ty`'s `instance_symbol`, or
-    one instance gets two names: `owner_instance_ty`,
-    `bind_static_receiver`, `erase_removed_owner`, `name_owner_origins`,
-    and the `enqueue` owner arguments.
-  - `types::coerces` admits a deferred slot against any value, as
-    `Origin::coerces_to` admits `Unbound`.
-  - An overload key spelled from an annotation (`symbol::ast_raw`) spells
-    no `mut=`, while `ty_raw_in` would spell the slot: make the two agree
-    (an explicit keyword's `Bool`, a `Deferred` slot erased).
-  - MIR text 1.209 sets an older instance's slot to `ct_deferred`, beside
-    1.206's `upgrade_struct_instance_arguments`.
-  - Then delete `ParamDecl::instance_view`, `instance_arguments`, and
-    `instance_binders`, and their `StructDeclaration` forwards
-    (`verify/scope.rs`, `param_uses.rs`, `copy_calls.rs`,
-    `call_defaults.rs`, `type_construction.rs`, `nested.rs`,
-    `struct_reads.rs`, `mono.rs`).
-  - Then drop the concrete verifier's `Deferred` admission for a call's
-    solved arguments (`verify/concrete.rs`), which a call MIR synthesizes
-    from an instance type (an `_ArrayIter`'s `__moveinit__`) needs today.
-  - Expect symbol, snapshot, and manifest churn: an instance of any of the
-    16 bundled structs with an `Origin[mut=<binder>]` binder renames.
-  - Probe: `def f(s: Span[mut=False, Int, _])` and `def g(s: Span[mut=True,
-    Int, _])`, each called with `Span(xs)` and with `xs`, print `1 1` twice
-    and must keep doing so.
-  - Probe: `reflect[A[origin_of(a)]].name()` over `struct A[mut: Bool, //,
-    o: Origin[mut=mut]]` prints `reflect.A[{}]`, where the pin prints
-    `reflect.A[True, {}, {}]` (the doubled `{}` and the module path are
-    R1679/R1680's).
-  - Plan: `R2362-a-struct-instance-holds-no-argument-plan.md` (slices
-    B1–B6, C2).
-  - Found while landing R762 (2026-11-19).
+  The checker writes an instance's `mut=` slot only where it decides the
+  mutability itself (`Checker::origin_mutability_slot`), so an origin
+  binder's `mut=` (`o: Origin[mut=m]`), a `ref` parameter's implicit
+  `self_is_mut`, and `Self`'s own (`StructInfo::self_arguments`) are
+  `CtValue::Deferred`, and the elaborator erases every slot with its
+  origin (`StructCatalog::without_mutability`), so no instance is
+  specialized per mutability.
+  - The lever: write the binder's read where a binder decides it, and bind
+    it on every path that substitutes an instance into a member's types:
+    `substitute_at_with`, `resolve_parameterized_member`,
+    `OwnParameters::apply`, and the `substitute(…, &struct_subst(…))`
+    readers (`rg struct_subst crates/mojito-checker`); a read the checker
+    leaves unbound leaks into a caller's MIR ("names parameter
+    `iterable_mut` of `_DictKeyIter` that no enclosing declaration
+    binds"), which is why it is deferred today.
+  - A `ref` parameter's mutability binder becomes a value binder a body
+    and its instance read, as upstream's `self_is_mut` is.
+  - Then key elaborated instances on the slot: drop
+    `without_mutability`, and spell the owner instance over the struct's
+    non-origin parameters in `owner_instance_ty`, `bind_static_receiver`,
+    `erase_removed_owner`, `name_owner_origins`, and the `enqueue` owner
+    arguments, so they agree with `substitute_ty`'s `instance_symbol`.
+  - Probe: `reflect[type_of(s)].name()` in `def f[m: Bool, //, o:
+    Origin[mut=m]](s: Span[Int, o])`, called with `Span(xs)` and with an
+    `ImmOrigin` span, prints `std.span.Span[mut, SIMD[DType.int, 1], {}]`
+    twice, where the pin prints `True` then `False` in that slot.
+  - Probe: `reflect[type_of(d.keys())].name()` over a `var d` prints
+    `_DictKeyIter[iterable_mut, …]`, where the pin prints `True`.
+  - Probe: the type of `xs.__iter__()` over a `var xs` list literal prints
+    `_ArrayIter[iterable_mut, …]`.
+  - Found while landing R2372 (2026-11-19).
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2376 A parameter typed by a struct with an unbound origin
+  declares no implicit binder for that origin's `mut=`, where upstream's
+  `addImplicitTypeParams` adds one**
+
+  `def f(s: Span[Int, _])` takes one instance whose `mut=` is deferred,
+  where the pin's `f` is generic over the span's mutability and its
+  origin and specializes per call.
+  - `auto_parameterize` (`mojito-comptime`) passes an origin's slot as
+    `_` and adds no binder, because the checker infers origins from
+    places.
+  - A lone `$mut` binder cannot be solved through an implicit conversion
+    (a `String` passed to a bare `StringSpan` parameter): no value
+    unification sees the converted instance, so the call matches no
+    overload. Declare the origin's implicit binder with it, as upstream
+    does, so the existing origin-binder inference (which already infers an
+    explicit `[m: Bool, //, o: Origin[mut=m]]` pair through a conversion)
+    solves both.
+  - A literal into such a pair (`g("xy")` over `g[m, o](s: StringSpan[o])`)
+    fails today with "expected StringSpan, found StringLiteral", which the
+    bare `StringSpan` parameters of the bundled library would hit.
+  - Probe: `reflect[type_of(s)].name()` in `def f(s: Span[Int, _])`,
+    called with `Span(xs)` and with an `ImmOrigin` span, prints
+    `std.span.Span[mut, SIMD[DType.int, 1], {}]` twice, where the pin
+    prints `True` then `False` in that slot.
+  - Found while landing R2372 (2026-11-19).
+  - Depends on R2375.
   - Model: Fable, Not Planned.
 
 - [ ] **R2373 `Self.mut` in a method of a struct whose origin's `mut=` is
@@ -10866,24 +10877,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Span[mut=True, SIMD[DType.int, 1]]([Int(1), Int(2)])`.
   - Found while landing R2362's readers (2026-11-19).
   - Depends on R2373.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2363 A collector's `VariadicPack` holds no `elt_is_mutable`
-  argument, so `types::variadic_pack_owned` scans for any `True`
-  argument instead of reading `is_owned`**
-
-  `types::variadic_pack_over` spells the pack's `origin`, trait, pack,
-  `is_owned`, and `TypeList`, but no `elt_is_mutable`, as every instance
-  lacks its `mut=` slot (R2372).
-  - The lever: spell `elt_is_mutable` in place; `variadic_pack_owned`
-    already reads `is_owned` as the last `Bool` argument.
-  - Sites: `types.rs` (`variadic_pack_over`, `variadic_pack_owned`) and the
-    `VariadicPack` builders in `mir/variadics.rs`.
-  - Pinned by `conformance/probes/variadic_pack_owned_iteration.mojo`.
-  - Re-probe the mutable-loan collector entries that cite
-    `elt_is_mutable`.
-  - Found while landing R762 (2026-11-19).
-  - Depends on R2372.
   - Model: Opus, Not Planned.
 
 - [ ] **R2364 A method's erased `Self` spelling carries none of its

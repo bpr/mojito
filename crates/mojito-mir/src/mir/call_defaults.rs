@@ -1001,13 +1001,14 @@ fn build_collector(
             TyKind::Tuple(types) => types.clone(),
             _ => return,
         };
+        let mutable = shape.variadic_convention == Some(ArgConvention::Mut);
         let pack_ty = mojito_types::types::bound_variadic_pack_type(
             element,
             &element_types,
+            mutable,
             false,
             mojito_types::origin::Origin::Unbound,
         );
-        let mutable = shape.variadic_convention == Some(ArgConvention::Mut);
         // A value read shallowly (a reference result's referent) belongs to
         // its owner, which the slot the pack binds it to must not destroy,
         // and which the call keeps live as upstream's reference into it
@@ -2518,13 +2519,13 @@ fn erase_slice(
 
 /// The arguments a call of `constructor` binds when it builds `ty`, an
 /// instance of its struct: a value for each declared parameter
-/// ([`ParamDecl::instance_arguments`]).
+/// ([`ParamDecl::constructor_call_arguments`]).
 fn constructed_arguments(constructor: &str, ty: &Ty, declarations: &MirDeclarations) -> Vec<TyArg> {
     let Some((_, arguments)) = ty.kind().as_non_simd_struct() else {
         return Vec::new();
     };
     declarations.function(constructor).map_or_else(
         || arguments.clone(),
-        |declaration| ParamDecl::instance_arguments(&declaration.param_decls, arguments),
+        |declaration| ParamDecl::constructor_call_arguments(&declaration.param_decls, arguments),
     )
 }

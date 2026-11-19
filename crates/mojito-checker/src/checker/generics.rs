@@ -2428,7 +2428,9 @@ fn substitute_at_with(
         &bound,
         &AssocBindings {
             types: struct_subst(&info.params, &view),
-            values: solved_value_bindings(&info.decls(), &view),
+            // The whole list, so a read of an origin's `mut=` binder
+            // (`Self.mut`) takes the instance's value beside its origin.
+            values: solved_value_bindings(&info.params, targs),
             ids: forwarded_pack_lists(&info.decls(), &view),
             origins: HashMap::new(),
         },

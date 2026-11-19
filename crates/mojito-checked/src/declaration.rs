@@ -203,17 +203,6 @@ impl StructDeclaration {
         ParamDecl::instance_argument_view(&self.param_decls, arguments)
     }
 
-    /// The binders an instance of the struct holds an argument for, origin
-    /// binders in place ([`ParamDecl::instance_binders`]).
-    pub fn instance_binders(&self) -> impl Iterator<Item = &ParamDecl> {
-        ParamDecl::instance_binders(&self.param_decls)
-    }
-
-    /// [`Self::instance_binders`] as a list.
-    pub fn instance_view(&self) -> std::borrow::Cow<'_, [ParamDecl]> {
-        ParamDecl::instance_view(&self.param_decls)
-    }
-
     /// The symbol of the struct's member keyed `member`, when it owns one:
     /// the first, for a generic member with several instances.
     pub fn member(&self, member: &str) -> Option<&str> {

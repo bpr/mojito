@@ -329,7 +329,7 @@ fn copy_construction<C: ConstructionTypes>(
 
 /// The compile-time arguments a call of the struct `ty`'s `initializer`
 /// binds its whole declared list by: the type's arguments, one per
-/// parameter ([`ParamDecl::instance_arguments`]), a lone pack the type
+/// parameter ([`ParamDecl::constructor_call_arguments`]), a lone pack the type
 /// spells element by element (`Tuple[Int, Bool]`) passed whole as a direct
 /// call passes it.
 fn struct_arguments(ty: &Ty, initializer: &str, declarations: &MirDeclarations) -> Vec<TyArg> {
@@ -344,7 +344,7 @@ fn struct_arguments(ty: &Ty, initializer: &str, declarations: &MirDeclarations) 
         .unwrap_or_else(|| arguments.clone());
     declarations.function(initializer).map_or_else(
         || arguments.clone(),
-        |declaration| ParamDecl::instance_arguments(&declaration.param_decls, &arguments),
+        |declaration| ParamDecl::constructor_call_arguments(&declaration.param_decls, &arguments),
     )
 }
 

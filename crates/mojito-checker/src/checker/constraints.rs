@@ -664,7 +664,7 @@ impl Checker {
         // generator value.
         let accepted = matches!(found.kind(), TyKind::ParamList(_))
             || matches!(declared.kind(), TyKind::ParamList(_))
-            || coerces(found, declared)
+            || self.coerces_by_origins(found, declared)
             || mojito_types::types::generator_converts(found, declared)
             || mojito_types::types::is_nominal_string(declared)
                 && matches!(compiled.as_constant(), Some(CtValue::Str(_)));
@@ -875,7 +875,7 @@ impl Checker {
             return Err(mismatch);
         }
         match compiled.meta().as_value() {
-            Some(actual) if coerces(actual, ty) => Ok(compiled),
+            Some(actual) if self.coerces_by_origins(actual, ty) => Ok(compiled),
             Some(actual) => Err(mismatch(actual.to_string())),
             None => Err(mismatch(compiled.meta().to_string())),
         }

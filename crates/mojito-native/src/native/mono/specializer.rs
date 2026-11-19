@@ -406,7 +406,7 @@ impl<'a> Specializer<'a> {
         let Some(decls) = self
             .structs
             .get(owner.as_str())
-            .map(|owner| owner.instance_view())
+            .map(|owner| owner.param_decls.as_slice())
         else {
             return Ok(());
         };
@@ -1653,6 +1653,7 @@ impl<'a> Specializer<'a> {
             let Some((name, arguments)) = mojito_types::types::nominal_parts(&ty) else {
                 return Err(unresolved("an instance that is no struct", instance));
             };
+            bind_mutability_args(&owner.param_decls, &arguments, &mut instance_bindings);
             bind_ty_args(
                 &owner.argument_view(),
                 &owner.view_arguments(&arguments),
@@ -4107,6 +4108,7 @@ impl<'a> Specializer<'a> {
             return Ok(());
         };
         let mut bindings = self.base_bindings();
+        bind_mutability_args(&template.param_decls, &arguments, &mut bindings);
         bind_ty_args(
             &template.argument_view(),
             &template.view_arguments(&arguments),
@@ -4156,6 +4158,7 @@ impl<'a> Specializer<'a> {
             return Ok(());
         };
         let mut bindings = self.base_bindings();
+        bind_mutability_args(&template.param_decls, &arguments, &mut bindings);
         bind_ty_args(
             &template.argument_view(),
             &template.view_arguments(&arguments),
@@ -4441,6 +4444,7 @@ impl<'a> Specializer<'a> {
             return Ok(None);
         }
         let mut bindings = self.base_bindings();
+        bind_mutability_args(&template.param_decls, arguments, &mut bindings);
         bind_ty_args(
             &template.argument_view(),
             &template.view_arguments(arguments),

@@ -2311,9 +2311,10 @@ parameter of that list, as upstream's call holds an attribute for each:
 the check records each origin binder's solved origin and each `mut=`
 binder's mutability in place (`Checker::declared_call_arguments`), a
 construction's struct origins from the instance it builds, a mutability
-the caller's binders decide as `CtValue::Deferred`, and a call MIR
-synthesizes from an instance type maps that instance's arguments onto the
-list (`ParamDecl::instance_arguments`). The verifier rejects a call whose
+the caller's binders decide as a read of that binder, and a call MIR
+synthesizes from an instance type takes that instance's arguments, one per
+struct parameter, before its constructor's own
+(`ParamDecl::constructor_call_arguments`). The verifier rejects a call whose
 solved arguments bind any other list (`verify_param_arguments`), and each
 reader indexes a declared slot directly; a reader keyed by the argument
 view (a nested body's generator scope) takes the view's solutions
@@ -3246,24 +3247,44 @@ A struct's own origin arguments are part of its checked identity: `TyKind::Struc
 carries one argument per declared parameter in declared order, each
 `Origin`/`OriginSet` binder's `TyArg::Origin` **in place**, infer-only ones
 included (bound by keyword, `VariadicList[origin=o, T, owned]`, or left
-unbound), as upstream's `!kgen.struct` attributes sit
-(`ParamDecl::instance_binders`; `P[origin_of(xs)]` and `P[origin_of(ys)]` are
-different types, as upstream). An origin's `mut=` binder holds no slot yet
-(R2372), and a closure storage's captured origins follow its binders, its
-declared list naming no binder for them (R2365). The checker builds an instance
-through `ParamDecl::place_origins` (`StructInfo::place_origins`), and every
-reader below it pairs a list of binders with an instance's arguments by kind
-(`ParamDecl::aligned_pairs`, `aligned_arguments`, `aligned_argument`): an
-argument view, which declares no origin binder, skips the instance's origins,
-and a list that declares them in place reads them where they sit. The whole
-declared list pairs with an instance of any shape, an erased one (no origin)
-or one holding no `mut=` slot, so a reader keyed by the argument view takes
+unbound), as upstream's `!kgen.struct` attributes sit (`P[origin_of(xs)]` and
+`P[origin_of(ys)]` are different types, as upstream). Each origin's `mut=`
+binder holds its slot in place too (`Span[True, Int, o]`), so
+`Span[mut=True, …]` and `Span[mut=False, …]` are two types: the origin's
+mutability where the checker decides it (a place's owner's, a cast's or a
+static origin's `False`, an explicit `mut=` keyword's value), and
+`CtValue::Deferred` naming the struct's own binder where it does not, which
+is to the `mut=` value what `Origin::Unbound` is to the origin: an unbound
+origin's, and an origin binder's or a `ref` parameter's, whose mutability
+is a binder the checker leaves to the call. A closure storage's captured
+origins follow its binders, its declared list naming no binder for them
+(R2365). The checker builds an instance through `ParamDecl::place_origins_with`
+under `Checker::origin_mutability_slot` (`Checker::place_struct_origins`); a
+phase below it, which knows no place's owner, through `ParamDecl::place_origins`
+(`ParamDecl::static_mutability_slot`). Because the checker relates bound
+origins by its own rule (an `ImmOrigin` cast of storage binding as the
+storage), its comparisons leave a `mut=` value both sides' origins bind to
+those origins (`Checker::coerces_by_origins`,
+`types::defer_origin_decided_mutability`), while a `mut=` value spelled over
+an unbound origin (`Span[mut=False, Int, _]`) still decides, so a mutable span
+converts through the implicit immutable-view constructor, as upstream's
+does; a deferred value agrees with any (`types::coerces`), and no `mut=`
+value changes a layout (`MirDeclarations::translated_type`, the checker's
+rebind check). Every reader below the checker pairs a list of binders with
+an instance's arguments by kind (`ParamDecl::aligned_pairs`,
+`aligned_arguments`, `aligned_argument`): an argument view, which declares no
+origin binder, skips the instance's origins, and a list that declares them in
+place reads them where they sit. The whole declared list pairs with an
+instance of any shape, an erased one (no origin) or an elaborated one, which
+erases its `mut=` slots with its origins (`StructCatalog::without_mutability`
+in `substitute_ty` and `unify`), so a reader keyed by the argument view takes
 an instance's arguments through `ParamDecl::instance_argument_view`
 (`StructInfo::view_arguments`, `StructDeclaration::view_arguments`) rather
-than skipping arguments by kind, and holds once instances carry the slot. The MIR
+than skipping arguments by kind. The MIR
 verifier rejects an instance of a struct declaring an origin binder that holds
-other than one argument per instance binder, each origin at its binder's
-position (`verify/scope.rs`, `misplaced_instance_argument`), an erased
+other than one argument per declared parameter, each origin and each `mut=`
+value at its binder's position (`verify/scope.rs`,
+`misplaced_instance_argument`), an erased
 spelling, a closure storage, and a static call's spelled receiver, whose
 instance drops the arguments of the parameters its callee removed, aside.
 `Origin::Unbound` marks a slot the use site infers (a bare or `_`

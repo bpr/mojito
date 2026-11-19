@@ -559,9 +559,20 @@ impl MirDeclarations {
     /// struct, as upstream's `LowerKGENToLLVM` lowers it; any other type is
     /// itself. A `SIMD` is its instance's `!kgen.simd` storage field. A
     /// literal struct (`TyKind::Tuple`, upstream's `!kgen.struct`) is never
-    /// unwrapped, even of one element.
+    /// unwrapped, even of one element. No origin's `mut=` value changes a
+    /// layout, so each is deferred.
     pub fn translated_type(&self, ty: &Ty) -> Ty {
-        let mut translated = ty.clone();
+        let mut translated = mojito_types::types::map_struct_arguments(ty, &|name, arguments| {
+            self.structure(name).map_or_else(
+                || arguments.clone(),
+                |structure| {
+                    mojito_types::types::defer_mutability_arguments(
+                        &structure.param_decls,
+                        arguments.clone(),
+                    )
+                },
+            )
+        });
         while let Some((declaration, _)) = self.struct_instance(&translated)
             && self.register_field(&declaration.name).is_some()
             && let Some(fields) = self.field_types(&translated)

@@ -728,7 +728,7 @@ fn method_struct<'a>(
     let (owner, _) = mojito_symbol::symbol::split_method_symbol(root)?;
     declarations
         .structure(owner)
-        .map(|structure| (owner, structure.instance_binders().collect()))
+        .map(|structure| (owner, structure.param_decls.iter().collect()))
 }
 
 /// The slots of `function` that a callable value parameter among `decls`
@@ -927,7 +927,7 @@ fn drop_receiver_arguments(
     };
     let Some(decls) = declarations
         .structure(name)
-        .map(|structure| structure.instance_view())
+        .map(|structure| structure.param_decls.as_slice())
         .filter(|decls| arguments.len() >= decls.len())
     else {
         return false;
@@ -1739,7 +1739,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         let Some(decls) = mojito_symbol::symbol::split_method_symbol(callee)
             .filter(|(owner, _)| owner == name)
             .and_then(|_| declarations.structure(name))
-            .map(|structure| structure.instance_view())
+            .map(|structure| structure.param_decls.as_slice())
             .filter(|decls| decls.len() == arguments.len())
         else {
             return false;

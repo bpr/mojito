@@ -2348,7 +2348,7 @@ impl Checker {
             // NAME = "a"` for `comptime NAME: String`).
             CtMemberReq::Value(expected) => {
                 self.ct_value_ty(value, self_ty).is_some_and(|actual| {
-                    coerces(&actual, expected)
+                    self.coerces_by_origins(&actual, expected)
                         || mojito_types::types::generator_converts(&actual, expected)
                 }) || value.clone().materialize_as(expected).is_some()
                     || self.open_type_list_satisfies(value, expected)
@@ -2596,7 +2596,7 @@ impl Checker {
                 let elem = self.ct_value_ty(first, self_ty)?;
                 if values.iter().skip(1).all(|v| {
                     self.ct_value_ty(v, self_ty)
-                        .is_some_and(|ty| coerces(&ty, &elem))
+                        .is_some_and(|ty| self.coerces_by_origins(&ty, &elem))
                 }) {
                     Some(list_type(elem))
                 } else {
@@ -2618,10 +2618,10 @@ impl Checker {
                         .skip(1)
                         .all(|(k, v)| {
                             self.ct_value_ty(k, self_ty)
-                                .is_some_and(|ty| coerces(&ty, &key))
+                                .is_some_and(|ty| self.coerces_by_origins(&ty, &key))
                                 && self
                                     .ct_value_ty(v, self_ty)
-                                    .is_some_and(|ty| coerces(&ty, &value))
+                                    .is_some_and(|ty| self.coerces_by_origins(&ty, &value))
                         })
                         .then(|| self.nominal_dict(key, value))
                 }
@@ -2636,7 +2636,7 @@ impl Checker {
                         .skip(1)
                         .all(|v| {
                             self.ct_value_ty(v, self_ty)
-                                .is_some_and(|ty| coerces(&ty, &element))
+                                .is_some_and(|ty| self.coerces_by_origins(&ty, &element))
                         })
                         .then(|| self.nominal_set(element))
                 }

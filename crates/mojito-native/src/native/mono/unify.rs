@@ -337,6 +337,28 @@ pub(super) fn bind_pack_values(decls: &[ParamDecl], bindings: &mut Bindings) {
     }
 }
 
+/// Bind each origin `mut=` binder of `decls`, a struct's whole declared
+/// list, to the value its instance's `arguments` hold for it, where they
+/// decide one: a member's types read it beside the origin, as the
+/// instance's other value arguments ([`bind_ty_args`]).
+pub(super) fn bind_mutability_args(
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+    bindings: &mut Bindings,
+) {
+    if arguments.len() != decls.len() {
+        return;
+    }
+    for (decl, argument) in decls.iter().zip(arguments) {
+        if let TyArg::Val(value) = argument
+            && decl.is_origin_mutability_binder(decls)
+            && !matches!(value, CtValue::Deferred(_) | CtValue::Expr(_))
+        {
+            bindings.values.insert(decl.binder(), value.clone());
+        }
+    }
+}
+
 pub(super) fn bind_ty_args(
     decls: &[ParamDecl],
     args: &[TyArg],
@@ -468,15 +490,14 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         }
         kind if let Some(CtValue::Expr(expr)) = kind.float_literal_slot()
             && let Some(binder) = expr.as_decl_ref()
-                && let Some(value) = mojito_types::types::int_literal_as_float(actual) =>
+            && let Some(value) = mojito_types::types::int_literal_as_float(actual) =>
         {
             bind_value(binder, &value, bindings)
         }
         // A literal-typed register materializes into whatever concrete
         // storage the checker admitted (`MaterializeLiteral` converts the
         // value at the boundary); the pattern constrains nothing here.
-        _ if (actual.is_string_literal()
-            || actual.kind().is_numeric_literal())
+        _ if (actual.is_string_literal() || actual.kind().is_numeric_literal())
             && pattern != actual =>
         {
             Ok(())
@@ -521,89 +542,10 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                 bindings,
             )
         }
-        struct_ty if let Some((pn, pa)) = struct_ty.as_non_simd_struct() => match actual.kind() {
-            // A type pack's visible `TypeList` beside its spread binds
-            // nothing; an elementwise actual spells none.
-            struct_ty
-                if let Some((an, _)) = struct_ty.as_non_simd_struct()
-                    && pa.iter().any(|argument| {
-                        matches!(argument, TyArg::Val(value) if ParamDecl::is_pack_value(value))
-                    })
-                    && mojito_types::types::binds_pack_elementwise(an) =>
-            {
-                let spread: Vec<TyArg> = pa
-                    .iter()
-                    .filter(|argument| {
-                        !matches!(argument, TyArg::Val(value) if ParamDecl::is_pack_value(value))
-                    })
-                    .cloned()
-                    .collect();
-                unify(
-                    &TyKind::Struct(pn.clone(), spread).into(),
-                    actual,
-                    bindings,
-                )
-            }
-            struct_ty
-                if let Some((an, _)) = struct_ty.as_non_simd_struct()
-                    && nominal_template(pn) == nominal_template(an)
-                    && pa.is_empty() =>
-            {
-                Ok(())
-            }
-            // A spread of a list computed from packs solves nothing: it
-            // closes once the packs it reads are bound.
-            struct_ty
-                if let Some((an, _)) = struct_ty.as_non_simd_struct()
-                    && spreads_into(pn, an, actual)
-                    && mojito_types::types::list_spread_argument(pa).is_some() =>
-            {
-                Ok(())
-            }
-            // A spread of a pack binds it to the actual's whole element
-            // list, unless the call's recorded arguments already did.
-            struct_ty
-                if let Some((an, aa)) = struct_ty.as_non_simd_struct()
-                    && spreads_into(pn, an, actual)
-                    && let Some(TyKind::Param { binder, .. }) =
-                        (mojito_types::types::pack_spread_argument(pa)).map(Ty::kind) =>
-            {
-                let elements = match aa.as_slice() {
-                    [TyArg::Val(CtValue::Tuple(values))] => values
-                        .iter()
-                        .map(|value| match value {
-                            CtValue::Type(ty) => Some(ty.clone()),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<_>>>(),
-                    arguments => arguments
-                        .iter()
-                        .map(|argument| match argument {
-                            TyArg::Ty(ty) => Some(ty.clone()),
-                            TyArg::Val(_) | TyArg::Origin(_) => None,
-                        })
-                        .collect(),
-                };
-                match elements {
-                    Some(elements) if !bindings.types.contains_key(binder) => {
-                        bind_pack(binder, elements, bindings);
-                        Ok(())
-                    }
-                    Some(_) => Ok(()),
-                    None => Err(format!("expected `{pattern}`, found `{actual}`")),
-                }
-            }
-            struct_ty
-                if let Some((an, aa)) = struct_ty.as_non_simd_struct()
-                    && nominal_template(pn) == nominal_template(an)
-                    && pa.len() == aa.len() =>
-            {
-                pa.iter()
-                    .zip(aa)
-                    .try_for_each(|(p, a)| unify_arg(p, a, bindings))
-            }
-            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
-        },
+        struct_ty if let Some((pn, pa)) = struct_ty.as_non_simd_struct() => {
+            let unslotted = bindings.structs.without_mutability(pn, pa);
+            unify_struct(pattern, pn, &unslotted, actual, bindings)
+        }
         TyKind::Tuple(p) | TyKind::RuntimePack(p) | TyKind::Variant(p) => match actual.kind() {
             // Storage spreading a pack (`Tuple[*Ts]`,
             // `VariadicPack._loaded_kgen_pack_type`) binds the pack to the
@@ -626,9 +568,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                     }
                 }
             }
-            TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::Variant(_)
-                if matches!(p.as_slice(), [spread] if mojito_types::types::list_spread(spread).is_some()) =>
-            {
+            TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::Variant(_) if matches!(p.as_slice(), [spread] if mojito_types::types::list_spread(spread).is_some()) => {
                 Ok(())
             }
             TyKind::Tuple(a) | TyKind::RuntimePack(a) | TyKind::Variant(a)
@@ -688,7 +628,10 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                 width: actual_width,
             } => unify(
                 &Ty::simd(SimdDtype::Known(mojito_ast::ast::Dtype::Int), width.clone()),
-                &Ty::simd(SimdDtype::Known(mojito_ast::ast::Dtype::Int), actual_width.clone()),
+                &Ty::simd(
+                    SimdDtype::Known(mojito_ast::ast::Dtype::Int),
+                    actual_width.clone(),
+                ),
                 bindings,
             ),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
@@ -828,6 +771,10 @@ pub(super) fn unify_arg(
             }
             Ok(())
         }
+        // A deferred value (an unbound origin's `mut=`) agrees with any and
+        // binds nothing, as an unbound origin does.
+        (TyArg::Val(CtValue::Deferred(_)), TyArg::Val(_))
+        | (TyArg::Val(_), TyArg::Val(CtValue::Deferred(_))) => Ok(()),
         // A direct reference binds; any other residual must already agree
         // with the actual once the environment closes it.
         (TyArg::Val(CtValue::Expr(expr)), TyArg::Val(value)) => match expr.as_decl_ref() {
@@ -1089,5 +1036,99 @@ fn push_bound_sugar(
         {
             arguments.push(InstanceArg::Ty(bound.clone()));
         }
+    }
+}
+
+/// [`unify`] of the struct pattern `pattern`, the template `pn` applied to
+/// `pa` (its `mut=` arguments left out), against `actual`.
+fn unify_struct(
+    pattern: &Ty,
+    pn: &str,
+    pa: &[TyArg],
+    actual: &Ty,
+    bindings: &mut Bindings,
+) -> Result<(), String> {
+    match actual.kind() {
+            // A type pack's visible `TypeList` beside its spread binds
+            // nothing; an elementwise actual spells none.
+            struct_ty
+                if let Some((an, _)) = struct_ty.as_non_simd_struct()
+                    && pa.iter().any(|argument| {
+                        matches!(argument, TyArg::Val(value) if ParamDecl::is_pack_value(value))
+                    })
+                    && mojito_types::types::binds_pack_elementwise(an) =>
+            {
+                let spread: Vec<TyArg> = pa
+                    .iter()
+                    .filter(|argument| {
+                        !matches!(argument, TyArg::Val(value) if ParamDecl::is_pack_value(value))
+                    })
+                    .cloned()
+                    .collect();
+                unify(
+                    &TyKind::Struct(pn.to_string(), spread).into(),
+                    actual,
+                    bindings,
+                )
+            }
+            struct_ty
+                if let Some((an, _)) = struct_ty.as_non_simd_struct()
+                    && nominal_template(pn) == nominal_template(an)
+                    && pa.is_empty() =>
+            {
+                Ok(())
+            }
+            // A spread of a list computed from packs solves nothing: it
+            // closes once the packs it reads are bound.
+            struct_ty
+                if let Some((an, _)) = struct_ty.as_non_simd_struct()
+                    && spreads_into(pn, an, actual)
+                    && mojito_types::types::list_spread_argument(pa).is_some() =>
+            {
+                Ok(())
+            }
+            // A spread of a pack binds it to the actual's whole element
+            // list, unless the call's recorded arguments already did.
+            struct_ty
+                if let Some((an, aa)) = struct_ty.as_non_simd_struct()
+                    && spreads_into(pn, an, actual)
+                    && let Some(TyKind::Param { binder, .. }) =
+                        (mojito_types::types::pack_spread_argument(pa)).map(Ty::kind) =>
+            {
+                let elements = match aa.as_slice() {
+                    [TyArg::Val(CtValue::Tuple(values))] => values
+                        .iter()
+                        .map(|value| match value {
+                            CtValue::Type(ty) => Some(ty.clone()),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>(),
+                    arguments => arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            TyArg::Ty(ty) => Some(ty.clone()),
+                            TyArg::Val(_) | TyArg::Origin(_) => None,
+                        })
+                        .collect(),
+                };
+                match elements {
+                    Some(elements) if !bindings.types.contains_key(binder) => {
+                        bind_pack(binder, elements, bindings);
+                        Ok(())
+                    }
+                    Some(_) => Ok(()),
+                    None => Err(format!("expected `{pattern}`, found `{actual}`")),
+                }
+            }
+            struct_ty
+                if let Some((an, aa)) = struct_ty.as_non_simd_struct()
+                    && nominal_template(pn) == nominal_template(an)
+                    && pa.len() == aa.len() =>
+            {
+                pa.iter()
+                    .zip(aa)
+                    .try_for_each(|(p, a)| unify_arg(p, a, bindings))
+            }
+            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
     }
 }

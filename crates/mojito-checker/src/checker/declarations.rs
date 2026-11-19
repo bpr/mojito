@@ -2801,7 +2801,7 @@ impl Checker {
         // Fall back to an `@implicit` converting constructor (records the
         // ctor target for omitted-arg materialization), matching the
         // free-function default path and the binding/argument positions.
-        if !coerces(&found, expected)
+        if !self.coerces_by_origins(&found, expected)
             && !self.record_constructor_conversion(default, &found, expected)?
         {
             return Err(TypeError::TypeMismatch {
@@ -3704,7 +3704,7 @@ impl Checker {
                                 ),
                             }
                         })?;
-                    if coerces(&actual, &expected) {
+                    if self.coerces_by_origins(&actual, &expected) {
                         // A literal argument materializes to the solved
                         // parameter type exactly as it does for a non-generic
                         // constructor (`Box[Float64](2.5)` stores a Float64,
@@ -4162,7 +4162,7 @@ impl Checker {
                         continue;
                     };
                     let actual = self.infer_with_expected(expression, expected, true)?;
-                    if coerces(&actual, expected) {
+                    if self.coerces_by_origins(&actual, expected) {
                         self.record_literal_materializations(expression, &actual, expected)?;
                     } else if !self.record_implicit_conversion(expression, &actual, expected)? {
                         return Err(TypeError::TypeMismatch {
@@ -5283,13 +5283,18 @@ impl Checker {
             // The instance's origin tail is the one the bracket's origin
             // arguments bound (`W[Self.o](copy=self)`).
             let with_tail = |arguments: Vec<TyArg>| {
-                let view = arguments
+                let view = ParamDecl::instance_argument_view(&info.params, &arguments)
+                    .into_owned()
                     .into_iter()
-                    .filter(|argument| !matches!(argument, TyArg::Origin(_)))
                     .take(info.decls().len());
                 Self::struct_instance_type(
                     name,
-                    info.place_origins(view, partitioned.origins.iter().cloned()),
+                    self.place_struct_origins(
+                        &info.params,
+                        view,
+                        partitioned.origins.iter().cloned(),
+                        &partitioned.mutabilities,
+                    ),
                 )
             };
             let instance = match constructed {
@@ -5321,7 +5326,7 @@ impl Checker {
                 );
                 // A source already of the instance keeps its origin tail.
                 return Ok(
-                    if coerces(&found, &instance)
+                    if self.coerces_by_origins(&found, &instance)
                         && matches!(found.kind(), TyKind::Struct(..))
                         && !found.is_numeric_literal()
                     {
@@ -5385,7 +5390,12 @@ impl Checker {
         } else {
             Self::struct_instance_type(
                 name,
-                info.place_origins(tyargs.clone(), partitioned.origins.iter().cloned()),
+                self.place_struct_origins(
+                    &info.params,
+                    tyargs.clone(),
+                    partitioned.origins.iter().cloned(),
+                    &partitioned.mutabilities,
+                ),
             )
         };
         let own = self.solve_constructor_own_params(
@@ -5395,7 +5405,7 @@ impl Checker {
             std::iter::once((expected.clone(), arg_ty.clone())),
         )?;
         let expected = own.apply(self, &expected)?;
-        if !coerces(&arg_ty, &expected) {
+        if !self.coerces_by_origins(&arg_ty, &expected) {
             return Err(TypeError::TypeMismatch {
                 expected: expected.to_string(),
                 found: arg_ty.to_string(),
@@ -5430,7 +5440,7 @@ impl Checker {
         );
         Ok(Self::struct_instance_type(
             name,
-            info.place_origins(tyargs, origins),
+            self.place_struct_origins(&info.params, tyargs, origins, &partitioned.mutabilities),
         ))
     }
 
@@ -5566,7 +5576,7 @@ impl Checker {
         actual: &Ty,
         expected: &Ty,
     ) -> Result<Option<usize>, TypeError> {
-        if coerces(actual, expected) {
+        if self.coerces_by_origins(actual, expected) {
             return Ok(Some(if actual == expected {
                 0
             } else {
@@ -5652,8 +5662,25 @@ impl Checker {
             ..
         } = self.resolve_use_params(&initializer, &decls, explicit, &patterns, &actuals)?;
         unify_through_callable_bounds(self, &decls, &mut subst)?;
+        // Each own origin's `mut=` binder takes the value the arguments
+        // carry beside the origin they bind it to, as upstream infers it
+        // with the origin.
+        let mut solved = HashMap::new();
+        for (pattern, actual) in patterns.iter().zip(&actuals) {
+            super::generics::solve_value_args(pattern, actual, &mut solved);
+        }
+        let (mutability_decls, mutability_values): (Vec<ParamDecl>, Vec<TyArg>) =
+            ParamDecl::mutability_binders(&sig.declared)
+                .filter_map(|decl| {
+                    solved
+                        .get(decl.name())
+                        .map(|value| (decl.clone(), TyArg::Val(value.clone())))
+                })
+                .unzip();
+        let valued: Vec<ParamDecl> = decls.iter().cloned().chain(mutability_decls).collect();
+        let values: Vec<TyArg> = arguments.iter().cloned().chain(mutability_values).collect();
         Ok(OwnParameters {
-            values: DependentValues::own(&self.param_context, &decls, &arguments),
+            values: DependentValues::own(&self.param_context, &valued, &values),
             subst,
             arguments,
         })
@@ -5964,6 +5991,7 @@ pub(super) fn refinement_admits(
                 || matches!(
                     argument,
                     TyArg::Origin(mojito_types::origin::Origin::Unbound)
+                        | TyArg::Val(CtValue::Deferred(_))
                 )
                 || mentioned_binder(defined, own).is_some()
                 || matches!(defined, TyArg::Origin(origin)

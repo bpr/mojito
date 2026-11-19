@@ -249,6 +249,7 @@ pub(super) fn declared_struct_instance<'b>(
         applications: bindings.applications.clone(),
         ..Bindings::default()
     };
+    bind_mutability_args(&declaration.param_decls, &struct_args, &mut instance);
     bind_ty_args(
         &declaration.argument_view(),
         &declaration.view_arguments(&struct_args),
@@ -323,6 +324,10 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 }
                 return Ok(TyKind::Struct(name.clone(), Vec::new()).into());
             }
+            // Each origin's `mut=` argument erases with the origin it
+            // follows: an instance is keyed on neither.
+            let unslotted = bindings.structs.without_mutability(name, original);
+            let original: &[TyArg] = &unslotted;
             // An argument that names a parameter the instance removed is
             // erased whole, as upstream's generator spells `_REMOVED_ARG`;
             // a struct type argument erases its own arguments instead.
