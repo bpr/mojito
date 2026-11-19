@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2345**.
+Next free ID: **R2347**.
 
 ## Ordered Work
 
@@ -10601,31 +10601,42 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2126 A function's, method's, or callable type's parameter list
-  leaves out its origin binders, where upstream's declares them in place**
+- [ ] **R2345 A call's bracket binds its callee's argument view, where
+  upstream binds the whole declared list, origin parameters in place**
 
-  `Checker::classify_params` (`checker/declarations.rs`) returns the
-  argument view of `classify_param_list`, so `GenericFuncTy::decls`,
-  `MethodSig::decls`, and a function's or method's `GenericSite` hold no
-  `ParamDecl::Origin` and no `mut=` binder; only a struct's list does (R761).
-  - The lever: store `classify_param_list` there, and have every consumer
-    that aligns binders with arguments read
-    `ParamDecl::argument_binders`, as `StructInfo::decls` does.
-  - Watch for: `decls.is_empty()` decides whether a function is generic
-    (`baked_decl_count`, `decls_are_concrete`, `statements.rs`), so a
-    function whose only parameters are origins must stay a `Func`.
-  - Watch for: `resolve_explicit_use_params` already reads the view, but
-    about seventy checker functions take a `decls` beside its arguments.
-  - Keep the MIR handoff on the view (R2127).
+  A function's, method's, and callable type's checked list declares its
+  origin binders (R2126), but `resolve_explicit_use_params`
+  (`checker/declarations.rs`) and the checker functions that take a
+  `decls` beside its arguments align the bracket with
+  `ParamDecl::argument_binders`.
   - Probe: an explicit specialization's origin arguments
-    (`borrow[Int, origin_of(x)]`) have no declared slot, so
-    `CallableSpecialization::declared` (`checker/type_resolution.rs`)
-    appends their attributes after the declared ones.
-  - The one solver should absorb `substitute_callee_pointer_origins`
-    (`checker/call_inference.rs`): every call path runs it as a pre-pass
-    that binds the callee's own origin binders before the type-parameter
-    solve, where upstream infers them together.
+    (`borrow[Int, origin_of(x)]`, `f[ImmStaticOrigin, 3]()`) have no
+    declared slot, so `CallableSpecialization::declared`
+    (`checker/type_resolution.rs`) appends their attributes after the
+    declared ones.
+  - Probe: `GenericFuncTy::argument_view`, `MethodSig::decls`, and
+    `Ty::generator_params` are the views each call path reads.
+  - The lever: bind a bracket against the whole list, an origin argument
+    in its binder's slot, recorded by its declaration as other arguments
+    are.
+  - Probe: `def call_it[f: def[o: ImmOrigin](Pointer[Int, o]) -> Int]()`
+    is rejected ("Undefined variable 'o'"), where the pin accepts it: the
+    origin signature (`checker/origins/sig.rs`) finds a callable type's
+    own origin binder among the enclosing declaration's parameters only.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2346 A call infers its callee's origin binders in a pass before
+  the type-parameter solve, where upstream infers them together**
+
+  `substitute_callee_pointer_origins` and `bind_generic_callee_origins`
+  (`checker/call_inference.rs`) bind the callee's own origin binders from
+  its argument types before `resolve_explicit_use_params` solves the
+  rest, on every call path.
+  - The lever: have the one solver bind the declared list's origin
+    binders from places beside its type and value binders, and delete the
+    pre-pass and `CalleeOriginArguments::own_binders`.
+  - Depends on R2345.
   - Model: Opus, Not Planned.
 
 - [ ] **R2127 The parameter lists MIR lowers are argument views without
@@ -10647,6 +10658,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `m=` and origin arguments in parameters naming no declaration
     (`CheckedParameter::declaration` is `None`), so once origins lower
     they would bind nothing.
+  - Probe: the package interface rebuilds a function's `GenericFuncTy`
+    and a method's `MethodSig::declared` from the lowered argument view
+    (`ProjectedBinding::ty`, `sig`, `checker/interface.rs`), so a
+    package's function lacks the origin binders a source one declares
+    (R2126).
   - Done when the interface projects every struct row again and MIR text
     writes an `origin_binder` record for each declared origin.
   - Depends on R2126.

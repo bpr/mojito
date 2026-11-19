@@ -140,7 +140,7 @@ pub(super) fn same_method_shape(a: &MethodSig, b: &MethodSig) -> bool {
         && (!a.params.is_empty()
             || a.variadic.is_some()
             || a.kw_variadic.is_some()
-            || explicit_parameter_names(&a.decls).eq(explicit_parameter_names(&b.decls)))
+            || explicit_parameter_names(&a.decls()).eq(explicit_parameter_names(&b.decls())))
         && parameter_packs(a).eq(parameter_packs(b))
 }
 
@@ -148,7 +148,7 @@ pub(super) fn same_method_shape(a: &MethodSig, b: &MethodSig) -> bool {
 /// symbol (`SignatureKey`'s `packs`): `shuffle[*mask: SIMDLength]` overloads
 /// `shuffle[mask: IndexList[…]]`.
 fn parameter_packs(sig: &MethodSig) -> impl Iterator<Item = bool> + '_ {
-    explicit_parameter_names(&sig.decls).map(|name| name.starts_with('*'))
+    explicit_parameter_names(&sig.declared).map(|name| name.starts_with('*'))
 }
 
 /// A conforming method may promise no error where its trait requirement raises,
@@ -203,7 +203,7 @@ pub(super) fn canonical_availability(method: &MethodSig) -> Vec<GenericConstrain
     let canonical_id = |index| ParamId::new(mojito_types::types::CONTRACT_BINDER_OWNER, index);
     let canonical = |reference: &ParamRef| {
         method
-            .decls
+            .decls()
             .iter()
             .position(|decl| decl.id() == &reference.id)
             .map_or_else(
@@ -216,7 +216,7 @@ pub(super) fn canonical_availability(method: &MethodSig) -> Vec<GenericConstrain
     };
     let context = ParamContext::detached();
     let mut renamed = mojito_types::param_expr::ParamBindings::new();
-    for (index, decl) in method.decls.iter().enumerate() {
+    for (index, decl) in method.decls().iter().enumerate() {
         renamed.bind(
             decl.id().clone(),
             context.decl_ref(
@@ -291,7 +291,7 @@ pub(super) fn method_func_ty(
 /// identity is its declaration's and its spelling is not part of the shape.
 fn canonical_method_shape(method: &MethodSig) -> MethodSig {
     let method = &with_existential_binders(method);
-    if method.decls.is_empty() {
+    if method.decls().is_empty() {
         return method.clone();
     }
     let mut types = method.params.clone();
@@ -300,9 +300,9 @@ fn canonical_method_shape(method: &MethodSig) -> MethodSig {
     types.extend(method.kw_variadic.clone());
     types.extend(method.error.clone());
     let (decls, mut types) =
-        mojito_types::types::canonical_generic_signature(&method.decls, &types);
+        mojito_types::types::canonical_generic_signature(&method.decls(), &types);
     let mut shape = method.clone();
-    shape.decls = decls;
+    shape.declared = decls;
     shape.error = method
         .error
         .is_some()
@@ -346,7 +346,7 @@ fn with_existential_binders(method: &MethodSig) -> MethodSig {
             callable_bound: None,
         }
         .into();
-        lifted.decls.push(ParamDecl::Type {
+        lifted.declared.push(ParamDecl::Type {
             id,
             name: String::new(),
             bounds,
@@ -391,11 +391,11 @@ fn requirement_type(requirement: &CtMemberReq) -> String {
 /// the generic function type a `def[...]` contract's `__call__` must match.
 fn method_generic_callable_ty(method: &MethodSig) -> Ty {
     let func = method_func_ty(method, mojito_types::origin::CallableEnvironment::Default);
-    if method.decls.is_empty() {
+    if method.decls().is_empty() {
         return TyKind::Func(Box::new(func)).into();
     }
     TyKind::GenericFunc(Box::new(GenericFuncTy {
-        decls: method.decls.clone(),
+        decls: method.declared.clone(),
         func,
     }))
     .into()

@@ -1453,7 +1453,7 @@ fn method_projection_differs(
         (
             "parameters",
             own_decls(method, owner_decls.len(), declaration)
-                .is_some_and(|own| same_bytes(&sig.decls, &own))
+                .is_some_and(|own| same_bytes(&sig.decls(), &own))
                 && (!mojito_symbol::symbol::is_initializer_member(method)
                     || declaration
                         .param_decls
@@ -1611,7 +1611,7 @@ impl MethodResidue {
         declaration: &FunctionDeclaration,
     ) -> MethodSig {
         MethodSig {
-            decls: own_decls(method, owner_decls, declaration)
+            declared: own_decls(method, owner_decls, declaration)
                 .unwrap_or_default()
                 .to_vec(),
             availability: declaration.availability.clone(),

@@ -508,7 +508,8 @@ impl Checker {
         m: &mojito_ast::ast::TraitMethod,
         owner: &str,
     ) -> Result<MethodSig, TypeError> {
-        let decls = self.classify_params(owner, &m.type_params)?;
+        let declared = self.classify_param_list(owner, &m.type_params)?;
+        let decls = ParamDecl::argument_decls(&declared);
         self.push_param_scope(&decls);
         let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
             if let Some(annotation) = &m.self_type {
@@ -579,7 +580,7 @@ impl Checker {
             _ => None,
         };
         let sig = MethodSig {
-            decls,
+            declared,
             availability: Vec::new(),
             has_self: true,
             params: regular
@@ -1419,7 +1420,7 @@ impl Checker {
             declaration,
             method_index,
             m,
-            &sig.decls,
+            &sig.decls(),
             &sig.availability,
         );
         self.generic_parameters.borrow_mut().insert(
@@ -1428,7 +1429,7 @@ impl Checker {
                 declaration: name.to_string(),
                 method: method_index,
             },
-            sig.decls.clone(),
+            sig.declared.clone(),
         );
         if let Some(info) = self.structs.get(name) {
             sig.parametric_origin_writes = parametric_origin_writes_in_body(&m.body, &info.fields);
@@ -1544,8 +1545,8 @@ impl Checker {
         owner: &str,
     ) -> Result<(Vec<Ty>, MethodSig), TypeError> {
         let name = declaration.name;
-        let method_decls = self.classify_params(owner, &m.type_params)?;
-        self.push_param_scope(&method_decls);
+        let method_decls = self.classify_param_list(owner, &m.type_params)?;
+        self.push_param_scope(&ParamDecl::argument_view(&method_decls));
         let saved_method_type_params = self.enclosing_type_params.clone();
         let saved_struct_count = self
             .enclosing_struct_type_params
@@ -1554,22 +1555,26 @@ impl Checker {
         // The method's own `where` clause refines its signature exactly as
         // it refines its body: a conditionally available method may name
         // types its receiver's bare bounds do not admit.
-        let signature =
-            match self.emitted_method_constraints(declaration, method_index, m, &method_decls) {
-                Some(availability) => {
-                    self.push_assumptions(self.method_where_assumptions(m, &availability));
-                    let receiver = self.self_ty.clone().filter(|_| m.has_self);
-                    let signature = self.in_signature_scope(receiver.as_ref(), |this| {
-                        let all_types = this.param_tys(&m.params)?;
-                        let sig = this.method_sig(m, method_decls, &all_types, availability)?;
-                        this.check_method_result_origins(name, m, &all_types, receiver.as_ref())?;
-                        Ok((all_types, sig))
-                    });
-                    self.pop_assumptions();
-                    signature
-                }
-                None => self.compiled_method_signature(name, m, method_decls),
-            };
+        let signature = match self.emitted_method_constraints(
+            declaration,
+            method_index,
+            m,
+            &ParamDecl::argument_view(&method_decls),
+        ) {
+            Some(availability) => {
+                self.push_assumptions(self.method_where_assumptions(m, &availability));
+                let receiver = self.self_ty.clone().filter(|_| m.has_self);
+                let signature = self.in_signature_scope(receiver.as_ref(), |this| {
+                    let all_types = this.param_tys(&m.params)?;
+                    let sig = this.method_sig(m, method_decls, &all_types, availability)?;
+                    this.check_method_result_origins(name, m, &all_types, receiver.as_ref())?;
+                    Ok((all_types, sig))
+                });
+                self.pop_assumptions();
+                signature
+            }
+            None => self.compiled_method_signature(name, m, method_decls),
+        };
         self.enclosing_type_params = saved_method_type_params;
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.pop_param_scope();
@@ -2141,7 +2146,7 @@ impl Checker {
     /// conventions are part of the contract.
     pub(super) fn requirement_at(&self, req_sig: &MethodSig, self_ty: &Ty) -> MethodSig {
         MethodSig {
-            decls: req_sig.decls.clone(),
+            declared: req_sig.declared.clone(),
             availability: req_sig.availability.clone(),
             has_self: true,
             params: req_sig

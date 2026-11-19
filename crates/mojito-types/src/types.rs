@@ -1196,10 +1196,10 @@ impl Ty {
     /// The parameters a `#kgen.bind_params` binds, when this is a
     /// generator type: a `__generator_type`'s, or a generic function's,
     /// which upstream types as a generator over its own parameters.
-    pub fn generator_params(&self) -> Option<&[ParamDecl]> {
+    pub fn generator_params(&self) -> Option<std::borrow::Cow<'_, [ParamDecl]>> {
         match self.kind() {
-            TyKind::Generator(generator) => Some(&generator.params),
-            TyKind::GenericFunc(generic) => Some(&generic.decls),
+            TyKind::Generator(generator) => Some(std::borrow::Cow::Borrowed(&generator.params)),
+            TyKind::GenericFunc(generic) => Some(generic.argument_view()),
             _ => None,
         }
     }
@@ -1660,10 +1660,28 @@ impl FuncTy {
 
 /// A generic function's signature: its declared parameters over the
 /// signature they bind.
+///
+/// `decls` is the whole declared list, in declared order, as upstream
+/// declares it: each `Origin`/`OriginSet` parameter a [`ParamDecl::Origin`]
+/// and the `Bool` binding one's `mut=` an infer-only value binder. A call,
+/// an explicit specialization, and a `#kgen.bind_params` bind the
+/// [`Self::argument_view`] by position and infer the origins from places.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GenericFuncTy {
     pub decls: Vec<ParamDecl>,
     pub func: FuncTy,
+}
+
+impl GenericFuncTy {
+    /// The binders a call binds by position ([`ParamDecl::argument_view`]).
+    pub fn argument_view(&self) -> std::borrow::Cow<'_, [ParamDecl]> {
+        ParamDecl::argument_view(&self.decls)
+    }
+
+    /// [`Self::argument_view`], borrowed binder by binder.
+    pub fn argument_binders(&self) -> impl Iterator<Item = &ParamDecl> {
+        ParamDecl::argument_binders(&self.decls)
+    }
 }
 
 impl Deref for GenericFuncTy {

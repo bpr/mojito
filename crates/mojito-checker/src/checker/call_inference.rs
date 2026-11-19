@@ -1230,12 +1230,12 @@ impl Checker {
                             self.record_call_through(name, &prepared, args);
                             self.record_call_parameter_names(&span, &prepared);
                             let callee_decls = match prepared.kind() {
-                                TyKind::GenericFunc(generic) => generic.decls.as_slice(),
-                                _ => &[],
+                                TyKind::GenericFunc(generic) => generic.argument_view(),
+                                _ => std::borrow::Cow::Borrowed(&[][..]),
                             };
                             self.apply_call_through_effects(
                                 name,
-                                callee_decls,
+                                &callee_decls,
                                 None,
                                 param_args,
                                 args,
@@ -1379,10 +1379,10 @@ impl Checker {
         // concrete callables this call supplies.
         self.record_call_through(name, &ty, args);
         let callee_decls = match ty.kind() {
-            TyKind::GenericFunc(generic) => generic.decls.as_slice(),
-            _ => &[],
+            TyKind::GenericFunc(generic) => generic.argument_view(),
+            _ => std::borrow::Cow::Borrowed(&[][..]),
         };
-        self.apply_call_through_effects(name, callee_decls, None, param_args, args, &span)?;
+        self.apply_call_through_effects(name, &callee_decls, None, param_args, args, &span)?;
         // A function-typed VALUE carries its origin def's effects on the
         // type; replay those too (the name-keyed entry above covers direct
         // and nested calls by declaration name).
@@ -1965,7 +1965,7 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<InferredCall, TypeError> {
         let Some(GenericFuncTy {
-            decls,
+            decls: binders,
             func:
                 func @ FuncTy {
                     names,
@@ -1986,6 +1986,7 @@ impl Checker {
                 "generic call inference received non-generic callee '{name}'"
             )));
         };
+        let decls = &*ParamDecl::argument_view(binders);
         let forwarded_element = self.forwarded_kwargs_element(name, kwargs)?;
         if forwarded_element.is_some() && kw_variadic.is_none() {
             return Err(TypeError::BadCall {

@@ -475,12 +475,12 @@ impl Checker {
                         &substitute(
                             &super::super::generics::expand_solved_packs(
                                 &declared_ret,
-                                &sig.decls,
+                                &sig.decls(),
                                 &method_arguments,
                             ),
                             &method_subst,
                         ),
-                        &sig.decls,
+                        &sig.decls(),
                         &method_arguments,
                     ),
                     result_adapter: None,
@@ -505,7 +505,7 @@ impl Checker {
                     ref_params: sig.ref_params.clone(),
                     ref_return,
                     param_types: params,
-                    param_decls: sig.decls.clone(),
+                    param_decls: sig.decls().into_owned(),
                     parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     instantiation: instantiation.clone(),
                     parameter_names: sig.names.clone(),

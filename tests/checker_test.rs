@@ -10652,6 +10652,87 @@ fn struct_param_list_declares_origin_binders_in_place() {
 }
 
 #[test]
+fn function_and_method_param_lists_declare_origin_binders_in_place() {
+    // A function's and a method's checked lists hold their origin binders
+    // in declared order, as a struct's does; a call binds only the
+    // argument view, and a function whose only binders are origins stays
+    // non-generic.
+    let source = "struct S:\n    def __init__(out self):\n        pass\n    def get[o: ImmOrigin, n: Int](self, p: Pointer[Int, o]) -> Int:\n        return p[] + n\n\ndef pick[o: ImmOrigin, n: Int](p: Pointer[Int, o]) -> Int:\n    return p[] + n\n\ndef only[o: ImmOrigin](p: Pointer[Int, o]) -> Int:\n    return p[]\n\ndef main():\n    var x = 1\n    print(pick[n=2](Pointer(to=x)), S().get[n=3](Pointer(to=x)), only(Pointer(to=x)))\n";
+    let checked = checked_source_with_std(source, "function_origin_binders.mojo").expect("check");
+    let def_of = |wanted: &str| {
+        checked
+            .statements()
+            .iter()
+            .find(|statement| {
+                matches!(&statement.kind, mojito::ast::StmtKind::Def { name, .. } if name == wanted)
+            })
+            .unwrap_or_else(|| panic!("def '{wanted}'"))
+    };
+    let site_of = |wanted: &str| {
+        let statement = def_of(wanted);
+        mojito::checked::GenericSite::Function {
+            module: statement.module.clone(),
+            declaration: statement.span,
+            syntax: statement.syntax_id,
+        }
+    };
+    let module = checked
+        .statements()
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Struct { name, .. } if name == "S" => {
+                Some(statement.module.clone())
+            }
+            _ => None,
+        })
+        .expect("S");
+    let method = mojito::checked::GenericSite::Method {
+        module,
+        declaration: "S".to_string(),
+        method: 1,
+    };
+    for site in [site_of("pick"), method] {
+        let decls = checked
+            .checked()
+            .generic_parameters_at(&site)
+            .unwrap_or_else(|| panic!("{site:?}'s binders"));
+        let [
+            mojito::types::ParamDecl::Origin { id, .. },
+            n @ mojito::types::ParamDecl::Value { .. },
+        ] = decls
+        else {
+            panic!("o, n in declared order: {decls:?}");
+        };
+        assert_eq!((id.slot, n.id().slot), (0, 1));
+        let arguments: Vec<&str> = mojito::types::ParamDecl::argument_binders(decls)
+            .map(mojito::types::ParamDecl::name)
+            .collect();
+        assert_eq!(arguments, ["n"]);
+    }
+    let types: Vec<_> = ["pick", "only"]
+        .into_iter()
+        .map(|name| {
+            let statement = def_of(name);
+            checked
+                .checked()
+                .checked_type_at(&mojito::checked::AnnotationSite::FunctionType {
+                    module: statement.module.clone(),
+                    declaration: statement.span,
+                    syntax: statement.syntax_id,
+                })
+                .cloned()
+                .unwrap_or_else(|| panic!("'{name}' has a type"))
+        })
+        .collect();
+    let Some(generic) = types[0].as_generic_func() else {
+        panic!("pick is generic: {}", types[0]);
+    };
+    assert!(generic.decls.first().is_some_and(|decl| decl.is_origin()));
+    assert_eq!(generic.argument_view().len(), 1);
+    assert!(types[1].as_func().is_some(), "only is a Func: {}", types[1]);
+}
+
+#[test]
 fn a_callee_origin_binder_bound_from_an_argument_roots_its_reference_result() {
     // A generic function's and a method's own binder, bound from a pointer
     // argument, make the `ref[o]` result borrow the pointee's storage, not

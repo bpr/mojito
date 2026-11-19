@@ -750,7 +750,7 @@ impl Checker {
             source
         };
         let (decls, bindings) = mojito_types::types::reown_generic_signature(
-            &sig.decls,
+            &sig.declared,
             &super::annotations::binder_owner(&lowered),
         );
         let moved = |ty: &Ty| {
@@ -762,7 +762,7 @@ impl Checker {
             )
             .unwrap_or_else(|_| ty.clone())
         };
-        sig.decls = decls;
+        sig.declared = decls;
         sig.params = sig.params.iter().map(moved).collect();
         for ty in [&mut sig.variadic, &mut sig.kw_variadic, &mut sig.error]
             .into_iter()
@@ -786,7 +786,7 @@ impl Checker {
                 declaration: name.to_string(),
                 method: index,
             },
-            sig.decls.clone(),
+            sig.declared.clone(),
         );
         let mut regular = sig.params.iter();
         for (param, declared) in wrapper.shape.params.iter().enumerate() {
@@ -887,7 +887,7 @@ impl Checker {
         let saved_site = self
             .method_site
             .replace((wrapper.module.clone(), declaration.to_string()));
-        self.push_param_scope(&signature.decls);
+        self.push_param_scope(&signature.decls());
         let saved_struct_count = self
             .enclosing_struct_type_params
             .replace(self.enclosing_type_params.len());
@@ -895,7 +895,7 @@ impl Checker {
         for gate in &signature.availability {
             self.guaranteed_facts(gate, &mut assumptions);
         }
-        assumptions.extend(self.method_propositions(&signature.availability, &signature.decls));
+        assumptions.extend(self.method_propositions(&signature.availability, &signature.decls()));
         self.push_assumptions(assumptions);
         let result = self.check_default_wrapper_body(self_ty, wrapper, &signature, effect_key);
         self.pop_assumptions();
@@ -917,7 +917,7 @@ impl Checker {
         self.push_scope();
         self.raising_context.push(signature.error.clone());
         let result = (|| {
-            self.declare_value_parameters(&signature.decls)?;
+            self.declare_value_parameters(&signature.decls())?;
             let self_writable = ref_binding_is_writable(signature.self_convention, None, &[]);
             self.bind_receiver(self_ty, self_writable)?;
             let mut regular = signature.params.iter();
@@ -970,10 +970,10 @@ impl Checker {
                 self_writable,
                 initializing: false,
                 effect_key,
-                method_decls: &signature.decls,
+                method_decls: &signature.decls(),
                 ref_return: signature.ref_return.clone(),
                 return_annotation: None,
-                generic: !signature.decls.is_empty(),
+                generic: !signature.decls().is_empty(),
                 ret_ty: &signature.ret,
                 body: &wrapper.body,
             })

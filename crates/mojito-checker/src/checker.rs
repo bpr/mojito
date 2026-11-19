@@ -403,7 +403,7 @@ pub(crate) fn parametric_runtime_closure(ty: &Ty) -> TypeError {
     TypeError::ParametricRuntimeClosure {
         unbound: ty
             .generator_params()
-            .and_then(mojito_types::types::ParamDecl::first_unbound),
+            .and_then(|params| mojito_types::types::ParamDecl::first_unbound(&params)),
     }
 }
 
@@ -412,7 +412,7 @@ pub(crate) fn parametric_runtime_closure(ty: &Ty) -> TypeError {
 /// infers no specialization from the slot a reference fills.
 pub(crate) fn is_unbound_parametric_function(ty: &Ty) -> bool {
     ty.generator_params()
-        .and_then(mojito_types::types::ParamDecl::first_unbound)
+        .and_then(|params| mojito_types::types::ParamDecl::first_unbound(&params))
         .is_some()
 }
 
@@ -2169,7 +2169,7 @@ impl Checker {
                             declarations::refinement_admits(
                                 refined,
                                 &instance,
-                                &sig.decls,
+                                &sig.decls(),
                                 Some(own_origins_from),
                                 to,
                             )
@@ -2942,7 +2942,11 @@ struct ParamScopes {
     reason = "TODO: group the flags into a state enum"
 )]
 struct MethodSig {
-    decls: Vec<ParamDecl>,
+    /// Its whole declared parameter list, in declared order, as upstream
+    /// declares it: each `Origin`/`OriginSet` parameter a
+    /// [`ParamDecl::Origin`] and the `Bool` binding one's `mut=` an
+    /// infer-only value binder ([`Checker::classify_param_list`]).
+    declared: Vec<ParamDecl>,
     availability: Vec<GenericConstraint>,
     has_self: bool,
     /// Regular parameters only; variadic element type is stored separately.
@@ -3014,6 +3018,13 @@ struct MethodSig {
 }
 
 impl MethodSig {
+    /// The parameters a call binds by position, in declared order
+    /// ([`ParamDecl::argument_binders`]): a call infers the origins from
+    /// places instead.
+    fn decls(&self) -> std::borrow::Cow<'_, [ParamDecl]> {
+        ParamDecl::argument_view(&self.declared)
+    }
+
     /// Whether this method takes `ref self`, which upstream makes generic
     /// over the receiver's mutability (`self_is_mut`) and origin: its value
     /// read through the struct binds neither.
@@ -3024,7 +3035,7 @@ impl MethodSig {
     fn intrinsic(params: Vec<Ty>, ret: Ty) -> Self {
         let len = params.len();
         Self {
-            decls: Vec::new(),
+            declared: Vec::new(),
             availability: Vec::new(),
             has_self: true,
             params,

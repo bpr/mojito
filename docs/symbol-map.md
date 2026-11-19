@@ -3356,10 +3356,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mut=` binder an infer-only `ParamDecl::Value`.
   `Checker::classify_param_list` (`declarations.rs`, through
   `origin_param_decl`) classifies the whole list, which a struct keeps
-  (`StructInfo::params`, its `GenericSite::Struct`);
-  `Checker::classify_params` returns its argument view
-  (`ParamDecl::{argument_binders, argument_decls, argument_view}`), as
-  `StructInfo::decls` and MIR lowering's struct rows do. A `where` clause
+  (`StructInfo::params`, its `GenericSite::Struct`), and so do a
+  function's or callable type's `GenericFuncTy::decls`, a method's
+  `MethodSig::declared`, and a function's or method's `GenericSite` row
+  (`def_signature_in_scope`, `statements.rs`;
+  `method_signature_owned_by`, `traits.rs`;
+  `lower_anonymous_callable_type`, `declarations.rs`). A function whose
+  only binders are origins stays a `Func`.
+  `Checker::classify_params` returns the argument view
+  (`ParamDecl::{argument_binders, argument_decls, argument_view}`), which
+  a body's scope binds and every consumer aligning binders with arguments
+  reads: `StructInfo::decls`, `MethodSig::decls`,
+  `GenericFuncTy::{argument_view, argument_binders}`, `Ty::generator_params`,
+  `CheckedSignature::parameters` (`checked.rs`), and MIR lowering's
+  struct rows. A `where` clause
   attaches to the last argument binder (`ParamDecl::clause_constraints`).
   A package's struct row keeps its own list when it differs from the
   lowered row (`DeclarationInterface::project`, `interface.rs`). MIR text

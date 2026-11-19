@@ -119,7 +119,7 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
     arguments: &[TyArg],
 ) -> Result<Ty, String> {
     let Some(GenericFuncTy {
-        decls,
+        decls: binders,
         func:
             FuncTy {
                 environment,
@@ -142,6 +142,7 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
     else {
         return Err("retained contract is not generic".to_string());
     };
+    let decls = &*ParamDecl::argument_view(binders);
     if decls.len() != arguments.len() {
         return Err(format!(
             "{} retained argument(s) for {} declaration(s)",

@@ -5163,7 +5163,7 @@ fn body_parameter_ty<P: DeclaredParam>(parameter: &P, ty: Ty) -> Ty {
 
 fn generic_callable_param_decls(callable: &Ty) -> Vec<ParamDecl> {
     match callable.kind() {
-        TyKind::GenericFunc(generic) => generic.decls.clone(),
+        TyKind::GenericFunc(generic) => generic.argument_view().into_owned(),
         TyKind::Param {
             callable_bound: Some(bound),
             ..

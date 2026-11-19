@@ -4463,9 +4463,10 @@ fn adopt_callee_binders(block: &mut MirBlock, function: &MirFunction) {
         else {
             continue;
         };
-        if generic.decls.len() == param_decls.len() {
-            mojito_mir::mir::witness_arguments(param_decls, &generic.decls, param_arg_regs);
-            param_decls.clone_from(&generic.decls);
+        let witness = generic.argument_view();
+        if witness.len() == param_decls.len() {
+            mojito_mir::mir::witness_arguments(param_decls, &witness, param_arg_regs);
+            *param_decls = witness.into_owned();
         }
     }
 }

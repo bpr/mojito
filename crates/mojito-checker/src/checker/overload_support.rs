@@ -222,7 +222,8 @@ pub(super) fn canonical_generic_parameter_shape(
         signature.push(parameter.clone());
         index
     });
-    let (decls, signature) = canonical_generic_signature(decls, &signature);
+    let (decls, signature) =
+        canonical_generic_signature(&ParamDecl::argument_view(decls), &signature);
     (
         decls,
         signature[..params.len()].to_vec(),
@@ -456,7 +457,7 @@ pub(super) fn method_lowered_name(
             types: signature_types,
             kw_variadic: sig.kw_variadic.as_ref(),
             keyword_names,
-            decls: &sig.decls,
+            decls: &sig.decls(),
         },
         self_ty,
         sig.has_self,
@@ -465,11 +466,10 @@ pub(super) fn method_lowered_name(
 }
 
 /// The names a call may bind in brackets, as the declaration side spells
-/// them (a pack's with its leading `*`): every compile-time parameter after
-/// the `//` infer-only marker.
+/// them (a pack's with its leading `*`): every argument binder
+/// ([`ParamDecl::argument_binders`]) after the `//` infer-only marker.
 pub(super) fn explicit_parameter_names(decls: &[ParamDecl]) -> impl Iterator<Item = &str> {
-    decls
-        .iter()
+    ParamDecl::argument_binders(decls)
         .filter(|decl| {
             !matches!(
                 decl,

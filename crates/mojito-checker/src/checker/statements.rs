@@ -1450,7 +1450,7 @@ impl Checker {
         {
             for element in &mut plan {
                 element.accessor = Some(format!("{name}.__getitem_param__"));
-                element.param_decls.clone_from(&accessor.decls);
+                element.param_decls = accessor.decls().into_owned();
                 let reference = match element.ty.kind() {
                     // A reference-valued element forwards its own handle.
                     TyKind::Ref(reference) => reference.clone(),
@@ -4017,11 +4017,11 @@ impl Checker {
                 "check_def requires a function declaration".to_string(),
             ));
         };
-        let decls = self.classify_params(owner, type_params)?;
+        let decls = self.classify_param_list(owner, type_params)?;
         // Type parameters are in scope while resolving the signature (as
         // bare `T`), and value parameters as the typed references a
         // dependent parameter expression names (`Buf[n + 1]`).
-        self.push_param_scope(&decls);
+        self.push_param_scope(&ParamDecl::argument_view(&decls));
         let enclosing_self = self.self_ty.clone();
         self.bind_trait_self();
         let signature = self.def_signature_in_scope(stmt, shape, decls, unavailable, required);
@@ -4031,7 +4031,10 @@ impl Checker {
     }
 
     /// The part of [`Self::def_signature`] that resolves under the
-    /// declaration's binders.
+    /// declaration's binders: `decls` is its whole declared list
+    /// ([`Self::classify_param_list`]), which its type and its
+    /// [`GenericSite`](mojito_checked::checked::GenericSite) row hold, and
+    /// the body reads the argument view of.
     fn def_signature_in_scope(
         &mut self,
         stmt: &Stmt,
@@ -4069,7 +4072,7 @@ impl Checker {
         let kw_only = effective_keyword_only_index(params, *keyword_only, *variadic_idx);
         // The clauses a compile-time application already emitted are the
         // signature's own, as upstream emits a signature once.
-        let emitted = self.emitted_def_constraints(stmt, &decls);
+        let emitted = self.emitted_def_constraints(stmt, &ParamDecl::argument_view(&decls));
         let (param_tys, ret_ty, compiled) = self.in_signature_scope(None, |this| {
             let generated = this.generated_declaration.replace(name.contains('$'));
             let param_tys = this.param_tys(params);
@@ -4175,7 +4178,8 @@ impl Checker {
             },
             ret_ty.clone(),
         );
-        self.check_parameter_defaults(params, &param_tys, &decls)?;
+        let arguments = ParamDecl::argument_decls(&decls);
+        self.check_parameter_defaults(params, &param_tys, &arguments)?;
         let declared_error = self.declared_error(*raises, raises_type.as_ref())?;
         let effect_raises = declared_error
             .as_ref()
@@ -4230,13 +4234,12 @@ impl Checker {
             ref_return: ref_return.clone().map(Box::new),
             transfers: TransferSet::default(),
         };
-        let fn_ty = Ty::new(if decls.is_empty() {
+        // A function whose only binders are origins is no generic one: a
+        // call infers every origin from a place.
+        let fn_ty = Ty::new(if arguments.is_empty() {
             TyKind::Func(Box::new(func))
         } else {
-            TyKind::GenericFunc(Box::new(GenericFuncTy {
-                decls: decls.clone(),
-                func,
-            }))
+            TyKind::GenericFunc(Box::new(GenericFuncTy { decls, func }))
         });
         self.declaration_types.borrow_mut().insert(
             mojito_checked::checked::AnnotationSite::FunctionType {
@@ -4257,7 +4260,7 @@ impl Checker {
         Ok(DefSignature {
             symbol: name.clone(),
             clauses,
-            decls,
+            decls: arguments,
             param_tys,
             ret_ty,
             function_assumptions,
@@ -4988,6 +4991,8 @@ struct DefSignature {
     /// call of it reads; `None` when one reads an erased origin-mutability
     /// binder, which no call binds.
     clauses: Option<Vec<GenericConstraint>>,
+    /// The argument view of its declared list
+    /// ([`ParamDecl::argument_binders`]), which its body and its calls bind.
     decls: Vec<ParamDecl>,
     param_tys: Vec<Ty>,
     ret_ty: Ty,
@@ -5122,7 +5127,7 @@ fn closure_call_method(
         .as_ref()
         .map(|_| func.keyword_only.unwrap_or(func.params.len()));
     Some(MethodSig {
-        decls: contract
+        declared: contract
             .kind()
             .as_generic_func()
             .map(|generic| generic.decls.clone())

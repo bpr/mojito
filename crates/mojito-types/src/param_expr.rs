@@ -6818,7 +6818,7 @@ fn generator_shape(ty: &Ty) -> Option<(Cow<'_, crate::types::GeneratorTy>, bool)
         TyKind::Generator(generator) => Some((Cow::Borrowed(generator.as_ref()), false)),
         TyKind::GenericFunc(generic) => Some((
             Cow::Owned(crate::types::GeneratorTy {
-                params: generic.decls.clone(),
+                params: generic.argument_view().into_owned(),
                 result: Ty::new(TyKind::Func(Box::new(generic.func.clone()))),
             }),
             true,

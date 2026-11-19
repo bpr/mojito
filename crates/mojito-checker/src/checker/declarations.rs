@@ -670,7 +670,7 @@ impl Checker {
         let named_result = mojito_ast::ast::named_result(&method.params);
         Ok(MethodSig {
             availability,
-            decls,
+            declared: decls,
             has_self: method.has_self,
             params: regular
                 .iter()
@@ -1346,9 +1346,10 @@ impl Checker {
     /// under `owner`, which names this contract alone, so no two contracts'
     /// binders share an identity. The anonymous scope is nested inside the
     /// surrounding declaration's scope, so alpha-renamed binders retain their
-    /// own identity while a signature may still depend on an outer type. Origin declarations stay in the source
-    /// context used by reference/capture lowering, but are erased from the
-    /// ordinary `GenericFuncTy::decls` just like named defs.
+    /// own identity while a signature may still depend on an outer type. Its
+    /// `GenericFuncTy::decls` is the whole declared list, origin binders in
+    /// place, as a named def's is; with only origin binders it stays a
+    /// non-generic `Func`.
     pub(super) fn lower_anonymous_callable_type(
         &self,
         owner: &str,
@@ -1365,7 +1366,7 @@ impl Checker {
                 "anonymous callable lowering received a non-function type".to_string(),
             ));
         };
-        let mut decls = self.classify_params(owner, type_params)?;
+        let mut decls = self.classify_param_list(owner, type_params)?;
         // A trailing `where` clause constrains the contract's own `def[...]`
         // parameters; with none declared there is nothing to constrain.
         if !where_clauses.is_empty() && ParamDecl::argument_binders(&decls).next().is_none() {
@@ -1373,7 +1374,7 @@ impl Checker {
                 "a function-type 'where' clause requires a def[...] parameter list".to_string(),
             ));
         }
-        self.push_param_scope(&decls);
+        self.push_param_scope(&ParamDecl::argument_view(&decls));
         // Own declarations come first so any own Origin/OriginSet indexes
         // have the same source-relative positions they do on a named generic
         // def. The appended outer declarations are only a lookup context.
@@ -1402,7 +1403,7 @@ impl Checker {
                 .push(constraint);
         }
 
-        if decls.is_empty() {
+        if ParamDecl::argument_binders(&decls).next().is_none() {
             return Ok(checked);
         }
         let TyKind::Func(func) = checked.kind() else {
@@ -2906,7 +2907,7 @@ impl Checker {
                         .is_ok()
                     && sig.refined_self.as_ref().is_none_or(|refined| {
                         self.self_instance_ty(name).is_some_and(|instance| {
-                            refinement_admits(refined, &instance, &sig.decls, None, target)
+                            refinement_admits(refined, &instance, &sig.decls(), None, target)
                         })
                     })
             })
@@ -2914,8 +2915,8 @@ impl Checker {
                 let rank = overload_rank(
                     0,
                     sig.variadic.is_some(),
-                    baked_decl_count(&sig.decls),
-                    !decls_are_concrete(&sig.decls),
+                    baked_decl_count(&sig.decls()),
+                    !decls_are_concrete(&sig.decls()),
                 );
                 (rank, sig)
             })
@@ -2962,7 +2963,7 @@ impl Checker {
         struct_decls: &[ParamDecl],
         struct_arguments: &[TyArg],
     ) -> Option<TypeError> {
-        if !struct_decls.is_empty() && method_arguments.len() < sig.decls.len() {
+        if !struct_decls.is_empty() && method_arguments.len() < sig.decls().len() {
             return None;
         }
         self.method_constraint_result(sig, method_arguments, struct_decls, struct_arguments)
@@ -3234,7 +3235,7 @@ impl Checker {
                             ref_params: sig.ref_params.clone(),
                             ref_return: None,
                             param_types: params,
-                            param_decls: sig.decls.clone(),
+                            param_decls: sig.decls().into_owned(),
                             parametric_origin_writes: sig.parametric_origin_writes.clone(),
                             instantiation,
                             parameter_names: sig.names.clone(),
@@ -3384,7 +3385,7 @@ impl Checker {
                 {
                     return specialized;
                 }
-                unify_through_callable_bounds(self, &sig.decls, &mut subst)?;
+                unify_through_callable_bounds(self, &sig.decls(), &mut subst)?;
                 if let Some(unavailable) =
                     self.unavailable_constructor(name, sig, &[], &decls, &tyargs)
                 {
@@ -3830,8 +3831,8 @@ impl Checker {
                         let rank = overload_rank(
                             score,
                             sig.variadic.is_some(),
-                            baked_decl_count(&sig.decls),
-                            !decls_are_concrete(&sig.decls),
+                            baked_decl_count(&sig.decls()),
+                            !decls_are_concrete(&sig.decls()),
                         ) + binding.rank();
                         matches.push(GenericConstructorMatch {
                             rank,
@@ -3881,7 +3882,7 @@ impl Checker {
                     pointer_origins,
                     ..
                 } = best_matches.remove(0);
-                unify_through_callable_bounds(self, &sig.decls, &mut subst)?;
+                unify_through_callable_bounds(self, &sig.decls(), &mut subst)?;
                 if let Some(specialized) =
                     self.finish_variadic_construction(span, name, param_args, &tyargs, args, kwargs)
                 {
@@ -5366,13 +5367,13 @@ impl Checker {
         bound: impl Iterator<Item = (Ty, Ty)>,
     ) -> Result<OwnParameters, TypeError> {
         let initializer = format!("{name}.__init__");
-        if sig.decls.is_empty() {
+        if sig.decls().is_empty() {
             return self
                 .resolve_use_params(&initializer, &[], explicit, &[], &[])
                 .map(|_| OwnParameters::default());
         }
         let decls = sig
-            .decls
+            .decls()
             .iter()
             .map(|decl| substituted_own_decl(decl, struct_subst))
             .collect::<Vec<_>>();
@@ -5505,7 +5506,7 @@ impl Checker {
         // argument, and no spelled instance determines leaves its struct
         // parameter uninferred.
         let spelled_own =
-            bracket_bindings(&format!("{name}.__init__"), &sig.decls, explicit, None)?;
+            bracket_bindings(&format!("{name}.__init__"), &sig.decls(), explicit, None)?;
         for (index, ((decl, argument), defined)) in
             decls.iter().zip(&refinement).zip(&defined).enumerate()
         {
@@ -5515,7 +5516,7 @@ impl Checker {
             if !defined || spelled {
                 continue;
             }
-            let undetermined = sig.decls.iter().zip(&spelled_own).any(|(own, spelled)| {
+            let undetermined = sig.decls().iter().zip(&spelled_own).any(|(own, spelled)| {
                 let own = std::slice::from_ref(own);
                 spelled.is_empty()
                     && mentioned_binder(argument, own).is_some()
@@ -5769,7 +5770,7 @@ fn mentioned_binder<'d>(argument: &TyArg, decls: &'d [ParamDecl]) -> Option<&'d 
 fn struct_binders_only(subst: &TySubst, sig: &MethodSig) -> TySubst {
     subst
         .iter()
-        .filter(|(id, _)| !sig.decls.iter().any(|decl| decl.id() == *id))
+        .filter(|(id, _)| !sig.decls().iter().any(|decl| decl.id() == *id))
         .map(|(id, ty)| (id.clone(), ty.clone()))
         .collect()
 }

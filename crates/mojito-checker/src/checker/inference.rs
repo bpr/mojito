@@ -1653,7 +1653,7 @@ impl Checker {
         self.structs.get(sname).is_some_and(|info| {
             info.methods
                 .get("__getitem_param__")
-                .is_some_and(|sigs| sigs.iter().any(|sig| !sig.decls.is_empty()))
+                .is_some_and(|sigs| sigs.iter().any(|sig| !sig.decls().is_empty()))
         })
     }
 
@@ -2698,7 +2698,7 @@ impl Checker {
             .find(|sig| is_literal(&sig.names, sig.variadic.is_some()))?;
         let struct_arguments =
             super::comptime_validation::positional_pack_arguments(&info.decls(), arguments);
-        let mut environment = ConstraintEnvironment::declared(&sig.decls, &[]);
+        let mut environment = ConstraintEnvironment::declared(&sig.decls(), &[]);
         environment.bind_declared(&info.decls(), &struct_arguments);
         let available = sig.availability.iter().try_for_each(|constraint| {
             self.validate_constraint_in_environment(name, constraint, &environment)

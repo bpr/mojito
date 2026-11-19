@@ -2255,13 +2255,18 @@ Origin[mut=m]`, `o: OriginSet`) declared in place, as upstream's list
 declares it, its `OriginMutability` naming the sibling `Bool` binder its
 `mut=` binds, a fixed value, or a set. Every binder's `ParamId` slot is its
 declared position, origin parameters counted. A struct's list in the check
-(`StructInfo::params`, the struct's `GenericSite`) holds the origin binders;
-every other list (`Checker::classify_params`) and every list MIR lowers is
-its argument view (`ParamDecl::argument_binders`), which leaves out the
-origin binders and their `mut=` binders, because an instance carries its
-origins as a tail and a call infers them from places. Code that aligns a
+(`StructInfo::params`, the struct's `GenericSite`), a function's or callable
+type's (`GenericFuncTy::decls`, the function's `GenericSite`), and a
+method's (`MethodSig::declared`, its `GenericSite`) hold the origin
+binders; a function whose only binders are origins stays a non-generic
+`Func`. A body's scope (`Checker::classify_params`) and every parameter
+list MIR lowers (`CheckedSignature::parameters`, a struct row) is the
+argument view (`ParamDecl::argument_binders`), which leaves out the origin
+binders and their `mut=` binders, because an instance carries its origins
+as a tail and a call infers them from places. Code that aligns a
 declaration's binders with its arguments reads that view
-(`StructInfo::decls`). The shared `CtValue` model carries integers, booleans,
+(`StructInfo::decls`, `MethodSig::decls`, `GenericFuncTy::argument_view`);
+a generic function type in MIR keeps its whole list. The shared `CtValue` model carries integers, booleans,
 strings, tuples/lists, types, residual parameter expressions, and zero-sized
 reflection handles. The check and the elaborator below MIR fold through
 `param_expr::fold`.

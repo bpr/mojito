@@ -649,9 +649,13 @@ pub(super) fn effective_call_convention_matches(
         )
 }
 
-pub(super) fn generic_callable_decls(ty: &Ty) -> Option<&[mojito_types::types::ParamDecl]> {
+/// The binders a call through the generic callable `ty` binds by position
+/// ([`mojito_types::types::GenericFuncTy::argument_view`]).
+pub(super) fn generic_callable_decls(
+    ty: &Ty,
+) -> Option<std::borrow::Cow<'_, [mojito_types::types::ParamDecl]>> {
     match ty.kind() {
-        TyKind::GenericFunc(generic) => Some(&generic.decls),
+        TyKind::GenericFunc(generic) => Some(generic.argument_view()),
         TyKind::Param {
             callable_bound: Some(bound),
             ..
@@ -1162,7 +1166,7 @@ fn verify_bound_call(
     let mut instantiated = None;
     match generic_callable_decls(contract) {
         Some(decls) => {
-            if decls != param_decls.as_slice() {
+            if *decls != *param_decls.as_slice() {
                 errors.push(format!(
                     "{prefix}: a generic `def[...]` bound's call does not carry the bound's compile-time parameters"
                 ));
@@ -1170,7 +1174,7 @@ fn verify_bound_call(
             verify_param_arguments(
                 prefix,
                 cx.function,
-                decls,
+                &decls,
                 param_arg_regs,
                 instantiated_args,
                 None,
@@ -1318,7 +1322,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
     }
     let checked_decls = cx.reg_ty(*callee).and_then(generic_callable_decls);
     if let Some(checked_decls) = checked_decls {
-        if checked_decls != param_decls {
+        if *checked_decls != **param_decls {
             errors.push(format!(
                         "{prefix}: indirect-call compile-time parameter metadata does not match its callable contract"
                     ));
@@ -1326,7 +1330,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
         verify_param_arguments(
             prefix,
             cx.function,
-            checked_decls,
+            &checked_decls,
             param_arg_regs,
             instantiated_args,
             None,

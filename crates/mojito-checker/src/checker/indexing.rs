@@ -2436,7 +2436,7 @@ impl Checker {
             super::comptime_validation::positional_pack_arguments(&info.decls(), arguments);
         let mut viable = Vec::new();
         for signature in constructors.iter().filter(|signature| {
-            signature.decls.is_empty()
+            signature.decls().is_empty()
                 && signature.keyword_only.is_none_or(|first| first >= 3)
                 && mojito_symbol::symbol::is_slice_literal_constructor(
                     &signature.names,
@@ -2449,7 +2449,7 @@ impl Checker {
                     .skip(3)
                     .all(|(required, name)| !required || name == "__slice_literal__")
         }) {
-            let mut environment = ConstraintEnvironment::declared(&signature.decls, &[]);
+            let mut environment = ConstraintEnvironment::declared(&signature.decls(), &[]);
             environment.bind_declared(&info.decls(), &struct_arguments);
             if signature.availability.iter().any(|constraint| {
                 self.validate_constraint_in_environment(name, constraint, &environment)

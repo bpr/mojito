@@ -1380,7 +1380,8 @@ parameter, its `mut=` binder an ordinary infer-only `value_param`, and
 every binder's `slot` is its declared position, origin parameters counted.
 The lists MIR lowers (a struct row's `param_decls`, a function's) are still
 their argument views, without the origin binders, until instances and calls
-bind origins in declared order. The package format moves to
+bind origins in declared order; a `generic_func` type's `decls` hold the
+whole declared list, an `origin_binder` per origin parameter (R2126). The package format moves to
 `mojito-package 212`.
 
 Schema 1.185 withdraws the compile-time value `ct_marker` (an elaborator

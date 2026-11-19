@@ -1168,6 +1168,7 @@ impl Checker {
             return Ok((callable, Vec::new()));
         };
         let GenericFuncTy { decls, func } = (**generic).clone();
+        let decls = ParamDecl::argument_decls(&decls);
         let BoundParameters {
             subst,
             arguments: tyargs,
@@ -1586,7 +1587,7 @@ impl Checker {
         )?;
         let params = params.as_slice();
         let variadic = bound_variadic.as_ref().or(variadic);
-        if signature.decls.is_empty() {
+        if signature.decls().is_empty() {
             if !param_args.is_empty() {
                 return Err(TypeError::WrongTypeArgCount {
                     name: name.to_string(),
@@ -1636,7 +1637,7 @@ impl Checker {
             mojito_ast::call::bind_spread(&matched, *position)
                 .map_err(|error| error.into_type_error(name))?;
         }
-        let explicit = self.explicit_type_args(name, &signature.decls, param_args)?;
+        let explicit = self.explicit_type_args(name, &signature.decls(), param_args)?;
         let mut patterns = Vec::new();
         let mut actuals = Vec::new();
         for (index, slot) in matched.slots.iter().enumerate() {
@@ -1649,7 +1650,7 @@ impl Checker {
             let actual = self.solving_argument_ty(
                 expression,
                 &params[index],
-                &signature.decls,
+                &signature.decls(),
                 &explicit.subst,
             )?;
             let actual = self.callable_bound_argument(
@@ -1678,7 +1679,7 @@ impl Checker {
                     _ => self.solving_argument_ty(
                         &args[position],
                         element,
-                        &signature.decls,
+                        &signature.decls(),
                         &explicit.subst,
                     )?,
                 };
@@ -1701,14 +1702,14 @@ impl Checker {
             attributes,
         } = self.resolve_explicit_use_params(
             name,
-            &signature.decls,
+            &signature.decls(),
             (param_args, &explicit),
             &patterns,
             &actuals,
         )?;
-        let values = DependentValues::own(&self.param_context, &signature.decls, &tyargs);
+        let values = DependentValues::own(&self.param_context, &signature.decls(), &tyargs);
         let resolve = |ty: &Ty| {
-            let expanded = expand_solved_packs(ty, &signature.decls, &tyargs);
+            let expanded = expand_solved_packs(ty, &signature.decls(), &tyargs);
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
             self.resolve_dependent_ty(&substituted, &values)
         };
@@ -1719,7 +1720,7 @@ impl Checker {
         let resolved_variadic = match variadic.map(Ty::kind) {
             Some(TyKind::Param { binder, .. }) if binder.name.starts_with('*') => {
                 let pack = signature
-                    .decls
+                    .decls()
                     .iter()
                     .position(|decl| decl.id() == &binder.id)
                     .and_then(|index| tyargs.get(index));
@@ -1797,7 +1798,7 @@ impl Checker {
         }
 
         if targs.is_empty()
-            || !signature.decls.iter().any(|decl| {
+            || !signature.decls().iter().any(|decl| {
                 matches!(
                     decl,
                     ParamDecl::Value { .. }
@@ -1824,7 +1825,7 @@ impl Checker {
         };
         let mut closed = signature.clone();
         let mut retyped = false;
-        for decl in &mut closed.decls {
+        for decl in &mut closed.declared {
             match decl {
                 ParamDecl::Value { ty, default, .. } => {
                     let rewritten = mojito_types::types::rewrite_ty(ty, &mut rewrite)
@@ -1949,7 +1950,7 @@ impl Checker {
         struct_arguments: &[TyArg],
     ) -> Result<(), ConstraintFailure<'signature>> {
         let struct_arguments = positional_pack_arguments(struct_decls, struct_arguments);
-        let mut environment = ConstraintEnvironment::declared(&signature.decls, arguments);
+        let mut environment = ConstraintEnvironment::declared(&signature.decls(), arguments);
         environment.bind_declared(struct_decls, &struct_arguments);
         for constraint in &signature.availability {
             match self.constraint_verdict(constraint, &environment) {
@@ -2231,11 +2232,11 @@ fn method_value_ty(sig: &MethodSig, owner: &Ty) -> Ty {
     } else if sig.has_self {
         func = with_receiver_parameter(func, sig.self_convention, owner);
     }
-    if sig.decls.is_empty() {
+    if sig.decls().is_empty() {
         return TyKind::Func(Box::new(func)).into();
     }
     TyKind::GenericFunc(Box::new(GenericFuncTy {
-        decls: sig.decls.clone(),
+        decls: sig.declared.clone(),
         func,
     }))
     .into()
@@ -2301,7 +2302,7 @@ pub(super) fn method_instantiation_arguments(
     signature: &MethodSig,
     arguments: &[TyArg],
 ) -> Option<Vec<TyArg>> {
-    (!signature.decls.is_empty() && arguments.len() == signature.decls.len())
+    (!signature.decls().is_empty() && arguments.len() == signature.decls().len())
         .then(|| arguments.to_vec())
 }
 

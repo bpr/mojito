@@ -244,7 +244,7 @@ impl Checker {
                 Err(TypeError::NotComptime(_) | TypeError::DynamicParameterValue)
                     if !overloaded
                         && matches!(method, "__getitem__" | "__getitem_param__")
-                        && matches!(sig.decls.as_slice(),
+                        && matches!(&*sig.decls(),
                             [decl @ ParamDecl::Value { .. }]
                                 if decl.value_element_ty().is_some_and(|ty| ty.is_int())) =>
                 {
@@ -328,20 +328,20 @@ impl Checker {
                             substitute(
                                 &super::super::generics::expand_solved_packs(
                                     &declared_ret,
-                                    &sig.decls,
+                                    &sig.decls(),
                                     &method_arguments,
                                 ),
                                 &method_subst,
                             ),
                             &[
-                                (&sig.decls, &method_arguments),
+                                (&sig.decls(), &method_arguments),
                                 (
                                     &info.decls(),
                                     &positional_pack_arguments(&info.decls(), targs),
                                 ),
                             ],
                         ),
-                        &sig.decls,
+                        &sig.decls(),
                         &method_arguments,
                     ),
                     result_adapter: None,
@@ -386,7 +386,7 @@ impl Checker {
                     bracket_attributes,
                     refined_bound: None,
                     param_types: params,
-                    param_decls: sig.decls.clone(),
+                    param_decls: sig.decls().into_owned(),
                 });
             }
         }
@@ -519,7 +519,7 @@ impl Checker {
             };
             let return_type = self.close_method_values(
                 &substitute(&declared_ret, &method_subst),
-                &sig.decls,
+                &sig.decls(),
                 &method_arguments,
             );
             matches.push(MethodCallResolution {
@@ -547,7 +547,7 @@ impl Checker {
                 error: sig.error.as_ref().map(|error| {
                     self.close_method_values(
                         &substitute(&self.substitute_self_members(error, obj_ty), &method_subst),
-                        &sig.decls,
+                        &sig.decls(),
                         &method_arguments,
                     )
                 }),
@@ -569,7 +569,7 @@ impl Checker {
                 ref_params: sig.ref_params.clone(),
                 ref_return,
                 param_types: params,
-                param_decls: sig.decls.clone(),
+                param_decls: sig.decls().into_owned(),
                 parametric_origin_writes: sig.parametric_origin_writes.clone(),
                 instantiation: None,
                 parameter_names: Vec::new(),
@@ -749,7 +749,7 @@ fn collector_element_failure(sig: &MethodSig, failure: &TypeError) -> Option<Str
         return None;
     };
     let collector = sig.variadic_name.as_ref()?;
-    ParamDecl::type_pack_list(&sig.decls, param)
+    ParamDecl::type_pack_list(&sig.decls(), param)
         .is_some()
         .then(|| {
             format!(

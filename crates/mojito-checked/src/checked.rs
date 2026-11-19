@@ -3039,7 +3039,9 @@ pub struct CheckedDef {
 /// as a broken invariant.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CheckedSignature {
-    /// Its own compile-time parameters.
+    /// Its own compile-time parameters a call binds by position: the
+    /// argument view ([`mojito_types::types::ParamDecl::argument_decls`]) of
+    /// its [`GenericSite`] row, which declares its origin binders in place.
     pub parameters: Vec<mojito_types::types::ParamDecl>,
     /// Each declared parameter's checked type, in declaration order (the
     /// receiver excluded), aligned with the declaration's parameters.
@@ -5789,7 +5791,7 @@ impl Signatures<'_> {
                     declaration,
                     syntax,
                 })
-                .cloned()
+                .map(|parameters| mojito_types::types::ParamDecl::argument_decls(parameters))
                 .unwrap_or_default(),
             params: (0..arity)
                 .map(|param| {
@@ -5830,7 +5832,7 @@ impl Signatures<'_> {
                     declaration: declaration.to_string(),
                     method,
                 })
-                .cloned()
+                .map(|parameters| mojito_types::types::ParamDecl::argument_decls(parameters))
                 .unwrap_or_default(),
             params: (0..arity)
                 .map(|param| {

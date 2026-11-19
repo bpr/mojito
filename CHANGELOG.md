@@ -1437,6 +1437,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A function's, method's, and callable type's checked parameter list now
+  declares its origin parameters in place, each an origin binder and its
+  `mut=` an infer-only `Bool` binder, as a struct's already did and as
+  upstream declares them: `GenericFuncTy::decls`, a method's signature,
+  and their `GenericSite` rows hold the whole list. Calls, bodies, overload
+  symbols, and the lists MIR lowers still read its argument view, and a
+  function whose only parameters are origins stays non-generic (R2126).
+
 - The migration of origin-binder classification from its bound's spelling
   to its resolved `Origin` type is planned and filed as chained roadmap
   entries: the check classifies by type (R2339), checker sites and origin

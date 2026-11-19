@@ -162,9 +162,9 @@ impl Checker {
             .zip(&requirement.names)
             .filter_map(|((slot, default), name)| {
                 match (slot, default) {
-                    (ArgSlot::Default, Some(SignatureDefault::Parameter(default))) => {
-                        Some(self.spelled_parameter_default(default, &requirement.decls, call, &at))
-                    }
+                    (ArgSlot::Default, Some(SignatureDefault::Parameter(default))) => Some(
+                        self.spelled_parameter_default(default, &requirement.decls(), call, &at),
+                    ),
                     (ArgSlot::Default, Some(SignatureDefault::Constant(default)))
                         if !self.witnesses_default_alike(bounds, method, name, default) =>
                     {
