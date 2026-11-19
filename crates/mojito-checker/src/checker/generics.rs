@@ -2094,7 +2094,11 @@ impl Checker {
             targets,
         }))
     }
-    fn fold_immutable_origin_cast(
+
+    /// `origin` folded as [`Self::fold_immutable_origin_casts`] folds a
+    /// type's origin arguments: an `ImmOrigin(o)` cast of an `o` already
+    /// immutable is `o`.
+    pub(in crate::checker) fn fold_immutable_origin_cast(
         &self,
         origin: &mojito_types::origin::Origin,
     ) -> mojito_types::origin::Origin {

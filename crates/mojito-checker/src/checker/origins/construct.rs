@@ -320,11 +320,19 @@ impl Checker {
         bindings: &ConstructorOriginBindings,
     ) -> Ty {
         let arguments = match self.structs.get(name) {
-            Some(info) => info.place_origins(
-                view.into_iter()
-                    .filter(|argument| !matches!(argument, TyArg::Origin(_))),
-                bindings.bind_origins(info.origin_decls().map(|(id, _)| id), tail),
-            ),
+            Some(info) => {
+                let origins = bindings
+                    .bind_origins(info.origin_decls().map(|(id, _)| id), tail)
+                    .into_iter()
+                    .zip(info.origin_decls())
+                    .map(|(origin, (_, decl))| self.slot_converted_origin(decl, origin))
+                    .collect::<Vec<_>>();
+                info.place_origins(
+                    view.into_iter()
+                        .filter(|argument| !matches!(argument, TyArg::Origin(_))),
+                    origins,
+                )
+            }
             None => view,
         };
         Self::struct_instance_type(name, arguments)
@@ -599,6 +607,21 @@ impl Checker {
             }
         }
         Ok(bindings)
+    }
+
+    /// The origin a struct's origin slot `decl` holds for the origin its
+    /// construction bound: an `ImmOrigin` (`Origin[mut=False]`) slot holds
+    /// the `ImmOrigin(o)` cast of an `o` not already immutable, as
+    /// upstream's implicit conversion of the inferred origin to the slot's
+    /// type makes it, and as the slot's explicit annotation resolves.
+    fn slot_converted_origin(&self, decl: &ParamDecl, origin: Origin) -> Origin {
+        match decl {
+            ParamDecl::Origin {
+                mutability: mojito_types::types::OriginMutability::Fixed(false),
+                ..
+            } => self.fold_immutable_origin_cast(&Origin::immutable(origin)),
+            _ => origin,
+        }
     }
 
     /// The read of the `mut=` binder the enclosing origin binder `id`

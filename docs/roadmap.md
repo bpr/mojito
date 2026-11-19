@@ -1380,27 +1380,6 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R2347 A `ref self` method's field origin at a struct's `ImmOrigin`
-  slot does not convert to its own annotation**
-
-  `def it(ref self) -> ItemIter[origin_of(self.value)]: return
-  ItemIter(self.value, False)` over `struct ItemIter[o: Origin[mut=False]]`
-  is rejected ("cannot implicitly convert 'ItemIter[origin_of(self.value)]'
-  value to 'ItemIter[origin_of(self.value)]'"), where the pin runs it.
-  - The annotation binds the slot to the `ImmOrigin(o)` cast of the
-    receiver's mut-parametric field origin, which the construction's
-    inferred, uncast origin does not convert to.
-  - The same shapes over a `read self` receiver, over a `ref` argument
-    (`def make(ref w: Item) -> ItemIter[origin_of(w)]`), and through a
-    local `ref v = self.value` under `self` check and run.
-  - Probe: `conformance/fixtures/reference_iteration_binding_modes.mojo`,
-    a `scripts/smoke` fixture, fails with it.
-  - It predates R2126; d5a7e631c, which made an explicit origin at an
-    `ImmOrigin` slot bind its cast, is the likely cause.
-  - Found while landing R2127 (2026-11-18).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2094 A loan named only inside a type argument does not follow a
   move or copy of its holder**
 

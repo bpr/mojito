@@ -861,6 +861,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A construction whose arguments infer a struct's `Origin[mut=False]`
+  slot (`ItemIter(self.value, False)`) now binds the inferred origin's
+  `ImmOrigin(o)` cast, as upstream's conversion to the slot's type does,
+  so it converts to the explicit annotation
+  `ItemIter[origin_of(self.value)]`, which binds the cast. A `ref self`
+  method or `ref` argument returning such a field-origin iterator had been
+  rejected ("cannot implicitly convert").
+
 - A struct application's origin arguments are now bound and validated
   against the struct's checked parameter list, each at its `ParamDecl`'s
   slot and declared mutability, as upstream binds them, where the checker
