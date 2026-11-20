@@ -4245,6 +4245,59 @@ impl Checker {
             })
     }
 
+    /// Whether the default of header parameter `param` reads a member of a
+    /// struct this program declares that has yet to register it
+    /// (`n: K = K.ONE`, or `space: AddressSpace = .GENERIC` read against the
+    /// parameter's type): the default waits for that struct's members, as
+    /// the pin resolves a declaration's header on demand.
+    pub(super) fn reads_unregistered_struct_member(
+        &self,
+        param: &mojito_ast::ast::TypeParam,
+        default: &Expr,
+    ) -> bool {
+        struct Reads<'a> {
+            checker: &'a Checker,
+            contextual: Option<&'a str>,
+            found: bool,
+        }
+        impl mojito_ast::visit::Visitor for Reads<'_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                if let ExprKind::Member { object, field } = &expr.kind
+                    && let ExprKind::Identifier(base) = &object.kind
+                {
+                    let owner = if base == mojito_ast::ast::CONTEXTUAL_SENTINEL {
+                        self.contextual
+                    } else {
+                        Some(base.as_str())
+                    };
+                    self.found |= owner.is_some_and(|owner| {
+                        self.checker.declared_structs.contains(owner)
+                            && !self.checker.structs.get(owner).is_some_and(|info| {
+                                info.associated.contains_key(field)
+                                    || info.methods.contains_key(field)
+                            })
+                    });
+                }
+            }
+        }
+        let contextual = match &param.value_type {
+            Some(SourceType::Named(name, _)) => Some(name.as_str()),
+            Some(_) => None,
+            None => param
+                .bounds
+                .first()
+                .filter(|_| param.bounds.len() == 1)
+                .map(String::as_str),
+        };
+        let mut reads = Reads {
+            checker: self,
+            contextual,
+            found: false,
+        };
+        mojito_ast::visit::walk_expr(&mut reads, default);
+        reads.found
+    }
+
     /// How the struct type `ty` (`name` applied to `args`) conforms to `tr`,
     /// by the rule [`struct_trait_rule`] names. A lifecycle trait answers by
     /// its declared conformance where the struct declares one, and otherwise
@@ -4509,7 +4562,7 @@ impl Checker {
                         && !self.comptime_aliases.contains_key(name)
                         && !self.applied_module_constants.contains(name)
                         && self.module_constant_value(name).is_none()
-                })
+                }) || self.reads_unregistered_struct_member(param, default)
             })
         };
         type_params.iter().any(defers).then(|| {

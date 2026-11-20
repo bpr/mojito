@@ -130,6 +130,11 @@ point, as upstream's toolchain does.
   its declared `__init__`. The prelude exports it.
 - `std/memory/unsafe.mojo` — upstream's `bitcast` and `pack_bits` over
   `pop.bitcast`, re-exported by `std.memory`.
+- `std/memory/pointer.mojo` — upstream's `Pointer` aliases (`MutPointer`,
+  `ImmPointer`, `OpaquePointer`, `MutOpaquePointer`, `ImmOpaquePointer`,
+  and the deprecated `Optional*Pointer` three), exported from `std.memory`
+  and the prelude, without their `@stable`/`@deprecated` decorators (R1925).
+  The `Pointer` struct is not declared yet (R2414).
 - `std/builtin/dtype.mojo` — upstream's `struct DType` over
   `!kgen.dtype`, its mask aliases, `_int_type_of_width`,
   `_uint_type_of_width`, `_integral_type_of`, and

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2413**.
+Next free ID: **R2420**.
 
 ## Ordered Work
 
@@ -7335,6 +7335,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     upstream's `@deprecated(use=Ts)`.
   - Lever: the struct-body parser takes decorators before a `comptime`
     member; the warning itself is R1164's.
+  - Probe: a module-level `@deprecated("…")` or `@stable(since="1.0")`
+    before `comptime` stops with "a decorator must precede a 'def' or
+    'struct'", where the pin accepts it; the bundled
+    `std/memory/pointer.mojo` omits both from upstream's `Pointer`
+    aliases, so `OptionalPointer` does not warn.
   - Found while landing R1302 (2026-11-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8806,9 +8811,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
 
 - [ ] **R1463 A `Pointer` conforms to `Writable` but cannot be printed**
 
-  Problem: `print(Pointer(to=x))` is rejected ("does not conform to trait
-  'Writable'"), where the pin prints the address, though
-  `modelled_declares` answers `Writable` for `TyKind::Pointer`, as
+  Problem: `print(Pointer(to=x))` fails on the VM ("vm backend does not
+  support methods on Pointer yet"), where the pin prints the address,
+  though `modelled_declares` answers `Writable` for `TyKind::Pointer`, as
   upstream's `Pointer` declares.
   - Neither backend has a display of one: the bundled library declares
     no `Pointer.write_to`.
@@ -8819,7 +8824,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     until R761, writes its `_data` field as `Pointer(0x11+0)` on the VM and
     stops natively with "unsupported display of a Pointer".
   - Found while landing R424 (2026-10-26).
-  - Depends on nothing.
+  - Depends on R2415 (the declared `write_to`).
   - Model: Opus, Not Planned.
 
 - [ ] **R425 A malformed literal `format` template aborts at run time where
@@ -9596,6 +9601,66 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R2344 (2026-11-19).
   - Depends on R2371.
   - Model: Opus, Not Planned.
+
+- [ ] **R2419 A pointer parameter's `_` origin is an unsafe-any origin,
+  where upstream infers it per call**
+
+  `def same(p: Pointer[Int, _], q: Pointer[Int, _])` called as
+  `same(p, p)` over `p = Pointer(to=x)` runs, where the pin rejects it
+  ("aliasing values passed mutably to 'p' argument and passed mutably to
+  'q' argument").
+  - `pointer_type` reads a parameter's `_` as `PointerOrigin::UnsafeAny`,
+    which names no storage, so argument exclusivity sees no shared place.
+  - Upstream auto-parameterizes the `_` into an infer-only origin binder
+    (and its `mut`), so each call binds the argument's own origin.
+  - `bind_alias_origin_placeholders` reads an alias's `_` the same way
+    (`MutPointer[Int, _]`, `OpaquePointer[_]`), so the fix covers both.
+  - Probe: `same(o, o)` over `def same(p: OpaquePointer[_], q:
+    MutOpaquePointer[_])`, likewise.
+  - Found while landing R2205 (2026-11-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2416 `UnsafePointer` resolves, where the pin has no such name**
+
+  A bare `UnsafePointer[Int, _]` parameter type with no import runs, where
+  the pin reports "use of unknown declaration 'UnsafePointer'" and rejects
+  `from std.memory import UnsafePointer`.
+  - Mojito resolves the name by rule in `named_type`,
+    `infer_unbound_call`, `type_receivers.rs`, and `statics.rs`, and
+    mangles it in `mojito-symbol/src/symbol.rs`.
+  - Withdraw it sites-first: respell every use as `Pointer`, then delete
+    the arms.
+  - Sites (`rg -c '\bUnsafePointer\b'`): `tests/checker_test.rs` 35,
+    `vm_test.rs` 11, `ownership_test.rs` 8, `mir_test.rs` 8, and a few
+    more test files.
+  - Sites: about 45 assets across `ok`, `origin_ok`, `origin_error`,
+    `ownership_error`, `type_error`, and `extensions`.
+  - Sites: the bundled `optional`, `array`, `string`, and `alloc` modules,
+    two benchmarks, conformance fixtures and probes, and the docs.
+  - Expected-message fixtures (`static_pointer_alloc_removed.mojo`) need
+    their text checked one by one.
+  - The `UnsafePointer$` mangling prefix may stay as a symbol spelling or
+    be renamed with a MIR text and package format bump; decide here.
+  - Found while planning R2205 (2026-11-20).
+  - Depends on R2414.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2417 The one-argument `Pointer[T]` is accepted, where the pin
+  cannot infer its origin**
+
+  `var y: Pointer[Int] = p` runs, where the pin reports "'Pointer' failed
+  to infer parameter 'origin'".
+  - `pointer_type` maps the one-argument spelling to
+    `MutUntrackedOrigin`.
+  - The bundled `Optional`, `Array`, and `String` storage fields and
+    `alloc.mojo`'s `UnsafePointer[Self.T].alloc(count)` depend on it.
+  - Respell them with an explicit `MutUntrackedOrigin` and upstream's
+    `alloc(Layout…)`, then reject the spelling.
+  - Probe: `Pointer[T].alloc` and `alloc_aligned` go with it.
+  - Found while planning R2205 (2026-11-20).
+  - Depends on R2416.
+  - Model: Fable, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
@@ -10500,40 +10565,104 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2205 The bundled library declares no `struct Pointer`**
+- [ ] **R2413 A `Pointer` type has no declared-struct identity to bridge
+  to**
 
-  Upstream declares `struct Pointer` in `std/memory/pointer.mojo` over one
-  `!kgen.pointer` field, and `MutPointer`, `ImmPointer`, `OpaquePointer`,
-  and `UnsafePointer` as `comptime` aliases, where every one is a name
-  `type_resolution.rs` resolves (`pointer_type`).
-  - Declare the struct with upstream's header, its `_mlir_type` and
-    `_with_origin` comptimes, its field, and the members R2203 and R2204
-    make spellable, `unsafe_address_space_cast` among them, copied from
-    the pin's file.
-  - Declare the aliases there and in `unsafe_pointer.mojo`, exported
-    through `std.memory` and the prelude, and resolve the names through
-    them.
-  - A `Pointer[...]` application still builds `TyKind::Pointer` (the
-    bridge), and the checker's member rules still win.
-  - A member with no checker rule resolves to the declared body.
-  - `Origin` declares `_mlir_origin` (R2370), so the `_mlir_lit_ref`
-    comptime takes upstream's body (`!lit.ref<…, Self.origin._mlir_origin,
-    …>`) in place of Mojito's rule.
-  - Probe: `p.as_imm()[]` is rejected; the pin prints the pointee.
-  - Probe: R1463's `print(p)`.
-  - Probe: a bare `UnsafePointer[Int, _]` parameter type with no import
-    resolves, where the pin reports "use of unknown declaration
-    'UnsafePointer'" (and rejects `from std.memory import UnsafePointer`):
-    declare only the names the pin's prelude and `std.memory` export.
-  - Probe: `p.address_space` fails with "has no field 'address_space'",
-    where the pin prints `AddressSpace.GENERIC`; `p.mut`, `p.T`, and
-    `p.origin` are rejected the same way. The declared parameters make
-    them readable.
-  - The base fixtures (`assets/ok/*pointer*`) keep their output on both
-    backends.
-  - Found while planning R1681 (2026-11-14).
-  - Depends on R2203, R2204, R2409 (`ref[o, as]` member results).
+  `Ty::new` and `nominal_parts` (`mojito-types/src/types.rs`) map nothing
+  between `TyKind::Pointer` and a `TyKind::Struct("Pointer", …)`, so a
+  declared `struct Pointer` would be a second, unrelated type.
+  - Add `canonical_pointer_application` to `Ty::new`: a struct application
+    `[mut, T, origin, address_space]` becomes `TyKind::Pointer` through
+    `PointerOrigin::from_parts` and `AddressSpaceSlot::of_value`, closed
+    or symbolic, so the declaration's own `Self` is the pointer kind.
+  - The `mut` slot is the hard part: a closed `Bool`, the deferred binder
+    `ParamDecl::self_arguments` writes, or a binder expression each map to
+    a `Mutability`, and a shape that maps to none stays the struct, as
+    SIMD's bridge did (`c42de86a2`).
+  - Make `nominal_parts` answer `("Pointer", args)` for a pointer through
+    `PointerOrigin::parts`, with a round-trip unit test.
+  - Audit its 62 readers (`rg -n 'nominal_parts\('`) for any that would
+    now treat a pointer as an aggregate instance: `vm.rs`'s constructor
+    check, `inline_parametric.rs`, `mir.rs`, `statics.rs`, and the
+    `mono/infer.rs` receiver arms.
+  - Probe: with nothing declared, the `assets/ok/*pointer*` cross-section
+    keeps its output on both backends.
+  - Found while landing R2205 (2026-11-20).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2414 The bundled library declares no `struct Pointer`**
+
+  `std/memory/pointer.mojo` declares upstream's aliases but not the struct,
+  so `from std.memory import Pointer` fails with "module 'std.memory' has no
+  declaration named 'Pointer'", where the pin imports it.
+  - Declare it with upstream's header (`address_space: AddressSpace =
+    .GENERIC` now registers), the `_mlir_lit_ref`, `_mlir_type`,
+    `_with_origin`, and `_OriginCastType` comptimes, the field, and the
+    members whose bodies check, copied from the pin's file.
+  - Route `named_type` and `infer_unbound_call` to `pointer_type` and the
+    construction rules before their `self.structs` lookups, so every
+    application still builds `TyKind::Pointer` and the checker's member
+    rules still win.
+  - A member no rule answers resolves to the declared body:
+    `declared_receiver_member` admits a pointer receiver for any member
+    off one `POINTER_RULE_MEMBERS` list.
+  - Export `Pointer` from `std.memory` and the prelude
+    (`implicit_public_identity`, `PRELUDE_EXPORTS`).
+  - Probe: `p.as_imm()[]` is rejected ("has no method 'as_imm'"); the pin
+    prints the pointee.
+  - Probe: `p.as_unsafe_any_origin()[]`, likewise.
+  - Probe: `from std.memory import Pointer, MutPointer` then
+    `MutPointer[Int, origin_of(x)]` (`/tmp/r2205/pin3.mojo` in the plan).
+  - Each omitted member names its blocker in the file's header comment;
+    file any blocker not already on the roadmap.
+  - The plan is `R2205-the-bundled-library-declares-no-struct-plan.md`,
+    slices 4 and 5.
+  - Found while landing R2205 (2026-11-20).
+  - Depends on R2413, R2418 (the declared initializer set).
+  - Model: Fable, Planned.
+
+- [ ] **R2415 A `Pointer`'s parameters, associated comptimes, and
+  conformances do not read through its declaration**
+
+  `p.address_space` fails with "has no field 'address_space'", where the
+  pin prints `AddressSpace.GENERIC`.
+  - The member read takes its struct arm only for `TyKind::Struct`
+    (`checker/indexing.rs`); read through `nominal_struct` instead.
+  - `associated_type_from_base` answers `_mlir_type` and `_mlir_lit_ref`
+    on a pointer base by rule; admit it in the declared-member arm, now
+    that `declared_associated_type` binds origin binders.
+  - `modelled_conformance` answers `Intable` and `Writable` for a pointer
+    by kind; let the declaration answer, as SIMD's did (`153785c2b`).
+  - Probe: `p.mut`, `p.T`, and `var o = p.origin` are rejected the same
+    way; the pin reads each.
+  - Probe: `comptime T = type_of(p).T` is rejected; the pin binds `Int`.
+  - Probe: R1463's `print(p)` reaches the declared `write_to`, and
+    `repr(p)` starts `Pointer[mut=True, SIMD[DType.int, 1],
+    address_space=AddressSpace.GENERIC](0x` at the pin.
+  - The plan is `R2205-the-bundled-library-declares-no-struct-plan.md`,
+    slices 6 and 7.
+  - Found while landing R2205 (2026-11-20).
+  - Depends on R2414.
+  - Model: Fable, Planned.
+
+- [ ] **R2418 A struct whose initializers include upstream's `ref[...] to`
+  form rejects a `_mlir_value=` construction**
+
+  A user copy of `Pointer`'s three initializers (`_mlir_value:
+  Self._mlir_type`, `_mlir_value: Self._mlir_lit_ref`, and `ref[Self.origin,
+  Self.address_space] to: Self.T`) rejects `P[Int, origin_of(x)](
+  _mlir_value=k)` with "no constructor overload matches", where the pin
+  prints `5 5 AddressSpace.GENERIC True True`.
+  - Without the `to=` initializer the same struct runs as at the pin, so
+    the `ref` keyword candidate breaks the overload set's selection.
+  - Probe: `/tmp/r2205/mirror2.mojo` against `mirror3.mojo` (the plan's
+    table lists both shapes).
+  - It blocks declaring `Pointer`'s initializers (R2414) and moving
+    construction to them (R2206, R2208).
+  - Found while planning R2205 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2206 `Pointer`'s casts and conversions are checker rules, where
   upstream's are bodies of the declared struct**
@@ -10552,7 +10681,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `PointerConvert` adjustments into the declared bodies.
   - Re-probe R344 and R1215.
   - Found while planning R1681 (2026-11-14).
-  - Depends on R2205.
+  - Depends on R2205, R2415 (the declared struct's members and reads).
   - Model: Fable, Not Planned.
 
 - [ ] **R2207 `Pointer`'s address and memory members are checker rules,

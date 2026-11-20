@@ -6725,24 +6725,21 @@ fn unsafe_pointer_typing() {
 fn pointer_names_resolve_to_one_builtin_type() {
     // `Pointer` and the deprecated `UnsafePointer` alias are interchangeable,
     // and the one-argument spelling is the mutable untracked origin.
-    ok(
-        "def main():\n    var p: Pointer[Int, MutUntrackedOrigin] = UnsafePointer[Int].alloc(1)\n    p[0] = 1\n    var q: UnsafePointer[Int] = p\n    var r: Pointer[Int] = q\n    r.free()\n",
+    ok_std(
+        "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](1)\n    p[unsafe_offset=0] = 1\n    var q: UnsafePointer[Int] = p\n    var r: Pointer[Int] = q\n    r.unsafe_free()\n",
     );
     // `Pointer(to=x)` is the current spelling of the place-pointer constructor.
     ok("def main():\n    var x = 42\n    var p = Pointer(to=x)\n    print(p[0])\n");
-    // The mutability-fixing aliases accept a matching origin argument.
-    assert!(check_source(
-        "struct MutView:\n    var ptr: MutPointer[Int, MutUntrackedOrigin]\n\nstruct ImmView:\n    var ptr: ImmPointer[Int, ImmUntrackedOrigin]\n"
-    )
-    .is_ok());
-    // …and reject a statically known mismatched one.
+    // The prelude's mutability-fixing aliases accept a matching origin
+    // argument, and a mutable one where the alias's `ImmOrigin` binder
+    // converts it, as the pin does…
+    ok_std(
+        "struct MutView:\n    var ptr: MutPointer[Int, MutUntrackedOrigin]\n\nstruct ImmView:\n    var ptr: ImmPointer[Int, ImmUntrackedOrigin]\n\nstruct Converted:\n    var ptr: ImmPointer[Int, MutUntrackedOrigin]\n",
+    );
+    // …and reject an immutable one where the binder is `MutOrigin`.
     assert!(matches!(
-        check_source("struct Bad:\n    var ptr: MutPointer[Int, ImmUntrackedOrigin]\n"),
-        Err(TypeError::TypeMismatch { .. })
-    ));
-    assert!(matches!(
-        check_source("struct Bad:\n    var ptr: ImmPointer[Int, MutUntrackedOrigin]\n"),
-        Err(TypeError::TypeMismatch { .. })
+        err_std("struct Bad:\n    var ptr: MutPointer[Int, ImmUntrackedOrigin]\n"),
+        TypeError::TypeMismatch { .. }
     ));
 }
 
@@ -11158,4 +11155,97 @@ fn an_inherited_default_with_an_alias_typed_origin_binder_is_unsupported() {
             other.map(|()| ())
         ),
     }
+}
+
+#[test]
+fn a_struct_header_default_reads_a_later_structs_comptime_member() {
+    let declarations = "
+struct K(ImplicitlyCopyable, TrivialRegisterPassable):
+    var v: Int
+    comptime ONE = K(1)
+    def __init__(out self, v: Int):
+        self.v = v
+";
+    for header in ["K = K.ONE", "K = .ONE"] {
+        ok_std(&format!(
+            "struct Q[n: {header}]:
+    def __init__(out self):
+        pass
+    def get(self) -> Int:
+        return Self.n.v
+{declarations}
+def main():
+    print(Q().get())
+"
+        ));
+    }
+    let error = err_std(&format!(
+        "struct Q[n: K = K.NOPE]:
+    def __init__(out self):
+        pass
+{declarations}
+def main():
+    _ = Q()
+"
+    ));
+    assert!(
+        error.to_string().contains("has no attribute 'NOPE'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_comptime_alias_binds_its_origin_arguments() {
+    ok_std(
+        "
+comptime MP[T: AnyType, origin: MutOrigin] = Pointer[T, origin]
+def f(p: MP[Int, _]) -> Int:
+    p[] = 9
+    return p[]
+def g[o: MutOrigin](p: MP[Int, o]) -> Int:
+    return p[]
+def main():
+    var x = 5
+    var q: MP[Int, origin_of(x)] = Pointer(to=x)
+    print(q[], f(q), g(q))
+",
+    );
+    ok_std(
+        "
+struct S[o: MutOrigin](ImplicitlyCopyable):
+    var p: Pointer[Int, Self.o]
+    def __init__(out self, p: Pointer[Int, Self.o]):
+        self.p = p
+comptime AS[o: MutOrigin] = S[o]
+def g(s: AS[_]) -> Int:
+    return s.p[]
+def main():
+    var x = 5
+    print(g(S(Pointer(to=x))))
+",
+    );
+    let error = err_std(
+        "
+comptime MP[T: AnyType, origin: MutOrigin] = Pointer[T, origin]
+def main():
+    var x = 5
+    var q: MP[Int, ImmOrigin(origin_of(x))] = Pointer(to=x)
+    print(q[])
+",
+    );
+    assert!(error.to_string().contains("expected MutOrigin"), "{error}");
+}
+
+#[test]
+fn a_structs_associated_type_binds_its_origin_binders() {
+    ok_std(
+        "
+struct S[mut: Bool, //, o: Origin[mut=mut]]:
+    comptime R = Pointer[Int, Self.o]
+def main():
+    var x = 5
+    var r: S[origin_of(x)].R = Pointer(to=x)
+    print(r[])
+",
+    );
 }

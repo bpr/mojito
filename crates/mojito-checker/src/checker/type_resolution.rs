@@ -1710,10 +1710,7 @@ impl Checker {
             } = self.resolve_struct_use_args(name, &decls, args, &[], &[])?;
             return Ok((Self::struct_instance_type(name, arguments), attributes));
         }
-        if matches!(
-            name,
-            "UnsafePointer" | "Pointer" | "MutPointer" | "ImmPointer"
-        ) {
+        if matches!(name, "UnsafePointer" | "Pointer") {
             return self.pointer_type(name, args);
         }
         // The enclosing struct's own parameter spelled bare: Mojo
@@ -3055,7 +3052,7 @@ impl Checker {
         };
         // The member's type names the struct's own parameters of
         // every kind; the instance binds them all at once.
-        Ok(self.resolve_assoc_ty(&substitute_at(ty, info, targs)))
+        Ok(self.resolve_assoc_ty(&self.substitute_at_instance(ty, info, targs)))
     }
 
     /// Expand a generic comptime alias application (`Alias[args]`) into the
@@ -3099,12 +3096,13 @@ impl Checker {
         let BoundParameters {
             arguments: tyargs,
             attributes,
+            origins,
             ..
         } = self.resolve_use_params(name, &alias.decls, args, &[], &[])?;
         let mut types = HashMap::new();
         let mut values = HashMap::new();
         let mut ids = mojito_types::param_expr::ParamBindings::new();
-        for (decl, argument) in alias.decls.iter().zip(&tyargs) {
+        for (decl, argument) in ParamDecl::aligned_pairs(&alias.decls, &tyargs) {
             if let Some(list) = self.forwarded_type_pack(decl, argument) {
                 ids.bind(decl.id().clone(), list);
             }
@@ -3130,16 +3128,25 @@ impl Checker {
             types,
             values,
             ids,
-            // Origin parameters are rejected at alias declaration.
             origins: HashMap::new(),
         };
+        // The origin arguments bind the alias's origin binders wherever the
+        // template names them, a pointer's provenance included, at the
+        // mutability each bound origin gives a parametric binder.
+        let tails = origins
+            .into_iter()
+            .map(|bound| (bound.id, bound.origin))
+            .collect();
+        let substituted = super::generics::bind_struct_origins(
+            &substitute_assoc(&template, &bindings),
+            &tails,
+            &|_, origin| self.bound_origin_mutability(origin),
+        );
+        let substituted = bind_alias_origin_placeholders(&substituted, &alias.decls, args);
         // The symbolic template keeps canonical `Tuple[T, ...]`; a substituted
         // application must re-select the executable nominal implementation so
         // discovery can materialize it.
-        Ok((
-            self.resolve_assoc_ty(&substitute_assoc(&template, &bindings)),
-            attributes,
-        ))
+        Ok((self.resolve_assoc_ty(&substituted), attributes))
     }
 
     /// The struct application an alias declaring no parameters takes
@@ -4160,8 +4167,7 @@ impl Checker {
     }
 
     /// Resolve current Mojo's `Pointer[T, origin]` (also spelled through the
-    /// deprecated `UnsafePointer` alias and the mutability-fixing `MutPointer`/
-    /// `ImmPointer` aliases) or the one-argument `Pointer[T]` compatibility
+    /// deprecated `UnsafePointer` alias) or the one-argument `Pointer[T]` compatibility
     /// spelling, which resolves to the mutable untracked origin of heap
     /// allocations. The inferred mutability parameter is intentionally absent
     /// from the user-facing argument list.
@@ -4203,59 +4209,26 @@ impl Checker {
             }
         };
         let origin = if args.len() == 1 {
-            mojito_types::origin::PointerOrigin::Untracked {
-                mutable: name != "ImmPointer",
-            }
+            mojito_types::origin::PointerOrigin::Untracked { mutable: true }
         } else if origin_placeholder(&args[1]) {
-            // A placeholder origin (`ImmPointer[UInt8, _]`, upstream's raw
-            // byte-pointer parameter) accepts any provenance at the alias's
-            // fixed permission; the callee holds no loan. The bare spelling
-            // (`Pointer[T, _]`) is a parameter whose origin — and so whose
-            // `mut` — is inferred per call: the body cannot prove the
-            // capability, so upstream rejects writes and mutable-demanding
-            // forwards through it, exactly the immutable alias's reading.
-            // Outside parameter position the bare placeholder is not
-            // concrete (upstream's verdict).
-            use mojito_types::origin::PointerOrigin;
-            match name {
-                "ImmPointer" => PointerOrigin::UnsafeAny { mutable: false },
-                "MutPointer" => PointerOrigin::UnsafeAny { mutable: true },
-                _ if self.resolving_parameter_annotation.get() => {
-                    PointerOrigin::UnsafeAny { mutable: false }
-                }
-                _ => {
-                    return Err(TypeError::Unsupported(format!(
-                        "'{name}[{elem}, _]' is not concrete outside parameter position: a \
-                         bare placeholder origin is inferred only for a parameter; spell \
-                         ImmPointer[T, _] or MutPointer[T, _] here"
-                    )));
-                }
+            // A placeholder origin (`Pointer[T, _]`) is a parameter whose
+            // origin — and so whose `mut` — is inferred per call: it accepts
+            // any provenance, the callee holds no loan, and the body cannot
+            // prove the capability, so upstream rejects writes and
+            // mutable-demanding forwards through it. Outside parameter
+            // position the bare placeholder is not concrete (upstream's
+            // verdict).
+            if !self.resolving_parameter_annotation.get() {
+                return Err(TypeError::Unsupported(format!(
+                    "'{name}[{elem}, _]' is not concrete outside parameter position: a \
+                     bare placeholder origin is inferred only for a parameter; spell \
+                     ImmPointer[T, _] or MutPointer[T, _] here"
+                )));
             }
+            mojito_types::origin::PointerOrigin::UnsafeAny { mutable: false }
         } else {
             self.pointer_origin_arg(&args[1])?
         };
-        // The mutability-fixing aliases constrain the origin argument's
-        // statically known permission.
-        let required = match name {
-            "MutPointer" => Some(true),
-            "ImmPointer" => Some(false),
-            _ => None,
-        };
-        if let (Some(required), Some(actual)) = (required, origin.statically_mutable())
-            && required != actual
-        {
-            return Err(TypeError::TypeMismatch {
-                expected: format!(
-                    "an origin with {} permission",
-                    if required { "mutable" } else { "immutable" }
-                ),
-                found: format!(
-                    "{} origin",
-                    if actual { "a mutable" } else { "an immutable" }
-                ),
-                context: format!("{name} origin"),
-            });
-        }
         let mut attributes = vec![bracket_attribute(&args[0], &TyArg::Ty(elem.clone()))];
         if let Some(argument) = args.get(1) {
             attributes.push(bracket_attribute(
@@ -4271,10 +4244,6 @@ impl Checker {
             }
             None => mojito_types::types::AddressSpaceSlot::GENERIC,
         };
-        let params = match name {
-            "MutPointer" | "ImmPointer" => FIXED_POINTER_PARAMS,
-            _ => POINTER_PARAMS,
-        };
         let all_args;
         let args = match address_space_arg {
             Some(keyword) => {
@@ -4283,7 +4252,7 @@ impl Checker {
             }
             None => args,
         };
-        let attributes = DeclaredAttributes::of_builtin(name, params, args, attributes)?;
+        let attributes = DeclaredAttributes::of_builtin(name, POINTER_PARAMS, args, attributes)?;
         Ok((Ty::pointer(elem, origin, address_space), attributes))
     }
 
@@ -5610,14 +5579,6 @@ const POINTER_PARAMS: &[BuiltinParam] = &[
     BuiltinParam::new("origin"),
     BuiltinParam::new("address_space"),
 ];
-/// `MutPointer`/`ImmPointer[T: AnyType, origin: MutOrigin, *,
-/// address_space: AddressSpace = .GENERIC]`, the mutability-fixing aliases.
-const FIXED_POINTER_PARAMS: &[BuiltinParam] = &[
-    BuiltinParam::new("T"),
-    BuiltinParam::new("origin"),
-    BuiltinParam::new("address_space"),
-];
-
 fn computed_string_literal(value: &CtValue) -> bool {
     matches!(value, CtValue::Expr(expression)
         if matches!(expression.kind(), mojito_types::param_expr::ParamKind::Apply { .. })
@@ -5851,6 +5812,45 @@ fn unbound_struct_spelling(name: &str, params: &[ParamDecl]) -> Option<String> {
     } else {
         format!("{name}[{}]", vec!["_"; holes].join(", "))
     })
+}
+
+/// `ty`, an alias's expansion, with each origin binder the bracket
+/// `args` leaves to inference (`MutPointer[T, _]`, `AS[_]`) bound as
+/// a parameter's `_` binds it: a struct's origin slot unbound, and a
+/// pointer's provenance any origin at the binder's declared mutability
+/// (immutable for a parametric binder, whose capability the body
+/// cannot prove).
+fn bind_alias_origin_placeholders(
+    ty: &Ty,
+    decls: &[ParamDecl],
+    args: &[mojito_ast::ast::ParamArg],
+) -> Ty {
+    use mojito_types::origin::{Origin, PointerOrigin};
+    let Ok(slots) = mojito_ast::call::bracket_unbound_slots(decls, args) else {
+        return ty.clone();
+    };
+    let mut tails = HashMap::new();
+    let mut pointers = HashMap::new();
+    for (decl, open) in decls.iter().zip(&slots.open) {
+        if let (
+            ParamDecl::Origin {
+                origin, mutability, ..
+            },
+            Some(_),
+        ) = (decl, open)
+        {
+            let mutable = matches!(mutability, OriginMutability::Fixed(true));
+            tails.insert(*origin, Origin::Unbound);
+            pointers.insert(*origin, PointerOrigin::UnsafeAny { mutable });
+        }
+    }
+    if tails.is_empty() {
+        return ty.clone();
+    }
+    super::origins::substitute_pointer_origin_params(
+        &super::origins::substitute_struct_origins(ty, &tails),
+        &pointers,
+    )
 }
 
 fn origin_placeholder(argument: &mojito_ast::ast::ParamArg) -> bool {

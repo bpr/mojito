@@ -868,14 +868,27 @@ impl Checker {
         &mut self,
         statement: &Stmt,
     ) -> Result<AliasRegistration, TypeError> {
-        let StmtKind::Comptime { value, .. } = &statement.kind else {
+        let StmtKind::Comptime {
+            value, type_params, ..
+        } = &statement.kind
+        else {
             return Ok(AliasRegistration::Registered);
         };
         if self.applies_unregistered_member(value) {
             return Ok(AliasRegistration::AwaitsTypes);
         }
         match self.register_module_alias(statement) {
-            Err(_) if self.constructs_unsigned_struct(value) => {
+            // A parameter default reading a struct's constructed member
+            // (`address_space: AddressSpace = .GENERIC`) waits for the
+            // struct's initializers, which build the member.
+            Err(_)
+                if self.constructs_unsigned_struct(value)
+                    || type_params.iter().any(|param| {
+                        param.default.as_ref().is_some_and(|default| {
+                            self.reads_unregistered_struct_member(param, default)
+                        })
+                    }) =>
+            {
                 Ok(AliasRegistration::AwaitsSignatures)
             }
             Err(_)

@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The bundled `std/memory/pointer.mojo` declares upstream's `Pointer`
+  aliases (R2205): `MutPointer`, `ImmPointer`, `OpaquePointer`,
+  `MutOpaquePointer`, `ImmOpaquePointer`, and the deprecated
+  `Optional*Pointer` three, exported from `std.memory` and the prelude.
+  `ImmPointer[T, o]` now converts a mutable origin, as at the pin, and
+  `OpaquePointer[o]` resolves where it was an unknown type. A struct
+  header or `comptime` alias default may read another struct's `comptime`
+  member (`n: K = K.ONE`, `address_space: AddressSpace = .GENERIC`), a
+  generic `comptime` alias binds its origin arguments and the value
+  arguments after them, and a struct's associated type binds the
+  instance's origin binders, where each kept an unbound `origin#n` or
+  reported a missing attribute. The `Pointer` struct itself is still the
+  compiler's (R2413, R2414, R2415).
+
 - A `ref[...]` specifier takes upstream's address-space operand (R2409):
   its operands are classified by type, so `ref[o, a] x`,
   `ref[AddressSpace.GENERIC] x`, and upstream's `-> ref[Self.origin,

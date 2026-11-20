@@ -1787,9 +1787,18 @@ fn ast_raw(
         }
         // Mirror `ty_raw`: every pointer annotation (`UnsafePointer[T]`,
         // `Pointer[T, origin]`, the `ImmPointer`/`MutPointer` permission
-        // aliases) mangles as `UnsafePointer$<element>` — the origin argument
-        // erases from the runtime ABI, so a call site's `Pointer` type key and
-        // the declaration agree.
+        // aliases) mangles as `UnsafePointer$<element>`, and an opaque one
+        // (`OpaquePointer[origin]` and its permission aliases) over `None` —
+        // the origin argument erases from the runtime ABI, so a call site's
+        // `Pointer` type key and the declaration agree.
+        Type::Named(name, _)
+            if matches!(
+                name.as_str(),
+                "OpaquePointer" | "MutOpaquePointer" | "ImmOpaquePointer"
+            ) =>
+        {
+            "UnsafePointer$None".to_string()
+        }
         Type::Named(name, args)
             if matches!(
                 name.as_str(),
