@@ -1,7 +1,7 @@
 # std.memory.pointer — upstream's `Pointer` aliases, ported with these
 # departures. The `Pointer` struct itself is not declared yet: the compiler
-# answers `Pointer[...]` by rule (R2413 bridges it to a declaration, R2414
-# declares it here). `@stable` and `@deprecated` on each alias are omitted,
+# answers `Pointer[...]` by rule (R2414 declares it here; the compiler
+# already folds the struct's applications into its own pointer type). `@stable` and `@deprecated` on each alias are omitted,
 # since a decorator may not precede a `comptime` declaration yet (R1925), so
 # the three `Optional*Pointer` aliases do not warn as the pin does.
 """Implements `Pointer`, Mojo's primary pointer type for indirect memory

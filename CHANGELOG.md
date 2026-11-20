@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The compiler's pointer type is the identity of upstream's `Pointer`
+  struct (R2413): `Ty::new` folds an application `Pointer[mut, T,
+  origin, address_space]` into it, a symbolic `mut` taking the origin
+  binder's mutability, and `nominal_parts` answers a pointer as that
+  application. No program changes behaviour until the bundled library
+  declares the struct (R2414).
 - The bundled `std/memory/pointer.mojo` declares upstream's `Pointer`
   aliases (R2205): `MutPointer`, `ImmPointer`, `OpaquePointer`,
   `MutOpaquePointer`, `ImmOpaquePointer`, and the deprecated
@@ -20,7 +26,7 @@ to evolve under the `0.x` compatibility rules.
   arguments after them, and a struct's associated type binds the
   instance's origin binders, where each kept an unbound `origin#n` or
   reported a missing attribute. The `Pointer` struct itself is still the
-  compiler's (R2413, R2414, R2415).
+  compiler's (R2414, R2415).
 
 - A `ref[...]` specifier takes upstream's address-space operand (R2409):
   its operands are classified by type, so `ref[o, a] x`,

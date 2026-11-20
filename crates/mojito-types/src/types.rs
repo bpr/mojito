@@ -1086,8 +1086,10 @@ pub enum TyKind {
     /// The built-in tagged union `Variant[T1, ..., Tn]`.  The ordering is part
     /// of the type: it determines the runtime tag used by typed projection.
     Variant(Vec<Ty>),
-    /// The built-in `UnsafePointer[T, origin]`.  The VM erases the origin, but
-    /// the checked and MIR types retain it for lifetime/aggregate validation.
+    /// Upstream's `Pointer[mut, T, origin, address_space]` struct, the
+    /// compiler's representation of its instances: [`Ty::new`] folds a
+    /// struct application into it. The VM erases the origin, but the
+    /// checked and MIR types retain it for lifetime/aggregate validation.
     Pointer {
         element: Ty,
         origin: crate::origin::PointerOrigin,
@@ -1378,11 +1380,14 @@ impl Ty {
     /// type. A `StringLiteral[value]` application folds a closed slot to
     /// its text ([`canonical_string_literal_application`]), and an
     /// `IntLiteral[value]` or `FloatLiteral[value]` one to its attribute
-    /// ([`canonical_numeric_literal_application`]). `Bool` shares one node
-    /// ([`Ty::bool`]).
+    /// ([`canonical_numeric_literal_application`]). A
+    /// `Pointer[mut, T, origin, address_space]` application is the
+    /// compiler's pointer type ([`canonical_pointer_application`]).
+    /// `Bool` shares one node ([`Ty::bool`]).
     pub fn new(kind: TyKind) -> Self {
         Self::dataless(&kind)
             .or_else(|| canonical_simd_application(&kind))
+            .or_else(|| canonical_pointer_application(&kind))
             .or_else(|| canonical_string_literal_application(&kind))
             .or_else(|| canonical_numeric_literal_application(&kind))
             .or_else(|| shared_bool(&kind))
@@ -1493,8 +1498,9 @@ impl Ty {
     /// A `Pointer[element, origin]`. Code outside this crate builds and
     /// reads a `Pointer` only through this constructor and
     /// [`TyKind::as_pointer`], [`TyKind::pointer_element`], and
-    /// [`TyKind::is_pointer`], so the type can become the struct
-    /// `std.memory.pointer` declares without touching its readers.
+    /// [`TyKind::is_pointer`]. An application of the struct
+    /// `std.memory.pointer` declares folds to this type ([`Ty::new`]), and
+    /// [`nominal_parts`] answers it as that application.
     pub fn pointer(
         element: Self,
         origin: crate::origin::PointerOrigin,
@@ -2116,6 +2122,9 @@ pub const ERROR_TYPE_NAME: &str = "Error";
 
 /// The name of upstream's `SIMD`, declared in `std.simd`.
 pub const SIMD_TYPE_NAME: &str = "SIMD";
+
+/// The name of upstream's `Pointer`, declared in `std.memory.pointer`.
+pub const POINTER_TYPE_NAME: &str = "Pointer";
 
 /// The symbol of upstream's `@implicit SIMD.__init__(IntLiteral)`, which
 /// splats an integer literal across a vector's lanes.
@@ -5800,6 +5809,55 @@ fn canonical_simd_application(kind: &TyKind) -> Option<Ty> {
     simd_ty_from_slots(dtype, width).ok()
 }
 
+/// The pointer type a `Pointer[mut, T, origin, address_space]` application
+/// denotes, closed or symbolic. A closed `mut` is the pointer's mutability;
+/// a symbolic one is the origin binder's, as upstream's
+/// `origin: Origin[mut=mut]` ties them. Any other shape (the bare template,
+/// a short application, an origin no pointer holds, a symbolic `mut` over an
+/// origin no binder roots) is not rewritten.
+fn canonical_pointer_application(kind: &TyKind) -> Option<Ty> {
+    let TyKind::Struct(name, args) = kind else {
+        return None;
+    };
+    let [
+        TyArg::Val(mutable),
+        TyArg::Ty(element),
+        TyArg::Origin(origin),
+        TyArg::Val(space),
+    ] = args.as_slice()
+    else {
+        return None;
+    };
+    if name != POINTER_TYPE_NAME {
+        return None;
+    }
+    let mutability = match mutable {
+        CtValue::Bool(mutable) => crate::origin::Mutability::of(*mutable),
+        CtValue::Deferred(_) => origin.binder_mutability()?,
+        CtValue::Expr(expr) => match expr.as_constant() {
+            Some(CtValue::Bool(mutable)) => crate::origin::Mutability::of(*mutable),
+            Some(_) => return None,
+            None => origin.binder_mutability()?,
+        },
+        _ => return None,
+    };
+    let origin = crate::origin::PointerOrigin::from_parts(origin.clone(), mutability)?;
+    Some(Ty::pointer(
+        element.clone(),
+        origin,
+        AddressSpaceSlot::of_value(space)?,
+    ))
+}
+
+/// The `mut` binder of upstream's `Pointer`, its first declared parameter:
+/// the `mut` argument of a pointer whose mutability an origin binder decides.
+fn pointer_mut_binder() -> ParamRef {
+    ParamRef {
+        id: ParamId::new(POINTER_TYPE_NAME, 0),
+        name: Arc::from("mut"),
+    }
+}
+
 /// The SIMD type of two slots that may still be symbolic.
 ///
 /// A slot whose expression is a closed constant becomes `Known`, and two
@@ -5857,10 +5915,38 @@ pub fn simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
 /// The declared struct `ty` is an instance of, and its arguments.
 ///
 /// A struct application answers its own name and arguments, a literal's
-/// (`StringLiteral[value]`, `IntLiteral[value]`) included.
+/// (`StringLiteral[value]`, `IntLiteral[value]`) included. A pointer
+/// answers upstream's `Pointer[mut, T, origin, address_space]`, its `mut`
+/// a `Bool` or, when an origin binder decides it, the struct's own `mut`
+/// binder. Two provenances have no exact spelling there, since upstream's
+/// `origin: Origin[mut=mut]` ties the two: a binder's origin at another
+/// binder's mutability reads back at its own binder's, and the receiver's
+/// origin at a binder's mutability does not fold back. A caller rebuilding
+/// a pointer goes through [`Ty::pointer`], never these parts.
 pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
     match ty.kind() {
         TyKind::Struct(name, args) => Some((name, std::borrow::Cow::Borrowed(args))),
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => {
+            let (origin, mutability) = origin.parts();
+            let mutable = match mutability {
+                crate::origin::Mutability::Mutable => CtValue::Bool(true),
+                crate::origin::Mutability::Immutable => CtValue::Bool(false),
+                crate::origin::Mutability::Param(_) => CtValue::Deferred(pointer_mut_binder()),
+            };
+            Some((
+                POINTER_TYPE_NAME,
+                std::borrow::Cow::Owned(vec![
+                    TyArg::Val(mutable),
+                    TyArg::Ty(element.clone()),
+                    TyArg::Origin(origin),
+                    TyArg::Val(address_space.value()),
+                ]),
+            ))
+        }
         _ => None,
     }
 }
@@ -10551,6 +10637,221 @@ mod string_literal_application_tests {
         assert!(bare.kind().is_non_simd_struct());
         let int_slot = application(vec![TyArg::Val(CtValue::Int(3))]);
         assert!(!int_slot.is_string_literal());
+    }
+}
+
+#[cfg(test)]
+mod pointer_application_tests {
+    use super::*;
+    use crate::origin::{
+        Mutability, Origin, OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin,
+    };
+
+    fn application(args: Vec<TyArg>) -> Ty {
+        Ty::new(TyKind::Struct(POINTER_TYPE_NAME.to_string(), args))
+    }
+
+    fn pointer_args(mutable: CtValue, origin: Origin, space: CtValue) -> Vec<TyArg> {
+        vec![
+            TyArg::Val(mutable),
+            TyArg::Ty(Ty::int()),
+            TyArg::Origin(origin),
+            TyArg::Val(space),
+        ]
+    }
+
+    fn generic() -> CtValue {
+        AddressSpaceSlot::GENERIC.value()
+    }
+
+    fn symbolic_space() -> AddressSpaceSlot {
+        AddressSpaceSlot::of(ParamContext::detached().decl_ref(
+            ParamId::new(POINTER_TYPE_NAME, 3),
+            "address_space",
+            MetaTy::value(address_space_ty()),
+        ))
+        .expect("an AddressSpace binder")
+    }
+
+    fn place() -> OriginPlace {
+        OriginPlace {
+            root: OwnerId(1),
+            path: vec![OriginSeg::Field("a".into())],
+        }
+    }
+
+    #[test]
+    fn a_closed_pointer_application_is_the_pointer_type() {
+        assert_eq!(
+            application(pointer_args(
+                CtValue::Bool(true),
+                Origin::Untracked { mutable: true },
+                generic(),
+            )),
+            Ty::pointer(
+                Ty::int(),
+                PointerOrigin::Untracked { mutable: true },
+                AddressSpaceSlot::GENERIC
+            )
+        );
+        assert_eq!(
+            application(pointer_args(
+                CtValue::Bool(false),
+                Origin::Static,
+                address_space_value(3),
+            )),
+            Ty::pointer(Ty::int(), PointerOrigin::Static, AddressSpaceSlot::Known(3))
+        );
+        assert_eq!(
+            application(pointer_args(
+                CtValue::Bool(true),
+                Origin::Place(place()),
+                generic()
+            )),
+            Ty::pointer(
+                Ty::int(),
+                PointerOrigin::Place {
+                    place: place(),
+                    mutable: true
+                },
+                AddressSpaceSlot::GENERIC
+            )
+        );
+    }
+
+    #[test]
+    fn the_declarations_own_self_is_the_symbolic_pointer_type() {
+        let space = symbolic_space();
+        let id = OriginParamId(2);
+        assert_eq!(
+            application(pointer_args(
+                CtValue::Deferred(pointer_mut_binder()),
+                Origin::Param(id),
+                space.value(),
+            )),
+            Ty::pointer(
+                Ty::int(),
+                PointerOrigin::Param {
+                    id,
+                    mutability: Mutability::Param(id),
+                    interior: Vec::new(),
+                    subtree: false,
+                },
+                space
+            )
+        );
+    }
+
+    #[test]
+    fn a_pointer_application_no_pointer_denotes_stays_the_struct() {
+        let deferred = CtValue::Deferred(pointer_mut_binder());
+        for unfolded in [
+            application(Vec::new()),
+            application(pointer_args(
+                CtValue::Bool(true),
+                Origin::Unbound,
+                generic(),
+            )),
+            application(pointer_args(
+                deferred.clone(),
+                Origin::Place(place()),
+                generic(),
+            )),
+            application(pointer_args(deferred, Origin::SelfParam, generic())),
+            application(pointer_args(CtValue::Bool(true), Origin::Static, generic())),
+            application(pointer_args(CtValue::Int(1), Origin::Static, generic())),
+        ] {
+            assert!(!unfolded.kind().is_pointer(), "{unfolded:?}");
+        }
+        let short = application(vec![
+            TyArg::Val(CtValue::Bool(true)),
+            TyArg::Ty(Ty::int()),
+            TyArg::Origin(Origin::Static),
+        ]);
+        assert!(!short.kind().is_pointer());
+    }
+
+    #[test]
+    fn pointer_nominal_parts_round_trip() {
+        let id = OriginParamId(3);
+        let projections = [
+            (Vec::new(), false),
+            (vec!["element".to_string()], false),
+            (vec!["element".to_string()], true),
+        ];
+        let mut origins = vec![PointerOrigin::Static];
+        for mutable in [false, true] {
+            origins.push(PointerOrigin::Place {
+                place: place(),
+                mutable,
+            });
+            origins.push(PointerOrigin::Untracked { mutable });
+            origins.push(PointerOrigin::UnsafeAny { mutable });
+        }
+        for mutability in [
+            Mutability::Mutable,
+            Mutability::Immutable,
+            Mutability::Param(id),
+        ] {
+            for (interior, subtree) in &projections {
+                origins.push(PointerOrigin::Param {
+                    id,
+                    mutability,
+                    interior: interior.clone(),
+                    subtree: *subtree,
+                });
+            }
+        }
+        for mutability in [Mutability::Mutable, Mutability::Immutable] {
+            origins.push(PointerOrigin::SelfPlace {
+                mutability,
+                interior: vec!["element".to_string()],
+                subtree: false,
+            });
+        }
+        for space in [
+            AddressSpaceSlot::GENERIC,
+            AddressSpaceSlot::Known(3),
+            symbolic_space(),
+        ] {
+            for origin in &origins {
+                let pointer = Ty::pointer(Ty::int(), origin.clone(), space.clone());
+                let (name, args) = nominal_parts(&pointer).expect("a pointer is an instance");
+                assert_eq!(name, POINTER_TYPE_NAME);
+                assert_eq!(application(args.into_owned()), pointer, "{origin:?}");
+            }
+        }
+        let parts = |origin: PointerOrigin| {
+            let pointer = Ty::pointer(Ty::int(), origin, AddressSpaceSlot::GENERIC);
+            application(nominal_parts(&pointer).expect("a pointer").1.into_owned())
+        };
+        assert_eq!(
+            parts(PointerOrigin::Param {
+                id,
+                mutability: Mutability::Param(OriginParamId(1)),
+                interior: Vec::new(),
+                subtree: false,
+            }),
+            Ty::pointer(
+                Ty::int(),
+                PointerOrigin::Param {
+                    id,
+                    mutability: Mutability::Param(id),
+                    interior: Vec::new(),
+                    subtree: false,
+                },
+                AddressSpaceSlot::GENERIC
+            )
+        );
+        assert!(
+            !parts(PointerOrigin::SelfPlace {
+                mutability: Mutability::Param(id),
+                interior: Vec::new(),
+                subtree: false,
+            })
+            .kind()
+            .is_pointer()
+        );
     }
 }
 

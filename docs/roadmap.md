@@ -10565,32 +10565,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2413 A `Pointer` type has no declared-struct identity to bridge
-  to**
-
-  `Ty::new` and `nominal_parts` (`mojito-types/src/types.rs`) map nothing
-  between `TyKind::Pointer` and a `TyKind::Struct("Pointer", …)`, so a
-  declared `struct Pointer` would be a second, unrelated type.
-  - Add `canonical_pointer_application` to `Ty::new`: a struct application
-    `[mut, T, origin, address_space]` becomes `TyKind::Pointer` through
-    `PointerOrigin::from_parts` and `AddressSpaceSlot::of_value`, closed
-    or symbolic, so the declaration's own `Self` is the pointer kind.
-  - The `mut` slot is the hard part: a closed `Bool`, the deferred binder
-    `ParamDecl::self_arguments` writes, or a binder expression each map to
-    a `Mutability`, and a shape that maps to none stays the struct, as
-    SIMD's bridge did (`c42de86a2`).
-  - Make `nominal_parts` answer `("Pointer", args)` for a pointer through
-    `PointerOrigin::parts`, with a round-trip unit test.
-  - Audit its 62 readers (`rg -n 'nominal_parts\('`) for any that would
-    now treat a pointer as an aggregate instance: `vm.rs`'s constructor
-    check, `inline_parametric.rs`, `mir.rs`, `statics.rs`, and the
-    `mono/infer.rs` receiver arms.
-  - Probe: with nothing declared, the `assets/ok/*pointer*` cross-section
-    keeps its output on both backends.
-  - Found while landing R2205 (2026-11-20).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2414 The bundled library declares no `struct Pointer`**
 
   `std/memory/pointer.mojo` declares upstream's aliases but not the struct,
@@ -10616,6 +10590,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `MutPointer[Int, origin_of(x)]` (`/tmp/r2205/pin3.mojo` in the plan).
   - Each omitted member names its blocker in the file's header comment;
     file any blocker not already on the roadmap.
+  - The declared `mut` must be binder slot 0 under the owner `Pointer`:
+    `Ty::new` folds the struct's applications into `TyKind::Pointer`, and
+    `nominal_parts` answers a symbolic `mut` as `ParamId("Pointer", 0)`
+    (`pointer_mut_binder`, `types.rs`).
+  - The VM's `constructed` (`vm.rs`) now admits a pointer receiver, so a
+    declared `Pointer.__init__` reaches `uninitialized_value`, which needs
+    a pointer arm (the null `Value::Pointer`).
+  - A bare-`ref` binder's pointer at another binder's mutability
+    (`pointer_subscript_reads_in_place.mojo`) reads back from its struct
+    parts at its own binder's: a reader that rebuilds a pointer from a
+    declared struct's substitution must keep `Ty::pointer`, or the
+    provenance must be normalized, since upstream's `Origin[mut=mut]`
+    cannot spell it.
   - The plan is `R2205-the-bundled-library-declares-no-struct-plan.md`,
     slices 4 and 5.
   - Found while landing R2205 (2026-11-20).

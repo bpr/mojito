@@ -322,6 +322,19 @@ impl Origin {
         }
     }
 
+    /// The `mut` an `Origin[mut=mut]` binder takes when only an origin
+    /// binder decides it: the mutability of the binder this origin is
+    /// rooted in, through projections and mutability casts. `None` for an
+    /// origin no binder roots (a place, the receiver, a fixed origin).
+    #[must_use]
+    pub fn binder_mutability(&self) -> Option<Mutability> {
+        match self {
+            Self::Param(id) => Some(Mutability::Param(*id)),
+            Self::Projected(base, _) | Self::MutCast(base, _) => base.binder_mutability(),
+            _ => None,
+        }
+    }
+
     /// The symbolic mutability a cast to a binder's `Bool` holds
     /// (`o.unsafe_mut_cast[m]()`); `None` for any other origin.
     #[must_use]
