@@ -275,7 +275,8 @@ impl FnLowering<'_> {
     /// Pointer-receiver method intrinsics — the VM's `Value::Pointer` method
     /// dispatch: `free`/`unsafe_free` release through the runtime's size-less
     /// free, `copy` is the pointer itself, as a register copy is, and
-    /// `__int__` is the address (0 for null on both backends). Everything
+    /// `__int__` is the address (0 for null on both backends). A member the
+    /// elaborator resolved to a declared body never reaches here; anything
     /// else stays unsupported.
     pub(super) fn lower_pointer_method(
         &mut self,

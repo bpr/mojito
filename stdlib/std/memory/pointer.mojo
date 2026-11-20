@@ -4,15 +4,17 @@
 # the casts, the address members, and the operators (R2206–R2208); a member
 # no rule answers does not yet reach its body here (R2420). Conformances
 # `DevicePassable`, `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable`
-# are absent from the bundle, and `Comparable` and `Writable` wait on the
-# members below. Members omitted, by blocker:
+# are absent from the bundle, and `Comparable` waits on the members below.
+# Members omitted, by blocker:
 # - `_with_origin` and `__merge_with__`: a `Pointer[...]` bracket does not
 #   bind `mut=`, `T=`, or `origin=` (R2421).
-# - the implicit mut-to-imm `__init__(other: Pointer, …)`: a parameter read
-#   through a pointer value (`other.T`, R2415).
+# - the implicit mut-to-imm `__init__(other: Pointer, …)`: the bare
+#   `other: Pointer` auto-parameterizes as three positionals the bracket
+#   rejects (R2421).
 # - `as_unsafe_any_origin`: `UnsafeAnyOrigin[mut=Self.mut]` keeps no
 #   symbolic `mut` (R2384).
-# - `write_to` and `write_repr_to`: R2415.
+# - `write_repr_to`: `Named("mut", Self.mut)` binds a compile-time value to
+#   a `ref` argument (R2425).
 # - `__init__(unsafe_from_address: IntLiteral)`: `Self(unsafe_from_address=)`
 #   reaches the construction rule, not the declared initializers (R2420).
 # - `__bool__`: `@unavailable` on a method is rejected (R1162).
@@ -51,6 +53,7 @@ from std.builtin.int import Indexer, index
 from std.sys import bit_width_of
 from std.builtin.debug_assert import debug_assert
 from std.memory.address_space import AddressSpace
+from std.builtin.format_int import _write_int
 
 
 comptime MutPointer[
@@ -188,6 +191,7 @@ struct Pointer[
     ImplicitlyCopyable,
     Intable,
     TrivialRegisterPassable,
+    Writable,
 ):
     """`Pointer` represents an indirect reference to one or more values
     of type `T` consecutively in memory, and can refer to uninitialized memory.
@@ -417,3 +421,12 @@ struct Pointer[
                 ]._mlir_type,
             ](self._mlir_value)
         }
+
+    @inline(.never)
+    def write_to(self, mut writer: Some[Writer]):
+        """Formats this pointer address to the provided Writer.
+
+        Args:
+            writer: The object to write to.
+        """
+        _write_int[radix=16](writer, Int(Int(self)), prefix="0x")

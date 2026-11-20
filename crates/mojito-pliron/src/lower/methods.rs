@@ -56,9 +56,11 @@ impl FnLowering<'_> {
         args: &[Reg],
         kwargs: &[(String, Reg)],
     ) -> Result<(), PlironError> {
-        // Pointer receivers dispatch to runtime intrinsics, never to compiled
-        // stdlib bodies.
-        if self.func.reg_types.get(&recv.0).is_some_and(Ty::is_pointer) {
+        // A pointer's rule members dispatch to runtime intrinsics; a member
+        // the elaborator resolved to a declared body (`write_to`) calls it.
+        if self.func.reg_types.get(&recv.0).is_some_and(Ty::is_pointer)
+            && resolved.is_none_or(|symbol| !self.signatures.contains_key(symbol))
+        {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
         }
         // The struct-to-literal bridge (the VM's `string_struct_literal`):

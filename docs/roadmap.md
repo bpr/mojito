@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2424**.
+Next free ID: **R2426**.
 
 ## Ordered Work
 
@@ -4920,6 +4920,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2424 A compile-time value bound to a `ref` argument fails MIR
+  verification or overload resolution**
+
+  `g(K)` over `def g(ref x: Int)` and `comptime K = 4` fails with "argument
+  0 of 'g' has type IntLiteral[4], declared Int", where the pin prints `4`.
+  - Upstream materializes the parameter value into a temporary of the
+    argument's declared type and lends that temporary's address.
+  - Mojito lends a place of the value's literal type, so the reference's
+    type disagrees with the declared one.
+  - Probe: `g(k)` inside `def h[k: Int]()`, called `h[7]()`, likewise; the
+    pin prints `7`.
+  - Probe: `s.write(Named("k", K))` (`Named.__init__` takes `ref[Self.o]
+    value: Self.T`) fails with "MakeRef destination targets Int,
+    incompatible with place storage IntLiteral[4]"; the pin prints `k=4`.
+  - Probe: `FormatStruct(writer, "R").params(Named("k", Self.k))` in a
+    struct's `write_repr_to` fails with "invalid call to 'params': no
+    overload matches"; the pin prints `R[k=1](255)`.
+  - Found while landing R2415 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
@@ -8820,24 +8841,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1463 A `Pointer` conforms to `Writable` but cannot be printed**
-
-  Problem: `print(Pointer(to=x))` fails on the VM ("vm backend does not
-  support methods on Pointer yet"), where the pin prints the address,
-  though `modelled_declares` answers `Writable` for `TyKind::Pointer`, as
-  upstream's `Pointer` declares.
-  - Neither backend has a display of one: the bundled library declares
-    no `Pointer.write_to`.
-  - Upstream's `write_to` writes the address in hex and `write_repr_to`
-    writes `Pointer[mut=True, SIMD[DType.int, 1],
-    address_space=AddressSpace.GENERIC](0x...)`.
-  - Probe: `repr(Span(xs))`, which takes `Writable`'s synthesized default
-    until R761, writes its `_data` field as `Pointer(0x11+0)` on the VM and
-    stops natively with "unsupported display of a Pointer".
-  - Found while landing R424 (2026-10-26).
-  - Depends on R2415 (the declared `write_to`).
-  - Model: Opus, Not Planned.
-
 - [ ] **R425 A malformed literal `format` template aborts at run time where
   the pin rejects it at compile time**
 
@@ -10588,9 +10591,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`method_calls/builtin_types.rs`), and let
     `infer_intrinsic_receiver_call` defer to it, as its string-literal arm
     does.
-  - Mono, the VM, and Pliron then dispatch a declared member on a pointer
-    receiver: `carries_instance_in_slots` (`native/mono/infer.rs`), VM
-    `invoke`'s `declared_owner`, and `mojito-pliron/src/lower/methods.rs`.
+  - Mono then dispatches a declared member on a pointer receiver
+    (`carries_instance_in_slots`, `native/mono/infer.rs`); the VM's
+    `invoke` and Pliron's `lower_method_call` already run a resolved
+    declared body (R2415's `write_to`).
   - The VM's `constructed` admits a pointer receiver, so a declared
     `Pointer.__init__` reaches `uninitialized_value`, which needs a pointer
     arm (the null `Value::Pointer`).
@@ -10631,38 +10635,36 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: the bundled `Pointer._with_origin` and `__merge_with__` spell
     `Pointer[mut=…, …]` and `Pointer[T=…, origin=…]`, so neither is
     declared.
+  - Probe: the bundled implicit mut-to-imm `__init__(other: Pointer, out
+    self: Pointer[other.T, ImmOrigin(other.origin),
+    address_space=other.address_space])` cannot be declared, since its
+    bare `other: Pointer` is the three-positional spelling above. Its
+    parameter reads (`other.T`, `other.origin`) already resolve; selecting
+    it as the implicit conversion is R2208's.
   - Found while landing R2414 (2026-11-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2415 A `Pointer`'s parameters, associated comptimes, and
-  conformances do not read through its declaration**
+- [ ] **R2425 `Pointer` declares no `write_repr_to`, so `repr(p)` fails**
 
-  `p.address_space` fails with "has no field 'address_space'", where the
-  pin prints `AddressSpace.GENERIC`.
-  - The member read takes its struct arm only for `TyKind::Struct`
-    (`checker/indexing.rs`); read through `nominal_struct` instead.
-  - `associated_type_from_base` answers `_mlir_type` and `_mlir_lit_ref`
-    on a pointer base by rule; admit it in the declared-member arm, now
-    that `declared_associated_type` binds origin binders.
-  - `modelled_conformance` answers `Intable` and `Writable` for a pointer
-    by kind; let the declaration answer, as SIMD's did (`153785c2b`).
-  - Probe: `p.mut`, `p.T`, and `var o = p.origin` are rejected the same
-    way; the pin reads each.
-  - Probe: `comptime T = type_of(p).T` is rejected; the pin binds `Int`.
-  - Probe: R1463's `print(p)` reaches the declared `write_to`, and
-    `repr(p)` starts `Pointer[mut=True, SIMD[DType.int, 1],
-    address_space=AddressSpace.GENERIC](0x` at the pin.
-  - Probe: the bundled implicit mut-to-imm `__init__(other: Pointer, out
-    self: Pointer[other.T, ImmOrigin(other.origin), …])` cannot be
-    declared ("value has no attribute 'T'"); declare it here.
-  - Probe: declare `write_to` and `write_repr_to` (and `Writable`); the
-    latter reads `Self.mut`.
-  - The plan is `R2205-the-bundled-library-declares-no-struct-plan.md`,
-    slices 6 and 7.
-  - Found while landing R2205 (2026-11-20).
-  - Depends on R2422.
-  - Model: Fable, Planned.
+  `repr(Pointer(to=x))` fails with "reflect[Pointer[…]].field_count()
+  requires a struct type", where the pin prints `Pointer[mut=True,
+  SIMD[DType.int, 1], address_space=AddressSpace.GENERIC](0x…)`.
+  - The declared `Writable` (R2415) has no `write_repr_to`, so the trait's
+    reflective default is the witness, and it cannot reflect over the
+    `!kgen.pointer` field.
+  - Declare upstream's `write_repr_to` verbatim in
+    `std/memory/pointer.mojo`: its `Named("mut", Self.mut)` and
+    `Named("address_space", Self.address_space)` need R2424.
+  - Widen the bundled `TypeNames[*Ts: Movable]` (`std/format/_utils.mojo`)
+    to upstream's `AnyType`, which `TypeNames[Self.T]` over `T: AnyType`
+    needs; that edit alone names a non-`Movable` type
+    (`TypeNames[Int, NM]()` prints `SIMD[DType.int, 1], NM`).
+  - Probe: `repr(Span(xs))` reaches the same reflective default through
+    its `_data` field until R2374 declares `Span.write_repr_to`.
+  - Found while landing R2415 (2026-11-20).
+  - Depends on R2424.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2206 `Pointer`'s casts and conversions are checker rules, where
   upstream's are bodies of the declared struct**
@@ -11122,6 +11124,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     slot with any value, the verifier's `erased_struct_agrees` admits the
     edge, and the VM's `thaw` names a frozen argument by the erased
     instance. Per-call specialization replaces that edge.
+  - Probe: `t = freeze(s)` over `def freeze(other: S) -> S[other.T,
+    ImmOrigin(other.origin)]` (`S[mut: Bool, //, T: AnyType, origin:
+    Origin[mut=mut]]`) gets an unbound origin and an undecided `mut=`, so
+    `t.mut` fails with "'mut' is not a compile-time constant here", where
+    the pin prints `False`.
   - Found while landing R2372 (2026-11-19).
   - Landing it unblocks R2396, which retires the pre-check origin
     spelling.
@@ -11139,11 +11146,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     clause; `std/format/_utils.mojo` already has `FormatStruct`, `Named`,
     and `TypeNames`. A missing piece (`_is_generic_as`) is filed, not
     stubbed.
-  - Probe: `print(repr(Span(xs)))` over `xs = [1, 2]` fails with "vm:
-    Pointer has no method 'write_repr_to'", where the pin prints
-    `Span[mut=True, SIMD[DType.int, 1]]([Int(1), Int(2)])`.
+  - Its `fmt.Named("mut", Self.mut)` binds a compile-time value to a
+    `ref` argument (R2424).
+  - Probe: `print(repr(Span(xs)))` over `xs = [1, 2]` fails with
+    "reflect[Pointer[…]].field_count() requires a struct type" (the
+    synthesized default reaches the `_data` pointer's), where the pin
+    prints `Span[mut=True, SIMD[DType.int, 1]]([Int(1), Int(2)])`.
   - Found while landing R2362's readers (2026-11-19).
-  - Depends on R2422.
+  - Depends on R2422, R2424.
   - Model: Opus, Not Planned.
 
 - [ ] **R2402 An instance spelling may carry its struct's type and value
@@ -13278,7 +13288,8 @@ residue found inside a task moves to the task that owns its fix.
     `fields(fields_fn: Some[def[T: Writer](mut T)])` overload, and
     `Some[def[...](...)]` is rejected with "unknown type 'Some'".
   - The bundled `TypeNames[*Ts: Movable]` is narrower than upstream's
-    `AnyType`, so it cannot name `ParameterList`'s element type.
+    `AnyType`, so it cannot name `ParameterList`'s element type; R2425
+    widens it.
   - The bundled collections' `write_repr_to` bodies write by hand too.
   - `IndexList.write_repr_to` is omitted (`stdlib/std/utils/index.mojo`):
     restore it with its `import std.format._utils as fmt`.

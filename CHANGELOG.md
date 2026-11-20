@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `Pointer` answers as its declaration in `std.memory.pointer` (R2415):
+  `var o = p.origin`, `comptime T = type_of(p).T`, and `var z: p.T` read
+  its parameters, `_mlir_type` and `_mlir_lit_ref` are the declared
+  `comptime` members, and `Intable` and `Writable` are the declared
+  conformances. The bundled struct declares upstream's `write_to`, so
+  `print(p)` and `String(p)` write the address on both backends, where
+  they failed (`assets/ok/pointer_declared_parameter_reads.mojo`). Any
+  struct's type and origin parameters read through a value the same way,
+  in a body and in a signature over an auto-parameterized argument
+  (`def f(other: S) -> S[other.T, ImmOrigin(other.origin)]`,
+  `assets/ok/struct_parameter_reads_through_value.mojo`). `repr(p)` waits
+  on R2425.
+
 - A struct's origin-mutability binder reads as a value (R2422): in
   `struct Q[mut: Bool, //, origin: Origin[mut=mut]]`, `Self.mut` and a
   `comptime` alias of it answer the instance's mutability, and `Q[o].mut`

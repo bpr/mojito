@@ -237,8 +237,9 @@ pub fn leaf_conforms(
 /// Upstream's `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`,
 /// and `DType` lists `Equatable`.
 ///
-/// `StringLiteral` lists `Boolable` and a `Pointer` `Intable`; none lists
-/// `Identifiable`. A numeric literal answers every trait as its declared
+/// `StringLiteral` lists `Boolable`; none lists `Identifiable`. A
+/// `Pointer`'s `Intable` and `Writable` are its declaration's in
+/// `std.memory.pointer`, which the checker and the elaborator read instead. A numeric literal answers every trait as its declared
 /// `IntLiteral` or `FloatLiteral` struct lists it, which the checker and
 /// the elaborator read instead. `SIMD`'s `Boolable`, `Comparable`, `Equatable`,
 /// `Intable`, `Indexer`, and `Sized` are its declaration's in `std.simd`,
@@ -259,8 +260,8 @@ pub fn leaf_conforms(
 /// `TrivialRegisterPassable`, and a closure's storage `RegisterPassable`
 /// or `TrivialRegisterPassable` where each of its captures is.
 ///
-/// Every modelled leaf but a callable or an MLIR type (`None` among them)
-/// lists `Writable`; `Tuple` and
+/// Every modelled leaf but a callable, an MLIR type (`None` among them),
+/// or a `Pointer` lists `Writable`; `Tuple` and
 /// `Variant` list it where every element conforms, which `element` answers.
 ///
 /// A struct (`NoneType` among them) or a type parameter answers by its own
@@ -277,9 +278,8 @@ pub fn modelled_conformance(
         .unwrap_or(trait_name)
     {
         "Boolable" => ty.is_string_literal(),
-        "Intable" => matches!(ty.kind(), TyKind::Pointer { .. }),
-        "Floatable" | "Indexer" | "Equatable" | "Comparable" | "Ceilable" | "Floorable"
-        | "Truncable" | "Absable" | "Roundable" | "Hashable" => false,
+        "Intable" | "Floatable" | "Indexer" | "Equatable" | "Comparable" | "Ceilable"
+        | "Floorable" | "Truncable" | "Absable" | "Roundable" | "Hashable" => false,
         "Writable" => match ty.kind() {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
                 return every(items, trait_name, element);
@@ -298,6 +298,7 @@ pub fn modelled_conformance(
             | TyKind::KgenPointer { .. }
             | TyKind::LitRef { .. }
             | TyKind::LitRefPack { .. }
+            | TyKind::Pointer { .. }
             | TyKind::Generator(_)
             | TyKind::AnyStruct(_)
             | TyKind::AnyTrait(_)

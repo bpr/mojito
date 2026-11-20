@@ -217,10 +217,12 @@ impl VmBackend {
             Value::Tuple(_) => Err(RuntimeError::Unsupported(format!(
                 "vm: internal tuple-pack storage has no runtime method '{method}'; public Tuple methods require nominal lowering"
             ))),
-            // `Pointer` methods: `free()` releases the allocation (a no-op in
-            // the arena model — the arena never reclaims), and `__int__()` is
-            // the synthetic address, which a place pointer also has.
-            Value::Pointer { allocation, offset } => match method {
+            // `Pointer`'s rule methods: `free()` releases the allocation (a
+            // no-op in the arena model — the arena never reclaims), and
+            // `__int__()` is the synthetic address, which a place pointer
+            // also has. A member the elaborator resolved to a declared body
+            // (`write_to`) runs that body instead.
+            Value::Pointer { allocation, offset } if declared_owner.is_none() => match method {
                 "free" | "unsafe_free" => {
                     self.heap_free(*allocation, *offset)?;
                     Ok(Value::None)

@@ -4592,7 +4592,11 @@ impl Checker {
                 }
                 let value = self
                     .struct_value_member(info, &arguments, field)
-                    .or_else(|| self.struct_generator_member(&subject, info, &arguments, field))?;
+                    .or_else(|| self.struct_generator_member(&subject, info, &arguments, field))
+                    .or_else(|| {
+                        self.struct_type_parameter_at(info, &arguments, field)
+                            .map(Ok)
+                    })?;
                 Some(value.and_then(|value| {
                     self.reject_generator_dependence(object, field, &value)
                         .map(|()| value)
@@ -4754,6 +4758,26 @@ impl Checker {
                     ))
                 }),
         )
+    }
+
+    /// The type a struct application `arguments` binds at its type
+    /// parameter `field` (`type_of(p).T`, `other.T` in a signature), as
+    /// upstream reads a value's type parameter through its type. `None`
+    /// when `field` names no type parameter of the struct.
+    fn struct_type_parameter_at(
+        &self,
+        info: &StructInfo,
+        arguments: &[TyArg],
+        field: &str,
+    ) -> Option<ParamExpr> {
+        let decls = info.decls();
+        let index = decls
+            .iter()
+            .position(|decl| matches!(decl, ParamDecl::Type { .. }) && decl.name() == field)?;
+        match ParamDecl::source_argument(&decls, &info.view_arguments(arguments), index)? {
+            TyArg::Ty(ty) => Some(self.param_context.type_shape(ty.clone())),
+            _ => None,
+        }
     }
 
     /// A struct's parameterized value member `field` as the generator its
@@ -6800,7 +6824,7 @@ impl Checker {
     /// is its type's subject, as upstream reads a value's parameter or
     /// `comptime` member (`x.dtype`, `x.length`) through `type_of(x)`, never
     /// through the value; a field path (`h.w.n`) stays a dynamic value.
-    fn member_subject(&self, object: &Expr) -> Option<Ty> {
+    pub(super) fn member_subject(&self, object: &Expr) -> Option<Ty> {
         match &object.kind {
             ExprKind::Identifier(name) if name == "Self" => self.self_ty.clone(),
             ExprKind::Identifier(name) if self.lookup(name).is_some() => {
@@ -6844,22 +6868,29 @@ impl Checker {
             .map_err(param_error)
     }
 
-    /// The argument a struct application `arguments` holds at its value
-    /// parameter `field`: upstream's parameter read through a type
-    /// (`S[7].n`, `ParameterList[vs.values].values`), folded when closed.
-    /// `None` when `field` names no value parameter of the struct.
+    /// The argument a struct application `arguments` holds at its value or
+    /// origin parameter `field`: upstream's parameter read through a type
+    /// or a value (`S[7].n`, `ParameterList[vs.values].values`, `p.origin`),
+    /// folded when closed. An origin binder's value is typed at the
+    /// instance, so its `Origin[mut=…]` names no struct binder. `None` when
+    /// `field` names no value or origin parameter of the struct.
     pub(super) fn struct_parameter_at(
         &self,
         info: &StructInfo,
         arguments: &[TyArg],
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
-        let (decl, TyArg::Val(value)) =
+        let (decl, argument) =
             ParamDecl::aligned_pairs(&info.params, arguments).find(|(decl, _)| {
-                matches!(decl, ParamDecl::Value { .. })
+                matches!(decl, ParamDecl::Value { .. } | ParamDecl::Origin { .. })
                     && decl.name().trim_start_matches('*') == field
-            })?
-        else {
+            })?;
+        if let TyArg::Origin(origin) = argument {
+            let ty = decl.origin_argument_ty(origin)?;
+            let ty = self.substitute_at_instance(&ty, info, arguments);
+            return Some(Ok(self.param_context.origin(origin.clone(), ty)));
+        }
+        let TyArg::Val(value) = argument else {
             return None;
         };
         let value = match value {
@@ -6895,6 +6926,25 @@ impl Checker {
                 .and_then(|value| context.fold(&value))
                 .map_err(param_error),
         )
+    }
+
+    /// The origin a value's struct type binds at its origin parameter
+    /// `field` (`other.origin` in `ImmOrigin(other.origin)`): upstream's
+    /// `type_of(other).origin`, read where an origin argument is expected.
+    pub(super) fn struct_origin_argument(
+        &self,
+        object: &Expr,
+        field: &str,
+    ) -> Option<mojito_types::origin::Origin> {
+        let subject = self.member_subject(object)?;
+        let (name, arguments) = self.nominal_struct(&subject)?;
+        let info = self.structs.get(name)?;
+        ParamDecl::aligned_pairs(&info.params, &arguments).find_map(|(decl, argument)| {
+            match argument {
+                TyArg::Origin(origin) if decl.name() == field => Some(origin.clone()),
+                _ => None,
+            }
+        })
     }
 
     /// Bind each of `decls` to its argument in `arguments` by binder id: a

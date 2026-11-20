@@ -11313,3 +11313,70 @@ def main():
 ",
     );
 }
+
+#[test]
+fn a_structs_type_and_origin_parameters_read_through_a_value() {
+    let header = "
+struct S[mut: Bool, //, T: AnyType, origin: Origin[mut=mut], *, k: Int = 1](ImplicitlyCopyable):
+    var a: Int
+    def __init__(out self):
+        self.a = 0
+";
+    ok_std(&format!(
+        "{header}
+def f(other: S) -> S[other.T, ImmOrigin(other.origin), k=other.k]:
+    return S[other.T, ImmOrigin(other.origin), k=other.k]()
+def main():
+    var x = 5
+    var s = S[Int, origin_of(x)]()
+    var o = s.origin
+    comptime T = type_of(s).T
+    var y: T = 3
+    var z: s.T = 4
+    print(s.mut, s.k, y, z, f(s).a)
+"
+    ));
+    let error = err_std(&format!(
+        "{header}
+def main():
+    var x = 5
+    var s = S[Int, origin_of(x)]()
+    print(s.nope)
+"
+    ));
+    assert!(error.to_string().contains("has no field 'nope'"), "{error}");
+    let error = err_std(&format!(
+        "{header}
+def f(other: S) -> S[other.U, ImmOrigin(other.origin)]:
+    return S[other.U, ImmOrigin(other.origin)]()
+def main():
+    var x = 5
+    print(f(S[Int, origin_of(x)]()).a)
+"
+    ));
+    assert!(error.to_string().contains("no attribute 'U'"), "{error}");
+    err_std(&format!(
+        "{header}
+def main():
+    var x = 5
+    var s = S[Int, origin_of(x)]()
+    print(s.T)
+"
+    ));
+}
+
+#[test]
+fn a_pointers_parameters_read_through_its_declaration() {
+    ok_std(
+        "
+def main():
+    var x = 5
+    var p = Pointer(to=x)
+    var o = p.origin
+    comptime T = type_of(p).T
+    var y: T = 3
+    var z: p.T = 4
+    print(p.address_space, p.mut, y, z, conforms_to(type_of(p), Writable))
+",
+    );
+}

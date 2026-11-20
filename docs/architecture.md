@@ -3753,10 +3753,16 @@ application into `TyKind::Pointer`, `nominal_parts` answers it back). A
 pointer is a declared struct for member lookup, associated members, and
 conformance, read through `nominal_struct`, never through a kind test, and
 a scalar for layout and the runtime: no reader treats it as a one-field
-aggregate. The checker's rules still win for every member
-`POINTER_RULE_MEMBERS` names, construction included, so the declared
+aggregate. Its parameters (`p.origin`, `type_of(p).T`), `comptime`
+members (`_mlir_type`, `_mlir_lit_ref`), and conformances (`Intable`,
+`Writable`) are the declaration's, in the checker and the elaborator
+alike. The checker's rules still win for every member
+`POINTER_RULE_MEMBERS` names, construction included, so those declared
 bodies are checked but no call selects them until R2206–R2208 retire the
-rules.
+rules; a member no rule names that the elaborator resolves through a
+witness (`write_to` under `print(p)`) runs its declared body on both
+backends, while the rule members keep the VM's and Pliron's intrinsic
+paths.
 
 Borrowed views (`Span`, `StringSpan`) are pointer-plus-length structs over
 that capability. Their loans flow through three checked channels: a

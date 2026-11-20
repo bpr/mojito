@@ -2966,27 +2966,10 @@ impl Checker {
             kind if kind.is_simd() && name == "_mlir_type" && args.is_empty() => {
                 Ok(mojito_types::types::simd_storage(base).unwrap_or_else(|| base.clone()))
             }
-            // A pointer's raw MLIR types: the `!kgen.pointer` it wraps and
-            // the `!lit.ref` it is built from, as upstream's `Pointer`
-            // declares them.
-            TyKind::Pointer {
-                element,
-                address_space,
-                ..
-            } if name == "_mlir_type" && args.is_empty() => {
-                Ok(Ty::kgen_pointer(element.clone(), address_space.clone()))
-            }
-            TyKind::Pointer {
-                element,
-                origin,
-                address_space,
-            } if name == "_mlir_lit_ref" && args.is_empty() => Ok(Ty::lit_ref(
-                element.clone(),
-                origin.clone(),
-                address_space.clone(),
-            )),
-            // A member alias `SIMD` declares, over the vector's parameters,
-            // or one a literal's struct declares (`StringLiteral._from`).
+            // A member alias `SIMD` or `Pointer` declares, over the type's
+            // parameters, or one a literal's struct declares
+            // (`StringLiteral._from`); a pointer's type parameter too
+            // (`type_of(p).T`).
             kind if (kind.is_simd()
                 || kind.is_pointer()
                 || kind.string_literal_value().is_some()
@@ -2995,6 +2978,8 @@ impl Checker {
                 && self.structs.get(sname).is_some_and(|info| {
                     info.associated.contains_key(name)
                         || info.parameterized_associated.contains_key(name)
+                        || (kind.is_pointer()
+                            && info.decls().iter().any(|decl| decl.name() == name))
                 }) =>
             {
                 self.declared_associated_type(base, sname, &targs, name, args)
@@ -5554,7 +5539,8 @@ impl Checker {
     /// it names no type (`w.E` over `comptime w = W[3]()`): upstream types
     /// the base as an expression and reads the member on its type. A local
     /// `comptime` binding the builder does not inline types as its
-    /// construction (`comptime L = TypeList.of[Trait=AnyType, Int]()`).
+    /// construction (`comptime L = TypeList.of[Trait=AnyType, Int]()`); a
+    /// run-time local or argument types as its declared type (`var z: p.T`).
     fn value_base_type(&self, base: &SourceType) -> Option<Ty> {
         let expr = base.expression_spelling(mojito_common::token::Span::default())?;
         if let Some(ty) = self
@@ -5567,8 +5553,10 @@ impl Checker {
         let ExprKind::Identifier(name) = &expr.kind else {
             return None;
         };
-        let bound = self.local_comptime_value(name)?;
-        self.compile_time_value_type(bound).ok()
+        if let Some(bound) = self.local_comptime_value(name) {
+            return self.compile_time_value_type(bound).ok();
+        }
+        self.member_subject(&expr)
     }
 }
 

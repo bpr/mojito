@@ -993,23 +993,15 @@ impl<'p> CallEdges<'p, '_> {
                     self.targets.push(*callee);
                 }
             }
-            // Pointer-receiver methods dispatch to runtime
-            // intrinsics, never to compiled stdlib bodies.
+            // A resolved member's body is reachable; a pointer's rule
+            // members resolve to no compiled function and stay intrinsics.
             MirInstr::MethodCall {
                 dest,
-                recv,
                 resolved: Some(resolved),
                 result_adapter,
                 ..
             } => {
-                if !self
-                    .function
-                    .reg_types
-                    .get(&recv.0)
-                    .is_some_and(Ty::is_pointer)
-                {
-                    self.push_named(resolved);
-                }
+                self.push_named(resolved);
                 // Its result adapter copies the element out by the
                 // constructor it names.
                 if let Some(constructor) = result_adapter

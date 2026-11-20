@@ -1059,6 +1059,7 @@ assets/ok/pointer_aliases_declared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_augmented_literal_offset.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_bound_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_declared_import.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_declared_parameter_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_deref_store_loan_carrying_pointee.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_deref_store_overwrite_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_empty_deref.mojo	-	ineligible	no-scalar-entry-shape
@@ -1426,6 +1427,7 @@ assets/ok/struct_origin_pointer_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_pack_parameterized_type_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_parameter_comptime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_parameter_instance_read.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_parameter_reads_through_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_slot_fields_split.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_type_param_construction_clone.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_call_is_call_method.mojo	-	ineligible	no-scalar-entry-shape

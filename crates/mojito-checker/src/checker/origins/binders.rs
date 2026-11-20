@@ -552,6 +552,13 @@ impl Checker {
                         context: "explicit origin argument".to_string(),
                     })
             }
+            // A value's origin parameter (`other.origin`), read through its
+            // type.
+            ExprKind::Member { object, field }
+                if let Some(origin) = self.struct_origin_argument(object, field) =>
+            {
+                Ok(origin)
+            }
             _ => Err(TypeError::TypeMismatch {
                 expected: "origin_of(place) or a builtin Origin value".to_string(),
                 found: "a runtime value".to_string(),

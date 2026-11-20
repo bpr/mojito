@@ -270,12 +270,14 @@ impl Specializer<'_> {
         visiting: &mut HashSet<(String, String)>,
     ) -> Option<bool> {
         let declarations = &self.source.declarations;
-        // A `SIMD` or a `Bool` answers a trait its declaration lists, or one
-        // such a trait refines, as the struct it is.
+        // A `SIMD`, a `Bool`, or a `Pointer` answers a trait its declaration
+        // lists, or one such a trait refines, as the struct it is.
         let bridged = if ty.is_simd() {
             Some(mojito_types::types::SIMD_TYPE_NAME)
         } else if ty.kind().is_bool() {
             Some(mojito_types::types::BOOL_TYPE_NAME)
+        } else if ty.is_pointer() {
+            Some(mojito_types::types::POINTER_TYPE_NAME)
         } else {
             None
         };

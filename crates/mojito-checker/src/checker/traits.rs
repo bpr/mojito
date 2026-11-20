@@ -2700,19 +2700,21 @@ impl Checker {
             struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                 self.struct_trait_conformance(ty, name, args, tr)
             }
-            // A `SIMD` answers a trait its declaration lists as the struct it
-            // is; the traits its module does not declare yet keep the model.
-            simd if simd.is_simd()
-                && let Some((name, args)) = self.nominal_struct(ty)
-                && matches!(
-                    struct_trait_rule(tr, self.traits.contains_key(tr)),
-                    StructTraitRule::Declared
-                )
-                && self.structs.get(name).is_some_and(|info| {
-                    info.conforms
-                        .iter()
-                        .any(|declared| self.trait_implies(declared, tr))
-                }) =>
+            // A `SIMD` or a `Pointer` answers a trait its declaration lists
+            // as the struct it is; the traits its module does not declare yet
+            // keep the model.
+            nominal
+                if (nominal.is_simd() || nominal.is_pointer())
+                    && let Some((name, args)) = self.nominal_struct(ty)
+                    && matches!(
+                        struct_trait_rule(tr, self.traits.contains_key(tr)),
+                        StructTraitRule::Declared
+                    )
+                    && self.structs.get(name).is_some_and(|info| {
+                        info.conforms
+                            .iter()
+                            .any(|declared| self.trait_implies(declared, tr))
+                    }) =>
             {
                 self.struct_conformance(name, &args, tr)
             }
