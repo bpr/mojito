@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's origin-mutability binder reads as a value (R2422): in
+  `struct Q[mut: Bool, //, origin: Origin[mut=mut]]`, `Self.mut` and a
+  `comptime` alias of it answer the instance's mutability, and `Q[o].mut`
+  under an enclosing `o: Origin[mut=m]` reads `m`, as at the pin, on both
+  backends, where each failed with "'mut' is not a compile-time constant
+  here" (`assets/ok/struct_origin_mutability_binder_read.mojo`).
+
 - An elaborated struct instance keeps a closed origin `mut=` argument
   (R2423), as upstream's `Q[True, o]` and `Q[False, o]` are distinct
   types: each mutability is its own instance, and a member reading

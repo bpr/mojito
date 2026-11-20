@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1266
+# swept-count	1268
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
@@ -73,6 +73,8 @@ assets/type_error/struct_mutable_origin_without_converting_constructor.mojo	comp
 assets/type_error/struct_not_deinitable_reason_abandoned.mojo	compile-reject	agree	error: 's' abandoned without being explicitly destroyed: call close() instead
 assets/type_error/struct_origin_binder_interior_is_distinct.mojo	compile-reject	agree	error: cannot implicitly convert 'S[o]' value to 'S[origin_of(o["e"])]'
 assets/type_error/struct_origin_binder_subtree_to_base.mojo	compile-reject	agree	error: cannot implicitly convert 'S[origin_of(origin_of(o).subtree)]' value to 'S[o]'
+assets/type_error/struct_origin_mutability_binder_bare_read.mojo	compile-reject	agree	error: unqualified access to struct parameter 'mut'; use 'Self.mut' instead
+assets/type_error/struct_origin_mutability_binder_unknown_self_param.mojo	compile-reject	agree	error: 'Q[origin]' value has no attribute 'nope'
 assets/type_error/trait_value_compared.mojo	compile-reject	agree	error: 'AnyTrait[AnyType]' does not implement the '__eq__' method
 assets/type_error/type_binder_value_to_int.mojo	compile-reject	agree	error: cannot implicitly convert 'Copyable' value to 'Int'
 assets/type_error/type_binder_var_binding.mojo	compile-reject	agree	error: dynamic type values not permitted yet; try creating a 'comptime' instead of a 'var'

@@ -4946,39 +4946,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2422 A struct's origin-mutability binder is not readable as a
-  value**
-
-  `return Self.mut` in a method of `struct Q[mut: Bool, //, origin:
-  Origin[mut=mut]]` fails with "not a compile-time Int constant: 'mut' is
-  not a compile-time constant here", where the pin prints `True` for
-  `Q[origin_of(x)](4).g()` over a `var x`.
-  - `Self` in a method is `Q[Deferred(mut), Origin::Param(origin)]`
-    (`ParamDecl::self_arguments`), and `Checker::struct_parameter_at` and
-    `Checker::self_param_value` (`checker/constraints.rs`) hand the
-    `Deferred` slot to `ParamContext::constant`, which rejects it.
-  - Lever: a deferred `mut=` slot reads as its governed origin's
-    mutability, as `Origin[mut=mut]` ties them: `Self`'s own origin binder
-    reads the binder (`decl.own_argument()`), a decided origin reads
-    `Checker::decided_origin_mutability`, and `Origin::Unbound` keeps the
-    rejection. Leave `ParamDecl::self_arguments` alone (R2375).
-  - Probe: the plan's fixture `Q` prints `True` for `Q[origin_of(x)](4).g()`
-    and `Q[MutAnyOrigin](4).g()`, `False` for `Q[ImmutAnyOrigin](4).g()`
-    and `show[o: ImmOrigin]`, and the same through `comptime m =
-    Self.mut` and `Self.origin.mut` (the latter already checks and fails
-    only in elaboration), on both backends.
-  - Add an `assets/ok` fixture with those lines, and keep `Self.nope`
-    rejecting with `UnknownSelfParam` and a bare `return mut` rejected.
-  - Do not land the checker half before R2423: alone it turns the check
-    error into a later elaborator `Unsupported`.
-  - The bundled `Pointer.as_unsafe_any_origin` and `write_repr_to` also
-    need R2384 and R2415, so they are not this entry's probe.
-  - The plan is `R2422-a-struct-s-origin-mutability-binder-plan.md`,
-    slices 1 to 3.
-  - Found while landing R2414 (2026-11-20).
-  - Depends on R2423.
-  - Model: Fable, Planned.
-
 - [ ] **R2007 A struct's `comptime` member that constructs the struct
   through an initializer typed by a struct alias does not evaluate**
 
@@ -10690,7 +10657,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     self: Pointer[other.T, ImmOrigin(other.origin), …])` cannot be
     declared ("value has no attribute 'T'"); declare it here.
   - Probe: declare `write_to` and `write_repr_to` (and `Writable`); the
-    latter's `Named("mut", Self.mut)` also needs R2422.
+    latter reads `Self.mut`.
   - The plan is `R2205-the-bundled-library-declares-no-struct-plan.md`,
     slices 6 and 7.
   - Found while landing R2205 (2026-11-20).

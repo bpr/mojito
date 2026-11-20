@@ -10,9 +10,9 @@
 #   bind `mut=`, `T=`, or `origin=` (R2421).
 # - the implicit mut-to-imm `__init__(other: Pointer, …)`: a parameter read
 #   through a pointer value (`other.T`, R2415).
-# - `as_unsafe_any_origin`: `Self.mut` is not readable (R2422), and
-#   `UnsafeAnyOrigin[mut=Self.mut]` keeps no symbolic `mut` (R2384).
-# - `write_to` and `write_repr_to`: R2415, and `Self.mut` (R2422).
+# - `as_unsafe_any_origin`: `UnsafeAnyOrigin[mut=Self.mut]` keeps no
+#   symbolic `mut` (R2384).
+# - `write_to` and `write_repr_to`: R2415.
 # - `__init__(unsafe_from_address: IntLiteral)`: `Self(unsafe_from_address=)`
 #   reaches the construction rule, not the declared initializers (R2420).
 # - `__bool__`: `@unavailable` on a method is rejected (R1162).

@@ -11013,6 +11013,46 @@ fn alias_typed_origin_binders_classify_as_origins() {
     assert_eq!(&binder.id, mm.id());
 }
 
+/// A struct's `mut=` binder reads through `Self` as the mutability its
+/// governed origin decides, while an origin nothing decides (`Q[_]`) keeps
+/// the slot unreadable.
+#[test]
+fn struct_origin_mutability_binder_reads_through_self() {
+    let declaration = "struct Q[mut: Bool, //, origin: Origin[mut=mut]]:
+    var n: Int
+
+    def __init__(out self, n: Int):
+        self.n = n
+
+    def g(self) -> Bool:
+        return Self.mut
+
+    def k(self) -> Bool:
+        comptime m = Self.mut
+        return m
+";
+    check_with_std(&format!(
+        "{declaration}
+def main():
+    var x = 1
+    print(Q[origin_of(x)](4).g())
+    print(Q[ImmutAnyOrigin](4).k())
+"
+    ))
+    .expect("Self.mut reads the origin's mutability");
+    let error = check_with_std(&format!(
+        "{declaration}
+def main():
+    print(Q[_].mut)
+"
+    ))
+    .expect_err("an unbound origin decides no mutability");
+    assert!(
+        error.to_string().contains("not a compile-time constant"),
+        "{error}"
+    );
+}
+
 #[test]
 fn function_and_method_param_lists_declare_origin_binders_in_place() {
     // A function's and a method's checked lists hold their origin binders

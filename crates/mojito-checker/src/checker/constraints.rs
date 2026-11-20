@@ -6862,7 +6862,25 @@ impl Checker {
         else {
             return None;
         };
-        let value = value.clone();
+        let value = match value {
+            CtValue::Deferred(_) if decl.is_origin_mutability_binder(&info.params) => self
+                .deferred_mutability_value(
+                    &info.params,
+                    arguments,
+                    decl,
+                    self.self_ty
+                        .as_ref()
+                        .and_then(|ty| ty.kind().as_non_simd_struct())
+                        .filter(|(owner, _)| {
+                            self.structs
+                                .get(owner)
+                                .is_some_and(|own| std::ptr::eq(own, info))
+                        })
+                        .map(|(_, self_arguments)| self_arguments.as_slice()),
+                )
+                .unwrap_or_else(|| value.clone()),
+            _ => value.clone(),
+        };
         let context = &self.param_context;
         // A function symbol holds no signature: it is a value of the
         // parameter's declared callable type.

@@ -349,6 +349,39 @@ impl Checker {
         }
     }
 
+    /// The value a struct application's `mut=` slot `decl` holds when it
+    /// holds [`CtValue::Deferred`], read as its governed origin's
+    /// mutability, as `Origin[mut=mut]` ties the two: the binder itself
+    /// where the origin is `Self`'s own origin binder (`self_arguments`),
+    /// else the `Bool` or enclosing binder read the origin decides. `None`
+    /// where nothing decides it yet (an unbound origin's).
+    pub(in crate::checker) fn deferred_mutability_value(
+        &self,
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+        decl: &ParamDecl,
+        self_arguments: Option<&[TyArg]>,
+    ) -> Option<CtValue> {
+        let (_, TyArg::Origin(origin)) =
+            ParamDecl::aligned_pairs(decls, arguments).find(|(candidate, _)| {
+                matches!(candidate, ParamDecl::Origin {
+                    mutability: mojito_types::types::OriginMutability::Binder(binder),
+                    ..
+                } if binder.id == *decl.id())
+            })?
+        else {
+            return None;
+        };
+        if matches!(origin, Origin::Param(_)) && self_arguments == Some(arguments) {
+            return match decl.own_argument() {
+                TyArg::Val(value) => Some(value),
+                _ => None,
+            };
+        }
+        Some(self.call_mutability_argument(decl, origin, None))
+            .filter(|value| !matches!(value, CtValue::Deferred(_)))
+    }
+
     /// The value each origin `mut=` binder among `decls`, a callee's whole
     /// declared list, takes from the origin `bindings` bound its origin to.
     pub(in crate::checker) fn own_origin_mutabilities(
