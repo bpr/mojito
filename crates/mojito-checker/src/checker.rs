@@ -1745,7 +1745,10 @@ impl Checker {
     }
 
     /// `from` and `to` with each origin's `mut=` argument deferred where
-    /// both instances, of one struct at one position, bind its origin.
+    /// both instances, of one struct at one position, bind its origin. Two
+    /// known values that differ stay: a mutable instance reaches an
+    /// immutable one only through a converting constructor, as upstream's
+    /// `Span` view does.
     fn defer_bound_mutability(&self, from: &Ty, to: &Ty) -> (Ty, Ty) {
         let (TyKind::Struct(name, from_args), TyKind::Struct(to_name, to_args)) =
             (from.kind(), to.kind())
@@ -1774,10 +1777,14 @@ impl Checker {
                     from_out.push(TyArg::Ty(a));
                     to_out.push(TyArg::Ty(b));
                 }
-                (TyArg::Val(_), TyArg::Val(_))
+                (TyArg::Val(a_value), TyArg::Val(b_value))
                     if matches!(from_deferred[index], TyArg::Val(CtValue::Deferred(_)))
                         && from_deferred[index] != *a
-                        && to_deferred[index] != *b =>
+                        && to_deferred[index] != *b
+                        && !matches!(
+                            (a_value, b_value),
+                            (CtValue::Bool(a), CtValue::Bool(b)) if a != b
+                        ) =>
                 {
                     from_out.push(from_deferred[index].clone());
                     to_out.push(to_deferred[index].clone());
@@ -2203,19 +2210,51 @@ impl Checker {
         else {
             return false;
         };
+        let decls = self
+            .structs
+            .get(name)
+            .map(|info| info.params.as_slice())
+            .unwrap_or_default();
+        // The `mut=` value `to` holds beside its origin at `index`: an
+        // origin at an immutable slot is that origin's `ImmOrigin` cast.
+        let slot_mutability = |index: usize| match decls.get(index) {
+            Some(ParamDecl::Origin {
+                mutability: mojito_types::types::OriginMutability::Binder(binder),
+                ..
+            }) => decls
+                .iter()
+                .position(|decl| decl.id() == &binder.id)
+                .and_then(|slot| match target.get(slot) {
+                    Some(TyArg::Val(CtValue::Bool(mutable))) => Some(*mutable),
+                    _ => None,
+                }),
+            _ => None,
+        };
         refinement
             .iter()
             .zip(&binders)
             .zip(&target)
-            .all(|((defined, binder), argument)| match (defined, argument) {
-                (TyArg::Origin(origin), TyArg::Origin(target)) if defined != binder => {
-                    origins::substitute_origin_params(origin.clone(), &|id| {
-                        origins.origins.get(&id).cloned()
-                    })
-                    .coerces_to(target)
-                }
-                _ => true,
-            })
+            .enumerate()
+            .all(
+                |(index, ((defined, binder), argument))| match (defined, argument) {
+                    (TyArg::Origin(origin), TyArg::Origin(target)) if defined != binder => {
+                        let solved = origins::substitute_origin_params(origin.clone(), &|id| {
+                            origins.origins.get(&id).cloned()
+                        });
+                        solved.coerces_to(target)
+                            || slot_mutability(index).is_some_and(|mutable| {
+                                matches!(
+                                    &solved,
+                                    mojito_types::origin::Origin::MutCast(
+                                        base,
+                                        mojito_types::types::LitOriginMut::Known(cast),
+                                    ) if *cast == mutable && base.coerces_to(target)
+                                )
+                            })
+                    }
+                    _ => true,
+                },
+            )
     }
 
     /// The `@implicit` constructor of `to` that takes a `from` value itself.
@@ -2276,7 +2315,7 @@ impl Checker {
                     })
             })
             .filter_map(|sig| {
-                let (parameter, own_arguments) =
+                let (parameter, own_arguments, own_origins) =
                     self.conversion_constructor_parameter(name, sig, &subst, from)?;
                 let parameter = mojito_types::types::replace_parameters(
                     &self.param_context,
@@ -2288,16 +2327,19 @@ impl Checker {
                 // The constructor's own origin binders are solved from the
                 // source (`other: V[T, src]`), and a refined `out self`
                 // naming them (`V[T, ImmOrigin(src)]`) must then be `to`.
-                let origins = Self::bind_callee_origins(
-                    name,
-                    &sig.names,
-                    std::slice::from_ref(&parameter),
-                    &[(0, from)],
-                    origins::CalleeBinders::Declared(
-                        origins::declared_origin_binders(&sig.declared).collect(),
-                    ),
-                )
-                .ok()?;
+                let origins = match own_origins {
+                    Some(origins) => origins,
+                    None => Self::bind_callee_origins(
+                        name,
+                        &sig.names,
+                        std::slice::from_ref(&parameter),
+                        &[(0, from)],
+                        origins::CalleeBinders::Declared(
+                            origins::declared_origin_binders(&sig.declared).collect(),
+                        ),
+                    )
+                    .ok()?,
+                };
                 let parameter = origins.substitute(&parameter);
                 if !self.solved_refinement_is(name, sig, &origins, to) {
                     return None;

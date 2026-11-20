@@ -3276,14 +3276,15 @@ impl Checker {
     /// collector (`Error`'s `__init__[*Ts: Writable](out self, *args:
     /// *Ts)`) takes `source` as the collector's one element. `None` when
     /// its own parameters cannot be solved from `source` or `source` misses
-    /// one of their bounds.
+    /// one of their bounds. The third component is the own origin binders
+    /// the source bound, which the returned parameter already names.
     pub(super) fn conversion_constructor_parameter(
         &self,
         name: &str,
         sig: &MethodSig,
         struct_subst: &TySubst,
         source: &Ty,
-    ) -> Option<(Ty, Vec<TyArg>)> {
+    ) -> Option<(Ty, Vec<TyArg>, Option<ConstructorOriginBindings>)> {
         let collected = sig.params.is_empty() && sig.variadic.is_some();
         let parameter = match (sig.params.first(), &sig.variadic) {
             (None, Some(element)) => element,
@@ -3313,9 +3314,10 @@ impl Checker {
         // A collector's one element is the source, at the pack's solved
         // type.
         if collected {
-            return Some((source.clone(), own.arguments));
+            return Some((source.clone(), own.arguments, own.origins));
         }
-        Some((own.apply(self, &pattern).ok()?, own.arguments))
+        let parameter = own.apply(self, &pattern).ok()?;
+        Some((parameter, own.arguments, own.origins))
     }
 
     pub(super) fn infer_construction(

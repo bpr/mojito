@@ -9,8 +9,7 @@ the roadmap has landed and is dropped; a batch with none left is skipped.
 Each batch runs:
   1. `scripts/claude_loop.py --model opus --plan-fable-on-opus --task ID ... -n 0`.
      A task the loop could not finish is noted and the run goes on (the
-     loop already committed its work and skips what waits on it). A usage
-     limit, an outage, or a failing environment stops the run.
+     loop already committed its work and skips what waits on it).
   2. The batch's residue: every roadmap entry its sessions filed (a "Found
      while landing" entry, a split, a refiled remainder), run the same way
      at once. An entry a residue round files is the next round's residue,
@@ -18,23 +17,36 @@ Each batch runs:
      than the one before: residue that stops shrinking is a backlog being
      uncovered, not a batch being finished, so it is reported and left on
      the roadmap for planned batches.
-  3. `scripts/focused`. Any failure stops the run.
-  4. `scripts/instantiation-report --check`. A lost or failing fixture, or a
-     growth over `--max-growth` percent, stops the run. Drift confined to
+  3. `scripts/focused`. A failure is filed as a repair entry at the top of
+     the `measure` track and run at once through `claude_loop.py --only`,
+     then the tier reruns, up to `--repair-attempts` times. A failure that
+     survives them stays on the roadmap as its entry, and the run goes on.
+  4. `scripts/instantiation-report --check`. A fixture that stopped
+     elaborating is repaired the same way. One that still fails is
+     accepted: the fresh report, which records it as failed, becomes the
+     baseline, and its open repair entry tracks it. Growth over
+     `--max-growth` percent is accepted and filed as a `measure` entry
+     for a later regressions pass, not run now. Drift confined to
      `pointer_tuple_field_write.mojo` (R1069) passes. Any other growth or
      shrink is locked in: the fresh report becomes the baseline and is
      committed.
 
+Nothing but a lost machine stops the run. A loop that a usage limit, an
+outage, or a failing environment stops is retried every half hour, up to
+`--max-wait` hours per step, and only then does the run stop.
+
 Every step's output goes to `target/run-batches/<stamp>/`, with a
 `summary.md` of the run. The terminal shows the running step on one line,
-updated in place with its latest output, and a line per finished step. On a stop the script prints what failed and the
-command that resumes at that batch.
+updated in place with its latest output, and a line per finished step. On a
+stop the script prints what failed and the command that resumes at that
+batch.
 
 Usage:
   scripts/run-batches                 # run every batch with open entries
   scripts/run-batches --dry-run       # list the batches and their open entries
   scripts/run-batches --start 3       # resume at batch 3 (numbers from --dry-run)
-  scripts/run-batches --max-growth 2  # tolerate up to 2% instruction growth
+  scripts/run-batches --max-growth 2  # lock in up to 2% growth without filing it
+  scripts/run-batches --repair-attempts 0  # file regressions without running them
   scripts/run-batches --residue-rounds 0  # leave filed residue on the roadmap
 """
 
@@ -57,6 +69,9 @@ BASELINE = ROOT / "benchmarks/instantiation.tsv"
 FRESH = ROOT / "target/instantiation.tsv"
 NOISY_FIXTURE = "assets/ok/pointer_tuple_field_write.mojo"
 LOOP_STOPS = ("a usage limit stopped", "network outage", "sessions in a row failed")
+ROADMAP = ROOT / "docs/roadmap.md"
+REPAIR_TRACK = "measure"
+RETRY_SECONDS = 30 * 60
 
 
 def main() -> int:
@@ -64,9 +79,15 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true", help="list the batches and exit")
     p.add_argument("--start", type=int, default=1, metavar="N", help="first batch to run")
     p.add_argument("--max-growth", type=float, default=1.0, metavar="PCT",
-                   help="largest instruction growth locked in without stopping (default 1.0)")
+                   help="largest instruction growth locked in without filing an entry "
+                   "(default 1.0)")
     p.add_argument("--residue-rounds", type=int, default=3, metavar="N",
                    help="rounds of residue to run after each batch (default 3, 0 for none)")
+    p.add_argument("--repair-attempts", type=int, default=2, metavar="N",
+                   help="repair sessions per regression before it is accepted (default 2)")
+    p.add_argument("--max-wait", type=float, default=48.0, metavar="HOURS",
+                   help="hours to keep retrying a stopped loop before the run stops "
+                   "(default 48)")
     args = p.parse_args()
     if args.start < 1:
         p.error("--start counts from 1, as --dry-run numbers the batches")
@@ -96,10 +117,10 @@ def main() -> int:
 
         known = set(roadmap_open())
         log = log_dir / f"batch{number}-loop.log"
-        stopped, left = run_loop(ids, log)
-        if stopped:
-            return summary.stop(number, f"claude_loop stopped (usage limit, outage, or "
-                                f"environment); see {log}", args)
+        left = run_loop_retrying(ids, log, summary, args)
+        if left is None:
+            return summary.stop(number, f"claude_loop kept stopping (usage limit, outage, or "
+                                f"environment) for {args.max_wait:g}h; see {log}", args)
         if left:
             unfinished += left
             summary.line(f"  claude_loop left unfinished: {' '.join(left)}; continuing")
@@ -118,12 +139,12 @@ def main() -> int:
             attempted.update(residue)
             summary.line(f"  residue round {round_number}: {' '.join(residue)}")
             log = log_dir / f"batch{number}-residue{round_number}-loop.log"
-            stopped, left = run_loop(residue, log)
-            if stopped:
+            left = run_loop_retrying(residue, log, summary, args)
+            if left is None:
                 summary.line(f"  residue still open: {' '.join(open_ids(residue))}; run it with "
                              f"{' '.join(loop_command(open_ids(residue))[1:])}")
-                return summary.stop(number, f"claude_loop stopped (usage limit, outage, or "
-                                    f"environment); see {log}", args)
+                return summary.stop(number, f"claude_loop kept stopping (usage limit, outage, "
+                                    f"or environment) for {args.max_wait:g}h; see {log}", args)
             if left:
                 unfinished += left
                 summary.line(f"  residue left unfinished: {' '.join(left)}; continuing")
@@ -133,26 +154,12 @@ def main() -> int:
                 summary.line(f"  residue past {args.residue_rounds} rounds, left on the "
                              f"roadmap: {' '.join(residue)}")
 
-        status, _ = run(["scripts/focused"], log_dir / f"batch{number}-focused.log")
-        if status != 0:
-            return summary.stop(number, "scripts/focused failed; the report is "
-                                "target/focused/last.log", args)
-        summary.line("  focused: passed")
-
-        _, output = run(["scripts/instantiation-report", "--check"],
-                        log_dir / f"batch{number}-ratchet.log")
-        verdict = ratchet_verdict(output, args.max_growth)
-        if verdict.startswith("stop"):
-            return summary.stop(number, f"instantiation ratchet: {verdict[5:]}; see "
-                                f"{log_dir}/batch{number}-ratchet.log", args)
-        if verdict == "refresh":
-            BASELINE.write_bytes(FRESH.read_bytes())
-            git("add", str(BASELINE.relative_to(ROOT)))
-            git("commit", "-q", "-m", f"Refresh the instantiation baseline after batch {number} "
-                f"({' '.join(ids)})")
-            summary.line("  ratchet: baseline refreshed and committed")
-        else:
-            summary.line("  ratchet: passed")
+        if not focused_gate(number, log_dir, summary, args):
+            return summary.stop(number, "a focused repair loop kept stopping (usage limit, "
+                                "outage, or environment)", args)
+        if not ratchet_gate(number, ids, log_dir, summary, args):
+            return summary.stop(number, "a ratchet repair loop kept stopping (usage limit, "
+                                "outage, or environment)", args)
 
     if unfinished:
         summary.line(f"done; unfinished entries to look at: {' '.join(unfinished)} "
@@ -172,6 +179,212 @@ def next_batch(attempted: set[str]) -> tuple[list[str], int]:
     return [], 0
 
 
+def focused_gate(number: int, log_dir: Path, summary: "Summary",
+                 args: argparse.Namespace) -> bool:
+    """Run `scripts/focused`, repairing a failure through a filed entry.
+
+    False only when a repair loop kept stopping; a failure that outlives
+    the repairs stays filed and the run goes on."""
+    status, output = run(["scripts/focused"], log_dir / f"batch{number}-focused.log")
+    if status == 0:
+        summary.line("  focused: passed")
+        return True
+    entry = None
+    for attempt in range(1, args.repair_attempts + 1):
+        entry = file_repair_entry(
+            f"The focused tier fails after batch {number}",
+            "`scripts/focused` fails after a `scripts/run-batches` batch; it passed "
+            "before the batch.",
+            focused_failures(output) + [f"Report: `{relative(ROOT / 'target/focused/last.log')}`."],
+            summary,
+        )
+        summary.line(f"  focused failed; repair {attempt}: {entry}")
+        log = log_dir / f"batch{number}-focused-repair{attempt}-loop.log"
+        if run_loop_retrying([entry], log, summary, args, only=True) is None:
+            return False
+        status, output = run(["scripts/focused"],
+                             log_dir / f"batch{number}-focused-repair{attempt}.log")
+        if status == 0:
+            summary.line(f"  focused: passed after repair {attempt}")
+            return True
+    if entry is None or not open_ids([entry]):
+        entry = file_repair_entry(
+            f"The focused tier fails after batch {number}",
+            "`scripts/focused` fails after a `scripts/run-batches` batch; it passed "
+            "before the batch.",
+            focused_failures(output) + [f"Report: `{relative(ROOT / 'target/focused/last.log')}`."],
+            summary,
+        )
+    summary.line(f"  focused still failing, left on the roadmap as {entry}; continuing")
+    return True
+
+
+def ratchet_gate(number: int, ids: list[str], log_dir: Path, summary: "Summary",
+                 args: argparse.Namespace) -> bool:
+    """Run the instantiation ratchet, repairing lost fixtures and accepting
+    the rest. False only when a repair loop kept stopping."""
+    log = log_dir / f"batch{number}-ratchet.log"
+    _, output = run(["scripts/instantiation-report", "--check"], log)
+    entry = None
+    attempt = 0
+    while (lost := lost_fixtures(output)) and attempt < args.repair_attempts:
+        attempt += 1
+        entry = file_repair_entry(
+            f"{len(lost)} fixture{'s' if len(lost) != 1 else ''} stopped elaborating "
+            f"after batch {number}",
+            "The instantiation ratchet finds `assets/ok` fixtures that elaborated at "
+            "the last baseline and now fail to compile.",
+            [f"Probe: `{fixture}` ({cause})." for fixture, cause in lost]
+            + [f"Ratchet log: `{relative(log)}`.",
+               "Fix the regression, or delete this entry and file one entry per cause "
+               "in the track that owns it."],
+            summary,
+        )
+        summary.line(f"  ratchet lost {len(lost)} fixture(s); repair {attempt}: {entry}")
+        loop_log = log_dir / f"batch{number}-ratchet-repair{attempt}-loop.log"
+        if run_loop_retrying([entry], loop_log, summary, args, only=True) is None:
+            return False
+        log = log_dir / f"batch{number}-ratchet-repair{attempt}.log"
+        _, output = run(["scripts/instantiation-report", "--check"], log)
+
+    lost = lost_fixtures(output)
+    if lost and (entry is None or not open_ids([entry])):
+        entry = file_repair_entry(
+            f"{len(lost)} fixture{'s' if len(lost) != 1 else ''} stopped elaborating "
+            f"after batch {number}",
+            "The instantiation ratchet finds `assets/ok` fixtures that elaborated at "
+            "the last baseline and now fail to compile; the baseline records them as "
+            "failed, so this entry is all that tracks them.",
+            [f"Probe: `{fixture}` ({cause})." for fixture, cause in lost]
+            + [f"Ratchet log: `{relative(log)}`."],
+            summary,
+        )
+    verdict = ratchet_verdict(output, args.max_growth)
+    if verdict == "pass":
+        summary.line("  ratchet: passed")
+        return True
+    if verdict.startswith("stop"):
+        broken = file_repair_entry(
+            f"The instantiation ratchet fails unreadably after batch {number}",
+            "`scripts/instantiation-report --check` failed in a way `scripts/run-batches` "
+            "does not recognize, so the baseline was left as it was.",
+            [f"Ratchet log: `{relative(log)}`."],
+            summary,
+        )
+        summary.line(f"  ratchet: {verdict[5:]}, baseline kept, filed as {broken}; continuing")
+        return True
+    filed = []
+    if lost:
+        filed.append(entry)
+        summary.line(f"  ratchet: {len(lost)} fixture(s) still fail, accepted and tracked "
+                     f"by {entry}")
+    growth = growth_percent(output)
+    if growth is not None and growth > args.max_growth:
+        grew = file_growth_entry(number, ids, output, log, summary)
+        filed.append(grew)
+        summary.line(f"  ratchet: growth +{growth}% over --max-growth {args.max_growth}, "
+                     f"accepted and filed as {grew}")
+    BASELINE.write_bytes(FRESH.read_bytes())
+    git("add", str(BASELINE.relative_to(ROOT)), str(ROADMAP.relative_to(ROOT)))
+    git("commit", "-q", "-m", f"Refresh the instantiation baseline after batch {number} "
+        f"({' '.join(ids)})" + (f", filing {' '.join(filed)}" if filed else ""))
+    summary.line("  ratchet: baseline refreshed and committed")
+    return True
+
+
+def lost_fixtures(output: str) -> list[tuple[str, str]]:
+    """The fixtures the ratchet reports as newly failing, with their causes."""
+    lost = re.findall(r"^FAIL lost: (\S+) stopped elaborating \((.*)\)$", output, re.MULTILINE)
+    seen = {fixture for fixture, _ in lost}
+    known = baseline_failures()
+    lost += [(fixture, cause) for fixture, cause in
+             re.findall(r"^failed: (\S+): (.*)$", output, re.MULTILINE)
+             if fixture not in known and fixture not in seen]
+    return lost
+
+
+def growth_percent(output: str) -> float | None:
+    found = re.search(r"FAIL growth: grew by \d+ instructions \(\+([\d.]+)%\)", output)
+    return float(found.group(1)) if found else None
+
+
+def focused_failures(output: str) -> list[str]:
+    """One probe bullet per failing `scripts/focused` entry, with the first
+    line of its problem."""
+    bullets = []
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("FAIL "):
+            detail = next((later.strip() for later in lines[index + 1:index + 4]
+                           if later.strip()), "")
+            bullets.append(f"Probe: `{line[5:].strip()}`" + (f" ({detail[:200]})." if detail else "."))
+    if not bullets:
+        tail = [line for line in lines if line.strip()][-3:]
+        bullets.append("The tier failed before reporting entries: "
+                       + " / ".join(t.strip()[:200] for t in tail) + ".")
+    return bullets[:40]
+
+
+def file_growth_entry(number: int, ids: list[str], output: str, log: Path,
+                      summary: "Summary") -> str:
+    """File, without running, a `measure` entry for growth over the limit."""
+    total = re.search(r"FAIL growth: (grew by \d+ instructions \(\+[\d.]+%\))", output)
+    counts = re.search(r"concrete_instructions: (\d+) -> (\d+)", output)
+    deltas = re.findall(r"^\s+(\+\d+)\s+(\S+)$", output, re.MULTILINE)[:10]
+    bullets = []
+    if counts:
+        bullets.append(f"Concrete instructions went from {counts.group(1)} to {counts.group(2)}.")
+    if deltas:
+        bullets.append("Largest per-fixture growth: "
+                       + ", ".join(f"`{path}` {delta}" for delta, path in deltas) + ".")
+    bullets += [f"Batch entries: {' '.join(ids)}.",
+                f"Commits since the last baseline refresh: `{baseline_range()}`.",
+                f"Ratchet log: `{relative(log)}`.",
+                "Accepted into the baseline by `scripts/run-batches`; fix it in a "
+                "regressions pass (fix the pass that stopped folding, not the lowering)."]
+    return file_repair_entry(
+        f"Concrete instructions {total.group(1) if total else 'grew'} over batch {number}",
+        "The elaborated corpus grew past `scripts/run-batches`' `--max-growth`, and the "
+        "growth was accepted into the baseline.",
+        bullets, summary, model="Fable, Not Planned",
+    )
+
+
+def baseline_range() -> str:
+    last = subprocess.run(["git", "log", "-1", "--format=%h", "HEAD", "--",
+                           str(BASELINE.relative_to(ROOT))],
+                          capture_output=True, text=True).stdout.strip()
+    return f"{last}..HEAD" if last else "HEAD"
+
+
+def file_repair_entry(title: str, issue: str, bullets: list[str], summary: "Summary",
+                      model: str = "Opus, Not Planned") -> str:
+    """Reserve an ID and file an entry at the top of the repair track."""
+    entry_id = subprocess.run([sys.executable, "scripts/roadmap.py", "new-id"],
+                              capture_output=True, text=True, check=True).stdout.split()[0]
+    today = dt.date.today().isoformat()
+    body = [f"- [ ] **{entry_id} {title}**", "", f"  {issue}"]
+    body += [f"  - {bullet}" for bullet in bullets]
+    body += [f"  - Filed by `scripts/run-batches` ({today}).",
+             "  - Depends on nothing.", f"  - Model: {model}.", "", ""]
+    text = ROADMAP.read_text()
+    track = text.index(f"Track: `{REPAIR_TRACK}`.")
+    first = text.index("\n- [ ] **R", track) + 1
+    ROADMAP.write_text(text[:first] + "\n".join(body) + text[first:])
+    lint = subprocess.run([sys.executable, "scripts/roadmap.py", "lint"],
+                          capture_output=True, text=True)
+    if lint.returncode != 0:
+        summary.line(f"  roadmap lint after filing {entry_id}: {lint.stdout.strip()} "
+                     f"{lint.stderr.strip()}")
+    git("add", str(ROADMAP.relative_to(ROOT)))
+    git("commit", "-q", "-m", f"File {entry_id}: {title}")
+    return entry_id
+
+
+def relative(path: Path) -> str:
+    return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path)
+
+
 def note_batches() -> list[list[str]]:
     """The entry IDs of each `scripts/claude_loop.py` command in the note."""
     text = NOTE.read_text().replace("\\\n", " ")
@@ -179,18 +392,52 @@ def note_batches() -> list[list[str]]:
     return [re.findall(r"--(?:task|only)\s+(R\d+)", command) for command in commands]
 
 
-def run_loop(ids: list[str], log: Path) -> tuple[bool, list[str]]:
+def run_loop(ids: list[str], log: Path, only: bool = False) -> tuple[bool, list[str]]:
     """Run `ids` through `scripts/claude_loop.py`: whether a usage limit, an
     outage, or the environment stopped it, and the entries it left open."""
-    status, output = run(loop_command(ids), log)
+    status, output = run(loop_command(ids, only), log)
     if any(stop in output for stop in LOOP_STOPS):
         return True, []
     return False, open_ids(ids) if status != 0 else []
 
 
-def loop_command(ids: list[str]) -> list[str]:
+def run_loop_retrying(ids: list[str], log: Path, summary: "Summary",
+                      args: argparse.Namespace, only: bool = False) -> list[str] | None:
+    """[`run_loop`], rerun every half hour while something stops it, up to
+    `--max-wait` hours: the entries it left open, or `None` when it never
+    got through."""
+    deadline = time.monotonic() + args.max_wait * 3600
+    attempt = 0
+    while True:
+        remaining = open_ids(ids)
+        if not remaining:
+            return []
+        attempt_log = log if attempt == 0 else log.with_name(f"{log.stem}-retry{attempt}.log")
+        stopped, left = run_loop(remaining, attempt_log, only)
+        if not stopped:
+            return left
+        if time.monotonic() + RETRY_SECONDS > deadline:
+            return None
+        attempt += 1
+        summary.line(f"  claude_loop stopped (usage limit, outage, or environment; see "
+                     f"{attempt_log}); retry {attempt} in {RETRY_SECONDS // 60} min")
+        wait(RETRY_SECONDS)
+
+
+def wait(seconds: int) -> None:
+    """Sleep `seconds`, counting down on the terminal's last line."""
+    end = time.monotonic() + seconds
+    while (left := end - time.monotonic()) > 0:
+        show_progress(seconds - left, "waiting", f"retrying in {left / 60:.0f} min")
+        time.sleep(min(left, 10))
+    if sys.stdout.isatty():
+        print("\r\033[K", end="", flush=True)
+
+
+def loop_command(ids: list[str], only: bool = False) -> list[str]:
+    flag = "--only" if only else "--task"
     return [sys.executable, "scripts/claude_loop.py", "--model", "opus",
-            "--plan-fable-on-opus", *[a for i in ids for a in ("--task", i)], "-n", "0"]
+            "--plan-fable-on-opus", *[a for i in ids for a in (flag, i)], "-n", "0"]
 
 
 def open_ids(ids: list[str]) -> list[str]:
@@ -207,23 +454,21 @@ def roadmap_open() -> list[str]:
 
 
 def ratchet_verdict(output: str, max_growth: float) -> str:
-    """`pass`, `refresh`, or `stop <why>` for an instantiation `--check` report.
+    """`pass`, `refresh`, or `stop <why>` (a report it cannot read) for an
+    instantiation `--check` report.
 
-    A fixture failing to elaborate stops the run unless the baseline already
-    records it as failed: an accepted failure is tracked on the roadmap.
+    A fixture newly failing to elaborate, or growth over `max_growth`,
+    is accepted too ([`ratchet_gate`] files the entry tracking it): only a
+    report the verdict cannot read is a `stop`.
     """
-    failing = re.findall(r"^failed: (\S+):", output, re.MULTILINE)
-    if "FAIL lost" in output or set(failing) - baseline_failures():
-        return "stop a fixture stopped elaborating"
+    if lost_fixtures(output):
+        return "refresh"
     if "FAIL" not in output:
         return "pass"
     moved = re.findall(r"^\s+[+-]\d+\s+(\S+)$", output, re.MULTILINE)
     if moved and all(path == NOISY_FIXTURE for path in moved):
         return "pass"
-    growth = re.search(r"FAIL growth: grew by \d+ instructions \(\+([\d.]+)%\)", output)
-    if growth and float(growth.group(1)) > max_growth:
-        return f"stop instructions grew {growth.group(1)}%, over --max-growth {max_growth}"
-    if growth or "FAIL stale" in output:
+    if growth_percent(output) is not None or "FAIL stale" in output:
         return "refresh"
     return "stop an unrecognized ratchet failure"
 

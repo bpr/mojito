@@ -10530,32 +10530,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2377 A construction call binds a struct's origin `mut=` slot
-  from its constructor argument, not its explicit origin argument**
-
-  Over `struct View[mut: Bool, //, o: Origin[mut=mut]]`,
-  `View[ImmOrigin(origin_of(x))](Pointer(to=x))` builds `View[True, …]`,
-  where the pin builds `View[False, …]`, and the checked MIR then fails
-  verification.
-  - The funnel is `infer_construction` (`checker/declarations.rs`):
-    `struct_bracket` collects the explicit origin's mutability, but the `mut=` value `place_struct_origins`
-    (`checker/origins/construct.rs`) places comes from the constructor
-    argument (`Pointer(to=x)`, mutable).
-  - Probe: `assets/ok/immutable_origin_struct_cast_of_immutable_origin.mojo`
-    ("argument 0 of 'imm_binder' has type View[true], declared
-    View[false]").
-  - Probe: `assets/ok/origin_parameter_before_value_parameter.mojo`
-    (`StringSpan[true]` against `StringSpan[false]`).
-  - Probe: `assets/ok/copy_argument_destroys_owner_first.mojo`
-    (`Span[true, Int]` against `Span[false, Int]`).
-  - Probe: `print(reflect[type_of(View[ImmOrigin(origin_of(x))](Pointer(to=x)))].name())`
-    prints `View[True, {}]`; the pin prints `View[False, {}, {}]` (the
-    third `{}` is R2371's).
-  - Found while landing R2370 (2026-11-19); it already fails at
-    `3a322a838`, probably since R2372 put `mut` into every instance.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2371 A binder typed by an `Origin` with an unbound `_mlir_origin`
   declares no implicit `_mlir_origin` binder**
 

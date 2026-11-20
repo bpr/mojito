@@ -321,9 +321,10 @@ impl Checker {
 
     /// The value an origin's `mut=` binder `decl` holds where its governed
     /// origin is `origin`, as upstream's instance and call carry it in
-    /// place: `bound`, the mutability a construction's arguments bound,
-    /// when there is one, else the origin's own (a place's owner's, a
-    /// cast's or a static origin's `False`). A mutability nothing decides
+    /// place: the origin's own when the origin alone decides it (a cast's,
+    /// a static origin's `False`), else `bound`, the mutability a
+    /// construction's arguments bound, when there is one, else the
+    /// origin's own (a place's owner's). A mutability nothing decides
     /// yet (an unbound origin's) or a binder decides (an origin binder's,
     /// a `ref` parameter's) is [`CtValue::Deferred`], following its origin
     /// as `Origin::Unbound` and `Origin::Param` do.
@@ -333,7 +334,11 @@ impl Checker {
         origin: &Origin,
         bound: Option<Mutability>,
     ) -> CtValue {
-        match bound.or_else(|| self.decided_origin_mutability(origin)) {
+        let decided = origin.static_mutability().map(Mutability::of);
+        match decided
+            .or(bound)
+            .or_else(|| self.decided_origin_mutability(origin))
+        {
             Some(Mutability::Mutable) => CtValue::Bool(true),
             Some(Mutability::Immutable) => CtValue::Bool(false),
             Some(Mutability::Param(_)) | None => origin.symbolic_cast_mutability().map_or_else(

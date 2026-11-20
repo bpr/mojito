@@ -1324,6 +1324,7 @@ assets/ok/span_generic_free_def_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_implicit_from_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_move_use.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/span_mutable_converts_to_immutable_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_parameter_from_list_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_pointer_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_temp_method_argument.mojo	-	ineligible	no-scalar-entry-shape
