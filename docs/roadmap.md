@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2420**.
+Next free ID: **R2423**.
 
 ## Ordered Work
 
@@ -2963,12 +2963,15 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - `Origin::Untracked` and `Origin::UnsafeAny` (`mojito-types/origin.rs`)
     hold a closed `bool`, so the attribute `Checker::named_origin_value`
     reads cannot keep a binder's mutability.
-  - Every use in upstream's std applies a literal `mut=`, so nothing
-    bundled needs it yet.
+  - The bundled `Pointer.as_unsafe_any_origin` needs it
+    (`UnsafeAnyOrigin[mut=Self.mut]`), as does `write_repr_to`.
+  - Probe: declare `as_unsafe_any_origin` in `std/memory/pointer.mojo`;
+    `print(Pointer(to=x).as_unsafe_any_origin()[])` then prints `5`, as
+    at the pin.
   - Lever: the mutability becomes a `LitOriginMut`-like slot, substituted
     as `Origin::Param` is.
   - Probe: the line above.
-  - Depends on nothing.
+  - Depends on R2422, R2420 (the declared member resolves).
   - Model: Fable, Not Planned.
 
 - [ ] **R2383 An `OriginSet` binder supplied explicitly is rejected with
@@ -4942,6 +4945,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1540 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R2422 A struct's origin-mutability binder is not readable as a
+  value**
+
+  `return Self.mut` in a method of `struct Q[mut: Bool, //, origin:
+  Origin[mut=mut]]` fails with "not a compile-time Int constant: 'mut' is
+  not a compile-time constant here", where the pin prints `True` for
+  `Q[origin_of(x)](4).g()` over a `var x`.
+  - The binder is semantic-only (`TypeParam::is_erased_origin_param`,
+    `mojito-ast/src/ast.rs`): the origin's mutability, not a value the
+    struct's instance binds, so a read has no argument to take.
+  - Lever: a read of the binder is its origin argument's mutability, as
+    `Origin[mut=mut]` ties them; a symbolic one stays the binder.
+  - Probe: the bundled `Pointer.as_unsafe_any_origin` and `write_repr_to`
+    read `Self.mut`, so neither is declared in `std/memory/pointer.mojo`.
+  - Found while landing R2414 (2026-11-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2007 A struct's `comptime` member that constructs the struct
   through an initializer typed by a struct alias does not evaluate**
@@ -10570,49 +10591,64 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2414 The bundled library declares no `struct Pointer`**
+- [ ] **R2420 A `Pointer` member no checker rule answers does not resolve
+  to its declared body**
 
-  `std/memory/pointer.mojo` declares upstream's aliases but not the struct,
-  so `from std.memory import Pointer` fails with "module 'std.memory' has no
-  declaration named 'Pointer'", where the pin imports it.
-  - Declare it with upstream's header (`address_space: AddressSpace =
-    .GENERIC` now registers), the `_mlir_lit_ref`, `_mlir_type`,
-    `_with_origin`, and `_OriginCastType` comptimes, the field, and the
-    members whose bodies check, copied from the pin's file.
-  - Route `named_type` and `infer_unbound_call` to `pointer_type` and the
-    construction rules before their `self.structs` lookups, so every
-    application still builds `TyKind::Pointer` and the checker's member
-    rules still win.
-  - A member no rule answers resolves to the declared body:
-    `declared_receiver_member` admits a pointer receiver for any member
-    off one `POINTER_RULE_MEMBERS` list.
-  - Export `Pointer` from `std.memory` and the prelude
-    (`implicit_public_identity`, `PRELUDE_EXPORTS`).
-  - Probe: `p.as_imm()[]` is rejected ("has no method 'as_imm'"); the pin
-    prints the pointee.
-  - Probe: `p.as_unsafe_any_origin()[]`, likewise.
-  - Probe: `from std.memory import Pointer, MutPointer` then
-    `MutPointer[Int, origin_of(x)]` (`/tmp/r2205/pin3.mojo` in the plan).
-  - Each omitted member names its blocker in the file's header comment;
-    file any blocker not already on the roadmap.
-  - The declared `mut` must be binder slot 0 under the owner `Pointer`:
-    `Ty::new` folds the struct's applications into `TyKind::Pointer`, and
-    `nominal_parts` answers a symbolic `mut` as `ParamId("Pointer", 0)`
-    (`pointer_mut_binder`, `types.rs`).
-  - The VM's `constructed` (`vm.rs`) now admits a pointer receiver, so a
-    declared `Pointer.__init__` reaches `uninitialized_value`, which needs
-    a pointer arm (the null `Value::Pointer`).
+  `print(Pointer(to=x).as_imm()[])` fails with "type 'Pointer[Int,
+  origin@…]' has no method 'as_imm'", where the pin prints `5`, though
+  `std/memory/pointer.mojo` declares the body.
+  - `declared_receiver_member` (`checker/method_calls/resolution.rs`)
+    admits only SIMD and literal receivers.
+  - Admit a pointer for any member off `POINTER_RULE_MEMBERS`
+    (`method_calls/builtin_types.rs`), and let
+    `infer_intrinsic_receiver_call` defer to it, as its string-literal arm
+    does.
+  - Mono, the VM, and Pliron then dispatch a declared member on a pointer
+    receiver: `carries_instance_in_slots` (`native/mono/infer.rs`), VM
+    `invoke`'s `declared_owner`, and `mojito-pliron/src/lower/methods.rs`.
+  - The VM's `constructed` admits a pointer receiver, so a declared
+    `Pointer.__init__` reaches `uninitialized_value`, which needs a pointer
+    arm (the null `Value::Pointer`).
   - A bare-`ref` binder's pointer at another binder's mutability
     (`pointer_subscript_reads_in_place.mojo`) reads back from its struct
     parts at its own binder's: a reader that rebuilds a pointer from a
-    declared struct's substitution must keep `Ty::pointer`, or the
-    provenance must be normalized, since upstream's `Origin[mut=mut]`
-    cannot spell it.
-  - The plan is `R2205-the-bundled-library-declares-no-struct-plan.md`,
-    slices 4 and 5.
-  - Found while landing R2205 (2026-11-20).
-  - Depends on R2413, R2418 (the declared initializer set).
+    declared struct's substitution must keep `Ty::pointer`.
+  - Probe: `Pointer[Int, origin_of(x)](unsafe_from_address=Int(Pointer(to=x)))[]`
+    fails with "explicit type arguments are not supported", where the pin
+    prints `5`: a construction whose keyword no rule answers must select
+    the declared initializers.
+  - Probe: the bundled `__init__(unsafe_from_address: IntLiteral)` cannot
+    be declared, since its `Self(unsafe_from_address=…)` reaches the
+    construction rule ("expected exactly one 'to=' keyword argument").
+  - The plan is `R2414-the-bundled-library-declares-no-struct-plan.md`,
+    slices 7–9.
+  - Found while landing R2414 (2026-11-20).
+  - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R2421 A `Pointer[...]` bracket does not bind over upstream's
+  declared parameter list**
+
+  `var q: Pointer[T=Int, origin=origin_of(x)] = p` fails with "unsupported
+  feature: named Tuple element arguments", where the pin binds it.
+  - `pointer_type` (`checker/type_resolution.rs`) accepts one or two
+    positionals and a trailing `address_space=`.
+  - Lever: bind through `mojito_ast::call::match_parameter_slots(
+    POINTER_PARAMS, …)`, as `pointer_construction_attributes` does, and
+    check a `mut=` argument against the origin's mutability.
+  - Probe: `var r: Pointer[mut=True, Int, origin_of(x)] = p`, likewise.
+  - Probe: `Pointer[mut=True, Int, origin_of(x)](to=x)` fails with
+    "explicit type arguments are not supported", where the pin builds it.
+  - Probe: `def f(p: Pointer)` fails with "type 'Pointer' expects 2 type
+    argument(s), got 3", where the pin runs it: auto-parameterization
+    spells the bare struct `Pointer[$T_p, _, $address_space_p]`, the
+    keyword-only `address_space` positionally (R1735).
+  - Probe: the bundled `Pointer._with_origin` and `__merge_with__` spell
+    `Pointer[mut=…, …]` and `Pointer[T=…, origin=…]`, so neither is
+    declared.
+  - Found while landing R2414 (2026-11-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2415 A `Pointer`'s parameters, associated comptimes, and
   conformances do not read through its declaration**
@@ -10632,10 +10668,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: R1463's `print(p)` reaches the declared `write_to`, and
     `repr(p)` starts `Pointer[mut=True, SIMD[DType.int, 1],
     address_space=AddressSpace.GENERIC](0x` at the pin.
+  - Probe: the bundled implicit mut-to-imm `__init__(other: Pointer, out
+    self: Pointer[other.T, ImmOrigin(other.origin), …])` cannot be
+    declared ("value has no attribute 'T'"); declare it here.
+  - Probe: declare `write_to` and `write_repr_to` (and `Writable`); the
+    latter's `Named("mut", Self.mut)` also needs R2422.
   - The plan is `R2205-the-bundled-library-declares-no-struct-plan.md`,
     slices 6 and 7.
   - Found while landing R2205 (2026-11-20).
-  - Depends on R2414.
+  - Depends on R2422.
   - Model: Fable, Planned.
 
 - [ ] **R2206 `Pointer`'s casts and conversions are checker rules, where
@@ -10647,9 +10688,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `unsafe_address_space_cast`, `_get_kgen_pointer`, `copy`, the
   `_mlir_value` field, and both
   `Pointer[T, o](_mlir_value=)` initializers.
-  - Probe: `p._mlir_value = k` is rejected ("a write to a Pointer's
-    '_mlir_value' field is not supported", `checker/indexing.rs`); the pin
-    writes the field.
   - Retire those arms, `record_pointer_origin_cast`,
     `infer_pointer_bitcast`, and the `PointerOriginCast` and
     `PointerConvert` adjustments into the declared bodies.
@@ -10674,6 +10712,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     goes through `Pointer(to=self[i])`, so both need the VM to address a
     place pointer.
   - Re-probe R2027.
+  - Probe: declaring upstream's comparisons in `std/memory/pointer.mojo`
+    fails: `not (self == rhs)` hits the rule ("pointer arithmetic and
+    comparison are not supported on an origin-bearing Pointer"), and
+    `Comparable` reports "method '__eq__' does not match the signature
+    required by trait 'Comparable'".
   - Probe: a pointer offset's result at a by-address generic parameter
     (`Int(buf + 1)`, `f(q + 0)` or `f(buf.unsafe_offset(1))` over `def
     f[T: Intable](v: T)`) fails MIR verification ("received by address

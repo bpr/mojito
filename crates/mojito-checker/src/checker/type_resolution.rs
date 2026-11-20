@@ -1250,7 +1250,11 @@ impl Checker {
                     // concretely; otherwise the trait's abstract `Self`.
                     SourceType::SelfParam(name) => {
                         let base = match &self.self_ty {
-                            Some(ty) if (ty.is_simd() || ty.kind().is_non_simd_struct()) => {
+                            Some(ty)
+                                if ty.is_simd()
+                                    || ty.is_pointer()
+                                    || ty.kind().is_non_simd_struct() =>
+                            {
                                 ty.clone()
                             }
                             _ => Ty::self_type(),
@@ -1315,9 +1319,9 @@ impl Checker {
             // comes from the struct's own parameterized definition, so an
             // application such as a conformer's `Self.IteratorType[origin_of(self)]`
             // resolves concretely rather than falling through to dependent indexing.
-            struct_ty if let Some((sname, _)) = struct_ty.as_non_simd_struct() => self
-                .structs
-                .get(sname)
+            _ if base_ty.kind().is_non_simd_struct() || base_ty.is_pointer() => self
+                .nominal_struct(base_ty)
+                .and_then(|(sname, _)| self.structs.get(sname))
                 .and_then(|info| info.parameterized_associated.get(name))
                 .map(|member| member.params.clone()),
             _ => None,
@@ -1392,7 +1396,7 @@ impl Checker {
         // resolve it through the same path as a non-indexed struct-based
         // application. An abstract base (`Self` or a bounded parameter) stays
         // symbolic until the base becomes a conforming struct.
-        if base_ty.kind().is_non_simd_struct() {
+        if base_ty.kind().is_non_simd_struct() || base_ty.is_pointer() {
             return Ok(Some(
                 self.associated_type_from_base(base_ty, name, &arguments)?,
             ));
@@ -1570,6 +1574,17 @@ impl Checker {
         argument: &mojito_ast::ast::ParamArg,
     ) -> Result<TyArg, TypeError> {
         use mojito_ast::ast::ParamArg;
+        // A conversion (`ImmOrigin(o)`) or cast (`o.unsafe_mut_cast[m]()`)
+        // binds the member's origin at its mutability, as the member's
+        // infer-only `mut` binder takes it.
+        if origin
+            && let ParamArg::Value(expression) = argument
+            && let Some(read) = self
+                .origin_method_cast(expression)
+                .or_else(|| self.origin_conversion(expression))
+        {
+            return read.map(|(origin, _)| TyArg::Origin(origin));
+        }
         if origin {
             return match self.explicit_origin_argument(argument) {
                 Ok(origin) => Ok(TyArg::Origin(origin)),
@@ -1691,6 +1706,11 @@ impl Checker {
                 return self.resolve_comptime_alias(&candidate, &alias, args);
             }
         }
+        // The declared `Pointer` struct's applications are the compiler's
+        // pointer type (`Ty::new` folds them), so its bracket binds here.
+        if matches!(name, "UnsafePointer" | "Pointer") {
+            return self.pointer_type(name, args);
+        }
         if let Some(info) = self.structs.get(name) {
             // A bare parametric struct is not concrete where the position
             // must name a concrete type; only a run-time or compile-time
@@ -1709,9 +1729,6 @@ impl Checker {
                 ..
             } = self.resolve_struct_use_args(name, &decls, args, &[], &[])?;
             return Ok((Self::struct_instance_type(name, arguments), attributes));
-        }
-        if matches!(name, "UnsafePointer" | "Pointer") {
-            return self.pointer_type(name, args);
         }
         // The enclosing struct's own parameter spelled bare: Mojo
         // requires `Self.T` / `Self.n` inside the body.
@@ -2971,6 +2988,7 @@ impl Checker {
             // A member alias `SIMD` declares, over the vector's parameters,
             // or one a literal's struct declares (`StringLiteral._from`).
             kind if (kind.is_simd()
+                || kind.is_pointer()
                 || kind.string_literal_value().is_some()
                 || kind.is_numeric_literal())
                 && let Some((sname, targs)) = self.nominal_struct(base)

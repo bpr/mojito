@@ -67,7 +67,7 @@ impl Checker {
         {
             return Some(SubscriptGetter::Param);
         }
-        self.nominal_struct(obj_ty)
+        self.member_struct(obj_ty, "__getitem__")
             .and_then(|(name, _)| self.structs.get(name))
             .is_some_and(|info| info.methods.contains_key("__getitem__"))
             .then_some(SubscriptGetter::Call)
@@ -171,14 +171,9 @@ impl Checker {
             }
             ExprKind::Member { object, field } => {
                 // The object must itself be a writable place (a struct value).
+                // A pointer's one field, `_mlir_value`, stores the whole
+                // pointer, keeping the place's origin.
                 self.check_place(object)?;
-                if field == mojito_types::ct::MLIR_VALUE_FIELD && self.infer(object)?.is_pointer() {
-                    return Err(TypeError::Unsupported(
-                        "a write to a Pointer's '_mlir_value' field is not supported: the \
-                         Pointer is a compiler built-in whose origin its address cannot change"
-                            .to_string(),
-                    ));
-                }
                 // Reuse the field-typing logic (validates the field exists).
                 self.infer_member(place.source_span(), object, field)
             }
@@ -616,7 +611,7 @@ impl Checker {
             TyKind::Ref(reference) => reference.referent.clone(),
             _ => receiver,
         };
-        let Some((name, _)) = self.nominal_struct(&receiver) else {
+        let Some((name, _)) = self.member_struct(&receiver, "__getitem__") else {
             return Ok(None);
         };
         let Some(info) = self.structs.get(name) else {

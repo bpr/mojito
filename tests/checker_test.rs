@@ -9422,6 +9422,30 @@ fn raw_pointer_types_take_an_address_space() {
 }
 
 #[test]
+fn a_pointer_mlir_value_field_store_needs_a_mutable_place() {
+    // A pointer's one field, `_mlir_value`, stores the whole pointer, as
+    // upstream's `Pointer.__init__` writes it, through a mutable place only.
+    ok_std(concat!(
+        "def main():\n",
+        "    var x = 5\n",
+        "    var p = Pointer(to=x).unsafe_origin_cast[MutAnyOrigin]()\n",
+        "    var q = Pointer(to=x).unsafe_origin_cast[MutAnyOrigin]()\n",
+        "    p._mlir_value = q._mlir_value\n",
+        "    print(p[])\n",
+    ));
+    let error = err_std(concat!(
+        "def f(p: Pointer[Int, MutAnyOrigin], q: Pointer[Int, MutAnyOrigin]):\n",
+        "    p._mlir_value = q._mlir_value\n",
+        "def main():\n",
+        "    print(1)\n",
+    ));
+    assert!(
+        matches!(error, TypeError::ImmutableBinding(ref name) if name == "p"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn pointer_address_space_must_be_an_address_space() {
     // The slot takes an `AddressSpace`, never an `Int` or an origin; an
     // inferred `address_space=_` is R2410's; and a pointer in another space

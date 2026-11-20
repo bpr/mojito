@@ -43,6 +43,18 @@ impl Checker {
         mojito_types::types::nominal_parts(ty).filter(|(name, _)| self.structs.contains_key(name))
     }
 
+    /// The declared struct `ty`'s member `member` is read from:
+    /// [`Self::nominal_struct`], except for a pointer member a checker rule
+    /// answers ([`pointer_rule_member`]).
+    pub(in crate::checker) fn member_struct<'t>(
+        &self,
+        ty: &'t Ty,
+        member: &str,
+    ) -> Option<(&'t str, std::borrow::Cow<'t, [TyArg]>)> {
+        self.nominal_struct(ty)
+            .filter(|_| !(ty.is_pointer() && super::builtin_types::pointer_rule_member(member)))
+    }
+
     /// The declaration a compiler-typed receiver's member `method` is read
     /// from before the compiler's rule: `SIMD`'s, for a receiver
     /// of that type whose struct declares it, and `StringLiteral`'s,

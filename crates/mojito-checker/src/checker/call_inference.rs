@@ -52,13 +52,13 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match name {
+            "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
+                self.infer_pointer_to(span, param_args, args, kwargs)
+            }
             _ if self.structs.contains_key(name) => {
                 let constructed = self.infer_construction(&span, name, param_args, args, kwargs)?;
                 self.type_runtime_param_args(param_args, &self.recorded_bracket_attributes(&span))?;
                 Ok(constructed)
-            }
-            "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
-                self.infer_pointer_to(span, param_args, args, kwargs)
             }
             "__get_mvalue_as_litref" => self.infer_mvalue_as_litref(span, param_args, args, kwargs),
             // Compiler-private tagged-union storage:
@@ -322,6 +322,46 @@ impl Checker {
                     }
                     _ => constructed,
                 }),
+            // A pointer's construction is the rule's, its bracket the
+            // instance's.
+            TyKind::Pointer {
+                element,
+                origin,
+                address_space,
+            } => {
+                let constructed = match (args, kwargs) {
+                    ([], [kwarg]) if kwarg.name == "_mlir_value" => self.pointer_from_mlir_value(
+                        span.clone(),
+                        Some((element.clone(), origin.clone())),
+                        Some(address_space.clone()),
+                        &kwarg.value,
+                    )?,
+                    // `Copyable`'s synthesized `copy` (`Self(copy=self)`):
+                    // the same address, retyped to the instance.
+                    ([], [kwarg]) if kwarg.name == "copy" => {
+                        let copied = self.infer(&kwarg.value)?;
+                        self.record_pointer_adjustment(
+                            span.clone(),
+                            mojito_checked::checked::SemanticAdjustment::PointerConvert {
+                                origin: Some(origin.clone()),
+                                materialized: None,
+                                bitcast: false,
+                            },
+                        );
+                        copied
+                    }
+                    _ => self.infer_pointer_to(span.clone(), &[], args, kwargs)?,
+                };
+                if self.coerces_by_origins(&constructed, instance) {
+                    Ok(instance.clone())
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: instance.to_string(),
+                        found: constructed.to_string(),
+                        context: "the construction of a 'Pointer'".to_string(),
+                    })
+                }
+            }
             // A reflected field type's default construction.
             TyKind::Dependent(_) if args.is_empty() && kwargs.is_empty() => {
                 self.construct_dependent(span.clone(), instance.clone())

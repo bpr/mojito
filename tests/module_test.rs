@@ -1061,6 +1061,29 @@ fn std_memory_exports_the_allocation_vocabulary() {
 }
 
 #[test]
+fn std_memory_exports_the_declared_pointer_struct() {
+    // `std/memory/pointer.mojo` declares upstream's `struct Pointer`; its
+    // application is the type `Pointer(to=)` builds.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "from std.memory import Pointer, MutPointer\n\ndef main():\n    var x = 5\n    var p: Pointer[Int, origin_of(x)] = Pointer(to=x)\n    var q: MutPointer[Int, origin_of(x)] = p\n    print(q[])\n",
+    );
+    assert_eq!(run(&main).expect("run"), "5\n");
+
+    // The pin has no `UnsafePointer`, so the package exports none.
+    let unsafe_pointer = d.write(
+        "unsafe_pointer.mojo",
+        "from std.memory import UnsafePointer\n\ndef main():\n    pass\n",
+    );
+    let err = run(&unsafe_pointer).expect_err("the import must fail");
+    assert!(
+        err.contains("no declaration named 'UnsafePointer'"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn std_memory_package_does_not_export_unsafe_alloc() {
     // As upstream, `unsafe_alloc` lives only in `std.memory.alloc`; the
     // package `__init__` re-exports the layout-based vocabulary without it.

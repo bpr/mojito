@@ -307,8 +307,11 @@ impl InstalledInterfaces {
     /// The struct and bracket arguments the reached module's alias `name`
     /// applies, its own parameters spelled as the `_` holes they leave
     /// unbound: `comptime Scalar = SIMD[_, length=1]`, which its check
-    /// holds as a generator over `dtype`, is `SIMD[_, length=1]`. Decodes
-    /// its declaration's record on first use.
+    /// holds as a generator over `dtype`, is `SIMD[_, length=1]`. A
+    /// keyword argument naming a binder whose default is the struct's own
+    /// for that keyword is omitted, since a use the binder is not supplied
+    /// to binds the default (`ImmPointer[Int, _]` is `Pointer[Int, _]`).
+    /// Decodes its declaration's record on first use.
     pub fn alias_application(
         &self,
         name: &str,
@@ -319,9 +322,38 @@ impl InstalledInterfaces {
             .ok()?;
         let alias = &aliases[position].1;
         let (name, args) = alias.value.bracket_application()?;
+        let struct_params = self
+            .declaration(Table::Structs, name)
+            .and_then(|declaration| {
+                declaration
+                    .structs
+                    .iter()
+                    .find(|(struct_name, _)| struct_name == name)
+            })
+            .map(|(_, info)| info.params.as_slice())
+            .unwrap_or_default();
+        let defaulted_as_struct = |argument: &mojito_ast::ast::ParamArg| {
+            let mojito_ast::ast::ParamArg::Named {
+                name: keyword,
+                value,
+            } = argument
+            else {
+                return false;
+            };
+            let mojito_ast::ast::ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(binder),
+                ..
+            }) = value.as_ref()
+            else {
+                return false;
+            };
+            let alias_default = value_default(&alias.decls, binder);
+            alias_default.is_some() && alias_default == value_default(struct_params, keyword)
+        };
         let binders: Vec<&str> = alias.decls.iter().map(ParamDecl::name).collect();
         let args = args
             .iter()
+            .filter(|argument| !defaulted_as_struct(argument))
             .map(|argument| alias_binder_hole(argument, &binders))
             .collect();
         Some((name.to_string(), args))
@@ -1900,6 +1932,18 @@ fn refuse_unplaced(mut unplaced: Vec<String>) -> Result<(), String> {
         "no library module declares {}",
         unplaced.join(", ")
     ))
+}
+
+/// The default of the value parameter `name` among `decls`.
+fn value_default<'d>(decls: &'d [ParamDecl], name: &str) -> Option<&'d ParamExpr> {
+    decls.iter().find_map(|decl| match decl {
+        ParamDecl::Value {
+            name: declared,
+            default,
+            ..
+        } if declared == name => default.as_ref(),
+        _ => None,
+    })
 }
 
 /// `argument` with a bare reference to one of `binders` respelled as the

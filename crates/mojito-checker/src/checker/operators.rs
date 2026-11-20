@@ -1170,6 +1170,37 @@ impl Checker {
             })
             .map(|argument| self.address_space_arg(argument))
             .transpose()?;
+        let constructed =
+            self.pointer_from_mlir_value(span.clone(), bracket, bracket_space, value)?;
+        if let (Some(bracket_origin), Some(element)) =
+            (bracket_origin, constructed.pointer_element())
+        {
+            let attributes = super::type_resolution::pointer_construction_attributes(
+                param_args,
+                element,
+                &bracket_origin,
+            )?;
+            self.record_declared_attributes(span, &attributes);
+        }
+        Ok(constructed)
+    }
+
+    /// Type `Pointer(_mlir_value=value)` under `bracket`, the element (or
+    /// `Infer`) and origin its application names, and `bracket_space`, its
+    /// address space, recording the `PointerConvert` adjustment at `span`:
+    /// a `!lit.ref` operand supplies whatever the bracket leaves open, and a
+    /// `!kgen.pointer` operand, which carries no origin, needs the bracket.
+    pub(super) fn pointer_from_mlir_value(
+        &self,
+        span: SourceSpan,
+        bracket: Option<(Ty, mojito_types::origin::PointerOrigin)>,
+        bracket_space: Option<mojito_types::types::AddressSpaceSlot>,
+        value: &Expr,
+    ) -> Result<Ty, TypeError> {
+        let no_match = |reason: String| TypeError::BadCall {
+            func: "Pointer".to_string(),
+            reason: format!("no matching function in initialization: {reason}"),
+        };
         let operand = self.infer(value)?;
         let operand_space = operand
             .kind()
@@ -1230,14 +1261,6 @@ impl Checker {
                 });
             }
         };
-        if let Some(bracket_origin) = bracket_origin {
-            let attributes = super::type_resolution::pointer_construction_attributes(
-                param_args,
-                &element,
-                &bracket_origin,
-            )?;
-            self.record_declared_attributes(span.clone(), &attributes);
-        }
         self.record_pointer_adjustment(
             span,
             SemanticAdjustment::PointerConvert {

@@ -5,6 +5,51 @@
 use super::*;
 use mojito_types::types::TyKind;
 
+/// The members of the declared `Pointer` a checker rule answers ahead of
+/// the declaration: `infer_pointer_method`'s arms, the operator and
+/// subscript rules, the construction rules, and the static rules. A member
+/// off this list resolves to the declared body.
+pub(in crate::checker) const POINTER_RULE_MEMBERS: &[&str] = &[
+    "unsafe_origin_cast",
+    "unsafe_mut_cast",
+    "unsafe_bitcast",
+    "unsafe_address_space_cast",
+    "copy",
+    "_get_kgen_pointer",
+    "__int__",
+    "unsafe_offset",
+    "unsafe_write",
+    "write",
+    "unsafe_write_move_from",
+    "unsafe_take_pointee",
+    "unsafe_deinit_pointee",
+    "free",
+    "unsafe_free",
+    "__eq__",
+    "__ne__",
+    "__lt__",
+    "__le__",
+    "__gt__",
+    "__ge__",
+    "__add__",
+    "__sub__",
+    "__iadd__",
+    "__isub__",
+    "__getitem__",
+    "__setitem__",
+    "__init__",
+    "__merge_with__",
+    "alloc",
+    "alloc_aligned",
+    "unsafe_dangling",
+];
+
+/// Whether a checker rule answers the declared `Pointer`'s `member`
+/// ([`POINTER_RULE_MEMBERS`]).
+pub(in crate::checker) fn pointer_rule_member(member: &str) -> bool {
+    POINTER_RULE_MEMBERS.contains(&member)
+}
+
 impl Checker {
     /// Type a `Pointer[T]` instance method: the public `unsafe_*` operation
     /// vocabulary (offset, write, take/deinit pointee, free) plus the

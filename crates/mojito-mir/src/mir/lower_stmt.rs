@@ -1682,6 +1682,9 @@ impl<'a> Flatten<'a> {
                 return Some(StoredDestination::Reference(reference));
             }
         }
+        if let Some(object) = pointer_field_store_object(place) {
+            return Some(self.lower_pointer_field_store(object, src));
+        }
         self.emit_interior_invalidations(place, None);
         // A projection below a nominal reference-returning accessor
         // (`xs[i].field`) is rooted in that accessor's materialized
@@ -1812,6 +1815,27 @@ impl<'a> Flatten<'a> {
             None => value,
         };
         self.augmented_setter_value(target, &setter, source, CValue::Value(converted))
+    }
+
+    /// A store to pointer `object`'s one field, `_mlir_value`: the whole
+    /// pointer's store of `src` retyped at the place's own pointer type,
+    /// whose origin the store keeps.
+    fn lower_pointer_field_store(&mut self, object: Node<'a>, src: Reg) -> StoredDestination {
+        let place = self.place(object);
+        let pointer = self.fresh_typed(
+            object.location(),
+            None,
+            object.ty().unwrap_or_else(Ty::none),
+        );
+        self.emit(MirInstr::PointerConvert {
+            dest: pointer,
+            value: src,
+        });
+        self.emit(MirInstr::Store {
+            place: place.clone(),
+            src: pointer,
+        });
+        StoredDestination::Place(place)
     }
 
     pub(super) fn lower_assignment_value(
@@ -4419,6 +4443,16 @@ enum SetArguments<'a> {
 /// lowering facts a borrower built from the binding copies (`aggregate_loans`,
 /// `aliases`) keep the exclusive form, so a view of the binding borrows the
 /// owner as a view of the owner does.
+/// The pointer whose `_mlir_value` field store `place` names.
+fn pointer_field_store_object(place: Node<'_>) -> Option<Node<'_>> {
+    let CheckedOp::Member { field, .. } = place.op() else {
+        return None;
+    };
+    place.object().filter(|object| {
+        field == mojito_types::ct::MLIR_VALUE_FIELD && object.ty().is_some_and(|ty| ty.is_pointer())
+    })
+}
+
 /// Whether walrus target `node` stores through a subscript's
 /// `__setitem__` (upstream's `SubscriptDLValue`), which leaves no memory
 /// lvalue for the walrus to yield ([`Flatten::walrus_destination`]).

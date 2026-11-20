@@ -119,6 +119,7 @@ from std.memory.pointer import (
     OptionalImmPointer,
     OptionalMutPointer,
     OptionalPointer,
+    Pointer,
 )
 from std.span import Span
 from std.hash import Hashable, hash

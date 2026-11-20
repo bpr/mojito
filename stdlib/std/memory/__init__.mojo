@@ -3,9 +3,8 @@
 # uninitialized storage (`MaybeUninit`), the owning smart pointer
 # (`OwnedPointer`), `forget_deinit` (`std.memory.memory`), and the bit
 # reinterpretations `bitcast` and `pack_bits` (`std.memory.unsafe`), a
-# pointer's `AddressSpace` (`std.memory.address_space`), and the `Pointer`
-# aliases (`std.memory.pointer`). `Pointer` itself is not re-exported until
-# the module declares it (R2414).
+# pointer's `AddressSpace` (`std.memory.address_space`), and `Pointer` and
+# its aliases (`std.memory.pointer`).
 # `unsafe_alloc` is deliberately not re-exported: as upstream, it imports
 # only from `std.memory.alloc`.
 
@@ -22,6 +21,7 @@ from .pointer import (
     OptionalImmPointer,
     OptionalMutPointer,
     OptionalPointer,
+    Pointer,
 )
 from .memory import forget_deinit
 from .unsafe import bitcast, pack_bits

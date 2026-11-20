@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The bundled `std/memory/pointer.mojo` declares upstream's `struct
+  Pointer` (R2414), exported from `std.memory` and the prelude, so `from
+  std.memory import Pointer` resolves where it failed. Its applications
+  stay the compiler's pointer type and its rules still answer the members
+  they did; a declared member no rule answers (`as_imm`) does not resolve
+  to its body yet (R2420). A write to a pointer's `_mlir_value` field
+  stores the whole pointer, as at the pin, where it was rejected. A
+  `comptime` alias's defaulted keyword binder no longer turns an alias
+  application like `ImmPointer[T, _]` into a struct application with an
+  open `address_space`, and an associated member template binds origins
+  inside its pointers, keeping an `ImmOrigin(…)` argument's mutability.
+
 - The compiler's pointer type is the identity of upstream's `Pointer`
   struct (R2413): `Ty::new` folds an application `Pointer[mut, T,
   origin, address_space]` into it, a symbolic `mut` taking the origin

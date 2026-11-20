@@ -763,7 +763,7 @@ pub(super) struct AssocBindings {
 /// and a last pass replaces symbolic value parameters (`CtValue::Expr`),
 /// which the type-only pass carries through.
 pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
-    let bound = mojito_types::types::substitute_origin_params(ty, &bindings.origins);
+    let bound = mojito_types::types::bind_origin_params(ty, &bindings.origins);
     let mut values = bindings.ids.clone();
     values.bind_named_values(&ParamContext::detached(), &bindings.values);
     substitute_values(&substitute(&bound, &bindings.types), &values)

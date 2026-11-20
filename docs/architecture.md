@@ -3736,6 +3736,17 @@ binder or the receiver (`Origin::Projected`) and the unsafe-any origin
 loan-tracked root, with the projection dropped, for the readers that ask
 which storage a loan keeps.
 
+The bundled library declares upstream's `struct Pointer`, and the
+compiler's pointer type is that struct's identity (`Ty::new` folds an
+application into `TyKind::Pointer`, `nominal_parts` answers it back). A
+pointer is a declared struct for member lookup, associated members, and
+conformance, read through `nominal_struct`, never through a kind test, and
+a scalar for layout and the runtime: no reader treats it as a one-field
+aggregate. The checker's rules still win for every member
+`POINTER_RULE_MEMBERS` names, construction included, so the declared
+bodies are checked but no call selects them until R2206–R2208 retire the
+rules.
+
 Borrowed views (`Span`, `StringSpan`) are pointer-plus-length structs over
 that capability. Their loans flow through three checked channels: a
 constructor's `ref [origin]` parameter records `BorrowRefArguments` (the

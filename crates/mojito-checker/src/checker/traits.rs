@@ -3490,6 +3490,11 @@ impl Checker {
                 struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
                     self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
                 }
+                // The declared `Pointer` answers through its declaration;
+                // without one, upstream's unconditional conformance.
+                TyKind::Pointer { .. } => self.nominal_struct(ty).is_none_or(|(name, args)| {
+                    self.struct_conformance_applies(name, &args, "TrivialRegisterPassable")
+                }),
                 TyKind::Param { .. } => self.refined_bound(ty).is_some_and(|bounds| {
                     bounds
                         .iter()
