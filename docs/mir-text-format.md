@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.213
+mojito-mir 1.214
 ```
 
-The writer emits 1.213. The reader accepts 1.0 through 1.213; *Schema 1.0*
+The writer emits 1.214. The reader accepts 1.0 through 1.214; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1279,6 +1279,15 @@ declaring parameters). The verifier now rejects an application to no
 argument of a struct declaring parameters, unless it is keyed on one type
 pack (`Tuple()`). The package format moves to `mojito-package 241`
 (R2364).
+
+Schema 1.214 declares a closure storage's origin binders in its list
+(`__origin_<capture>`, fixed by the reference field's mutability), one per
+reference field, after the enclosing binders, so its instance's captured
+origins sit at their binders and the verifier's instance rule holds for it
+as for any struct. An older storage declares its enclosing binders alone,
+which reads with those origin binders appended
+(`nested::upgrade_closure_storage_origins`). The package format moves to
+`mojito-package 242`.
 
 Schema 1.207 adds two origin spellings a struct's origin argument can
 hold, as upstream's `_mlir_origin` attribute can: `origin_projected { base,

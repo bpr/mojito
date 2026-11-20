@@ -4418,24 +4418,7 @@ impl Checker {
             }
         }
         mojito_types::closure_trait::declare_closure_trait(&name, &contract);
-        let reference_fields = || {
-            storage
-                .fields
-                .iter()
-                .filter_map(|field| Some((field, field.reference?)))
-        };
-        let params = reference_fields()
-            .map(|(field, reference)| ParamDecl::Origin {
-                id: mojito_types::param_expr::ParamId::new(&name, reference.origin.0 as usize),
-                name: format!("__origin_{}", field.name),
-                origin: reference.origin,
-                mutability: mojito_types::types::OriginMutability::Fixed(
-                    reference.mutability == mojito_types::origin::Mutability::Mutable,
-                ),
-                infer_only: false,
-                lit: false,
-            })
-            .collect();
+        let params = storage.origin_parameters(&name, 0);
         let fields = storage
             .fields
             .iter()

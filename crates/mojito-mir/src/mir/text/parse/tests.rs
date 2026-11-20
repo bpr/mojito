@@ -5416,3 +5416,62 @@ fn unpaired_legacy_operand_places_are_rejected() {
         decoder.diagnostics
     );
 }
+
+/// An artifact before MIR 1.214 declares a closure storage's enclosing
+/// binders alone; it reads with the origin parameter each reference field
+/// refers through declared after them, as its instance spells it.
+#[test]
+fn an_artifact_older_than_1_214_declares_its_closure_storage_origins() {
+    let owner = "f$g$__storage";
+    let binder = ParamDecl::Type {
+        id: ParamId::new(owner, 0),
+        name: "T".into(),
+        bounds: Vec::new(),
+        trait_param: None,
+        callable_bound: None,
+        default: None,
+        infer_only: false,
+        variadic: false,
+        constraints: Vec::new(),
+    };
+    let origin = ParamDecl::Origin {
+        id: ParamId::new(owner, 1),
+        name: "__origin_x".into(),
+        origin: OriginParamId(1),
+        mutability: mojito_types::types::OriginMutability::Fixed(true),
+        infer_only: false,
+        lit: false,
+    };
+    let field: Ty = TyKind::Ref(mojito_types::origin::RefTy {
+        referent: Ty::int(),
+        origin: Origin::Param(OriginParamId(1)),
+        mutability: mojito_types::origin::Mutability::Mutable,
+    })
+    .into();
+    let mut program = program_with(Vec::new());
+    program.declarations.structs.push(MirStructDeclaration {
+        name: owner.into(),
+        module: String::new(),
+        fields: vec![("x".into(), field)],
+        fieldwise_init: true,
+        param_decls: vec![binder.clone()],
+        explicit_destructors: HashMap::new(),
+        explicit_destroy: None,
+        conformances: Vec::new(),
+        declared: Vec::new(),
+        register_passable: false,
+        associated_types: Vec::new(),
+        parameterized_associated_types: Vec::new(),
+        associated_values: Vec::new(),
+        parameterized_associated_values: Vec::new(),
+        witness_tables: Vec::new(),
+        members: Vec::new(),
+    });
+    let read = |minor| {
+        let text = legacy_text(&program, minor, &[]);
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        parsed.program.declarations.structs[0].param_decls.clone()
+    };
+    assert_eq!(read(213), vec![binder.clone(), origin]);
+    assert_eq!(read(214), vec![binder]);
+}

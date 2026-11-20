@@ -3774,10 +3774,9 @@ impl ParamDecl {
     /// take `origins`, each argument at its binder's declared position, as
     /// upstream's `!kgen.struct` attributes hold one per parameter. An
     /// origin binder `origins` leaves out is
-    /// [`Origin::Unbound`](crate::origin::Origin::Unbound), an origin
-    /// `decls` declares no binder for (a closure storage's) follows the
-    /// rest, and each origin's `mut=` binder holds the value `mutability`
-    /// gives it from its governed origin's placed argument. `view` followed
+    /// [`Origin::Unbound`](crate::origin::Origin::Unbound), and each
+    /// origin's `mut=` binder holds the value `mutability` gives it from
+    /// its governed origin's placed argument. `view` followed
     /// by `origins` when `view` is not one argument per argument binder (a
     /// struct keyed on its lone pack, applied element by element).
     pub fn place_origins_with(
@@ -3825,7 +3824,6 @@ impl ParamDecl {
                 .unwrap_or(crate::origin::Origin::Unbound);
             placed[index] = TyArg::Val(mutability(decl, &governed));
         }
-        placed.extend(origins.map(TyArg::Origin));
         placed
     }
 
@@ -3847,31 +3845,6 @@ impl ParamDecl {
         origin
             .static_mutability()
             .map_or_else(|| CtValue::Deferred(decl.binder()), CtValue::Bool)
-    }
-
-    /// `arguments` aligned with `decls` position by position: as they stand
-    /// when `decls` declares its origin binders in place or `arguments`
-    /// carry no origin, and otherwise without their origins, which no
-    /// binder of an argument view ([`Self::argument_view`]) takes.
-    pub fn aligned_arguments<'a>(
-        decls: &[Self],
-        arguments: &'a [TyArg],
-    ) -> std::borrow::Cow<'a, [TyArg]> {
-        if decls.iter().any(Self::is_origin)
-            || !arguments
-                .iter()
-                .any(|argument| matches!(argument, TyArg::Origin(_)))
-        {
-            std::borrow::Cow::Borrowed(arguments)
-        } else {
-            std::borrow::Cow::Owned(
-                arguments
-                    .iter()
-                    .filter(|argument| !matches!(argument, TyArg::Origin(_)))
-                    .cloned()
-                    .collect(),
-            )
-        }
     }
 
     /// The arguments an instance's `arguments` give the argument binders
@@ -3908,7 +3881,7 @@ impl ParamDecl {
     }
 
     /// `decls` paired with their arguments among `arguments` position by
-    /// position, as [`Self::aligned_arguments`] aligns them.
+    /// position.
     ///
     /// `decls` may be a struct's whole declared list, which an instance
     /// spelling of any shape pairs with: an origin binder pairs with
@@ -4315,7 +4288,7 @@ impl ParamDecl {
     }
 
     /// The argument of `arguments` aligned with `decls[index]`, as
-    /// [`Self::aligned_arguments`] aligns them.
+    /// as [`Self::aligned_pairs`] pairs them.
     pub fn aligned_argument<'a>(
         decls: &[Self],
         arguments: &'a [TyArg],
@@ -6503,7 +6476,6 @@ pub fn own_parameter_bindings(decls: &[ParamDecl], own: &[ParamDecl]) -> ParamBi
 /// binds them too, for a value binder a field's lane slot or value
 /// argument names. Empty for a non-generic struct.
 pub fn struct_argument_substitution(decls: &[ParamDecl], arguments: &[TyArg]) -> TySubst {
-    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
     ParamDecl::aligned_pairs(decls, arguments)
         .filter_map(|(decl, argument)| match (decl, argument) {
             (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => Some((id.clone(), ty.clone())),
@@ -6534,7 +6506,6 @@ pub fn struct_field_types<'a>(
     arguments: &[TyArg],
     fields: &'a [(String, Ty)],
 ) -> Option<std::borrow::Cow<'a, [(String, Ty)]>> {
-    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
     let binders: Vec<ParamRef> = decls.iter().map(ParamDecl::binder).collect();
     let names_own_binder = |ty: &Ty| binders.iter().any(|binder| names_binder(ty, binder));
     if is_identity_application(decls, arguments)
@@ -6564,7 +6535,6 @@ pub fn struct_instance_types(
     arguments: &[TyArg],
     types: &[Ty],
 ) -> Option<Vec<Ty>> {
-    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
     let context = ParamContext::detached();
     let bindings = struct_argument_bindings(&context, decls, arguments);
     let packs = struct_pack_arguments(decls, arguments);
@@ -6591,7 +6561,6 @@ pub fn struct_argument_bindings(
     decls: &[ParamDecl],
     arguments: &[TyArg],
 ) -> ParamBindings {
-    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
     let mut bindings = ParamBindings::new();
     for (decl, argument) in ParamDecl::aligned_pairs(decls, arguments) {
         match (decl, argument) {
@@ -8746,7 +8715,6 @@ fn write_callable(
 /// element tuple or runtime pack, to types none of which spreads another
 /// pack. A struct applied element by element (`Tuple[A, B]`) binds none.
 fn struct_pack_arguments(decls: &[ParamDecl], arguments: &[TyArg]) -> HashMap<ParamId, Vec<Ty>> {
-    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
     ParamDecl::aligned_pairs(decls, arguments)
         .filter_map(|(decl, argument)| {
             let ParamDecl::Type { variadic: true, .. } = decl else {

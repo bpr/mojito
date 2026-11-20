@@ -180,6 +180,11 @@ impl Decoder {
         if self.minor < 213 {
             crate::mir::nested::upgrade_bare_owner_spellings(&mut functions, &mut declarations);
         }
+        // Schema 1.214 declares a closure storage's origin parameters in
+        // its list; an older storage declares its enclosing binders alone.
+        if self.minor < 214 {
+            crate::mir::nested::upgrade_closure_storage_origins(&mut declarations);
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {

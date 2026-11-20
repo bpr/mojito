@@ -4885,11 +4885,12 @@ struct ClosureStorage {
     /// `emitClosureInstance` applies the promoted origins.
     instance_ty: Ty,
     fields: Vec<(String, Ty)>,
-    /// The enclosing binders the closure names, in its fields, its
-    /// signature, or its body, as the check collected them
-    /// (`CheckedClosureUses::binders`): `ty`'s arguments, and the struct's
-    /// parameters once `own_storage_binders` (`mir/nested.rs`) declares
-    /// them as its own.
+    /// The struct's declared list, `ty`'s arguments: the enclosing binders
+    /// the closure names, in its fields, its signature, or its body, as the
+    /// check collected them (`CheckedClosureUses::binders`), which
+    /// `own_storage_binders` (`mir/nested.rs`) declares as its own once its
+    /// members are lowered, then the origin parameter each reference field
+    /// refers through, already its own.
     param_decls: Vec<ParamDecl>,
     /// `param_decls` declared as the struct's own
     /// (`CheckedClosureUses::parameters`).

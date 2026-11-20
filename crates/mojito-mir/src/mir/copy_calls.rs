@@ -263,12 +263,7 @@ fn restated_arguments(decls: &[ParamDecl], ty: &Ty) -> Option<Vec<TyArg>> {
             .then(Vec::new);
     }
     let arguments: Vec<TyArg> = match ty.kind() {
-        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
-            // A closure storage's type carries origins its list declares
-            // no binder for.
-            let aligned = ParamDecl::aligned_arguments(decls, arguments);
-            aligned.get(..decls.len())?.to_vec()
-        }
+        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments.clone(),
         _ => Vec::new(),
     };
     (arguments.len() == decls.len()).then_some(arguments)

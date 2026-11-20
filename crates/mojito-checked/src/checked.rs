@@ -4110,6 +4110,34 @@ impl CheckedClosureStorage {
     pub fn trivially_register_passable(&self) -> bool {
         self.passability == StoragePassability::TriviallyRegisterPassable
     }
+
+    /// The origin parameter each reference field refers through, as the
+    /// struct `owner` declares it after `leading` parameters, in field
+    /// order: upstream's `outlineAndPromoteOrigins` promotes each captured
+    /// origin to one, its mutability fixed by the field's.
+    pub fn origin_parameters(
+        &self,
+        owner: &str,
+        leading: usize,
+    ) -> Vec<mojito_types::types::ParamDecl> {
+        self.fields
+            .iter()
+            .filter_map(|field| Some((field, field.reference?)))
+            .map(|(field, reference)| {
+                let position = leading + reference.origin.0 as usize;
+                mojito_types::types::ParamDecl::Origin {
+                    id: mojito_types::param_expr::ParamId::new(owner, position),
+                    name: format!("__origin_{}", field.name),
+                    origin: OriginParamId(position as u32),
+                    mutability: mojito_types::types::OriginMutability::Fixed(
+                        reference.mutability == mojito_types::origin::Mutability::Mutable,
+                    ),
+                    infer_only: false,
+                    lit: false,
+                }
+            })
+            .collect()
+    }
 }
 
 /// A closure's positional collector, as its declaration spells it.
@@ -4125,9 +4153,12 @@ pub struct CheckedCollector {
 pub struct CheckedClosureUses {
     /// In scope order: the arguments its storage type is applied to.
     pub binders: Vec<mojito_types::types::ParamDecl>,
-    /// `binders` declared as the storage struct's own parameters, position
-    /// for position, as upstream's `liftClosure` declares them, reusing
-    /// their spellings.
+    /// The storage struct's whole declared list: `binders` declared as its
+    /// own, position for position, as upstream's `liftClosure` declares
+    /// them, reusing their spellings, then the origin parameter each
+    /// reference field refers through
+    /// ([`CheckedClosureStorage::origin_parameters`]), so the list matches
+    /// the storage's instance argument for argument.
     pub parameters: Vec<mojito_types::types::ParamDecl>,
 }
 

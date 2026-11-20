@@ -895,9 +895,13 @@ fn closure_uses(
             .iter()
             .any(|declaration| declaration.name().trim_start_matches('*') == name)
     });
-    (!unbound).then(|| CheckedClosureUses {
-        parameters: mojito_types::types::reown_as_own_parameters(&binders, name).0,
-        binders,
+    (!unbound).then(|| {
+        let mut parameters = mojito_types::types::reown_as_own_parameters(&binders, name).0;
+        parameters.extend(storage.origin_parameters(name, binders.len()));
+        CheckedClosureUses {
+            binders,
+            parameters,
+        }
     })
 }
 

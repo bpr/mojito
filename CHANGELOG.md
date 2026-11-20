@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A closure storage struct declares an origin binder for each captured
+  reference, after the enclosing binders it is applied to, as upstream's
+  `outlineAndPromoteOrigins` promotes each captured origin to one, so its
+  declared list matches its instance. The MIR verifier's instance rule now
+  holds for closure storages, and the elaborator, the checker, and MIR no
+  longer special-case origins trailing a storage's binders (MIR schema
+  1.214, which declares an older storage's origin binders at load)
+  (R2365).
 - A struct member's receiver is upstream's `Self`, the struct at every
   declared parameter, origin binders included, rather than a bare
   spelling the elaborator rewrote per instance. An associated member over

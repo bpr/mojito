@@ -1046,23 +1046,6 @@ fn push_bound_sugar(
     }
 }
 
-/// `arguments`, an instance of the closure storage `pattern` spells at
-/// `spelled`, without the capture origins its declared list names no
-/// binder for (R2365); `arguments` as they stand for any other struct.
-fn closure_storage_binder_arguments<'a>(
-    pattern: &str,
-    spelled: &[TyArg],
-    arguments: std::borrow::Cow<'a, [TyArg]>,
-) -> std::borrow::Cow<'a, [TyArg]> {
-    let origin = |argument: &TyArg| matches!(argument, TyArg::Origin(_));
-    if !mojito_symbol::symbol::is_closure_storage_name(nominal_template(pattern))
-        || spelled.iter().any(origin)
-    {
-        return arguments;
-    }
-    std::borrow::Cow::Owned(arguments.iter().filter(|a| !origin(a)).cloned().collect())
-}
-
 /// [`unify`] of the struct pattern `pattern`, the template `pn` applied to
 /// `pa` (its `mut=` arguments left out), against `actual`.
 fn unify_struct(
@@ -1137,15 +1120,12 @@ fn unify_struct(
                     None => Err(format!("expected `{pattern}`, found `{actual}`")),
                 }
             }
-            // The actual's `mut=` arguments leave with the pattern's, and a
-            // closure storage's capture origins, which no binder of its
-            // declared list takes (R2365), with its spelling at its binders.
+            // The actual's `mut=` arguments leave with the pattern's.
             struct_ty
                 if let Some((an, aa)) = struct_ty.as_non_simd_struct()
                     && nominal_template(pn) == nominal_template(an)
                     && let structs = Rc::clone(&bindings.structs)
                     && let aa = structs.without_mutability(an, aa)
-                    && let aa = closure_storage_binder_arguments(pn, pa, aa)
                     && pa.len() == aa.len() =>
             {
                 pa.iter()

@@ -2717,15 +2717,7 @@ impl<'a> Flatten<'a> {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
-            // The storage's parameters are the enclosing binders, which no
-            // capture need spell; the origins its reference fields refer
-            // through follow them in its type, which its list declares no
-            // binder for.
-            instantiated_args: parameters
-                .iter()
-                .take(storage.param_decls.len())
-                .cloned()
-                .collect(),
+            instantiated_args: parameters.clone(),
             spread: None,
         });
         dest

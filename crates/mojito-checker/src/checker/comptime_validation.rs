@@ -7178,9 +7178,6 @@ pub(super) fn positional_pack_arguments<'a>(
     decls: &[ParamDecl],
     arguments: &'a [TyArg],
 ) -> std::borrow::Cow<'a, [TyArg]> {
-    if let std::borrow::Cow::Owned(aligned) = ParamDecl::aligned_arguments(decls, arguments) {
-        return std::borrow::Cow::Owned(positional_pack_arguments(decls, &aligned).into_owned());
-    }
     // A type pack's visible binder is its zero-sized `TypeList`.
     let declared = |list: TyArg| {
         let mut declared = vec![list];
@@ -7211,7 +7208,6 @@ pub(super) fn positional_pack_binding(
     arguments: &[TyArg],
 ) -> Option<(String, TyArg)> {
     let list = ParamDecl::sole_type_pack(decls)?;
-    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
     if mojito_types::types::pack_spread_argument(arguments).is_some()
         || mojito_types::types::list_spread_argument(arguments).is_some()
     {

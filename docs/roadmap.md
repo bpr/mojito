@@ -10980,40 +10980,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `StructDeclaration::associated_type`
     (`mojito-checked/src/declaration.rs`) returns `None` for such a
     spelling, its last erased-spelling exit.
-  - Probe: `ParamDecl::aligned_arguments` and
-    `ParamDecl::instance_argument_view` filter origins out for it.
+  - Probe: `ParamDecl::instance_argument_view` filters origins out for
+    it.
   - Probe: `types_compatible` (`mir/verify/types.rs`) compares struct
     arguments with origins set aside, so one side holding none passes.
   - Found while landing R2364 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R2365 A closure storage's declared list names no binder for the
-  origins its type carries, so they still follow its binders as a tail**
-
-  `CheckedClosureUses::binders` (`mojito-checked/src/closure_uses.rs`)
-  holds the enclosing binders alone, while the storage's type carries one
-  origin per captured reference after them
-  (`CheckedClosureStorage::origin_arguments`).
-  - The lever: give the storage an origin `ParamDecl` per captured
-    origin, in place, so its declared list matches its instance.
-  - Then delete the special cases: `ParamDecl::place_origins` appending
-    origins no binder takes, `ParamDecl::aligned_arguments` skipping them,
-    `StructInfo::instance_origin_bindings` reading the source parameters,
-    the verifier's closure-storage exemption
-    (`misplaced_instance_argument`, `verify/scope.rs`), and the
-    `instantiated_args` truncation in `build_closure_storage`
-    (`mir/lower_stmt.rs`).
-  - Probe: the elaborator's `unify_struct` drops a storage instance's
-    capture origins before matching its receiver `Self`
-    (`closure_storage_binder_arguments`, `native/mono/unify.rs`); seen
-    under `MOJITO_PRE_ELABORATION=0` on any program printing an `Int`
-    (`_write_int`'s `process_digits` closure).
-  - Pinned by `assets/ok/capturing_lambda_storage.mojo`, whose capture
-    access disappears when the storage's origins are misread.
-  - Found while landing R762 (2026-11-19).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R2366 A static call's spelled receiver drops the arguments of the
   parameters its callee removed, where upstream's instance spells each

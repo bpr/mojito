@@ -2162,7 +2162,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and `place_partitioned`, an explicit `mut=` keyword's value kept in
   `PartitionedStructArgs::mutabilities`), and `place_origins` its
   below-the-checker form under `static_mutability_slot`;
-  `aligned_pairs`/`aligned_arguments`/`aligned_argument` pair a list of
+  `aligned_pairs`/`aligned_argument` pair a list of
   binders with an instance's arguments by kind, a struct's whole declared
   list with an instance of any shape, an erased one or an elaborated one
   without its `mut=` slots included; `instance_argument_view` is an
@@ -2185,7 +2185,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`ParamDecl::self_arguments`, `mojito-types`, read by the checker's
   `StructInfo::self_arguments` and MIR lowering's `self_receiver_ty`);
   MIR text 1.213's `nested::upgrade_bare_owner_spellings` spells an older
-  member's bare owner so. The MIR verifier checks a member call at the
+  member's bare owner so, and 1.214's
+  `nested::upgrade_closure_storage_origins` declares an older closure
+  storage's origin binders. The MIR verifier checks a member call at the
   owner instance its `Self`-typed operand carries
   (`verify/calls.rs:owner_instance_param_types`, over
   `types::struct_instance_types`), and the elaborator's unification lets an

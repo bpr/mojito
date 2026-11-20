@@ -3361,16 +3361,15 @@ impl StructInfo {
         ParamDecl::self_arguments(&self.params)
     }
 
-    /// The binder-to-origin map an instance's arguments bind, for
-    /// substituting the struct's own origin binders (`Self.o`) in member
-    /// signatures.
+    /// The binder-to-origin map an instance's arguments bind, each origin
+    /// binder the struct declares to its origin argument, for substituting
+    /// the struct's own origin binders (`Self.o`) in member signatures.
     fn instance_origin_bindings(
         &self,
         arguments: &[TyArg],
     ) -> HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin> {
-        self.origin_decls()
-            .zip(ParamDecl::origin_arguments(arguments))
-            .map(|((id, _), origin)| (id, origin.clone()))
+        ParamDecl::instance_origins(&self.params, arguments)
+            .map(|(id, origin)| (id, origin.clone()))
             .collect()
     }
 

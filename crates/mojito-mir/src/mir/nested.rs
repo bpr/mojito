@@ -882,18 +882,17 @@ fn closure_storage(
             (field.name.clone(), ty)
         })
         .collect();
+    let param_decls: Vec<ParamDecl> = uses
+        .binders
+        .iter()
+        .chain(&uses.parameters[uses.binders.len()..])
+        .cloned()
+        .collect();
     let binders = || uses.binders.iter().map(ParamDecl::own_argument);
     Some(ClosureStorage {
         ty: TyKind::Struct(
             declared.name.clone(),
-            binders()
-                .chain(declared.fields.iter().filter_map(|field| {
-                    let origin = field.reference?.origin;
-                    Some(TyArg::Origin(mojito_types::origin::Origin::Param(
-                        origin_param(origin),
-                    )))
-                }))
-                .collect(),
+            param_decls.iter().map(ParamDecl::own_argument).collect(),
         )
         .into(),
         instance_ty: TyKind::Struct(
@@ -904,7 +903,7 @@ fn closure_storage(
         )
         .into(),
         fields,
-        param_decls: uses.binders.clone(),
+        param_decls,
         parameters: uses.parameters.clone(),
         method: mojito_symbol::symbol::closure_method_name(&child.mangled, &child.source_name),
         declared: declared.clone(),
@@ -2022,6 +2021,51 @@ pub(super) fn upgrade_struct_instance_mutability(
         in_place: true,
     };
     place_struct_origins(placing, functions, declarations);
+}
+
+/// Declare on each closure storage `declarations` holds the origin
+/// parameter each reference field refers through and its list does not
+/// declare, after its other parameters, as an artifact before MIR 1.214
+/// declares the enclosing binders alone: the list then matches the
+/// storage's instance, whose captured origins follow its binders.
+pub(super) fn upgrade_closure_storage_origins(declarations: &mut MirDeclarations) {
+    for structure in &mut declarations.structs {
+        if !mojito_symbol::symbol::is_closure_storage_name(&structure.name) {
+            continue;
+        }
+        let origins: Vec<ParamDecl> = structure
+            .fields
+            .iter()
+            .filter_map(|(field, ty)| match ty.kind() {
+                TyKind::Ref(reference) => match reference.origin {
+                    mojito_types::origin::Origin::Param(origin) => Some(ParamDecl::Origin {
+                        id: mojito_types::param_expr::ParamId::new(
+                            &structure.name,
+                            origin.0 as usize,
+                        ),
+                        name: format!("__origin_{field}"),
+                        origin,
+                        mutability: mojito_types::types::OriginMutability::Fixed(
+                            reference.mutability == mojito_types::origin::Mutability::Mutable,
+                        ),
+                        infer_only: false,
+                        lit: false,
+                    }),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .filter(|decl| {
+                !structure.param_decls.iter().any(|declared| {
+                    matches!((declared, decl), (
+                    ParamDecl::Origin { origin: a, .. },
+                    ParamDecl::Origin { origin: b, .. },
+                ) if a == b)
+                })
+            })
+            .collect();
+        structure.param_decls.extend(origins);
+    }
 }
 
 /// Give each member body `functions` and `declarations` hold of a struct

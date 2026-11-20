@@ -373,11 +373,8 @@ impl ScopeCx<'_> {
                     .declarations
                     .structure(name)
                     .map(|declaration| declaration.param_decls.as_slice());
-                // A closure storage's origins follow its binders, which
-                // name none of them (R2365); it spells every binder still.
                 if let Some(binders) = declared
                     && !std::mem::take(&mut self.spelled_receiver)
-                    && (args.is_empty() || !mojito_symbol::symbol::is_closure_storage_name(name))
                     && let Some(misplaced) = misplaced_instance_argument(binders, args)
                 {
                     self.errors.push(format!(

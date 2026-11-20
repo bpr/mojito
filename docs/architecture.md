@@ -795,7 +795,8 @@ policy or data-model responsibilities to focused children:
   broken invariant MIR reports. `emitClosureInstance` applies the struct
   to them and `liftClosure` declares them, reusing their spellings,
   which the check does too (`CheckedClosureUses::parameters`, over
-  `reown_as_own_parameters`): once the closure is lowered,
+  `reown_as_own_parameters`, followed by the origin binder each reference
+  field refers through, `CheckedClosureStorage::origin_parameters`): once the closure is lowered,
   `nested::own_storage_binders`
   moves every reference in its fields, its members, and its method's
   body (with the bodies nested in it) to the struct's binders, while the
@@ -3272,9 +3273,10 @@ static origin's `False`, an explicit `mut=` keyword's value), and
 `CtValue::Deferred` naming the struct's own binder where it does not, which
 is to the `mut=` value what `Origin::Unbound` is to the origin: an unbound
 origin's, and an origin binder's or a `ref` parameter's, whose mutability
-is a binder the checker leaves to the call. A closure storage's captured
-origins follow its binders, its declared list naming no binder for them
-(R2365). The checker builds an instance through `ParamDecl::place_origins_with`
+is a binder the checker leaves to the call. A closure storage declares an
+origin binder per captured reference after the enclosing binders it is
+applied to (`CheckedClosureStorage::origin_parameters`), so its instance's
+captured origins sit at their binders as any struct's do. The checker builds an instance through `ParamDecl::place_origins_with`
 under `Checker::origin_mutability_slot` (`Checker::place_struct_origins`); a
 phase below it, which knows no place's owner, through `ParamDecl::place_origins`
 (`ParamDecl::static_mutability_slot`). Because the checker relates bound
@@ -3288,7 +3290,7 @@ does; a deferred value agrees with any (`types::coerces`), and no `mut=`
 value changes a layout (`MirDeclarations::translated_type`, the checker's
 rebind check). Every reader below the checker pairs a list of binders with
 an instance's arguments by kind (`ParamDecl::aligned_pairs`,
-`aligned_arguments`, `aligned_argument`): an argument view, which declares no
+`aligned_argument`): an argument view, which declares no
 origin binder, skips the instance's origins, and a list that declares them in
 place reads them where they sit. The whole declared list pairs with an
 instance of any shape, an erased one (no origin) or an elaborated one, which
