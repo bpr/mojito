@@ -993,8 +993,8 @@ impl Checker {
 
     /// Type `Pointer(to=place)` (also spelled through the deprecated
     /// `UnsafePointer` alias): an origin-bearing pointer to existing checked
-    /// storage. The element type is the place's type and the origin is the
-    /// place itself, so loan analysis keeps the owner alive and rejects
+    /// storage. The element type is the place's type, the address space the
+    /// place's, and the origin is the place itself, so loan analysis keeps the owner alive and rejects
     /// conflicting access. Execution represents the value as a frame/slot
     /// handle; only the VM erases the origin.
     pub(super) fn infer_pointer_to(
@@ -1024,12 +1024,13 @@ impl Checker {
         Ok(Ty::pointer(
             element,
             origin,
-            mojito_types::types::AddressSpaceSlot::GENERIC,
+            self.place_address_space(&kwargs[0].value),
         ))
     }
 
     /// Type upstream's `__get_mvalue_as_litref(place)`: the `!lit.ref` of a
-    /// place, whose origin is the place, as `Pointer(to=place)` takes it.
+    /// place, whose origin is the place and whose address space is the
+    /// place's, as `Pointer(to=place)` takes it.
     pub(super) fn infer_mvalue_as_litref(
         &self,
         span: SourceSpan,
@@ -1047,7 +1048,7 @@ impl Checker {
         Ok(Ty::lit_ref(
             element,
             origin,
-            mojito_types::types::AddressSpaceSlot::GENERIC,
+            self.place_address_space(value),
         ))
     }
 

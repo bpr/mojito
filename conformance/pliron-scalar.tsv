@@ -1099,6 +1099,7 @@ assets/ok/pointer_origin_constructors.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_origin_field_inference.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_place_address.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_ref_place_address_space.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_slot_is_its_pointer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_subscript_operand_keeps_owner.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_subscript_reads_in_place.mojo	-	ineligible	no-scalar-entry-shape

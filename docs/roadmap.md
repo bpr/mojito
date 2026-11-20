@@ -2682,6 +2682,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     is "expected Pointer[Int, origin#0], found Pointer[Int, origin@N]",
     and so is the `-> Pointer[Int, ImmOrigin(o)]` result. The pin runs
     both.
+  - Probe: a bare `ref x: Int` parameter's `var p: Pointer[Int,
+    origin_of(x)] = Pointer(to=x)` is "type mismatch for variable 'p'"
+    naming two origins that print alike, where the pin returns `p[]`:
+    `Pointer(to=)` over a `ref` binding takes the subtree of its origin
+    (`checker/operators.rs`), which `origin_of(x)` does not admit.
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10632,24 +10637,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R2205 (2026-11-20).
   - Depends on R2414.
   - Model: Fable, Planned.
-
-- [ ] **R2418 A struct whose initializers include upstream's `ref[...] to`
-  form rejects a `_mlir_value=` construction**
-
-  A user copy of `Pointer`'s three initializers (`_mlir_value:
-  Self._mlir_type`, `_mlir_value: Self._mlir_lit_ref`, and `ref[Self.origin,
-  Self.address_space] to: Self.T`) rejects `P[Int, origin_of(x)](
-  _mlir_value=k)` with "no constructor overload matches", where the pin
-  prints `5 5 AddressSpace.GENERIC True True`.
-  - Without the `to=` initializer the same struct runs as at the pin, so
-    the `ref` keyword candidate breaks the overload set's selection.
-  - Probe: `/tmp/r2205/mirror2.mojo` against `mirror3.mojo` (the plan's
-    table lists both shapes).
-  - It blocks declaring `Pointer`'s initializers (R2414) and moving
-    construction to them (R2206, R2208).
-  - Found while planning R2205 (2026-11-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R2206 `Pointer`'s casts and conversions are checker rules, where
   upstream's are bodies of the declared struct**

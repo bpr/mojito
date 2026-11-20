@@ -1076,6 +1076,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The address of a place keeps the place's address space (R2418):
+  `Pointer(to=x)` and `__get_mvalue_as_litref(x)` over a `ref[_, a] x`
+  are in space `a`, as at the pin, where both were generic. A struct
+  declaring upstream's three `Pointer` initializers, the `ref[Self.origin,
+  Self.address_space] to` one included, now builds and selects its
+  `_mlir_value=` construction instead of failing with "no constructor
+  overload matches", and a struct's explicit origin now binds a
+  constructor's `!lit.ref` parameter type, as it binds a `Pointer` one.
 - A place holding a `Pointer` is addressed as that place, never as the
   pointer's pointee: natively, `Pointer(to=result[i]).unsafe_write(p)` over
   a pointer element stores `p` instead of writing through the uninitialized

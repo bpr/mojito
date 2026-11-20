@@ -845,8 +845,8 @@ impl Checker {
     }
 
     /// Bind the struct binders one declared parameter or field type names
-    /// from the actual filling it: a pointer's binder from the pointer's
-    /// provenance, a reference's binder from the reference's origin, and a
+    /// from the actual filling it: a pointer's or `!lit.ref`'s binder from
+    /// the actual pointer's or `!lit.ref`'s provenance, a reference's binder from the reference's origin, and a
     /// struct-typed pattern's tail binders from the actual's tail (recursing
     /// through nested type arguments and tuples).
     #[allow(clippy::too_many_arguments)]
@@ -862,8 +862,8 @@ impl Checker {
         let slot_of = |id: &OriginParamId| super::super::struct_origin_decl(params, *id);
         match (pattern.kind(), actual.kind()) {
             (pattern_kind, actual_kind)
-                if let (
-                    Some((
+                if let Some((
+                    (
                         _,
                         PointerOrigin::Param {
                             id,
@@ -871,9 +871,9 @@ impl Checker {
                             subtree,
                             ..
                         },
-                    )),
-                    Some((_, actual_origin)),
-                ) = (pattern_kind.as_pointer(), actual_kind.as_pointer()) =>
+                    ),
+                    (_, actual_origin),
+                )) = pattern_kind.matching_pointer_parts(actual_kind) =>
             {
                 let Some(slot) = slot_of(&id) else {
                     return Ok(());
