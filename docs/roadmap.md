@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2423**.
+Next free ID: **R2424**.
 
 ## Ordered Work
 
@@ -4953,16 +4953,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Origin[mut=mut]]` fails with "not a compile-time Int constant: 'mut' is
   not a compile-time constant here", where the pin prints `True` for
   `Q[origin_of(x)](4).g()` over a `var x`.
-  - The binder is semantic-only (`TypeParam::is_erased_origin_param`,
-    `mojito-ast/src/ast.rs`): the origin's mutability, not a value the
-    struct's instance binds, so a read has no argument to take.
-  - Lever: a read of the binder is its origin argument's mutability, as
-    `Origin[mut=mut]` ties them; a symbolic one stays the binder.
-  - Probe: the bundled `Pointer.as_unsafe_any_origin` and `write_repr_to`
-    read `Self.mut`, so neither is declared in `std/memory/pointer.mojo`.
+  - `Self` in a method is `Q[Deferred(mut), Origin::Param(origin)]`
+    (`ParamDecl::self_arguments`), and `Checker::struct_parameter_at` and
+    `Checker::self_param_value` (`checker/constraints.rs`) hand the
+    `Deferred` slot to `ParamContext::constant`, which rejects it.
+  - Lever: a deferred `mut=` slot reads as its governed origin's
+    mutability, as `Origin[mut=mut]` ties them: `Self`'s own origin binder
+    reads the binder (`decl.own_argument()`), a decided origin reads
+    `Checker::decided_origin_mutability`, and `Origin::Unbound` keeps the
+    rejection. Leave `ParamDecl::self_arguments` alone (R2375).
+  - Probe: the plan's fixture `Q` prints `True` for `Q[origin_of(x)](4).g()`
+    and `Q[MutAnyOrigin](4).g()`, `False` for `Q[ImmutAnyOrigin](4).g()`
+    and `show[o: ImmOrigin]`, and the same through `comptime m =
+    Self.mut` and `Self.origin.mut` (the latter already checks and fails
+    only in elaboration), on both backends.
+  - Add an `assets/ok` fixture with those lines, and keep `Self.nope`
+    rejecting with `UnknownSelfParam` and a bare `return mut` rejected.
+  - Do not land the checker half before R2423: alone it turns the check
+    error into a later elaborator `Unsupported`.
+  - The bundled `Pointer.as_unsafe_any_origin` and `write_repr_to` also
+    need R2384 and R2415, so they are not this entry's probe.
+  - The plan is `R2422-a-struct-s-origin-mutability-binder-plan.md`,
+    slices 1 to 3.
   - Found while landing R2414 (2026-11-20).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Depends on R2423.
+  - Model: Fable, Planned.
 
 - [ ] **R2007 A struct's `comptime` member that constructs the struct
   through an initializer typed by a struct alias does not evaluate**
@@ -11073,6 +11088,41 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2423 An elaborated struct instance erases a closed `mut=`
+  argument, so no member is specialized per mutability**
+
+  `substitute_ty` (`mojito-native/src/native/mono/substitute.rs`) strips
+  every `mut=` argument through `StructCatalog::without_mutability`, so
+  `Q[True, o]` and `Q[False, o]` elaborate to one instance and a method
+  reading `Self.mut` keeps an unbound parameter constant, where upstream's
+  are distinct types whose member generator keeps `mut` when its body
+  reads it.
+  - Lever: keep the closed (`CtValue::Bool`) slot in the elaborated
+    arguments and the `instance_symbol` key; drop `without_mutability`
+    on both `unify` sides (`mono/unify.rs`) so pattern and actual agree in
+    arity; count `mut=` binders in `StructCatalog::is_generic`.
+  - Spell owner arguments with the `mut=` binder in
+    `owner_instance_ty`, `bind_static_receiver` (`mono/infer.rs`), and
+    both owner arms of `Specializer::enqueue`; a `Deferred` slot still
+    binds nothing (`unify_arg`'s Deferred arm).
+  - Audit the readers that assume an elaborated instance holds no slot:
+    `rg "is_origin_mutability_binder|without_mutability|CtValue::Deferred"
+    crates/mojito-native crates/mojito-analysis crates/mojito-mir
+    crates/mojito-checked`.
+  - Instance symbols change, so MIR snapshots and Pliron goldens are
+    updated in the same task.
+  - Probe: `reflect[A[origin_of(a)]].name()` still prints `reflect.A[True,
+    {}]`, and two `Span`s differing only in a closed `mut=` are two
+    elaborated instances.
+  - Probe: `scripts/smoke` stays clean on both backends; a partial
+    prototype failed 51 of 54 fixtures on "expected `VariadicList[…]`,
+    found `VariadicList$mono$…[false, Int, false]`".
+  - The plan is `R2422-a-struct-s-origin-mutability-binder-plan.md`,
+    slice E.
+  - Found while planning R2422 (2026-11-20).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
 - [ ] **R2375 A `mut=` value a binder decides is deferred in a checked
   instance and erased from an elaborated one, where upstream's instance
   carries the binder's value**
@@ -11094,10 +11144,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     binds"), which is why it is deferred today.
   - A `ref` parameter's mutability binder becomes a value binder a body
     and its instance read, as upstream's `self_is_mut` is.
-  - Then key elaborated instances on the slot: drop
-    `without_mutability`, and spell the owner instance over the struct's
-    non-origin parameters in `owner_instance_ty`, `bind_static_receiver`,
-    and the `enqueue` owner arguments, so they agree with `substitute_ty`'s `instance_symbol`.
+  - Keying elaborated instances on a closed slot is R2423; this entry
+    writes the binder-decided slots it then keys on.
   - Probe: `reflect[type_of(s)].name()` in `def f[m: Bool, //, o:
     Origin[mut=m]](s: Span[Int, o])`, called with `Span(xs)` and with an
     `ImmOrigin` span, prints `std.span.Span[mut, SIMD[DType.int, 1], {}]`
@@ -11107,7 +11155,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: the type of `xs.__iter__()` over a `var xs` list literal prints
     `_ArrayIter[iterable_mut, …]`.
   - Found while landing R2372 (2026-11-19).
-  - Depends on nothing.
+  - Depends on R2423.
   - Model: Fable, Not Planned.
 
 - [ ] **R2376 A parameter typed by a struct with an unbound origin
@@ -11140,26 +11188,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2375.
   - Model: Fable, Not Planned.
 
-- [ ] **R2373 `Self.mut` in a method of a struct whose origin's `mut=` is
-  a binder is rejected, where the pin reads it**
-
-  The checker's struct scope (`enter_struct_scope`, `traits.rs`) installs
-  `self_decls` as the struct's argument view, which declares no origin or
-  `mut=` binder, so the `Self.<name>` reader (`indexing.rs`) and
-  `self_param_value` (`constraints.rs`) cannot find `mut`.
-  - The lever: `self_decls` becomes the whole declared list; each of its
-    readers (`rg self_decls crates/mojito-checker`) that assumes no origin
-    binder in it pairs through `ParamDecl::aligned_pairs`.
-  - Probe: `struct V[mut: Bool, //, origin: Origin[mut=mut]]` with `def
-    m(self) -> Bool: return Self.mut`, called on `V[origin_of(a)](3)`,
-    fails with "'mut' is not a compile-time constant here", where the pin
-    prints `True`.
-  - Add an `assets/ok` fixture with a `mut=True` and a `mut=False`
-    instance, and keep `Self.nope` rejecting with `UnknownSelfParam`.
-  - Found while landing R2362's readers (2026-11-19).
-  - Depends on R2372.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2374 The bundled `Span` declares no `write_repr_to`, so
   `repr(Span(xs))` fails where the pin prints `Span[mut=True, …]([…])`**
 
@@ -11175,7 +11203,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     Pointer has no method 'write_repr_to'", where the pin prints
     `Span[mut=True, SIMD[DType.int, 1]]([Int(1), Int(2)])`.
   - Found while landing R2362's readers (2026-11-19).
-  - Depends on R2373.
+  - Depends on R2422.
   - Model: Opus, Not Planned.
 
 - [ ] **R2402 An instance spelling may carry its struct's type and value

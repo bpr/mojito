@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Roadmap: R2422 (`Self.mut` over a struct's origin binder) is planned and
+  now depends on R2423, the elaborator keeping a closed `mut=` argument
+  in a struct instance; the duplicate R2373 is folded into R2422. No
+  compiler behaviour changes.
+
 - The bundled `std/memory/pointer.mojo` declares upstream's `struct
   Pointer` (R2414), exported from `std.memory` and the prelude, so `from
   std.memory import Pointer` resolves where it failed. Its applications
