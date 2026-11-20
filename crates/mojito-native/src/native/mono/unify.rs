@@ -904,6 +904,13 @@ pub(super) fn bind_value(
         return Err(format!("solution for `{name}` is not constant"));
     }
     match bindings.values.get(binder) {
+        // An erased argument names no value, as upstream's `_REMOVED_ARG`
+        // keys nothing: it yields to any solution and never overrides one.
+        Some(_) if matches!(value, CtValue::RemovedArg) => Ok(()),
+        Some(CtValue::RemovedArg) => {
+            bindings.values.insert(binder.clone(), value.clone());
+            Ok(())
+        }
         // As in `bind_type`, `Display` can collapse distinct values (an Int
         // and a UInt render alike), so the conflict text carries the
         // structural forms.
@@ -1039,6 +1046,23 @@ fn push_bound_sugar(
     }
 }
 
+/// `arguments`, an instance of the closure storage `pattern` spells at
+/// `spelled`, without the capture origins its declared list names no
+/// binder for (R2365); `arguments` as they stand for any other struct.
+fn closure_storage_binder_arguments<'a>(
+    pattern: &str,
+    spelled: &[TyArg],
+    arguments: std::borrow::Cow<'a, [TyArg]>,
+) -> std::borrow::Cow<'a, [TyArg]> {
+    let origin = |argument: &TyArg| matches!(argument, TyArg::Origin(_));
+    if !mojito_symbol::symbol::is_closure_storage_name(nominal_template(pattern))
+        || spelled.iter().any(origin)
+    {
+        return arguments;
+    }
+    std::borrow::Cow::Owned(arguments.iter().filter(|a| !origin(a)).cloned().collect())
+}
+
 /// [`unify`] of the struct pattern `pattern`, the template `pn` applied to
 /// `pa` (its `mut=` arguments left out), against `actual`.
 fn unify_struct(
@@ -1056,7 +1080,7 @@ fn unify_struct(
                     && pa.iter().any(|argument| {
                         matches!(argument, TyArg::Val(value) if ParamDecl::is_pack_value(value))
                     })
-                    && mojito_types::types::binds_pack_elementwise(an) =>
+                    && mojito_types::types::binds_pack_elementwise(nominal_template(an)) =>
             {
                 let spread: Vec<TyArg> = pa
                     .iter()
@@ -1070,13 +1094,6 @@ fn unify_struct(
                     actual,
                     bindings,
                 )
-            }
-            struct_ty
-                if let Some((an, _)) = struct_ty.as_non_simd_struct()
-                    && nominal_template(pn) == nominal_template(an)
-                    && pa.is_empty() =>
-            {
-                Ok(())
             }
             // A spread of a list computed from packs solves nothing: it
             // closes once the packs it reads are bound.
@@ -1120,13 +1137,19 @@ fn unify_struct(
                     None => Err(format!("expected `{pattern}`, found `{actual}`")),
                 }
             }
+            // The actual's `mut=` arguments leave with the pattern's, and a
+            // closure storage's capture origins, which no binder of its
+            // declared list takes (R2365), with its spelling at its binders.
             struct_ty
                 if let Some((an, aa)) = struct_ty.as_non_simd_struct()
                     && nominal_template(pn) == nominal_template(an)
+                    && let structs = Rc::clone(&bindings.structs)
+                    && let aa = structs.without_mutability(an, aa)
+                    && let aa = closure_storage_binder_arguments(pn, pa, aa)
                     && pa.len() == aa.len() =>
             {
                 pa.iter()
-                    .zip(aa)
+                    .zip(aa.iter())
                     .try_for_each(|(p, a)| unify_arg(p, a, bindings))
             }
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),

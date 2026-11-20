@@ -56,8 +56,9 @@
 //! through MLIR's `AttrTypeReplacer`; an argument over the caller's own
 //! binders stays symbolic, for the elaborator to fold in each instance of
 //! the caller. A parametric owner's binders take the arguments of the
-//! receiver's type, or of the constructed one, which the member's bare
-//! spelling of its owner denotes too; an owner keyed on one type pack
+//! receiver's type, or of the constructed one, its origin binders that
+//! type's origins, and `Self` in a body of the owner's own member binds
+//! them to themselves; an owner keyed on one type pack
 //! (`Tuple[*Ts]`) binds it to that type's element list. A read of a value binder, the
 //! owner's (`Self.k`) included, becomes its argument as a constant,
 //! upstream's `kgen.param.constant`. A variadic binder binds to its element
@@ -442,7 +443,7 @@ struct Inliner<'f, 'c> {
     /// whether its value captures nothing: what a callable binder's
     /// argument register names.
     function_values: HashMap<u32, (String, bool)>,
-    /// The caller's name: a member's body spells its own struct bare.
+    /// The caller's name: a member's body spells its own struct as `Self`.
     caller: &'c str,
     /// Which callees the pass inlines.
     admission: Admission,
@@ -882,8 +883,8 @@ enum Receiver {
 
 /// What a call binds its callee's owner's compile-time parameters to.
 enum Owner<'c> {
-    /// Nothing: the owner has none, or the call's type spells it bare, as
-    /// a body of its own member does, whose binders are the callee's too.
+    /// Nothing: the owner has none, or the call's type is `Self` in a body
+    /// of its own member, whose binders are the callee's too.
     Unbound,
     Applied(OwnerInstance<'c>),
 }
@@ -891,9 +892,6 @@ enum Owner<'c> {
 /// The parametric struct a callee is a member of, at the type a call
 /// instantiates it.
 struct OwnerInstance<'c> {
-    /// The struct's name, which the member's body spells bare for its own
-    /// type.
-    template: String,
     /// The call's receiver or result type, an application of `template`.
     ty: Ty,
     decls: std::borrow::Cow<'c, [ParamDecl]>,
@@ -1734,22 +1732,19 @@ impl<'c> Inliner<'_, 'c> {
             return Some(Owner::Unbound);
         }
         match ty.kind() {
-            // A bare spelling in a body of the struct's own member denotes
-            // its own type, whose binders are the callee's too; anywhere
-            // else it is the empty application of a struct keyed on one
-            // pack (`Tuple()`), whose pack binds to no element.
+            // `Self` in a body of the struct's own member, the struct at its
+            // own parameters, binds them to themselves: they are the
+            // callee's too.
             struct_ty
                 if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
                     && name == template
-                    && arguments.is_empty()
-                    && (self.is_member_of(template)
-                        || ParamDecl::sole_type_pack(&decls).is_none()) =>
+                    && self.is_member_of(template)
+                    && *arguments == ParamDecl::self_arguments(&structure.param_decls) =>
             {
                 Some(Owner::Unbound)
             }
             _ if nominal_parts(ty).is_some_and(|(name, _)| name == template) => {
                 Some(Owner::Applied(OwnerInstance {
-                    template: template.to_string(),
                     ty: ty.clone(),
                     decls,
                     declared: &structure.param_decls,
@@ -4259,6 +4254,7 @@ fn instantiated<'c>(
     let mut instantiation = Instantiation::new(declaration, owner, arguments, declarations)?;
     let mut function = callee.clone();
     walk_function_mut(&mut instantiation, &mut function).ok()?;
+    bind_reference_result_origins(&mut function.body, &instantiation.origins);
     construct_type_parameters(
         &mut function.body,
         &instantiation,
@@ -4785,9 +4781,9 @@ struct Instantiation<'d> {
     /// concrete.
     declarations: &'d MirDeclarations,
     bindings: ParamBindings,
-    /// The owner's name and the type the body's bare spelling of it
-    /// denotes.
-    owner: Option<(String, Ty)>,
+    /// The origin each of the owner's origin binders takes from the call's
+    /// type, keyed by the binder's id: a member's `Self.o`.
+    origins: HashMap<u32, mojito_types::origin::Origin>,
     /// Each owner value binder's spelling, which names the receiver's
     /// member a read of it loads, and its argument.
     members: Vec<(String, ParamExpr)>,
@@ -4834,7 +4830,7 @@ impl<'d> Instantiation<'d> {
         };
         let mut instantiation = Self {
             bindings: ParamBindings::new(),
-            owner: owner.map(|owner| (owner.template.clone(), owner.ty.clone())),
+            origins: HashMap::new(),
             members: Vec::new(),
             closures: Vec::new(),
             types: Vec::new(),
@@ -4845,6 +4841,9 @@ impl<'d> Instantiation<'d> {
             let (_, instance) = nominal_parts(&owner.ty)?;
             let owner_arguments = ParamDecl::instance_argument_view(owner.declared, &instance);
             let owner_arguments = owner_binder_arguments(&owner.decls, &owner_arguments)?;
+            instantiation.origins = ParamDecl::instance_origins(owner.declared, &instance)
+                .map(|(id, origin)| (id.0, origin.clone()))
+                .collect();
             for (decl, argument) in ParamDecl::aligned_pairs(owner.declared, &instance) {
                 if decl.is_origin_mutability_binder(owner.declared)
                     && !matches!(argument, TyArg::Val(CtValue::Deferred(_)))
@@ -5023,20 +5022,13 @@ impl<'d> Instantiation<'d> {
         }
     }
 
-    /// `ty` with the owner's bare spelling replaced by the owner's type,
-    /// then every bound binder by its argument; an error when a bound
+    /// `ty` with every bound binder replaced by its argument, the owner's
+    /// origin binders by the call type's origins; an error when a bound
     /// binder survives the substitution (a pack queried under a loop
     /// binder, which only the elaborator's unrolling closes).
     fn instantiate(&self, ty: &Ty) -> Result<Ty, ParamError> {
-        // The owner is the call's own type, spelled over the caller's
-        // binders: it replaces the bare template after the substitution, so
-        // a caller of the same struct (`Counter[1 + Self.length]` built in
-        // a `Counter` method) does not see its binders substituted again.
         let ty = replace_parameters(&self.context, ty, &self.bindings, 0)?;
-        let ty = match &self.owner {
-            Some((template, owner)) => rewrite_ty(&ty, &mut BareOwner { template, owner })?,
-            None => ty,
-        };
+        let ty = mojito_types::types::bind_origin_params(&ty, &self.origins);
         let ty = rewrite_ty(&ty, &mut SelectedShapes)?;
         let ty = rewrite_ty(&ty, &mut ClosedProjections(self.declarations))?;
         if let Some(binder) = self.types.iter().find(|binder| names_binder(&ty, binder)) {
@@ -5450,27 +5442,31 @@ fn restated_owner_binders(owner: &[ParamDecl], decls: &[ParamDecl]) -> usize {
     if restated { owner.len() } else { 0 }
 }
 
-/// The rewrite of a member's bare spelling of its owner, `template`, which
-/// denotes the owner's own type, to the type `owner` a call instantiates.
-struct BareOwner<'a> {
-    template: &'a str,
-    owner: &'a Ty,
-}
-
-impl TyRewrite for BareOwner<'_> {
-    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
-        ty.kind()
-            .as_non_simd_struct()
-            .is_some_and(|(name, arguments)| name == self.template && arguments.is_empty())
-            .then(|| self.owner.clone())
+/// Bind the owner's origin binders `origins` in each reference result of
+/// `blocks`, as [`Instantiation::instantiate`] binds them in the
+/// destination's type: the type walk reaches a reference result's referent
+/// but not its origin.
+fn bind_reference_result_origins(block: &mut MirBlock, origins: &HashMap<u32, Origin>) {
+    if origins.is_empty() {
+        return;
     }
-
-    fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
-        Ok(expr.clone())
-    }
-
-    fn visits_closed(&self) -> bool {
-        true
+    for instruction in &mut block.instrs {
+        let reference = if let MirInstr::MethodCall {
+            reference_result: Some(reference),
+            ..
+        } = instruction
+        {
+            Some(&mut **reference)
+        } else {
+            instruction_subscript_call_mut(instruction)
+                .and_then(|call| call.reference_result.as_mut())
+        };
+        if let Some(reference) = reference {
+            reference.origin = reference.origin.substitute_params(origins);
+        }
+        for region in instruction_regions_mut(instruction) {
+            bind_reference_result_origins(region, origins);
+        }
     }
 }
 

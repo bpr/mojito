@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.212
+mojito-mir 1.213
 ```
 
-The writer emits 1.212. The reader accepts 1.0 through 1.212; *Schema 1.0*
+The writer emits 1.213. The reader accepts 1.0 through 1.213; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1268,6 +1268,18 @@ Schema 1.212 adds `param_origin { origin, type: meta }`, upstream's
 `#kgen.bind_params` binds a generator's origin binder to, typed by the
 binder's `Origin[mut=m, _mlir_origin=origin]` value type (R2358).
 
+Schema 1.213 spells a struct member's receiver, and every spelling of its
+own struct in its body, at every declared parameter, as upstream's `Self`
+is (`::Span[$0, $1, $2, $3]`): each binder as itself, an origin's `mut=`
+binder deferred to itself (`ParamDecl::self_arguments`). An older member
+spells its owner bare (`struct_type { name: S, arguments: [] }`), which
+reads as that spelling at load (`nested::upgrade_bare_owner_spellings`,
+for a function whose root enclosing declaration is a member of a struct
+declaring parameters). The verifier now rejects an application to no
+argument of a struct declaring parameters, unless it is keyed on one type
+pack (`Tuple()`). The package format moves to `mojito-package 241`
+(R2364).
+
 Schema 1.207 adds two origin spellings a struct's origin argument can
 hold, as upstream's `_mlir_origin` attribute can: `origin_projected { base,
 path }`, an interior or subtree projection over an origin binder or the
@@ -1287,8 +1299,8 @@ type_arg(Int)]`, not `B[type_arg(Int), origin_arg(…)]`). A closure
 storage's captured origins still follow its binders, its declared list
 naming no binder for them. The verifier rejects an instance of a struct
 declaring an origin binder that holds other than one argument per such
-binder, each origin in place; an erased spelling (no arguments) and a static
-call's spelled receiver stay exempt. A struct record no longer carries
+binder, each origin in place; a static call's spelled receiver stays
+exempt. A struct record no longer carries
 `origin_params`: an instance's origins are keyed by its declared origin
 binders. A 1.168–1.205 artifact's `origin_params` naming an id its
 `param_decls` declares no origin binder for reads as an infer-only origin

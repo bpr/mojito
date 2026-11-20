@@ -303,14 +303,6 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         }
         struct_ty if let Some((name, original)) = struct_ty.as_non_simd_struct() => {
             if original.is_empty() {
-                // The bare in-body `self` spelling of a generic owner resolves
-                // to the concrete instance being materialized; other bare
-                // names are non-generic (or unresolvable, failing later).
-                if let Some((template, concrete)) = &bindings.self_instance
-                    && template == name
-                {
-                    return Ok(concrete.clone());
-                }
                 // `Tuple` applied to no element is the empty tuple's
                 // instance, not the template.
                 if mojito_types::types::binds_pack_elementwise(name)

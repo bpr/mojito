@@ -434,10 +434,11 @@ pub(super) fn verify_direct_call(
         )
         .collect();
     verify_by_address_operands(cx, declaration, &operands, errors);
+    let param_types = owner_instance_param_types(cx, declaration, &operands);
     verify_operand_types(
         cx,
         &declaration.lowered_name,
-        &declaration.param_types,
+        param_types.as_deref().unwrap_or(&declaration.param_types),
         &declaration.param_conventions,
         &operands,
         errors,
@@ -1491,3 +1492,30 @@ type OwnerArguments<'a> = (
     std::borrow::Cow<'a, [mojito_types::types::ParamDecl]>,
     std::borrow::Cow<'a, [TyArg]>,
 );
+
+/// The parameter types of `declaration`, a member of a struct declaring
+/// parameters, at the owner instance one of its `Self`-typed operands
+/// carries, as upstream checks a call against its generator applied to the
+/// call's parameters: a `Counter[length]` member called on a
+/// `Counter[length + 1]` declares `Counter[length + 1]` there. `None` when
+/// no operand binds the owner, or the instance leaves a binder open.
+fn owner_instance_param_types(
+    cx: &InstrCx<'_>,
+    declaration: &MirFunctionDeclaration,
+    operands: &[crate::mir::BoundOperand<'_>],
+) -> Option<Vec<Ty>> {
+    let (owner, _) = mojito_symbol::symbol::split_method_symbol(&declaration.lowered_name)?;
+    let decls = &cx.declarations.structure(owner)?.param_decls;
+    let own = ParamDecl::self_arguments(decls);
+    let instance = operands.iter().find_map(|operand| {
+        let expected = declaration.param_types.get(operand.parameter?)?;
+        let (_, arguments) = crate::mir::operand_value_ty(expected)
+            .kind()
+            .as_non_simd_struct()?;
+        let (found_name, found) = crate::mir::operand_value_ty(cx.reg_ty(operand.register)?)
+            .kind()
+            .as_non_simd_struct()?;
+        (found_name == owner && *arguments == own && *found != own).then_some(found)
+    })?;
+    mojito_types::types::struct_instance_types(decls, instance, &declaration.param_types)
+}

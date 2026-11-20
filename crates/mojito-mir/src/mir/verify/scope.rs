@@ -374,10 +374,10 @@ impl ScopeCx<'_> {
                     .structure(name)
                     .map(|declaration| declaration.param_decls.as_slice());
                 // A closure storage's origins follow its binders, which
-                // name none of them (R2365).
+                // name none of them (R2365); it spells every binder still.
                 if let Some(binders) = declared
                     && !std::mem::take(&mut self.spelled_receiver)
-                    && !mojito_symbol::symbol::is_closure_storage_name(name)
+                    && (args.is_empty() || !mojito_symbol::symbol::is_closure_storage_name(name))
                     && let Some(misplaced) = misplaced_instance_argument(binders, args)
                 {
                     self.errors.push(format!(
@@ -1114,7 +1114,7 @@ pub(super) mod tests {
             misplaced_instance_argument(&origin_first(), &[origin.clone(), n.clone()]),
             None
         );
-        assert_eq!(misplaced_instance_argument(&origin_first(), &[]), None);
+        assert!(misplaced_instance_argument(&origin_first(), &[]).is_some());
         assert!(misplaced_instance_argument(&origin_first(), &[n.clone(), origin]).is_some());
         assert!(misplaced_instance_argument(&origin_first(), &[n]).is_some());
     }
@@ -1656,11 +1656,21 @@ pub(super) mod tests {
 /// Why `args`, the arguments of an instance of a struct declaring
 /// `binders`, are not one per declared parameter with each origin at its
 /// binder's position, each origin's `mut=` value at its own: `None` when
-/// they are, when they are none (an erased spelling), or when the struct
-/// declares no origin binder (an elaborated instance's declaration keeps
-/// none).
+/// they are, or when the struct declares no origin binder (an elaborated
+/// instance's declaration keeps none). An application to no argument of a
+/// struct declaring parameters names no instance, as upstream's `Self`
+/// spells every parameter, unless the struct is keyed on one type pack
+/// (`Tuple()`, the empty application).
 fn misplaced_instance_argument(binders: &[ParamDecl], args: &[TyArg]) -> Option<String> {
-    if args.is_empty() || !binders.iter().any(ParamDecl::is_origin) {
+    if args.is_empty() {
+        return (!binders.is_empty() && ParamDecl::sole_type_pack(binders).is_none()).then(|| {
+            format!(
+                "no arguments where its struct declares {} parameters",
+                binders.len()
+            )
+        });
+    }
+    if !binders.iter().any(ParamDecl::is_origin) {
         return None;
     }
     if args.len() != binders.len() {

@@ -1,4 +1,4 @@
-mojito-mir 1.202
+mojito-mir 1.213
 artifact {
   features: [],
   files: [
@@ -18,12 +18,12 @@ artifact {
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: Tuple, arguments: [] }],
+        param_types: [struct_type { name: Tuple, arguments: [type_arg(param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }), value_arg(ct_struct { name: TypeList, fields: [] })] }],
         owned_params: [false],
         deinit_params: [true],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }), value_arg(ct_struct { name: TypeList, fields: [] })] } }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -43,12 +43,12 @@ artifact {
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: Tuple, arguments: [] }],
+        param_types: [struct_type { name: Tuple, arguments: [type_arg(param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }), value_arg(ct_struct { name: TypeList, fields: [] })] }],
         owned_params: [false],
         deinit_params: [true],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }), value_arg(ct_struct { name: TypeList, fields: [] })] } }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -57,7 +57,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              ownership.mark_destroyed { place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent } }
+              ownership.mark_destroyed { place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [type_arg(param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }), value_arg(ct_struct { name: TypeList, fields: [] })] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent } }
             ],
             terminator: return { value: absent }
           }

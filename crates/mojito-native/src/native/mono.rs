@@ -41,8 +41,7 @@ use mojito_types::param_expr::{
     ParamContext, ParamExpr, ParamKind, ParamRef,
 };
 use mojito_types::types::{
-    ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, TyKind,
-    erase_origins,
+    ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, erase_origins,
 };
 use mojito_vm::backend::{ConcreteProgram, VmBackend};
 
@@ -456,9 +455,8 @@ struct Bindings {
     values: HashMap<ParamRef, CtValue>,
     associated: HashMap<String, Ty>,
     /// When materializing a generic struct's method: the owner's template name
-    /// and its concrete instance type. Substitution rewrites the bare in-body
-    /// `self` spelling (`Struct(template, [])`) to the concrete instance so
-    /// nested method calls can bind the owner's parameters from the receiver.
+    /// and its concrete instance type, the receiver's `Self` at the call's
+    /// bindings, which keys the instance on its owner.
     self_instance: Option<(String, Ty)>,
     /// Each source struct's parameters, unparameterized associated types,
     /// and fields. Substitution renames a concrete application of a generic
@@ -506,45 +504,6 @@ impl Bindings {
         self.values
             .values_mut()
             .for_each(|value| *value = mojito_types::types::erase_value_origins(value));
-        self.name_owner_origins();
-    }
-
-    /// Name the owner's own origin parameters in the instance a bare `Self`
-    /// stands for, each at its binder's position, as upstream spells a
-    /// method's `Self` over its owner's unspecialized parameters
-    /// (`::Span[$0, $1, $2, $3]`): an explicit `Span[T, origin]` keeps its
-    /// `Origin::Param` likewise.
-    fn name_owner_origins(&mut self) {
-        let Some((owner, instance)) = &mut self.self_instance else {
-            return;
-        };
-        let Some(declaration) = self.structs.declaration(owner) else {
-            return;
-        };
-        let TyKind::Struct(name, arguments) = instance.kind() else {
-            return;
-        };
-        let binders: Vec<&ParamDecl> = declaration.param_decls.iter().collect();
-        if !binders.iter().any(|decl| decl.is_origin())
-            || arguments.len() != binders.len()
-            || binders
-                .iter()
-                .zip(arguments)
-                .any(|(decl, argument)| decl.is_origin() != matches!(argument, TyArg::Origin(_)))
-        {
-            return;
-        }
-        let arguments = binders
-            .iter()
-            .zip(arguments)
-            .map(|(decl, argument)| match decl {
-                ParamDecl::Origin { origin, .. } => {
-                    TyArg::Origin(mojito_types::origin::Origin::Param(*origin))
-                }
-                _ => argument.clone(),
-            })
-            .collect();
-        *instance = instance.reusing(TyKind::Struct(name.clone(), arguments));
     }
 }
 

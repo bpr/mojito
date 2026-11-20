@@ -1,4 +1,4 @@
-mojito-mir 1.202
+mojito-mir 1.213
 artifact {
   features: [],
   files: [
@@ -54,12 +54,12 @@ artifact {
         vars: 2,
         var_names: [self, v],
         params: 2,
-        param_types: [struct_type { name: D, arguments: [] }, Int],
+        param_types: [struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "D", slot: 0, name: k, type: meta_value(Int) }))] }, Int],
         owned_params: [false, false],
         deinit_params: [false, false],
         ref_params: [false, false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: D, arguments: [] } }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "D", slot: 0, name: k, type: meta_value(Int) }))] } }, var_type { var: $v1, type: Int }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -69,7 +69,7 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v1, mode: copy },
-              place.store { place: place { root: $v0, root_type: present(struct_type { name: D, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r0 }
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "D", slot: 0, name: k, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r0 }
             ],
             terminator: return { value: absent }
           }
@@ -81,12 +81,12 @@ artifact {
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: D, arguments: [] }],
+        param_types: [struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "D", slot: 0, name: k, type: meta_value(Int) }))] }],
         owned_params: [false],
         deinit_params: [true],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: D, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "D", slot: 0, name: k, type: meta_value(Int) }))] } }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -96,7 +96,7 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: param(param_decl_ref { owner: "D", slot: 0, name: k, type: meta_value(Int) }) },
-              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: D, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "D", slot: 0, name: k, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               call { dest: %r2, func: note, raises: absent, args: [%r0, %r1], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
@@ -109,12 +109,12 @@ artifact {
         vars: 2,
         var_names: [self, v],
         params: 2,
-        param_types: [struct_type { name: S, arguments: [] }, Int],
+        param_types: [struct_type { name: S, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))] }, Int],
         owned_params: [false, false],
         deinit_params: [false, false],
         ref_params: [false, false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))] } }, var_type { var: $v1, type: Int }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -126,9 +126,9 @@ artifact {
               const { dest: %r0, value: param(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }) },
               var.use { dest: %r1, var: $v1, mode: copy },
               call { dest: %r2, func: "D.__init__", raises: absent, args: [%r1], kwargs: [], capture_accesses: [], param_arg_regs: [param_arg { name: present(k), value: present(%r0), expr: present(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))], spread: absent },
-              place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))] } }], type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))] }), through: absent }, src: %r2 },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))] } }], type: present(struct_type { name: D, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))] }), through: absent }, src: %r2 },
               var.use { dest: %r3, var: $v1, mode: copy },
-              place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r3 }
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r3 }
             ],
             terminator: return { value: absent }
           }
@@ -140,12 +140,12 @@ artifact {
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: S, arguments: [] }],
+        param_types: [struct_type { name: S, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))] }],
         owned_params: [false],
         deinit_params: [true],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [value_arg(ct_expr(param_decl_ref { owner: "S", slot: 0, name: k, type: meta_value(Int) }))] } }],
         return_type: present(None),
         raises: false,
         error_type: absent,

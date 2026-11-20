@@ -395,37 +395,6 @@ impl<'a> Specializer<'a> {
             .collect()
     }
 
-    /// Erase the parameters of the struct an owner-less method instance
-    /// removed from the `self` its bare struct spelling stands for: the
-    /// instance takes every struct instance agreeing on the kept arguments
-    /// (`Box[_REMOVED_ARG]`), as upstream's generator takes its `self`.
-    fn erase_removed_owner(&self, bindings: &mut Bindings) -> Result<(), MonoError> {
-        let Some((owner, _)) = &bindings.self_instance else {
-            return Ok(());
-        };
-        let Some(decls) = self
-            .structs
-            .get(owner.as_str())
-            .map(|owner| owner.param_decls.as_slice())
-        else {
-            return Ok(());
-        };
-        if !decls
-            .iter()
-            .any(|decl| bindings.removed.contains(&decl.binder()))
-        {
-            return Ok(());
-        }
-        let spelled: Ty = TyKind::Struct(
-            owner.clone(),
-            decls.iter().map(ParamDecl::own_argument).collect(),
-        )
-        .into();
-        let erased = substitute_ty(&spelled, bindings)?;
-        bindings.self_instance = Some((owner.clone(), erased));
-        Ok(())
-    }
-
     /// The instance arguments of `target`'s parameters `decls` under
     /// `bindings`: [`bound_argument`] of each past the `owner_covered` decls that
     /// restate the owner's parameters, without those the body removed.
@@ -1031,15 +1000,12 @@ impl<'a> Specializer<'a> {
                     key.owner.is_none() || !self.structs.contains_key(&binder.id.owner)
                 }),
         );
-        let mut bindings = Bindings {
+        let bindings = Bindings {
             layout: self.layout_oracle(),
             applications: Some(Rc::clone(&self.applications)),
             removed,
             ..bindings.clone()
         };
-        if key.owner.is_none() {
-            self.erase_removed_owner(&mut bindings)?;
-        }
         let bindings = &bindings;
         // A type or a parameter argument may carry the application of a
         // lowered function (`SIMD[dt, L[0]]`), which only running it

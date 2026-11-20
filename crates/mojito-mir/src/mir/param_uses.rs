@@ -162,21 +162,6 @@ pub fn unread_parameters_of<'a>(
     walker.structs = Some(&structs);
     walker.layout = true;
     walker.callees = Some(callees);
-    if let Some((spelled, decls)) = structure
-        && let Some(owner) = walker.owners.iter().position(|owner| *owner == spelled)
-    {
-        walker.self_spelling = Some((
-            spelled,
-            decls.iter().map(|decl| (owner, decl.id().slot)).collect(),
-        ));
-        walker.self_type = Some(
-            TyKind::Struct(
-                spelled.to_string(),
-                decls.iter().map(|decl| decl.own_argument()).collect(),
-            )
-            .into(),
-        );
-    }
     walker.signature(declaration);
     walker.body(function);
     walker.nominal_reads(function, declarations);
@@ -1275,21 +1260,10 @@ struct Walker<'o, 'a, 'n> {
     /// The functions whose nested (`f$…`) and lifted (`$comptime$f$…`)
     /// bodies a walked value may name.
     bodies: Vec<&'o str>,
-    /// The struct whose method the function is, and its binders as `slots`
-    /// entries: the struct spelled with no arguments is the method's `Self`,
-    /// which reads the ones its layout reads, and under a nominal read all
-    /// of them.
-    self_spelling: Option<(&'o str, Vec<(usize, usize)>)>,
-    /// The struct whose method the function is, spelled at its own
-    /// parameters: the lifecycle members its `Self` runs read them.
-    self_type: Option<Ty>,
     /// Each tuple variant the walk is inside: for a struct type, how many of
-    /// its fields were walked, whether its name is `self_spelling`'s, and,
-    /// under `layout`, what its layout reads of its arguments.
+    /// its fields were walked and, under `layout`, what its layout reads of
+    /// its arguments.
     variants: Vec<Option<StructFrame>>,
-    /// Whether the next sequence is the arguments of a struct type spelling
-    /// `self_spelling`'s name.
-    self_arguments: bool,
     /// The struct reads a `layout` walk consults.
     structs: Option<&'n StructReads<'n, 'a>>,
     /// Whether a struct type reads only the arguments its lowered layout
@@ -1353,10 +1327,9 @@ type TypeReads<'a> = (
 );
 
 /// A struct type the walk is inside: how many of its fields were walked,
-/// whether its name is `self_spelling`'s, and what its layout reads.
+/// and what its layout reads.
 struct StructFrame {
     field: usize,
-    self_named: bool,
     reads: Option<LayoutReads>,
 }
 
@@ -1372,10 +1345,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         Self {
             bodies: owners.clone(),
             owners,
-            self_spelling: None,
-            self_type: None,
             variants: Vec::new(),
-            self_arguments: false,
             structs: None,
             layout: false,
             struct_arguments: None,
@@ -1502,25 +1472,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     /// (its struct spelled with no arguments) runs the member over the
     /// struct at its own parameters.
     fn member_reads(&self, ty: &Ty, member: &'static str) -> Option<Vec<TyArg>> {
-        let ty = self.spelled_self(ty);
         self.structs.map(|structs| structs.member_reads(ty, member))
-    }
-
-    /// `ty`, but the method's `Self` (its struct spelled with no
-    /// arguments) spelled at the struct's own parameters.
-    fn spelled_self<'t>(&'t self, ty: &'t Ty) -> &'t Ty {
-        match (ty.kind(), &self.self_type) {
-            (TyKind::Struct(name, arguments), Some(self_type))
-                if arguments.is_empty()
-                    && self_type
-                        .kind()
-                        .as_non_simd_struct()
-                        .is_some_and(|(spelled, _)| spelled == name) =>
-            {
-                self_type
-            }
-            _ => ty,
-        }
     }
 
     fn nominal_blocks(
@@ -1732,7 +1684,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         }) else {
             return false;
         };
-        let receiver = self.spelled_self(receiver).clone();
         let Some((name, arguments)) = receiver.kind().as_non_simd_struct() else {
             return false;
         };
@@ -1813,7 +1764,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         if !self.types.contains_key(&key) {
             let mut walker = Walker::new(self.owners.clone(), self.nested);
             walker.bodies.clone_from(&self.bodies);
-            walker.self_spelling.clone_from(&self.self_spelling);
             walker.structs = self.structs;
             walker.declarations = self.declarations;
             walker.layout = self.layout;
@@ -1862,10 +1812,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
         if let Some(Some(frame)) = self.variants.last_mut()
             && frame.field == 0
         {
-            frame.self_named = self
-                .self_spelling
-                .as_ref()
-                .is_some_and(|(spelled, _)| *spelled == value);
             frame.reads = layout.map(|structs| structs.layout(value));
         }
         let owned = |name: &str| {
@@ -2164,22 +2110,8 @@ impl ser::Serializer for &mut Walker<'_, '_, '_> {
         Ok(())
     }
 
-    fn serialize_seq(self, length: Option<usize>) -> Result<Self, Unwalkable> {
+    fn serialize_seq(self, _: Option<usize>) -> Result<Self, Unwalkable> {
         let arguments = self.struct_arguments.take();
-        if std::mem::take(&mut self.self_arguments)
-            && length == Some(0)
-            && self.unread == 0
-            && let Some((_, slots)) = &self.self_spelling
-        {
-            let reads = arguments.as_ref().unwrap_or(&LayoutReads::All);
-            self.slots.extend(
-                slots
-                    .iter()
-                    .enumerate()
-                    .filter(|(position, _)| reads.reads(*position))
-                    .map(|(_, slot)| *slot),
-            );
-        }
         self.sequences
             .push(arguments.map(|arguments| (arguments, 0)));
         Ok(self.compound())
@@ -2204,7 +2136,6 @@ impl ser::Serializer for &mut Walker<'_, '_, '_> {
         self.variants
             .push((variant == "Struct").then_some(StructFrame {
                 field: 0,
-                self_named: false,
                 reads: None,
             }));
         Ok(self.compound())
@@ -2296,11 +2227,9 @@ impl ser::SerializeTupleVariant for &mut Walker<'_, '_, '_> {
         if let Some(Some(frame)) = self.variants.last_mut()
             && frame.field == 1
         {
-            self.self_arguments = frame.self_named;
             self.struct_arguments = frame.reads.take();
         }
         self.visit(value);
-        self.self_arguments = false;
         self.struct_arguments = None;
         if let Some(Some(frame)) = self.variants.last_mut() {
             frame.field += 1;

@@ -15,8 +15,7 @@ use mojito_types::ct::CtValue;
 use mojito_types::origin::{Origin, OriginParamId};
 use mojito_types::param_expr::{ParamBindings, ParamContext, ParamExpr, ParamRef};
 use mojito_types::types::{
-    GenericConstraint, ParamDecl, Ty, TyArg, TyKind, mentions, replace_parameters,
-    substitute_origin_params,
+    GenericConstraint, ParamDecl, Ty, TyArg, replace_parameters, substitute_origin_params,
 };
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -354,12 +353,20 @@ impl StructDeclaration {
     /// `_ListIter[Int, o]`): [`Self::associated_member`] under the
     /// instance's declared parameters.
     ///
-    /// `None` when the struct does not declare the member closed at these
-    /// arguments: an argument only the elaborator binds (a pack, a deferred
-    /// value, an omitted default), a value member parameter, or a member
-    /// over one of the struct's own origin parameters that the arguments
-    /// leave unbound (an erased spelling, which carries no origin).
+    /// `None` when `arguments` name no instance (none for a struct
+    /// declaring parameters, or no origin for one declaring origins), or
+    /// the struct does not declare the member closed at these arguments: an
+    /// argument only the elaborator binds (a pack, a deferred value, an
+    /// omitted default), or a value member parameter. A member over the
+    /// struct's own origin binder takes the instance's origin there, which
+    /// in a member's `Self` is that binder itself.
     pub fn associated_type(&self, arguments: &[TyArg], name: &str, args: &[TyArg]) -> Option<Ty> {
+        let declares_origins = self.param_decls.iter().any(ParamDecl::is_origin);
+        if (arguments.is_empty() && !self.param_decls.is_empty())
+            || (declares_origins && ParamDecl::origin_arguments(arguments).next().is_none())
+        {
+            return None;
+        }
         let context = ParamContext::detached();
         let mut bindings = ParamBindings::new();
         let pairs: Vec<_> = ParamDecl::aligned_pairs(&self.param_decls, arguments)
@@ -413,8 +420,7 @@ impl StructDeclaration {
             bindings.bind(binder.id.clone(), context.type_shape(ty.clone()));
             bindings.bind_type(binder.id, ty);
         }
-        let ty = replace_parameters(&context, &member.template, &bindings, 0).ok()?;
-        (!mentions(&ty, &names_origin_param)).then_some(ty)
+        replace_parameters(&context, &member.template, &bindings, 0).ok()
     }
 }
 
@@ -980,32 +986,10 @@ fn sorted_map<K: Ord + serde::Serialize, V: serde::Serialize, S: serde::Serializ
     )
 }
 
-/// Whether `ty` itself names an origin parameter, in its arguments or its
-/// reference's origin.
-fn names_origin_param(ty: &Ty) -> bool {
-    fn names(origin: &Origin) -> bool {
-        match origin {
-            Origin::Param(_) => true,
-            Origin::Union(members) => members.iter().any(names),
-            Origin::Projected(base, _) => names(base),
-            _ => false,
-        }
-    }
-    match ty.kind() {
-        TyKind::Struct(_, arguments)
-        | TyKind::Assoc {
-            args: arguments, ..
-        } => arguments
-            .iter()
-            .any(|argument| matches!(argument, TyArg::Origin(origin) if names(origin))),
-        TyKind::Ref(reference) => names(&reference.origin),
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mojito_types::types::TyKind;
 
     fn over(name: &str, origin: Origin) -> Ty {
         TyKind::Struct(name.into(), vec![TyArg::Origin(origin)]).into()
@@ -1194,12 +1178,17 @@ mod tests {
     }
 
     #[test]
-    fn associated_type_leaves_an_unbound_struct_origin_open() {
+    fn associated_type_keeps_the_instance_s_own_origin_binder() {
         let bag = bag(
             vec![OriginParamId(1)],
             over("BagIter", Origin::Param(OriginParamId(1))),
         );
+        let own = [TyArg::Origin(Origin::Param(OriginParamId(1)))];
         let member = [TyArg::Origin(Origin::Static)];
+        assert_eq!(
+            bag.associated_type(&own, "IteratorType", &member),
+            Some(over("BagIter", Origin::Param(OriginParamId(1)))),
+        );
         assert_eq!(bag.associated_type(&[], "IteratorType", &member), None);
     }
 }

@@ -175,6 +175,11 @@ impl Decoder {
                 &mut declarations,
             );
         }
+        // Schema 1.213 spells a member's own struct at every declared
+        // parameter, upstream's `Self`; an older member spells it bare.
+        if self.minor < 213 {
+            crate::mir::nested::upgrade_bare_owner_spellings(&mut functions, &mut declarations);
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {

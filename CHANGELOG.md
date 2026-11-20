@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct member's receiver is upstream's `Self`, the struct at every
+  declared parameter, origin binders included, rather than a bare
+  spelling the elaborator rewrote per instance. An associated member over
+  the struct's own origin (`Self.Me` for `comptime Me = BagIter[Self.o]`)
+  closes in a method's template at that binder, and the MIR verifier
+  rejects an application to no argument of a struct declaring parameters
+  (MIR schema 1.213, which spells an older artifact's bare owner at load)
+  (R2364).
 - A `where` clause over an origin's `mut=` binder is a clause of the
   function's whole declared list, as upstream's is the generator's, checked
   with every parameter the call binds. An overloaded `w[mut: Bool, //, o:

@@ -3358,16 +3358,7 @@ impl StructInfo {
     /// struct's own parameters, an origin's `mut=` deferred to the origin
     /// binder it follows ([`Checker::origin_mutability_slot`]).
     fn self_arguments(&self) -> Vec<TyArg> {
-        self.params
-            .iter()
-            .map(|decl| {
-                if decl.is_origin_mutability_binder(&self.params) {
-                    TyArg::Val(CtValue::Deferred(decl.binder()))
-                } else {
-                    decl.own_argument()
-                }
-            })
-            .collect()
+        ParamDecl::self_arguments(&self.params)
     }
 
     /// The binder-to-origin map an instance's arguments bind, for

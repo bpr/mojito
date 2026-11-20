@@ -2361,28 +2361,12 @@ fn lower_function(
     );
 }
 
-/// The type of `self` in a member of struct `name` declaring `parameters`:
-/// the struct at its own binders, which parametric MIR spells by the bare
-/// name and each instance replaces. `SIMD` and the literal structs are the
-/// exceptions: the checker types their `Self` as the application at the
-/// binders, as upstream's is, since `SIMD`'s lane rules read its slots off
-/// it, and a literal's members read its text or value off it. The receiver
-/// is that type at the binders, which an instance substitutes as any other
-/// type.
+/// The type of `self` in a member of struct `name` declaring `parameters`,
+/// upstream's `Self`: the struct applied to every declared parameter
+/// ([`ParamDecl::self_arguments`]), which each instance substitutes as any
+/// other type.
 fn self_receiver_ty(name: &str, parameters: &[ParamDecl]) -> Ty {
-    let arguments = if [
-        mojito_types::types::SIMD_TYPE_NAME,
-        mojito_types::types::STRING_LITERAL_TYPE_NAME,
-        mojito_types::types::INT_LITERAL_TYPE_NAME,
-        mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
-    ]
-    .contains(&name)
-    {
-        parameters.iter().map(ParamDecl::own_argument).collect()
-    } else {
-        Vec::new()
-    };
-    TyKind::Struct(name.to_string(), arguments).into()
+    TyKind::Struct(name.to_string(), ParamDecl::self_arguments(parameters)).into()
 }
 
 /// Lower struct `structure`'s member `m`: its declaration, its parameter
@@ -2448,13 +2432,13 @@ fn lower_struct_member<P: DeclaredParam>(
             .unwrap_or_default();
         param_decls = struct_decls.into_iter().chain(param_decls).collect();
     }
-    let struct_parameters = checked
+    let struct_declared = checked
         .generic_parameters_at(&GenericSite::Struct {
             module,
             declaration: name.to_string(),
         })
-        .map(ParamDecl::argument_decls)
         .unwrap_or_default();
+    let struct_parameters = ParamDecl::argument_decls(struct_declared);
     let enclosing_binders =
         EnclosingBinders::of(struct_parameters.iter().chain(signature.argument_binders()));
     let defaults = regular
@@ -2554,7 +2538,7 @@ fn lower_struct_member<P: DeclaredParam>(
     if m.has_self {
         inferred.push(m.self_convention == Some(ArgConvention::Ref));
         names.push("self".to_string());
-        ptys.push(self_receiver_ty(name, &struct_parameters));
+        ptys.push(self_receiver_ty(name, struct_declared));
         owned.push(is_owned(&m.self_convention));
         deinit.push(is_deinit(&m.self_convention));
         refp.push(is_ref(&m.self_convention));

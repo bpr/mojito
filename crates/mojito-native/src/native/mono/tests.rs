@@ -2140,7 +2140,7 @@ fn an_instance_binds_origin_erased_types() {
 }
 
 #[test]
-fn a_method_instance_s_bare_self_names_its_owner_s_origin_binders() {
+fn a_method_instance_s_self_keeps_its_owner_s_origin_binders() {
     use mojito_types::origin::Origin;
     let source = "struct View[T: Copyable, origin: Origin[mut=False]](Copyable):\n\
          \x20   var p: UnsafePointer[Self.T, Self.origin]\n\
@@ -2170,7 +2170,7 @@ fn a_method_instance_s_bare_self_names_its_owner_s_origin_binders() {
             && origins
                 .iter()
                 .all(|origin| matches!(origin, Origin::Param(_))),
-        "`same`'s bare `Self` keeps `View`'s own origin binder: {origins:?}"
+        "`same`'s `Self` keeps `View`'s own origin binder: {origins:?}"
     );
 }
 

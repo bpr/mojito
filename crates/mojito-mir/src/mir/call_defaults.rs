@@ -61,7 +61,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 ///
 /// The slot takes the callee's default under the arguments the call binds
 /// the callee's binders to: its own `instantiated_args`, for a method its
-/// struct's from the receiver's type (a bare struct's binders stand for
+/// struct's from the receiver's type (`Self`'s binders stand for
 /// themselves), and for a nested body each enclosing declaration's, which
 /// stand for themselves inside it. A literal default is its constant,
 /// materialized at the parameter type as a written literal is; a recorded
@@ -1837,8 +1837,8 @@ fn requirement_member(dispatch: &str, declarations: &MirDeclarations) -> Option<
 
 /// The arguments the call binds `callee`'s binders to, then those of the
 /// scopes around it: a method's struct's from `receiver`, the receiver
-/// instance's type (a bare struct's binders standing for themselves), and
-/// a nested body's enclosing declarations', standing for themselves inside
+/// instance's type (`Self`'s binders standing for themselves), and a
+/// nested body's enclosing declarations', standing for themselves inside
 /// the function declaring them.
 fn bindings_of(
     callee: &str,
@@ -1869,19 +1869,11 @@ fn bindings_of(
     if let Some((name, arguments)) = receiver.and_then(|ty| ty.kind().as_non_simd_struct())
         && let Some(owner) = declarations.structure(name)
     {
-        if arguments.is_empty() {
-            bound.extend(
-                owner
-                    .argument_binders()
-                    .map(|decl| (decl.clone(), decl.own_argument())),
-            );
-        } else {
-            let view = owner.argument_view();
-            bound.extend(
-                ParamDecl::aligned_pairs(&view, &owner.view_arguments(arguments))
-                    .map(|(decl, argument)| (decl.clone(), argument.clone())),
-            );
-        }
+        let view = owner.argument_view();
+        bound.extend(
+            ParamDecl::aligned_pairs(&view, &owner.view_arguments(arguments))
+                .map(|(decl, argument)| (decl.clone(), argument.clone())),
+        );
     }
     bound
 }

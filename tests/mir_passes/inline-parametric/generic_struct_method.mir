@@ -1,4 +1,4 @@
-mojito-mir 1.202
+mojito-mir 1.213
 artifact {
   features: [],
   files: [
@@ -20,12 +20,12 @@ artifact {
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: Box, arguments: [] }],
+        param_types: [struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }))] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -34,7 +34,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
               const { dest: %r1, value: param(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }) },
               binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
             ],
@@ -48,12 +48,12 @@ artifact {
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: Box, arguments: [] }],
+        param_types: [struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }))] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -62,7 +62,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Box", slot: 0, name: k, type: meta_value(Int) }))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
               const { dest: %r1, value: param(param_decl_ref { owner: "Box.scaled", slot: 0, name: j, type: meta_value(Int) }) },
               binary { op: mul, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
             ],

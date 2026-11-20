@@ -3300,9 +3300,19 @@ than skipping arguments by kind. The MIR
 verifier rejects an instance of a struct declaring an origin binder that holds
 other than one argument per declared parameter, each origin and each `mut=`
 value at its binder's position (`verify/scope.rs`,
-`misplaced_instance_argument`), an erased
-spelling, a closure storage, and a static call's spelled receiver, whose
-instance drops the arguments of the parameters its callee removed, aside.
+`misplaced_instance_argument`), a closure storage's capture origins and a
+static call's spelled receiver, whose instance drops the arguments of the
+parameters its callee removed, aside. It rejects an application to no
+argument of any struct declaring parameters, unless the struct is keyed on
+one type pack (`Tuple()`): a member's receiver, like every own-type spelling
+in its body, is upstream's `Self`, the struct at every declared parameter
+(`ParamDecl::self_arguments`, which MIR lowering's `self_receiver_ty` and
+the checker's `StructInfo::self_arguments` share), so no bare spelling
+stands for the owner. A call of a member is checked against its declared
+types at the owner instance its `Self`-typed operand carries
+(`verify/calls.rs`, `owner_instance_param_types` over
+`types::struct_instance_types`), so `Counter[length]`'s method building a
+`Counter[length + 1]` passes it to `__moveinit__`.
 `Origin::Unbound` marks a slot the use site infers (a bare or `_`
 parameter or initialized-local annotation, an alias body); `Origin::Param` in an
 instance is the struct's own binder, rigid inside its methods. `Origin::coerces_to`
@@ -3326,10 +3336,9 @@ call's own type where the two agree once erased, so a caller's dereference of
 `id(Pointer(to=x))` keeps `x`'s origin. The instance's own origin
 binders and its body's own places stay symbolic, as upstream keeps an
 instance's origin parameters unspecialized (`$0`, `$1`), so concrete MIR
-admits `Origin::Param`. A method instance's bare `Self` is likewise its
-owner's instance over the owner's own origin binders
-(`Bindings::name_owner_origins`, from the declaration's origin binders),
-as upstream spells it `::Span[$0, $1, $2, $3]`, the same type an explicit
+admits `Origin::Param`. A method instance's `Self` is likewise its
+receiver's type, whose owner origin binders stay symbolic, as upstream
+spells it `::Span[$0, $1, $2, $3]`, the same type an explicit
 `Span[T, origin]` names.
 
 A type's node caches whether it is closed (`Ty::is_closed`: no parameter,
@@ -7627,10 +7636,10 @@ point where a slot declared in a loop is uninitialized again.
   keyed by the id of the origin binder whose position it holds
   (`ParamDecl::instance_origins`), beside the member's own origins, through
   `types::substitute_origin_params`, as upstream's substitution binds a
-  struct's origin parameters like any other. A projection over an origin
-  the arguments leave unbound (an erased spelling), an argument only the
-  elaborator binds, or a type or value member parameter stays open for
-  the elaborator. The substitution then folds each witness
+  struct's origin parameters like any other; in a member's `Self` that
+  origin is the binder itself. An instance spelled with no origin, an
+  argument only the elaborator binds, or a type or value member parameter
+  stays open for the elaborator. The substitution then folds each witness
   lookup it closed (the private `fold_witnesses`): a method call, a resolved operator, or a subscript
   through a bound (`symbol::is_trait_dispatch_symbol`) whose receiver
   (`mir::member_receiver_ty`) is now a struct names the member that
@@ -7701,11 +7710,11 @@ point where a slot declared in a loop is uninitialized again.
   A method of a parametric struct binds
   the struct's binders to its receiver type's arguments, and a call naming
   a struct whose one `__init__` is followed binds them to the constructed
-  type's, past the binders the initializer restates; the member's bare
-  spelling of its owner becomes that type, and a read of an owner value
+  type's, past the binders the initializer restates, and its origin
+  binders to that type's origins; `Self` in a body of the owner's own
+  member binds them to themselves, and a read of an owner value
   binder through `self` (`Self.k`, a member load) becomes its argument as
-  a constant. A struct keyed on one pack applied to no element (`Tuple()`
-  outside `Tuple`'s own members, where the bare spelling denotes `Self`)
+  a constant. A struct keyed on one pack applied to no element (`Tuple()`)
   binds the pack to the empty list (R1093). A type whose arguments do not
   align with the binders keeps the call. The
   initializer's `out self` is a fresh slot that a `var.declare` opens
@@ -8090,10 +8099,10 @@ point where a slot declared in a loop is uninitialized again.
   `bump(mut self)` over `Box[n]{v: Int}` remove `n`. A method that removed
   one is keyed and named off the struct template with its kept struct
   arguments leading its own (`S.st$mono`, `Specializer::enqueue`), so it
-  names no owner instance, and the bare spelling in its body stands for
-  the struct with the removed arguments erased
-  (`Specializer::erase_removed_owner`, `Box$mono$V$REMOVED$ARG`), which
-  every receiver's instance agrees with. A destructor, copy, or move
+  names no owner instance, and its receiver's `Self` substitutes each
+  removed argument as `_REMOVED_ARG` (`Box$mono$V$REMOVED$ARG`), which
+  binds nothing in unification and so agrees with every receiver's
+  instance. A destructor, copy, or move
   constructor is such a generator too: each concrete struct declaration's
   member table (`StructDeclaration::members`) names the instance its drops,
   copies, and moves run, which the elaborator records as it demands it

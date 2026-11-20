@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2402**.
+Next free ID: **R2403**.
 
 ## Ordered Work
 
@@ -10884,8 +10884,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Then key elaborated instances on the slot: drop
     `without_mutability`, and spell the owner instance over the struct's
     non-origin parameters in `owner_instance_ty`, `bind_static_receiver`,
-    `erase_removed_owner`, `name_owner_origins`, and the `enqueue` owner
-    arguments, so they agree with `substitute_ty`'s `instance_symbol`.
+    and the `enqueue` owner arguments, so they agree with `substitute_ty`'s `instance_symbol`.
   - Probe: `reflect[type_of(s)].name()` in `def f[m: Bool, //, o:
     Origin[mut=m]](s: Span[Int, o])`, called with `Span(xs)` and with an
     `ImmOrigin` span, prints `std.span.Span[mut, SIMD[DType.int, 1], {}]`
@@ -10966,19 +10965,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2373.
   - Model: Opus, Not Planned.
 
-- [ ] **R2364 A method's erased `Self` spelling carries none of its
-  struct's arguments, where upstream's `Self` carries every parameter**
+- [ ] **R2402 An instance spelling may carry its struct's type and value
+  arguments but no origin, which readers pair as an erased instance, where
+  upstream's instance carries every parameter**
 
-  A method's `self` typed `BagIter` with no arguments is an erased
-  instance, so `StructDeclaration::associated_type` leaves a member
-  template naming `Self.o` open there.
-  - The lever: type a bare `Self` or own-name receiver as the struct at
-    its own parameters (`StructInfo::self_arguments`), not as an erased
-    instance.
-  - Then `associated_type` needs no erased-spelling exit, and the
-    elaborator's `Bindings::name_owner_origins` (`native/mono.rs`), which
-    names the owner's origin binders in a bare `Self`, goes.
-  - Found while landing R762 (2026-11-19).
+  `ParamDecl::aligned_pairs` (`mojito-types/src/types.rs`) skips a
+  struct's origin binders when the arguments hold no origin
+  (`skip_origin_binders`), so a spelling with no origin still reads as an
+  instance whose origins are unbound.
+  - The lever: make the MIR verifier reject an instance of an
+    origin-declaring struct that carries no origin
+    (`misplaced_instance_argument`, `verify/scope.rs`), find its
+    producers sites-first, then delete the erased-spelling readers.
+  - Probe: `StructDeclaration::associated_type`
+    (`mojito-checked/src/declaration.rs`) returns `None` for such a
+    spelling, its last erased-spelling exit.
+  - Probe: `ParamDecl::aligned_arguments` and
+    `ParamDecl::instance_argument_view` filter origins out for it.
+  - Probe: `types_compatible` (`mir/verify/types.rs`) compares struct
+    arguments with origins set aside, so one side holding none passes.
+  - Found while landing R2364 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -10998,6 +11004,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`misplaced_instance_argument`, `verify/scope.rs`), and the
     `instantiated_args` truncation in `build_closure_storage`
     (`mir/lower_stmt.rs`).
+  - Probe: the elaborator's `unify_struct` drops a storage instance's
+    capture origins before matching its receiver `Self`
+    (`closure_storage_binder_arguments`, `native/mono/unify.rs`); seen
+    under `MOJITO_PRE_ELABORATION=0` on any program printing an `Int`
+    (`_write_int`'s `process_digits` closure).
   - Pinned by `assets/ok/capturing_lambda_storage.mojo`, whose capture
     access disappears when the storage's origins are misread.
   - Found while landing R762 (2026-11-19).
@@ -11014,9 +11025,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The MIR verifier's instance rule exempts a call's spelled receiver
     for it (`misplaced_instance_argument`, `verify/scope.rs`).
   - The lever: write `CtValue::RemovedArg` in each removed slot, as an
-    erased instance does elsewhere, read it in the elaborator's
-    `bind_static_receiver` (`native/mono/infer.rs`), and delete the
-    exemption.
+    erased instance does elsewhere, and delete the exemption. The
+    elaborator's unification already lets a `_REMOVED_ARG` solution bind
+    nothing (`unify::bind_value`, landed with R2364), so
+    `bind_static_receiver` (`native/mono/infer.rs`) reads such a slot as
+    it reads a method receiver's.
   - Probe: `VariadicPack.__len__(self)` calls `Self.__len__()`, whose
     receiver after `remove-unused-params` holds 3 of its 5 arguments.
   - Found while landing R762 (2026-11-19).

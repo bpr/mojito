@@ -1,4 +1,4 @@
-mojito-mir 1.202
+mojito-mir 1.213
 artifact {
   features: [],
   files: [
@@ -111,12 +111,12 @@ artifact {
         vars: 2,
         var_names: [self, copy],
         params: 2,
-        param_types: [struct_type { name: IBox, arguments: [] }, struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] }],
+        param_types: [struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] }, struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] }],
         owned_params: [false, false],
         deinit_params: [false, false],
         ref_params: [false, false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: IBox, arguments: [] } }, var_type { var: $v1, type: struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v1, type: struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] } }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -127,7 +127,7 @@ artifact {
             instructions: [
               place.load { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               value.copy { dest: %r1, value: %r0 },
-              place.store { place: place { root: $v0, root_type: present(struct_type { name: IBox, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r1 }
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: IBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "IBox", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r1 }
             ],
             terminator: return { value: absent }
           }
@@ -139,12 +139,12 @@ artifact {
         vars: 2,
         var_names: [self, move],
         params: 2,
-        param_types: [struct_type { name: MBox, arguments: [] }, struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] }],
+        param_types: [struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] }, struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] }],
         owned_params: [false, false],
         deinit_params: [false, true],
         ref_params: [false, false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: MBox, arguments: [] } }, var_type { var: $v1, type: struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v1, type: struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] } }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -156,7 +156,7 @@ artifact {
               place.load { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               value.copy { dest: %r1, value: %r0 },
               consume.var { var: $v1 },
-              place.store { place: place { root: $v0, root_type: present(struct_type { name: MBox, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r1 }
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: MBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "MBox", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r1 }
             ],
             terminator: return { value: absent }
           }
@@ -168,12 +168,12 @@ artifact {
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: KBox, arguments: [] }],
+        param_types: [struct_type { name: KBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "KBox", slot: 0, name: n, type: meta_value(Int) }))] }],
         owned_params: [false],
         deinit_params: [true],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: KBox, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: KBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "KBox", slot: 0, name: n, type: meta_value(Int) }))] } }],
         return_type: present(None),
         raises: false,
         error_type: absent,

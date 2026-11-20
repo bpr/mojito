@@ -1,4 +1,4 @@
-mojito-mir 1.202
+mojito-mir 1.213
 artifact {
   features: [],
   files: [
@@ -21,12 +21,12 @@ artifact {
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: NBox, arguments: [] }],
+        param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }))] }],
         owned_params: [false],
         deinit_params: [true],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }))] } }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -37,7 +37,7 @@ artifact {
             instructions: [
               const { dest: %r0, value: string("del") },
               const { dest: %r1, value: param(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }) },
-              place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r2, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               call { dest: %r3, func: print, raises: absent, args: [%r0, %r1, %r2], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               consume.var { var: $v0 }
             ],
@@ -51,12 +51,12 @@ artifact {
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: NBox, arguments: [] }],
+        param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }))] } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -65,7 +65,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "NBox", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
               value.copy { dest: %r1, value: %r0 }
             ],
             terminator: return { value: present(%r1) }

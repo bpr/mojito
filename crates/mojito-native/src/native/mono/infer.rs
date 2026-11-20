@@ -503,26 +503,6 @@ impl Specializer<'_> {
                 );
             }
         }
-        if bindings.self_instance.is_none()
-            && let Some(receiver) = receiver
-            && !carries_instance_in_slots(peel_refs(reg_ty(caller, receiver, owner)?))
-            && let Some((receiver_name, _)) = (peel_refs(reg_ty(caller, receiver, owner)?))
-                .kind()
-                .as_non_simd_struct()
-            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
-            && struct_decl.argument_binders().next().is_some()
-        {
-            bindings.self_instance = Some((
-                nominal_template(receiver_name).to_string(),
-                owner_instance_ty(
-                    nominal_template(receiver_name),
-                    &struct_decl.argument_view(),
-                    &bindings,
-                )?,
-            ));
-            owner_covered =
-                owner_covered_prefix(&struct_decl.argument_view(), &declaration.argument_view());
-        }
         let mut arguments = inherited_arguments;
         arguments.extend(match receiver {
             Some(receiver) if bindings.self_instance.is_none() => self
@@ -755,22 +735,6 @@ impl Specializer<'_> {
                     &declaration.argument_view(),
                 );
             }
-        }
-        if bindings.self_instance.is_none()
-            && let Some((receiver_name, _)) = receiver.kind().as_non_simd_struct()
-            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
-            && struct_decl.argument_binders().next().is_some()
-        {
-            bindings.self_instance = Some((
-                nominal_template(receiver_name).to_string(),
-                owner_instance_ty(
-                    nominal_template(receiver_name),
-                    &struct_decl.argument_view(),
-                    &bindings,
-                )?,
-            ));
-            owner_covered =
-                owner_covered_prefix(&struct_decl.argument_view(), &declaration.argument_view());
         }
         let mut arguments = if bindings.self_instance.is_none() {
             self.uninstanced_owner_arguments(peel_refs(receiver), &bindings, target)?

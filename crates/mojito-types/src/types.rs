@@ -4459,6 +4459,22 @@ impl ParamDecl {
         typed
     }
 
+    /// The arguments of the declaration declaring `decls` at its own
+    /// parameters, upstream's `Self`: each binder by [`Self::own_argument`],
+    /// except an origin's `mut=` binder, which stays the deferred binder.
+    pub fn self_arguments(decls: &[Self]) -> Vec<TyArg> {
+        decls
+            .iter()
+            .map(|decl| {
+                if decl.is_origin_mutability_binder(decls) {
+                    TyArg::Val(CtValue::Deferred(decl.binder()))
+                } else {
+                    decl.own_argument()
+                }
+            })
+            .collect()
+    }
+
     /// The argument this binder contributes to its declaration's own `Self`
     /// type: a type binder as its `TyKind::Param`, a value binder as a reference
     /// to itself.
@@ -6526,24 +6542,43 @@ pub fn struct_field_types<'a>(
     {
         return Some(std::borrow::Cow::Borrowed(fields));
     }
+    let types: Vec<Ty> = fields.iter().map(|(_, field)| field.clone()).collect();
+    struct_instance_types(decls, arguments, &types)?
+        .into_iter()
+        .zip(fields)
+        .map(|(field, (name, _))| (!names_own_binder(&field)).then(|| (name.clone(), field)))
+        .collect::<Option<Vec<_>>>()
+        .map(std::borrow::Cow::Owned)
+}
+
+/// Each of `types`, written over a struct's binders `decls`, at its
+/// application `arguments`.
+///
+/// A type pack bound whole expands, and every other binder an argument
+/// binds is replaced by it. An argument may name the binders themselves
+/// (`Counter[length + 1]` inside `Counter`'s own members), as a call of a
+/// member at another instance of its owner does. `None` when a
+/// replacement fails.
+pub fn struct_instance_types(
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+    types: &[Ty],
+) -> Option<Vec<Ty>> {
+    let arguments = &*ParamDecl::aligned_arguments(decls, arguments);
     let context = ParamContext::detached();
     let bindings = struct_argument_bindings(&context, decls, arguments);
     let packs = struct_pack_arguments(decls, arguments);
-    fields
+    types
         .iter()
-        .map(|(name, field)| {
-            let field = if packs.is_empty() {
-                std::borrow::Cow::Borrowed(field)
+        .map(|ty| {
+            let ty = if packs.is_empty() {
+                std::borrow::Cow::Borrowed(ty)
             } else {
-                std::borrow::Cow::Owned(substitute_packs(field, &TySubst::new(), &packs, &[]))
+                std::borrow::Cow::Owned(substitute_packs(ty, &TySubst::new(), &packs, &[]))
             };
-            replace_parameters(&context, &field, &bindings, 0)
-                .ok()
-                .filter(|field| !names_own_binder(field))
-                .map(|field| (name.clone(), field))
+            replace_parameters(&context, &ty, &bindings, 0).ok()
         })
-        .collect::<Option<Vec<_>>>()
-        .map(std::borrow::Cow::Owned)
+        .collect()
 }
 
 /// The bindings a struct application's `arguments` give its declared
@@ -9228,6 +9263,15 @@ fn is_identity_application(decls: &[ParamDecl], arguments: &[TyArg]) -> bool {
                 }
                 (ParamDecl::Value { id, .. }, TyArg::Val(CtValue::Expr(expr))) => {
                     matches!(expr.kind(), ParamKind::DeclRef(reference) if reference.id == *id)
+                }
+                // An origin's `mut=` binder deferred to itself, and a pack's
+                // visible list binder at its own list, as
+                // [`ParamDecl::self_arguments`] spells them.
+                (ParamDecl::Value { id, .. }, TyArg::Val(CtValue::Deferred(binder))) => {
+                    binder.id == *id
+                }
+                (decl @ ParamDecl::Value { .. }, TyArg::Val(value)) => {
+                    decl.pack_value().as_ref() == Some(value)
                 }
                 _ => false,
             })

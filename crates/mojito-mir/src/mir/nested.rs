@@ -1004,7 +1004,7 @@ fn lower_closure_storage(
     // `__del__is_trivial`), as are its copy and move.
     if !storage.declared.trivially_register_passable() {
         lower_synthesized_member(
-            (name, &[]),
+            (name, &storage.param_decls),
             &storage.fields,
             SynthesizedMember::Destroy,
             functions,
@@ -2024,16 +2024,59 @@ pub(super) fn upgrade_struct_instance_mutability(
     place_struct_origins(placing, functions, declarations);
 }
 
+/// Give each member body `functions` and `declarations` hold of a struct
+/// declaring parameters, as an artifact before MIR 1.213 spells its owner
+/// bare, that owner at every declared parameter
+/// ([`ParamDecl::self_arguments`]): upstream's `Self`, which a member's
+/// receiver and every own-type spelling in its body now carry. A nested
+/// body is its enclosing member's.
+pub(super) fn upgrade_bare_owner_spellings(
+    functions: &mut [(String, MirFunction)],
+    declarations: &mut MirDeclarations,
+) {
+    let owner_self = |name: &str, declarations: &MirDeclarations| {
+        let mut root = name;
+        while let Some(enclosing) = declarations
+            .function(root)
+            .and_then(|declaration| declaration.enclosing.as_deref())
+        {
+            root = enclosing;
+        }
+        let (owner, _) = mojito_symbol::symbol::split_method_symbol(root)?;
+        let structure = declarations.structure(owner)?;
+        (!structure.param_decls.is_empty()).then(|| BareOwner {
+            name: owner.to_string(),
+            spelled: ParamDecl::self_arguments(&structure.param_decls),
+        })
+    };
+    for (name, function) in functions.iter_mut() {
+        if let Some(owner) = owner_self(name, declarations) {
+            let Ok(()) = crate::mir::visit::walk_function_mut(&mut Rewriting(owner), function);
+        }
+    }
+    let owners: Vec<_> = declarations
+        .functions
+        .iter()
+        .map(|function| owner_self(&function.lowered_name, declarations))
+        .collect();
+    for (function, owner) in declarations.functions.iter_mut().zip(owners) {
+        if let Some(owner) = owner {
+            Rewriting(owner).declared(function);
+        }
+    }
+}
+
 /// Rewrite every struct instance `functions` and `declarations` spell by
 /// `placing`.
 fn place_struct_origins(
-    mut placing: OriginTails,
+    placing: OriginTails,
     functions: &mut [(String, MirFunction)],
     declarations: &mut MirDeclarations,
 ) {
     if placing.decls.is_empty() {
         return;
     }
+    let mut placing = Rewriting(placing);
     for (_, function) in functions.iter_mut() {
         let Ok(()) = crate::mir::visit::walk_function_mut(&mut placing, function);
     }
@@ -2043,6 +2086,50 @@ fn place_struct_origins(
         }
     }
     for function in &mut declarations.functions {
+        placing.declared(function);
+    }
+}
+
+/// [`upgrade_bare_owner_spellings`]'s rewrite: the owner a member body
+/// spells bare, and its arguments at its own parameters.
+struct BareOwner {
+    name: String,
+    spelled: Vec<TyArg>,
+}
+
+impl mojito_types::types::TyRewrite for BareOwner {
+    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        ty.kind()
+            .as_non_simd_struct()
+            .is_some_and(|(name, arguments)| *name == self.name && arguments.is_empty())
+            .then(|| ty.reusing(TyKind::Struct(self.name.clone(), self.spelled.clone())))
+    }
+
+    fn expr(
+        &mut self,
+        expr: &mojito_types::param_expr::ParamExpr,
+    ) -> Result<mojito_types::param_expr::ParamExpr, mojito_types::param_expr::ParamError> {
+        Ok(expr.clone())
+    }
+
+    fn visits_closed(&self) -> bool {
+        true
+    }
+}
+
+/// A body's and a declaration's types rewritten by the [`TyRewrite`]
+/// `R`: an upgrade of an older artifact's struct spellings.
+///
+/// [`TyRewrite`]: mojito_types::types::TyRewrite
+struct Rewriting<R>(R);
+
+impl<R: mojito_types::types::TyRewrite> Rewriting<R> {
+    fn placed(&mut self, ty: &Ty) -> Ty {
+        mojito_types::types::rewrite_ty(ty, &mut self.0).unwrap_or_else(|_| ty.clone())
+    }
+
+    /// Rewrite each type `function`'s declaration spells.
+    fn declared(&mut self, function: &mut MirFunctionDeclaration) {
         for ty in function
             .param_types
             .iter_mut()
@@ -2051,7 +2138,7 @@ fn place_struct_origins(
             .chain(std::iter::once(&mut function.ret_ty))
             .chain(&mut function.error_ty)
         {
-            *ty = placing.placed(ty);
+            *ty = self.placed(ty);
         }
     }
 }
@@ -2128,7 +2215,7 @@ impl mojito_types::types::TyRewrite for OriginTails {
     }
 }
 
-impl crate::mir::visit::MutTypeVisitor for OriginTails {
+impl<R: mojito_types::types::TyRewrite> crate::mir::visit::MutTypeVisitor for Rewriting<R> {
     type Error = std::convert::Infallible;
 
     fn visit_ty(&mut self, ty: &mut Ty, _: crate::mir::visit::TySite) -> Result<(), Self::Error> {
@@ -2137,7 +2224,9 @@ impl crate::mir::visit::MutTypeVisitor for OriginTails {
     }
 
     fn visit_ty_arg(&mut self, arg: &mut TyArg) -> Result<(), Self::Error> {
-        *arg = self.placed_argument(arg);
+        if let TyArg::Ty(ty) = arg {
+            *ty = self.placed(ty);
+        }
         Ok(())
     }
 

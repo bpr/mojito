@@ -177,10 +177,8 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     {
         return true;
     }
-    // A bare `Struct(name, [])` is the established erased spelling for a
-    // receiver or synthesized construction of any instantiation of `name`.
-    // Otherwise the origin arguments erase from the runtime ABI like a
-    // pointer origin: the checker owns origin identity, so two
+    // The origin arguments erase from the runtime ABI like a pointer
+    // origin: the checker owns origin identity, so two
     // instantiations that differ only in their origin arguments, or spell
     // them on one side alone (an instance's own spelling holds none), are
     // one type here.
@@ -189,9 +187,6 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         expected.kind().as_non_simd_struct(),
     ) && found_name == expected_name
     {
-        if found_args.is_empty() || expected_args.is_empty() {
-            return true;
-        }
         let binding = |arguments: &'_ [TyArg]| {
             arguments
                 .iter()

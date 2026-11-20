@@ -5,12 +5,12 @@
         vars: 2,
         var_names: [self, left],
         params: 2,
-        param_types: [struct_type { name: BagIter, arguments: [] }, Int],
+        param_types: [struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }, Int],
         owned_params: [false, false],
         deinit_params: [false, false],
         ref_params: [false, false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [] } }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] } }, var_type { var: $v1, type: Int }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -20,7 +20,7 @@
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v1, mode: copy },
-              place.store { place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent }, src: %r0 }
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent }, src: %r0 }
             ],
             terminator: return { value: absent }
           }
@@ -32,21 +32,21 @@
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: BagIter, arguments: [] }],
+        param_types: [struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [true],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] } }],
         return_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: BagIter, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] } }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 444, end: 448, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 444, end: 455, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [], type: present(struct_type { name: BagIter, arguments: [] }), through: absent } },
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }), projections: [], type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }), through: absent } },
               call.method { dest: %r1, recv: %r0, method: copy, resolved: present("BagIter.copy"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: false, receiver_convention: absent, capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
@@ -59,12 +59,12 @@
         vars: 2,
         var_names: [self, "$error"],
         params: 1,
-        param_types: [struct_type { name: BagIter, arguments: [] }],
+        param_types: [struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [true],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [] } }, var_type { var: $v1, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] } }, var_type { var: $v1, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
         return_type: present(Int),
         raises: true,
         error_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }),
@@ -74,18 +74,18 @@
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
               const { dest: %r1, value: int_literal(0) },
               literal.materialize { dest: %r2, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r3, fields: [%r2] },
               call.method { dest: %r4, recv: %r0, method: __le__, resolved: present("SIMD.__le__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r3], kwargs: [], recv_writes: false, receiver_convention: absent, capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               if { results: [], condition: %r4, then: [bb0 { instructions: [call { dest: %r5, func: "__module$std$iter$StopIteration.__init__", raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v1, src: %r5, binding_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }), in_place: false }], terminator: error_return {} }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
-              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
               const { dest: %r7, value: int_literal(1) },
               literal.materialize { dest: %r8, value: %r7, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r9, fields: [%r8] },
               call.method { dest: %r11, recv: %r6, method: __isub__, resolved: present("SIMD.__isub__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r9], kwargs: [], recv_writes: true, receiver_convention: present(mut), capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
-              place.load { dest: %r12, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r12, place: place { root: $v0, root_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
               value.copy { dest: %r13, value: %r12 }
             ],
             terminator: return { value: present(%r13) }
@@ -98,12 +98,12 @@
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: BagIter, arguments: [] }],
+        param_types: [struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] } }],
         return_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }),
         raises: false,
         error_type: absent,
@@ -124,12 +124,12 @@
         vars: 2,
         var_names: [self, n],
         params: 2,
-        param_types: [struct_type { name: Bag, arguments: [] }, Int],
+        param_types: [struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] }, Int],
         owned_params: [false, false],
         deinit_params: [false, false],
         ref_params: [false, false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Bag, arguments: [] } }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] } }, var_type { var: $v1, type: Int }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -139,7 +139,7 @@
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v1, mode: copy },
-              place.store { place: place { root: $v0, root_type: present(struct_type { name: Bag, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r0 }
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r0 }
             ],
             terminator: return { value: absent }
           }
@@ -151,12 +151,12 @@
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: Bag, arguments: [] }],
+        param_types: [struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [true],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Bag, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] } }],
         return_type: present(struct_type { name: BagIter, arguments: [origin_arg(origin_param(1))] }),
         raises: false,
         error_type: absent,
@@ -165,7 +165,7 @@
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Bag, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
               call { dest: %r1, func: "BagIter.__init__", raises: absent, args: [%r0], kwargs: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
@@ -178,12 +178,12 @@
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: Bag, arguments: [] }],
+        param_types: [struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Bag, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] } }],
         return_type: present(struct_type { name: Bag, arguments: [origin_arg(origin_param(1))] }),
         raises: false,
         error_type: absent,
@@ -204,12 +204,12 @@
         vars: 2,
         var_names: [self, left],
         params: 2,
-        param_types: [struct_type { name: Walk, arguments: [] }, Int],
+        param_types: [struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }, Int],
         owned_params: [false, false],
         deinit_params: [false, false],
         ref_params: [false, false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [] } }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] } }, var_type { var: $v1, type: Int }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -219,7 +219,7 @@
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v1, mode: copy },
-              place.store { place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent }, src: %r0 }
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent }, src: %r0 }
             ],
             terminator: return { value: absent }
           }
@@ -231,21 +231,21 @@
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: Walk, arguments: [] }],
+        param_types: [struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [true],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] } }],
         return_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: Walk, arguments: [] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] } }],
+        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1406, end: 1410, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1406, end: 1417, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [], type: present(struct_type { name: Walk, arguments: [] }), through: absent } },
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }), projections: [], type: present(struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }), through: absent } },
               call.method { dest: %r1, recv: %r0, method: copy, resolved: present("Walk.copy"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_writes: false, receiver_convention: absent, capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
@@ -258,12 +258,12 @@
         vars: 2,
         var_names: [self, "$error"],
         params: 1,
-        param_types: [struct_type { name: Walk, arguments: [] }],
+        param_types: [struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [true],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [] } }, var_type { var: $v1, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] } }, var_type { var: $v1, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
         return_type: present(Int),
         raises: true,
         error_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }),
@@ -273,18 +273,18 @@
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
               const { dest: %r1, value: int_literal(0) },
               literal.materialize { dest: %r2, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r3, fields: [%r2] },
               call.method { dest: %r4, recv: %r0, method: __le__, resolved: present("SIMD.__le__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r3], kwargs: [], recv_writes: false, receiver_convention: absent, capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               if { results: [], condition: %r4, then: [bb0 { instructions: [call { dest: %r5, func: "__module$std$iter$StopIteration.__init__", raises: absent, args: [], kwargs: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v1, src: %r5, binding_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }), in_place: false }], terminator: error_return {} }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
-              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
               const { dest: %r7, value: int_literal(1) },
               literal.materialize { dest: %r8, value: %r7, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r9, fields: [%r8] },
               call.method { dest: %r11, recv: %r6, method: __isub__, resolved: present("SIMD.__isub__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r9], kwargs: [], recv_writes: true, receiver_convention: present(mut), capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
-              place.load { dest: %r12, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r12, place: place { root: $v0, root_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }), projections: [projection { op: field(left), type: Int }], type: present(Int), through: absent } },
               value.copy { dest: %r13, value: %r12 }
             ],
             terminator: return { value: present(%r13) }
@@ -297,12 +297,12 @@
         vars: 1,
         var_names: [self],
         params: 1,
-        param_types: [struct_type { name: Walk, arguments: [] }],
+        param_types: [struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] } }],
         return_type: present(struct_type { name: Walk, arguments: [origin_arg(origin_param(1))] }),
         raises: false,
         error_type: absent,

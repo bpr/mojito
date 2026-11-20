@@ -2180,7 +2180,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `nested::upgrade_struct_instance_arguments` moves an older artifact's
   origin tail into place, and 1.209's
   `nested::upgrade_struct_instance_mutability` gives its instances their
-  `mut=` slots. `checker/origins/transfer.rs` owns the
+  `mut=` slots. A member's receiver and every own-type spelling in its
+  body are upstream's `Self`, the struct at every declared parameter
+  (`ParamDecl::self_arguments`, `mojito-types`, read by the checker's
+  `StructInfo::self_arguments` and MIR lowering's `self_receiver_ty`);
+  MIR text 1.213's `nested::upgrade_bare_owner_spellings` spells an older
+  member's bare owner so. The MIR verifier checks a member call at the
+  owner instance its `Self`-typed operand carries
+  (`verify/calls.rs:owner_instance_param_types`, over
+  `types::struct_instance_types`), and the elaborator's unification lets an
+  erased `_REMOVED_ARG` solution bind nothing (`unify::bind_value`).
+  `checker/origins/transfer.rs` owns the
   carried source (`SigOrigin::Carried`, recorded by
   `record_transfer_effect` and closed by `replay_transfer_effects` with the
   receiver's arguments and the call's own bindings, `call_closed`).

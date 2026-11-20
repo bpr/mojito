@@ -556,9 +556,8 @@ fn receiver_type<'a>(
 }
 
 /// The parameters of the struct whose method `name` is that a call of
-/// `name` on a `receiver` of that type passes as themselves: every one
-/// when the receiver is the bare `Self`, else each the receiver's
-/// argument at it names.
+/// `name` on a `receiver` of that type passes as themselves: each the
+/// receiver's argument at it names, every one when the receiver is `Self`.
 fn receiver_forwarded_owner_params(
     name: &str,
     receiver: &Ty,
@@ -577,9 +576,6 @@ fn receiver_forwarded_owner_params(
         return Vec::new();
     }
     let decls = method_owner_params(name, declarations);
-    if arguments.is_empty() {
-        return decls.iter().map(|decl| decl.id().clone()).collect();
-    }
     if arguments.len() != decls.len() {
         return Vec::new();
     }
@@ -599,6 +595,8 @@ fn names_parameter(argument: &TyArg, decl: &ParamDecl) -> bool {
         TyArg::Val(CtValue::Expr(expr)) => {
             matches!(expr.kind(), ParamKind::DeclRef(reference) if reference.id == *id)
         }
+        TyArg::Val(CtValue::Deferred(binder)) => binder.id == *id,
+        TyArg::Val(value) if decl.pack_value().as_ref() == Some(value) => true,
         TyArg::Ty(ty) => matches!(ty.kind(), TyKind::Param { binder, .. } if binder.id == *id),
         TyArg::Origin(mojito_types::origin::Origin::Param(origin)) => {
             matches!(decl, ParamDecl::Origin { origin: declared, .. } if declared == origin)
