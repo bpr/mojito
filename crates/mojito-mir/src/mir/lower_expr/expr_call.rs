@@ -390,6 +390,9 @@ impl<'a> Flatten<'a> {
         if let Some(op) = Self::checked_mlir_op(call) {
             return self.lower_mlir_op(call, op, args);
         }
+        if let Some(op) = Self::checked_pointer_op(call) {
+            return self.lower_pointer_op(call, op, args);
+        }
         if let Some(called) = Self::checked_llvm_intrinsic(call) {
             return self.lower_llvm_intrinsic(call, called, args);
         }

@@ -526,7 +526,8 @@ impl CmpPredicate {
 /// run-time `!kgen.string`: `pop.string.size`, its byte length as an
 /// `index`, and `pop.string.address`, the address of its bytes, and the
 /// conversions of a `!kgen.dtype` to and from its `ui8` code,
-/// `pop.dtype.to_ui8` and `pop.dtype.from_ui8`.
+/// `pop.dtype.to_ui8` and `pop.dtype.from_ui8`, and the address of a
+/// `!kgen.pointer` as an `index`, `pop.pointer_to_index`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PopOp {
     Div,
@@ -547,11 +548,12 @@ pub enum PopOp {
     StringAddress,
     DtypeToUi8,
     DtypeFromUi8,
+    PointerToIndex,
 }
 
 impl PopOp {
     /// Every operation, in declaration order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Div,
         Self::Rem,
         Self::Abs,
@@ -570,6 +572,7 @@ impl PopOp {
         Self::StringAddress,
         Self::DtypeToUi8,
         Self::DtypeFromUi8,
+        Self::PointerToIndex,
     ];
 
     /// The number of operands.
@@ -583,7 +586,8 @@ impl PopOp {
             | Self::StringSize
             | Self::StringAddress
             | Self::DtypeToUi8
-            | Self::DtypeFromUi8 => 1,
+            | Self::DtypeFromUi8
+            | Self::PointerToIndex => 1,
             Self::Fma => 3,
             _ => 2,
         }
@@ -627,6 +631,7 @@ impl PopOp {
             Self::StringAddress => "string.address",
             Self::DtypeToUi8 => "dtype.to_ui8",
             Self::DtypeFromUi8 => "dtype.from_ui8",
+            Self::PointerToIndex => "pointer_to_index",
         }
     }
 
@@ -688,6 +693,87 @@ impl FastMathFlags {
     /// Whether every flag of `other` is in the set.
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
+    }
+}
+
+/// One of upstream's ops over a `!kgen.pointer` or a `!lit.ref`, which the
+/// bodies of its `struct Pointer` are written in.
+///
+/// `lit.ref.to_pointer` and `lit.ref.from_pointer` retype one address
+/// between a `!lit.ref` and a `!kgen.pointer`, `pop.pointer.bitcast` retypes
+/// a `!kgen.pointer`'s element, `pop.offset` moves it by an `index` count of
+/// elements, `pop.pointer_to_index` reads its address as an `index`, and
+/// `pop.load` and `pop.store` read and write the register-passable element
+/// it addresses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum PointerOp {
+    LitRefToPointer,
+    LitRefFromPointer,
+    Bitcast,
+    Offset,
+    PointerToIndex,
+    Load,
+    Store,
+}
+
+impl PointerOp {
+    /// Every operation, in declaration order.
+    pub const ALL: [Self; 7] = [
+        Self::LitRefToPointer,
+        Self::LitRefFromPointer,
+        Self::Bitcast,
+        Self::Offset,
+        Self::PointerToIndex,
+        Self::Load,
+        Self::Store,
+    ];
+
+    /// The op spelled `name`, if it is one of these.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|op| op.name() == name)
+    }
+
+    /// The upstream spelling of this operation.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::LitRefToPointer => "lit.ref.to_pointer",
+            Self::LitRefFromPointer => "lit.ref.from_pointer",
+            Self::Bitcast => "pop.pointer.bitcast",
+            Self::Offset => "pop.offset",
+            Self::PointerToIndex => "pop.pointer_to_index",
+            Self::Load => "pop.load",
+            Self::Store => "pop.store",
+        }
+    }
+
+    /// The number of operands the op takes.
+    pub const fn arity(self) -> usize {
+        match self {
+            Self::Offset | Self::Store => 2,
+            _ => 1,
+        }
+    }
+
+    /// The attributes the op holds, each paired with whether its verifier
+    /// requires it: `_type` names a result type, `name` a `!lit.ref`'s
+    /// debug name, `alignment` an `index`, and the memory flags an `i1`.
+    pub const fn attributes(self) -> &'static [(&'static str, bool)] {
+        match self {
+            Self::LitRefFromPointer => &[("_type", true), ("name", true)],
+            Self::Bitcast => &[("_type", true)],
+            Self::Load => &[
+                ("alignment", false),
+                ("isInvariant", true),
+                ("isNonTemporal", true),
+                ("isVolatile", true),
+            ],
+            Self::Store => &[
+                ("alignment", false),
+                ("isNonTemporal", true),
+                ("isVolatile", true),
+            ],
+            Self::LitRefToPointer | Self::Offset | Self::PointerToIndex => &[],
+        }
     }
 }
 

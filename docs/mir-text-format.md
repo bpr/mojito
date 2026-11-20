@@ -1289,6 +1289,15 @@ which reads with those origin binders appended
 (`nested::upgrade_closure_storage_origins`). The package format moves to
 `mojito-package 242`.
 
+Schema 1.215 adds the `pop` op `pointer_to_index`, upstream's
+`pop.pointer_to_index`: one `kgen_pointer` operand's address as a
+`!kgen.scalar<index>`, the storage of an `Int`. The checked handoff records
+upstream's pointer `__mlir_op`s as `SemanticAdjustment::MlirPointerOp`,
+which MIR lowering writes onto `pointer.convert`, `pointer.bitcast` (now
+also between two `kgen_pointer`s), the pointer `binary add`, this op,
+`ref.read`, and `ref.write`. The package format moves to
+`mojito-package 243`.
+
 Schema 1.207 adds two origin spellings a struct's origin argument can
 hold, as upstream's `_mlir_origin` attribute can: `origin_projected { base,
 path }`, an interior or subtree projection over an origin binder or the
@@ -2572,10 +2581,10 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage, or (schema 1.164) one is a `ui8` and the other a `UInt8`'s `!kgen.scalar<ui8>` storage |
 | `PointerConvert` | `pointer.convert { dest, value }` (schema 1.140): `dest` and `value` are each a `pointer`, a `kgen_pointer`, or a `lit_ref` of one element, the bits unchanged: upstream's `struct.create` and `struct.extract` of a `Pointer`'s `_mlir_value`, and `lit.ref.to_pointer` |
-| `PointerBitcast` | `pointer.bitcast { dest, value }` (schema 1.195): `dest` and `value` are each a `pointer`, of any two elements and origins of one mutability, the bits unchanged: upstream's `pop.pointer.bitcast`, the body of `Pointer.unsafe_bitcast[U]()`. The VM runs one only where the two elements are one type up to origins, and refuses any other |
+| `PointerBitcast` | `pointer.bitcast { dest, value }` (schema 1.195): `dest` and `value` are each a `pointer`, of any two elements and origins of one mutability, or each a `kgen_pointer` (schema 1.215), the bits unchanged: upstream's `pop.pointer.bitcast`, the body of `Pointer.unsafe_bitcast[U]()`. The VM runs one only where the two elements are one type up to origins, and refuses any other |
 | `IsRunInComptimeInterpreter` | `is_run_in_comptime_interpreter { dest }` (schema 1.128): a `Bool`, `True` exactly while the comptime interpreter runs the function; never folded before a backend reads it |
 | `SourceLoc` | `kgen.source_loc { dest, inline_count, location: [site {...}] }` (schema 1.183): the `(line, column, file)` `Tuple` of the call site `inline_count` frames out along the call-site chain `location`; resolved to constants by the driver after the post-elaboration pipeline |
-| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div` (before schema 1.145, which writes `binary div`), `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133), or `string.size` or `string.address` (schema 1.135), reading one `KgenString` operand's byte length into an `index` or its bytes' address into a static `Pointer[UInt8]`, or `dtype.to_ui8` or `dtype.from_ui8` (schema 1.164), converting one `kgen_dtype` operand to its `ui8` code or one `ui8` code to its `kgen_dtype`; an integer division by zero traps; schema 1.181 adds an optional `fastmath` constant, a `pop.fma`'s `fastmathFlags` |
+| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div` (before schema 1.145, which writes `binary div`), `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133), or `string.size` or `string.address` (schema 1.135), reading one `KgenString` operand's byte length into an `index` or its bytes' address into a static `Pointer[UInt8]`, or `dtype.to_ui8` or `dtype.from_ui8` (schema 1.164), converting one `kgen_dtype` operand to its `ui8` code or one `ui8` code to its `kgen_dtype`, or `pointer_to_index` (schema 1.215), reading one `kgen_pointer` operand's address into a `!kgen.scalar<index>`; an integer division by zero traps; schema 1.181 adds an optional `fastmath` constant, a `pop.fma`'s `fastmathFlags` |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
 | `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |

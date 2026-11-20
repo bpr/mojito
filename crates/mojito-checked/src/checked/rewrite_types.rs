@@ -762,6 +762,7 @@ impl RewriteTypes for SemanticAdjustment {
             | Self::SimdShuffle { mask: _ }
             | Self::MarkInitialized
             | Self::MarkDestroyed
+            | Self::MlirPointerOp { .. }
             | Self::PopSimdShuffle { mask: _ }
             | Self::PopArrayRepeat
             | Self::KgenStructLoadIndirect

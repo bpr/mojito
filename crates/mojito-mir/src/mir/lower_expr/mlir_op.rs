@@ -10,11 +10,12 @@
 //! `pop.array.gep`, lowered to `array.repeat`, `array.get`,
 //! `array.replace`, and `array.gep`, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
-//! and `Int`, lowered to `builtin.cast`.
+//! and `Int`, lowered to `builtin.cast`, and the pointer ops over a
+//! `!kgen.pointer` or a `!lit.ref`, lowered onto the address instructions.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::mlir::{MlirLowering, MlirOp};
+use mojito_types::mlir::{MlirLowering, MlirOp, PointerOp};
 use mojito_types::types::LaneMask;
 
 impl<'a> Flatten<'a> {
@@ -75,6 +76,121 @@ impl<'a> Flatten<'a> {
                 }
                 _ => None,
             })
+    }
+
+    /// The pointer op the checker recorded on `call`, if it is an
+    /// `__mlir_op` over a `!kgen.pointer` or a `!lit.ref`.
+    pub(super) fn checked_pointer_op(call: Node<'a>) -> Option<PointerOp> {
+        call.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::MlirPointerOp { op } => Some(*op),
+                _ => None,
+            })
+    }
+
+    /// Lower the checked pointer op `op` over `args` onto the address
+    /// instructions: the `lit.ref` conversions to `pointer.convert`,
+    /// `pop.pointer.bitcast` to `pointer.bitcast`, `pop.offset` to the
+    /// pointer `+` over the address as an untracked `Pointer`,
+    /// `pop.pointer_to_index` to `pop.pointer_to_index`, and `pop.load` and
+    /// `pop.store` to a `ref.read` and a `ref.write` through the address
+    /// as an untracked reference.
+    pub(super) fn lower_pointer_op(
+        &mut self,
+        call: Node<'a>,
+        op: PointerOp,
+        args: &[Node<'a>],
+    ) -> Reg {
+        use mojito_types::origin::{Mutability, Origin, PointerOrigin, RefTy};
+        let ty = call.ty().expect("a checked `__mlir_op` has a type");
+        let location = call.location();
+        let operands: Vec<Reg> = args.iter().map(|argument| self.expr(*argument)).collect();
+        let retyped = |lowering: &mut Self, value: Reg, ty: Ty| {
+            let dest = lowering.fresh_typed(location.clone(), None, ty);
+            lowering.emit(MirInstr::PointerConvert { dest, value });
+            dest
+        };
+        let reference = |referent: Ty, mutability: Mutability| -> Ty {
+            TyKind::Ref(RefTy {
+                referent,
+                origin: Origin::Untracked {
+                    mutable: mutability == Mutability::Mutable,
+                },
+                mutability,
+            })
+            .into()
+        };
+        match (op, operands.as_slice()) {
+            (PointerOp::LitRefToPointer | PointerOp::LitRefFromPointer, [value]) => {
+                retyped(self, *value, ty)
+            }
+            (PointerOp::Bitcast, [value]) => {
+                let dest = self.fresh_typed(location.clone(), None, ty);
+                self.emit(MirInstr::PointerBitcast {
+                    dest,
+                    value: *value,
+                });
+                dest
+            }
+            (PointerOp::Offset, [pointer, offset]) => {
+                let TyKind::KgenPointer(element) = ty.kind() else {
+                    unreachable!("a checked `pop.offset` gives a `!kgen.pointer`")
+                };
+                let untracked =
+                    Ty::pointer(element.clone(), PointerOrigin::Untracked { mutable: true });
+                let base = retyped(self, *pointer, untracked.clone());
+                let moved = self.fresh_typed(location.clone(), None, untracked);
+                self.emit(MirInstr::BinOp {
+                    op: mojito_ast::ast::InfixOp::Add,
+                    dest: moved,
+                    a: base,
+                    b: *offset,
+                    resolved: None,
+                    raises: None,
+                    refined_bound: None,
+                    fastmath: None,
+                });
+                retyped(self, moved, ty)
+            }
+            (PointerOp::PointerToIndex, [pointer]) => {
+                let dest = self.fresh_typed(location.clone(), None, ty);
+                self.emit(MirInstr::Pop {
+                    dest,
+                    op: mojito_types::mlir::PopOp::PointerToIndex,
+                    operands: vec![*pointer],
+                    fastmath: None,
+                });
+                dest
+            }
+            (PointerOp::Load, [pointer]) => {
+                let handle = retyped(self, *pointer, reference(ty.clone(), Mutability::Immutable));
+                let dest = self.fresh_typed(location.clone(), None, ty);
+                self.emit(MirInstr::ReadRef {
+                    dest,
+                    reference: handle,
+                });
+                dest
+            }
+            (PointerOp::Store, [value, pointer]) => {
+                let element = match self.f.reg_types.get(&pointer.0).map(Ty::kind) {
+                    Some(TyKind::KgenPointer(element)) => element.clone(),
+                    _ => unreachable!("a checked `pop.store` writes through a `!kgen.pointer`"),
+                };
+                let handle = retyped(self, *pointer, reference(element, Mutability::Mutable));
+                self.emit(MirInstr::WriteRef {
+                    reference: handle,
+                    value: *value,
+                });
+                let dest = self.fresh_typed(location.clone(), None, Ty::none());
+                self.emit(MirInstr::Const {
+                    dest,
+                    k: Const::None,
+                });
+                dest
+            }
+            _ => unreachable!("a checked `{}` takes {} operand(s)", op.name(), op.arity()),
+        }
     }
 
     /// Lower the checked `kgen.source_loc` `call` to `kgen.source_loc`,

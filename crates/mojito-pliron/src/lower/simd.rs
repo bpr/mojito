@@ -669,6 +669,18 @@ impl FnLowering<'_> {
             self.reg_values.insert(dest.0, value);
             return Ok(());
         }
+        // `pop.pointer_to_index` is the address as an `i64`, as
+        // `Pointer.__int__` reads it.
+        if op == PopOp::PointerToIndex {
+            let [pointer] = operands else {
+                return Err(self
+                    .unsupported_reg(format!("`pop.{}` takes one operand", op.mnemonic()), dest));
+            };
+            let ptr = self.reg_value(ctx, *pointer, ScalarTy::Ptr)?;
+            let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+            let cast = PtrToIntOp::new(ctx, ptr, i64_ty);
+            return self.define(ctx, dest, cast.get_operation(), cast.get_result(ctx));
+        }
         // A `!kgen.dtype` is its one-byte code, the `ui8` it converts to
         // and from; no native check rejects a code no dtype has.
         if op.is_dtype_code() {
@@ -1432,7 +1444,8 @@ impl FnLowering<'_> {
                     | PopOp::StringSize
                     | PopOp::StringAddress
                     | PopOp::DtypeToUi8
-                    | PopOp::DtypeFromUi8 => {
+                    | PopOp::DtypeFromUi8
+                    | PopOp::PointerToIndex => {
                         return Err(self.unsupported_reg(
                             format!("`pop.{}` operand count", op.mnemonic()),
                             dest,

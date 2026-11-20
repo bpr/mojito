@@ -647,6 +647,43 @@ impl VmBackend {
                 .map_err(|error| RuntimeError::Unsupported(error.to_string()))?;
                 regs[dest.0 as usize] = crate::crossing::ct_to_vm(&folded)?;
             }
+            // A heap pointer's address is its allocation's; a place pointer
+            // or reference takes its place's synthetic one, as
+            // `Pointer.__int__` does.
+            MirInstr::Pop {
+                dest,
+                op: mojito_types::mlir::PopOp::PointerToIndex,
+                operands,
+                fastmath: _,
+            } => {
+                let address = match operands.first().map(|operand| &regs[operand.0 as usize]) {
+                    Some(Value::Pointer { allocation, offset }) => {
+                        crate::runtime::pointer_address(*allocation, *offset)
+                    }
+                    Some(
+                        Value::PlacePointer {
+                            frame,
+                            slot,
+                            projection,
+                        }
+                        | Value::Ref {
+                            frame,
+                            slot,
+                            projection,
+                        },
+                    ) => {
+                        let (frame, slot, projection) = (*frame, *slot, projection.clone());
+                        self.place_address(frame, slot, &projection)
+                    }
+                    other => {
+                        return Err(RuntimeError::TypeError(format!(
+                            "'pop.pointer_to_index' reads an address, not {}",
+                            other.map_or_else(|| "nothing".to_string(), crate::runtime::type_name)
+                        )));
+                    }
+                };
+                regs[dest.0 as usize] = Value::Int(address);
+            }
             MirInstr::Pop {
                 dest,
                 op,

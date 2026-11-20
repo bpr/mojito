@@ -10,7 +10,8 @@
 //! `lit.mojo.version.major`, `.minor`, and `.patch` of the language version,
 //! `lit.ref.pack.extract` of an element reference of a reference pack,
 //! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the
-//! `pop.array` ops of `pop_array_ops.rs`, the
+//! `pop.array` ops of `pop_array_ops.rs`, the pointer ops of
+//! `pointer_ops.rs`, the
 //! `pop` and `index` ops of `pop_ops.rs` with its `pop.simd.shuffle`, and the LLVM
 //! intrinsic call and `llvm.intr.trap` of `llvm_intrinsic.rs`.
 
@@ -34,7 +35,8 @@ impl Checker {
     /// indirect struct load ([`Self::infer_kgen_load_indirect_op`]), a
     /// source location ([`Self::infer_kgen_source_loc_op`]), a language
     /// version component ([`Self::infer_mojo_version_op`]), a
-    /// KGEN string read ([`Self::infer_string_op`]), a lane gather
+    /// KGEN string read ([`Self::infer_string_op`]), a pointer op
+    /// ([`Self::infer_pointer_op`]), a lane gather
     /// ([`Self::infer_simd_shuffle_op`]), or a
     /// `pop` or `index` op ([`Self::infer_pop_op`]). The
     /// statement's checked record is `SemanticAdjustment::MarkInitialized`
@@ -73,6 +75,9 @@ impl Checker {
         }
         if method == SOURCE_LOC {
             return self.infer_kgen_source_loc_op(span, method, call);
+        }
+        if let Some(op) = mojito_types::mlir::PointerOp::parse(method) {
+            return self.infer_pointer_op(span, op, call);
         }
         if let Some(op) = mojito_types::mlir::MojoVersionOp::parse(method) {
             return self.infer_mojo_version_op(span, method, op, call);

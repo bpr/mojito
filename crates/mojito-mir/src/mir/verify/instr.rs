@@ -1342,6 +1342,24 @@ fn verify_pop(
         }
         return;
     }
+    if op == mojito_types::mlir::PopOp::PointerToIndex {
+        let expected = storage_ty(&Ty::int());
+        if *result != expected {
+            errors.push(format!(
+                "{prefix}: pop.{} defines a register of type {result}, not {expected}",
+                op.mnemonic()
+            ));
+        }
+        if let Some(found) = operands.first().and_then(|operand| cx.reg_ty(*operand))
+            && !matches!(found.kind(), TyKind::KgenPointer(_))
+        {
+            errors.push(format!(
+                "{prefix}: pop.{} reads an operand of type {found}, not a `!kgen.pointer`",
+                op.mnemonic()
+            ));
+        }
+        return;
+    }
     if op.is_dtype_code() {
         let (operand, expected) = if op == mojito_types::mlir::PopOp::DtypeToUi8 {
             (Ty::kgen_dtype(), Ty::ui8())
@@ -1685,11 +1703,18 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
 
 /// `pop.pointer.bitcast` retypes a `Pointer`'s pointee and keeps its
 /// origin, as `unsafe_bitcast` declares its result
-/// `Pointer[U, Self.origin]`.
+/// `Pointer[U, Self.origin]`, or retypes one `!kgen.pointer` to another,
+/// as upstream's op does.
 fn verify_pointer_bitcast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec<String>) {
     let (Some(to), Some(from)) = (cx.reg_ty(dest), cx.reg_ty(value)) else {
         return;
     };
+    if matches!(
+        (to.kind(), from.kind()),
+        (TyKind::KgenPointer(_), TyKind::KgenPointer(_))
+    ) {
+        return;
+    }
     let (Some(to_origin), Some(from_origin)) =
         (to.kind().pointer_origin(), from.kind().pointer_origin())
     else {

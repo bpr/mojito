@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `__mlir_op` admits upstream's pointer ops, which its `struct Pointer`
+  bodies are written in: `lit.ref.to_pointer`, `lit.ref.from_pointer`,
+  `pop.pointer.bitcast`, `pop.offset`, `pop.pointer_to_index`, and the
+  `pop.load` and `pop.store` of a register-passable element, each typed as
+  the pin's verifier types it and run on both backends, where each was
+  "outside the subset" (R2203). MIR schema 1.215 adds the `pop` op
+  `pointer_to_index`, and `pointer.bitcast` now also retypes a
+  `!kgen.pointer`; the package format moves to `mojito-package 243`.
 - A pointer formed over a place has an integer address on the VM, as
   upstream's one `!kgen.pointer` value does: `Int(Pointer(to=x))`,
   `UInt(p)`, `p.__int__()`, and an `Intable` generic over such a pointer

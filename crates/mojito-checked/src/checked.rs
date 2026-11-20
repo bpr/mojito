@@ -1286,6 +1286,16 @@ pub enum SemanticAdjustment {
         op: mojito_types::mlir::MlirOp,
         fastmath: Option<mojito_types::param_expr::ParamExpr>,
     },
+    /// An `__mlir_op` over a `!kgen.pointer` or a `!lit.ref`
+    /// (``__mlir_op.`lit.ref.to_pointer`(r)``, ``__mlir_op.`pop.load`[…](p)``),
+    /// as upstream's `Pointer` bodies spell them. MIR lowers the
+    /// conversions to `pointer.convert`, the bitcast to `pointer.bitcast`,
+    /// the offset to the pointer `+`, the address to `pop.pointer_to_index`,
+    /// and the load and store to a `ref.read` and `ref.write` through the
+    /// address.
+    MlirPointerOp {
+        op: mojito_types::mlir::PointerOp,
+    },
     /// The `comptime assert` of the builtin `SIMD` dunder or constructor
     /// this node applies (`__lt__`'s `Self.length == 1`, or the implicit
     /// `Bool` to `SIMD[DType.bool, n]` conversion's), judged per reached

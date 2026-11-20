@@ -828,8 +828,11 @@ pub fn pointer_bitcast_preserves_pointee(
 ) -> Result<(), RuntimeError> {
     use mojito_types::types::erase_origins;
     let pointee = |ty: Option<&mojito_types::types::Ty>| {
-        ty.and_then(mojito_types::types::Ty::pointer_element)
-            .map(|pointee| erase_origins(&held_pointee(pointee)))
+        ty.and_then(|ty| match ty.kind() {
+            mojito_types::types::TyKind::KgenPointer(element) => Some(element),
+            _ => ty.pointer_element(),
+        })
+        .map(|pointee| erase_origins(&held_pointee(pointee)))
     };
     match (pointee(from), pointee(to)) {
         (Some(from), Some(to)) if from == to => Ok(()),

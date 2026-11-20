@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2405**.
+Next free ID: **R2406**.
 
 ## Ordered Work
 
@@ -7557,6 +7557,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     buf = unsafe_alloc[Int](3)`.
   - Probe: `Int(Pointer(to=a[1])) - Int(Pointer(to=a[0]))` over an
     `InlineArray`/`Array` element place, once R1298 lets it lower.
+  - Probe: ``__mlir_op.`pop.pointer_to_index`(k)`` reads the same
+    element-counted address (`VmBackend::exec`'s `PointerToIndex` arm),
+    so its difference over ``__mlir_op.`pop.offset`(k, Int(1)._mlir_value)``
+    is `1` on the VM and `8` at the pin.
   - Found while landing R1665 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10349,6 +10353,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     prints `0`; the pin and Pliron print `4`. So does
     `(Pointer(to=left), 7).reverse()` printed without a later use of
     `left` (`7 0` on the VM, `7 4` on the pin).
+  - Probe: `var p2 = pop.load(Pointer(to=py)._mlir_value)` over `var py =
+    Pointer(to=y)`, then `print(p2[])`, prints `0` on the VM, where the
+    pin and Pliron print `y`.
   - Lever: give a read of a reference result an immutable reborrow, or
     record the result's owner on the element, so `build_variadic_pack`
     can keep the owner itself alive.
@@ -10356,32 +10363,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2203 `__mlir_op` rejects upstream's pointer ops, which the bodies
-  of `struct Pointer` are written in**
+- [ ] **R2405 `pop.load` and `pop.store` move a register-passable
+  element with no ownership, so only a trivial one is admitted**
 
-  `Checker::infer_mlir_op` (`checker/method_calls/mlir_op.rs`) admits only
-  the `pop` and `index` ops of `SIMD`, `SIMDLength`, and `Bool` arithmetic,
-  so none of `Pointer`'s member bodies can be spelled.
-  - Probe: ``__mlir_op.`lit.ref.to_pointer`(__get_mvalue_as_litref(x))``
-    is "outside the subset"; the pin builds the `!kgen.pointer`.
-  - Probe: ``__mlir_op.`lit.ref.from_pointer`[_type=Pointer[Int, origin_of(x)]._mlir_lit_ref](p._mlir_value)``
-    is rejected the same way.
-  - Probe: ``__mlir_op.`pop.pointer.bitcast`[_type=…](p._mlir_value)``,
-    ``__mlir_op.`pop.offset`(p._mlir_value, i)``, and
-    ``__mlir_op.`pop.pointer_to_index`(p._mlir_value)`` are rejected the
-    same way.
-  - `pop.load` and `pop.store` (scalar or vector, with `alignment`) are
-    the rest of the vocabulary.
-  - Lever: a `pointer_ops.rs` beside `pop_ops.rs` in
-    `checker/method_calls/`, dispatched from `mlir_op.rs`.
-  - Lower onto what exists: `MirInstr::PointerConvert` for the two
-    `lit.ref` conversions, `PointerBitcast` for the bitcast, the pointer
-    offset lowering for `pop.offset`, `LoadIndirect` and `StoreToMem` for
-    `pop.load` and `pop.store`.
-  - `pop.pointer_to_index` over a place pointer reads its VM address
-    through `VmBackend::place_address`, as `Pointer.__int__` does.
-  - `__get_address_as_uninit_lvalue` is R2024's.
-  - Found while planning R1681 (2026-11-14).
+  `infer_pointer_op` (`checker/method_calls/pointer_ops.rs`) rejects a
+  `pop.load` or `pop.store` element that is no scalar,
+  `TrivialRegisterPassable` struct, or pointer, where the pin admits any
+  `RegisterPassable` one.
+  - Cause: `lower_pointer_op` (`mir/lower_expr/mlir_op.rs`) writes the
+    load as a `ref.read` and the store as a `ref.write`, so ownership
+    analysis sees a borrow, where upstream's load is a bitwise copy that
+    yields an owned value and its store consumes its operand without
+    destroying the old element.
+  - Probe: over `struct R(RegisterPassable, Movable)` with a printing
+    `__del__`, `var s = pop.load(Pointer(to=r)._mlir_value)` then a
+    `pop.store` of `R(5)` prints `3`, `del 3`, `del 5`, `5`, `del 5` at
+    the pin, and is rejected.
+  - Lever: an owned bitwise read and a consuming raw write, as
+    `PointerStorageTake` and `unsafe_write`'s store already are.
+  - Found while landing R2203 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13211,6 +13211,8 @@ residue found inside a task moves to the task that owns its fix.
     `_Null` view of a `MaybeUninit[Self]` (R2055).
   - Probe: `gather` and `scatter` read a `SIMD[.int, size]` as a
     `!kgen.simd<size, address>` (R2037).
+  - Probe: ``__mlir_op.`pop.pointer.bitcast`[_type=…](k)`` between two
+    `!kgen.pointer`s of different elements is refused the same way.
   - Found while landing R221 (2026-11-14).
   - Depends on nothing.
   - Model: Fable, Not Planned.

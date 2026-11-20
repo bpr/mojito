@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1257
+# swept-count	1261
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
@@ -801,6 +801,10 @@ assets/type_error/mlir_op_operand_types_differ.mojo	compile-reject	agree	error: 
 assets/type_error/mlir_op_select_cases_differ.mojo	compile-reject	agree	error: 'pop.select' op failed to verify that all of {trueValue, falseValue, result} have same type
 assets/type_error/mlir_op_select_condition_not_scalar.mojo	compile-reject	agree	error: 'pop.select' op operand #0 must be !kgen.scalar<bool>, but got '!kgen.simd<2, bool>'
 assets/type_error/mlir_op_select_mask_not_bool.mojo	compile-reject	agree	error: 'pop.simd.select' op operand #0 must be !kgen.simd<N, bool>, but got '!kgen.simd<4, si32>'
+assets/type_error/mlir_pointer_load_without_flags.mojo	compile-reject	agree	error: 'pop.load' op requires attribute 'isInvariant'
+assets/type_error/mlir_pointer_offset_index_operand.mojo	compile-reject	agree	error: 'pop.offset' op operand #1 must be !kgen.scalar<index>, but got 'index'
+assets/type_error/mlir_pointer_store_element_mismatch.mojo	compile-reject	agree	error: 'pop.store' op failed to verify that pointer element type
+assets/type_error/mlir_pointer_to_pointer_operand.mojo	compile-reject	agree	error: unable to infer result type from MLIR operation 'lit.ref.to_pointer'
 assets/type_error/mlir_pop_array_dynamic_index.mojo	compile-reject	agree	error: cannot use a dynamic value in MLIR magic
 assets/type_error/mlir_pop_array_gep_index_operand.mojo	compile-reject	agree	error: 'pop.array.gep' op operand #1 must be index, but got '!lit.struct<@std::@builtin::@int_literal::@IntLiteral<:!pop.int_literal 0>>'
 assets/type_error/mlir_pop_array_gep_non_array_pointer.mojo	compile-reject	agree	error: unable to infer result type from MLIR operation 'pop.array.gep'
