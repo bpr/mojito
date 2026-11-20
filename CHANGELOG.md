@@ -1122,6 +1122,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `rebind` changes a `Pointer`'s origin
+  (`rebind[Pointer[String, origin_of(a)]](Pointer(to=b))`), as at the pin;
+  R344 is closed on re-probe. R2206 (`Pointer`'s casts as declared bodies)
+  stays open behind R2420, R2421, R1656, R2368, and the new R2426: an
+  origin parameter whose `mut=` reads a binder does not check its
+  argument's mutability.
+
 - The address of a place keeps the place's address space (R2418):
   `Pointer(to=x)` and `__get_mvalue_as_litref(x)` over a `ref[_, a] x`
   are in space `a`, as at the pin, where both were generic. A struct

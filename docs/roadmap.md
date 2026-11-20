@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2426**.
+Next free ID: **R2427**.
 
 ## Ordered Work
 
@@ -2687,6 +2687,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     naming two origins that print alike, where the pin returns `p[]`:
     `Pointer(to=)` over a `ref` binding takes the subtree of its origin
     (`checker/operators.rs`), which `origin_of(x)` does not admit.
+  - Probe: `Pointer(to=x).unsafe_origin_cast[MutUntrackedOrigin]()
+    .unsafe_origin_cast[origin_of(x)]()` returned at `Pointer[Int, o]`
+    from `def view2[o: MutOrigin](ref[o] x: Int)` is "expected
+    Pointer[Int, origin#0], found Pointer[Int, origin@N]": `origin_of(x)`
+    of a `ref[o] x` is not `o`.
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4569,17 +4574,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `conformance/probes/fieldwise_init_satisfies_trait_init.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R344 `rebind` cannot change a `Pointer`'s origin**
-
-  Problem: `rebind[Pointer[String, origin_of(a)]](Pointer(to=b))` stops
-  with "type mismatch for rebind: the input type does not match the result
-  type", naming two origins, where the pin accepts it.
-  - Upstream's `Tuple.reverse` and `Tuple.concat` retype their source
-    pointers this way.
-  - `checker/rebind.rs` compares the closed types whole, origins included.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R409 A violated `where` clause is quoted from its folded
   constraint, not as declared**
@@ -9094,6 +9088,31 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2426 An origin parameter whose `mut=` reads a binder does not
+  check its argument's mutability**
+
+  `f[t=ImmOrigin(origin_of(z))](Pointer(to=y))` over `def f[m: Bool, //,
+  o: Origin[mut=m], t: Origin[mut=m]](p: Pointer[Int, o])` prints `1`,
+  where the pin rejects it: "value passed to 't' cannot be converted from
+  'ImmOrigin' to 'MutOrigin'".
+  - `convert_bracket_origin` (`checker/generics.rs`) checks only a
+    closed `OriginMutability::Fixed(true)` binder.
+  - Lever: resolve a `Param` or `Self.mut` mutability from the call's
+    binding, the receiver's included, and check the argument against it.
+  - The converse must keep working: a `MutOrigin` passed where the binder
+    is `False` converts to its immutable form
+    (`pointer_origin_cast_no_upgrade.mojo`).
+  - Probe: `s.g[ImmOrigin(origin_of(y))]()` over `def g[t:
+    Origin[mut=Self.mut]](self)` on a mutable `S[mut, o]` is accepted,
+    likewise.
+  - Upstream's `Pointer.unsafe_origin_cast[target_origin:
+    Origin[mut=Self.mut]]` is this shape, so R2206's declared casts need it
+    to keep `pointer_origin_cast_no_downgrade.mojo` rejected and to close
+    R1215.
+  - Found while executing R2206 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1215 `unsafe_origin_cast` accepts a target of different
   mutability**
 
@@ -9110,7 +9129,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
     of matching the two.
   - The same body under `mut self` is accepted by both.
   - Found while landing R679 (2026-10-20).
-  - Depends on nothing.
+  - Depends on R2206 (its arm goes) and R2426 (the declared
+    `Origin[mut=Self.mut]` check).
   - Model: Opus, Not Planned.
 
 - [ ] **R1324 A struct over a place origin converts implicitly to one over
@@ -10671,17 +10691,29 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   `infer_pointer_method` (`checker/method_calls/builtin_types.rs`) and
   `infer_pointer_from_mlir_value` (`checker/operators.rs`) type
-  `unsafe_origin_cast`, `unsafe_mut_cast`, `as_imm`, `unsafe_bitcast`,
+  `unsafe_origin_cast`, `unsafe_mut_cast`, `unsafe_bitcast`,
   `unsafe_address_space_cast`, `_get_kgen_pointer`, `copy`, the
-  `_mlir_value` field, and both
-  `Pointer[T, o](_mlir_value=)` initializers.
+  `_mlir_value` field read, and the `_mlir_value=` and `copy=`
+  constructions, where `std/memory/pointer.mojo` declares upstream's
+  bodies.
   - Retire those arms, `record_pointer_origin_cast`,
-    `infer_pointer_bitcast`, and the `PointerOriginCast` and
-    `PointerConvert` adjustments into the declared bodies.
-  - Re-probe R344 and R1215.
+    `infer_pointer_bitcast`, `infer_pointer_address_space_cast`, the
+    `copy=` arm of the instance-construction rule
+    (`checker/call_inference.rs`), and the `PointerOriginCast` and
+    `PointerConvert` adjustments (a `PACKAGE_FORMAT` bump).
+  - The `pointer.convert`/`pointer.bitcast` MIR instructions stay: the
+    field read lowers to `pointer.convert` keyed on the object's checked
+    type, as `lower_pointer_field_store` does the store.
+  - Loans come from the call's checked result type, not an adjustment.
+  - `as_imm` is no rule: it reaches the casts through its body once
+    R2420 resolves declared members.
+  - Re-probe R1215 (fixed by this plus R2426).
+  - The plan is `R2206-pointer-s-casts-and-conversions-are-plan.md`; its
+    probes re-ran unchanged on 2026-11-20.
   - Found while planning R1681 (2026-11-14).
-  - Depends on R2205, R2415 (the declared struct's members and reads).
-  - Model: Fable, Not Planned.
+  - Depends on R2420 (declared members and initializers resolve), R2421
+    (the `Pointer[origin=…]` spelling), R1656, R2426, R2368.
+  - Model: Fable, Planned.
 
 - [ ] **R2207 `Pointer`'s address and memory members are checker rules,
   where upstream's are bodies of the declared struct**
@@ -10752,6 +10784,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     then `print(b.view().p[])`: Mojito rejects it ("expected a pointer
     whose origin lies within the supplied 'o' argument, found a pointer of
     origin origin_of(self)"); the pin prints `1`.
+  - Probe: `cast[origin_of(self)._subtree](Pointer(to=self.value))` under
+    `ref self`, over `def cast[m: Bool, //, t: Origin[mut=m]](p:
+    Pointer[Int, _]) -> Pointer[Int, t]`, is "type mismatch for return:
+    expected Pointer[Int, origin_of(self)], found Pointer[Int,
+    ImmOrigin(origin@N)]", and without `._subtree` under `mut self`
+    likewise; the `unsafe_origin_cast` rule accepts both. A declared
+    `unsafe_origin_cast` (R2206) meets this at the 14
+    `assets/extensions/*/subtree_*` fixtures and the bundled
+    `unsafe_origin_cast[origin_of(self)…]` casts in `collections/`,
+    `string.mojo`, and `span.mojo`.
   - Found while landing R2209 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.
