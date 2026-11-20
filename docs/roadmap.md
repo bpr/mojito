@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2401**.
+Next free ID: **R2402**.
 
 ## Ordered Work
 
@@ -10831,23 +10831,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2360 A construction's solved arguments leave its initializer's
-  own origin binders unbound, where upstream's call binds every declared
-  parameter in its one solve**
+- [ ] **R2401 A `ref [o]` argument's binding of its callee's own origin
+  binder never reaches the call's recorded arguments, where upstream's
+  call binds every declared parameter in its one solve**
 
-  `record_construction_instantiation` (`checker/declarations.rs`) places
-  the struct's origin binders from the constructed instance
-  (`bind_constructed_origins`), but an `__init__`'s own origin binder, and
-  its `mut=` binder, record `origin_unbound` and `ct_deferred`.
-  - Probe: `__init__[T: Copyable, o: ImmOrigin](out self, x: T, p:
-    Pointer[Int, o])` constructed as `W(1, Pointer(to=k))` records `T` and
-    an unbound `o` in the call's `instantiated_args`, though the check
-    bound `o` to `origin_of(k)` to type the argument.
-  - The lever: solve the initializer's own origin binders with its type
-    and value binders (`solve_constructor_own_params`), as a method's
-    are (`instantiate_method_generics`), and record that solution through
-    `Checker::declared_call_arguments`.
-  - Found while landing R2350 (2026-11-19).
+  `solve_call_origins_with_bool_bindings` (`checker/origins/solve.rs`)
+  binds an own origin binder from the `ref` arguments naming it
+  (`bind_ref_binders`) after the call's solve has recorded its declared
+  arguments through `Checker::declared_call_arguments`, so a binder only
+  a `ref [o]` parameter names records `origin_unbound`, and its `mut=`
+  binder `ct_deferred`.
+  - Probe: `def h[T: Copyable, o: ImmOrigin](x: T, ref [o] r: Int)`
+    called as `h(1, k)` records `[Int, origin_unbound]`.
+  - Probe: the method `def f[o: ImmOrigin](self, x: Self.T, ref [o] r:
+    Int)` called as `s.f(1, k)` records `[origin_unbound]`.
+  - Probe: the initializer `__init__[o: ImmOrigin](out self, x: Self.T,
+    ref [o] r: Int)` of `struct R[T: …]` constructed as `R(1, k)` records
+    `[Int, origin_unbound]`.
+  - The lever: bind the `ref` arguments' places in the one solve
+    (`resolve_call_params`), beside the type-shaped places it binds, so
+    the recorded list and the solved contracts read one binding.
+  - Found while landing R2360 (2026-11-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

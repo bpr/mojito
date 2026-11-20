@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A construction solves its initializer's own origin binders with its
+  type and value binders in its one solve, as upstream's call binds
+  every declared parameter, and records them, each `mut=` binder's
+  mutability included, in the call's arguments. `W(1, Pointer(to=k))`
+  over a generic `W[T]`'s `__init__[o: ImmOrigin](out self, x: Self.T,
+  p: Pointer[Int, o])` now runs instead of failing its argument check,
+  and a struct without parameters records `origin_of(k)` where it
+  recorded an unbound origin (R2360).
 - A `#kgen.bind_params` binds a generator's whole declared list, as
   upstream's does: an origin argument binds its origin binder's slot as an
   origin attribute (`ParamKind::Origin`, MIR schema 1.212's
