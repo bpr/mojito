@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2391**.
+Next free ID: **R2396**.
 
 ## Ordered Work
 
@@ -2918,8 +2918,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Upstream's `Pointer._OriginCastType … where O.contains[Self.origin]`
     uses them.
   - Probe: `def k[o: Origin[mut=False]]() -> Bool: return o.equals[o]`
-    (R2344's probe once a binder is a value).
-  - Depends on R2344, which makes a binder a value in scope.
+    is "type 'Origin[false]' has no field 'equals'"; the pin prints `True`
+    for `k[ImmStaticOrigin]()`.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2384 A named origin whose `mut` is symbolic is rejected**
@@ -2950,44 +2951,73 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2344 An origin binder is not a value of its `Origin` type in
-  scope**
+- [ ] **R2391 A raw origin is no compile-time value**
 
-  `def k[o: Origin[mut=False]]() -> Bool: return o.equals[o]` and
-  `comptime T = type_of(o)` are rejected ("Undefined variable 'o'"),
-  where the pin accepts both and prints `True` for `k[ImmStaticOrigin]()`.
-  - Upstream's binder is a value parameter, so it enters scope with type
-    `Origin[mut=m, _mlir_origin=<binder>]`.
-  - Lever: a binder classified `ParamDecl::Origin` also enters the value
-    scope with that type.
-  - `reflect[MutOrigin].name()` prints `std.origin.Origin[True]`, where
-    the pin rejects it ("'AnyStruct[MutOrigin]' is not 'AnyType'",
-    since `_mlir_origin` is unbound). Fix it here, or file it on the
-    `divergences` track if out of reach.
-  - Probes: the two shapes above, and `reflect[MutOrigin]`.
-  - Probe: `comptime O = origin_of(x)` in a function is rejected
-    ("Undefined variable 'origin_of'"); the pin accepts it, an origin
-    value of type `Origin`.
-  - Probe: `comptime c = ImmOrigin(o); print(c.mut)` in
-    `def f[o: MutOrigin](ref[o] x: Int)` is rejected ("struct 'Origin'
-    has no constructor"); the pin prints `False`. It needs R2386's
-    `@implicit __init__` too.
-  - Probe: `comptime c = o.unsafe_mut_cast[False]()` in `def f[o:
-    MutOrigin]()` is "Undefined variable 'o'"; the pin accepts it.
-  - Probe: a body's binder scope below the check still takes the argument
-    view: `EnclosingBinders` (`mir.rs`), the lifted thunks' lists it
-    yields, `binder_scope`, and `closure_uses`' `BinderScope` read
-    `CheckedSignature::argument_binders`, so no MIR body names an origin
-    binder as a value.
-  - Probe: `comptime r = Self.o._mlir_origin` over `struct S[o:
-    ImmOrigin]` is rejected ("a raw origin of type 'LITImmOrigin' as a
-    compile-time value (R2344)"); the pin accepts it. A raw origin needs
-    the same in-scope value node, so `Origin[_mlir_origin=r]` can then
-    read it back.
-  - Planned in R2139 (2026-11-18).
-  - Depends on R2343, R2380, R2386, and R2388 (the `ImmOrigin(o)` value
-    probe constructs through the declared conversion).
-  - Model: Fable, Planned.
+  `comptime r = Self.o._mlir_origin` over `struct S[o: ImmOrigin]` is
+  rejected ("a raw origin of type 'LITImmOrigin' as a compile-time value
+  (R2391)"), where the pin accepts it.
+  - `CtValue` has no form that holds an origin, so `X._mlir_origin` reads
+    only inside an origin slot, and a raw binder (`ParamDecl::Origin`'s
+    `lit`) is a slot filler, not a value.
+  - Lever: a value of type `LITOrigin[m]` whose node holds an `Origin`,
+    read from the `_mlir_origin` argument of the operand's type, so
+    `Origin[_mlir_origin=r]` can read it back.
+  - Probe: the struct member above.
+  - Probe: `comptime r = ImmStaticOrigin._mlir_origin; comptime O =
+    Origin[_mlir_origin=r]; print(O.mut)` is "type 'Origin[false]' has no
+    field '_mlir_origin'"; the pin prints `False`.
+  - Found while landing R2344 (2026-11-19).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2392 `origin_of(x)` is not an expression of type `Origin`**
+
+  `comptime O = origin_of(x); print(O.mut)` in a function is rejected
+  ("Undefined variable 'origin_of'"), where the pin prints `True`.
+  - `origin_of` resolves only inside origin slots, `ref[...]` clauses,
+    and pointers.
+  - Lever: type `origin_of(place)` as `Origin[mut=<the place's
+    mutability>, _mlir_origin=<the place's origin>]`; it lowers to
+    `struct.create` like any `Origin` value.
+  - Probe: the line above in `main` over `var x = 1`.
+  - Found while landing R2344 (2026-11-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2393 An origin slot does not read a local `comptime` origin
+  value**
+
+  `comptime O = o; var p: Pointer[Int, O] = Pointer(to=x)` in `def h[o:
+  ImmOrigin](ref[o] x: Int)` is rejected ("Undefined variable 'O'"),
+  where the pin prints `3` for `h(x)` over `x = 3`.
+  - The origin-slot readers (`resolve_origin_param_arg`,
+    `explicit_origin_argument`, `named_origin_value`) recognize only
+    binder names and declared module values.
+  - Lever: read any compile-time value of `Origin` type through its
+    type's `_mlir_origin` argument, as upstream does; find the sites with
+    `rg -n "enclosing_origin_type_param|named_origin_value"
+    crates/mojito-checker/src`.
+  - Probe: the shape above.
+  - Found while landing R2344 (2026-11-19).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2395 A `ref[o]` argument does not bind its origin's `mut=`
+  binder for the instance**
+
+  `def f[m: Bool, //, o: Origin[mut=m]](ref[o] x: Int): print(m)` called
+  as `f(x)` fails elaboration ("monomorphization cannot resolve parameter
+  `m`"), where the pin prints `True`.
+  - The same body over `x: Pointer[Int, o]` runs
+    (`assets/ok/origin_mutability_binder_body_read.mojo`), so the call
+    records the binder's mutability from a pointer argument's origin but
+    not from a `ref` parameter's place.
+  - Probe: the shape above.
+  - Probe: `print(o.mut)` in the same body, which reads `m` through the
+    binder's `Origin[mut=m, …]` type.
+  - Found while landing R2344 (2026-11-19).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2357 A call bracket's origin argument is not checked against its
   binder's mutability**
@@ -9486,6 +9516,20 @@ retained on purpose and re-probed rather than fixed; they are listed in
     variants.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R2394 `reflect[MutOrigin]` is accepted**
+
+  `print(reflect[MutOrigin].name())` prints `std.origin.Origin[True, {}]`,
+  where the pin rejects it ("'AnyStruct[MutOrigin]' is not 'AnyType'"),
+  since `_mlir_origin` is unbound.
+  - A type annotation's unbound `_mlir_origin` slot is silently
+    `Origin::Unbound`; rejecting it outside a binder annotation needs
+    R2371's implicit binder, or every `v: ImmOrigin` argument would be
+    rejected too.
+  - Probe: the line above.
+  - Found while landing R2344 (2026-11-19).
+  - Depends on R2371.
+  - Model: Opus, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 

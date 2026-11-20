@@ -3069,6 +3069,15 @@ impl Checker {
                                 .map_err(param_error)
                             }
                             TyArg::Val(value) => Ok(TyArg::Val(value.clone())),
+                            // A cast's residual mutability closes alike:
+                            // `#lit.origin.mutcast<o> : !lit.origin<dest_mut>`
+                            // at `dest_mut = False`.
+                            TyArg::Origin(origin) if !values.is_empty() => origin
+                                .try_map_cast_mutability(&mut |mutability| {
+                                    self.param_context.replace(mutability, &values.bindings)
+                                })
+                                .map(TyArg::Origin)
+                                .map_err(param_error),
                             TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
                         })
                         .collect::<Result<Vec<_>, TypeError>>()?,

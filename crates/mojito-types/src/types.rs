@@ -1791,6 +1791,9 @@ impl GeneratorTy {
 
 pub const ARRAY_TYPE_NAME: &str = "Array";
 
+/// The library struct an origin value has as its type (`std.origin.Origin`).
+pub const ORIGIN_TYPE_NAME: &str = "Origin";
+
 /// The declared parameters of `Array[T: AnyType, length: Int]`, which an
 /// array literal's construction names its compile-time arguments by.
 pub const ARRAY_ELEMENT_PARAM: &str = "T";
@@ -3672,6 +3675,18 @@ impl ParamDecl {
             .filter(move |decl| decl.is_origin_mutability_binder(decls))
     }
 
+    /// The binders of `decls` a signature reads by name: the argument
+    /// binders and the origin binders, each a value of its `Origin` type,
+    /// but not an origin's `mut=` binder, which a call binds from the
+    /// origin it infers.
+    pub fn signature_scope(decls: &[Self]) -> Vec<Self> {
+        decls
+            .iter()
+            .filter(|decl| !decl.is_origin_mutability_binder(decls))
+            .cloned()
+            .collect()
+    }
+
     /// [`Self::argument_binders`], owned.
     pub fn argument_decls(decls: &[Self]) -> Vec<Self> {
         Self::argument_binders(decls).cloned().collect()
@@ -3991,15 +4006,36 @@ impl ParamDecl {
     /// declared type's, which for a pack's visible binder (`*values: T`) is
     /// its `ParameterList` and for its implicit `values.values` the raw
     /// list, as for a raw-list binder (`values: KGENParamList[T]`); a type
-    /// binder's `Type`, or a type list for a type pack. A signature names
-    /// an origin binder by its [`Origin::Param`](crate::origin::Origin)
-    /// id, never by a reference, so its meta-type, an opaque compile-time
-    /// entity's, is `Type`'s.
+    /// binder's `Type`, or a type list for a type pack. An origin binder is
+    /// a value parameter, as upstream's is, of its
+    /// [`Self::origin_value_ty`].
     pub fn binder_meta(&self) -> MetaTy {
         match self {
             Self::Value { ty, .. } => MetaTy::value(ty.clone()),
+            Self::Origin {
+                origin,
+                mutability,
+                lit,
+                ..
+            } => MetaTy::value(origin_binder_ty(*origin, mutability, *lit)),
             Self::Type { variadic: true, .. } => MetaTy::type_list(),
-            Self::Type { .. } | Self::Origin { .. } => MetaTy::Type,
+            Self::Type { .. } => MetaTy::Type,
+        }
+    }
+
+    /// The type an origin binder's value has in its declaration's scope:
+    /// `Origin[mut=m, _mlir_origin=<the binder>]` for `o: Origin[mut=m]`,
+    /// `LITOrigin[m]` for a raw `_mlir_origin` binder, and `LITOriginSet`
+    /// for an `OriginSet`. `None` for any other binder.
+    pub fn origin_value_ty(&self) -> Option<Ty> {
+        match self {
+            Self::Origin {
+                origin,
+                mutability,
+                lit,
+                ..
+            } => Some(origin_binder_ty(*origin, mutability, *lit)),
+            _ => None,
         }
     }
 
@@ -9115,6 +9151,47 @@ fn collect_named_origins(ty: &Ty, out: &mut Vec<crate::origin::Origin>) {
         }
         _ => {}
     }
+}
+
+/// [`ParamDecl::origin_value_ty`] of the origin binder `origin` declaring
+/// `mutability`, raw when `lit`.
+fn origin_binder_ty(
+    origin: crate::origin::OriginParamId,
+    mutability: &OriginMutability,
+    lit: bool,
+) -> Ty {
+    let binder_mut = |binder: &ParamRef| {
+        ParamContext::detached().decl_ref(
+            binder.id.clone(),
+            &binder.name,
+            MetaTy::value(Ty::bool()),
+        )
+    };
+    match (mutability, lit) {
+        (OriginMutability::Set, _) => TyKind::LitOriginSet.into(),
+        (OriginMutability::Fixed(fixed), true) => {
+            TyKind::LitOrigin(LitOriginMut::Known(*fixed)).into()
+        }
+        (OriginMutability::Binder(binder), true) => {
+            TyKind::LitOrigin(LitOriginMut::Expr(binder_mut(binder))).into()
+        }
+        (OriginMutability::Fixed(fixed), false) => {
+            origin_struct_ty(CtValue::Bool(*fixed), crate::origin::Origin::Param(origin))
+        }
+        (OriginMutability::Binder(binder), false) => origin_struct_ty(
+            CtValue::Expr(binder_mut(binder)),
+            crate::origin::Origin::Param(origin),
+        ),
+    }
+}
+
+/// `Origin[mut=mutable, _mlir_origin=origin]`.
+fn origin_struct_ty(mutable: CtValue, origin: crate::origin::Origin) -> Ty {
+    TyKind::Struct(
+        ORIGIN_TYPE_NAME.to_string(),
+        vec![TyArg::Val(mutable), TyArg::Origin(origin)],
+    )
+    .into()
 }
 
 #[cfg(test)]

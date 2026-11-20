@@ -1560,7 +1560,8 @@ impl Checker {
             &m.type_params,
             self.enclosing_type_params.len(),
         )?;
-        self.push_param_scope(&ParamDecl::argument_view(&method_decls));
+        // The signature reads an origin binder as a value (`where o.mut`).
+        self.push_param_scope(&ParamDecl::signature_scope(&method_decls));
         let saved_method_type_params = self.enclosing_type_params.clone();
         let saved_method_decls = self.enclosing_param_decls.clone();
         let saved_struct_count = self

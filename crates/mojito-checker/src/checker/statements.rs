@@ -4036,8 +4036,9 @@ impl Checker {
         let decls = self.classify_param_list(owner, type_params)?;
         // Type parameters are in scope while resolving the signature (as
         // bare `T`), and value parameters as the typed references a
-        // dependent parameter expression names (`Buf[n + 1]`).
-        self.push_param_scope(&ParamDecl::argument_view(&decls));
+        // dependent parameter expression names (`Buf[n + 1]`), an origin
+        // binder among them (`where o.mut`).
+        self.push_param_scope(&ParamDecl::signature_scope(&decls));
         let enclosing_self = self.self_ty.clone();
         self.bind_trait_self();
         let signature = self.def_signature_in_scope(stmt, shape, decls, unavailable, required);

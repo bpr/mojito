@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An origin binder is a value parameter of its `Origin[mut=m,
+  _mlir_origin=o]` type, as upstream's is, in its signature and body: `o.mut`,
+  `type_of(o)`, `ImmOrigin(o)`, `o.unsafe_mut_cast[m]()`, `var v = o`, a
+  `where o.mut` clause, a nested function's read, and a struct's `Self.o`
+  now check and run as at the pin. A static `Origin` method's result now
+  closes its cast mutability under the call's and the instance's bindings,
+  so `MutUntrackedOrigin.unsafe_mut_cast[False]()` is a value too (R2344).
 - `Origin` declares upstream's `@implicit __init__(v: Origin) ->
   ImmOrigin[_mlir_origin=v._mlir_origin]`, and every origin position reads
   `ImmOrigin(o)` through it rather than by its spelling, so a user alias

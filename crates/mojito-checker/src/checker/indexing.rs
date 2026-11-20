@@ -1830,6 +1830,15 @@ impl Checker {
                     );
                     Ok((*ty).clone())
                 }
+                // An origin binder reads alike, as a value of its `Origin`
+                // type.
+                None if let Some((decl, ty)) = self.self_origin_value(field) => {
+                    self.record_member_value(
+                        span,
+                        super::annotations::value_parameter_expr(decl, &ty),
+                    );
+                    Ok(ty)
+                }
                 _ => self
                     .read_type_member(span, object, field)
                     .unwrap_or_else(|| Err(TypeError::UnknownSelfParam(field.to_string()))),

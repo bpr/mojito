@@ -102,7 +102,10 @@ impl Checker {
             ParamDecl::Value { name, ty, .. } => {
                 self.declare_value_parameter(name.trim_start_matches('*'), ty.clone())
             }
-            ParamDecl::Type { .. } | ParamDecl::Origin { .. } => Ok(()),
+            ParamDecl::Origin { name, .. } => decl
+                .origin_value_ty()
+                .map_or(Ok(()), |ty| self.declare_value_parameter(name, ty)),
+            ParamDecl::Type { .. } => Ok(()),
         })
     }
 

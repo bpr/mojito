@@ -1994,30 +1994,49 @@ impl Checker {
     }
 
     pub(super) fn self_param_ct_value(&self, name: &str) -> Option<CtValue> {
-        self.self_decls.iter().find_map(|decl| match decl {
-            // `Self.values` names the struct's value pack unstarred too.
-            ParamDecl::Value {
-                name: n,
-                ty,
-                variadic,
-                ..
-            } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
-                // A pack's elements are its list binder's.
-                match ParamDecl::pack_list(&self.self_decls, decl) {
-                    Some(list @ ParamDecl::Value { ty, .. }) => Some(value_parameter(list, ty)),
-                    Some(list @ ParamDecl::Type { .. }) => type_parameter(list).map(CtValue::Type),
-                    Some(ParamDecl::Origin { .. }) => None,
-                    None => Some(value_parameter(decl, ty)),
+        self.self_decls
+            .iter()
+            .find_map(|decl| match decl {
+                // `Self.values` names the struct's value pack unstarred too.
+                ParamDecl::Value {
+                    name: n,
+                    ty,
+                    variadic,
+                    ..
+                } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
+                    // A pack's elements are its list binder's.
+                    match ParamDecl::pack_list(&self.self_decls, decl) {
+                        Some(list @ ParamDecl::Value { ty, .. }) => Some(value_parameter(list, ty)),
+                        Some(list @ ParamDecl::Type { .. }) => {
+                            type_parameter(list).map(CtValue::Type)
+                        }
+                        Some(ParamDecl::Origin { .. }) => None,
+                        None => Some(value_parameter(decl, ty)),
+                    }
                 }
-            }
-            // `Self.Ts` names the struct's pack by its unstarred spelling.
-            ParamDecl::Type {
-                name: n, variadic, ..
-            } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
-                type_parameter(decl).map(CtValue::Type)
-            }
-            _ => None,
-        })
+                // `Self.Ts` names the struct's pack by its unstarred spelling.
+                ParamDecl::Type {
+                    name: n, variadic, ..
+                } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
+                    type_parameter(decl).map(CtValue::Type)
+                }
+                _ => None,
+            })
+            // `Self.o` is the struct's origin binder, a value of its `Origin`
+            // type as upstream's is; the argument view holds no origin.
+            .or_else(|| {
+                self.self_origin_value(name)
+                    .map(|(decl, ty)| value_parameter(decl, &ty))
+            })
+    }
+
+    /// The struct origin binder `Self.name` names, with the type of its
+    /// value ([`ParamDecl::origin_value_ty`]).
+    pub(super) fn self_origin_value(&self, name: &str) -> Option<(&ParamDecl, Ty)> {
+        self.enclosing_param_decls
+            .iter()
+            .filter(|decl| decl.is_origin() && decl.name() == name)
+            .find_map(|decl| decl.origin_value_ty().map(|ty| (decl, ty)))
     }
 
     /// The type value a name (with bracket arguments) denotes, `None` when
@@ -7361,11 +7380,11 @@ fn derived_list_query(list: &ParamExpr, query: &str) -> TypeError {
     ))
 }
 
-/// A raw origin of type `found` read as a compile-time value, which needs
-/// an origin binder to be a value in scope (R2344).
+/// A raw origin of type `found` read as a compile-time value, which has no
+/// value form yet (R2391).
 fn raw_origin_value_unsupported(found: &str) -> TypeError {
     TypeError::Unsupported(format!(
-        "a raw origin of type '{found}' as a compile-time value (R2344)"
+        "a raw origin of type '{found}' as a compile-time value (R2391)"
     ))
 }
 

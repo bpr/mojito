@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1248
+# swept-count	1249
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
@@ -48,6 +48,7 @@ assets/type_error/none_result_not_writable.mojo	compile-reject	agree	error: inva
 assets/type_error/none_type_to_none_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'NoneType' to 'None'
 assets/type_error/none_type_to_none_return.mojo	compile-reject	agree	error: cannot implicitly convert 'NoneType' value to 'None' in return value
 assets/type_error/none_value_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/type_error/origin_binder_value_not_int.mojo	compile-reject	agree	error: cannot implicitly convert 'ImmOrigin' value to 'Int'
 assets/type_error/origin_generic_value_unapplied.mojo	compile-reject	agree	error: value passed to 'o' cannot be converted from '__generator_type[*, mut: Bool] Origin[mut=mut]' to 'Origin[mut=$0]', it depends on an unresolved parameter '$0'
 assets/type_error/origin_mutability_binder_function_value.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
 assets/type_error/origin_mutability_binder_where_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'only_mutable': violated constraint

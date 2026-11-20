@@ -429,7 +429,8 @@ pub(super) fn pack_list_expr(decls: &[ParamDecl], decl: &ParamDecl) -> Option<Pa
 /// binder's included, which a body reads as its parameter reference too,
 /// and a pack's, a pack of callables among them, as its visible binder
 /// (`vs: ParameterList[T, vs.values]`, `Ts: TypeList[Tr, Ts.values]`),
-/// whose list [`pack_scope`] maps the same name to.
+/// whose list [`pack_scope`] maps the same name to. An origin binder is a
+/// value of its [`ParamDecl::origin_value_ty`], as upstream's is.
 pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()
@@ -454,6 +455,9 @@ pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
                 variadic: false,
                 ..
             } if decl.binds_callables() => Some((name.clone(), value_parameter_expr(decl, ty))),
+            ParamDecl::Origin { name, .. } => decl
+                .origin_value_ty()
+                .map(|ty| (name.clone(), value_parameter_expr(decl, &ty))),
             _ => None,
         })
         .collect()

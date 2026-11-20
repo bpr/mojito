@@ -44,6 +44,33 @@ pub(super) fn closed_argument(expr: &ParamExpr, bindings: &Bindings) -> Result<C
     eval_ct(expr, bindings)
 }
 
+/// `origin` with each cast mutability it carries
+/// (`#lit.origin.mutcast<o> : !lit.origin<dest_mut>`) closed under the mono
+/// environment, as [`closed_argument`] closes a value argument; the origin
+/// itself stays as the template names it ([`Bindings::erase_origins`]).
+pub(super) fn closed_cast_origin(
+    origin: &mojito_types::origin::Origin,
+    bindings: &Bindings,
+) -> Result<mojito_types::origin::Origin, MonoError> {
+    let mut failure = None;
+    let closed =
+        origin.try_map_cast_mutability(&mut |mutability| match eval_ct(mutability, bindings) {
+            Ok(value) => ParamContext::detached().constant(value),
+            Err(error) => {
+                failure = Some(error);
+                Ok(mutability.clone())
+            }
+        });
+    match failure {
+        Some(error) => Err(error),
+        None => closed.map_err(|error| MonoError {
+            kind: MonoErrorKind::Unsupported,
+            function: None,
+            construct: error.to_string(),
+        }),
+    }
+}
+
 /// Whether `value` is a residual [`closed_argument`] keys an instance by.
 pub(super) fn is_closed_residual(value: &CtValue) -> bool {
     matches!(value, CtValue::Expr(expr) if expr.is_closed_application())

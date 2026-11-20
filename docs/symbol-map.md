@@ -3452,7 +3452,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`ParamDecl::{argument_binders, argument_decls, argument_view}`), which
   every consumer aligning binders with arguments reads, while a body's
   value scope binds the whole list's value binders, each `mut=` binder
-  (`ParamDecl::mutability_binders`) included
+  (`ParamDecl::mutability_binders`) included, and each origin binder as a
+  value of its `Origin[mut=m, _mlir_origin=o]` type
+  (`ParamDecl::origin_value_ty`, which `ParamDecl::binder_meta` reads, and
+  the origin arms of `annotations::value_scope`,
+  `Checker::self_param_ct_value`, and `Checker::infer_member`'s `Self.o`);
+  a function's or method's signature resolves under its argument and
+  origin binders (`ParamDecl::signature_scope`, read by
+  `def_signature_owned_by` and the struct method signature in `traits.rs`,
+  so `where o.mut` reads the binder)
   (`Checker::declare_value_parameters`, `scopes.rs`; `check_def_inner`,
   `statements.rs`; `check_method`, `bind_and_check_method`,
   `declarations.rs`). The elaborator keys an instance on the read ones

@@ -849,6 +849,7 @@ assets/ok/origin_argument_direct_applications.mojo	-	ineligible	no-scalar-entry-
 assets/ok/origin_binder_mutable_ref_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_binder_ref_result_keeps_pointer_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_binder_result_keeps_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_binder_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_comptime_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_declared_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_delegated_call_arguments_run.mojo	-	ineligible	no-scalar-entry-shape
