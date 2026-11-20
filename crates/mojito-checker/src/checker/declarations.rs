@@ -3546,9 +3546,15 @@ impl Checker {
                         args,
                         kwargs,
                     ) {
-                        if let Some(unavailable) =
-                            self.unavailable_constructor(name, sig, &method_arguments, &[], &[])
-                        {
+                        if let Some(unavailable) = self.unavailable_constructor(
+                            name,
+                            sig,
+                            declared_instantiation
+                                .as_deref()
+                                .unwrap_or(&method_arguments),
+                            &[],
+                            &[],
+                        ) {
                             availability_failure.get_or_insert(unavailable);
                             continue;
                         }
@@ -4182,7 +4188,7 @@ impl Checker {
                     }
                     if ok
                         && let Some(unavailable) =
-                            self.unavailable_constructor(name, sig, &own.arguments, &decls, &tyargs)
+                            self.unavailable_constructor(name, sig, &own.declared, &decls, &tyargs)
                     {
                         availability_failure.get_or_insert(unavailable);
                         continue;

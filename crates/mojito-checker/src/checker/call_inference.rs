@@ -41,64 +41,6 @@ impl Checker {
         }
     }
 
-    fn erased_origin_constraint_environment(
-        signature: &CallableOriginSignature,
-        bindings: &HashMap<usize, bool>,
-    ) -> Vec<(String, TyArg)> {
-        bindings
-            .iter()
-            .filter_map(|(index, value)| {
-                signature
-                    .binder_names
-                    .get(*index)
-                    .map(|name| (name.clone(), TyArg::Val(CtValue::Bool(*value))))
-            })
-            .collect()
-    }
-
-    fn erased_origin_constraint_applies(
-        &self,
-        signature: &CallableOriginSignature,
-        bindings: &HashMap<usize, bool>,
-    ) -> bool {
-        if signature.availability.is_empty() {
-            return true;
-        }
-        let owned = Self::erased_origin_constraint_environment(signature, bindings);
-        let environment = ConstraintEnvironment::named(
-            &[],
-            owned.iter().map(|(name, value)| (name.as_str(), value)),
-        );
-        signature
-            .availability
-            .iter()
-            .all(|constraint| self.eval_generic_constraint(constraint, &environment))
-    }
-
-    /// The retained diagnostic for a failed erased-origin availability check:
-    /// the first failing clause's message, when it declared one.
-    fn first_failing_erased_origin_message(
-        &self,
-        signature: &CallableOriginSignature,
-        bindings: &HashMap<usize, bool>,
-    ) -> Option<String> {
-        let owned = Self::erased_origin_constraint_environment(signature, bindings);
-        let environment = ConstraintEnvironment::named(
-            &[],
-            owned.iter().map(|(name, value)| (name.as_str(), value)),
-        );
-        signature
-            .availability
-            .iter()
-            .find(|constraint| !self.eval_generic_constraint(constraint, &environment))
-            .and_then(|constraint| match constraint {
-                GenericConstraint::WithMessage(_, message) => {
-                    Some(format!("constraint failed: {message}"))
-                }
-                _ => None,
-            })
-    }
-
     /// A call of a built-in or a struct construction: a name no binding
     /// shadows.
     fn infer_unbound_call(
@@ -460,29 +402,20 @@ impl Checker {
             call.args,
             call.kwargs,
         ) {
-            Ok((ret, score, error, bool_bindings, simd_erasures, ..)) => {
+            Ok((ret, score, error, _, simd_erasures, ..)) => {
                 let Some(target) = callable_lowered_name(call.name, candidate) else {
                     return CandidateOutcome::Rejected;
                 };
-                match signature {
-                    Some(signature)
-                        if !self.erased_origin_constraint_applies(signature, &bool_bindings) =>
-                    {
-                        CandidateOutcome::Unavailable(
-                            self.first_failing_erased_origin_message(signature, &bool_bindings),
-                        )
-                    }
-                    _ => CandidateOutcome::Match(CallableOverloadMatch {
-                        ret,
-                        score,
-                        target,
-                        index,
-                        error,
-                        owned: owned_parameters(candidate),
-                        owned_arguments: owned_arguments(candidate, call.args, call.kwargs),
-                        simd_erasures,
-                    }),
-                }
+                CandidateOutcome::Match(CallableOverloadMatch {
+                    ret,
+                    score,
+                    target,
+                    index,
+                    error,
+                    owned: owned_parameters(candidate),
+                    owned_arguments: owned_arguments(candidate, call.args, call.kwargs),
+                    simd_erasures,
+                })
             }
             Err(TypeError::BadCall { reason, .. })
                 if reason.starts_with("constraint failed: ")
@@ -534,62 +467,6 @@ impl Checker {
             Err(failure @ TypeError::ComptimeCrossing(_)) => CandidateOutcome::Argument(failure),
             Err(_) => CandidateOutcome::Rejected,
         }
-    }
-
-    /// Validate the `where` clauses over `signature`'s erased origin
-    /// binders at a call: each `mut=` binder reads the value the call
-    /// recorded for it (`declared`, [`Self::recorded_mutability_bindings`]),
-    /// as upstream's call binds it, and a `ref` parameter's `Bool` binder
-    /// the mutability its argument bound.
-    fn validate_erased_origin_constraint(
-        &self,
-        name: &str,
-        signature: &CallableOriginSignature,
-        bindings: &HashMap<usize, bool>,
-        declared: &[(String, TyArg)],
-    ) -> Result<(), TypeError> {
-        if signature.availability.is_empty() {
-            return Ok(());
-        }
-        let owned = Self::erased_origin_constraint_environment(signature, bindings);
-        let environment = ConstraintEnvironment::named(
-            &[],
-            declared
-                .iter()
-                .chain(&owned)
-                .map(|(name, value)| (name.as_str(), value)),
-        );
-        for constraint in &signature.availability {
-            self.validate_constraint_in_environment(name, constraint, &environment)?;
-        }
-        Ok(())
-    }
-
-    /// The value the call at `span` of `callee` recorded for each of its
-    /// origin `mut=` binders that the bound origin decides, by name: the
-    /// binder's slot in the call's solved arguments over the whole declared
-    /// list ([`Self::declared_call_arguments`]).
-    fn recorded_mutability_bindings(&self, span: &SourceSpan, callee: &Ty) -> Vec<(String, TyArg)> {
-        let Some(generic) = callee.as_generic_func() else {
-            return Vec::new();
-        };
-        let Some(arguments) = self
-            .fact(span, |facts| facts.generic_instantiation.as_ref())
-            .map(|instantiation| instantiation.arguments)
-            .filter(|arguments| arguments.len() == generic.decls.len())
-        else {
-            return Vec::new();
-        };
-        generic
-            .decls
-            .iter()
-            .zip(arguments)
-            .filter(|(decl, argument)| {
-                decl.is_origin_mutability_binder(&generic.decls)
-                    && matches!(argument, TyArg::Val(CtValue::Bool(_)))
-            })
-            .map(|(decl, argument)| (decl.name().to_string(), argument))
-            .collect()
     }
 
     /// The result of a builtin that builds the nominal `String` itself
@@ -1392,7 +1269,7 @@ impl Checker {
             ));
         }
         super::type_resolution::reject_trait_callable_call(&ty)?;
-        let (ret, _, error, bool_bindings, _, attributes, ty) = self.infer_callable_ty(
+        let (ret, _, error, _, _, attributes, ty) = self.infer_callable_ty(
             &span,
             name,
             ty,
@@ -1401,10 +1278,6 @@ impl Checker {
             kwargs,
         )?;
         self.record_declared_attributes(span.clone(), &attributes);
-        if let Some(signature) = origin_signatures.first() {
-            let declared = self.recorded_mutability_bindings(&span, &ty);
-            self.validate_erased_origin_constraint(name, signature, &bool_bindings, &declared)?;
-        }
         // Replay the callee's loan-transfer effects against the actuals.
         let bindings = self.call_bindings.borrow_mut().remove(&span);
         self.apply_transfer_effects(name, None, args, &span, &bindings.unwrap_or_default())?;
@@ -2343,8 +2216,8 @@ impl Checker {
         attributes.merge(folded_parameter_attributes(binders, param_args, &tyargs));
         // An overload candidate's write here is undone with its probe; the
         // selected candidate's re-run is the only one kept.
-        let solved = (binders.as_slice(), &explicit, origins.as_ref());
-        self.record_generic_application(span, name, generic, (param_args, decls), &tyargs, solved);
+        let solved = (&binders[..], &explicit, origins.as_ref(), &bool_bindings);
+        self.record_generic_application(span, name, generic, (param_args, decls), &tyargs, solved)?;
         Ok((
             result,
             overload_rank(
@@ -2370,14 +2243,64 @@ impl Checker {
         ))
     }
 
+    /// The `where` clauses of `binders`' origin `mut=` binders, the last
+    /// binders of their generator, at a call whose solved arguments over
+    /// the whole declared list are `declared`
+    /// ([`Self::declared_call_arguments`]), as upstream evaluates a
+    /// generator's clause with every parameter bound. A `mut=` binder only
+    /// a `ref` argument decides takes the mutability the call's origin
+    /// solve bound it to (`ref_mutability`, by its
+    /// [`SigMutability::BoolParam`](mojito_types::origin::SigMutability)
+    /// slot). The argument view's own clauses were checked as the call
+    /// solved it.
+    fn validate_mutability_clauses(
+        &self,
+        name: &str,
+        binders: &[ParamDecl],
+        declared: &[TyArg],
+        ref_mutability: &HashMap<usize, bool>,
+    ) -> Result<(), TypeError> {
+        if declared.len() != binders.len()
+            || ParamDecl::mutability_binders(binders).all(|binder| binder.constraints().is_empty())
+        {
+            return Ok(());
+        }
+        let arguments: Vec<TyArg> = binders
+            .iter()
+            .zip(declared)
+            .enumerate()
+            .map(|(index, (binder, argument))| match argument {
+                TyArg::Val(CtValue::Deferred(_)) if binder.is_origin_mutability_binder(binders) => {
+                    let slot = binders[..index]
+                        .iter()
+                        .filter(|earlier| !earlier.is_pack_list())
+                        .count();
+                    ref_mutability.get(&slot).map_or_else(
+                        || argument.clone(),
+                        |&mutable| TyArg::Val(CtValue::Bool(mutable)),
+                    )
+                }
+                _ => argument.clone(),
+            })
+            .collect();
+        let environment = ConstraintEnvironment::declared(binders, &arguments);
+        ParamDecl::mutability_binders(binders)
+            .flat_map(ParamDecl::constraints)
+            .try_for_each(|constraint| {
+                self.validate_constraint_in_environment(name, constraint, &environment)
+            })
+    }
+
     /// Record the call at `span` of `generic`, named `name`, with bracket
     /// `param_args` and solved arguments `tyargs` over its argument view
-    /// `decls`: the already-minted clone a closed inferred application
-    /// retargets to by exact name instead of requesting a discovery round
-    /// of its own (an earlier round minted it for another occurrence), or
-    /// the application, its arguments over the whole declared list
-    /// `binders`, each origin binder's from the bracket or the arguments'
-    /// places `origins` bound it to ([`Self::declared_call_arguments`]).
+    /// `decls`, once its `mut=` binders' clauses hold over its arguments
+    /// over the whole declared list `binders`
+    /// ([`Self::validate_mutability_clauses`]): the already-minted clone a
+    /// closed inferred application retargets to by exact name instead of
+    /// requesting a discovery round of its own (an earlier round minted it
+    /// for another occurrence), or the application, with those arguments,
+    /// each origin binder's from the bracket or the arguments' places
+    /// `origins` bound it to ([`Self::declared_call_arguments`]).
     fn record_generic_application(
         &self,
         span: &SourceSpan,
@@ -2385,27 +2308,29 @@ impl Checker {
         generic: &Ty,
         (param_args, decls): (&[mojito_ast::ast::ParamArg], &[ParamDecl]),
         tyargs: &[TyArg],
-        (binders, explicit, origins): (
+        (binders, explicit, origins, ref_mutability): (
             &[ParamDecl],
             &ExplicitTypes,
             Option<&super::origins::ConstructorOriginBindings>,
+            &HashMap<usize, bool>,
         ),
-    ) {
+    ) -> Result<(), TypeError> {
         let Some(func) = generic.as_generic_func() else {
-            return;
+            return Ok(());
         };
+        let bracket = explicit
+            .origins()
+            .iter()
+            .map(|bound| (bound.id, bound.origin.clone()))
+            .collect();
+        let declared = self.declared_call_arguments(binders, tyargs, &bracket, origins);
+        self.validate_mutability_clauses(name, binders, &declared, ref_mutability)?;
         if param_args.is_empty()
             && let Some(clone) = self.existing_def_clone(name, decls, tyargs)
         {
             self.clear_fact(span, |facts| facts.generic_instantiation.take());
             self.record_at(span.clone()).overload_target = Some(clone);
         } else {
-            let bracket = explicit
-                .origins()
-                .iter()
-                .map(|bound| (bound.id, bound.origin.clone()))
-                .collect();
-            let declared = self.declared_call_arguments(binders, tyargs, &bracket, origins);
             self.record_at(span.clone()).generic_instantiation =
                 Some(mojito_checked::checked::GenericInstantiation {
                     callee: name.to_string(),
@@ -2419,6 +2344,7 @@ impl Checker {
                     arguments: declared,
                 });
         }
+        Ok(())
     }
 
     /// The already-minted clone of bound-generic `name` for a closed inferred

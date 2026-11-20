@@ -367,23 +367,6 @@ pub(in crate::checker) fn lower_ref_param_sigs(
         .collect()
 }
 
-/// The origin signature of a callable declaring `type_params`: its source
-/// binder names and its erased-origin `availability` constraints.
-pub(in crate::checker) fn callable_origin_signature(
-    type_params: &[mojito_ast::ast::TypeParam],
-    availability: Vec<GenericConstraint>,
-) -> CallableOriginSignature {
-    CallableOriginSignature {
-        binder_names: type_params
-            .iter()
-            .map(|parameter| parameter.name.clone())
-            .collect(),
-        availability,
-        view_return: Vec::new(),
-        unavailable: None,
-    }
-}
-
 impl Checker {
     /// Reject a result that names the origin of a value with no memory to
     /// borrow, as upstream does: every `origin_of(p)` in the result

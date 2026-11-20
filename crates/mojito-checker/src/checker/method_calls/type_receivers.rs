@@ -519,9 +519,16 @@ impl Checker {
                 attributes: bracket_attributes,
                 ..
             } = instantiated;
-            if let Err(failure) =
-                self.method_constraint_result(sig, &method_arguments, &info.decls(), &[])
-            {
+            let declared_instantiation =
+                method_declared_arguments(sig, &method_arguments, &declared_arguments);
+            if let Err(failure) = self.method_constraint_result(
+                sig,
+                declared_instantiation
+                    .as_deref()
+                    .unwrap_or(&method_arguments),
+                &info.decls(),
+                &[],
+            ) {
                 if single_candidate
                     && availability_failure.is_none()
                     && self
@@ -598,11 +605,7 @@ impl Checker {
                     param_decls: sig.declared.clone(),
                     parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     instantiation: method_instantiation_arguments(sig, &method_arguments),
-                    declared_instantiation: method_declared_arguments(
-                        sig,
-                        &method_arguments,
-                        &declared_arguments,
-                    ),
+                    declared_instantiation,
                     parameter_names: sig.names.clone(),
                     view_return_interior: Vec::new(),
                     view_return: Vec::new(),

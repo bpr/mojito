@@ -10851,36 +10851,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The lever: bind the `ref` arguments' places in the one solve
     (`resolve_call_params`), beside the type-shaped places it binds, so
     the recorded list and the solved contracts read one binding.
+  - Then `Checker::validate_mutability_clauses` (`call_inference.rs`)
+    drops its `ref_mutability` fill, which reads a `mut=` binder only a
+    `ref [o]` argument decides from the origin solve's `Bool` bindings
+    by source slot: `def f[mut: Bool, //, o: Origin[mut=mut]](ref [o] x:
+    Int) where mut` called as `f(a)`.
   - Found while landing R2360 (2026-11-19).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2361 A `where` clause over an origin's `mut=` binder is no
-  constraint of the declared list, where upstream's clause is one of the
-  generator's, evaluated with every parameter bound**
-
-  A function whose only argument binders are origins keeps its clause in
-  `CallableOriginSignature::availability` (`erased_origin_constraints`,
-  `def_signature_in_scope` in `checker/statements.rs`), because
-  `ParamDecl::clause_constraints` attaches a clause only to an argument
-  binder.
-  - A single free call reads the binder from the call's recorded solved
-    arguments (`recorded_mutability_bindings`,
-    `checker/call_inference.rs`), beside the `ref` parameters' `Bool`
-    bindings keyed by source slot (`binder_names`).
-  - Probe: an overloaded `def w[mut: Bool, //, o: Origin[mut=mut]](x:
-    Pointer[Int, o]) -> Int where mut` beside `def w(x: Int)` called as
-    `w(Pointer(to=a))` is "no overload matches", where the pin prints
-    `7`: `check_overload_candidate` reads the source-slot bindings only.
-  - Probe: the same `where mut` on a method (`def m[mut: Bool, //, o:
-    Origin[mut=mut]](self, x: Pointer[Int, o]) -> Int where mut`) is
-    "unsupported generic where proposition", where the pin prints `3`.
-  - The lever: attach the clause to the declared list's last binder, the
-    `mut=` binder included, evaluate it against the call's solved
-    arguments over the whole list, and delete
-    `CallableOriginSignature::{availability, binder_names}` and the
-    erased-origin evaluation in `call_inference.rs`.
-  - Found while landing R2128 (2026-11-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -2147,9 +2147,12 @@ impl Checker {
     /// Evaluate method availability, keeping what a call diagnostic needs:
     /// the retained `(condition, "message")` text, or the violated clause
     /// itself, which may explain a sole-candidate call failure. `arguments`
-    /// bind the method's own parameters and `struct_arguments` its struct's
-    /// `struct_decls`, each position by position; a lone variadic struct
-    /// parameter binds the whole positional list as its pack.
+    /// bind the method's own parameters, its argument view or, as upstream
+    /// evaluates a generator's clause with every parameter bound, its whole
+    /// declared list ([`method_declared_arguments`]), and
+    /// `struct_arguments` its struct's `struct_decls`, each position by
+    /// position; a lone variadic struct parameter binds the whole
+    /// positional list as its pack.
     pub(super) fn method_constraint_result<'signature>(
         &self,
         signature: &'signature MethodSig,
@@ -2158,7 +2161,11 @@ impl Checker {
         struct_arguments: &[TyArg],
     ) -> Result<(), ConstraintFailure<'signature>> {
         let struct_arguments = positional_pack_arguments(struct_decls, struct_arguments);
-        let mut environment = ConstraintEnvironment::declared(&signature.decls(), arguments);
+        let mut environment = if arguments.len() == signature.declared.len() {
+            ConstraintEnvironment::declared(&signature.declared, arguments)
+        } else {
+            ConstraintEnvironment::declared(&signature.decls(), arguments)
+        };
         environment.bind_declared(struct_decls, &struct_arguments);
         for constraint in &signature.availability {
             match self.constraint_verdict(constraint, &environment) {

@@ -3487,7 +3487,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `native/mono/specializer.rs`). Readers of the argument view: `StructInfo::decls`, `MethodSig::decls`,
   `GenericFuncTy::{argument_view, argument_binders}`,
   and `CheckedSignature::argument_binders` (`checked.rs`). A `where` clause
-  attaches to the last argument binder (`ParamDecl::clause_constraints`).
+  attaches to the last argument binder (`ParamDecl::clause_constraints`);
+  a function's attaches to its whole list's last type or value binder,
+  an origin's `mut=` binder included
+  (`ParamDecl::generator_clause_constraints`), whose clauses a call checks
+  over its solved whole-list arguments
+  (`Checker::validate_mutability_clauses`, `call_inference.rs`) and a
+  signature compiles with the `mut=` binders open
+  (`Checker::with_mutability_binders`, `constraints.rs`).
   MIR lowers the whole lists (`CheckedSignature::parameters`, a struct
   row, an initializer's struct prefix); code below the check that aligns
   a declaration's binders with arguments reads

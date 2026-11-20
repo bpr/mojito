@@ -3962,9 +3962,12 @@ struct declarations, conditional conformances, method availability, associated
 and trait comptime members, and comptime declarations.
 Associated-member constraints are validated at concrete projection; a
 conditional-conformance failure feeds its retained reason into lifecycle and
-trait diagnostics. Origin-mutability-only function constraints survive the
-ordinary generic erasure in `CallableOriginSignature` and are discharged after
-call-origin solving recovers the inferred Bool binding. The checked constraint
+trait diagnostics. A function's clauses attach to its whole declared list's
+last type or value binder (`ParamDecl::generator_clause_constraints`), an
+origin's `mut=` binder included, as upstream's clause is the generator's; a
+call checks a `mut=` binder's clauses against its solved arguments over the
+whole list (`Checker::validate_mutability_clauses`), and a method's
+availability reads those arguments too (`method_declared_arguments`). The checked constraint
 contract is plural: every declaration family stores one compiled constraint
 per trailing `where` clause, the first failing clause reports its own message,
 and truth-only operations (implication, inherited-requirement merging) fold a

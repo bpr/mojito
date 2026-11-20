@@ -430,7 +430,9 @@ impl Checker {
                 method_declared_arguments(sig, &method_arguments, &declared_arguments);
             if let Err(failure) = self.method_constraint_result(
                 sig,
-                &method_arguments,
+                declared_instantiation
+                    .as_deref()
+                    .unwrap_or(&method_arguments),
                 &info.decls(),
                 &info.view_arguments(tyargs),
             ) {

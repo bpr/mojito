@@ -4129,15 +4129,8 @@ impl CapturePolicy {
 
 /// Origin-specialization metadata for one declaration in an overload set.
 /// Entries are registered in the same order as `TyKind::Overload` candidates.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct CallableOriginSignature {
-    /// The name of each source compile-time parameter, by source slot: the
-    /// `Bool` binder an origin's `mut=` names is keyed by its slot.
-    binder_names: Vec<String>,
-    /// Declaration constraints whose only binders were erased origin
-    /// metadata, one per trailing `where` clause. They are checked after
-    /// call-origin solving recovers the inferred Bool mutability arguments.
-    availability: Vec<GenericConstraint>,
     /// See [`MethodSig::view_return`]; the free-function twin.
     view_return: Vec<ViewReturnOrigin>,
     /// The rejection of a use of an `@unavailable` declaration.

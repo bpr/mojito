@@ -1621,7 +1621,10 @@ impl Checker {
         method_decls: Vec<ParamDecl>,
     ) -> Result<(Vec<Ty>, MethodSig), TypeError> {
         self.method_gate(name, m)
-            .and_then(|gate| self.method_clauses(m, false).map(|free| (free, gate)))
+            .and_then(|gate| {
+                self.with_mutability_binders(&method_decls, |this| this.method_clauses(m, false))
+                    .map(|free| (free, gate))
+            })
             .and_then(|(free, gate)| {
                 let mut facts = Vec::new();
                 for clause in free.iter().map(|(_, clause)| clause).chain(&gate) {
@@ -1632,7 +1635,9 @@ impl Checker {
                 let signature = self.in_signature_scope(receiver.as_ref(), |this| {
                     let all_types = this.param_tys(&m.params)?;
                     let mut clauses = free;
-                    clauses.extend(this.method_clauses(m, true)?);
+                    clauses.extend(this.with_mutability_binders(&method_decls, |this| {
+                        this.method_clauses(m, true)
+                    })?);
                     clauses.sort_by_key(|(index, _)| *index);
                     let availability = clauses
                         .into_iter()

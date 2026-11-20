@@ -3359,7 +3359,13 @@ impl Checker {
                 lambda,
             })
         };
-        let mut known = self.declared_propositions(&decls);
+        // The body assumes every clause of its generator, a `mut=`
+        // binder's included, over the whole declared list.
+        let mut known = self.declared_propositions(
+            fn_ty
+                .as_generic_func()
+                .map_or(decls.as_slice(), |generic| generic.decls.as_slice()),
+        );
         known.extend(function_assumptions);
         self.push_assumptions(known);
         // A parameter typed by a dependent pack projection (`values.Ts[index]`
@@ -4062,7 +4068,7 @@ impl Checker {
     ) -> Result<DefSignature, TypeError> {
         let StmtKind::Def {
             name,
-            type_params,
+            type_params: _,
             params,
             positional_only,
             keyword_only,
@@ -4114,44 +4120,27 @@ impl Checker {
             }
             // Upstream's `Signatures.cpp` emits the `where` clauses after the
             // arguments, so a clause reads them (`where base.dtype ==
-            // DType.float32`) as the result annotation does. An erased origin
-            // mutability binder (`m: Bool, //, o: Origin[mut=m]`) occupies no
-            // slot, so a clause reads it by name and a call binds it to the
-            // mutability inferred for its origin.
-            if let Some(scope) = this.param_scopes.borrow_mut().values.last_mut() {
-                for parameter in ParamDecl::mutability_binders(&decls) {
-                    let name = parameter.name();
-                    let reference = ParamRef::unbound(name);
-                    scope.insert(
-                        name.to_string(),
-                        ParamContext::detached().decl_ref(
-                            reference.id,
-                            name,
-                            MetaTy::Value(Ty::bool()),
-                        ),
-                    );
-                }
-            }
+            // DType.float32`) as the result annotation does, and the origins'
+            // `mut=` binders.
             let compiled = match emitted {
                 Some(emitted) => emitted,
-                None => where_clauses
-                    .iter()
-                    .map(|condition| this.compile_where_clause(condition))
-                    .collect::<Result<Vec<_>, _>>()?,
+                None => this.with_mutability_binders(&decls, |this| {
+                    where_clauses
+                        .iter()
+                        .map(|condition| this.compile_where_clause(condition))
+                        .collect::<Result<Vec<_>, _>>()
+                })?,
             };
             Ok((param_tys, ret_ty, compiled))
         })?;
         let mut function_assumptions = Vec::new();
-        let mut erased_origin_constraints = Vec::new();
         let clauses = compiled.clone();
         for constraint in compiled {
             self.guaranteed_facts(&constraint, &mut function_assumptions);
-            if let Some(constraints) = ParamDecl::clause_constraints(&mut decls) {
+            if let Some(constraints) = ParamDecl::generator_clause_constraints(&mut decls) {
                 constraints.push(constraint);
-            } else if type_params.is_empty() {
-                self.validate_declaration_constraint(name, &constraint)?;
             } else {
-                erased_origin_constraints.push(constraint);
+                self.validate_declaration_constraint(name, &constraint)?;
             }
         }
         self.generic_parameters.borrow_mut().insert(
@@ -4255,14 +4244,15 @@ impl Checker {
             transfers: TransferSet::default(),
         };
         // Upstream's function with any declared parameter, origins
-        // included, is a generator over its whole declared list.
-        // A call binds no erased origin-mutability binder, so a clause
-        // reading one is no application's.
-        let clauses_apply = erased_origin_constraints.is_empty();
-        let mut origin_signature =
-            callable_origin_signature(type_params, erased_origin_constraints);
-        origin_signature.view_return =
-            self.view_return_origins(ret_anno.as_ref(), &decls, regular, 0, None);
+        // included, is a generator over its whole declared list. A
+        // compile-time application binds the argument view alone, so a
+        // clause of an origin's `mut=` binder is no application's.
+        let clauses_apply =
+            ParamDecl::mutability_binders(&decls).all(|binder| binder.constraints().is_empty());
+        let origin_signature = CallableOriginSignature {
+            view_return: self.view_return_origins(ret_anno.as_ref(), &decls, regular, 0, None),
+            unavailable: unavailable.clone(),
+        };
         let fn_ty = Ty::new(if decls.is_empty() {
             TyKind::Func(Box::new(func))
         } else {
@@ -4277,7 +4267,6 @@ impl Checker {
             fn_ty.clone(),
         );
         let clauses = clauses_apply.then_some(clauses);
-        origin_signature.unavailable.clone_from(&unavailable);
         Ok(DefSignature {
             symbol: name.clone(),
             clauses,

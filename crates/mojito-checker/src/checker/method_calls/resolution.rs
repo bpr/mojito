@@ -284,7 +284,9 @@ impl Checker {
                 method_declared_arguments(sig, &method_arguments, &declared_arguments);
             if let Err(failure) = self.method_constraint_result(
                 sig,
-                &method_arguments,
+                declared_instantiation
+                    .as_deref()
+                    .unwrap_or(&method_arguments),
                 &info.decls(),
                 &info.view_arguments(targs),
             ) {
@@ -498,10 +500,20 @@ impl Checker {
                 kw_variadic,
                 subst: method_subst,
                 arguments: method_arguments,
+                declared: declared_arguments,
                 attributes: bracket_attributes,
                 ..
             } = instantiated;
-            if let Err(failure) = self.method_constraint_result(&sig, &method_arguments, &[], &[]) {
+            let declared_instantiation =
+                method_declared_arguments(&sig, &method_arguments, &declared_arguments);
+            if let Err(failure) = self.method_constraint_result(
+                &sig,
+                declared_instantiation
+                    .as_deref()
+                    .unwrap_or(&method_arguments),
+                &[],
+                &[],
+            ) {
                 if single_candidate
                     && availability_failure.is_none()
                     && self

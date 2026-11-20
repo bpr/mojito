@@ -4014,6 +4014,15 @@ impl ParamDecl {
         decls[last].constraints_mut()
     }
 
+    /// The constraints a trailing `where` clause of the generator `decls`
+    /// attaches to, as upstream's clause is one of the generator's,
+    /// evaluated with its whole declared list bound: its last type or value
+    /// binder, an origin's `mut=` binder included. `None` when it declares
+    /// none.
+    pub fn generator_clause_constraints(decls: &mut [Self]) -> Option<&mut Vec<GenericConstraint>> {
+        decls.iter_mut().rev().find_map(Self::constraints_mut)
+    }
+
     /// [`Self::constraints`], mutable; `None` for an origin binder.
     pub const fn constraints_mut(&mut self) -> Option<&mut Vec<GenericConstraint>> {
         match self {

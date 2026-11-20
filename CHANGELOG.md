@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `where` clause over an origin's `mut=` binder is a clause of the
+  function's whole declared list, as upstream's is the generator's, checked
+  with every parameter the call binds. An overloaded `w[mut: Bool, //, o:
+  Origin[mut=mut]](x: Pointer[Int, o]) where mut` beside `w(x: Int)` now
+  runs instead of matching no overload, the same clause on a method, a
+  static method, or an initializer compiles and is checked, and a body
+  forwarding its own binder to such a callee assumes its clause (R2361).
 - A construction solves its initializer's own origin binders with its
   type and value binders in its one solve, as upstream's call binds
   every declared parameter, and records them, each `mut=` binder's
