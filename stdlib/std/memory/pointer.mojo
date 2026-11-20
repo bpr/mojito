@@ -2,7 +2,7 @@
 # these departures. The compiler folds every application of the struct into
 # its own pointer type, and its rules still answer `Pointer(to=)`, `p[]`,
 # the casts, the address members, and the operators (R2206–R2208); a member
-# no rule answers does not yet reach its body here (R2420). Conformances
+# or an initializer keyword no rule answers reaches its body here. Conformances
 # `DevicePassable`, `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable`
 # are absent from the bundle, and `Comparable` waits on the members below.
 # Members omitted, by blocker:
@@ -15,8 +15,6 @@
 #   symbolic `mut` (R2384).
 # - `write_repr_to`: `Named("mut", Self.mut)` binds a compile-time value to
 #   a `ref` argument (R2425).
-# - `__init__(unsafe_from_address: IntLiteral)`: `Self(unsafe_from_address=)`
-#   reaches the construction rule, not the declared initializers (R2420).
 # - `__bool__`: `@unavailable` on a method is rejected (R1162).
 # - the comparisons, `__add__`, `__sub__`, `offset_from`, the memory
 #   members (`unsafe_write*`, `unsafe_take_pointee`, `unsafe_deinit_pointee*`,
@@ -261,6 +259,22 @@ struct Pointer[
                 " does not fit in this pointer's address space",
             )
         self = Pointer(to=unsafe_from_address).unsafe_bitcast[type_of(self)]()[]
+
+    @inline(.always)
+    @doc_hidden
+    def __init__(out self, *, unsafe_from_address: IntLiteral):
+        """Create a pointer from a raw address.
+
+        This checks at compile time if the address is invalid and emits a compilation error.
+        """
+        comptime assert type_of(unsafe_from_address)() != 0, (
+            "Pointer is non-nullable. To construct a null pointer, use"
+            " Optional[Pointer] to model nullability."
+        )
+        comptime assert (
+            type_of(unsafe_from_address)() > 0
+        ), "Pointer's address cannot be negative."
+        self = Self(unsafe_from_address=Int(unsafe_from_address))
 
     @inline(.nodebug)
     @stable(since="1.3")

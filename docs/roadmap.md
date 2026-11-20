@@ -10599,42 +10599,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2420 A `Pointer` member no checker rule answers does not resolve
-  to its declared body**
-
-  `print(Pointer(to=x).as_imm()[])` fails with "type 'Pointer[Int,
-  origin@…]' has no method 'as_imm'", where the pin prints `5`, though
-  `std/memory/pointer.mojo` declares the body.
-  - `declared_receiver_member` (`checker/method_calls/resolution.rs`)
-    admits only SIMD and literal receivers.
-  - Admit a pointer for any member off `POINTER_RULE_MEMBERS`
-    (`method_calls/builtin_types.rs`), and let
-    `infer_intrinsic_receiver_call` defer to it, as its string-literal arm
-    does.
-  - Mono then dispatches a declared member on a pointer receiver
-    (`carries_instance_in_slots`, `native/mono/infer.rs`); the VM's
-    `invoke` and Pliron's `lower_method_call` already run a resolved
-    declared body (R2415's `write_to`).
-  - The VM's `constructed` admits a pointer receiver, so a declared
-    `Pointer.__init__` reaches `uninitialized_value`, which needs a pointer
-    arm (the null `Value::Pointer`).
-  - A bare-`ref` binder's pointer at another binder's mutability
-    (`pointer_subscript_reads_in_place.mojo`) reads back from its struct
-    parts at its own binder's: a reader that rebuilds a pointer from a
-    declared struct's substitution must keep `Ty::pointer`.
-  - Probe: `Pointer[Int, origin_of(x)](unsafe_from_address=Int(Pointer(to=x)))[]`
-    fails with "explicit type arguments are not supported", where the pin
-    prints `5`: a construction whose keyword no rule answers must select
-    the declared initializers.
-  - Probe: the bundled `__init__(unsafe_from_address: IntLiteral)` cannot
-    be declared, since its `Self(unsafe_from_address=…)` reaches the
-    construction rule ("expected exactly one 'to=' keyword argument").
-  - The plan is `R2414-the-bundled-library-declares-no-struct-plan.md`,
-    slices 7–9.
-  - Found while landing R2414 (2026-11-20).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2421 A `Pointer[...]` bracket does not bind over upstream's
   declared parameter list**
 
@@ -10705,8 +10669,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     field read lowers to `pointer.convert` keyed on the object's checked
     type, as `lower_pointer_field_store` does the store.
   - Loans come from the call's checked result type, not an adjustment.
-  - `as_imm` is no rule: it reaches the casts through its body once
-    R2420 resolves declared members.
+  - `as_imm` is no rule: it already reaches the casts through its body.
+  - Shrink `POINTER_RULE_MEMBERS` and `POINTER_RULE_INITIALIZERS`
+    (`method_calls/builtin_types.rs`) as the rules retire.
+  - Probe: `Pointer(copy=p)` prints `5` at the pin; today it fails with
+    "expected exactly one 'to=' keyword argument". Sent to the declared
+    initializers instead, the checker selects the synthesized copy and
+    elaboration fails, so `copy=` stays a rule keyword until this lands.
+  - A reader that rebuilds a pointer from a declared struct's
+    substitution must keep `Ty::pointer`: a bare-`ref` binder's pointer
+    at another binder's mutability (`pointer_subscript_reads_in_place.mojo`)
+    reads back from its struct parts at its own binder's.
   - Re-probe R1215 (fixed by this plus R2426).
   - The plan is `R2206-pointer-s-casts-and-conversions-are-plan.md`; its
     probes re-ran unchanged on 2026-11-20.
@@ -13468,7 +13441,11 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: R2202's `StringLiteral.ptr`, which bitcasts the pin's `si8`
     string address to `Byte`.
   - Probe: upstream's `Pointer(unsafe_from_address=)`, which reads an
-    `Int` as a pointer through `Pointer(to=address).unsafe_bitcast[...]`.
+    `Int` as a pointer through `Pointer(to=address).unsafe_bitcast[...]`:
+    `Pointer[Int, origin_of(x)](unsafe_from_address=Int(Pointer(to=x)))[]`
+    prints `5` at the pin and natively, and is refused on the VM. Once
+    fixed, `Int(Pointer[Int, MutAnyOrigin](unsafe_from_address=4096))`
+    (the `IntLiteral` overload) makes an `assets/ok` fixture.
   - Probe: upstream's `MaybeUninit` pointer views
     (`.unsafe_bitcast[MaybeUninit[U]]()`) and `Pointer.write_niche`'s
     `_Null` view of a `MaybeUninit[Self]` (R2055).

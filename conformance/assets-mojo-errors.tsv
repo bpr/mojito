@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1268
+# swept-count	1270
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
@@ -952,6 +952,8 @@ assets/type_error/pointer_field_symbolic_deref_store.mojo	compile-reject	agree	e
 assets/type_error/pointer_field_symbolic_generic_body_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_symbolic_in_place_immutable_source.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/pointer_field_symbolic_ref_result_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/pointer_from_address_literal_negative.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/pointer_from_address_literal_null.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/pointer_immutable_conversion_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_kgen_pointer_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pointer_kgen_pointer_no_origin.mojo	compile-reject	agree	error: no matching function in initialization

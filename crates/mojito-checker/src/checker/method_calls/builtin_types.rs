@@ -50,6 +50,20 @@ pub(in crate::checker) fn pointer_rule_member(member: &str) -> bool {
     POINTER_RULE_MEMBERS.contains(&member)
 }
 
+/// The initializer keywords of the declared `Pointer` a checker rule
+/// answers ahead of the declaration: `to=`, `_mlir_value=`, and `copy=`. A
+/// construction by any other keyword selects among the declared
+/// initializers.
+pub(in crate::checker) const POINTER_RULE_INITIALIZERS: &[&str] = &["to", "_mlir_value", "copy"];
+
+/// Whether a checker rule answers a `Pointer` construction by `kwargs`:
+/// one with no keyword, or with only [`POINTER_RULE_INITIALIZERS`] ones.
+pub(in crate::checker) fn pointer_rule_construction(kwargs: &[mojito_ast::ast::KwArg]) -> bool {
+    kwargs
+        .iter()
+        .all(|kwarg| POINTER_RULE_INITIALIZERS.contains(&kwarg.name.as_str()))
+}
+
 impl Checker {
     /// Type a `Pointer[T]` instance method: the public `unsafe_*` operation
     /// vocabulary (offset, write, take/deinit pointee, free) plus the

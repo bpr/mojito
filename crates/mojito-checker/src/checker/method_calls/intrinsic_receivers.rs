@@ -7,8 +7,8 @@ use mojito_types::types::TyKind;
 impl Checker {
     /// Type a call the receiver's type answers without a declared signature:
     /// the compiler-known collections, string literals, tuples, packs, pointers, and uninit
-    /// storage. `None` leaves the call to
-    /// signature resolution.
+    /// storage. `None` leaves the call to signature resolution, as it does
+    /// a string literal's or a pointer's declared member no rule answers.
     pub(super) fn infer_intrinsic_receiver_call(
         &self,
         site: MethodCallSite<'_>,
@@ -26,8 +26,8 @@ impl Checker {
             kwargs,
             ..
         } = call;
-        // A string literal's declared member is its struct's body.
-        if obj_ty.kind().string_literal_value().is_some()
+        // A string literal's or a pointer's declared member is its struct's body.
+        if (obj_ty.kind().string_literal_value().is_some() || obj_ty.is_pointer())
             && self.declared_receiver_member(obj_ty, method).is_some()
         {
             return Ok(None);

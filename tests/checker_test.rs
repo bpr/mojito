@@ -5783,6 +5783,28 @@ fn pointer_to_place_requires_a_single_to_keyword_place() {
 }
 
 #[test]
+fn pointer_construction_by_a_keyword_no_rule_answers_selects_declared_initializers() {
+    check_with_std(
+        "def main():\n    var x = 5\n    var p = Pointer[Int, origin_of(x)](unsafe_from_address=Int(Pointer(to=x)))\n    print(p[])\n    var q = type_of(p)(unsafe_from_address=Int(p))\n    print(q[])\n",
+    )
+    .expect("a declared `Pointer` initializer is selected by its keyword");
+    assert!(matches!(
+        check_with_std(
+            "def main():\n    var x = 1\n    var p = Pointer[Int, origin_of(x)](unsafe_from_address=\"a\")\n",
+        ),
+        Err(TypeError::BadCall { reason, .. }) if reason.contains("no constructor overload matches")
+    ));
+}
+
+#[test]
+fn pointer_member_no_rule_answers_resolves_to_its_declared_body() {
+    check_with_std(
+        "def main():\n    var x = 5\n    var p = Pointer(to=x)\n    print(p.as_imm()[])\n    var s = String()\n    p.write_to(s)\n",
+    )
+    .expect("`as_imm` and `write_to` resolve to their declared bodies");
+}
+
+#[test]
 fn origin_bearing_pointer_writes_require_mutable_provenance() {
     ok("def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    p[0] = 2\n");
     assert!(matches!(

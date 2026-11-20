@@ -3757,12 +3757,15 @@ aggregate. Its parameters (`p.origin`, `type_of(p).T`), `comptime`
 members (`_mlir_type`, `_mlir_lit_ref`), and conformances (`Intable`,
 `Writable`) are the declaration's, in the checker and the elaborator
 alike. The checker's rules still win for every member
-`POINTER_RULE_MEMBERS` names, construction included, so those declared
-bodies are checked but no call selects them until R2206–R2208 retire the
-rules; a member no rule names that the elaborator resolves through a
-witness (`write_to` under `print(p)`) runs its declared body on both
-backends, while the rule members keep the VM's and Pliron's intrinsic
-paths.
+`POINTER_RULE_MEMBERS` names and for a construction by only the keywords
+`POINTER_RULE_INITIALIZERS` names, so those declared bodies are checked
+but no call selects them until R2206–R2208 retire the rules. Any other
+member (`p.as_imm()`, `p.write_to(w)`, or `write_to` through a witness
+under `print(p)`) resolves to its declared body through
+`declared_receiver_member`, and a construction by any other keyword
+(`unsafe_from_address=`) is an overload resolution over the declared
+initializers, both running the declared body on both backends, while the
+rule members keep the VM's and Pliron's intrinsic paths.
 
 Borrowed views (`Span`, `StringSpan`) are pointer-plus-length structs over
 that capability. Their loans flow through three checked channels: a

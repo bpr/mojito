@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `Pointer` member no checker rule answers resolves to its declared
+  body (R2420), so `Pointer(to=x).as_imm()[]` and `p.write_to(s)` run on
+  both backends where they failed with "has no method". A construction
+  by a keyword no rule answers selects the declared initializers:
+  `Pointer[Int, o](unsafe_from_address=a)` checks and runs natively (the
+  VM refuses its bitcast, R2201), and the bundle declares upstream's
+  `IntLiteral` overload, whose asserts reject a null or negative literal.
+
 - A `Pointer` answers as its declaration in `std.memory.pointer` (R2415):
   `var o = p.origin`, `comptime T = type_of(p).T`, and `var z: p.T` read
   its parameters, `_mlir_type` and `_mlir_lit_ref` are the declared

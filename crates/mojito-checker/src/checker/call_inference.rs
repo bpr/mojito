@@ -6,8 +6,8 @@ use super::constraints::LACKING_EVIDENCE;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_symbol::symbol::TypeKey;
-use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
+use mojito_types::types::{POINTER_TYPE_NAME, TyKind};
 
 /// A call typed against one callable: its result, rank, error type, the
 /// erased-origin bindings, and how many arguments with a lane it binds to a
@@ -52,8 +52,18 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match name {
-            "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
+            "Pointer" | "UnsafePointer"
+                if !kwargs.is_empty()
+                    && (super::method_calls::pointer_rule_construction(kwargs)
+                        || !self.structs.contains_key(POINTER_TYPE_NAME)) =>
+            {
                 self.infer_pointer_to(span, param_args, args, kwargs)
+            }
+            "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
+                let constructed =
+                    self.infer_construction(&span, POINTER_TYPE_NAME, param_args, args, kwargs)?;
+                self.type_runtime_param_args(param_args, &self.recorded_bracket_attributes(&span))?;
+                Ok(constructed)
             }
             _ if self.structs.contains_key(name) => {
                 let constructed = self.infer_construction(&span, name, param_args, args, kwargs)?;
@@ -322,8 +332,9 @@ impl Checker {
                     }
                     _ => constructed,
                 }),
-            // A pointer's construction is the rule's, its bracket the
-            // instance's.
+            // A pointer's construction is the rule's for the keywords a
+            // rule answers, and its declared initializers' otherwise; its
+            // bracket is the instance's.
             TyKind::Pointer {
                 element,
                 origin,
@@ -349,6 +360,21 @@ impl Checker {
                             },
                         );
                         copied
+                    }
+                    ([], [kwarg]) if kwarg.name == "to" => {
+                        self.infer_pointer_to(span.clone(), &[], args, kwargs)?
+                    }
+                    _ if self.structs.contains_key(POINTER_TYPE_NAME)
+                        && !super::method_calls::pointer_rule_construction(kwargs) =>
+                    {
+                        self.infer_construction_of(
+                            span,
+                            POINTER_TYPE_NAME,
+                            Some(instance),
+                            &[],
+                            args,
+                            kwargs,
+                        )?
                     }
                     _ => self.infer_pointer_to(span.clone(), &[], args, kwargs)?,
                 };

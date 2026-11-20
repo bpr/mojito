@@ -3417,14 +3417,12 @@ impl Checker {
         name: &str,
         constructed: &Ty,
     ) -> HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin> {
-        let Some((_, instance)) = constructed
-            .kind()
-            .as_non_simd_struct()
-            .filter(|(constructed, _)| constructed.as_str() == name)
+        let Some((_, instance)) =
+            nominal_parts(constructed).filter(|(constructed, _)| *constructed == name)
         else {
             return HashMap::new();
         };
-        info.instance_origin_bindings(instance)
+        info.instance_origin_bindings(&instance)
     }
 
     /// [`Self::infer_construction_of`] inside its argument memo.
@@ -7106,7 +7104,7 @@ fn bind_instance_origins(
     instance: &Ty,
 ) {
     use mojito_types::origin::Origin;
-    let Some((_, arguments)) = instance.kind().as_non_simd_struct() else {
+    let Some((_, arguments)) = nominal_parts(instance) else {
         return;
     };
     let origins = arguments.iter().filter_map(|argument| match argument {

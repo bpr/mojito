@@ -59,9 +59,9 @@ impl Checker {
     /// from before the compiler's rule: `SIMD`'s, for a receiver
     /// of that type whose struct declares it, and `StringLiteral`'s,
     /// `IntLiteral`'s, or `FloatLiteral`'s, for a literal whose type
-    /// carries its value. A member the
-    /// literal's struct does not declare falls through to the compiler's
-    /// rule.
+    /// carries its value, and `Pointer`'s, for a member no checker rule
+    /// answers ([`pointer_rule_member`]). A member the struct does not
+    /// declare falls through to the compiler's rule.
     pub(in crate::checker) fn declared_receiver_member<'t>(
         &self,
         ty: &'t Ty,
@@ -69,7 +69,8 @@ impl Checker {
     ) -> Option<(&'t str, std::borrow::Cow<'t, [TyArg]>)> {
         if !(ty.is_simd()
             || ty.kind().string_literal_value().is_some()
-            || ty.kind().is_numeric_literal())
+            || ty.kind().is_numeric_literal()
+            || (ty.is_pointer() && !super::builtin_types::pointer_rule_member(method)))
         {
             return None;
         }
