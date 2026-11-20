@@ -1182,6 +1182,7 @@ impl Checker {
                             origins.push(resolved.clone());
                             continue;
                         }
+                        self.convert_bracket_origin(decl, argument)?;
                         let origin = self.explicit_origin_argument(argument)?;
                         origins.push(BoundOrigin {
                             slot: index,
@@ -2305,6 +2306,35 @@ impl Checker {
                 .any(|member| self.origin_is_immutable(member)),
             _ => self.bound_origin_mutability(origin) == Some(Mutability::Immutable),
         }
+    }
+
+    /// Convert bracket origin `argument` to the `Origin[mut=…]` type its
+    /// binder `decl` declares, as upstream passes a bracket value: an
+    /// immutable origin does not convert to a `MutOrigin` binder.
+    fn convert_bracket_origin(
+        &self,
+        decl: &ParamDecl,
+        argument: &mojito_ast::ast::ParamArg,
+    ) -> Result<(), TypeError> {
+        let ParamDecl::Origin {
+            mutability: OriginMutability::Fixed(true),
+            lit,
+            ..
+        } = decl
+        else {
+            return Ok(());
+        };
+        let immutable = self
+            .resolve_origin_param_arg(argument)
+            .is_ok_and(|(_, own)| own == Some(mojito_types::origin::Mutability::Immutable));
+        if !immutable {
+            return Ok(());
+        }
+        Err(TypeError::TypeMismatch {
+            expected: super::origin_value_type(Some(true), *lit),
+            found: super::origin_value_type(Some(false), *lit),
+            context: format!("value passed to '{}'", decl.name()),
+        })
     }
 }
 

@@ -591,6 +591,8 @@ assets/type_error/if_case_binding_not_in_else.mojo	compile-reject	agree	error: u
 assets/type_error/imm_capture_transfer.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
 assets/type_error/imm_origin_binder_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/imm_origin_mut_binder.mojo	compile-reject	agree	error: value passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'
+assets/type_error/function_bracket_imm_origin_to_mut_binder.mojo	compile-reject	agree	error: invalid call to 'put': value passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'
+assets/type_error/method_bracket_imm_origin_to_mut_binder.mojo	compile-reject	agree	error: invalid call to 'put': value passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/imm_origin_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/immutable_mutation.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/immutable_origin_struct_cast_to_uncast.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(x)]' value to 'View[origin_of(x)]'

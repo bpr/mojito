@@ -952,6 +952,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A call bracket's origin argument now converts to its binder's declared
+  `Origin[mut=…]` type, so `put[ImmOrigin(origin_of(a))](Pointer(to=a))`
+  over `def put[o: MutOrigin](…)`, a free or method call, is rejected as at
+  the pin instead of running (R2357).
 - An explicit construction through a result-form initializer now binds the
   struct's origin and `mut=` slots its declared result names, so `var d =
   ImmOrigin(MutUntrackedOrigin)` (and `Origin[mut=False](…)`, `Origin(…)`,

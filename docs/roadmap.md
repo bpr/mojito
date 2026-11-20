@@ -3019,27 +3019,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2357 A call bracket's origin argument is not checked against its
-  binder's mutability**
-
-  `put[ImmOrigin(origin_of(a))](Pointer(to=a))` over `def put[o:
-  MutOrigin](p: Pointer[Int, o])` runs, where the pin rejects it ("value
-  passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'").
-  - `explicit_origin_argument` (`checker/origins/binders.rs`) erases an
-    `ImmOrigin(o)` cast to `o`, so `bound_bracket_origins`
-    (`checker/generics.rs`) binds a `MutOrigin` binder without the
-    capability check `accept_origin_argument`
-    (`checker/type_resolution.rs`) gives a struct application.
-  - Probe: the free call above, and the method call `s.put[ImmOrigin(
-    origin_of(a))](Pointer(to=a))` over `def put[o: MutOrigin](self, p:
-    Pointer[Int, o])`, which binds through the same binder.
-  - The lever: have `bound_bracket_origins` convert the argument to the
-    binder's declared `Origin[mut=…]` type, rejecting an immutable origin
-    for a `mut=True` binder as upstream's conversion does.
-  - Found while landing R2353 (2026-11-19).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
 Track: `calls`.
@@ -9330,6 +9309,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     and `g.view[origin_of(a)](Pointer(to=b))` reports it where the pin
     reports the conversion of `p`
     (`method_bracket_origin_mismatch_struct_parameter.mojo`).
+  - Probe: `s.put[ImmOrigin(origin_of(a))](Pointer(to=a))` over a single
+    `def put[o: MutOrigin](self, p: Pointer[Int, o])` reports "no overload
+    matches", where the pin reports "value passed to 'o' cannot be
+    converted from 'ImmOrigin' to 'MutOrigin'"
+    (`assets/type_error/method_bracket_imm_origin_to_mut_binder.mojo`).
   - The `assets/type_error` fixtures that expect "no overload matches"
     move to the pin's words with the fix.
   - Found while landing R2115 (2026-11-12).
