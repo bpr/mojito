@@ -2050,7 +2050,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `read_reference_projection`, `extend_reference`, and `MakeRef`). A heap
   pointer stays a `Value::Pointer`, which also holds a reference to a heap
   element, so `MakeRef` asks the slot's type whether a whole slot holding
-  one is the pointer (`Prog::pointer_slot`, `backend/vm.rs`).
+  one is the pointer (`Prog::pointer_slot`, `backend/vm.rs`). A place
+  pointer's integer address (`__int__`, `VmBackend::method_call`) is
+  `VmBackend::place_address`: an interned synthetic allocation per place
+  (`place_allocations`), or the heap element's own address for one rooted
+  at `POINTER_ROOT_FRAME`, through `runtime::pointer_address`.
 - `backend/vm/exec.rs` owns the `exec_instr` instruction dispatcher and the
   error a `raise` propagates as (`raise_register`, `raise`); a raise with no
   label leaves the function as `RuntimeError::Raised`.

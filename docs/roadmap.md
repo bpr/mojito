@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2403**.
+Next free ID: **R2404**.
 
 ## Ordered Work
 
@@ -2760,31 +2760,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     user value `__getitem__`, are rejected the same way, where the pin
     points at the materialized result (`2`).
   - Found while landing R1132 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1665 A `Pointer` formed over a place has no address on the VM**
-
-  `Int(Pointer(to=x)) != 0` prints `True` at the pin and natively; the VM
-  fails with "vm: SIMD[DType.int, 1] has no method '__int__'".
-  - Cause: the VM keeps two pointer kinds where upstream has one pointer
-    value. A place-formed pointer is a `Value::PlacePointer` (frame,
-    slot, projection), which has no integer form beside
-    `runtime::pointer_address`'s for an allocation's `Value::Pointer`.
-  - Since the place-pointer split, `Int(p)` fails "vm backend does not
-    support methods on Pointer yet" (`VmBackend::method_call`,
-    `vm/invoke.rs`, has `__int__` only for a heap pointer).
-  - Fix: give a place pointer a provenance-unique synthetic address, or
-    fold the two kinds into one `Value::Pointer` over one address space,
-    as upstream's `!kgen.pointer` is one value.
-  - Probe: `p.__int__()`, `Int(p)`, `UInt(p)`, and `def addr[T:
-    Intable](v: T) -> Int: return Int(v)` over `var p = Pointer(to=x)`.
-  - Probe: `@always_inline def outer[T: Intable](value: T) -> Int:
-    return inner(value)` over `def inner[T: Intable](value: T) -> Int:
-    return Int(value)`, called with `Pointer(to=x)`, fails "vm backend
-    does not support methods on Int yet"; the pin and Pliron print the
-    address.
-  - Found while landing R1399 (2026-10-29).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7566,6 +7541,26 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on R2207.
   - Model: Opus, Not Planned.
 
+- [ ] **R2403 A pointer's VM address counts elements, where upstream's
+  counts bytes**
+
+  `Int(buf + 1) - Int(buf)` over an `Int` buffer prints `8` at the pin
+  and natively, and `1` on the VM.
+  - Cause: `runtime::pointer_address` adds the pointer's element offset
+    to its allocation's synthetic base, and `VmBackend::place_address`
+    adds a place pointer's trailing element index the same way, where
+    upstream's `pop.pointer_to_index` is a byte address.
+  - Fix: scale the offset by the pointee's size from
+    `mojito-native-core`'s layout, which `method_call` can read from
+    the receiver's type.
+  - Probe: `var n = buf + 1` then `print(Int(n) - Int(buf))` over `var
+    buf = unsafe_alloc[Int](3)`.
+  - Probe: `Int(Pointer(to=a[1])) - Int(Pointer(to=a[0]))` over an
+    `InlineArray`/`Array` element place, once R1298 lets it lower.
+  - Found while landing R1665 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2196 A `Pointer` held in a place is addressed as its pointee, so
   a pointer to it reads or writes the wrong storage**
 
@@ -10386,8 +10381,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `lit.ref` conversions, `PointerBitcast` for the bitcast, the pointer
     offset lowering for `pop.offset`, `LoadIndirect` and `StoreToMem` for
     `pop.load` and `pop.store`.
-  - `pop.pointer_to_index` over a place pointer fails on the VM until
-    R1665 lands; that is its explicit boundary, not this entry's.
+  - `pop.pointer_to_index` over a place pointer reads its VM address
+    through `VmBackend::place_address`, as `Pointer.__int__` does.
   - `__get_address_as_uninit_lvalue` is R2024's.
   - Found while planning R1681 (2026-11-14).
   - Depends on nothing.
@@ -10483,6 +10478,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     goes through `Pointer(to=self[i])`, so both need the VM to address a
     place pointer.
   - Re-probe R2027.
+  - Probe: a pointer offset's result at a by-address generic parameter
+    (`Int(buf + 1)`, `f(q + 0)` or `f(buf.unsafe_offset(1))` over `def
+    f[T: Intable](v: T)`) fails MIR verification ("received by address
+    but passes a Pointer value"), where a declared member's call result
+    passes as its temporary's address (`f(mk(q))` runs).
   - Found while planning R1681 (2026-11-14).
   - Depends on R2206, R1665, R2196, R2024.
   - Model: Fable, Not Planned.

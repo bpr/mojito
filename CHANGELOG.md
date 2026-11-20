@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A pointer formed over a place has an integer address on the VM, as
+  upstream's one `!kgen.pointer` value does: `Int(Pointer(to=x))`,
+  `UInt(p)`, `p.__int__()`, and an `Intable` generic over such a pointer
+  print what the pin and the native backend print instead of failing
+  "vm backend does not support methods on Pointer" (R1665).
 - A struct application binds its whole bracket over the struct's declared
   list in one solve, as a call's bracket and upstream's type expression
   do, instead of pulling its origin arguments out in a pre-pass first. A

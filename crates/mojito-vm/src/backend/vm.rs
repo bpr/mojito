@@ -110,6 +110,10 @@ pub struct VmBackend {
     /// `Span`) that held the pointer reaching it.
     pointer_roots: Vec<Value>,
     pointer_root_slots: HashMap<(u64, i64), usize>,
+    /// The synthetic allocation id each place a place pointer addresses
+    /// takes when its integer address is read ([`VmBackend::place_address`]),
+    /// by frame, slot, and the projection up to its element index.
+    place_allocations: HashMap<(u64, usize, Vec<RefProjection>), u64>,
 }
 
 /// The reserved frame id of compile-time memory. Frame ids count up from zero,
@@ -119,6 +123,11 @@ pub(super) const COMPTIME_MEMORY_FRAME: u64 = u64::MAX;
 /// The reserved frame id of the interned heap pointers
 /// ([`VmBackend::pointer_root`]), beside [`COMPTIME_MEMORY_FRAME`].
 pub(super) const POINTER_ROOT_FRAME: u64 = u64::MAX - 1;
+
+/// The first synthetic allocation id of a place's address
+/// ([`VmBackend::place_address`]): above every heap allocation id, and
+/// below the bit `runtime::pointer_address` would shift out of the sign.
+const PLACE_ALLOCATION_BASE: u64 = 1 << 30;
 
 impl VmBackend {
     pub fn new() -> Self {
@@ -535,6 +544,37 @@ impl VmBackend {
                     .push(Value::Pointer { allocation, offset });
                 self.pointer_roots.len() - 1
             })
+    }
+
+    /// The integer address of the place pointer `(frame, slot, projection)`:
+    /// upstream's `pop.pointer_to_index` of the one `!kgen.pointer` value it
+    /// is. A pointer into an interned heap element takes that heap pointer's
+    /// address; any other place takes a synthetic allocation, unique to its
+    /// storage and disjoint from the heap's, and a trailing element index is
+    /// its offset, so pointers into one array keep their element distance.
+    pub(super) fn place_address(
+        &mut self,
+        frame: u64,
+        slot: usize,
+        projection: &[RefProjection],
+    ) -> i64 {
+        let (base, index) = match projection.split_last() {
+            Some((RefProjection::Index(index), base)) => (base, *index as i64),
+            Some((RefProjection::Deref, base)) => (base, 0),
+            _ => (projection, 0),
+        };
+        if frame == POINTER_ROOT_FRAME
+            && base.is_empty()
+            && let Some(Value::Pointer { allocation, offset }) = self.pointer_roots.get(slot)
+        {
+            return crate::runtime::pointer_address(*allocation, offset.wrapping_add(index));
+        }
+        let next = self.place_allocations.len() as u64;
+        let allocation = *self
+            .place_allocations
+            .entry((frame, slot, base.to_vec()))
+            .or_insert(PLACE_ALLOCATION_BASE + next);
+        crate::runtime::pointer_address(allocation, index)
     }
 
     /// Move `value` into compile-time memory, which is never destroyed, and

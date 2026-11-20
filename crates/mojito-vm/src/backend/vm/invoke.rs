@@ -219,7 +219,7 @@ impl VmBackend {
             ))),
             // `Pointer` methods: `free()` releases the allocation (a no-op in
             // the arena model — the arena never reclaims), and `__int__()` is
-            // the synthetic address.
+            // the synthetic address, which a place pointer also has.
             Value::Pointer { allocation, offset } => match method {
                 "free" | "unsafe_free" => {
                     self.heap_free(*allocation, *offset)?;
@@ -233,6 +233,13 @@ impl VmBackend {
                     "vm: Pointer has no method '{method}'"
                 ))),
             },
+            Value::PlacePointer {
+                frame,
+                slot,
+                projection,
+            } if method == "__int__" && args.is_empty() => {
+                Ok(Value::Int(self.place_address(*frame, *slot, projection)))
+            }
             _ if let Some(name) = &declared_owner => {
                 let method_argc = args.len();
                 let source_fname = format!("{name}.{method}");

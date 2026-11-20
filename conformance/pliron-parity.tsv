@@ -1094,6 +1094,7 @@ assets/ok/pointer_origin_cast_reads_pointee.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_cast_upgrade_reads.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_constructors.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_field_inference.mojo	main	exe-differential	sanitized
+assets/ok/pointer_place_address.mojo	main	exe-differential	sanitized
 assets/ok/pointer_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/pointer_slot_is_its_pointer.mojo	main	exe-differential	sanitized
 assets/ok/pointer_subscript_operand_keeps_owner.mojo	main	exe-differential	sanitized
