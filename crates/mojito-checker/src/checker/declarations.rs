@@ -4880,7 +4880,11 @@ impl Checker {
     /// partial `#kgen.bind_params`: each argument the list leaves unbound
     /// is `None`, with no default installed and no inference solution
     /// taken for it, beside the markers that leave it so. A list with no
-    /// marker binds as [`Self::resolve_use_params`] does.
+    /// marker binds as [`Self::resolve_use_params`] does. The arguments are
+    /// over `decls`, the whole declared list, as upstream's binding of a
+    /// generator's list is: an origin binder holds the origin the list
+    /// bound it to, and its `mut=` binder the mutability that origin
+    /// decides; one the list leaves to inference is `None`.
     pub(super) fn resolve_partial_use_params(
         &self,
         name: &str,
@@ -4891,7 +4895,11 @@ impl Checker {
             .map_err(|error| error.into_type_error(name))?;
         if !unbound.any_open() {
             let bound = self.resolve_use_params(name, decls, param_args, &[], &[])?;
-            return Ok((bound.arguments.into_iter().map(Some).collect(), unbound));
+            let arguments = bound.arguments.into_iter().map(Some).collect();
+            return Ok((
+                self.declared_partial_arguments(decls, arguments, &bound.origins),
+                unbound,
+            ));
         }
         if let Some(decl) = decls.iter().zip(&unbound.open).find_map(|(decl, open)| {
             (open.is_some() && mojito_ast::call::CompileTimeParam::variadic(decl)).then_some(decl)
@@ -4909,13 +4917,60 @@ impl Checker {
             &[],
             &[],
         )?;
+        let slots = decls
+            .iter()
+            .zip(&unbound.open)
+            .filter(|(decl, _)| decl.is_argument_binder(decls));
         let arguments = bound
             .arguments
             .into_iter()
-            .zip(&unbound.open)
-            .map(|(argument, open)| open.is_none().then_some(argument))
+            .zip(slots)
+            .map(|(argument, (_, open))| open.is_none().then_some(argument))
             .collect();
-        Ok((arguments, unbound))
+        Ok((
+            self.declared_partial_arguments(decls, arguments, &bound.origins),
+            unbound,
+        ))
+    }
+
+    /// `view`, a bracket's arguments over the argument view of `decls`, as
+    /// arguments over `decls` itself: each origin binder the bracket bound
+    /// (`origins`) at its origin and its `mut=` binder at the mutability
+    /// that origin decides, and every other origin slot `None`.
+    fn declared_partial_arguments(
+        &self,
+        decls: &[ParamDecl],
+        view: Vec<Option<TyArg>>,
+        origins: &[BoundOrigin],
+    ) -> Vec<Option<TyArg>> {
+        if !decls.iter().any(ParamDecl::is_origin) {
+            return view;
+        }
+        let bound_origin = |id: &mojito_types::origin::OriginParamId| {
+            origins
+                .iter()
+                .find(|bound| bound.id == *id)
+                .map(|bound| bound.origin.clone())
+        };
+        let mut view = view.into_iter();
+        decls
+            .iter()
+            .map(|decl| match decl {
+                ParamDecl::Origin { origin: id, .. } => bound_origin(id).map(TyArg::Origin),
+                _ if decl.is_origin_mutability_binder(decls) => {
+                    let origin = decls.iter().find_map(|candidate| match candidate {
+                        ParamDecl::Origin {
+                            origin: id,
+                            mutability: mojito_types::types::OriginMutability::Binder(binder),
+                            ..
+                        } if binder.id == *decl.id() => bound_origin(id),
+                        _ => None,
+                    })?;
+                    Some(TyArg::Val(self.origin_mutability_slot(decl, &origin, None)))
+                }
+                _ => view.next().flatten(),
+            })
+            .collect()
     }
 
     /// The type binders of `decls` a call's bracket arguments bind

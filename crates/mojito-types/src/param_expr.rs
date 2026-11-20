@@ -549,17 +549,34 @@ impl ParamContext {
         }
     }
 
-    /// The argument `argument` binds a generator's parameter to, as an
-    /// application spells it: a type's shape, a value's constant, and no
-    /// expression for an origin, which an application erases (`Ok(None)`).
+    /// The origin attribute `origin` as a value of `ty`, its binder's
+    /// `Origin[mut=m, _mlir_origin=origin]` type ([`ParamKind::Origin`]).
+    pub fn origin(&self, origin: crate::origin::Origin, ty: Ty) -> ParamExpr {
+        self.make(MetaTy::value(ty), ParamKind::Origin(origin))
+    }
+
+    /// The argument `argument` binds the generator parameter `decl` to, as
+    /// an application spells it: a type's shape, a value's constant, and an
+    /// origin's attribute, a value of the binder's `Origin` type at that
+    /// origin, as upstream's `#kgen.bind_params` binds a `!lit.origin`.
     pub fn argument_expr(
         &self,
+        decl: &crate::types::ParamDecl,
         argument: &crate::types::TyArg,
-    ) -> Result<Option<ParamExpr>, ParamError> {
+    ) -> Result<ParamExpr, ParamError> {
         match argument {
-            crate::types::TyArg::Ty(ty) => Ok(Some(self.type_shape(ty.clone()))),
-            crate::types::TyArg::Val(value) => self.constant(value.clone()).map(Some),
-            crate::types::TyArg::Origin(_) => Ok(None),
+            crate::types::TyArg::Ty(ty) => Ok(self.type_shape(ty.clone())),
+            crate::types::TyArg::Val(value) => self.constant(value.clone()),
+            crate::types::TyArg::Origin(origin) => {
+                let ty =
+                    decl.origin_argument_ty(origin)
+                        .ok_or_else(|| ParamError::TypeMismatch {
+                            operation: "parameter binding".to_string(),
+                            expected: format!("an origin binder for '{origin}'"),
+                            found: decl.name().to_string(),
+                        })?;
+                Ok(self.origin(origin.clone(), ty))
+            }
         }
     }
 
@@ -1219,8 +1236,11 @@ impl ParamContext {
                 let arguments = args
                     .iter()
                     .flatten()
-                    .map(|arg| match arg.meta() {
-                        MetaTy::Type => crate::types::TyArg::Ty(
+                    .map(|arg| match (arg.kind(), arg.meta()) {
+                        (ParamKind::Origin(origin), _) => {
+                            crate::types::TyArg::Origin(origin.clone())
+                        }
+                        (_, MetaTy::Type) => crate::types::TyArg::Ty(
                             crate::types::DependentType::resolve(arg.clone()),
                         ),
                         _ => crate::types::TyArg::Val(arg.clone().into_value()),
@@ -1293,9 +1313,10 @@ impl ParamContext {
             _ => {}
         }
         let meta = if complete {
-            MetaTy::value(crate::types::replace_parameters(
-                self, &ty.result, &bindings, 0,
-            )?)
+            MetaTy::value(crate::types::bind_origin_params(
+                &crate::types::replace_parameters(self, &ty.result, &bindings, 0)?,
+                &generator_origins(&ty.params, &args),
+            ))
         } else {
             MetaTy::value(Ty::generator(
                 bound_generator_params(&ty.unbound_params(&args), &bindings),
@@ -3375,7 +3396,7 @@ impl ParamContext {
             return Ok(done.clone());
         }
         let replaced = match expr.kind() {
-            ParamKind::Constant(_) | ParamKind::Hole { .. } => expr.clone(),
+            ParamKind::Constant(_) | ParamKind::Hole { .. } | ParamKind::Origin(_) => expr.clone(),
             ParamKind::DeclRef(reference) => match bindings.lookup(reference) {
                 Some(value) => self.bound_value(expr, value, bindings, depth)?,
                 None => expr.clone(),
@@ -4016,6 +4037,7 @@ impl ParamExpr {
             | ParamKind::DeclRef(_)
             | ParamKind::IndexRef { .. }
             | ParamKind::TypeShape(_)
+            | ParamKind::Origin(_)
             | ParamKind::Hole { .. } => Vec::new(),
         }
     }
@@ -4060,6 +4082,7 @@ impl ParamExpr {
             ParamKind::TypeMember { .. } => 17,
             ParamKind::BindParams { .. } => 18,
             ParamKind::StructValue { .. } => 19,
+            ParamKind::Origin(_) => 20,
         }
     }
 }
@@ -4205,6 +4228,10 @@ pub enum ParamKind {
     },
     /// A type with free typed references; a closed type is a constant.
     TypeShape(Ty),
+    /// An origin attribute (`!lit.origin`), upstream's binding of an origin
+    /// binder: the value of its `Origin[mut=m, _mlir_origin=origin]` type a
+    /// `#kgen.bind_params` binds a generator's origin binder to.
+    Origin(crate::origin::Origin),
     /// Finite type selection by an integer expression.
     Select { elements: Vec<Ty>, index: ParamExpr },
     /// `param_list.get`: one element of a parameter list that is still a
@@ -6515,6 +6542,7 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             crate::types::trivial_predicate_spelling(*lifecycle)
         ),
         ParamKind::TypeShape(ty) => write!(f, "{ty}"),
+        ParamKind::Origin(origin) => write!(f, "{origin}"),
         ParamKind::Select { elements, index } => {
             write!(f, "type_sequence[")?;
             for (position, ty) in elements.iter().enumerate() {
@@ -6818,13 +6846,31 @@ fn generator_shape(ty: &Ty) -> Option<(Cow<'_, crate::types::GeneratorTy>, bool)
         TyKind::Generator(generator) => Some((Cow::Borrowed(generator.as_ref()), false)),
         TyKind::GenericFunc(generic) => Some((
             Cow::Owned(crate::types::GeneratorTy {
-                params: generic.argument_view().into_owned(),
+                params: generic.decls.clone(),
                 result: Ty::new(TyKind::Func(Box::new(generic.func.clone()))),
             }),
             true,
         )),
         _ => None,
     }
+}
+
+/// The origin each origin binder among `params` is bound to by `args`,
+/// keyed by its binder's slot.
+fn generator_origins(
+    params: &[crate::types::ParamDecl],
+    args: &[Option<ParamExpr>],
+) -> HashMap<u32, crate::origin::Origin> {
+    params
+        .iter()
+        .zip(args)
+        .filter_map(|(decl, arg)| match (decl, arg.as_ref()?.kind()) {
+            (crate::types::ParamDecl::Origin { origin: id, .. }, ParamKind::Origin(origin)) => {
+                Some((id.0, origin.clone()))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn generator_bindings(

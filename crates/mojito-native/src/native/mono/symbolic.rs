@@ -307,6 +307,8 @@ fn member_body(
                 }
                 TyArg::Ty(ty)
             }
+            // An origin binder's attribute erases from the instance.
+            ParamKind::Origin(origin) => TyArg::Origin(origin.clone()),
             _ => TyArg::Val(eval_ct(arg, bindings).map_err(unsupported)?),
         };
         arguments.push(argument);

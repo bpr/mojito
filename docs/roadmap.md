@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2399**.
+Next free ID: **R2401**.
 
 ## Ordered Work
 
@@ -1804,6 +1804,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The lever: judge every origin specifier's `origin_of` place the same
     way, at `validate_origin_expr` and the body's origin resolution, with
     `Checker::register_passability`.
+  - Probe: a call bracket's origin argument over a read `x: Int`
+    (`is_mut[o=origin_of(x)]`, `f[ImmOrigin(origin_of(x)), 3]`) checks and
+    runs, where the pin rejects it with the same message
+    (`Checker::explicit_origin_argument`).
   - Found while landing R668 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2593,6 +2597,27 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     before indexing it, where upstream returns
     `self._value.unsafe_ptr()[unsafe_offset=idx][]`.
   - Found while landing R1073 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2399 A nested `def`'s origin binder declares a slot its
+  signature does not name, so its bracket origin never binds**
+
+  A nested function's `ParamDecl::Origin` carries its source index, while
+  its signature names the binder past the enclosing scope's binders, so
+  `Checker::bind_bracket_origins` finds no `Origin::Param` to substitute.
+  - Probe: `def inner[o: MutOrigin](p: Pointer[Int, o]) -> Int` nested in
+    `outer2(x: Int)` and called as `inner[origin_of(y)](Pointer(to=y))`
+    over a local `y` is rejected ("expected Pointer[Int, origin#1], found
+    Pointer[Int, origin@…]"), where the pin runs it.
+  - Probe: a nested function value `var f = inner[o=ImmOrigin(origin_of(y))]`
+    over `def inner[mut: Bool, //, o: Origin[mut=mut]](p: Pointer[Int, o])`
+    is rejected at its call the same way, where the pin prints `708` for
+    `outer[3](4)` returning `f(Pointer(to=y)) * 100 + g(Pointer(to=y))`.
+  - The lever: number a nested declaration's origin binders as its
+    signature does when they are classified
+    (`Checker::classify_param_list_after`), so each list names one slot.
+  - Found while landing R2358 (2026-11-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7486,6 +7511,21 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2400 A `def` declaration spelling the `thin` effect is
+  accepted, where the pin rejects it**
+
+  The pin allows `thin` on a function type only ("function effect 'thin'
+  must only be used on function types"), and the parser takes it after a
+  declaration's parameter list too.
+  - Probe: `def first(p: Int) thin -> Int: return p` checks and runs,
+    printing `2` for `first(2)`, where the pin rejects the declaration.
+  - Reject the effect where a `def` statement's signature is parsed, and
+    keep it on `def(...)` function types (`docs/grammar.md`).
+  - Found while landing R2358 (2026-11-19).
+  - Ledger name: `thin-effect-on-def-declaration`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2199 An `__mlir_op` whose result type is not `RegisterPassable`
   is accepted, where the pin rejects it**
 
@@ -10788,44 +10828,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     Filling it where `checker/trait_defaults.rs` records the wrapper's
     sites would let those rows go too.
   - Found while landing R630 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2358 A `#kgen.bind_params` cannot bind an origin binder, where
-  upstream's binds a generator's whole declared list**
-
-  A `ParamExpr` has no origin value, so `bind_generator`
-  (`checker/constraints.rs`) rejects an origin argument ("origin
-  parameters on a parameterized comptime value"), and
-  `Ty::generator_params` gives a generic function's argument view.
-  - Probe: `comptime g = f[ImmStaticOrigin, 3]` over a callable parameter
-    `f: def[o: ImmOrigin, n: Int](Pointer[Int, o]) thin -> Int` is
-    rejected ("type 'f' expects 1 type argument(s), got 2"), where the
-    pin binds it.
-  - Probe: `comptime Twice[o: ImmOrigin, n: Int] = n * 2` is rejected
-    ("origin parameters on a generic comptime alias"), where the pin
-    prints `Twice[ImmStaticOrigin, 3]` as `6`.
-  - The lever: give `ParamExpr` an origin attribute
-    (`ParamContext::argument_expr`), have `generator_params` and
-    `generator_shape` (`mojito-types/src/param_expr.rs`) return the whole
-    declared list, and have `resolve_partial_use_params` return its
-    arguments over that list, as `bind_bracket_params` already binds it.
-  - Probe: a function value's symbol (`ct::FuncSymbolRef::arguments`)
-    binds its generator's argument view, so the elaborator's nested
-    generator scope (`nested_application_scope`, `function_value_instance`
-    in `native/mono/specializer.rs`) reads that view, and
-    `apply_nested_generator` takes a nested call's whole solved arguments
-    down to it (`ParamDecl::argument_view_arguments`) before applying the
-    generator; a `def(...)` bound's inflated callee
-    (`bound_calls::bound_call_from_indirect`) chains that view before the
-    call's whole list.
-  - Probe: a function value of a generator whose body reads its origin's
-    `mut=` binder (`var f = g[o=origin_of(a)]` over `def g[mut: Bool, //,
-    o: Origin[mut=mut]](x: Pointer[Int, o]) -> Bool: return mut`) fails
-    elaboration ("cannot resolve parameter `mut`"), where the pin prints
-    `True`: the value's symbol binds the argument view, which holds no
-    slot for the binder, so its instance has no value for it.
-  - Found while landing R2348 (2026-11-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

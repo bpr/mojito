@@ -1271,7 +1271,9 @@ value binders and records each such `_`'s attribute as the origin it bound;
 a method call's bracket binds
 its method's whole declared list (`MethodSig::declared`) the same way in
 `instantiate_method_generics`, which substitutes the bound origins into the
-method's parameters and result through `bind_struct_origins` and binds the
+method's parameters and result through `bind_struct_origins` (a
+parametric `Origin[mut=m]` binder's pointer at the mutability the bound
+origin decides, an `ImmOrigin(o)` argument's `False`) and binds the
 origin binders its bracket left open in `resolve_call_params`'s one solve,
 as a free call's: a method's declared origin binder is numbered past its
 struct's parameters, as its signature names it

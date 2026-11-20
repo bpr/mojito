@@ -1744,7 +1744,7 @@ impl Checker {
         // arguments bind, and infer the compile-time parameters left open.
         if let Some(generic) = ty.as_generic_func() {
             let explicit = self.explicit_type_args(name, &generic.decls, param_args)?;
-            let bound = Self::bind_bracket_origins(ty.clone(), explicit.origins());
+            let bound = self.bind_bracket_origins(ty.clone(), explicit.origins());
             return self.infer_generic_call(
                 span,
                 name,

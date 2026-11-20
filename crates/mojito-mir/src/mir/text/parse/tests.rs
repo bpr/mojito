@@ -592,6 +592,34 @@ fn param_bind_params_round_trips() {
     assert_reprints(&program);
 }
 
+/// An origin binder's bound argument, upstream's `!lit.origin` attribute,
+/// reprints as a `param_origin` node typed by the binder's `Origin` value
+/// type (schema 1.212).
+#[test]
+fn param_origin_round_trips() {
+    let context = ParamContext::detached();
+    let ty: Ty = TyKind::Struct(
+        "Origin".into(),
+        vec![
+            TyArg::Val(CtValue::Bool(false)),
+            TyArg::Origin(Origin::Static),
+        ],
+    )
+    .into();
+    let program = program_with(vec![(
+        "consts".into(),
+        function_with(
+            vec![ty.clone()],
+            vec![MirInstr::Const {
+                dest: Reg(0),
+                k: Const::Param(context.origin(Origin::Static, ty)),
+            }],
+        ),
+    )]);
+    assert!(write::program(&program).contains("param(param_origin"));
+    assert_reprints(&program);
+}
+
 /// The reversal of a pack still open reprints as a `param_list_tabulate`
 /// node, spread as the one argument of a `Tuple` type.
 #[test]

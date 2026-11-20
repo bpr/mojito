@@ -956,6 +956,7 @@ impl Decoder {
                     let id = self.upgraded_id(&owner, slot);
                     Some(self.context.decl_ref(id, &name, meta))
                 }
+                "param_origin" => self.param_origin(value, fields),
                 "param_index_ref" => {
                     let depth = self.req(value, fields, "depth", Self::uint32)?;
                     let index = self.req(value, fields, "index", Self::uint32)?;
@@ -1202,6 +1203,16 @@ impl Decoder {
                 None
             }
         }
+    }
+
+    /// `param_origin { origin, type }`: an origin binder's bound argument,
+    /// typed by the binder's `Origin` value type (schema 1.212).
+    fn param_origin(&mut self, value: &Value, fields: &[Field]) -> Option<ParamExpr> {
+        let origin = self.req(value, fields, "origin", Self::origin)?;
+        let meta = self.req(value, fields, "type", Self::meta_ty)?;
+        self.unknown(fields, &["origin", "type"]);
+        let ty = meta.as_value()?.clone();
+        Some(self.context.origin(origin, ty))
     }
 
     /// A pack query's pack operand. Before MIR 1.166 the query named its

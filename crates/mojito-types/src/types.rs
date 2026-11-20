@@ -1265,12 +1265,13 @@ impl Ty {
     }
 
     /// The parameters a `#kgen.bind_params` binds, when this is a
-    /// generator type: a `__generator_type`'s, or a generic function's,
-    /// which upstream types as a generator over its own parameters.
-    pub fn generator_params(&self) -> Option<std::borrow::Cow<'_, [ParamDecl]>> {
+    /// generator type: a `__generator_type`'s, or a generic function's
+    /// whole declared list, origin binders and their `mut=` binders in
+    /// place, which upstream types as a generator over its own parameters.
+    pub fn generator_params(&self) -> Option<&[ParamDecl]> {
         match self.kind() {
-            TyKind::Generator(generator) => Some(std::borrow::Cow::Borrowed(&generator.params)),
-            TyKind::GenericFunc(generic) => Some(generic.argument_view()),
+            TyKind::Generator(generator) => Some(&generator.params),
+            TyKind::GenericFunc(generic) => Some(&generic.decls),
             _ => None,
         }
     }
@@ -4058,6 +4059,45 @@ impl ParamDecl {
         }
     }
 
+    /// The type of the value an origin binder takes when bound to
+    /// `argument` ([`Self::origin_value_ty`] at that origin): its
+    /// `_mlir_origin` the argument, and a `mut=` binder the mutability the
+    /// argument alone decides ([`crate::origin::Origin::static_mutability`]),
+    /// else the binder still. `None` for any other binder.
+    pub fn origin_argument_ty(&self, argument: &crate::origin::Origin) -> Option<Ty> {
+        let Self::Origin {
+            mutability, lit, ..
+        } = self
+        else {
+            return None;
+        };
+        let decided = match mutability {
+            OriginMutability::Binder(_) => argument.static_mutability(),
+            _ => None,
+        };
+        Some(match (mutability, *lit, decided) {
+            (OriginMutability::Set, _, _) => TyKind::LitOriginSet.into(),
+            (_, true, Some(known)) => TyKind::LitOrigin(LitOriginMut::Known(known)).into(),
+            (OriginMutability::Fixed(fixed), false, _) => {
+                origin_struct_ty(CtValue::Bool(*fixed), argument.clone())
+            }
+            (_, false, Some(known)) => origin_struct_ty(CtValue::Bool(known), argument.clone()),
+            (OriginMutability::Binder(_), false, None) => {
+                return self.origin_value_ty().map(|declared| {
+                    let mutable = declared
+                        .kind()
+                        .as_non_simd_struct()
+                        .and_then(|(_, arguments)| arguments.first().cloned());
+                    match mutable {
+                        Some(TyArg::Val(mutable)) => origin_struct_ty(mutable, argument.clone()),
+                        _ => declared,
+                    }
+                });
+            }
+            (_, true, None) => return self.origin_value_ty(),
+        })
+    }
+
     /// Declare the value pack `visible` (`*vs: T`, its declared type the
     /// element `T`) after `decls` as upstream's `typeCheckVariadicParams`
     /// declares it: an implicit infer-only `vs.values: KGENParamList[T]`
@@ -4929,6 +4969,77 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
     map_origins(ty, &|origin| origin.substitute_params(origins))
 }
 
+/// [`substitute_origin_params`] reaching pointer provenances too, as a
+/// `#kgen.bind_params` substitutes the origins it binds into its result.
+///
+/// A pointer, `!lit.ref`, or reference pack naming a bound binder takes the
+/// bound origin below its own projection, a parametric binder's
+/// mutability the one the bound origin alone decides. A provenance no
+/// pointer can hold stays as it is.
+pub fn bind_origin_params<S: std::hash::BuildHasher>(
+    ty: &Ty,
+    origins: &HashMap<u32, crate::origin::Origin, S>,
+) -> Ty {
+    use crate::origin::{Mutability, PointerOrigin};
+    if origins.is_empty() {
+        return ty.clone();
+    }
+    let bind = |origin: &PointerOrigin| -> PointerOrigin {
+        let PointerOrigin::Param { id, mutability, .. } = origin else {
+            return origin.clone();
+        };
+        let Some(bound) = origins.get(&id.0) else {
+            return origin.clone();
+        };
+        let mutability = match mutability {
+            Mutability::Param(_) => match bound.static_mutability() {
+                Some(mutable) => Mutability::of(mutable),
+                None => *mutability,
+            },
+            fixed => *fixed,
+        };
+        PointerOrigin::from_parts(origin.parts().0.substitute_params(origins), mutability)
+            .unwrap_or_else(|| origin.clone())
+    };
+    let recur = |ty: &Ty| bind_origin_params(ty, origins);
+    let mapped = substitute_origin_params(ty, origins);
+    match mapped.kind() {
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: recur(element),
+            origin: bind(origin),
+        }
+        .into(),
+        TyKind::LitRef { element, origin } => TyKind::LitRef {
+            element: recur(element),
+            origin: bind(origin),
+        }
+        .into(),
+        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+            elements: elements.iter().map(recur).collect(),
+            origin: bind(origin),
+        }
+        .into(),
+        TyKind::Struct(name, args) => TyKind::Struct(
+            name.clone(),
+            args.iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
+                    other => other.clone(),
+                })
+                .collect(),
+        )
+        .into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            TyKind::Ref(reference).into()
+        }
+        TyKind::Func(func) => TyKind::Func(Box::new(func.map_types(recur))).into(),
+        _ => mapped,
+    }
+}
+
 /// The type with every struct and associated-type origin argument, and
 /// every reference's origin, replaced by `map` of it, through type
 /// arguments, tuples, packs, and referents.
@@ -5184,6 +5295,29 @@ pub fn same_generator_signature(left: &[ParamDecl], right: &[ParamDecl]) -> bool
                 substitute(ty, &renamed) == *more_ty
                     && infer_only == more_infer_only
                     && variadic == more_variadic
+            }
+            (
+                ParamDecl::Origin {
+                    mutability,
+                    infer_only,
+                    lit,
+                    ..
+                },
+                ParamDecl::Origin {
+                    mutability: more_mutability,
+                    infer_only: more_infer_only,
+                    lit: more_lit,
+                    ..
+                },
+            ) => {
+                let same_mutability = match (mutability, more_mutability) {
+                    (OriginMutability::Binder(binder), OriginMutability::Binder(more)) => {
+                        left.iter().position(|decl| decl.id() == &binder.id)
+                            == right.iter().position(|decl| decl.id() == &more.id)
+                    }
+                    (mutability, more) => mutability == more,
+                };
+                same_mutability && infer_only == more_infer_only && lit == more_lit
             }
             _ => false,
         })

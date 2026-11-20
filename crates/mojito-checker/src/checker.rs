@@ -4211,7 +4211,9 @@ impl MethodInstantiation {
     /// The declared result with the method's bound origin binders
     /// substituted, those its bracket bound first.
     fn bound_result(&self, checker: &Checker, ty: &Ty) -> Ty {
-        let ty = generics::bind_struct_origins(ty, &self.bracket_origins);
+        let ty = generics::bind_struct_origins(ty, &self.bracket_origins, &|_, origin| {
+            checker.bound_origin_mutability(origin)
+        });
         match &self.origin_bindings {
             Some(bindings) => bindings
                 .substitute_result(&ty, &|_, origin| checker.bound_origin_mutability(origin)),
@@ -4270,7 +4272,7 @@ fn first_unbound_parameter(ty: &Ty) -> Option<(String, String)> {
         }
         _ => ty
             .generator_params()
-            .and_then(|params| mojito_types::types::ParamDecl::first_unbound(&params)),
+            .and_then(mojito_types::types::ParamDecl::first_unbound),
     }
 }
 

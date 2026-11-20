@@ -2197,14 +2197,14 @@ fn evaluate_constant(
 /// the default's parameter expression into the call.
 fn default_application(thunk: &str, arguments: &[TyArg], ty: &Ty) -> Result<ParamExpr, String> {
     let context = ParamContext::detached();
-    let mut applied = Vec::with_capacity(arguments.len());
-    for argument in arguments {
-        match context.argument_expr(argument) {
-            Ok(Some(argument)) => applied.push(argument),
-            Ok(None) => return Err("an origin binder, which no application binds".to_string()),
-            Err(error) => return Err(error.to_string()),
-        }
-    }
+    let applied = arguments
+        .iter()
+        .map(|argument| match argument {
+            TyArg::Ty(ty) => Ok(context.type_shape(ty.clone())),
+            TyArg::Val(value) => context.constant(value.clone()).map_err(|e| e.to_string()),
+            TyArg::Origin(_) => Err("an origin binder, which no application binds".to_string()),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(context.apply(thunk, &applied, MetaTy::value(ty.clone())))
 }
 

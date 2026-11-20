@@ -423,17 +423,10 @@ impl Checker {
                         // one, unless its annotation declares a value.
                         let spelled_as_type =
                             declared.is_none() && assoc_body_source_type(&member.value).is_ok();
-                        if self.declares_origin_metadata(&member.params) {
-                            return Err(if declared.is_some() {
-                                TypeError::Unsupported(
-                                    "origin parameters on a parameterized comptime value"
-                                        .to_string(),
-                                )
-                            } else {
-                                type_error
-                            });
-                        }
-                        let decls = own_decls.clone();
+                        // A value member is a generator over its whole
+                        // declared list, as upstream's is: an application
+                        // binds an origin binder in its slot.
+                        let decls = self.classify_param_list(&member_owner, &member.params)?;
                         match self.lower_parametric_value(&decls, &member.value, declared) {
                             Ok(body) => MemberTemplate::Value { decls, body },
                             Err(_) if spelled_as_type => return Err(type_error),
@@ -1212,23 +1205,27 @@ impl Checker {
         arguments: &[Option<TyArg>],
     ) -> Result<ParamExpr, TypeError> {
         let context = &self.param_context;
+        let params = generator
+            .meta()
+            .as_value()
+            .and_then(|ty| ty.generator_params().map(<[ParamDecl]>::to_vec))
+            .unwrap_or_default();
         let arguments = arguments
             .iter()
-            .map(|argument| {
+            .enumerate()
+            .map(|(index, argument)| {
                 argument
-                    .clone()
-                    .map(|argument| {
-                        context
-                            .argument_expr(&argument)
-                            .map_err(param_error)?
-                            .ok_or_else(|| {
-                                TypeError::Unsupported(
-                                    "origin parameters on a parameterized comptime value"
-                                        .to_string(),
-                                )
-                            })
+                    .as_ref()
+                    .map(|argument| match params.get(index) {
+                        Some(decl) => context.argument_expr(decl, argument),
+                        None => Err(mojito_types::param_expr::ParamError::TypeMismatch {
+                            operation: "parameter binding".to_string(),
+                            expected: format!("{} argument(s)", params.len()),
+                            found: arguments.len().to_string(),
+                        }),
                     })
                     .transpose()
+                    .map_err(param_error)
             })
             .collect::<Result<Vec<_>, _>>()?;
         context
@@ -6856,6 +6853,14 @@ impl Checker {
                         id.clone(),
                         self.param_context
                             .constant(value.clone())
+                            .map_err(param_error)?,
+                    );
+                }
+                (ParamDecl::Origin { id, .. }, TyArg::Origin(_)) => {
+                    bindings.bind(
+                        id.clone(),
+                        self.param_context
+                            .argument_expr(decl, argument)
                             .map_err(param_error)?,
                     );
                 }

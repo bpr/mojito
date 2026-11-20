@@ -708,15 +708,19 @@ pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
 }
 
 /// `ty` with every struct origin tail naming an explicitly bound origin
-/// binder rebound to that origin, and every pointer nested in it too.
+/// binder rebound to that origin, and every pointer nested in it too, a
+/// parametric binder's (`Origin[mut=mut]`) at the mutability
+/// `binder_mutability` gives the bound origin, as upstream infers the
+/// binder's `mut` with the origin its bracket binds.
 pub(super) fn bind_struct_origins(
     ty: &Ty,
     tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+    binder_mutability: super::origins::BinderMutability<'_>,
 ) -> Ty {
     super::origins::bind_pointer_origins(
         &super::origins::substitute_struct_origins(ty, tails),
         tails,
-        None,
+        Some(binder_mutability),
     )
 }
 
@@ -1184,6 +1188,20 @@ impl Checker {
                         }
                         self.convert_bracket_origin(decl, argument)?;
                         let origin = self.explicit_origin_argument(argument)?;
+                        // A parametric binder's `mut=` is the argument's own
+                        // mutability, an `ImmOrigin(o)` conversion's `False`.
+                        let origin = match mutability {
+                            mojito_types::types::OriginMutability::Binder(_)
+                                if self.resolve_origin_param_arg(argument).is_ok_and(
+                                    |(_, own)| {
+                                        own == Some(mojito_types::origin::Mutability::Immutable)
+                                    },
+                                ) =>
+                            {
+                                mojito_types::origin::Origin::immutable(origin)
+                            }
+                            _ => origin,
+                        };
                         origins.push(BoundOrigin {
                             slot: index,
                             id: *id,
@@ -1210,7 +1228,7 @@ impl Checker {
     /// parameter, collector, and result type naming a bound origin binder
     /// (`Span[Int, o]`, `Pointer[Pointer[Int, o], …]`), and each `ref`
     /// contract over one.
-    pub(super) fn bind_bracket_origins(callable: Ty, origins: &[BoundOrigin]) -> Ty {
+    pub(super) fn bind_bracket_origins(&self, callable: Ty, origins: &[BoundOrigin]) -> Ty {
         if origins.is_empty() || callable.callable().is_none() {
             return callable;
         }
@@ -1218,7 +1236,11 @@ impl Checker {
             .iter()
             .map(|bound| (bound.id, bound.origin.clone()))
             .collect();
-        bind_callable_origins(bind_callable_ref_origins(callable, &tails), &tails)
+        bind_callable_origins(
+            bind_callable_ref_origins(callable, &tails),
+            &tails,
+            &|_, origin| self.bound_origin_mutability(origin),
+        )
     }
 
     /// Materialize the monomorphic checked view of an explicitly specialized
@@ -1233,19 +1255,25 @@ impl Checker {
         arguments: &[mojito_ast::ast::ParamArg],
     ) -> Result<(Ty, Vec<TyArg>), TypeError> {
         self.bind_generic_callable_value(name, callable, arguments)
-            .map(|(contract, arguments, _)| (contract, arguments))
+            .map(|bound| (bound.contract, bound.view))
     }
 
-    /// [`Self::instantiate_generic_callable_value`] with the origin binders
-    /// its bracket left open, which the contract still names.
+    /// [`Self::instantiate_generic_callable_value`] with the bracket's
+    /// arguments over the callee's whole declared list too, and the origin
+    /// binders it left open, which the contract still names.
     fn bind_generic_callable_value(
         &self,
         name: &str,
         callable: Ty,
         arguments: &[mojito_ast::ast::ParamArg],
-    ) -> Result<(Ty, Vec<TyArg>, Vec<ParamDecl>), TypeError> {
+    ) -> Result<BoundCallableValue, TypeError> {
         let TyKind::GenericFunc(generic) = callable.kind() else {
-            return Ok((callable, Vec::new(), Vec::new()));
+            return Ok(BoundCallableValue {
+                contract: callable,
+                view: Vec::new(),
+                declared: Vec::new(),
+                open: Vec::new(),
+            });
         };
         let BoundParameters {
             subst,
@@ -1262,9 +1290,15 @@ impl Checker {
             })
             .cloned()
             .collect();
-        let bound = Self::bind_bracket_origins(callable.clone(), &origins);
+        let declared = self.declared_symbol_arguments(&generic.decls, &tyargs, &origins);
+        let bound = self.bind_bracket_origins(callable.clone(), &origins);
         let Some(GenericFuncTy { decls, func }) = bound.as_generic_func() else {
-            return Ok((bound, tyargs, open));
+            return Ok(BoundCallableValue {
+                contract: bound,
+                view: tyargs,
+                declared,
+                open,
+            });
         };
         let decls = ParamDecl::argument_view(decls);
         let values = DependentValues::own(&self.param_context, &decls, &tyargs);
@@ -1274,7 +1308,41 @@ impl Checker {
             self.resolve_dependent_ty(&substituted, &values)
         };
         let contract = TyKind::Func(Box::new(func.try_map_types(resolve)?));
-        Ok((contract.into(), tyargs, open))
+        Ok(BoundCallableValue {
+            contract: contract.into(),
+            view: tyargs,
+            declared,
+            open,
+        })
+    }
+
+    /// A function value's bracket arguments `view` over the argument view
+    /// of `decls`, its callee's whole declared list, as that whole list, as
+    /// upstream's symbol reference binds a generator's declared list: each
+    /// origin binder holds the origin the bracket bound (`origins`) or
+    /// stays unbound for each call to infer, and each `mut=` binder the
+    /// mutability its origin decides.
+    fn declared_symbol_arguments(
+        &self,
+        decls: &[ParamDecl],
+        view: &[TyArg],
+        origins: &[BoundOrigin],
+    ) -> Vec<TyArg> {
+        if !decls.iter().any(ParamDecl::is_origin) {
+            return view.to_vec();
+        }
+        let placed = decls.iter().filter_map(|decl| match decl {
+            ParamDecl::Origin { origin: id, .. } => Some(
+                origins
+                    .iter()
+                    .find(|bound| bound.id == *id)
+                    .map_or(mojito_types::origin::Origin::Unbound, |bound| {
+                        bound.origin.clone()
+                    }),
+            ),
+            _ => None,
+        });
+        self.place_struct_origins(decls, view.iter().cloned(), placed, &[])
     }
 
     pub(super) fn specialize_callable_value_candidate(
@@ -1310,8 +1378,12 @@ impl Checker {
             // generator over them, as upstream's partial binding is: each
             // call of the value infers them.
             TyKind::GenericFunc(_) => {
-                let (contract, arguments, open) =
-                    self.bind_generic_callable_value(name, callable, arguments)?;
+                let BoundCallableValue {
+                    contract,
+                    declared: arguments,
+                    open,
+                    ..
+                } = self.bind_generic_callable_value(name, callable, arguments)?;
                 let contract = match contract.into_kind() {
                     TyKind::Func(func) if !open.is_empty() => {
                         TyKind::GenericFunc(Box::new(GenericFuncTy {
@@ -1679,14 +1751,14 @@ impl Checker {
             .iter()
             .map(|bound| (bound.id, bound.origin.clone()))
             .collect();
-        let bracket_params: Vec<Ty> = params
-            .iter()
-            .map(|ty| bind_struct_origins(ty, &bracket_origins))
-            .collect();
+        let binder_mutability =
+            |_, origin: &mojito_types::origin::Origin| self.bound_origin_mutability(origin);
+        let bind = |ty: &Ty| bind_struct_origins(ty, &bracket_origins, &binder_mutability);
+        let bracket_params: Vec<Ty> = params.iter().map(bind).collect();
         let params = bracket_params.as_slice();
-        let bracket_variadic = variadic.map(|ty| bind_struct_origins(ty, &bracket_origins));
+        let bracket_variadic = variadic.map(bind);
         let variadic = bracket_variadic.as_ref();
-        let kw_variadic = kw_variadic.map(|ty| bind_struct_origins(ty, &bracket_origins));
+        let kw_variadic = kw_variadic.map(bind);
         let kw_variadic = kw_variadic.as_ref();
         if signature.declared.is_empty() {
             let BoundParameters { attributes, .. } = self.resolve_explicit_use_params(
@@ -2549,6 +2621,19 @@ fn bind_callable_ref_origins(
     callable
 }
 
+/// A generic function value's bracket bound
+/// ([`Checker::bind_generic_callable_value`]).
+struct BoundCallableValue {
+    /// The function type at what the bracket bound.
+    contract: Ty,
+    /// The bracket's arguments over the callee's argument view.
+    view: Vec<TyArg>,
+    /// The bracket's arguments over the callee's whole declared list.
+    declared: Vec<TyArg>,
+    /// The origin binders the bracket left open.
+    open: Vec<ParamDecl>,
+}
+
 /// `callable` with every struct origin tail of its parameter, collector,
 /// and result types that names an explicitly bound origin binder rebound to
 /// that origin (`g[origin_of(xs)]` over `-> Pointer[Span[Int, o], …]`), and
@@ -2556,6 +2641,7 @@ fn bind_callable_ref_origins(
 fn bind_callable_origins(
     mut callable: Ty,
     tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+    binder_mutability: super::origins::BinderMutability<'_>,
 ) -> Ty {
     if tails.is_empty() {
         return callable;
@@ -2574,7 +2660,7 @@ fn bind_callable_origins(
         else {
             return;
         };
-        let bind = |ty: &mut Ty| *ty = bind_struct_origins(ty, tails);
+        let bind = |ty: &mut Ty| *ty = bind_struct_origins(ty, tails, binder_mutability);
         params.iter_mut().for_each(bind);
         variadic
             .iter_mut()

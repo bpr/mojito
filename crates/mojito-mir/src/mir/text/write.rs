@@ -2813,6 +2813,7 @@ fn param_expr(value: &ParamExpr) -> String {
             ],
         ),
         ParamKind::TypeShape(ty) => positional("param_type_shape", &ty_value(ty)),
+        ParamKind::Origin(value) => record("param_origin", &[("origin", origin(value)), meta]),
         ParamKind::Select { elements, index } => record(
             "param_select",
             &[

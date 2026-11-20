@@ -363,6 +363,7 @@ impl Checker {
             })?;
             let (requirement, constraints) = match declared {
                 CtMemberReq::Value(result) if !member.params.is_empty() => {
+                    let decls = self.classify_param_list(&owner, &member.params)?;
                     self.generator_requirement(member, decls, result)?
                 }
                 requirement => {
@@ -4417,20 +4418,15 @@ impl Checker {
     /// Whether a default is an expression over the method's value
     /// parameters, literals, and module constants alone.
     /// A trait's parameterized value requirement as the generator type it
-    /// declares: its parameters classified under `Trait.member`, beside its
-    /// `result`. Origin parameters are rejected, as on a struct's
-    /// parameterized value member.
+    /// declares: its whole declared list classified under `Trait.member`,
+    /// origin binders in place as on a struct's parameterized value member,
+    /// beside its `result`.
     fn generator_requirement(
         &self,
         member: &TraitComptime,
         mut params: Vec<ParamDecl>,
         result: Ty,
     ) -> Result<(CtMemberReq, Vec<GenericConstraint>), TypeError> {
-        if self.declares_origin_metadata(&member.params) {
-            return Err(TypeError::Unsupported(
-                "origin parameters on a parameterized comptime value".to_string(),
-            ));
-        }
         // The requirement's `where` clauses close its parameter list, as a
         // generic alias's do, so an application through a bound checks them.
         // They compile with its own binders open.

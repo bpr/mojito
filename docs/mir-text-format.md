@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.211
+mojito-mir 1.212
 ```
 
-The writer emits 1.211. The reader accepts 1.0 through 1.211; *Schema 1.0*
+The writer emits 1.212. The reader accepts 1.0 through 1.212; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1263,6 +1263,11 @@ to `False` keeps its `origin_immutable(origin)` spelling, which is
 `ImmOrigin(origin)`. The package format moves to `mojito-package 240`
 (R2380).
 
+Schema 1.212 adds `param_origin { origin, type: meta }`, upstream's
+`!lit.origin` attribute as a parameter expression: the origin a
+`#kgen.bind_params` binds a generator's origin binder to, typed by the
+binder's `Origin[mut=m, _mlir_origin=origin]` value type (R2358).
+
 Schema 1.207 adds two origin spellings a struct's origin argument can
 hold, as upstream's `_mlir_origin` attribute can: `origin_projected { base,
 path }`, an interior or subtree projection over an origin binder or the
@@ -2141,6 +2146,7 @@ param_identical { left, right }
 param_conforms  { subject, trait }
 param_trivial   { lifecycle, subject }
 param_type_shape(type)
+param_origin    { origin, type: meta }
 param_select    { elements: [type...], index }
 param_list_get  { list, index }
 param_list_tabulate { count, element }

@@ -1339,9 +1339,23 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   value's type (`g[4]` over `comptime g = T.get`, `G[3]` over a
   `__generator_type` parameter, `f[4]` over a generic callable parameter
   `f: def[n: Int]() thin -> Int`, whose type `Ty::generator_params` reads
-  as a generator over its own parameters) into `ParamContext::bind_params`,
-  which folds a bound function's symbol to its specialization's
-  `FuncSymbolRef` once the instance binds the parameter. A
+  as a generator over its own whole declared list) into
+  `ParamContext::bind_params`, which folds a bound function's symbol to its
+  specialization's `FuncSymbolRef` once the instance binds the parameter.
+  `resolve_partial_use_params` returns its arguments over the whole
+  declared list (`declared_partial_arguments`): an origin argument binds
+  its binder's slot as a `ParamKind::Origin` node
+  (`ParamContext::{origin, argument_expr}`, typed by
+  `ParamDecl::origin_argument_ty`), its `mut=` binder takes the
+  mutability that origin decides, and `bind_params` substitutes the bound
+  origins into a function generator's result (`types::bind_origin_params`);
+  the elaborator answers a member application's origin argument as an
+  erased `TyArg::Origin` (`native/mono/symbolic.rs`). A generic alias, a
+  struct's value member, and a trait's value requirement classify the
+  whole list (`classify_param_list`). A generic function value's symbol
+  binds its callee's whole list too (`Checker::declared_symbol_arguments`,
+  `generics.rs`), which `Specializer::function_value_instance` binds,
+  keying the instance by its `mut=` binders as a call's is. A
   parameterized declaration read unapplied is the generator it declares:
   `alias_generator` (a value or predicate alias, the latter's `Bool` body
   `ComptimeAlias::predicate_value`), `struct_generator_member` (a struct's
@@ -3468,7 +3482,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `declarations.rs`). The elaborator keys an instance on the read ones
   (`Specializer::mutability_arguments`, `nested_bindings`,
   `native/mono/specializer.rs`). Readers of the argument view: `StructInfo::decls`, `MethodSig::decls`,
-  `GenericFuncTy::{argument_view, argument_binders}`, `Ty::generator_params`,
+  `GenericFuncTy::{argument_view, argument_binders}`,
   and `CheckedSignature::argument_binders` (`checked.rs`). A `where` clause
   attaches to the last argument binder (`ParamDecl::clause_constraints`).
   MIR lowers the whole lists (`CheckedSignature::parameters`, a struct

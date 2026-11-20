@@ -4689,14 +4689,6 @@ impl Checker {
             .map_or((type_params, value), |(params, body)| {
                 (params.as_slice(), body)
             });
-        // The registry binds application arguments through classified
-        // `ParamDecl`s, which erase origin parameters; reject them instead of
-        // silently dropping a binder the template could still mention.
-        if self.declares_origin_metadata(type_params) {
-            return Err(TypeError::Unsupported(
-                "origin parameters on a generic comptime alias".to_string(),
-            ));
-        }
         if self.comptime_aliases.contains_key(name)
             || self.comptimes.contains_key(name)
             || self.structs.contains_key(name)
@@ -4719,7 +4711,9 @@ impl Checker {
             Some(CtMemberReq::Value(declared)) => Some(declared),
             _ => None,
         };
-        let mut decls = self.classify_params(name, type_params)?;
+        // The whole declared list, as upstream's generator declares it: an
+        // application binds an origin binder in its slot.
+        let mut decls = self.classify_param_list(name, type_params)?;
         let compiled = self.in_param_scope(&decls, |this| {
             where_clauses
                 .iter()

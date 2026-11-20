@@ -8260,12 +8260,19 @@ fn generic_comptime_aliases_reject_unsupported_shapes() {
         "a generic comptime alias must be declared at module scope"
     );
 
-    // Origin parameters never occupy a checked alias parameter slot.
-    let TypeError::Unsupported(message) = err("comptime Held[origin: Origin]: AnyType = Int\n")
-    else {
-        panic!("expected an origin-parameter rejection");
-    };
-    assert_eq!(message, "origin parameters on a generic comptime alias");
+    // An origin binder occupies its declared slot of the alias's list, as
+    // upstream's generator declares it, so an application binds it there.
+    let held = "comptime Held[origin: Origin]: AnyType = Int\n\ndef main():\n";
+    check_with_std(&format!(
+        "{held}    var held: Held[ImmStaticOrigin] = 1\n    print(held)\n"
+    ))
+    .expect("an origin argument binds the alias's origin binder");
+    let mismatch = check_with_std(&format!("{held}    var held: Held[3] = 1\n"))
+        .expect_err("a value does not bind an origin binder");
+    assert!(
+        matches!(mismatch, TypeError::TypeMismatch { .. }),
+        "{mismatch:?}"
+    );
 
     // An alias shares the type namespace with structs.
     assert!(matches!(

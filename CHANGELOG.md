@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `#kgen.bind_params` binds a generator's whole declared list, as
+  upstream's does: an origin argument binds its origin binder's slot as an
+  origin attribute (`ParamKind::Origin`, MIR schema 1.212's
+  `param_origin`), and its `mut=` binder the mutability that origin
+  decides. `comptime Twice[o: ImmOrigin, n: Int] = n * 2` prints
+  `Twice[ImmStaticOrigin, 3]` as `6`, a struct's and a trait's
+  parameterized value member and a callable parameter's bracket
+  (`f[ImmOrigin(origin_of(y)), 3]`) bind one, and a generic function
+  value's symbol binds its callee's whole list, so `var f =
+  g[o=origin_of(a)]` over a body reading `mut` runs. A call's bracket
+  origin now decides a parametric binder's `mut=`, so `g[o=origin_of(a)]
+  (p)` no longer fails its argument check and `ImmOrigin(o)` reads `False`
+  (R2358).
 - A function type declaring only origin parameters is a generator over
   them, as upstream's is, so a runtime parameter declares one (`f:
   def[o: ImmOrigin](Pointer[Int, o]) thin -> Int`) and `apply(first, 3)`

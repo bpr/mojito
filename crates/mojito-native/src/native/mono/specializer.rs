@@ -2825,12 +2825,13 @@ impl<'a> Specializer<'a> {
         arguments: &[TyArg],
         receiver: Option<&Ty>,
     ) -> Result<String, MonoError> {
-        let (decls, nested) = self
+        let (decls, declared, nested) = self
             .declarations
             .get(target)
             .map(|declaration| {
                 (
                     declaration.argument_view().into_owned(),
+                    declaration.param_decls.clone(),
                     declaration.enclosing.is_some(),
                 )
             })
@@ -2867,9 +2868,17 @@ impl<'a> Specializer<'a> {
             let receiver = substitute_ty(receiver, &self.enclosing)?;
             self.bind_static_receiver(owner, target, &receiver, &mut bindings)?;
         }
-        self.bind_instantiated_arguments(owner, target, &decls, own, &mut bindings)?;
+        // The symbol binds the whole declared list, origin binders and
+        // their `mut=` binders in place, as upstream's does; an origin
+        // erases, and a `mut=` binder keys the instance as a call's does.
+        let whole = own.len() == declared.len() && declared.len() != decls.len();
+        let bound_decls = if whole { &declared } else { &decls };
+        self.bind_instantiated_arguments(owner, target, bound_decls, own, &mut bindings)?;
         apply_defaults(&decls, &[], &mut bindings)?;
         instance_arguments.extend(ordered_arguments(&decls, &bindings, target)?);
+        if whole && let Some(declaration) = self.declarations.get(target) {
+            instance_arguments.extend(self.mutability_arguments(declaration, &bindings, target)?);
+        }
         self.enqueue(target, bindings, instance_arguments)
     }
 
