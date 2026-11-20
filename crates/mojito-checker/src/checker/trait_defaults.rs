@@ -13,12 +13,14 @@ use mojito_ast::ast::{
     ArgConvention, DeclaredParam, Expr, ExprKind, FnParam, KwArg, ParamArg, ParamKind, Stmt,
     StmtKind, TraitMethod, Type, TypeParam,
 };
+use mojito_ast::call::CompileTimeParam;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
 use mojito_checked::checked::{CheckedDefaultWrapper, CheckedTraitMember, SignatureParam};
 use mojito_common::error::TypeError;
 use mojito_common::token::{Span, SyntaxId};
 use mojito_symbol::symbol::OverloadLookup;
 use mojito_symbol::symbol::SignatureKey;
+use mojito_types::types::ParamDecl;
 
 use super::declarations::{BodyParam, MethodBody};
 use super::origins::ref_binding_is_writable;
@@ -151,11 +153,31 @@ pub(super) struct DefaultShape {
 
 impl DefaultShape {
     /// This default, its requirement the `overload`-th signature of its
-    /// name, which its trait's member `member` is named from.
-    pub(super) fn at_requirement(self, overload: usize, member: String) -> Self {
+    /// name, which its trait's member `member` is named from, declaring
+    /// the classified binders `declared`: the forwarding call binds each
+    /// argument binder by name, as `populateDefaultedTraitFunction`
+    /// forwards from the resolved signature.
+    pub(super) fn at_requirement(
+        self,
+        overload: usize,
+        member: String,
+        declared: &[ParamDecl],
+    ) -> Self {
+        let unforwardable = self.unforwardable.or_else(|| {
+            declared
+                .iter()
+                .any(ParamDecl::is_origin)
+                .then(|| names_origin_reason(&self.method))
+        });
+        let forwarded = ParamDecl::argument_binders(declared)
+            .filter(|decl| !decl.infer_only() && !decl.variadic() && !decl.is_pack_list())
+            .map(|decl| decl.keyword().to_string())
+            .collect();
         Self {
             overload,
             member: Some(member),
+            forwarded,
+            unforwardable,
             ..self
         }
     }
@@ -262,16 +284,7 @@ pub(super) fn default_shapes(methods: &[TraitMethod]) -> Vec<DefaultShape> {
                 .type_params
                 .first()
                 .is_some_and(|param| param.infer_only),
-            forwarded: method
-                .type_params
-                .iter()
-                .filter(|param| {
-                    !param.infer_only
-                        && !param.name.starts_with('*')
-                        && !param.is_erased_origin_param(&method.type_params)
-                })
-                .map(|param| param.name.clone())
-                .collect(),
+            forwarded: Vec::new(),
             unforwardable: unforwardable(method),
             callable: None,
         })
@@ -488,6 +501,9 @@ impl Checker {
             }
             let mut wrapper = wrapper.clone();
             wrapper.shape = self.registered_default(&wrapper)?.clone();
+            if let Some(reason) = &wrapper.shape.unforwardable {
+                return Err(TypeError::Unsupported(reason.clone()));
+            }
             let mut body = vec![forwarding_statement(&wrapper.shape, wrapper.span)?];
             if let Some(module) = &wrapper.module {
                 mojito_ast::ast::stamp_source(&mut body, module);
@@ -1162,17 +1178,17 @@ fn unforwardable(method: &TraitMethod) -> Option<String> {
     }
     let names_origin = method.self_origin.is_some()
         || method.params.iter().any(|param| param.origin.is_some())
-        || matches!(method.ret, Some(Type::Ref { .. }))
-        || method
-            .type_params
-            .iter()
-            .any(|param| param.is_erased_origin_param(&method.type_params));
-    names_origin.then(|| {
-        format!(
-            "inheriting trait default '{name}', whose signature names an origin: a \
-             conformer's wrapper over such a signature is not supported yet"
-        )
-    })
+        || matches!(method.ret, Some(Type::Ref { .. }));
+    names_origin.then(|| names_origin_reason(name))
+}
+
+/// Why no conformer's wrapper can forward to default `name`, whose
+/// signature names an origin.
+fn names_origin_reason(name: &str) -> String {
+    format!(
+        "inheriting trait default '{name}', whose signature names an origin: a \
+         conformer's wrapper over such a signature is not supported yet"
+    )
 }
 
 /// The one statement of a wrapper for `shape`: a call of its trait's member, with

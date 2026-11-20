@@ -439,7 +439,7 @@ impl Checker {
                     return Err(TypeError::Redeclaration(m.name.clone()));
                 }
                 if m.default_body.is_some() {
-                    default_overloads.push((overloads.len(), member));
+                    default_overloads.push((overloads.len(), member, sig.declared.clone()));
                 }
                 requirements.push((m.name.clone(), m.params.len(), overloads.len()));
                 overloads.push(sig);
@@ -454,7 +454,9 @@ impl Checker {
         let defaults = shapes
             .into_iter()
             .zip(default_overloads)
-            .map(|(shape, (overload, member))| shape.at_requirement(overload, member))
+            .map(|(shape, (overload, member, declared))| {
+                shape.at_requirement(overload, member, &declared)
+            })
             .collect();
         self.traits.insert(
             name.to_string(),
@@ -515,7 +517,12 @@ impl Checker {
             self,
         )?;
         let decls = ParamDecl::argument_decls(&declared);
-        self.push_param_scope(&decls);
+        // The signature reads an origin binder as a value (`Pointer[T, o]`).
+        self.push_param_scope(&ParamDecl::signature_scope(&declared));
+        let saved_type_params = self.enclosing_type_params.clone();
+        let saved_decls = self.enclosing_param_decls.clone();
+        self.enclosing_type_params.extend(m.type_params.clone());
+        self.enclosing_param_decls.extend(declared.iter().cloned());
         let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
             if let Some(annotation) = &m.self_type {
                 let ty = this.ty_from_anno(annotation)?;
@@ -552,6 +559,8 @@ impl Checker {
             Ok((defaults, all_types, ret, error))
         });
         self.pop_param_scope();
+        self.enclosing_type_params = saved_type_params;
+        self.enclosing_param_decls = saved_decls;
         let (defaults, all_types, ret, error) = signature?;
         self.check_result_origins(
             m.ret.as_ref(),

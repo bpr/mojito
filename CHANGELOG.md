@@ -952,6 +952,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A trait requirement or default whose own origin binder an argument's type
+  names (`def read[o: ImmOrigin](self, p: Pointer[Int, o])`) now declares,
+  where it failed with "Undefined variable 'o'", and inheriting such a
+  default reports the explicit unsupported diagnostic (R2342).
 - A call bracket's origin argument now converts to its binder's declared
   `Origin[mut=…]` type, so `put[ImmOrigin(origin_of(a))](Pointer(to=a))`
   over `def put[o: MutOrigin](…)`, a free or method call, is rejected as at
@@ -1659,6 +1663,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Preparation no longer folds an alias-typed origin binder's bound into the
+  `Origin` spelling: the check alone classifies it, and compile-time
+  applicability and trait-default forwarding read the classified list. A
+  non-`Bool` argument to a parameterized origin alias is now reported at
+  the alias's own parameter, as at the pin (R2342).
 - Every reader of a struct instance's compile-time arguments now pairs them
   with the struct's whole declared list, or takes them for its argument
   binders through `ParamDecl::instance_argument_view`, instead of skipping

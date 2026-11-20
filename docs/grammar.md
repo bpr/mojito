@@ -357,8 +357,8 @@ holding it is classified by its base as any bracket is. Named
 retained; the marker is followed by `,` or the closing `]`, so `[T: Copyable
 // U: AnyType]` is upstream's "expected ']' for parameter list". Any other
 bound name, `ImmOrigin` and `MutOrigin` included, records as spelled: those
-two are library aliases of `Origin`, and preparation resolves an origin alias
-in a bound before the check.
+two are library aliases of `Origin`, and the check resolves an origin alias
+in a bound as any type.
 Signature-level origin inference and substitution remain deferred.
 Origin positions also recognize two member projections as ordinary member
 syntax (no dedicated productions): `base._get_owned_interior["tag"]` names a

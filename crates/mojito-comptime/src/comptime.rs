@@ -89,14 +89,13 @@ pub fn prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// imports.
 ///
 /// `installed` holds the package's module constants as its build
-/// elaborated them, whose origin and SIMD aliases bound an own parameter. No package
+/// elaborated them, whose SIMD aliases bound an own parameter. No package
 /// declaration is read or rewritten.
 pub fn prepare_importing(
     mut own: Vec<Stmt>,
     installed: Option<&InstalledInterfaces>,
 ) -> Result<Vec<Stmt>, ComptimeError> {
     pack_qualification::qualify_struct_packs(&mut own)?;
-    fold_origin_alias_bounds(&mut own, installed);
     synthesize_copyable_copy(&mut own, installed);
     synthesize_hashable_hash(&mut own);
     synthesize_equatable_eq(&mut own);

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2396**.
+Next free ID: **R2399**.
 
 ## Ordered Work
 
@@ -2841,6 +2841,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The diagnostic comes from the VM's place projection
     (`vm/places.rs`, `Proj::Index`), so MIR lowers the in-place update as an
     index projection of the field's dereference.
+  - Probe: `self.p[] += 1` in a read-`self` method `bump` of that struct,
+    called on a local `H(Pointer(to=x))`, stops with "cannot index
+    Pointer"; the native backend prints `2`, as the pin does.
   - Found while planning R2113 (2026-11-12).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4600,6 +4603,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2397 A conformer's method never satisfies a trait requirement
+  that declares its own origin binder**
+
+  `struct A(T)` spelling `def read[o: ImmOrigin](self, p: Pointer[Int,
+  o]) -> Int` for the same requirement of `trait T` is rejected ("method
+  'read' does not match the signature required by trait 'T'"), where the
+  pin prints `7` for `A(4).read(Pointer(to=y))` and `6` through a generic
+  `def g[X: T](x: X)`.
+  - `method_satisfies_requirement_under` (`checker/traits.rs`) compares
+    the witness's signature with the requirement's, whose origin binders
+    are distinct declarations, so an origin naming one never compares
+    equal; upstream compares the two signatures up to their own binders.
+  - Probe: the `ref[o] p: Int` form of the same requirement fails the
+    same way.
+  - Found while landing R2342 (2026-11-19).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R550 A refining trait cannot restate an inherited requirement**
 
   Problem: `trait D(A)` declaring `def a(self) -> Int: ...` that `A`
@@ -4642,6 +4663,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     clause, a reference return, and an origin parameter.
   - Before R568 the cloned wrapper failed too, with "returned reference
     escapes storage outside its declared origin".
+  - `DefaultShape::at_requirement` reads the forwarded binders off the
+    requirement's classified list, so an origin binder and its `mut=`
+    binder are already excluded from the forwarding call.
   - Found while landing R568 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5974,7 +5998,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     body's scope: a struct type with open slots that an application fills.
   - The generator clones the struct's `StructInfo::source_params` into
     its own binders, one of the two readers keeping that syntax field
-    alive (R2342 holds the other); binding the open slots from the
+    alive (R2396 holds the other); binding the open slots from the
     checked `ParamDecl`s retires it here.
   - Found while landing R296 (2026-10-29).
   - Depends on nothing.
@@ -9526,37 +9550,32 @@ new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **R2342 Pre-check phases classify an origin binder by its folded
-  bound spelling**
+- [ ] **R2396 Pre-check auto-parameterization reads an origin binder by
+  its `Origin` spelling, so the parser keeps its `Origin[mut=…]` special
+  case**
 
-  `auto_parameterize`, `comptime/params.rs`, and `symbol.rs`'s annotation
-  mangling recognize an origin binder by `TypeParam::is_erased_origin_param`,
-  which matches `bounds == ["Origin"]`, because they run on AST before the
-  check, where upstream has one elaborator resolving the binder's type.
-  - `fold_origin_alias_bounds` (`comptime/synth.rs`) exists only to give
-    these phases that spelling for an alias-typed binder, a parameterized
-    alias applied to its arguments (`[o: O[True]]`) included; it goes
-    with the rest.
-  - Other readers: `module.rs` (two), and the checker's prescan in
-    `check_program`, which runs before any struct registers, so
-    `Checker::origin_binder` cannot resolve `std.origin`'s `Origin` while
-    std itself is checked.
-  - Probe: `default_shapes` and `unforwardable` (`trait_defaults.rs`)
-    shape a trait default's forwarding through the predicate.
-  - Probe: `ApplicableShape::applicable` (`comptime_validation.rs`)
-    erases a compile-time-applicable function's origin binders through
-    it.
-  - `InstalledInterfaces::struct_parameters` (`checker/interface.rs`)
-    hands a package struct's `StructInfo::source_params` to
-    `auto_parameterize` for the same reason. Once this and R1649 land,
-    nothing reads that field, and it goes.
-  - Withdrawn when these phases move behind the check
-    (`docs/parametric-mir-plan.md`, the AST cloner's retirement). The
-    parser then drops its `Origin[mut=…]` special case and
-    `TypeParam::origin_mutability`, and the fold goes.
-  - Planned in R2139 (2026-11-18).
-  - Depends on R2341.
-  - Model: Fable, Planned.
+  `auto_parameterize` runs on AST before the check and recognizes an origin
+  binder by `TypeParam::is_erased_origin_param` (`bounds == ["Origin"]`),
+  where upstream's `addImplicitTypeParams` runs on the resolved type.
+  - It skips a bare `Origin` binder and passes `_` for a struct's
+    `Origin`-spelled slot, while an alias-typed one (`[o: O]` over
+    `comptime O = Origin`) gains upstream's implicit `mut` and
+    `_mlir_origin` binders, so the two spellings differ before the check.
+  - `mojito-symbol`'s `func_annotation_raw` and
+    `syntactic_origin_argument` read the same spelling for the AST
+    `OverloadKey` of a `def[...]` annotation; they go with R570.
+  - Once both go, the parser drops its `Origin[mut=…]` special case
+    (`parser/types.rs`) and `TypeParam::origin_mutability`, taking
+    `TypeParam::{is_erased_origin_param, is_origin_mutability_binder}`
+    with it, and `TypeParam::annotation` collapses to `value_type`.
+  - The field's structural walkers go with it: `module.rs`'s
+    `rewrite_type_param`, `ast.rs`, `visit.rs` (two), `comptime/rewrite.rs`,
+    and `checker/constraints.rs`.
+  - `InstalledInterfaces::struct_parameters` hands a package struct's
+    `StructInfo::source_params` to `auto_parameterize` for the same reason;
+    once this and R1649 land, nothing reads that field, and it goes.
+  - Depends on R2371, R2376, R570.
+  - Model: Fable, Not Planned.
 
 - [ ] **R867 A conditional's literal arm reaches its carrier
   unmaterialized**
@@ -10502,7 +10521,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - With a bare `o: Origin`, both `mut` and `_mlir_origin` are
     auto-parameterized, so the pin prints `S[True, {}, {}]`.
   - `ParamDecl::place_origins_with` and the pre-check `auto_parameterize`
-    (R2342) are where the implicit binder enters.
+    (R2396) are where the implicit binder enters.
+  - Landing it unblocks R2396, which retires the pre-check origin
+    spelling.
   - Probe: `U[origin_of(x), Int]` over `struct U[o: ImmOrigin, T:
     AnyType]` prints `U[{}, SIMD[DType.int, 1]]`; the pin prints `U[{},
     {}, SIMD[DType.int, 1]]`.
@@ -10972,6 +10993,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `std.span.Span[mut, SIMD[DType.int, 1], {}]` twice, where the pin
     prints `True` then `False` in that slot.
   - Found while landing R2372 (2026-11-19).
+  - Landing it unblocks R2396, which retires the pre-check origin
+    spelling.
   - Depends on R2375.
   - Model: Fable, Not Planned.
 

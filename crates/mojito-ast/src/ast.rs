@@ -366,8 +366,8 @@ pub struct TypeParam {
     pub callable_bound: Option<Type>,
     /// `Some(expr)` for `Origin[mut=expr]`; `None` for type/value parameters.
     /// A bound naming an alias of an origin type (`ImmOrigin`, `MutOrigin`,
-    /// a parameterized `O[True]`) records as spelled until preparation
-    /// resolves it to the `Origin` bound and the alias's mutability.
+    /// a parameterized `O[True]`) stays as spelled, and the check classifies
+    /// the binder by its resolved type ([`Self::annotation`]).
     pub origin_mutability: Option<Expr>,
     /// Whether this parameter precedes the `//` infer-only marker.
     pub infer_only: bool,

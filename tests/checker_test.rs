@@ -11046,3 +11046,17 @@ fn a_callee_origin_binder_bound_from_an_argument_roots_its_reference_result() {
         );
     }
 }
+
+#[test]
+fn an_inherited_default_with_an_alias_typed_origin_binder_is_unsupported() {
+    // The default's registered signature classifies `o: Imm` as an origin
+    // binder, which no conformer's wrapper forwards yet (R571).
+    let source = "comptime Imm = ImmOrigin\n\ntrait T:\n    def get(self) -> Int: ...\n\n    def read[o: Imm](self, p: Pointer[Int, o]) -> Int:\n        return p[] + self.get()\n\n\nstruct A(T):\n    var v: Int\n\n    def __init__(out self, v: Int):\n        self.v = v\n\n    def get(self) -> Int:\n        return self.v\n";
+    match check_with_std(source) {
+        Err(TypeError::Unsupported(reason)) => assert!(reason.contains("names an origin")),
+        other => panic!(
+            "expected an unsupported default, got {:?}",
+            other.map(|()| ())
+        ),
+    }
+}

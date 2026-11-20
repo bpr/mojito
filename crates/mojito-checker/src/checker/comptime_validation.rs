@@ -191,7 +191,8 @@ pub(in crate::checker) struct ApplicableFunction {
     /// What its `self` is, if it has one.
     self_slot: SelfSlot,
     /// The names of the callable's own compile-time parameters, in
-    /// declared order.
+    /// declared order: every declared binder until [`classify_entry`]
+    /// replaces them with its classified argument binders.
     binders: Vec<String>,
     /// Those parameters classified as the callable's own check classifies
     /// them, and its result over them
@@ -3141,12 +3142,16 @@ impl Checker {
         declaration: &ApplicableDeclaration<'_>,
     ) -> Option<(AppliedSignature, Vec<Option<Ty>>)> {
         let function = &declaration.function;
-        let decls = self
-            .classify_params(&function.owner, declaration.type_params)
+        let declared = self
+            .classify_param_list(&function.owner, declaration.type_params)
             .ok()?;
-        if decls.iter().filter(|decl| !decl.is_pack_list()).count() != function.binders.len() {
+        if declared.iter().filter(|decl| !decl.is_pack_list()).count() != function.binders.len() {
             return None;
         }
+        // An origin binder, and the mutability that qualifies it, is no
+        // argument binder: the application binds compile-time memory's
+        // origin, as the pin binds `ComptimeOrigin`.
+        let decls = ParamDecl::argument_decls(&declared);
         self.push_param_scope(&decls);
         let params = function
             .params
@@ -7426,13 +7431,9 @@ impl ApplicableShape<'_> {
         on_instance: bool,
         self_slot: SelfSlot,
     ) -> Option<ApplicableFunction> {
-        // An origin binder, and the mutability that qualifies it, is erased:
-        // the application binds compile-time memory's origin, as the pin
-        // binds `ComptimeOrigin`.
         let binders: Vec<String> = self
             .type_params
             .iter()
-            .filter(|binder| !binder.is_erased_origin_param(self.type_params))
             .map(|binder| binder.callable_bound.is_none().then(|| binder.name.clone()))
             .collect::<Option<_>>()?;
         let slot = |ty: &SourceType| match ty {

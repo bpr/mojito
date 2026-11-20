@@ -5,20 +5,17 @@
 use super::*;
 use mojito_types::types::TyKind;
 
-/// Whether a source parameter is semantic metadata/runtime callable input rather
-/// than a value the compile-time evaluator may inspect.  These parameters stay
-/// on every generated specialization, and their call arguments stay at the
-/// rewritten call site.
+/// Whether a source parameter is a runtime callable input rather than a value
+/// the compile-time evaluator may inspect.  These parameters stay on every
+/// generated specialization, and their call arguments stay at the rewritten
+/// call site.
 ///
 /// An unqualified `F: def(...)` is a callable *type constraint* and therefore is
 /// still an ordinary type parameter.  Mojo's explicit `thin` form declares a
 /// compile-time callable value; evaluating that value as a
 /// [`CtValue`] would incorrectly require the compile-time universe to own VM
 /// closures and captured storage.
-pub(super) fn retained_specialization_param(tp: &TypeParam, siblings: &[TypeParam]) -> bool {
-    if tp.is_erased_origin_param(siblings) {
-        return true;
-    }
+pub(super) const fn retained_specialization_param(tp: &TypeParam) -> bool {
     matches!(
         tp.callable_bound.as_ref(),
         Some(Type::Func { thin: true, .. })
@@ -33,7 +30,7 @@ pub(super) fn classify_ct_param(
     siblings: &[TypeParam],
     owner: &str,
 ) -> Option<ParamDecl> {
-    if retained_specialization_param(tp, siblings) {
+    if retained_specialization_param(tp) {
         return None;
     }
     let value = |ty: Ty| ParamDecl::Value {

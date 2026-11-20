@@ -844,6 +844,7 @@ assets/ok/optional_owning_api.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_raising_subscript.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_string_from_stringify.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_value_protocols.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/origin_alias_binder_comptime_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_argument_alias_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_argument_direct_applications.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_binder_mutable_ref_result.mojo	-	ineligible	no-scalar-entry-shape
@@ -1606,6 +1607,7 @@ assets/ok/trait_requirement_constant_default.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/trait_requirement_default_from_caller_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_docstring.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_indexes_own_pack.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_requirement_origin_binder_in_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_variadic_collector.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_signature_reads_struct_value_member.mojo	-	ineligible	no-scalar-entry-shape
