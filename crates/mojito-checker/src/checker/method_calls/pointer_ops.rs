@@ -90,13 +90,17 @@ impl Checker {
             ))
         };
         let pointer_element = |index: usize| match operands[index].kind() {
-            TyKind::KgenPointer(element) => Ok(element.clone()),
+            TyKind::KgenPointer { element, .. } => Ok(element.clone()),
             _ => Err(operand_must(index, "a '!kgen.pointer'")),
         };
         let offset_ty = mojito_types::types::storage_ty(&Ty::int());
         let result = match op {
             PointerOp::LitRefToPointer => match operands[0].kind() {
-                TyKind::LitRef { element, .. } => TyKind::KgenPointer(element.clone()).into(),
+                TyKind::LitRef {
+                    element,
+                    address_space,
+                    ..
+                } => Ty::kgen_pointer(element.clone(), address_space.clone()),
                 _ => return Err(operand_must(0, "a '!lit.ref'")),
             },
             PointerOp::LitRefFromPointer => {
@@ -110,7 +114,10 @@ impl Checker {
                         "result type must be a '!lit.ref', but got '{result}'"
                     )));
                 };
-                if !same_element(referent, &element) {
+                if !same_element(referent, &element)
+                    || result.kind().pointer_address_space()
+                        != operands[0].kind().pointer_address_space()
+                {
                     return Err(invalid(format!(
                         "result type '{result}' does not reference the element of '{}'",
                         operands[0]
@@ -122,7 +129,7 @@ impl Checker {
             PointerOp::Bitcast => {
                 pointer_element(0)?;
                 let result = self.mlir_result_type(attribute("_type").expect("required"))?;
-                if !matches!(result.kind(), TyKind::KgenPointer(_)) {
+                if !matches!(result.kind(), TyKind::KgenPointer { .. }) {
                     return Err(invalid(format!(
                         "result type must be a '!kgen.pointer', but got '{result}'"
                     )));
@@ -180,7 +187,7 @@ impl Checker {
     /// access copies its bits, which Mojito admits for a trivial one: a
     /// scalar, a `TrivialRegisterPassable` struct, or a pointer.
     fn check_register_passable_element(&self, name: &str, element: &Ty) -> Result<(), TypeError> {
-        let pointer = element.is_pointer() || matches!(element.kind(), TyKind::KgenPointer(_));
+        let pointer = element.is_pointer() || matches!(element.kind(), TyKind::KgenPointer { .. });
         if pointer || self.is_trivial_register_passable(element) {
             return Ok(());
         }

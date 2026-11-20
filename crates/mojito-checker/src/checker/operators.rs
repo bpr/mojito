@@ -1021,7 +1021,11 @@ impl Checker {
             });
         }
         let (element, origin) = self.infer_place_address(span, &kwargs[0].value)?;
-        Ok(Ty::pointer(element, origin))
+        Ok(Ty::pointer(
+            element,
+            origin,
+            mojito_types::types::AddressSpaceSlot::GENERIC,
+        ))
     }
 
     /// Type upstream's `__get_mvalue_as_litref(place)`: the `!lit.ref` of a
@@ -1040,7 +1044,11 @@ impl Checker {
             });
         };
         let (element, origin) = self.infer_place_address(span, value)?;
-        Ok(TyKind::LitRef { element, origin }.into())
+        Ok(Ty::lit_ref(
+            element,
+            origin,
+            mojito_types::types::AddressSpaceSlot::GENERIC,
+        ))
     }
 
     /// Type upstream's address builtins `__get_litref_as_mvalue(r)` and
@@ -1152,34 +1160,63 @@ impl Checker {
             }
         };
         let bracket_origin = bracket.as_ref().map(|(_, origin)| origin.clone());
+        // A bracket that names no address space takes the operand's.
+        let bracket_space = param_args
+            .iter()
+            .find(|argument| {
+                matches!(argument, mojito_ast::ast::ParamArg::Named { name, .. }
+                    if name == "address_space")
+            })
+            .map(|argument| self.address_space_arg(argument))
+            .transpose()?;
         let operand = self.infer(value)?;
+        let operand_space = operand
+            .kind()
+            .pointer_address_space()
+            .cloned()
+            .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
+        let expected_space = bracket_space.unwrap_or_else(|| operand_space.clone());
         let (element, origin) = match (operand.kind(), bracket) {
-            (TyKind::LitRef { element, origin }, None) => (element.clone(), origin.clone()),
-            (TyKind::LitRef { element, origin }, Some((expected, expected_origin))) => {
+            (TyKind::LitRef { .. }, _) | (TyKind::KgenPointer { .. }, Some(_))
+                if expected_space != operand_space =>
+            {
+                return Err(no_match(format!(
+                    "a '{operand}' is not in the address space {expected_space}"
+                )));
+            }
+            (
+                TyKind::LitRef {
+                    element, origin, ..
+                },
+                None,
+            ) => (element.clone(), origin.clone()),
+            (
+                TyKind::LitRef {
+                    element, origin, ..
+                },
+                Some((expected, expected_origin)),
+            ) => {
                 if (*expected != TyKind::Infer && expected != *element)
                     || !origin.coerces_to(&expected_origin)
                 {
                     return Err(no_match(format!(
                         "a '{operand}' does not convert to '{}'",
-                        TyKind::LitRef {
-                            element: expected,
-                            origin: expected_origin,
-                        }
+                        Ty::lit_ref(expected, expected_origin, expected_space)
                     )));
                 }
                 (element.clone(), origin.clone())
             }
-            (TyKind::KgenPointer(_), None) => {
+            (TyKind::KgenPointer { .. }, None) => {
                 return Err(no_match(
                     "failed to infer parameter 'mut': a '!kgen.pointer' carries no origin"
                         .to_string(),
                 ));
             }
-            (TyKind::KgenPointer(element), Some((expected, origin))) => {
+            (TyKind::KgenPointer { element, .. }, Some((expected, origin))) => {
                 if *expected != TyKind::Infer && expected != *element {
                     return Err(no_match(format!(
                         "a '{operand}' does not convert to '{}'",
-                        TyKind::KgenPointer(expected)
+                        Ty::kgen_pointer(expected, expected_space)
                     )));
                 }
                 (element.clone(), origin)
@@ -1208,7 +1245,7 @@ impl Checker {
                 bitcast: false,
             },
         );
-        Ok(Ty::pointer(element, origin))
+        Ok(Ty::pointer(element, origin, operand_space))
     }
 
     /// The element and origin of the address of `value`, a place, as
@@ -1349,7 +1386,7 @@ impl Checker {
         };
         let found = self.infer(operand)?;
         match (litref, found.kind()) {
-            (true, TyKind::LitRef { .. }) | (false, TyKind::KgenPointer(_)) => {}
+            (true, TyKind::LitRef { .. }) | (false, TyKind::KgenPointer { .. }) => {}
             (true, _) => {
                 return Err(TypeError::InvalidAddressOperand(format!(
                     "operand isn't a '!lit.ref' type '{found}'"

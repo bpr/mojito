@@ -46,7 +46,7 @@ pub(super) fn functions_equivalent(a: &MirFunction, b: &MirFunction) -> bool {
 pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
     match (a.kind(), b.kind()) {
         (a, b) if a.is_pointer() && b.is_pointer() => true,
-        (TyKind::KgenPointer(_), TyKind::KgenPointer(_))
+        (TyKind::KgenPointer { .. }, TyKind::KgenPointer { .. })
         | (TyKind::LitRef { .. }, TyKind::LitRef { .. }) => true,
         (TyKind::LitRefPack { elements: a, .. }, TyKind::LitRefPack { elements: b, .. }) => {
             a.len() == b.len()
@@ -153,13 +153,40 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
         (TyKind::Ref(a), TyKind::Ref(b)) => {
             a.mutability == b.mutability && ty_equal_modulo_origins(&a.referent, &b.referent)
         }
-        (a, b) if let (Some(a), Some(b)) = (a.pointer_element(), b.pointer_element()) => {
-            ty_equal_modulo_origins(a, b)
-        }
-        (TyKind::KgenPointer(a), TyKind::KgenPointer(b))
-        | (TyKind::LitRef { element: a, .. }, TyKind::LitRef { element: b, .. }) => {
-            ty_equal_modulo_origins(a, b)
-        }
+        (
+            TyKind::Pointer {
+                element: a,
+                address_space: a_space,
+                ..
+            },
+            TyKind::Pointer {
+                element: b,
+                address_space: b_space,
+                ..
+            },
+        )
+        | (
+            TyKind::KgenPointer {
+                element: a,
+                address_space: a_space,
+            },
+            TyKind::KgenPointer {
+                element: b,
+                address_space: b_space,
+            },
+        )
+        | (
+            TyKind::LitRef {
+                element: a,
+                address_space: a_space,
+                ..
+            },
+            TyKind::LitRef {
+                element: b,
+                address_space: b_space,
+                ..
+            },
+        ) => a_space == b_space && ty_equal_modulo_origins(a, b),
         (TyKind::LitRefPack { elements: a, .. }, TyKind::LitRefPack { elements: b, .. }) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equal_modulo_origins(a, b))
         }
@@ -294,7 +321,7 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         | TyKind::Variant(_)
         | TyKind::ComptimeList(_)
         | TyKind::VariadicPack(_)
-        | TyKind::KgenPointer(_)
+        | TyKind::KgenPointer { .. }
         | TyKind::LitRef { .. }
         | TyKind::LitRefPack { .. }
         | TyKind::Ref(_) => true,
@@ -305,9 +332,15 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
     if !erases {
         return;
     }
-    if let Some((mut element, origin)) = ty.as_pointer() {
+    if let TyKind::Pointer {
+        element,
+        origin,
+        address_space,
+    } = ty.kind()
+    {
+        let mut element = element.clone();
         erase_callable_environments(&mut element);
-        *ty = Ty::pointer(element, origin);
+        *ty = Ty::pointer(element, origin.clone(), address_space.clone());
         return;
     }
     ty.update(|kind| match kind {
@@ -358,7 +391,7 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         | TyKind::PopArray { element, .. } => {
             erase_callable_environments(element);
         }
-        TyKind::KgenPointer(element) | TyKind::LitRef { element, .. } => {
+        TyKind::KgenPointer { element, .. } | TyKind::LitRef { element, .. } => {
             erase_callable_environments(element);
         }
         TyKind::LitRefPack { elements, .. } => {

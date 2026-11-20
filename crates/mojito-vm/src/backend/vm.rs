@@ -932,7 +932,11 @@ fn simd_instance<'s>(
 fn pointer_valued(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
     use mojito_types::types::TyKind;
     let is_pointer = |ty: &Ty| {
-        ty.is_pointer() || matches!(ty.kind(), TyKind::KgenPointer(_) | TyKind::LitRef { .. })
+        ty.is_pointer()
+            || matches!(
+                ty.kind(),
+                TyKind::KgenPointer { .. } | TyKind::LitRef { .. }
+            )
     };
     is_pointer(ty)
         || held_field(structs, ty).is_some_and(|(name, field)| {
@@ -2050,6 +2054,7 @@ mod pointer_storage_tests {
         let ty = Ty::pointer(
             Ty::int(),
             mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+            mojito_types::types::AddressSpaceSlot::GENERIC,
         );
         let first = vm.thaw(&empty_program(), &frozen, Some(&ty)).expect("thaw");
         let second = vm

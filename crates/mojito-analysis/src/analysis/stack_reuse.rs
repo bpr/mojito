@@ -637,10 +637,9 @@ fn access(
     // reads the pointer and addresses its pointee.
     let view = |place: &MirPlace| {
         place.owned_path().is_some()
-            && function
-                .var_tys
-                .get(&place.root)
-                .is_some_and(|ty| !(ty.is_pointer() || matches!(ty.kind(), TyKind::KgenPointer(_))))
+            && function.var_tys.get(&place.root).is_some_and(|ty| {
+                !(ty.is_pointer() || matches!(ty.kind(), TyKind::KgenPointer { .. }))
+            })
     };
     let slot_typed = |var: VarId, reg: Reg| {
         function.var_tys.contains_key(&var)

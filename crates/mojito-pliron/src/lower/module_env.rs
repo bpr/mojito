@@ -715,6 +715,7 @@ pub(super) fn reference_outcome(
     let pointer = Ty::pointer(
         referent.clone(),
         mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+        mojito_types::types::AddressSpaceSlot::GENERIC,
     );
     let composed = layout.outcome_layout(&pointer)?;
     Ok(OutcomeAbi {

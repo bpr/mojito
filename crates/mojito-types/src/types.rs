@@ -414,6 +414,182 @@ impl fmt::Display for LitOriginMut {
     }
 }
 
+/// The address-space slot of a `Pointer`, a `!kgen.pointer`, and a
+/// `!lit.ref`.
+///
+/// It is upstream's `address_space: AddressSpace` parameter, which the raw
+/// types spell as its index (`address_space._value._mlir_value`).
+/// `Expr` holds the `AddressSpace`-valued parameter expression (a binder
+/// `a`, `Self.address_space`), never a closed one: [`AddressSpaceSlot::of`]
+/// makes one `Known`. Both raw spellings read their index operand back to
+/// that value, so a `Pointer` and the `!kgen.pointer` it wraps hold one
+/// slot.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum AddressSpaceSlot {
+    Known(u32),
+    Expr(ParamExpr),
+}
+
+impl AddressSpaceSlot {
+    /// Upstream's `AddressSpace.GENERIC`, every pointer's default.
+    pub const GENERIC: Self = Self::Known(0);
+
+    /// The slot holding the `AddressSpace`-valued `space`: `Known` once it
+    /// folds.
+    pub fn of(space: ParamExpr) -> Result<Self, ParamError> {
+        if !space.meta().as_value().is_some_and(is_address_space) {
+            return Err(ParamError::TypeMismatch {
+                operation: "pointer address space".to_string(),
+                expected: ADDRESS_SPACE_TYPE_NAME.to_string(),
+                found: space.meta().to_string(),
+            });
+        }
+        Ok(address_space_index(&space).map_or(Self::Expr(space), Self::Known))
+    }
+
+    /// The slot a parameter value denotes: a closed `AddressSpace` value's
+    /// space, or a symbolic one's expression. `None` for any other value.
+    pub fn of_value(value: &CtValue) -> Option<Self> {
+        match value {
+            CtValue::Expr(expr) => Self::of(expr.clone()).ok(),
+            closed => address_space_of_value(closed).map(Self::Known),
+        }
+    }
+
+    /// The space a concrete use reads.
+    pub fn known(&self) -> Option<u32> {
+        match self {
+            Self::Known(space) => Some(*space),
+            Self::Expr(space) => address_space_index(space),
+        }
+    }
+
+    /// Whether this is upstream's `AddressSpace.GENERIC`.
+    pub fn is_generic(&self) -> bool {
+        self.known() == Some(0)
+    }
+
+    /// Whether only an instantiation can say which space it is.
+    pub fn is_symbolic(&self) -> bool {
+        self.known().is_none()
+    }
+
+    /// The `AddressSpace` value the slot holds, as a parameter value.
+    pub fn value(&self) -> CtValue {
+        match self {
+            Self::Known(space) => address_space_value(*space),
+            Self::Expr(space) => CtValue::Expr(space.clone()),
+        }
+    }
+
+    /// The expression a symbolic slot holds.
+    pub const fn expr(&self) -> Option<&ParamExpr> {
+        match self {
+            Self::Known(_) => None,
+            Self::Expr(space) => Some(space),
+        }
+    }
+
+    /// This slot after `rewrite` rewrote its expression.
+    pub fn try_map(
+        &self,
+        rewrite: impl FnOnce(&ParamExpr) -> Result<ParamExpr, ParamError>,
+    ) -> Result<Self, ParamError> {
+        match self {
+            Self::Known(_) => Ok(self.clone()),
+            Self::Expr(space) => Self::of(rewrite(space)?),
+        }
+    }
+
+    /// This slot after `rewrite` rewrote its expression, unchanged when
+    /// the rewrite fails.
+    #[must_use]
+    pub fn map_or_keep(
+        &self,
+        rewrite: impl FnOnce(&ParamExpr) -> Result<ParamExpr, ParamError>,
+    ) -> Self {
+        self.try_map(rewrite).unwrap_or_else(|_| self.clone())
+    }
+}
+
+/// The pin's `AddressSpace.write_to`: a named space by its case, any other
+/// as `AddressSpace(N)`.
+impl fmt::Display for AddressSpaceSlot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self.known() {
+            Some(0) => "GENERIC",
+            Some(1) => "GLOBAL",
+            Some(3) => "SHARED",
+            Some(4) => "CONSTANT",
+            Some(5) => "LOCAL",
+            Some(7) => "SHARED_CLUSTER",
+            Some(space) => return write!(f, "{ADDRESS_SPACE_TYPE_NAME}({space})"),
+            None => return write!(f, "{}", self.expr().expect("a symbolic slot")),
+        };
+        write!(f, "{ADDRESS_SPACE_TYPE_NAME}.{name}")
+    }
+}
+
+/// Upstream's `AddressSpace` (`std.memory.address_space`), the type of a
+/// pointer's address-space slot.
+pub fn address_space_ty() -> Ty {
+    TyKind::Struct(ADDRESS_SPACE_TYPE_NAME.to_string(), Vec::new()).into()
+}
+
+/// Whether `ty` is upstream's `AddressSpace`.
+pub fn is_address_space(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Struct(name, args) if name == ADDRESS_SPACE_TYPE_NAME && args.is_empty())
+}
+
+/// The closed `AddressSpace(space)`: its one `SIMDLength` field `_value`.
+pub fn address_space_value(space: u32) -> CtValue {
+    CtValue::Struct {
+        name: ADDRESS_SPACE_TYPE_NAME.to_string(),
+        fields: vec![(
+            ADDRESS_SPACE_VALUE_FIELD.to_string(),
+            simd_length_value(i64::from(space)),
+        )],
+    }
+}
+
+/// The space an `AddressSpace`-valued expression folds to: its `_value`
+/// field's index, read through a construction (`AddressSpace(3)`) as
+/// through a constant. `None` while it stays symbolic.
+pub fn address_space_index(space: &ParamExpr) -> Option<u32> {
+    if let Some(space) = space.as_constant().and_then(address_space_of_value) {
+        return Some(space);
+    }
+    let context = ParamContext::detached();
+    let length = context
+        .field(
+            space,
+            ADDRESS_SPACE_VALUE_FIELD,
+            MetaTy::value(simd_length_ty()),
+        )
+        .ok()?;
+    let index = simd_length_image(&context, &length).ok()?.as_i64()?;
+    u32::try_from(index).ok()
+}
+
+/// The space a closed `AddressSpace` value is ([`address_space_value`]),
+/// or `None` for any other value.
+pub fn address_space_of_value(value: &CtValue) -> Option<u32> {
+    let CtValue::Struct { name, fields } = value else {
+        return None;
+    };
+    if name != ADDRESS_SPACE_TYPE_NAME {
+        return None;
+    }
+    let [(_, length)] = fields.as_slice() else {
+        return None;
+    };
+    let space = match length {
+        CtValue::Int(space) | CtValue::Index(space) => Some(*space),
+        length => known_simd_length(length),
+    }?;
+    u32::try_from(space).ok()
+}
+
 /// Upstream's `SIMDLength`, the type of a `SIMD` width slot.
 pub fn simd_length_ty() -> Ty {
     TyKind::Struct(SIMD_LENGTH_TYPE_NAME.to_string(), Vec::new()).into()
@@ -481,6 +657,20 @@ pub fn simd_length_value(lanes: i64) -> CtValue {
             crate::ct::MLIR_VALUE_FIELD.to_string(),
             CtValue::Index(lanes),
         )],
+    }
+}
+
+/// The lane count of a closed `SIMDLength` value in its canonical form,
+/// its one field an `Index`.
+pub fn known_simd_length(value: &CtValue) -> Option<i64> {
+    match value {
+        CtValue::Struct { name, fields } if name == SIMD_LENGTH_TYPE_NAME => {
+            match fields.as_slice() {
+                [(_, CtValue::Index(lanes))] => Some(*lanes),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
@@ -901,13 +1091,18 @@ pub enum TyKind {
     Pointer {
         element: Ty,
         origin: crate::origin::PointerOrigin,
+        address_space: AddressSpaceSlot,
     },
     /// Upstream's raw address `!kgen.pointer<T>` (`Pointer[T, o]._mlir_type`),
     /// the one field a `Pointer` wraps, displayed
     /// ``__mlir_type.`!kgen.pointer<T>` ``. It carries no origin, so it lends
     /// nothing, and it has no members. Both backends hold it as they hold the
-    /// `Pointer` it came from.
-    KgenPointer(Ty),
+    /// `Pointer` it came from. Its address space is the `Pointer`'s,
+    /// displayed after the element when it is not the generic one.
+    KgenPointer {
+        element: Ty,
+        address_space: AddressSpaceSlot,
+    },
     /// Upstream's reference value `!lit.ref<T, origin>`
     /// (`Pointer[T, o]._mlir_lit_ref`), what `__get_mvalue_as_litref(place)`
     /// gives and `Pointer(_mlir_value=)` takes, displayed `ref[origin] T`.
@@ -916,6 +1111,7 @@ pub enum TyKind {
     LitRef {
         element: Ty,
         origin: crate::origin::PointerOrigin,
+        address_space: AddressSpaceSlot,
     },
     /// Upstream's reference pack `!lit.ref.pack<:param_list<Trait> Ts,
     /// origin>` (`VariadicPack._mlir_type`): one `!lit.ref` to each of a
@@ -1298,8 +1494,40 @@ impl Ty {
     /// [`TyKind::as_pointer`], [`TyKind::pointer_element`], and
     /// [`TyKind::is_pointer`], so the type can become the struct
     /// `std.memory.pointer` declares without touching its readers.
-    pub fn pointer(element: Self, origin: crate::origin::PointerOrigin) -> Self {
-        TyKind::Pointer { element, origin }.into()
+    pub fn pointer(
+        element: Self,
+        origin: crate::origin::PointerOrigin,
+        address_space: AddressSpaceSlot,
+    ) -> Self {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        }
+        .into()
+    }
+
+    /// The raw address `!kgen.pointer<element, address_space>`.
+    pub fn kgen_pointer(element: Self, address_space: AddressSpaceSlot) -> Self {
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        }
+        .into()
+    }
+
+    /// The reference `!lit.ref<element, origin, address_space>`.
+    pub fn lit_ref(
+        element: Self,
+        origin: crate::origin::PointerOrigin,
+        address_space: AddressSpaceSlot,
+    ) -> Self {
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        }
+        .into()
     }
 
     /// The pointee and origin of a `Pointer` ([`TyKind::as_pointer`]).
@@ -1379,7 +1607,9 @@ impl TyKind {
     /// is the struct's origin argument read with its `mut` one.
     pub fn as_pointer(&self) -> Option<(Ty, crate::origin::PointerOrigin)> {
         match self {
-            Self::Pointer { element, origin } => Some((element.clone(), origin.clone())),
+            Self::Pointer {
+                element, origin, ..
+            } => Some((element.clone(), origin.clone())),
             _ => None,
         }
     }
@@ -1405,7 +1635,9 @@ impl TyKind {
     /// `!lit.ref<T, origin>` a `Pointer` is built from, owned.
     pub fn pointer_or_lit_ref(&self) -> Option<(Ty, crate::origin::PointerOrigin)> {
         match self {
-            Self::LitRef { element, origin } => Some((element.clone(), origin.clone())),
+            Self::LitRef {
+                element, origin, ..
+            } => Some((element.clone(), origin.clone())),
             pointer => pointer.as_pointer(),
         }
     }
@@ -1424,6 +1656,25 @@ impl TyKind {
                 self.pointer_or_lit_ref().zip(other.pointer_or_lit_ref())
             }
             _ => self.as_pointer().zip(other.as_pointer()),
+        }
+    }
+
+    /// The address space of a `Pointer`, a `!kgen.pointer`, or a
+    /// `!lit.ref`.
+    pub const fn pointer_address_space(&self) -> Option<&AddressSpaceSlot> {
+        match self {
+            Self::Pointer { address_space, .. }
+            | Self::KgenPointer { address_space, .. }
+            | Self::LitRef { address_space, .. } => Some(address_space),
+            _ => None,
+        }
+    }
+
+    /// The pointee of a `!kgen.pointer`.
+    pub const fn kgen_pointee(&self) -> Option<&Ty> {
+        match self {
+            Self::KgenPointer { element, .. } => Some(element),
+            _ => None,
         }
     }
 
@@ -1847,6 +2098,14 @@ pub const TYPE_LIST_TYPE_NAME: &str = "TypeList";
 /// The name of upstream's `SIMDLength`, the type of `SIMD`'s width.
 pub const SIMD_LENGTH_TYPE_NAME: &str = "SIMDLength";
 
+/// Upstream's `AddressSpace` struct, the type of a pointer's address-space
+/// parameter.
+pub const ADDRESS_SPACE_TYPE_NAME: &str = "AddressSpace";
+
+/// The one field of an `AddressSpace`, the `SIMDLength` index its raw
+/// spellings read (`address_space._value._mlir_value`).
+pub const ADDRESS_SPACE_VALUE_FIELD: &str = "_value";
+
 /// The name of upstream's `DType`, declared in `std.builtin.dtype`: the
 /// type of `SIMD`'s element slot.
 pub const DTYPE_TYPE_NAME: &str = "DType";
@@ -2078,7 +2337,7 @@ pub fn ref_pack_pointers(ty: &Ty) -> Option<Ty> {
         TyKind::Tuple(
             elements
                 .iter()
-                .map(|element| TyKind::KgenPointer(element.clone()).into())
+                .map(|element| Ty::kgen_pointer(element.clone(), AddressSpaceSlot::GENERIC))
                 .collect(),
         )
         .into(),
@@ -2094,7 +2353,7 @@ pub fn pointer_struct_pointees(ty: &Ty) -> Option<Vec<Ty>> {
     elements
         .iter()
         .map(|element| match element.kind() {
-            TyKind::KgenPointer(pointee) => Some(pointee.clone()),
+            TyKind::KgenPointer { element, .. } => Some(element.clone()),
             _ => None,
         })
         .collect()
@@ -2733,17 +2992,31 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
             element: expand_pack_spread(element, pack, elements),
         }
         .into(),
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => TyKind::Pointer {
             element: expand_pack_spread(element, pack, elements),
             origin: origin.clone(),
+            address_space: address_space.clone(),
         }
         .into(),
-        TyKind::KgenPointer(element) => {
-            TyKind::KgenPointer(expand_pack_spread(element, pack, elements)).into()
-        }
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(
+            expand_pack_spread(element, pack, elements),
+            address_space.clone(),
+        ),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: expand_pack_spread(element, pack, elements),
             origin: origin.clone(),
+            address_space: address_space.clone(),
         }
         .into(),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
@@ -4626,15 +4899,36 @@ impl fmt::Display for TyKind {
             }
             Self::Dependent(dependent) => write!(f, "{}", dependent.expr()),
             Self::SelfType => write!(f, "Self"),
-            Self::Pointer { element, origin } => {
+            Self::Pointer {
+                element,
+                origin,
+                address_space,
+            } => {
                 write!(f, "Pointer[{element}, ")?;
                 fmt_pointer_origin(f, origin)?;
+                if !address_space.is_generic() {
+                    write!(f, ", address_space={address_space}")?;
+                }
                 write!(f, "]")
             }
-            Self::KgenPointer(element) => write!(f, "__mlir_type.`!kgen.pointer<{element}>`"),
-            Self::LitRef { element, origin } => {
+            Self::KgenPointer {
+                element,
+                address_space,
+            } => match address_space.known() {
+                Some(0) => write!(f, "__mlir_type.`!kgen.pointer<{element}>`"),
+                Some(space) => write!(f, "__mlir_type.`!kgen.pointer<{element}, {space}>`"),
+                None => write!(f, "__mlir_type.`!kgen.pointer<{element}, {address_space}>`"),
+            },
+            Self::LitRef {
+                element,
+                origin,
+                address_space,
+            } => {
                 write!(f, "ref[")?;
                 fmt_pointer_origin(f, origin)?;
+                if !address_space.is_generic() {
+                    write!(f, ", {address_space}")?;
+                }
                 write!(f, "] {element}")
             }
             Self::LitRefPack { elements, origin } => {
@@ -4839,15 +5133,28 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
             element: recur(element),
         }
         .into(),
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => TyKind::Pointer {
             element: recur(element),
             origin: origin.clone(),
+            address_space: address_space.clone(),
         }
         .into(),
-        TyKind::KgenPointer(element) => TyKind::KgenPointer(recur(element)).into(),
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(recur(element), address_space.clone()),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: recur(element),
             origin: origin.clone(),
+            address_space: address_space.clone(),
         }
         .into(),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
@@ -4885,15 +5192,28 @@ pub fn erase_origins(ty: &Ty) -> Ty {
                 })
                 .collect(),
         )),
-        TyKind::Pointer { element, .. } => TyKind::Pointer {
+        TyKind::Pointer {
+            element,
+            address_space,
+            ..
+        } => TyKind::Pointer {
             element: recur(element),
             origin: crate::origin::PointerOrigin::Static,
+            address_space: address_space.clone(),
         }
         .into(),
-        TyKind::KgenPointer(element) => TyKind::KgenPointer(recur(element)).into(),
-        TyKind::LitRef { element, .. } => TyKind::LitRef {
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(recur(element), address_space.clone()),
+        TyKind::LitRef {
+            element,
+            address_space,
+            ..
+        } => TyKind::LitRef {
             element: recur(element),
             origin: crate::origin::PointerOrigin::Static,
+            address_space: address_space.clone(),
         }
         .into(),
         TyKind::LitRefPack { elements, .. } => TyKind::LitRefPack {
@@ -5002,14 +5322,24 @@ pub fn bind_origin_params<S: std::hash::BuildHasher>(
     let recur = |ty: &Ty| bind_origin_params(ty, origins);
     let mapped = substitute_origin_params(ty, origins);
     match mapped.kind() {
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => TyKind::Pointer {
             element: recur(element),
             origin: bind(origin),
+            address_space: address_space.clone(),
         }
         .into(),
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: recur(element),
             origin: bind(origin),
+            address_space: address_space.clone(),
         }
         .into(),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
@@ -5060,15 +5390,28 @@ pub fn map_origins(ty: &Ty, map: &impl Fn(&crate::origin::Origin) -> crate::orig
             args: map_args(args),
         }
         .into(),
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => TyKind::Pointer {
             element: recur(element),
             origin: origin.clone(),
+            address_space: address_space.clone(),
         }
         .into(),
-        TyKind::KgenPointer(element) => TyKind::KgenPointer(recur(element)).into(),
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(recur(element), address_space.clone()),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: recur(element),
             origin: origin.clone(),
+            address_space: address_space.clone(),
         }
         .into(),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
@@ -5120,14 +5463,24 @@ pub fn map_struct_arguments(ty: &Ty, map: &impl Fn(&str, Vec<TyArg>) -> Vec<TyAr
         TyKind::Struct(name, args) => {
             ty.reusing(TyKind::Struct(name.clone(), map(name, map_args(args))))
         }
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => TyKind::Pointer {
             element: recur(element),
             origin: origin.clone(),
+            address_space: address_space.clone(),
         }
         .into(),
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: recur(element),
             origin: origin.clone(),
+            address_space: address_space.clone(),
         }
         .into(),
         TyKind::Ref(reference) => {
@@ -5413,20 +5766,6 @@ fn simd_dtype_slot(value: &CtValue) -> Option<SimdDtype> {
     }
 }
 
-/// The lane count of a closed `SIMDLength` value in its canonical form,
-/// its one field an `Index`.
-fn known_simd_length(value: &CtValue) -> Option<i64> {
-    match value {
-        CtValue::Struct { name, fields } if name == SIMD_LENGTH_TYPE_NAME => {
-            match fields.as_slice() {
-                [(_, CtValue::Index(lanes))] => Some(*lanes),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
 /// The canonical form of a `SIMD[dtype, length]` application, upstream's
 /// struct applied to a dtype value and a `SIMDLength` value, closed or
 /// symbolic: a closed slot folds, so `Int`, `Scalar[DType.int]`, and
@@ -5531,6 +5870,7 @@ pub fn static_string_address_ty() -> Ty {
     TyKind::Pointer {
         element: canonical_simd_ty(Dtype::UInt8, 1),
         origin: crate::origin::PointerOrigin::Static,
+        address_space: AddressSpaceSlot::GENERIC,
     }
     .into()
 }
@@ -5722,23 +6062,36 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
             TyKind::Pointer {
                 element: a,
                 origin: ao,
+                address_space: aa,
             },
             TyKind::Pointer {
                 element: b,
                 origin: bo,
+                address_space: ba,
             },
-        ) => coerces(a, b) && ao.coerces_to(bo),
-        (TyKind::KgenPointer(a), TyKind::KgenPointer(b)) => coerces(a, b),
-        (
+        )
+        | (
             TyKind::LitRef {
                 element: a,
                 origin: ao,
+                address_space: aa,
             },
             TyKind::LitRef {
                 element: b,
                 origin: bo,
+                address_space: ba,
             },
-        ) => coerces(a, b) && ao.coerces_to(bo),
+        ) => aa == ba && coerces(a, b) && ao.coerces_to(bo),
+        (
+            TyKind::KgenPointer {
+                element: a,
+                address_space: aa,
+            },
+            TyKind::KgenPointer {
+                element: b,
+                address_space: ba,
+            },
+        ) => aa == ba && coerces(a, b),
         (
             TyKind::LitRefPack {
                 elements: a,
@@ -5964,7 +6317,7 @@ pub fn copy_is_identity(ty: &TyKind) -> bool {
             | TyKind::KgenDtype
             | TyKind::None
             | TyKind::Pointer { .. }
-            | TyKind::KgenPointer(_)
+            | TyKind::KgenPointer { .. }
             | TyKind::LitRef { .. }
             | TyKind::LitRefPack { .. }
             | TyKind::KgenSimd {
@@ -6691,15 +7044,31 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                 .collect(),
         )
         .into(),
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => TyKind::Pointer {
             element: substitute(element, subst),
             origin: origin.clone(),
+            address_space: substitute_address_space(address_space, subst),
         }
         .into(),
-        TyKind::KgenPointer(element) => TyKind::KgenPointer(substitute(element, subst)).into(),
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(
+            substitute(element, subst),
+            substitute_address_space(address_space, subst),
+        ),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: substitute(element, subst),
             origin: origin.clone(),
+            address_space: substitute_address_space(address_space, subst),
         }
         .into(),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
@@ -6961,15 +7330,31 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         TyKind::RuntimePack(elements) => TyKind::RuntimePack(list(elements, rewrite)?).into(),
         TyKind::Variant(alternatives) => TyKind::Variant(list(alternatives, rewrite)?).into(),
         TyKind::Overload(candidates) => TyKind::Overload(all(candidates, rewrite)?).into(),
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => TyKind::Pointer {
             element: rewrite_ty(element, rewrite)?,
             origin: origin.clone(),
+            address_space: address_space.try_map(|space| rewrite.expr(space))?,
         }
         .into(),
-        TyKind::KgenPointer(element) => TyKind::KgenPointer(rewrite_ty(element, rewrite)?).into(),
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(
+            rewrite_ty(element, rewrite)?,
+            address_space.try_map(|space| rewrite.expr(space))?,
+        ),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: rewrite_ty(element, rewrite)?,
             origin: origin.clone(),
+            address_space: address_space.try_map(|space| rewrite.expr(space))?,
         }
         .into(),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
@@ -7810,10 +8195,21 @@ fn symbolic_in(ty: &Ty, keyed: bool) -> bool {
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::AnyStruct(element)
-        | TyKind::VariadicPack(element)
-        | TyKind::Pointer { element, .. }
-        | TyKind::KgenPointer(element)
-        | TyKind::LitRef { element, .. } => symbolic_in(element, keyed),
+        | TyKind::VariadicPack(element) => symbolic_in(element, keyed),
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        }
+        | TyKind::Pointer {
+            element,
+            address_space,
+            ..
+        }
+        | TyKind::LitRef {
+            element,
+            address_space,
+            ..
+        } => address_space.is_symbolic() || symbolic_in(element, keyed),
         TyKind::LitRefPack { elements, .. } => elements.iter().any(|ty| symbolic_in(ty, keyed)),
         TyKind::PopArray { size, element } => size.is_symbolic() || symbolic_in(element, keyed),
         TyKind::LitOrigin(mutability) => mutability.is_symbolic(),
@@ -8012,10 +8408,26 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::AnyStruct(element)
-        | TyKind::VariadicPack(element)
-        | TyKind::Pointer { element, .. }
-        | TyKind::KgenPointer(element)
-        | TyKind::LitRef { element, .. } => mentions(element, predicate),
+        | TyKind::VariadicPack(element) => mentions(element, predicate),
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        }
+        | TyKind::Pointer {
+            element,
+            address_space,
+            ..
+        }
+        | TyKind::LitRef {
+            element,
+            address_space,
+            ..
+        } => {
+            address_space
+                .expr()
+                .is_some_and(|expr| expr_mentions(expr, predicate))
+                || mentions(element, predicate)
+        }
         TyKind::LitRefPack { elements, .. } => {
             elements.iter().any(|element| mentions(element, predicate))
         }
@@ -8085,10 +8497,26 @@ fn decorated(ty: &Ty) -> bool {
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::AnyStruct(element)
-        | TyKind::VariadicPack(element)
-        | TyKind::Pointer { element, .. }
-        | TyKind::KgenPointer(element)
-        | TyKind::LitRef { element, .. } => element.carries_decorations(),
+        | TyKind::VariadicPack(element) => element.carries_decorations(),
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        }
+        | TyKind::Pointer {
+            element,
+            address_space,
+            ..
+        }
+        | TyKind::LitRef {
+            element,
+            address_space,
+            ..
+        } => {
+            address_space
+                .expr()
+                .is_some_and(ParamExpr::carries_decorations)
+                || element.carries_decorations()
+        }
         TyKind::LitRefPack { elements, .. } => elements.iter().any(Ty::carries_decorations),
         TyKind::PopArray { size, element } => {
             matches!(size, ArraySize::Expr(expr) if expr.carries_decorations())
@@ -8213,6 +8641,30 @@ fn closed_kind(kind: &TyKind) -> bool {
         TyKind::LitOrigin(mutability) => matches!(mutability, LitOriginMut::Known(_)),
         _ => false,
     }
+}
+
+/// A pointer's address-space slot after [`expand_packs`] bound `values`.
+fn expand_address_space<S: std::hash::BuildHasher>(
+    slot: &AddressSpaceSlot,
+    subst: &TySubst,
+    packs: &HashMap<ParamId, Vec<Ty>, S>,
+    values: &[(ParamId, CtValue)],
+) -> AddressSpaceSlot {
+    if values.is_empty() || slot.expr().is_none() {
+        return slot.clone();
+    }
+    let context = ParamContext::detached();
+    let bindings = pack_bindings(&context, subst, packs, values);
+    slot.map_or_keep(|space| context.replace(space, &bindings))
+}
+
+/// A pointer's address-space slot after [`substitute`] bound `subst`.
+fn substitute_address_space(slot: &AddressSpaceSlot, subst: &TySubst) -> AddressSpaceSlot {
+    if subst.is_empty() || slot.expr().is_none() {
+        return slot.clone();
+    }
+    let context = ParamContext::detached();
+    slot.map_or_keep(|space| context.replace(space, &type_bindings(subst)))
 }
 
 fn bind_constraints(constraints: &mut [GenericConstraint], scopes: &[&[ParamDecl]]) {
@@ -8498,15 +8950,31 @@ fn expand_packs<S: std::hash::BuildHasher>(
             )
             .into()
         }
-        TyKind::Pointer { element, origin } => TyKind::Pointer {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => TyKind::Pointer {
             element: recurse(element),
             origin: origin.clone(),
+            address_space: expand_address_space(address_space, subst, packs, values),
         }
         .into(),
-        TyKind::KgenPointer(element) => TyKind::KgenPointer(recurse(element)).into(),
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(
+            recurse(element),
+            expand_address_space(address_space, subst, packs, values),
+        ),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: recurse(element),
             origin: origin.clone(),
+            address_space: expand_address_space(address_space, subst, packs, values),
         }
         .into(),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
@@ -9294,7 +9762,12 @@ fn flatten_constraint<'a>(
 
 fn collect_named_origins(ty: &Ty, out: &mut Vec<crate::origin::Origin>) {
     match ty.kind() {
-        TyKind::Pointer { element, origin } | TyKind::LitRef { element, origin } => {
+        TyKind::Pointer {
+            element, origin, ..
+        }
+        | TyKind::LitRef {
+            element, origin, ..
+        } => {
             out.extend(origin.as_origin());
             collect_named_origins(element, out);
         }

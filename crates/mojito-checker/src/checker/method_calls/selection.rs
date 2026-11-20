@@ -23,6 +23,11 @@ impl Checker {
         else {
             return ty;
         };
+        let address_space = ty
+            .kind()
+            .pointer_address_space()
+            .cloned()
+            .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
         // A `ref[Self.o]` parameter receiver reads as the enclosing struct's
         // binder, as `Pointer(to=xs)` does: `array.unsafe_ptr()` in `Span`'s
         // constructor is a `Pointer[T, Self.origin._get_owned_interior[...]]`.
@@ -38,6 +43,7 @@ impl Checker {
                     interior,
                     subtree,
                 },
+                address_space,
             );
         }
         let Ok(reference) = self.reference_actual(receiver) else {
@@ -64,7 +70,7 @@ impl Checker {
             },
             _ => return ty,
         };
-        Ty::pointer(element, origin)
+        Ty::pointer(element, origin, address_space)
     }
 
     /// Apply the implicit conversions selected while scoring one concrete method

@@ -323,7 +323,10 @@ fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
                 dest: at,
                 k: Const::Int(i64::try_from(element_index).expect("a pack's arity fits an Int")),
             });
-            let pointer = fresh(TyKind::KgenPointer(element.clone()).into());
+            let pointer = fresh(Ty::kgen_pointer(
+                element.clone(),
+                mojito_types::types::AddressSpaceSlot::GENERIC,
+            ));
             reads.push(MirInstr::Index {
                 dest: pointer,
                 base: pack,
@@ -331,13 +334,11 @@ fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
                 call: None,
                 intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
             });
-            let reference = fresh(
-                TyKind::LitRef {
-                    element: element.clone(),
-                    origin: origin.clone(),
-                }
-                .into(),
-            );
+            let reference = fresh(Ty::lit_ref(
+                element.clone(),
+                origin.clone(),
+                mojito_types::types::AddressSpaceSlot::GENERIC,
+            ));
             reads.push(MirInstr::PointerConvert {
                 dest: reference,
                 value: pointer,

@@ -109,6 +109,7 @@ from std.builtin.builtin_slice import Slice, slice
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration, iter, map, next
 from std.builtin.reversed import reversed
 from std.memory.alloc import alloc
+from std.memory.address_space import AddressSpace
 from std.span import Span
 from std.hash import Hashable, hash
 from std.io import RawFileDescriptor, FileHandle, open

@@ -134,11 +134,18 @@ impl<'a> Flatten<'a> {
                 dest
             }
             (PointerOp::Offset, [pointer, offset]) => {
-                let TyKind::KgenPointer(element) = ty.kind() else {
+                let TyKind::KgenPointer {
+                    element,
+                    address_space,
+                } = ty.kind()
+                else {
                     unreachable!("a checked `pop.offset` gives a `!kgen.pointer`")
                 };
-                let untracked =
-                    Ty::pointer(element.clone(), PointerOrigin::Untracked { mutable: true });
+                let untracked = Ty::pointer(
+                    element.clone(),
+                    PointerOrigin::Untracked { mutable: true },
+                    address_space.clone(),
+                );
                 let base = retyped(self, *pointer, untracked.clone());
                 let moved = self.fresh_typed(location.clone(), None, untracked);
                 self.emit(MirInstr::BinOp {
@@ -174,7 +181,7 @@ impl<'a> Flatten<'a> {
             }
             (PointerOp::Store, [value, pointer]) => {
                 let element = match self.f.reg_types.get(&pointer.0).map(Ty::kind) {
-                    Some(TyKind::KgenPointer(element)) => element.clone(),
+                    Some(TyKind::KgenPointer { element, .. }) => element.clone(),
                     _ => unreachable!("a checked `pop.store` writes through a `!kgen.pointer`"),
                 };
                 let handle = retyped(self, *pointer, reference(element, Mutability::Mutable));

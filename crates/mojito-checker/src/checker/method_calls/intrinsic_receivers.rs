@@ -94,10 +94,23 @@ impl Checker {
         // Built-in `Pointer` methods: the public unsafe_* operation
         // vocabulary. `unsafe_write(copy=v)` is the one keyword shape; every
         // other pointer method rejects kwargs inside.
-        if let Some((elem, origin)) = obj_ty.as_pointer() {
+        if let TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } = obj_ty.kind()
+        {
             return self
                 .infer_pointer_method(
-                    span, object, method, &elem, &origin, param_args, args, kwargs,
+                    span,
+                    object,
+                    method,
+                    element,
+                    origin,
+                    address_space,
+                    param_args,
+                    args,
+                    kwargs,
                 )
                 .map(Some);
         }

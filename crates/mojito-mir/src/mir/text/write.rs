@@ -2383,20 +2383,40 @@ fn ty_value(ty: &Ty) -> String {
         }
         TyKind::VariadicPack(value) => positional("variadic_pack", &ty_value(value)),
         TyKind::Variant(values) => positional("variant", &list(values.iter().map(ty_value))),
-        TyKind::Pointer { element, origin } => record(
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => record(
             "pointer",
-            &[
-                ("element", ty_value(element)),
-                ("origin", pointer_origin(origin)),
-            ],
+            &with_address_space(
+                vec![
+                    ("element", ty_value(element)),
+                    ("origin", pointer_origin(origin)),
+                ],
+                address_space,
+            ),
         ),
-        TyKind::KgenPointer(element) => record("kgen_pointer", &[("element", ty_value(element))]),
-        TyKind::LitRef { element, origin } => record(
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => record(
+            "kgen_pointer",
+            &with_address_space(vec![("element", ty_value(element))], address_space),
+        ),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => record(
             "lit_ref",
-            &[
-                ("element", ty_value(element)),
-                ("origin", pointer_origin(origin)),
-            ],
+            &with_address_space(
+                vec![
+                    ("element", ty_value(element)),
+                    ("origin", pointer_origin(origin)),
+                ],
+                address_space,
+            ),
         ),
         TyKind::LitRefPack { elements, origin } => record(
             "lit_ref_pack",
@@ -2731,6 +2751,23 @@ fn array_size_slot(size: &mojito_types::types::ArraySize) -> String {
         mojito_types::types::ArraySize::Known(size) => size.to_string(),
         mojito_types::types::ArraySize::Expr(expr) => positional("ct_expr", &param_expr(expr)),
     }
+}
+
+/// A pointer type's fields, then its `address_space` (schema 1.216): a
+/// known space's number, a template's `ct_expr(...)`, omitted when generic.
+fn with_address_space<'a>(
+    mut fields: Vec<(&'a str, String)>,
+    address_space: &mojito_types::types::AddressSpaceSlot,
+) -> Vec<(&'a str, String)> {
+    use mojito_types::types::AddressSpaceSlot;
+    match address_space {
+        AddressSpaceSlot::Known(0) => {}
+        AddressSpaceSlot::Known(space) => fields.push(("address_space", space.to_string())),
+        AddressSpaceSlot::Expr(expr) => {
+            fields.push(("address_space", positional("ct_expr", &param_expr(expr))));
+        }
+    }
+    fields
 }
 
 /// A known mutability is its boolean, a template's `ct_expr(...)`.

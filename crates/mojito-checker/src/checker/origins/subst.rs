@@ -476,14 +476,24 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
         other => other.clone(),
     };
     match ty.kind() {
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: substitute_pointer_origin_params(element, bindings),
             origin: bind(origin),
+            address_space: address_space.clone(),
         }
         .into(),
-        pointer if let Some((element, origin)) = pointer.as_pointer() => Ty::pointer(
-            substitute_pointer_origin_params(&element, bindings),
-            bind(&origin),
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => Ty::pointer(
+            substitute_pointer_origin_params(element, bindings),
+            bind(origin),
+            address_space.clone(),
         ),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
             elements: elements
@@ -561,14 +571,21 @@ pub(in crate::checker) fn bind_pointer_origins(
     };
     let bind = |origin: &PointerOrigin| bind(origin).unwrap_or_else(|| origin.clone());
     match ty.kind() {
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: recur(element),
             origin: bind(origin),
+            address_space: address_space.clone(),
         }
         .into(),
-        pointer if let Some((element, origin)) = pointer.as_pointer() => {
-            Ty::pointer(recur(&element), bind(&origin))
-        }
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => Ty::pointer(recur(element), bind(origin), address_space.clone()),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
             elements: elements.iter().map(recur).collect(),
             origin: bind(origin),
@@ -628,12 +645,19 @@ pub(in crate::checker) fn substitute_struct_origins(
                     .collect(),
             ))
         }
-        pointer if let Some((element, origin)) = pointer.as_pointer() => {
-            Ty::pointer(recur(&element), origin)
-        }
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => Ty::pointer(recur(element), origin.clone(), address_space.clone()),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: recur(element),
             origin: origin.clone(),
+            address_space: address_space.clone(),
         }
         .into(),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {

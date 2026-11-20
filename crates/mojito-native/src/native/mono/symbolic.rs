@@ -337,11 +337,16 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Variant(v)
         | TyKind::Overload(v)
         | TyKind::LitRefPack { elements: v, .. } => v.iter().any(is_symbolic),
-        TyKind::ComptimeList(v)
-        | TyKind::ParamList(v)
-        | TyKind::VariadicPack(v)
-        | TyKind::KgenPointer(v)
-        | TyKind::LitRef { element: v, .. } => is_symbolic(v),
+        TyKind::ComptimeList(v) | TyKind::ParamList(v) | TyKind::VariadicPack(v) => is_symbolic(v),
+        TyKind::KgenPointer {
+            element: v,
+            address_space,
+        }
+        | TyKind::LitRef {
+            element: v,
+            address_space,
+            ..
+        } => address_space.is_symbolic() || is_symbolic(v),
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         // A literal type whose value is a parameter (`StringLiteral[v]`
         // under its binder) unifies against the argument's text.
@@ -465,7 +470,7 @@ pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
         | TyKind::ParamList(v)
         | TyKind::VariadicPack(v)
         | TyKind::PopArray { element: v, .. }
-        | TyKind::KgenPointer(v)
+        | TyKind::KgenPointer { element: v, .. }
         | TyKind::LitRef { element: v, .. } => {
             output.push((*v).clone());
         }

@@ -1774,18 +1774,32 @@ impl Checker {
             ("!lit.ref.pack<:param_list<{}>{},{}>", [element_trait, elements, origin]) => {
                 self.mlir_ref_pack_type(element_trait, elements, origin)
             }
-            ("!kgen.pointer<{}>", [element]) => {
-                Ok(TyKind::KgenPointer(self.mlir_type_operand(element)?).into())
+            ("!kgen.pointer<{}>", [element]) => Ok(Ty::kgen_pointer(
+                self.mlir_type_operand(element)?,
+                mojito_types::types::AddressSpaceSlot::GENERIC,
+            )),
+            ("!kgen.pointer<{},{}>", [element, address_space]) => Ok(Ty::kgen_pointer(
+                self.mlir_type_operand(element)?,
+                self.mlir_address_space_operand(address_space)?,
+            )),
+            ("!lit.ref<{},{}>", [element, origin]) => self.mlir_lit_ref_type(
+                element,
+                origin,
+                mojito_types::types::AddressSpaceSlot::GENERIC,
+            ),
+            ("!lit.ref<{},{},{}>", [element, origin, address_space]) => {
+                let address_space = self.mlir_address_space_operand(address_space)?;
+                self.mlir_lit_ref_type(element, origin, address_space)
             }
-            ("!lit.ref<{},{}>" | "!lit.ref<{},{},0>", [element, origin]) => {
-                self.mlir_lit_ref_type(element, origin)
+            (text, [element, origin])
+                if let Some(space) = literal_address_space(text, "!lit.ref<{},{},") =>
+            {
+                self.mlir_lit_ref_type(element, origin, space)
             }
-            (text, [_, _, ..]) if text.starts_with("!lit.ref<{},{},") => {
-                Err(TypeError::Unsupported(
-                    "a '!lit.ref' outside the generic address space '0' is not \
-                     supported (R2204)"
-                        .to_string(),
-                ))
+            (text, [element])
+                if let Some(space) = literal_address_space(text, "!kgen.pointer<{},") =>
+            {
+                Ok(Ty::kgen_pointer(self.mlir_type_operand(element)?, space))
             }
             ("!lit.origin<{}>", [mutability]) => {
                 Ok(TyKind::LitOrigin(self.mlir_bool_operand(mutability)?).into())
@@ -1887,19 +1901,47 @@ impl Checker {
     }
 
     /// The reference `!lit.ref<element, origin._mlir_origin[, as]>`, a
-    /// `!lit.ref` to `element` under `origin`, as upstream's
-    /// `Pointer._mlir_lit_ref` spells it. The address space is the generic
-    /// one, `0`; any other is R2204's.
+    /// `!lit.ref` to `element` under `origin` in `address_space`, as
+    /// upstream's `Pointer._mlir_lit_ref` spells it.
     fn mlir_lit_ref_type(
         &self,
         element: &mojito_ast::ast::ParamArg,
         origin: &mojito_ast::ast::ParamArg,
+        address_space: mojito_types::types::AddressSpaceSlot,
     ) -> Result<Ty, TypeError> {
-        Ok(TyKind::LitRef {
-            element: self.mlir_type_operand(element)?,
-            origin: self.mlir_origin_operand(origin)?,
+        Ok(Ty::lit_ref(
+            self.mlir_type_operand(element)?,
+            self.mlir_origin_operand(origin)?,
+            address_space,
+        ))
+    }
+
+    /// The `index` address-space operand of a `!kgen.pointer` or a
+    /// `!lit.ref`, an `AddressSpace`'s `_value._mlir_value`
+    /// (`Self.address_space._value._mlir_value`), as upstream's `Pointer`
+    /// spells its raw types; or a closed `SIMDLength`'s `_mlir_value`.
+    fn mlir_address_space_operand(
+        &self,
+        arg: &mojito_ast::ast::ParamArg,
+    ) -> Result<mojito_types::types::AddressSpaceSlot, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        let not_index = || mlir_operand_mismatch("index", "AddressSpace._value");
+        let operand = mojito_types::types::mlir_value_operand(arg).ok_or_else(not_index)?;
+        if let ParamArg::Value(Expr {
+            kind: ExprKind::Member { object, field },
+            ..
+        }) = &operand
+            && field == mojito_types::types::ADDRESS_SPACE_VALUE_FIELD
+        {
+            return self.address_space_arg(&ParamArg::Value((**object).clone()));
         }
-        .into())
+        match self.slot_value(&operand)? {
+            CtValue::Expr(_) => Err(not_index()),
+            closed => mojito_types::types::known_simd_length(&closed)
+                .and_then(|space| u32::try_from(space).ok())
+                .map(mojito_types::types::AddressSpaceSlot::Known)
+                .ok_or_else(not_index),
+        }
     }
 
     /// The raw origin operand `X._mlir_origin` of an MLIR type spelling,
@@ -2671,7 +2713,10 @@ impl Checker {
             kind if (kind.is_simd()
                 || kind.string_literal_value().is_some()
                 || kind.is_numeric_literal()
-                || matches!(kind, TyKind::KgenSimd { .. } | TyKind::PopArray { .. }))
+                || matches!(kind, TyKind::KgenSimd { .. } | TyKind::PopArray { .. })
+                || kind
+                    .pointer_address_space()
+                    .is_some_and(mojito_types::types::AddressSpaceSlot::is_symbolic))
                 && !values.is_empty()
                 && mojito_types::types::is_symbolic(ty) =>
             {
@@ -2757,9 +2802,15 @@ impl Checker {
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .into(),
-            pointer if let Some((element, origin)) = pointer.as_pointer() => {
-                Ty::pointer(self.resolve_dependent_ty(&element, values)?, origin)
-            }
+            TyKind::Pointer {
+                element,
+                origin,
+                address_space,
+            } => Ty::pointer(
+                self.resolve_dependent_ty(element, values)?,
+                origin.clone(),
+                address_space.clone(),
+            ),
             TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
                 referent: self.resolve_dependent_ty(&reference.referent, values)?,
                 origin: reference.origin.clone(),
@@ -2896,20 +2947,22 @@ impl Checker {
             // A pointer's raw MLIR types: the `!kgen.pointer` it wraps and
             // the `!lit.ref` it is built from, as upstream's `Pointer`
             // declares them.
-            pointer
-                if name == "_mlir_type"
-                    && args.is_empty()
-                    && let Some(element) = pointer.pointer_element() =>
-            {
-                Ok(TyKind::KgenPointer(element.clone()).into())
+            TyKind::Pointer {
+                element,
+                address_space,
+                ..
+            } if name == "_mlir_type" && args.is_empty() => {
+                Ok(Ty::kgen_pointer(element.clone(), address_space.clone()))
             }
-            pointer
-                if name == "_mlir_lit_ref"
-                    && args.is_empty()
-                    && let Some((element, origin)) = pointer.as_pointer() =>
-            {
-                Ok(TyKind::LitRef { element, origin }.into())
-            }
+            TyKind::Pointer {
+                element,
+                origin,
+                address_space,
+            } if name == "_mlir_lit_ref" && args.is_empty() => Ok(Ty::lit_ref(
+                element.clone(),
+                origin.clone(),
+                address_space.clone(),
+            )),
             // A member alias `SIMD` declares, over the vector's parameters,
             // or one a literal's struct declares (`StringLiteral._from`).
             kind if (kind.is_simd()
@@ -3417,9 +3470,15 @@ impl Checker {
                     .collect(),
             )
             .into(),
-            pointer if let Some((element, origin)) = pointer.as_pointer() => {
-                Ty::pointer(self.resolve_assoc_ty(&element), origin)
-            }
+            TyKind::Pointer {
+                element,
+                origin,
+                address_space,
+            } => Ty::pointer(
+                self.resolve_assoc_ty(element),
+                origin.clone(),
+                address_space.clone(),
+            ),
             TyKind::Func(func) => {
                 let FuncTy {
                     environment,
@@ -4103,6 +4162,16 @@ impl Checker {
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<(Ty, DeclaredAttributes), TypeError> {
+        // `address_space` is keyword-only, after the declaration's `*`.
+        let (args, address_space_arg) = match args {
+            [
+                positional @ ..,
+                keyword @ mojito_ast::ast::ParamArg::Named {
+                    name: keyword_name, ..
+                },
+            ] if keyword_name == "address_space" => (positional, Some(keyword)),
+            _ => (args, None),
+        };
         if !matches!(args.len(), 1 | 2) {
             return Err(TypeError::WrongTypeArgCount {
                 name: name.to_string(),
@@ -4186,12 +4255,68 @@ impl Checker {
                 &TyArg::Origin(origin.parts().0),
             ));
         }
+        let address_space = match address_space_arg {
+            Some(argument) => {
+                let address_space = self.address_space_arg(argument)?;
+                attributes.push(None);
+                address_space
+            }
+            None => mojito_types::types::AddressSpaceSlot::GENERIC,
+        };
         let params = match name {
             "MutPointer" | "ImmPointer" => FIXED_POINTER_PARAMS,
             _ => POINTER_PARAMS,
         };
+        let all_args;
+        let args = match address_space_arg {
+            Some(keyword) => {
+                all_args = args.iter().chain([keyword]).cloned().collect::<Vec<_>>();
+                all_args.as_slice()
+            }
+            None => args,
+        };
         let attributes = DeclaredAttributes::of_builtin(name, params, args, attributes)?;
-        Ok((Ty::pointer(elem, origin), attributes))
+        Ok((Ty::pointer(elem, origin, address_space), attributes))
+    }
+
+    /// The address space a `Pointer`'s `address_space=` argument, or an
+    /// `unsafe_address_space_cast` target, names: an `AddressSpace` value,
+    /// closed (`AddressSpace.SHARED`, a leading-dot `.GENERIC`) or a binder
+    /// in scope (`Self.address_space`, `a`).
+    pub(super) fn address_space_arg(
+        &self,
+        argument: &mojito_ast::ast::ParamArg,
+    ) -> Result<mojito_types::types::AddressSpaceSlot, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        let mut value = argument;
+        while let ParamArg::Named { value: inner, .. } = value {
+            value = inner;
+        }
+        if origin_placeholder(value) {
+            return Err(TypeError::Unsupported(
+                "an inferred address space ('address_space=_') is not supported (R2410)"
+                    .to_string(),
+            ));
+        }
+        let rewritten;
+        let value = match value {
+            ParamArg::Value(expr) if super::inference::contextual_root_span(expr).is_some() => {
+                rewritten = ParamArg::Value(super::inference::with_contextual_root(
+                    expr,
+                    &ExprKind::Identifier(mojito_types::types::ADDRESS_SPACE_TYPE_NAME.to_string()),
+                ));
+                &rewritten
+            }
+            other => other,
+        };
+        let found = self.slot_value(value)?;
+        mojito_types::types::AddressSpaceSlot::of_value(&found).ok_or_else(|| {
+            TypeError::TypeMismatch {
+                expected: mojito_types::types::ADDRESS_SPACE_TYPE_NAME.to_string(),
+                found: found.to_string(),
+                context: "a pointer's address space".to_string(),
+            }
+        })
     }
 
     pub(super) fn pointer_origin_arg(
@@ -5534,9 +5659,20 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::VariadicPack(element) => type_is_symbolic(element),
         TyKind::PopArray { size, element } => size.is_symbolic() || type_is_symbolic(element),
         TyKind::LitOrigin(mutability) => mutability.is_symbolic(),
-        TyKind::Pointer { element, .. }
-        | TyKind::KgenPointer(element)
-        | TyKind::LitRef { element, .. } => type_is_symbolic(element),
+        TyKind::Pointer {
+            element,
+            address_space,
+            ..
+        }
+        | TyKind::KgenPointer {
+            element,
+            address_space,
+        }
+        | TyKind::LitRef {
+            element,
+            address_space,
+            ..
+        } => address_space.is_symbolic() || type_is_symbolic(element),
         TyKind::LitRefPack { elements, .. } => elements.iter().any(type_is_symbolic),
         TyKind::Ref(reference) => type_is_symbolic(&reference.referent),
     }
@@ -5597,6 +5733,19 @@ fn project_pointer_origin(
         })
 }
 
+/// The literal address space `N` an MLIR type spelling's text ends with
+/// after `prefix` (`!lit.ref<{},{},1>`).
+fn literal_address_space(
+    text: &str,
+    prefix: &str,
+) -> Option<mojito_types::types::AddressSpaceSlot> {
+    text.strip_prefix(prefix)?
+        .strip_suffix('>')?
+        .parse()
+        .ok()
+        .map(mojito_types::types::AddressSpaceSlot::Known)
+}
+
 fn unsupported_mlir_type() -> TypeError {
     TypeError::Unsupported(
         "this MLIR type spelling is outside the supported subset; only \
@@ -5606,10 +5755,11 @@ fn unsupported_mlir_type() -> TypeError {
          '__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value, `>`]', \
          '__mlir_type[`!kgen.struct<`, ~Ts.values, ` isParamPack>`]', \
          '__mlir_type[`!kgen.struct<:param_list<type> `, L, ` isParamPack>`]', \
-         '__mlir_type[`!kgen.pointer<`, T, `>`]', \
+         '__mlir_type[`!kgen.pointer<`, T, `>`]' (with an optional address space \
+         `as._value._mlir_value` or literal `N`), \
          '__mlir_type[`!lit.origin<`, mut._mlir_value, `>`]', \
          '__mlir_type[`!lit.ref<`, T, `, `, origin._mlir_origin, `>`]' (with an optional \
-         generic address space `0`), \
+         address space, as for '!kgen.pointer'), \
          '__mlir_type[`!pop.array<`, n.__mlir_index__(), `, `, T, `>`]', and \
          '__mlir_type.`!pop.array<n, T>`' are accepted"
             .to_string(),

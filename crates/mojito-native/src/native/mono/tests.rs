@@ -463,7 +463,13 @@ fn nominal_len_inlines_the_library_overload_to_a_resolved_dunder_call() {
 
 #[test]
 fn colliding_instances_share_only_modulo_pointer_elements() {
-    let pointer = |element: Ty| Ty::pointer(element, mojito_types::origin::PointerOrigin::Static);
+    let pointer = |element: Ty| {
+        Ty::pointer(
+            element,
+            mojito_types::origin::PointerOrigin::Static,
+            mojito_types::types::AddressSpaceSlot::GENERIC,
+        )
+    };
     // The `_RawAlloc`/`List` shape: fields differing only behind a
     // pointer are one opaque word and drop inertly — benign to share.
     assert!(fields_equivalent(

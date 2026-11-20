@@ -18,23 +18,31 @@ impl Checker {
         method: &str,
         elem: &Ty,
         origin: &mojito_types::origin::PointerOrigin,
+        address_space: &mojito_types::types::AddressSpaceSlot,
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
+        let pointer = |element: Ty, origin: mojito_types::origin::PointerOrigin| {
+            Ty::pointer(element, origin, address_space.clone())
+        };
         // `unsafe_write` accepts the keyword `copy=` overload; every other
         // pointer method is positional-only.
         if !kwargs.is_empty() && method != "unsafe_write" {
             reject_kwargs(kwargs)?;
         }
         // `unsafe_origin_cast` takes its target origin, `unsafe_mut_cast`
-        // its target mutability, and `unsafe_bitcast` its target pointee as
-        // the sole compile-time parameter argument; no other pointer method
-        // is parameterized.
+        // its target mutability, `unsafe_bitcast` its target pointee, and
+        // `unsafe_address_space_cast` its target address space as the sole
+        // compile-time parameter argument; no other pointer method is
+        // parameterized.
         if !param_args.is_empty()
             && !matches!(
                 method,
-                "unsafe_origin_cast" | "unsafe_mut_cast" | "unsafe_bitcast"
+                "unsafe_origin_cast"
+                    | "unsafe_mut_cast"
+                    | "unsafe_bitcast"
+                    | "unsafe_address_space_cast"
             )
         {
             return Err(TypeError::BadCall {
@@ -84,7 +92,7 @@ impl Checker {
                     target
                 };
                 self.record_pointer_origin_cast(span, &target);
-                Ok(Ty::pointer(elem.clone(), target))
+                Ok(pointer(elem.clone(), target))
             }
             // Capability rebind (upstream's `unsafe_mut_cast[target_mut]`): the
             // runtime value is unchanged, as for an origin cast.
@@ -116,20 +124,27 @@ impl Checker {
                     origin.clone().immutable()
                 };
                 self.record_pointer_origin_cast(span, &target);
-                Ok(Ty::pointer(elem.clone(), target))
+                Ok(pointer(elem.clone(), target))
             }
             // Upstream's `unsafe_bitcast[U]()`: the same address and origin
             // retyped to a `U` pointee (`pop.pointer.bitcast`).
             "unsafe_bitcast" => {
                 no_arguments(method, args)?;
-                self.infer_pointer_bitcast(span, origin, param_args)
+                self.infer_pointer_bitcast(span, origin, address_space, param_args)
+            }
+            // Upstream's `unsafe_address_space_cast[target_address_space =
+            // Self.address_space]()`: the same address and origin in the
+            // target space (`pop.pointer.bitcast`).
+            "unsafe_address_space_cast" => {
+                no_arguments(method, args)?;
+                self.infer_pointer_address_space_cast(span, elem, origin, address_space, param_args)
             }
             // `Copyable.copy()`: the same pointer, lowered as an origin cast
             // to the receiver's own origin.
             "copy" => {
                 no_arguments("copy", args)?;
                 self.record_pointer_origin_cast(span, origin);
-                Ok(Ty::pointer(elem.clone(), origin.clone()))
+                Ok(pointer(elem.clone(), origin.clone()))
             }
             // The `!kgen.pointer` the pointer wraps, its `_mlir_value`.
             "_get_kgen_pointer" => {
@@ -142,7 +157,7 @@ impl Checker {
                         bitcast: false,
                     },
                 );
-                Ok(TyKind::KgenPointer(elem.clone()).into())
+                Ok(Ty::kgen_pointer(elem.clone(), address_space.clone()))
             }
             // `Intable.__int__()`: the address, upstream's
             // `pop.pointer_to_index`.
@@ -180,7 +195,7 @@ impl Checker {
                         materialized: None,
                     },
                 );
-                Ok(Ty::pointer(elem.clone(), origin.clone()))
+                Ok(pointer(elem.clone(), origin.clone()))
             }
             // `write` overwrites a pointee whose type has no destructor, so
             // it is `unsafe_write`'s store where upstream's `where
@@ -223,7 +238,7 @@ impl Checker {
                         context: "value written through 'Pointer.unsafe_write'".to_string(),
                     });
                 }
-                let receiver = Ty::pointer(elem.clone(), origin.clone());
+                let receiver = pointer(elem.clone(), origin.clone());
                 let (name, slot, convention) = if copy {
                     ("copy", ArgSlot::Keyword(0), None)
                 } else {
@@ -284,7 +299,7 @@ impl Checker {
                 Ok(Ty::none())
             }
             "unsafe_write_move_from" => {
-                self.infer_pointer_write_move_from(span, object, elem, origin, args)
+                self.infer_pointer_write_move_from(span, object, elem, origin, address_space, args)
             }
             "unsafe_take_pointee" | "unsafe_deinit_pointee" => {
                 self.check_pointer_take_source(span, method, elem, origin)?;
@@ -325,7 +340,7 @@ impl Checker {
                 Ok(Ty::none())
             }
             _ => Err(TypeError::NoSuchMethod {
-                object_type: Ty::pointer(elem.clone(), origin.clone()).to_string(),
+                object_type: pointer(elem.clone(), origin.clone()).to_string(),
                 method: method.to_string(),
             }),
         }
@@ -657,6 +672,7 @@ impl Checker {
         object: &Expr,
         elem: &Ty,
         origin: &mojito_types::origin::PointerOrigin,
+        address_space: &mojito_types::types::AddressSpaceSlot,
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
         self.check_pointer_write(object, origin)?;
@@ -667,12 +683,12 @@ impl Checker {
                 got: args.len(),
             });
         };
-        let receiver = Ty::pointer(elem.clone(), origin.clone());
+        let receiver = Ty::pointer(elem.clone(), origin.clone(), address_space.clone());
         let found = self.infer_with_expected(source, &receiver, true)?;
         let Some((source_elem, source_origin)) = found.as_pointer() else {
             return Err(pointer_move_source_mismatch(elem, &found));
         };
-        if &source_elem != elem {
+        if &source_elem != elem || found.kind().pointer_address_space() != Some(address_space) {
             return Err(pointer_move_source_mismatch(elem, &found));
         }
         self.check_pointer_take_source(span, "unsafe_write_move_from", elem, &source_origin)?;
@@ -715,6 +731,7 @@ impl Checker {
         &self,
         span: &SourceSpan,
         origin: &mojito_types::origin::PointerOrigin,
+        address_space: &mojito_types::types::AddressSpaceSlot,
         param_args: &[mojito_ast::ast::ParamArg],
     ) -> Result<Ty, TypeError> {
         let [target] = param_args else {
@@ -743,7 +760,39 @@ impl Checker {
                 bitcast: true,
             },
         );
-        Ok(Ty::pointer(element, origin.clone()))
+        Ok(Ty::pointer(element, origin.clone(), address_space.clone()))
+    }
+
+    /// Type upstream's `unsafe_address_space_cast[target_address_space =
+    /// Self.address_space]()`: the same address and origin in the target
+    /// space (`pop.pointer.bitcast`).
+    fn infer_pointer_address_space_cast(
+        &self,
+        span: &SourceSpan,
+        elem: &Ty,
+        origin: &mojito_types::origin::PointerOrigin,
+        address_space: &mojito_types::types::AddressSpaceSlot,
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
+        let target = match param_args {
+            [] => address_space.clone(),
+            [target] => self.address_space_arg(target)?,
+            _ => {
+                return Err(TypeError::BadCall {
+                    func: "Pointer.unsafe_address_space_cast".to_string(),
+                    reason: "expected at most one address space parameter argument".to_string(),
+                });
+            }
+        };
+        self.record_pointer_adjustment(
+            span.clone(),
+            mojito_checked::checked::SemanticAdjustment::PointerConvert {
+                origin: Some(origin.clone()),
+                materialized: None,
+                bitcast: true,
+            },
+        );
+        Ok(Ty::pointer(elem.clone(), origin.clone(), target))
     }
 
     /// Admit `method` taking the pointee `elem` out through a pointer of

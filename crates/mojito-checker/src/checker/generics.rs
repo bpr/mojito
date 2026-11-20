@@ -153,8 +153,11 @@ pub(super) fn unify(
             Ok(())
         }
         // So do its raw `!kgen.pointer` and `!lit.ref`.
-        TyKind::KgenPointer(pattern_element) => match actual.kind() {
-            TyKind::KgenPointer(element) => unify(pattern_element, element, subst, deduce),
+        TyKind::KgenPointer {
+            element: pattern_element,
+            ..
+        } => match actual.kind() {
+            TyKind::KgenPointer { element, .. } => unify(pattern_element, element, subst, deduce),
             _ => Ok(()),
         },
         TyKind::LitRef {
@@ -526,6 +529,45 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                 }
             }
         }
+        // A pointer's address space is a value argument of its own: a
+        // binder slot (`Pointer[T, _, address_space=a]`) binds to the
+        // actual's space, and the pointees solve as types do.
+        (
+            TyKind::Pointer {
+                element: pattern_element,
+                address_space: pattern_space,
+                ..
+            }
+            | TyKind::KgenPointer {
+                element: pattern_element,
+                address_space: pattern_space,
+            }
+            | TyKind::LitRef {
+                element: pattern_element,
+                address_space: pattern_space,
+                ..
+            },
+            TyKind::Pointer {
+                element,
+                address_space,
+                ..
+            }
+            | TyKind::KgenPointer {
+                element,
+                address_space,
+            }
+            | TyKind::LitRef {
+                element,
+                address_space,
+                ..
+            },
+        ) if std::mem::discriminant(pattern.kind()) == std::mem::discriminant(actual.kind()) => {
+            if let Some(reference) = pattern_space.expr().and_then(ParamExpr::as_decl_ref) {
+                out.entry(reference.name.to_string())
+                    .or_insert_with(|| address_space.value());
+            }
+            solve_value_args(pattern_element, element, out);
+        }
         (TyKind::Ref(pattern_reference), TyKind::Ref(actual_reference)) => {
             solve_value_args(&pattern_reference.referent, &actual_reference.referent, out);
         }
@@ -588,15 +630,27 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
                 .collect(),
         )
         .into(),
-        pointer if let Some((element, origin)) = pointer.as_pointer() => {
-            Ty::pointer(substitute_self(&element, replacement), origin)
-        }
-        TyKind::KgenPointer(element) => {
-            TyKind::KgenPointer(substitute_self(element, replacement)).into()
-        }
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => Ty::pointer(
+            substitute_self(element, replacement),
+            origin.clone(),
+            address_space.clone(),
+        ),
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(substitute_self(element, replacement), address_space.clone()),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: substitute_self(element, replacement),
             origin: origin.clone(),
+            address_space: address_space.clone(),
         }
         .into(),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
@@ -727,6 +781,9 @@ pub(super) fn bind_struct_origins(
 fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings) -> Ty {
     let recur = |t: &Ty| substitute_values(t, bindings);
     let context = ParamContext::detached();
+    let space = |slot: &mojito_types::types::AddressSpaceSlot| {
+        slot.map_or_keep(|space| context.replace(space, bindings))
+    };
     let map_args = |args: &[TyArg]| -> Vec<TyArg> {
         args.iter()
             .map(|argument| match argument {
@@ -749,13 +806,23 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
             args: map_args(args),
         }
         .into(),
-        pointer if let Some((element, origin)) = pointer.as_pointer() => {
-            Ty::pointer(recur(&element), origin)
-        }
-        TyKind::KgenPointer(element) => TyKind::KgenPointer(recur(element)).into(),
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => Ty::pointer(recur(element), origin.clone(), space(address_space)),
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(recur(element), space(address_space)),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => TyKind::LitRef {
             element: recur(element),
             origin: origin.clone(),
+            address_space: space(address_space),
         }
         .into(),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {

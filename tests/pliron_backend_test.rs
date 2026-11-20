@@ -1144,6 +1144,13 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
             &["compute"],
             &["operator `Eq` on Pointer operands"],
         ),
+        // Only the generic address space lowers; upstream's `ptr
+        // addrspace(N)` is R2406's.
+        (
+            "from std.memory import AddressSpace\n\ndef compute() -> Int:\n    var x = 5\n    var q = Pointer(to=x).unsafe_address_space_cast[AddressSpace.SHARED]()\n    return q.unsafe_address_space_cast[AddressSpace.GENERIC]()[]\n",
+            &["compute"],
+            &["address space AddressSpace.SHARED", "R2406"],
+        ),
     ];
     for (src, entries, phrases) in cases {
         let message = native_error(src, entries);

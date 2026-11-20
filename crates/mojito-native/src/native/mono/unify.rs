@@ -586,18 +586,41 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             TyKind::ParamList(a) => unify(p, a, bindings),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
-        pointer if let Some(p) = pointer.pointer_element() => match actual.pointer_element() {
-            Some(a) => unify(p, a, bindings),
-            None => Err(format!("expected `{pattern}`, found `{actual}`")),
-        },
-        TyKind::KgenPointer(p) => match actual.kind() {
-            TyKind::KgenPointer(a) => unify(p, a, bindings),
-            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
-        },
-        TyKind::LitRef { element: p, .. } => match actual.kind() {
-            TyKind::LitRef { element: a, .. } => unify(p, a, bindings),
-            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
-        },
+        // A pointer's address space binds a bare `AddressSpace` binder
+        // (`Pointer[T, _, address_space=a]`) from the argument's space; two
+        // known spaces must agree.
+        TyKind::Pointer { .. } | TyKind::KgenPointer { .. } | TyKind::LitRef { .. } => {
+            let (Some(p), Some(a)) = (pointer_like_element(pattern), pointer_like_element(actual))
+            else {
+                return Err(format!("expected `{pattern}`, found `{actual}`"));
+            };
+            if std::mem::discriminant(pattern.kind()) != std::mem::discriminant(actual.kind()) {
+                return Err(format!("expected `{pattern}`, found `{actual}`"));
+            }
+            let (Some(pattern_space), Some(actual_space)) = (
+                pattern.kind().pointer_address_space(),
+                actual.kind().pointer_address_space(),
+            ) else {
+                return Err(format!("expected `{pattern}`, found `{actual}`"));
+            };
+            match (
+                pattern_space.expr().and_then(ParamExpr::as_decl_ref),
+                actual_space.known(),
+            ) {
+                (Some(binder), Some(space)) => bind_value(
+                    binder,
+                    &mojito_types::types::address_space_value(space),
+                    bindings,
+                )?,
+                (None, Some(space))
+                    if pattern_space.known().is_some_and(|known| known != space) =>
+                {
+                    return Err(format!("expected `{pattern}`, found `{actual}`"));
+                }
+                _ => {}
+            }
+            unify(p, a, bindings)
+        }
         TyKind::LitRefPack { elements: p, .. } => match actual.kind() {
             TyKind::LitRefPack { elements: a, .. } => unify(
                 &TyKind::Tuple(p.clone()).into(),
@@ -1133,5 +1156,15 @@ fn unify_struct(
                     .try_for_each(|(p, a)| unify_arg(p, a, bindings))
             }
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
+    }
+}
+
+/// The pointee of a `Pointer`, a `!kgen.pointer`, or a `!lit.ref`.
+fn pointer_like_element(ty: &Ty) -> Option<&Ty> {
+    match ty.kind() {
+        TyKind::Pointer { element, .. }
+        | TyKind::KgenPointer { element, .. }
+        | TyKind::LitRef { element, .. } => Some(element),
+        _ => None,
     }
 }

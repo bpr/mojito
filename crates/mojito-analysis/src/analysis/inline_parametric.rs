@@ -3151,7 +3151,12 @@ impl TyRewrite for BoundMutabilities {
             {
                 *mutability = bound;
             }
-            return Some(Ty::pointer(rewrite_ty(&element, self).ok()?, origin));
+            let address_space = ty.kind().pointer_address_space()?.clone();
+            return Some(Ty::pointer(
+                rewrite_ty(&element, self).ok()?,
+                origin,
+                address_space,
+            ));
         }
         let TyKind::Ref(reference) = ty.kind() else {
             return None;

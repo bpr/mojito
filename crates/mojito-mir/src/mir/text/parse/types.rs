@@ -183,19 +183,22 @@ impl Decoder {
                 "pointer" => {
                     let element = self.req(value, fields, "element", Self::ty)?;
                     let origin = self.req(value, fields, "origin", Self::pointer_origin)?;
-                    self.unknown(fields, &["element", "origin"]);
-                    Ty::pointer(element, origin)
+                    let address_space = self.address_space_slot(fields)?;
+                    self.unknown(fields, &["element", "origin", "address_space"]);
+                    Ty::pointer(element, origin, address_space)
                 }
                 "kgen_pointer" => {
                     let element = self.req(value, fields, "element", Self::ty)?;
-                    self.unknown(fields, &["element"]);
-                    TyKind::KgenPointer(element).into()
+                    let address_space = self.address_space_slot(fields)?;
+                    self.unknown(fields, &["element", "address_space"]);
+                    Ty::kgen_pointer(element, address_space)
                 }
                 "lit_ref" => {
                     let element = self.req(value, fields, "element", Self::ty)?;
                     let origin = self.req(value, fields, "origin", Self::pointer_origin)?;
-                    self.unknown(fields, &["element", "origin"]);
-                    TyKind::LitRef { element, origin }.into()
+                    let address_space = self.address_space_slot(fields)?;
+                    self.unknown(fields, &["element", "origin", "address_space"]);
+                    Ty::lit_ref(element, origin, address_space)
                 }
                 "lit_ref_pack" => {
                     let elements =
@@ -810,6 +813,30 @@ impl Decoder {
                 }
             }
             _ => self.uint64(value).map(ArraySize::Known),
+        }
+    }
+
+    /// A pointer type's optional `address_space` (schema 1.216): a known
+    /// space's number or a template's `ct_expr(...)`, generic when absent.
+    fn address_space_slot(
+        &mut self,
+        fields: &[Field],
+    ) -> Option<mojito_types::types::AddressSpaceSlot> {
+        use mojito_types::types::AddressSpaceSlot;
+        let Ok(value) = self.field(fields, "address_space") else {
+            return Some(AddressSpaceSlot::GENERIC);
+        };
+        match &value.kind {
+            ValueKind::Positional(tag, inner) if tag == "ct_expr" => {
+                let space = self.param_expr(inner)?;
+                AddressSpaceSlot::of(space)
+                    .map_err(|error| self.error(value.span, format!("address space: {error}")))
+                    .ok()
+            }
+            _ => self
+                .uint64(value)
+                .and_then(|space| u32::try_from(space).ok())
+                .map(AddressSpaceSlot::Known),
         }
     }
 

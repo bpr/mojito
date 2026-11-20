@@ -1965,7 +1965,11 @@ impl Checker {
         }
         // `p._mlir_value` is upstream's `!kgen.pointer` field of a `Pointer`.
         if field == mojito_types::ct::MLIR_VALUE_FIELD
-            && let Some(element) = obj_ty.pointer_element()
+            && let TyKind::Pointer {
+                element,
+                address_space,
+                ..
+            } = obj_ty.kind()
         {
             self.record_pointer_adjustment(
                 span,
@@ -1975,7 +1979,7 @@ impl Checker {
                     bitcast: false,
                 },
             );
-            return Ok(TyKind::KgenPointer(element.clone()).into());
+            return Ok(Ty::kgen_pointer(element.clone(), address_space.clone()));
         }
         // `v.dtype` is upstream's lane-dtype parameter, the slot itself.
         if field == "dtype"

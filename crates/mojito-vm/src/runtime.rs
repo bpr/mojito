@@ -829,7 +829,7 @@ pub fn pointer_bitcast_preserves_pointee(
     use mojito_types::types::erase_origins;
     let pointee = |ty: Option<&mojito_types::types::Ty>| {
         ty.and_then(|ty| match ty.kind() {
-            mojito_types::types::TyKind::KgenPointer(element) => Some(element),
+            mojito_types::types::TyKind::KgenPointer { element, .. } => Some(element),
             _ => ty.pointer_element(),
         })
         .map(|pointee| erase_origins(&held_pointee(pointee)))
@@ -2320,8 +2320,12 @@ const fn low_bits(bits: usize) -> u64 {
 /// the same value as a pointer to the other.
 fn held_pointee(pointee: &mojito_types::types::Ty) -> mojito_types::types::Ty {
     match pointee.kind() {
-        mojito_types::types::TyKind::LitRef { element, origin } => {
-            mojito_types::types::Ty::pointer(element.clone(), origin.clone())
+        mojito_types::types::TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => {
+            mojito_types::types::Ty::pointer(element.clone(), origin.clone(), address_space.clone())
         }
         _ => pointee.clone(),
     }

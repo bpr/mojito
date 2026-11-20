@@ -13,6 +13,7 @@ assets/ok/abs_scalar_aliases.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/access_beside_live_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/add.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/address_space_constants.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/allocation_tracked_unsafe_ptr.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_builtin_arithmetic_fold.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_builtin_comparison_fold.mojo	-	ineligible	no-scalar-entry-shape
@@ -1053,6 +1054,7 @@ assets/ok/pliron_wrap_int_arith.mojo	compute	differential	ret=Int
 assets/ok/pliron_wrap_pow.mojo	compute	differential	ret=Int
 assets/ok/pliron_wrap_uint_arith.mojo	compute	differential	ret=UInt
 assets/ok/pointer_address_builtins.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_address_space_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_augmented_literal_offset.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_bound_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_deref_store_loan_carrying_pointee.mojo	-	ineligible	no-scalar-entry-shape

@@ -260,7 +260,11 @@ fn checked_types_with_specified_runtime_representations_agree() {
     structs.insert(
         "String".to_string(),
         vec![
-            Ty::pointer(Ty::uint(), mojito::origin::PointerOrigin::Static),
+            Ty::pointer(
+                Ty::uint(),
+                mojito::origin::PointerOrigin::Static,
+                mojito::types::AddressSpaceSlot::GENERIC,
+            ),
             Ty::int(),
             Ty::int(),
         ],

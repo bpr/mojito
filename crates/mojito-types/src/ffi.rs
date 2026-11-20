@@ -397,6 +397,7 @@ mod tests {
         let byte_ptr = Ty::new(TyKind::Pointer {
             element: canonical_simd_ty(Dtype::UInt8, 1),
             origin: crate::origin::PointerOrigin::Untracked { mutable: true },
+            address_space: crate::types::AddressSpaceSlot::GENERIC,
         });
         assert!(accepts_arg(CType::Int, &int32));
         assert!(accepts_arg(CType::Int, &Ty::int()));
@@ -419,6 +420,7 @@ mod tests {
             &Ty::new(TyKind::Pointer {
                 element: Ty::int(),
                 origin: crate::origin::PointerOrigin::Untracked { mutable: false },
+                address_space: crate::types::AddressSpaceSlot::GENERIC,
             })
         ));
     }

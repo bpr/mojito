@@ -15,7 +15,7 @@ use mojito_mir::mir::{MirParamArg, Proj};
 use mojito_types::param_expr::ParamRef;
 use mojito_types::types::LaneMask;
 use mojito_types::types::TyKind;
-use mojito_types::types::{ArraySize, FuncTy, VariantIndex};
+use mojito_types::types::{AddressSpaceSlot, ArraySize, FuncTy, VariantIndex};
 
 /// The declarations a reflected field-name list's construction names: the
 /// list-literal initializer ([`array_display_construction`]).
@@ -411,17 +411,31 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             TyKind::Tuple(sub_types(elements, bindings)?).into()
         }
         TyKind::VariadicPack(v) => TyKind::VariadicPack(substitute_ty(v, bindings)?).into(),
-        pointer if let Some((element, origin)) = pointer.as_pointer() => {
-            Ty::pointer(substitute_ty(&element, bindings)?, origin)
-        }
-        TyKind::KgenPointer(element) => {
-            TyKind::KgenPointer(substitute_ty(element, bindings)?).into()
-        }
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
-            element: substitute_ty(element, bindings)?,
-            origin: origin.clone(),
-        }
-        .into(),
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => Ty::pointer(
+            substitute_ty(element, bindings)?,
+            origin.clone(),
+            substitute_address_space(address_space, bindings),
+        ),
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(
+            substitute_ty(element, bindings)?,
+            substitute_address_space(address_space, bindings),
+        ),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => Ty::lit_ref(
+            substitute_ty(element, bindings)?,
+            origin.clone(),
+            substitute_address_space(address_space, bindings),
+        ),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
             elements: sub_spread_types(elements, bindings)?,
             origin: origin.clone(),
@@ -754,21 +768,35 @@ pub(super) fn substitute_func_ref(
 /// lowers a pointer field's pointee: the instance's layout holds its
 /// address alone, and no layout of the pointee is needed.
 pub(super) fn substitute_field(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoError> {
-    let Some((element, origin)) = ty.as_pointer() else {
+    let TyKind::Pointer {
+        element,
+        origin,
+        address_space,
+    } = ty.kind()
+    else {
         return substitute_ty(ty, bindings);
     };
     if bindings
         .removed
         .iter()
-        .any(|binder| mojito_types::types::names_binder(&element, binder))
+        .any(|binder| mojito_types::types::names_binder(element, binder))
     {
-        return substitute_ty(&Ty::pointer(Ty::none(), origin), bindings);
+        return substitute_ty(
+            &Ty::pointer(Ty::none(), origin.clone(), address_space.clone()),
+            bindings,
+        );
     }
     let substituted = substitute_ty(ty, bindings)?;
-    match substituted.as_pointer() {
-        Some((element, origin)) if mojito_types::types::erases_an_argument(&element) => {
-            Ok(Ty::pointer(Ty::none(), origin))
-        }
+    match substituted.kind() {
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } if mojito_types::types::erases_an_argument(element) => Ok(Ty::pointer(
+            Ty::none(),
+            origin.clone(),
+            address_space.clone(),
+        )),
         _ => Ok(substituted),
     }
 }
@@ -788,6 +816,15 @@ pub(super) fn removed_parameter_read(binder: &ParamRef) -> String {
     )
 }
 
+/// A pointer's address-space slot at the instance's bindings: a binder
+/// slot closes to the space its bound `AddressSpace` value is.
+fn substitute_address_space(slot: &AddressSpaceSlot, bindings: &Bindings) -> AddressSpaceSlot {
+    slot.expr()
+        .and_then(|expr| eval_ct(expr, bindings).ok())
+        .and_then(|value| AddressSpaceSlot::of_value(&value))
+        .unwrap_or_else(|| slot.clone())
+}
+
 /// Whether the struct argument `arg` names a parameter the instance
 /// removed ([`Bindings::removed`]) other than inside a struct type it
 /// holds, whose own arguments erase where they name one.
@@ -798,7 +835,7 @@ fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
                 names_outside_structs(element, removed)
             }
             struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => false,
-            TyKind::KgenPointer(element)
+            TyKind::KgenPointer { element, .. }
             | TyKind::LitRef { element, .. }
             | TyKind::PopArray { element, .. } => names_outside_structs(element, removed),
             TyKind::Ref(reference) => names_outside_structs(&reference.referent, removed),

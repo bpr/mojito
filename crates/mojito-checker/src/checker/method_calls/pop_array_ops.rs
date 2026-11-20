@@ -172,15 +172,18 @@ impl Checker {
             .map(|argument| self.infer(argument))
             .collect::<Result<Vec<_>, _>>()?;
         let element = operands.first().and_then(|pointer| match pointer.kind() {
-            TyKind::KgenPointer(array) => match array.kind() {
-                TyKind::PopArray { element, .. } => Some(element.clone()),
+            TyKind::KgenPointer {
+                element: array,
+                address_space,
+            } => match array.kind() {
+                TyKind::PopArray { element, .. } => Some((element.clone(), address_space.clone())),
                 _ => None,
             },
             _ => None,
         });
         let Some(result) = element
             .clone()
-            .map(|element| Ty::from(TyKind::KgenPointer(element)))
+            .map(|(element, address_space)| Ty::kgen_pointer(element, address_space))
             .or_else(|| result_type.clone())
         else {
             return Err(invalid(format!(

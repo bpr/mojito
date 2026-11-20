@@ -1289,6 +1289,16 @@ which reads with those origin binders appended
 (`nested::upgrade_closure_storage_origins`). The package format moves to
 `mojito-package 242`.
 
+Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
+optional `address_space` field, upstream's `AddressSpace` parameter of
+`Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and
+`!lit.ref<T, origin, as>`: a known space's number, or a template's
+`ct_expr(...)` over an `AddressSpace`-valued binder. It is omitted for the
+generic space `0`, so every older type reads unchanged. Two pointer types
+in different known spaces are distinct, and only a `pointer.bitcast` moves
+an address between them. The package format moves to
+`mojito-package 244`.
+
 Schema 1.215 adds the `pop` op `pointer_to_index`, upstream's
 `pop.pointer_to_index`: one `kgen_pointer` operand's address as a
 `!kgen.scalar<index>`, the storage of an `Int`. The checked handoff records

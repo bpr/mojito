@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1261
+# swept-count	1262
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
@@ -937,6 +937,7 @@ assets/type_error/param_expr_where_residual.mojo	compile-reject	agree	error: inv
 assets/type_error/param_expr_where_unfolded_atom.mojo	compile-reject	agree	error: invalid call to 'floored': lacking evidence to prove correctness
 assets/type_error/parametric_static_method_value_unbound.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
 assets/type_error/pointer_address_as_owned_value_not_kgen_pointer.mojo	compile-reject	agree	error: operand must have '!kgen.pointer<T>' type, not 'ref[x] Int'
+assets/type_error/pointer_address_space_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Pointer[Int, origin_of(x), address_space=AddressSpace.LOCAL]' value to 'Pointer[Int, origin_of(x)]'
 assets/type_error/pointer_escape.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
 assets/type_error/pointer_field_bare_origin_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_fieldwise_mut_true_immutable_place.mojo	compile-reject	agree	error: no matching function in initialization

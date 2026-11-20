@@ -794,12 +794,16 @@ fn pack_element_resolves_as_its_pack_and_index_bind() {
 }
 
 /// `variadic_ptrremove_map` over `variadic_ptr_map` of a pack still open
-/// is the pack itself, and binding the pack maps it element-wise.
+/// is the pack itself, and binding the pack maps it element-wise, each
+/// pointer in the map's address space.
 #[test]
 fn pointer_map_and_remove_undo_each_other() {
     let context = ParamContext::new();
     let pack = context.register(ParamId::new("S", 0), "Ts", MetaTy::type_list());
-    let pointers = context.list_pointer_map(&pack).expect("a pack maps");
+    let space = crate::types::AddressSpaceSlot::Known(1);
+    let pointers = context
+        .list_pointer_map(&pack, space.clone())
+        .expect("a pack maps");
     assert!(
         matches!(pointers.kind(), ParamKind::ListTabulate { .. }),
         "{pointers}"
@@ -810,7 +814,7 @@ fn pointer_map_and_remove_undo_each_other() {
     let mut bound = ParamBindings::new();
     bound.bind_name("Ts", context.constant(types.clone()).expect("constant"));
     let closed = context.replace(&pointers, &bound).expect("replacement");
-    let pointer = |ty: Ty| CtValue::Type(TyKind::KgenPointer(ty).into());
+    let pointer = |ty: Ty| CtValue::Type(Ty::kgen_pointer(ty, space.clone()));
     assert_eq!(
         closed.as_constant(),
         Some(&CtValue::Tuple(vec![

@@ -10,8 +10,10 @@
 #   `std.utils.coord.Coord` is not bundled (roadmap
 #   R1702);
 # - `default_atomic_ordering`: `std.atomic` is not bundled;
-# - `stack_allocation_fn`, `address_space_fn`, and `unsafe_dangling_fn`:
-#   `AddressSpace` and their hook types are not bundled;
+# - `address_space_fn`: only `AddressSpace.__getattr_param__` reads it,
+#   which the bundled `AddressSpace` omits (roadmap R2408);
+# - `stack_allocation_fn` and `unsafe_dangling_fn`: their hook types are
+#   not bundled;
 # - `print_emit_fn`: `std.io`'s `_PrintEmitPluginHookFnType` is not
 #   bundled;
 # - the `@staticmethod` hooks `abort_fn` and `debug_assert_emit_fn`

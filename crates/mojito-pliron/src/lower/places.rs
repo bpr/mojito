@@ -582,7 +582,9 @@ impl FnLowering<'_> {
         array: Reg,
         index: Reg,
     ) -> Result<(), PlironError> {
-        let Some(TyKind::KgenPointer(pointee)) = self.func.reg_types.get(&array.0).map(Ty::kind)
+        let Some(TyKind::KgenPointer {
+            element: pointee, ..
+        }) = self.func.reg_types.get(&array.0).map(Ty::kind)
         else {
             return Err(self.unsupported_reg("untyped array.gep operand".into(), dest));
         };
@@ -686,11 +688,11 @@ pub(super) fn ref_pack_pointers(
     elements
         .iter()
         .map(|element| {
-            TyKind::LitRef {
-                element: element.clone(),
-                origin: origin.clone(),
-            }
-            .into()
+            Ty::lit_ref(
+                element.clone(),
+                origin.clone(),
+                mojito_types::types::AddressSpaceSlot::GENERIC,
+            )
         })
         .collect()
 }

@@ -872,14 +872,19 @@ impl ParamContext {
         self.list_tabulate(&length, &element)
     }
 
-    /// KGEN's `variadic_ptr_map` at address space 0: the list of
+    /// KGEN's `variadic_ptr_map` at `address_space`: the list of
     /// `!kgen.pointer`s to `list`'s types, a tabulation of its length whose
-    /// element `i` is `!kgen.pointer<list[i]>`.
-    pub fn list_pointer_map(&self, list: &ParamExpr) -> Result<ParamExpr, ParamError> {
+    /// element `i` is `!kgen.pointer<list[i], address_space>`.
+    pub fn list_pointer_map(
+        &self,
+        list: &ParamExpr,
+        address_space: crate::types::AddressSpaceSlot,
+    ) -> Result<ParamExpr, ParamError> {
         let length = self.list_length(list)?;
         let element = self.list_get(&self.shift(list, 0, 1)?, &self.tabulate_index())?;
-        let pointer = TyKind::KgenPointer(crate::types::DependentType::resolve(element));
-        self.list_tabulate(&length, &self.type_shape(pointer.into()))
+        let pointer =
+            Ty::kgen_pointer(crate::types::DependentType::resolve(element), address_space);
+        self.list_tabulate(&length, &self.type_shape(pointer))
     }
 
     /// KGEN's `variadic_ptrremove_map`: the pointees of a list of
@@ -894,7 +899,7 @@ impl ParamContext {
         };
         let pointee = |element: &ParamExpr| match element.kind() {
             ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => match ty.kind() {
-                TyKind::KgenPointer(pointee) => Ok(self.type_expr(pointee)),
+                TyKind::KgenPointer { element, .. } => Ok(self.type_expr(element)),
                 _ => Err(not_pointers()),
             },
             _ => Err(not_pointers()),

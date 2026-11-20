@@ -2,10 +2,12 @@
 # (`Layout`, `Allocation`, `ThinAllocation`, `alloc`, `dealloc`), inline
 # uninitialized storage (`MaybeUninit`), the owning smart pointer
 # (`OwnedPointer`), `forget_deinit` (`std.memory.memory`), and the bit
-# reinterpretations `bitcast` and `pack_bits` (`std.memory.unsafe`).
+# reinterpretations `bitcast` and `pack_bits` (`std.memory.unsafe`), and a
+# pointer's `AddressSpace` (`std.memory.address_space`).
 # `unsafe_alloc` is deliberately not re-exported: as upstream, it imports
 # only from `std.memory.alloc`.
 
+from .address_space import AddressSpace
 from .alloc import Allocation, ThinAllocation, alloc, dealloc, Layout
 from .maybe_uninit import MaybeUninit
 from .owned_pointer import OwnedPointer

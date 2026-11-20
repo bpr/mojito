@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2406**.
+Next free ID: **R2412**.
 
 ## Ordered Work
 
@@ -973,6 +973,29 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Found while landing R2321 (2026-11-17).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R2406 Pliron lowers only pointers in the generic address space**
+
+  A `Pointer`, `!kgen.pointer`, or `!lit.ref` in any address space but
+  `AddressSpace.GENERIC` fails natively ("a pointer in the address space
+  AddressSpace.SHARED ...; only AddressSpace.GENERIC lowers natively"),
+  where the pin lowers it to `ptr addrspace(N)` and runs it on the host.
+  - Probe: `Pointer(to=x).unsafe_address_space_cast[AddressSpace.SHARED]()`
+    then `q[]` prints `5` at the pin and on the VM. The pin's `--emit llvm`
+    shows `addrspacecast ptr %3 to ptr addrspace(3)` and `load i64, ptr
+    addrspace(3)`.
+  - Pinned by `pliron_backend_test::unsupported_constructs_produce_contextual_diagnostics`
+    and `evaluator_test::a_pointer_runs_in_any_address_space`.
+  - Lever: `ScalarTy::Ptr` carries the space (`lower/types.rs` and its
+    users), and a cross-space `pointer.bitcast` lowers to
+    `llvm.addrspacecast`. Pliron 0.20 has `PointerType::get(ctx, as)`.
+  - Layout: x86-64's `p270`/`p271` spaces are 32-bit
+    (`mojito-native-core/src/layout.rs` gives every space the target
+    pointer's layout today).
+  - When it lands, move the non-generic program into `assets/ok`.
+  - Found while landing R2204 (2026-11-20).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2054 A `for ref` target assigned in its body has no slot type,
   so Pliron rejects the loop**
@@ -3022,6 +3045,23 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R2344 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2411 Reading through a pointer after a cast of it conflicts with
+  the cast**
+
+  `var p = Pointer(to=x)` then `print(p.unsafe_origin_cast[origin_of(x)]()[])`
+  and `print(p[])` fails with "access to 'x' conflicts with live reference
+  'p'", where the pin prints `5` twice.
+  - Probe: the same with `p.unsafe_bitcast[Int]()` in place of the cast.
+  - Probe: the same with `p.unsafe_address_space_cast[AddressSpace.GENERIC]()`.
+  - Probe: binding the cast first (`var q = p.unsafe_bitcast[Int]()`,
+    `print(q[])`, `print(p[])`) fails the same way.
+  - Each cast records a `PointerOriginCast` or `PointerConvert` adjustment
+    over the receiver, which ownership analysis reads as a fresh access to
+    the pointee's place rather than a copy of `p`.
+  - Found while landing R2204 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
@@ -7094,7 +7134,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     ImmStaticOrigin]`, where the pin prints
     `std.memory.pointer.Pointer[True, {}, SIMD[DType.int, 1], {}, 0]`:
     `Pointer` is the intrinsic `TyKind::Pointer`, which the speller leaves
-    to its `Display`.
+    to its `Display`. Its `address_space` is now the type's
+    `AddressSpaceSlot`, which the speller can read.
   - Probe: `_unqualified_type_name[type_of(buffer)]()` of `print`'s
     `_FlushingWriteBuffer` over a `RawFileDescriptor` prints
     `_FlushingWriteBuffer[RawFileDescriptor, 4096 : SIMD[DType.int, 1]]`,
@@ -10385,30 +10426,68 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2204 `!kgen.pointer` has no address space, and `AddressSpace` is
-  not bundled**
+- [ ] **R2409 A `ref[origin, address_space]` specifier is rejected**
 
-  Upstream's `Pointer` and `!kgen.pointer<T, as>` carry an address space,
-  where `TyKind::KgenPointer` holds only the element and the bundled
-  library declares no `std/memory/address_space.mojo`.
-  - Probe: `#kgen.param.expr<variadic_ptr_map, L, 1: index>` is rejected
-    as outside the subset (`mlir_bracket_attribute`,
-    `checker/constraints.rs`); only `0: index` is read.
-  - Probe: `p.unsafe_address_space_cast[AddressSpace.GENERIC]()` is
-    rejected.
-  - Bundle upstream's `AddressSpace` (`_value`, `.GENERIC`, comparisons)
-    and export it from `std.memory`.
-  - Give `TyKind::KgenPointer` its address-space argument and accept
-    ``__mlir_type[`!kgen.pointer<`, T, `, `, as._value._mlir_value, `>`]``.
-  - Probe: ``__mlir_type[`!lit.ref<`, T, `, `, o._mlir_origin, `, `, `1`,
-    `>`]`` is rejected ("outside the generic address space"); the pin
-    accepts it. `TyKind::LitRef` carries no address space either.
-  - Both backends lay out and run only `GENERIC`; any other space fails
-    explicitly as `MirInstr::Unsupported`.
-  - Needs a package format bump.
-  - Found while planning R1681 (2026-11-14).
+  `def g(ref[_, AddressSpace.GENERIC] x: Int)` fails with "Undefined
+  variable 'AddressSpace'", where the pin runs it.
+  - Upstream's `Pointer.__getitem__` spells its result `ref[Self.origin,
+    Self.address_space] Self.T`, as do `__init__(ref[...] to:)` and the
+    offset subscripts (`std/memory/pointer.mojo`).
+  - Cause: an origin clause reads only origins and parameter places, and
+    `RefTy` carries no address space where `TyKind::Pointer`'s
+    `AddressSpaceSlot` now does.
+  - Lever: give `RefTy` the slot and read the clause's second operand as
+    an `AddressSpace`; update `docs/grammar.md` first.
+  - Found while landing R2204 (2026-11-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2407 A typed `#lit.struct<{field = v}> : T` attribute is
+  rejected**
+
+  `A(__mlir_attr[`#lit.struct<{_mlir_value = 0}> : `, SIMDLength])` fails
+  with "not a compile-time Int constant: not an associated comptime
+  expression", where the pin builds the `SIMDLength` value.
+  - The bundled `AddressSpace.GENERIC` and `.GLOBAL` respell it
+    `AddressSpace(0)` and `AddressSpace(1)`
+    (`stdlib/std/memory/address_space.mojo`).
+  - `Scalar`'s length in `stdlib/std/simd.mojo` respells it the same way.
+  - Lever: `mlir_bracket_attribute` (`checker/constraints.rs`) builds the
+    struct value of the named type from its field list.
+  - Found while landing R2204 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2408 `__getattr_param__` is not supported**
+
+  `AddressSpace.FOO` fails with "'AddressSpace' value has no attribute
+  'FOO'", where the pin resolves the name through
+  `AddressSpace.__getattr_param__` and reports "unknown address space:
+  'FOO'".
+  - The bundled `AddressSpace` omits `__getattr_param__` and its
+    `std._plugin` import.
+  - Upstream's body asks the plugin's `address_space_fn[name]` hook with
+    `comptime if case .Some(space) = ...`, so it also needs R1248 and the
+    hook, which `stdlib/std/_plugin/_trait.mojo` omits.
+  - Found while landing R2204 (2026-11-20).
+  - Depends on R1248.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2410 An inferred `address_space=_` in a parameter type is
+  rejected**
+
+  `def f(p: Pointer[Int, _, address_space=_])` fails with "an inferred
+  address space ('address_space=_') is not supported", where the pin
+  infers the space per call and prints the pointee.
+  - Cause: a `_` slot is an implicit infer-only parameter of the function,
+    and Mojito has no `AddressSpaceSlot` hole that a call binds, as an
+    origin's `_` binds (`address_space_arg`,
+    `checker/type_resolution.rs`).
+  - Lever: declare the hole as an infer-only `AddressSpace` binder of the
+    enclosing function, so the elaborator instantiates it per space.
+  - Found while landing R2204 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2205 The bundled library declares no `struct Pointer`**
 
@@ -10418,7 +10497,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `type_resolution.rs` resolves (`pointer_type`).
   - Declare the struct with upstream's header, its `_mlir_type` and
     `_with_origin` comptimes, its field, and the members R2203 and R2204
-    make spellable, copied from the pin's file.
+    make spellable, `unsafe_address_space_cast` among them, copied from
+    the pin's file.
   - Declare the aliases there and in `unsafe_pointer.mojo`, exported
     through `std.memory` and the prelude, and resolve the names through
     them.
@@ -10434,10 +10514,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     resolves, where the pin reports "use of unknown declaration
     'UnsafePointer'" (and rejects `from std.memory import UnsafePointer`):
     declare only the names the pin's prelude and `std.memory` export.
+  - Probe: `p.address_space` fails with "has no field 'address_space'",
+    where the pin prints `AddressSpace.GENERIC`; `p.mut`, `p.T`, and
+    `p.origin` are rejected the same way. The declared parameters make
+    them readable.
   - The base fixtures (`assets/ok/*pointer*`) keep their output on both
     backends.
   - Found while planning R1681 (2026-11-14).
-  - Depends on R2203, R2204.
+  - Depends on R2203, R2204, R2409 (`ref[o, as]` member results).
   - Model: Fable, Not Planned.
 
 - [ ] **R2206 `Pointer`'s casts and conversions are checker rules, where
@@ -10446,7 +10530,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `infer_pointer_method` (`checker/method_calls/builtin_types.rs`) and
   `infer_pointer_from_mlir_value` (`checker/operators.rs`) type
   `unsafe_origin_cast`, `unsafe_mut_cast`, `as_imm`, `unsafe_bitcast`,
-  `_get_kgen_pointer`, `copy`, the `_mlir_value` field, and both
+  `unsafe_address_space_cast`, `_get_kgen_pointer`, `copy`, the
+  `_mlir_value` field, and both
   `Pointer[T, o](_mlir_value=)` initializers.
   - Probe: `p._mlir_value = k` is rejected ("a write to a Pointer's
     '_mlir_value' field is not supported", `checker/indexing.rs`); the pin

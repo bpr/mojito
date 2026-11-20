@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Pointers carry upstream's address space (R2204). `std.memory` and the
+  prelude export the bundled `AddressSpace`, whose cases print by name and
+  compare by index. `Pointer[T, o, address_space=a]`, `!kgen.pointer<T,
+  as>`, and `!lit.ref<T, o, as>` take the space as a parameter that a call
+  deduces, `p.unsafe_address_space_cast[a]()` moves an address between
+  spaces, and pointers in different spaces no longer convert into each
+  other, as at the pin. `variadic_ptr_map` takes any literal space. The VM
+  runs every space; the native backend lowers only `GENERIC` and rejects
+  any other explicitly (R2406). MIR schema 1.216 adds an optional
+  `address_space` field to the pointer types; the package format moves to
+  `mojito-package 244`.
 - `__mlir_op` admits upstream's pointer ops, which its `struct Pointer`
   bodies are written in: `lit.ref.to_pointer`, `lit.ref.from_pointer`,
   `pop.pointer.bitcast`, `pop.offset`, `pop.pointer_to_index`, and the

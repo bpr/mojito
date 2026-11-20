@@ -163,9 +163,25 @@ pub fn lower_ty(
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(1),
         } => Ok(LowerTy::Scalar(ScalarTy::of_dtype(*dtype))),
+        // Only the generic address space lowers: upstream's `ptr
+        // addrspace(N)` for any other is R2406's.
+        kind if let Some(address_space) = kind.pointer_address_space()
+            && !address_space.is_generic() =>
+        {
+            Err(PlironError {
+                function: Some(function.to_string()),
+                kind: PlironErrorKind::Unsupported {
+                    construct: format!(
+                        "a pointer in the address space {address_space} (`{ty}`); only \
+                         AddressSpace.GENERIC lowers natively (R2406)"
+                    ),
+                },
+                location,
+            })
+        }
         // Origins and ownership facts erase after validation; a pointer is
         // one opaque target pointer regardless of its element type.
-        TyKind::KgenPointer(_) | TyKind::LitRef { .. } | TyKind::Ref(_) => {
+        TyKind::KgenPointer { .. } | TyKind::LitRef { .. } | TyKind::Ref(_) => {
             Ok(LowerTy::Scalar(ScalarTy::Ptr))
         }
         pointer if pointer.is_pointer() => Ok(LowerTy::Scalar(ScalarTy::Ptr)),

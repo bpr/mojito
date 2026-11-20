@@ -4055,12 +4055,19 @@ impl Checker {
                 self.bracket_type_operand(ty, recording)
             }
             // KGEN's pointer maps over a list of types: `variadic_ptr_map`
-            // (at address space 0, the default `!kgen.pointer`) gives the
-            // pointers to them, and `variadic_ptrremove_map` the pointees
-            // of a list of pointers.
-            ("#kgen.param.expr<variadic_ptr_map,{},0:index>:{}", [list, result]) => {
+            // at an address space (`0: index`, the default `!kgen.pointer`'s)
+            // gives the pointers to them, and `variadic_ptrremove_map` the
+            // pointees of a list of pointers.
+            (shape, [list, result])
+                if let Some(space) = shape
+                    .strip_prefix("#kgen.param.expr<variadic_ptr_map,{},")
+                    .and_then(|rest| rest.strip_suffix(":index>:{}"))
+                    .and_then(|space| space.parse().ok()) =>
+            {
                 let list = self.bracket_type_list(list, result, "variadic_ptr_map", recording)?;
-                context.list_pointer_map(&list).map_err(param_error)
+                context
+                    .list_pointer_map(&list, mojito_types::types::AddressSpaceSlot::Known(space))
+                    .map_err(param_error)
             }
             ("#kgen.param.expr<variadic_ptrremove_map,{}>:{}", [list, result]) => {
                 let list =

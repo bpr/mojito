@@ -73,18 +73,22 @@ pub struct VariadicListConstruction {
 /// `Pointer[element_type, origin]`, its origin untracked, mutable for an
 /// owned list.
 pub fn element_pointer_type(element: &Ty, owned: bool) -> Ty {
-    Ty::pointer(element.clone(), PointerOrigin::Untracked { mutable: owned })
+    Ty::pointer(
+        element.clone(),
+        PointerOrigin::Untracked { mutable: owned },
+        mojito_types::types::AddressSpaceSlot::GENERIC,
+    )
 }
 
 /// The type of one element reference a list of `element`s gathers in its
 /// `!pop.array`: upstream's `Pointer[element_type, origin]._mlir_lit_ref`,
 /// its origin untracked, mutable for an owned list.
 pub fn element_lit_ref_type(element: &Ty, owned: bool) -> Ty {
-    TyKind::LitRef {
-        element: element.clone(),
-        origin: PointerOrigin::Untracked { mutable: owned },
-    }
-    .into()
+    Ty::lit_ref(
+        element.clone(),
+        PointerOrigin::Untracked { mutable: owned },
+        mojito_types::types::AddressSpaceSlot::GENERIC,
+    )
 }
 
 /// The `VariadicList[element, owned]` over `elements`, in order.
@@ -153,13 +157,11 @@ pub fn build_variadic_list(
         binding_ty: Some(array_ty.clone()),
         in_place: false,
     });
-    let array_reference = tables.fresh_register(
-        TyKind::LitRef {
-            element: array_ty.clone(),
-            origin: PointerOrigin::Untracked { mutable: false },
-        }
-        .into(),
-    );
+    let array_reference = tables.fresh_register(Ty::lit_ref(
+        array_ty.clone(),
+        PointerOrigin::Untracked { mutable: false },
+        mojito_types::types::AddressSpaceSlot::GENERIC,
+    ));
     before.push(MirInstr::MakeRef {
         dest: array_reference,
         place: MirPlace::root(array_slot, Some(array_ty)),

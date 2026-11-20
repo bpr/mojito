@@ -154,7 +154,9 @@ impl LayoutCx<'_> {
                 Ok(Layout::new(element.size * size, element.align))
             }
             TyKind::Variant(alternatives) => Ok(self.variant_layout(alternatives)?.layout),
-            TyKind::KgenPointer(_) | TyKind::LitRef { .. } | TyKind::Ref(_) => Ok(self.pointer()),
+            TyKind::KgenPointer { .. } | TyKind::LitRef { .. } | TyKind::Ref(_) => {
+                Ok(self.pointer())
+            }
             pointer if pointer.is_pointer() => Ok(self.pointer()),
             // One address per element, the `!kgen.struct` of pointers
             // upstream lowers a `!lit.ref.pack` to.
@@ -460,7 +462,11 @@ mod tests {
             layout_of(&Ty::new(TyKind::KgenString)),
             Ok(Layout::new(16, 8))
         );
-        let pointer = Ty::pointer(Ty::int(), PointerOrigin::Static);
+        let pointer = Ty::pointer(
+            Ty::int(),
+            PointerOrigin::Static,
+            mojito_types::types::AddressSpaceSlot::GENERIC,
+        );
         assert_eq!(layout_of(&pointer), Ok(Layout::new(8, 8)));
         // A reference pack is one address per element, whatever each holds.
         let pack = Ty::new(TyKind::LitRefPack {

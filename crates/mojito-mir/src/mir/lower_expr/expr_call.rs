@@ -1012,7 +1012,11 @@ impl<'a> Flatten<'a> {
         let dest = self.fresh_typed(
             location,
             None,
-            Ty::pointer(element, mojito_types::origin::PointerOrigin::Static),
+            Ty::pointer(
+                element,
+                mojito_types::origin::PointerOrigin::Static,
+                mojito_types::types::AddressSpaceSlot::GENERIC,
+            ),
         );
         self.emit(MirInstr::ParamListAddress {
             dest,

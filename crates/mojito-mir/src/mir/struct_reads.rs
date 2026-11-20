@@ -585,6 +585,7 @@ mod tests {
                         Ty::pointer(
                             applied("Link", TyArg::Ty(param("Link", "T"))),
                             PointerOrigin::Static,
+                            mojito_types::types::AddressSpaceSlot::GENERIC,
                         ),
                         Ty::int(),
                     ],

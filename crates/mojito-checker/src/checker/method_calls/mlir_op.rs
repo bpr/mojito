@@ -210,7 +210,7 @@ impl Checker {
                 elements
                     .iter()
                     .map(|element| match element.kind() {
-                        TyKind::KgenPointer(pointee) => Ok(pointee.clone()),
+                        TyKind::KgenPointer { element, .. } => Ok(element.clone()),
                         _ => Err(not_pointers()),
                     })
                     .collect::<Result<_, _>>()?,
@@ -318,11 +318,11 @@ impl Checker {
         }
         let element = self.tuple_storage_element(&elements.iter().collect::<Vec<_>>(), index)?;
         let result = match origin {
-            Some(origin) => TyKind::LitRef {
+            Some(origin) => Ty::lit_ref(
                 element,
-                origin: origin.clone(),
-            }
-            .into(),
+                origin.clone(),
+                mojito_types::types::AddressSpaceSlot::GENERIC,
+            ),
             None => element,
         };
         self.record_at(span.clone()).adjustment = Some(Box::new(

@@ -802,7 +802,7 @@ impl MirDeclarations {
             return true;
         }
         match ty.kind() {
-            TyKind::KgenPointer(_)
+            TyKind::KgenPointer { .. }
             | TyKind::LitRef { .. }
             | TyKind::LitRefPack { .. }
             | TyKind::Ref(_) => true,

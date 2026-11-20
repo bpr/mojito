@@ -14,6 +14,7 @@ assets/ok/abs_scalar_aliases.mojo	main	exe-differential	sanitized
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	main	exe-differential	sanitized
 assets/ok/access_beside_live_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/add.mojo	main	exe-differential	sanitized
+assets/ok/address_space_constants.mojo	main	exe-differential	sanitized
 assets/ok/allocation_tracked_unsafe_ptr.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_builtin_arithmetic_fold.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_builtin_comparison_fold.mojo	main	exe-differential	sanitized
@@ -1054,6 +1055,7 @@ assets/ok/pliron_wrap_int_arith.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_pow.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_uint_arith.mojo	main	exe-differential	sanitized
 assets/ok/pointer_address_builtins.mojo	main	exe-differential	sanitized
+assets/ok/pointer_address_space_generic.mojo	main	exe-differential	sanitized
 assets/ok/pointer_augmented_literal_offset.mojo	main	exe-differential	sanitized
 assets/ok/pointer_bound_copy.mojo	main	exe-differential	sanitized
 assets/ok/pointer_deref_store_loan_carrying_pointee.mojo	main	exe-differential	sanitized

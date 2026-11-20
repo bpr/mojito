@@ -9405,12 +9405,51 @@ fn lit_ref_type_reads_an_origin_operand() {
 }
 
 #[test]
-fn lit_ref_type_rejects_other_address_spaces() {
-    // An address space other than the generic `0` is R2204's.
-    let error = err_std(
-        "struct V[T: AnyType, o: ImmOrigin]:\n    comptime R = __mlir_type[`!lit.ref<`, Self.T, `, `, Self.o._mlir_origin, `, `, `1`, `>`]\n\ndef main():\n    var x = 1\n    comptime R = V[Int, origin_of(x)].R\n    print(x)\n",
-    );
-    assert!(error.to_string().contains("address space"), "{error}");
+fn raw_pointer_types_take_an_address_space() {
+    // Upstream's `!lit.ref<T, origin, as>` and `!kgen.pointer<T, as>` name
+    // their address space as a literal index or as an `AddressSpace`'s
+    // `_value._mlir_value`, as `Pointer._mlir_lit_ref` and
+    // `Pointer._mlir_type` spell it.
+    ok_std(concat!(
+        "struct V[T: AnyType, o: ImmOrigin, a: AddressSpace]:\n",
+        "    comptime R = __mlir_type[`!lit.ref<`, Self.T, `, `, Self.o._mlir_origin, `, `, `1`, `>`]\n",
+        "    comptime S = __mlir_type[`!lit.ref<`, Self.T, `, `, Self.o._mlir_origin, `, `, Self.a._value._mlir_value, `>`]\n",
+        "    comptime K = __mlir_type[`!kgen.pointer<`, Self.T, `, `, Self.a._value._mlir_value, `>`]\n",
+        "    comptime L = __mlir_type[`!kgen.pointer<`, Self.T, `, `, `3`, `>`]\n",
+        "def main():\n",
+        "    var x = 1\n",
+        "    comptime R = V[Int, origin_of(x), AddressSpace.SHARED].R\n",
+        "    comptime K = V[Int, origin_of(x), AddressSpace.SHARED].K\n",
+        "    print(x)\n",
+    ));
+}
+
+#[test]
+fn pointer_address_space_must_be_an_address_space() {
+    // The slot takes an `AddressSpace`, never an `Int` or an origin; an
+    // inferred `address_space=_` is R2410's; and a pointer in another space
+    // does not convert to a generic one.
+    for (source, message) in [
+        (
+            "def f(p: Pointer[Int, _, address_space=3]) -> Int:\n    return p[]\n\ndef main():\n    print(1)\n",
+            "expected AddressSpace",
+        ),
+        (
+            "def f(p: Pointer[Int, _, address_space=_]) -> Int:\n    return p[]\n\ndef main():\n    print(1)\n",
+            "R2410",
+        ),
+        (
+            "struct V[T: AnyType, o: ImmOrigin]:\n    comptime R = __mlir_type[`!lit.ref<`, Self.T, `, `, Self.o._mlir_origin, `, `, Self.o._mlir_origin, `>`]\n\ndef main():\n    var x = 1\n    comptime R = V[Int, origin_of(x)].R\n    print(x)\n",
+            "index",
+        ),
+        (
+            "def main():\n    var x = 5\n    var y: Pointer[Int, origin_of(x)] = Pointer(to=x).unsafe_address_space_cast[AddressSpace.LOCAL]()\n    print(y[])\n",
+            "address_space=AddressSpace.LOCAL",
+        ),
+    ] {
+        let error = err_std(source);
+        assert!(error.to_string().contains(message), "{error}");
+    }
 }
 
 #[test]
@@ -9536,26 +9575,26 @@ fn kgen_pointer_maps_and_load_indirect_type_as_upstream() {
         "def main():\n",
         "    print(popcount(Int32(7)))\n",
     ));
-    for (source, message) in [
-        (
-            "def main():\n    var x = 1\n    var y = __mlir_op.`kgen.struct.load_indirect`(x)\n",
-            "op operand must be a '!kgen.struct' of '!kgen.pointer's",
-        ),
-        (
-            concat!(
-                "from std.builtin.variadics import _MLIR\n",
-                "struct P[*Ts: AnyType]:\n",
-                "    comptime _pointers = __mlir_attr[\n",
-                "        `#kgen.param.expr<variadic_ptr_map, `, rebind[\n",
-                "            _MLIR.KGENParamListType[__mlir_type.`!kgen.type`]\n",
-                "        ](Self.Ts.values),\n",
-                "        `, 1: index>: `, _MLIR.KGENParamListType[__mlir_type.`!kgen.type`],\n",
-                "    ]\n",
-                "def main():\n    print(1)\n",
-            ),
-            "is outside the subset",
-        ),
-    ] {
+    // The map takes any address space, each pointer carrying it.
+    ok_std(concat!(
+        "from std.builtin.variadics import _MLIR\n",
+        "struct P[*Ts: AnyType]:\n",
+        "    comptime _pointers = __mlir_attr[\n",
+        "        `#kgen.param.expr<variadic_ptr_map, `, rebind[\n",
+        "            _MLIR.KGENParamListType[__mlir_type.`!kgen.type`]\n",
+        "        ](Self.Ts.values),\n",
+        "        `, 1: index>: `, _MLIR.KGENParamListType[__mlir_type.`!kgen.type`],\n",
+        "    ]\n",
+        "    comptime _removed = __mlir_attr[\n",
+        "        `#kgen.param.expr<variadic_ptrremove_map, `, Self._pointers,\n",
+        "        `>: `, _MLIR.KGENParamListType[__mlir_type.`!kgen.type`],\n",
+        "    ]\n",
+        "def main():\n    print(1)\n",
+    ));
+    for (source, message) in [(
+        "def main():\n    var x = 1\n    var y = __mlir_op.`kgen.struct.load_indirect`(x)\n",
+        "op operand must be a '!kgen.struct' of '!kgen.pointer's",
+    )] {
         let error = err_std(source);
         assert!(error.to_string().contains(message), "{error}");
     }

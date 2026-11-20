@@ -1415,6 +1415,15 @@ fn ty_raw(ty: &Ty, self_ty: Option<&Ty>) -> String {
     clippy::format_push_string,
     reason = "TODO: write! into the buffer instead"
 )]
+/// The key suffix of a pointer's address space: empty for the generic one.
+fn address_space_raw(address_space: &mojito_types::types::AddressSpaceSlot) -> String {
+    match address_space.known() {
+        Some(0) => String::new(),
+        Some(space) => format!("$as{space}"),
+        None => format!("$as{}", encode_identifier(&address_space.to_string())),
+    }
+}
+
 fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
     // Canonicalize the enclosing struct type to `Self` however it is spelled
     // (`Self`, `Pair`, or `List[Self.T]` inside `List`). The declaration side
@@ -1576,15 +1585,34 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // user-facing name is `Pointer`: this string is internal callable
         // identity, and renaming it would churn every symbol golden for no
         // user-visible gain.
-        pointer if let Some(element) = pointer.pointer_element() => {
-            format!("UnsafePointer${}", ty_raw_in(element, self_ty, mode))
-        }
-        TyKind::KgenPointer(element) => {
-            format!("KgenPointer${}", ty_raw_in(element, self_ty, mode))
-        }
-        TyKind::LitRef { element, .. } => {
-            format!("LitRef${}", ty_raw_in(element, self_ty, mode))
-        }
+        // A non-generic address space is part of the pointer's identity; the
+        // generic one spells nothing, so a generic pointer's key is unchanged.
+        TyKind::Pointer {
+            element,
+            address_space,
+            ..
+        } => format!(
+            "UnsafePointer${}{}",
+            ty_raw_in(element, self_ty, mode),
+            address_space_raw(address_space)
+        ),
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => format!(
+            "KgenPointer${}{}",
+            ty_raw_in(element, self_ty, mode),
+            address_space_raw(address_space)
+        ),
+        TyKind::LitRef {
+            element,
+            address_space,
+            ..
+        } => format!(
+            "LitRef${}{}",
+            ty_raw_in(element, self_ty, mode),
+            address_space_raw(address_space)
+        ),
         TyKind::LitRefPack { elements, .. } => format!(
             "LitRefPack${}",
             elements
@@ -2646,26 +2674,38 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         // A caller place a clone binder stands for spells as the first
         // clone binder (`Elab::clone_binding`): one clone serves every place
         // of the shape, as an erased struct origin tail does.
-        pointer if let Some((element, origin)) = pointer.as_pointer() => Ty::pointer(
-            respell(&element),
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        } => Ty::pointer(
+            respell(element),
             origin.clone_bindable_place().map_or_else(
                 || origin.clone(),
                 |projection| {
                     projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
                 },
             ),
+            address_space.clone(),
         ),
-        TyKind::KgenPointer(element) => TyKind::KgenPointer(respell(element)).into(),
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
-            element: respell(element),
-            origin: origin.clone_bindable_place().map_or_else(
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(respell(element), address_space.clone()),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => Ty::lit_ref(
+            respell(element),
+            origin.clone_bindable_place().map_or_else(
                 || origin.clone(),
                 |projection| {
                     projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
                 },
             ),
-        }
-        .into(),
+            address_space.clone(),
+        ),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
             elements: elements.iter().map(respell).collect(),
             origin: origin.clone_bindable_place().map_or_else(

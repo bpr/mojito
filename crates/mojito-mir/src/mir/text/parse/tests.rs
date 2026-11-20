@@ -272,7 +272,11 @@ fn type_families_reprint_byte_identically() {
                 TyKind::Variant(vec![Ty::int(), Ty::none()]).into(),
                 TyKind::PopArray {
                     size: mojito_types::types::ArraySize::Known(2),
-                    element: Ty::pointer(Ty::int(), PointerOrigin::Untracked { mutable: false }),
+                    element: Ty::pointer(
+                        Ty::int(),
+                        PointerOrigin::Untracked { mutable: false },
+                        mojito_types::types::AddressSpaceSlot::GENERIC,
+                    ),
                 }
                 .into(),
                 Ty::pointer(
@@ -284,6 +288,7 @@ fn type_families_reprint_byte_identically() {
                         },
                         mutable: true,
                     },
+                    mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
                 Ty::pointer(
                     Ty::int(),
@@ -293,6 +298,7 @@ fn type_families_reprint_byte_identically() {
                         interior: vec!["element".into()],
                         subtree: true,
                     },
+                    mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
                 Ty::pointer(
                     Ty::int(),
@@ -301,21 +307,45 @@ fn type_families_reprint_byte_identically() {
                         interior: Vec::new(),
                         subtree: false,
                     },
+                    mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                Ty::pointer(Ty::int(), PointerOrigin::Static),
-                Ty::pointer(Ty::int(), PointerOrigin::Untracked { mutable: false }),
-                Ty::pointer(Ty::int(), PointerOrigin::UnsafeAny { mutable: true }),
-                TyKind::KgenPointer(Ty::int()).into(),
-                TyKind::LitRef {
-                    element: Ty::int(),
-                    origin: PointerOrigin::Param {
+                Ty::pointer(
+                    Ty::int(),
+                    PointerOrigin::Static,
+                    mojito_types::types::AddressSpaceSlot::GENERIC,
+                ),
+                Ty::pointer(
+                    Ty::int(),
+                    PointerOrigin::Untracked { mutable: false },
+                    mojito_types::types::AddressSpaceSlot::GENERIC,
+                ),
+                Ty::pointer(
+                    Ty::int(),
+                    PointerOrigin::UnsafeAny { mutable: true },
+                    mojito_types::types::AddressSpaceSlot::GENERIC,
+                ),
+                Ty::pointer(
+                    Ty::int(),
+                    PointerOrigin::Static,
+                    mojito_types::types::AddressSpaceSlot::Known(5),
+                ),
+                Ty::kgen_pointer(Ty::int(), mojito_types::types::AddressSpaceSlot::GENERIC),
+                Ty::kgen_pointer(Ty::int(), mojito_types::types::AddressSpaceSlot::Known(3)),
+                Ty::lit_ref(
+                    Ty::int(),
+                    PointerOrigin::Param {
                         id: OriginParamId(0),
                         mutability: Mutability::Immutable,
                         interior: Vec::new(),
                         subtree: false,
                     },
-                }
-                .into(),
+                    mojito_types::types::AddressSpaceSlot::GENERIC,
+                ),
+                Ty::lit_ref(
+                    Ty::int(),
+                    PointerOrigin::Static,
+                    mojito_types::types::AddressSpaceSlot::Known(1),
+                ),
                 TyKind::LitRefPack {
                     elements: vec![Ty::int(), Ty::float64()],
                     origin: PointerOrigin::Param {
@@ -880,6 +910,7 @@ fn frozen_pointer_constant_round_trip() {
     let ty = Ty::pointer(
         Ty::int(),
         mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+        mojito_types::types::AddressSpaceSlot::GENERIC,
     );
     let instructions = values
         .into_iter()
@@ -3178,7 +3209,11 @@ fn param_list_addresses_round_trip() {
         "values",
         MetaTy::ParamList(Box::new(MetaTy::int())),
     );
-    let pointer = Ty::pointer(Ty::int(), mojito_types::origin::PointerOrigin::Static);
+    let pointer = Ty::pointer(
+        Ty::int(),
+        mojito_types::origin::PointerOrigin::Static,
+        mojito_types::types::AddressSpaceSlot::GENERIC,
+    );
     for values in [
         Const::Param(list),
         Const::Value(mojito_types::ct::CtValue::Tuple(vec![
@@ -4803,7 +4838,9 @@ fn older_load_indirect_rebinds_its_reference_pack() {
     let pointers: Ty = TyKind::Tuple(
         elements
             .into_iter()
-            .map(|element| TyKind::KgenPointer(element).into())
+            .map(|element| {
+                Ty::kgen_pointer(element, mojito_types::types::AddressSpaceSlot::GENERIC)
+            })
             .collect(),
     )
     .into();

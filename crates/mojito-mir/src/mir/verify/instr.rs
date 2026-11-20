@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::ArgConvention;
+use mojito_types::types::AddressSpaceSlot;
 use mojito_types::types::TyKind;
 use mojito_types::types::storage_ty;
 
@@ -1351,7 +1352,7 @@ fn verify_pop(
             ));
         }
         if let Some(found) = operands.first().and_then(|operand| cx.reg_ty(*operand))
-            && !matches!(found.kind(), TyKind::KgenPointer(_))
+            && !matches!(found.kind(), TyKind::KgenPointer { .. })
         {
             errors.push(format!(
                 "{prefix}: pop.{} reads an operand of type {found}, not a `!kgen.pointer`",
@@ -1643,7 +1644,7 @@ fn verify_array_op(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<St
 fn verify_array_gep(cx: &InstrCx<'_>, dest: Reg, array: Reg, index: Reg, errors: &mut Vec<String>) {
     let prefix = cx.prefix;
     let element = cx.reg_ty(array).and_then(|pointer| match pointer.kind() {
-        TyKind::KgenPointer(array) => match array.kind() {
+        TyKind::KgenPointer { element: array, .. } => match array.kind() {
             TyKind::PopArray { element, .. } => Some(element.clone()),
             _ => None,
         },
@@ -1663,7 +1664,8 @@ fn verify_array_gep(cx: &InstrCx<'_>, dest: Reg, array: Reg, index: Reg, errors:
         ));
     }
     if let Some(result) = cx.reg_ty(dest)
-        && !matches!(result.kind(), TyKind::KgenPointer(found) if types_compatible(found, &element))
+        && !matches!(result.kind(), TyKind::KgenPointer { element: found, .. }
+            if types_compatible(found, &element))
     {
         errors.push(format!(
             "{prefix}: array.gep result {result} is not a `!kgen.pointer` to its element type \
@@ -1680,7 +1682,9 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
         return;
     };
     let element = |ty: &Ty| match ty.kind() {
-        TyKind::KgenPointer(element) | TyKind::LitRef { element, .. } => Some(element.clone()),
+        TyKind::KgenPointer { element, .. } | TyKind::LitRef { element, .. } => {
+            Some(element.clone())
+        }
         // A `ref` value is the `!lit.ref` upstream holds it as.
         TyKind::Ref(reference) => Some(reference.referent.clone()),
         pointer => pointer.pointer_element().cloned(),
@@ -1699,10 +1703,24 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
             cx.prefix
         ));
     }
+    if let (Some(to_space), Some(from_space)) = (
+        to.kind()
+            .pointer_address_space()
+            .and_then(AddressSpaceSlot::known),
+        from.kind()
+            .pointer_address_space()
+            .and_then(AddressSpaceSlot::known),
+    ) && to_space != from_space
+    {
+        errors.push(format!(
+            "{}: pointer conversion from {from} to {to} changes the address space",
+            cx.prefix
+        ));
+    }
 }
 
-/// `pop.pointer.bitcast` retypes a `Pointer`'s pointee and keeps its
-/// origin, as `unsafe_bitcast` declares its result
+/// `pop.pointer.bitcast` retypes a `Pointer`'s pointee or address space
+/// and keeps its origin, as `unsafe_bitcast` declares its result
 /// `Pointer[U, Self.origin]`, or retypes one `!kgen.pointer` to another,
 /// as upstream's op does.
 fn verify_pointer_bitcast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec<String>) {
@@ -1711,7 +1729,7 @@ fn verify_pointer_bitcast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
     };
     if matches!(
         (to.kind(), from.kind()),
-        (TyKind::KgenPointer(_), TyKind::KgenPointer(_))
+        (TyKind::KgenPointer { .. }, TyKind::KgenPointer { .. })
     ) {
         return;
     }

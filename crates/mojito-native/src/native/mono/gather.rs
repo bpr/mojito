@@ -69,8 +69,8 @@ impl Specializer<'_> {
             };
             let element = site.and_then(|(op, register)| {
                 let mut ty = reg_types.get(&register.0)?;
-                if let TyKind::KgenPointer(pointee) = ty.kind() {
-                    ty = pointee;
+                if let TyKind::KgenPointer { element, .. } = ty.kind() {
+                    ty = element;
                 }
                 match ty.kind() {
                     TyKind::PopArray { element, .. } => Some((op, element)),

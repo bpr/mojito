@@ -102,9 +102,28 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
             || found_size.known() == expected_size.known())
             && types_compatible(found_element, expected_element);
     }
+    // Two pointers in different known address spaces are distinct types;
+    // only a `pop.pointer.bitcast` moves a pointer between them.
+    if let (Some(found_space), Some(expected_space)) = (
+        found.kind().pointer_address_space(),
+        expected.kind().pointer_address_space(),
+    ) && let (Some(found_space), Some(expected_space)) =
+        (found_space.known(), expected_space.known())
+        && found_space != expected_space
+    {
+        return false;
+    }
     // A `!kgen.pointer` is its element's address.
-    if let (TyKind::KgenPointer(found_element), TyKind::KgenPointer(expected_element)) =
-        (found.kind(), expected.kind())
+    if let (
+        TyKind::KgenPointer {
+            element: found_element,
+            ..
+        },
+        TyKind::KgenPointer {
+            element: expected_element,
+            ..
+        },
+    ) = (found.kind(), expected.kind())
     {
         return types_compatible(found_element, expected_element);
     }
@@ -352,7 +371,7 @@ pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
         TyKind::RuntimePack(_) => true,
         TyKind::ComptimeList(inner)
         | TyKind::PopArray { element: inner, .. }
-        | TyKind::KgenPointer(inner)
+        | TyKind::KgenPointer { element: inner, .. }
         | TyKind::LitRef { element: inner, .. } => contains_runtime_pack(inner),
         pointer if let Some(inner) = pointer.pointer_element() => contains_runtime_pack(inner),
         TyKind::Tuple(elements)
@@ -544,27 +563,31 @@ pub(super) fn instantiate_checked_type(
                 .collect::<Result<Vec<_>, _>>()?,
         )
         .into(),
-        pointer if let Some((element, origin)) = pointer.as_pointer() => Ty::pointer(
-            instantiate_checked_type(&element, type_arguments, value_arguments, bound_values)?,
-            origin,
-        ),
-        TyKind::KgenPointer(element) => TyKind::KgenPointer(instantiate_checked_type(
+        TyKind::Pointer {
             element,
-            type_arguments,
-            value_arguments,
-            bound_values,
-        )?)
-        .into(),
-        TyKind::LitRef { element, origin } => TyKind::LitRef {
-            element: instantiate_checked_type(
-                element,
-                type_arguments,
-                value_arguments,
-                bound_values,
-            )?,
-            origin: origin.clone(),
-        }
-        .into(),
+            origin,
+            address_space,
+        } => Ty::pointer(
+            instantiate_checked_type(element, type_arguments, value_arguments, bound_values)?,
+            origin.clone(),
+            instantiate_address_space(address_space, value_arguments)?,
+        ),
+        TyKind::KgenPointer {
+            element,
+            address_space,
+        } => Ty::kgen_pointer(
+            instantiate_checked_type(element, type_arguments, value_arguments, bound_values)?,
+            instantiate_address_space(address_space, value_arguments)?,
+        ),
+        TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } => Ty::lit_ref(
+            instantiate_checked_type(element, type_arguments, value_arguments, bound_values)?,
+            origin.clone(),
+            instantiate_address_space(address_space, value_arguments)?,
+        ),
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = instantiate_checked_type(
@@ -711,7 +734,7 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         | TyKind::ParamList(inner)
         | TyKind::VariadicPack(inner)
         | TyKind::PopArray { element: inner, .. }
-        | TyKind::KgenPointer(inner)
+        | TyKind::KgenPointer { element: inner, .. }
         | TyKind::LitRef { element: inner, .. } => contains_type_param(inner),
         pointer if let Some(inner) = pointer.pointer_element() => contains_type_param(inner),
         TyKind::Tuple(elements)
@@ -779,6 +802,23 @@ fn signature_origins_erased(ty: &Ty) -> Ty {
         }
     });
     erased
+}
+
+/// A pointer's address-space slot at a checked instance's value
+/// arguments, as a `!pop.array`'s size closes.
+fn instantiate_address_space(
+    address_space: &mojito_types::types::AddressSpaceSlot,
+    value_arguments: &HashMap<String, CtValue>,
+) -> Result<mojito_types::types::AddressSpaceSlot, String> {
+    address_space
+        .try_map(|space| {
+            let context = ParamContext::detached();
+            let bindings = ParamBindings::from_named_values(&context, value_arguments);
+            context
+                .replace(space, &bindings)
+                .and_then(|space| context.fold(&space))
+        })
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

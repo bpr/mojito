@@ -132,6 +132,7 @@ fn tracked_pointer_ty(element: Ty, mutable: bool) -> Ty {
             },
             mutable,
         },
+        mojito::types::AddressSpaceSlot::GENERIC,
     )
 }
 
@@ -303,7 +304,14 @@ fn verifier_checks_make_ref_capability_types() {
             MirTerm::Return(None),
         ),
         1,
-        &[(0, Ty::pointer(Ty::int(), mojito::PointerOrigin::Static))],
+        &[(
+            0,
+            Ty::pointer(
+                Ty::int(),
+                mojito::PointerOrigin::Static,
+                mojito::types::AddressSpaceSlot::GENERIC,
+            ),
+        )],
     );
     expect_finding(
         &program(raw_pointer),
@@ -1750,6 +1758,7 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
     let pointer = Ty::pointer(
         Ty::int(),
         mojito::PointerOrigin::Untracked { mutable: true },
+        mojito::types::AddressSpaceSlot::GENERIC,
     );
 
     let mut wrong_element = MirPlace::root(0, Some(pointer.clone()));

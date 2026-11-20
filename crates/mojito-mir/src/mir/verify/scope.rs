@@ -460,10 +460,27 @@ impl ScopeCx<'_> {
             }
             TyKind::ComptimeList(element)
             | TyKind::ParamList(element)
-            | TyKind::VariadicPack(element)
-            | TyKind::Pointer { element, .. }
-            | TyKind::KgenPointer(element)
-            | TyKind::LitRef { element, .. } => {
+            | TyKind::VariadicPack(element) => {
+                self.walk_in(role, element, nested);
+            }
+            TyKind::Pointer {
+                element,
+                address_space,
+                ..
+            }
+            | TyKind::KgenPointer {
+                element,
+                address_space,
+            }
+            | TyKind::LitRef {
+                element,
+                address_space,
+                ..
+            } => {
+                if let Some(expr) = address_space.expr() {
+                    let space = MetaTy::value(mojito_types::types::address_space_ty());
+                    self.expr(role, "address space", expr, &space, nested);
+                }
                 self.walk_in(role, element, nested);
             }
             TyKind::LitRefPack { elements, .. } => {

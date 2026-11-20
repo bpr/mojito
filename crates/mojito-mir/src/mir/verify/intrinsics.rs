@@ -36,11 +36,11 @@ pub(super) fn verify_intrinsic_index(
             references = elements
                 .iter()
                 .map(|element| {
-                    TyKind::LitRef {
-                        element: element.clone(),
-                        origin: origin.clone(),
-                    }
-                    .into()
+                    Ty::lit_ref(
+                        element.clone(),
+                        origin.clone(),
+                        mojito_types::types::AddressSpaceSlot::GENERIC,
+                    )
                 })
                 .collect();
             Some(references.iter().collect::<Vec<_>>())
