@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::{TyKind, erase_origin_arguments};
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// A `struct.create`: fresh storage of `dest`'s struct type with each
@@ -151,31 +151,12 @@ impl FnLowering<'_> {
             let handle = ScalarTy::Ptr.handle(ctx);
             let load = LoadOp::new(ctx, address, handle);
             self.append(ctx, load.get_operation(), Some(dest));
-            if reference.referent.is_pointer() {
-                self.pointer_slot_refs.insert(dest.0);
-            }
             self.reg_values.insert(dest.0, load.get_result(ctx));
             return Ok(());
         }
-        // A reference typed as one to the pointer itself, whatever origin
-        // either spells, borrows its storage: a read of it is the pointer,
-        // not its pointee.
-        let borrows_pointer = match (self.func.reg_types.get(&dest.0).map(Ty::kind), ty.kind()) {
-            (Some(TyKind::Ref(reference)), pointer)
-                if let Some(element) = pointer.pointer_element() =>
-            {
-                reference
-                    .referent
-                    .pointer_element()
-                    .is_some_and(|referent| {
-                        erase_origin_arguments(referent) == erase_origin_arguments(element)
-                    })
-            }
-            _ => false,
-        };
-        if ty.is_pointer() && !borrows_pointer {
-            self.pointer_slot_refs.insert(dest.0);
-        }
+        // The handle designates the place's storage, as upstream's
+        // `!lit.ref` does: a handle to a slot holding a `Pointer` reads and
+        // writes that pointer, never its pointee.
         self.made_ref_places.insert(
             dest.0,
             MirPlace {
@@ -197,15 +178,7 @@ impl FnLowering<'_> {
         dest: Reg,
         reference: Reg,
     ) -> Result<(), PlironError> {
-        let mut pointer = self.reg_value(ctx, reference, ScalarTy::Ptr)?;
-        // A handle addressing pointer-typed storage dereferences through the
-        // stored pointer (the VM's reference-pointer boundary).
-        if self.pointer_slot_refs.contains(&reference.0) {
-            let handle = ScalarTy::Ptr.handle(ctx);
-            let load = LoadOp::new(ctx, pointer, handle);
-            self.append(ctx, load.get_operation(), Some(dest));
-            pointer = load.get_result(ctx);
-        }
+        let pointer = self.reg_value(ctx, reference, ScalarTy::Ptr)?;
         let Some(ty) = self.func.reg_types.get(&dest.0).cloned() else {
             return Err(self.unsupported_reg("untyped reference read".into(), dest));
         };
@@ -219,15 +192,7 @@ impl FnLowering<'_> {
         reference: Reg,
         value: Reg,
     ) -> Result<(), PlironError> {
-        let mut pointer = self.reg_value(ctx, reference, ScalarTy::Ptr)?;
-        // See `lower_read_ref`: a handle addressing pointer-typed storage
-        // dereferences through the stored pointer.
-        if self.pointer_slot_refs.contains(&reference.0) {
-            let handle = ScalarTy::Ptr.handle(ctx);
-            let load = LoadOp::new(ctx, pointer, handle);
-            self.append(ctx, load.get_operation(), Some(value));
-            pointer = load.get_result(ctx);
-        }
+        let pointer = self.reg_value(ctx, reference, ScalarTy::Ptr)?;
         let Some(ty) = self.func.reg_types.get(&value.0).cloned() else {
             return Err(self.unsupported_reg("untyped reference write".into(), value));
         };

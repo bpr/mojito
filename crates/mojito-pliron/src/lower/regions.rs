@@ -340,7 +340,6 @@ impl FnLowering<'_> {
             let facts = EdgeFacts {
                 shared: self.storage_reads.contains(&src.0)
                     || self.aliased_load_regs.contains(&src.0),
-                pointer_ref: self.pointer_slot_refs.contains(&src.0),
                 constant: if self.register_literal(*src).is_some()
                     || self.is_string_constant(*src)
                     || self.int_consts.contains_key(&src.0)
@@ -461,9 +460,6 @@ impl FnLowering<'_> {
                     if !folded {
                         self.reg_values.insert(reg.0, value);
                     }
-                    if facts.pointer_ref {
-                        self.pointer_slot_refs.insert(reg.0);
-                    }
                 }
                 CarrySlot::Aggregate { .. } if folded => {}
                 CarrySlot::Aggregate {
@@ -521,15 +517,12 @@ enum CarrySlot {
 struct EdgeFacts {
     /// Some edge carried bytes sharing another owner's buffers.
     shared: bool,
-    /// Some edge carried a handle to pointer-typed storage.
-    pointer_ref: bool,
     constant: Constant,
 }
 
 impl EdgeFacts {
     fn join(&mut self, edge: &Self) {
         self.shared |= edge.shared;
-        self.pointer_ref |= edge.pointer_ref;
         self.constant = match (self.constant, edge.constant) {
             (Constant::Unknown, constant) => constant,
             (Constant::Same(a), Constant::Same(b)) if a == b => Constant::Same(a),

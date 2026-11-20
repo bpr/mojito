@@ -1149,6 +1149,7 @@ assets/ok/ref_binding_operand_passes_stored_handle.mojo	-	ineligible	no-scalar-e
 assets/ok/ref_binding_owned_subscript_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_binding_projected_field_offset.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_binding_temporary_source.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_binding_to_pointer_reads_pointer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_result_field_value_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_result_through_read_param.mojo	-	ineligible	no-scalar-entry-shape
@@ -1676,6 +1677,7 @@ assets/ok/tuple_of_scalars_comparison.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_one_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_pointer_element_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_reverse_concat.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_reverse_concat_pointer_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_static_len_open_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_struct_element_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_template_served.mojo	-	ineligible	no-scalar-entry-shape

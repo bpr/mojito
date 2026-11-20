@@ -74,7 +74,7 @@ pub(super) fn verify_loan_instruction(
                 // projections extend it. Which prefix is not recorded, so the
                 // capability target has to match one of them.
                 if let Some(capability) = through_capability
-                    && let Some(designations) = through_designations(&loan.place)
+                    && let Some(designations) = through_designations(&loan.place, cx.function)
                     && !designations
                         .iter()
                         .any(|target| types_compatible(capability.target, target))
@@ -172,10 +172,16 @@ pub(super) fn verify_loan_instruction(
 /// chain at one of these positions and the place's remaining projections run
 /// from there; `through` does not record which position, so every one of them
 /// is an admissible capability target.
-fn through_designations(place: &MirPlace) -> Option<Vec<&Ty>> {
+fn through_designations<'p>(place: &'p MirPlace, function: &MirFunction) -> Option<Vec<&'p Ty>> {
     let root = place.root_ty.as_ref()?;
-    let mut designations =
-        vec![reference_capability(root).map_or(root, |capability| capability.target)];
+    // The root designates what `make_ref_target` says its whole designates:
+    // a pointer root reached through another slot is the pointer itself.
+    let root_designation = if pointer_root_is_value(place, function) {
+        root
+    } else {
+        reference_capability(root).map_or(root, |capability| capability.target)
+    };
+    let mut designations = vec![root_designation];
     // A `ref` field designates its referent too, which a read of the field
     // reaches through the handle it holds.
     for ty in &place.projection_tys {

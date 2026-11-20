@@ -4863,7 +4863,15 @@ the pointer, not its pointee, unless the place reads through the slot
 verifier's `make_ref_target` and Pliron's `designated_ty`
 (`lower/places.rs`) share that rule, which the VM's representation keeps
 (a place pointer is a `Value::PlacePointer`, never a `Value::Ref`), as upstream
-addresses a pointer local only through a `!lit.ref`.
+addresses a pointer local only through a `!lit.ref`. The verifier's loan check
+(`through_designations`, `verify/loans.rs`) takes a pointer root's designation
+from the same rule (`pointer_root_is_value`). Neither backend keeps a
+reference-pointer boundary: a `MakeRef` of a slot holding a pointer is a handle
+to that slot, and a `ReadRef`/`WriteRef` through it reads or writes the pointer
+itself, as `Pointer(to=result[i]).unsafe_write(p)` stores `p` into the element.
+A `ref` binding whose referent is a pointer is read through the binding
+(`Flatten::read_slot`), as any referent is, so its subscript dereferences the
+pointer it designates.
 
 ### Important MIR Instructions
 

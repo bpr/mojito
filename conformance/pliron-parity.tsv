@@ -1150,6 +1150,7 @@ assets/ok/ref_binding_operand_passes_stored_handle.mojo	main	exe-differential	sa
 assets/ok/ref_binding_owned_subscript_result.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized
+assets/ok/ref_binding_to_pointer_reads_pointer.mojo	main	exe-differential	sanitized
 assets/ok/ref_param.mojo	main	exe-differential	sanitized
 assets/ok/ref_result_field_value_copy.mojo	main	exe-differential	sanitized
 assets/ok/ref_result_through_read_param.mojo	main	exe-differential	sanitized
@@ -1677,6 +1678,7 @@ assets/ok/tuple_of_scalars_comparison.mojo	main	exe-differential	sanitized
 assets/ok/tuple_one_element.mojo	main	exe-differential	sanitized
 assets/ok/tuple_pointer_element_write.mojo	main	exe-differential	sanitized
 assets/ok/tuple_reverse_concat.mojo	main	exe-differential	sanitized
+assets/ok/tuple_reverse_concat_pointer_elements.mojo	main	exe-differential	sanitized
 assets/ok/tuple_static_len_open_pack.mojo	main	exe-differential	sanitized
 assets/ok/tuple_struct_element_equality.mojo	main	exe-differential	sanitized
 assets/ok/tuple_template_served.mojo	main	exe-differential	sanitized

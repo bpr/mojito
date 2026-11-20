@@ -104,7 +104,10 @@ impl<'a> Flatten<'a> {
     }
 
     /// Read slot `var` at `location`; `node` is the name node read, whose
-    /// type and adjustments decide a pointer read and a checked value copy.
+    /// adjustments decide a checked value copy. A `ref` binding reads its
+    /// referent through the binding whatever the referent's type, so a
+    /// binding of a `Pointer` reads the pointer it designates, never the
+    /// binding's own handle.
     pub(in crate::mir) fn read_slot(
         &mut self,
         var: VarId,
@@ -112,30 +115,16 @@ impl<'a> Flatten<'a> {
         node: Option<&CheckedExpr>,
     ) -> Reg {
         let d = self.fresh(location.clone(), Some(var));
-        if origin_bearing_pointer(node.and_then(|node| node.ty.as_ref())) {
-            // A pointer variable's read is its pointer value: both
-            // backends read a pointer-typed slot as the handle it
-            // stores (the VM keys `UseVar` on the variable's pointer
-            // type), so a copy into another local, a binding, or a
-            // call argument carries the pointee's address rather than
-            // a handle to this slot.
-            self.emit(MirInstr::UseVar {
-                dest: d,
-                var,
-                mode: UseMode::Copy,
-                constructor: None,
-            });
-            return d;
-        }
         if let Some(loan) = self.aliases.get(&var).cloned() {
             let mut place = loan.place;
             place.through = Some(var);
             self.emit(MirInstr::LoadPlace { dest: d, place });
         } else if self.runtime_aliases.contains(&var) {
             // A read borrows the referent immutably, whatever the handle
-            // the slot holds lets a write do.
+            // the slot holds lets a write do. The handle is typed from the
+            // binding's storage, as `binding_reference` types it: a
+            // `Pointer` referent is the value read, not a pointer to chase.
             let mut place = MirPlace::root(var, self.var_types.get(&var).cloned());
-            place.through = Some(var);
             let handle = match mir_place_handle_ty(
                 &place,
                 Some(mojito_types::origin::Mutability::Immutable),
@@ -143,6 +132,7 @@ impl<'a> Flatten<'a> {
                 Some(ty) => self.fresh_typed(location.clone(), Some(var), ty),
                 None => self.fresh(location.clone(), Some(var)),
             };
+            place.through = Some(var);
             self.emit(MirInstr::MakeRef {
                 dest: handle,
                 place,

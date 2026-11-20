@@ -1026,6 +1026,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A place holding a `Pointer` is addressed as that place, never as the
+  pointer's pointee: natively, `Pointer(to=result[i]).unsafe_write(p)` over
+  a pointer element stores `p` instead of writing through the uninitialized
+  element, so `(Pointer(to=x), 7).reverse()` and `concat` over pointer
+  elements print the pin's output instead of crashing; on both backends a
+  `ref` binding of a pointer (`ref s = p`, `ref u = t[0]`, a `ref` of such
+  a binding) reads the pointer through the binding instead of its own
+  handle (R2196).
 - A bracket keyword naming an infer-only parameter after a positional
   argument is "unexpected keyword parameter", as at the pin, for calls and
   struct applications alike (`f[Int, o=origin_of(x)]`,

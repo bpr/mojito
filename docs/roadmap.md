@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2404**.
+Next free ID: **R2405**.
 
 ## Ordered Work
 
@@ -7561,37 +7561,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2196 A `Pointer` held in a place is addressed as its pointee, so
-  a pointer to it reads or writes the wrong storage**
-
-  `Pointer(to=place)` over a place holding a `Pointer` (a local, a tuple
-  element, a pack element's slot) must address that place, where both
-  backends reach the held pointer's pointee.
-  - VM: `canonical_reference_parts` (`vm/references.rs`) adopts a
-    `Value::Ref` stored in the addressed root slot, so a read or write
-    through the outer pointer chases the inner one.
-  - Pliron: `Pointer(to=result[i]).unsafe_write(p)` over a `Pointer`
-    element loads the element slot as a pointer and stores `p` through it
-    (`store ptr %p, ptr (load result+8)`), so an uninitialized element
-    crashes.
-  - Probe: `var p = Pointer(to=x)`, `var pp = Pointer(to=p)`, `var q =
-    pp[]`, `print(q[])` prints `0` on the VM; the pin and Pliron print
-    `4`.
-  - Probe: `Pointer(to=t[1]).unsafe_take_pointee()[]` over `t =
-    (Pointer(to=left), Pointer(to=right))` prints `0` on the VM; the pin
-    prints `8`.
-  - Probe: `(Pointer(to=left), 7).reverse()` prints `7 0` on the VM and
-    crashes natively; the pin prints `7 4` (`Tuple.reverse` writes each
-    element through `Pointer(to=result[i])`).
-  - Probe: with R2197's upstream `Tuple.__init__`, which writes each
-    element through `Pointer(to=self[idx])`,
-    `assets/ok/pointer_tuple_field_write.mojo` and
-    `tuple_pointer_element_write.mojo` print `0 0` on the VM and crash
-    natively, where they print `4 10`.
-  - Found while landing R1927 (2026-11-14).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1817 With one caller, a function over `Optional[Pointer[Int, _]]`
   prints `None` for `p.value()[]`**
 
@@ -10273,8 +10242,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `_value`, mark the slot destroyed, and `struct.create` the callee's
     type. The moved register is untyped there; take its type from the
     `var.use`'s slot.
-  - With that conversion and R2196, the 60 fixtures that build or forward
-    an owned pack or construct a `Tuple` kept their output on the VM.
+  - With that conversion, the 60 fixtures that build or forward an owned
+    pack or construct a `Tuple` kept their output on the VM. The
+    upstream-shaped `Tuple.__init__`'s `Pointer(to=self[idx])` writes
+    store each element, pointers included, on both backends.
   - `VariadicPack.__deinit__` then destroys the elements last to first.
   - Probe: `owned_pack_destroyed_in_reverse.mojo`,
     `pack_constructor_spread_served.mojo`, `pack_struct_getitem.mojo`,
@@ -10330,6 +10301,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2197.
   - Model: Fable, Not Planned.
 
+- [ ] **R2404 The verifier admits a `UseVar` move of a reference slot into
+  a register typed as the referent**
+
+  `reference_read` (`mir/verify/concrete.rs`) exempts a moving `UseVar` of
+  a `ref`-typed slot, since a move transfers the handle, but never checks
+  that the destination is typed as that handle.
+  - A copy of a reference slot that last-use promotion turns into a move
+    therefore passes, though the register holds the handle and its
+    consumers read it as the referent.
+  - This hid R2196's `read_slot` shortcut: `ref s = p; s[] = 7` over
+    `var p = Pointer(to=x)` lowered to `var.use { var: $v2, mode: move }`
+    typed `Pointer`, then `ref.write` overwrote `p`'s slot.
+  - Lever: a moving `UseVar` of a `TyKind::Ref` slot must yield a register
+    whose type is the slot's `Ref` (or a reference to the same referent);
+    add the case to `reference_read` and its unit test.
+  - Enforce sites-first: run `scripts/smoke --suites` and `scripts/focused`
+    over the rule and fix every site it reports in the same session.
+  - Found while landing R2196 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1929 A read collector cannot keep alive the owner of an element
   read through a call's reference result**
 
@@ -10352,6 +10344,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`assets/ok/call_result_pointer_deref_keeps_owner.mojo`). The element
     is a value read through the returned pointer, whose register carries
     the loan on `w`; the slot the pack binds the value to does not.
+  - Probe: `var p = Pointer(to=x)`, `var pp = Pointer(to=p)`, `var q =
+    pp[]`, `print(q[])` destroys `x` before the print on the VM, which
+    prints `0`; the pin and Pliron print `4`. So does
+    `(Pointer(to=left), 7).reverse()` printed without a later use of
+    `left` (`7 0` on the VM, `7 4` on the pin).
   - Lever: give a read of a reference result an immutable reborrow, or
     record the result's owner on the element, so `build_variadic_pack`
     can keep the owner itself alive.

@@ -134,9 +134,6 @@ impl FnLowering<'_> {
         value: Reg,
         constructor: Option<&str>,
     ) -> Result<(), PlironError> {
-        if self.pointer_slot_refs.contains(&value.0) {
-            self.pointer_slot_refs.insert(dest.0);
-        }
         // A literal is zero-sized: its copy is the same type.
         if self.register_literal(value).is_some() || self.register_string_literal(value).is_some() {
             return Ok(());

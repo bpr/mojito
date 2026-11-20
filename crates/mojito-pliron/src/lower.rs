@@ -272,7 +272,6 @@ pub fn lower_body(
         erased: HashSet::new(),
         aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
         storage_reads: HashSet::new(),
-        pointer_slot_refs: HashSet::new(),
         made_ref_places: HashMap::new(),
         reference_places: HashMap::new(),
         var_slots: Vec::new(),
@@ -414,12 +413,6 @@ struct FnLowering<'a> {
     /// element, a payload): byte snapshots sharing their storage's buffers,
     /// which the storage's drop may free while the register is still read.
     storage_reads: HashSet<u32>,
-    /// `MakeRef` results that address pointer-typed storage: a value access
-    /// through such a handle first loads the stored pointer (the VM's
-    /// reference-pointer boundary). A plain pointer value (a loaded pointer
-    /// field) needs no extra dereference, so the distinction is per
-    /// register, not per type.
-    pointer_slot_refs: HashSet<u32>,
     /// The place each `MakeRef` result addresses, typed as what the handle
     /// designates (the referent, where the handle forwards a stored one).
     made_ref_places: HashMap<u32, MirPlace>,

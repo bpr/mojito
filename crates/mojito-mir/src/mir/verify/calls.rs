@@ -923,16 +923,7 @@ pub(super) fn make_ref_target<'p>(
     function: &MirFunction,
 ) -> Option<(&'p Ty, Option<ReferencePermission>)> {
     let root_capability = place.root_ty.as_ref().and_then(reference_capability);
-    let reference_parameter = function
-        .ref_params
-        .get(place.root as usize)
-        .copied()
-        .unwrap_or(false);
-    let pointer_value = (place.through != Some(place.root) || reference_parameter)
-        && place
-            .root_ty
-            .as_ref()
-            .is_some_and(|ty| ty.is_pointer() || matches!(ty.kind(), TyKind::LitRef { .. }));
+    let pointer_value = pointer_root_is_value(place, function);
     match (root_capability, place.is_whole_root()) {
         (Some(_), true) if pointer_value => place.ty.as_ref().map(|target| (target, None)),
         (Some(capability), true) => Some((capability.target, Some(capability.permission))),
@@ -942,6 +933,23 @@ pub(super) fn make_ref_target<'p>(
             .map(|target| (target, Some(capability.permission))),
         (None, _) => place.ty.as_ref().map(|target| (target, None)),
     }
+}
+
+/// Whether `place`'s pointer-typed root is the pointer itself rather than
+/// its pointee: true unless the place reads a local through its own slot
+/// (`through` naming the root). A `mut`/`ref` parameter's handle addresses
+/// the caller's pointer, so through itself it is still the pointer.
+pub(super) fn pointer_root_is_value(place: &MirPlace, function: &MirFunction) -> bool {
+    let reference_parameter = function
+        .ref_params
+        .get(place.root as usize)
+        .copied()
+        .unwrap_or(false);
+    (place.through != Some(place.root) || reference_parameter)
+        && place
+            .root_ty
+            .as_ref()
+            .is_some_and(|ty| ty.is_pointer() || matches!(ty.kind(), TyKind::LitRef { .. }))
 }
 
 pub(super) fn verify_function(
