@@ -136,7 +136,6 @@ pub(super) fn verify_scope(
         head: &head,
         errors,
         erasable: 0,
-        spelled_receiver: false,
         callee_removed_params: &function.callee_removed_params,
         family: Family::Other,
         callee: None,
@@ -320,10 +319,6 @@ struct ScopeCx<'a> {
     /// The callee the instruction names, whose scope its contract's
     /// declarations are spelled in.
     callee: Option<String>,
-    /// Whether the walk is at a static call's spelled receiver, whose
-    /// instance drops the arguments of the parameters the callee removed
-    /// (R2366).
-    spelled_receiver: bool,
 }
 
 impl ScopeCx<'_> {
@@ -374,7 +369,6 @@ impl ScopeCx<'_> {
                     .structure(name)
                     .map(|declaration| declaration.param_decls.as_slice());
                 if let Some(binders) = declared
-                    && !std::mem::take(&mut self.spelled_receiver)
                     && let Some(misplaced) = misplaced_instance_argument(binders, args)
                 {
                     self.errors.push(format!(
@@ -849,13 +843,11 @@ impl TypeVisitor for ScopeCx<'_> {
     }
 
     fn visit_ty(&mut self, ty: &Ty, site: TySite) -> Result<(), Self::Error> {
-        self.spelled_receiver = site == TySite::Receiver;
         self.walk(&self.family.ty_role(site), ty);
         Ok(())
     }
 
     fn visit_ty_arg(&mut self, arg: &TyArg) -> Result<(), Self::Error> {
-        self.spelled_receiver = false;
         let role = self.family.argument_role();
         match arg {
             TyArg::Ty(ty) => self.walk(role, ty),

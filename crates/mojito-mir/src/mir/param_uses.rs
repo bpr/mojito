@@ -60,6 +60,7 @@ use crate::mir::{
 };
 use mojito_ast::ast::InfixOp;
 use mojito_hir::hir::VarId;
+use mojito_types::ct::CtValue;
 use mojito_types::param_expr::ParamId;
 use mojito_types::types::{ParamDecl, Ty, TyKind};
 use serde::Serialize;
@@ -895,10 +896,11 @@ fn drop_removed_arguments<'a>(
     }
 }
 
-/// Drop from a static call's spelled receiver `S[…]` the arguments of the
-/// struct's parameters among the callee's removed `ids`, and the receiver
-/// itself when it keeps none; returns whether it dropped one. A receiver
-/// that does not spell every parameter of its struct is left whole.
+/// Erase in a static call's spelled receiver `S[…]` the arguments of the
+/// struct's parameters among the callee's removed `ids`, each to
+/// `_REMOVED_ARG` as upstream's instance spells it, so the receiver keeps
+/// one argument per binder; returns whether it erased one. A receiver that
+/// does not spell every parameter of its struct is left whole.
 fn drop_receiver_arguments(
     receiver: &mut Option<Ty>,
     declarations: &MirDeclarations,
@@ -917,26 +919,28 @@ fn drop_receiver_arguments(
     else {
         return false;
     };
-    let kept: Vec<bool> = decls
-        .iter()
-        .map(|decl| decl.is_origin() || !ids.contains(decl.id()))
-        .collect();
-    if kept.iter().all(|kept| *kept) {
+    let erased = |index: usize| {
+        decls
+            .get(index)
+            .is_some_and(|decl| !decl.is_origin() && ids.contains(decl.id()))
+    };
+    if !(0..decls.len())
+        .any(|index| erased(index) && !matches!(arguments[index], TyArg::Val(CtValue::RemovedArg)))
+    {
         return false;
     }
-    *receiver = kept
+    let arguments = arguments
         .iter()
-        .zip(decls.iter())
-        .any(|(kept, decl)| *kept && !decl.is_origin())
-        .then(|| {
-            let arguments = arguments
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| kept.get(*index).is_none_or(|kept| *kept))
-                .map(|(_, argument)| argument.clone())
-                .collect();
-            TyKind::Struct(name.clone(), arguments).into()
-        });
+        .enumerate()
+        .map(|(index, argument)| {
+            if erased(index) {
+                TyArg::Val(CtValue::RemovedArg)
+            } else {
+                argument.clone()
+            }
+        })
+        .collect();
+    *receiver = Some(TyKind::Struct(name.clone(), arguments).into());
     true
 }
 

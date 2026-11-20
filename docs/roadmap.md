@@ -10988,27 +10988,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2366 A static call's spelled receiver drops the arguments of the
-  parameters its callee removed, where upstream's instance spells each
-  as `_REMOVED_ARG`**
-
-  `param_uses::drop_receiver_arguments` (`mir/param_uses.rs`) rebuilds
-  `S[…]` without the removed binders' arguments, so the receiver's
-  instance no longer holds one argument per binder.
-  - The MIR verifier's instance rule exempts a call's spelled receiver
-    for it (`misplaced_instance_argument`, `verify/scope.rs`).
-  - The lever: write `CtValue::RemovedArg` in each removed slot, as an
-    erased instance does elsewhere, and delete the exemption. The
-    elaborator's unification already lets a `_REMOVED_ARG` solution bind
-    nothing (`unify::bind_value`, landed with R2364), so
-    `bind_static_receiver` (`native/mono/infer.rs`) reads such a slot as
-    it reads a method receiver's.
-  - Probe: `VariadicPack.__len__(self)` calls `Self.__len__()`, whose
-    receiver after `remove-unused-params` holds 3 of its 5 arguments.
-  - Found while landing R762 (2026-11-19).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2367 A struct application partitions its origin arguments in a
   pre-pass, where upstream binds its whole bracket in one solve**
 

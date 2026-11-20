@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A static call's spelled receiver keeps one argument per binder of its
+  struct when the callee removed some of its parameters, each removed one
+  spelled `_REMOVED_ARG` as upstream's erased instance spells it, rather
+  than dropping them (`Self.__len__()` in `VariadicPack.__len__`). The MIR
+  verifier's instance rule now holds for a static call's receiver, which
+  it no longer exempts (R2366).
 - A closure storage struct declares an origin binder for each captured
   reference, after the enclosing binders it is applied to, as upstream's
   `outlineAndPromoteOrigins` promotes each captured origin to one, so its
