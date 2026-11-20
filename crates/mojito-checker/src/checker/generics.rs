@@ -1155,18 +1155,24 @@ impl Checker {
         mojito_types::types::map_origins(ty, &|origin| self.fold_origin_mut_cast(origin))
     }
 
-    /// The origin arguments among `bound`, a bracket's arguments bound
-    /// against `decls`, the callee's whole declared list, as upstream's
-    /// binder binds them: each in its origin binder's declared slot, read
-    /// back from `explicit` when it resolved them already. An origin's
-    /// `mut=` binder and an `OriginSet` are inferred, never supplied.
+    /// The origin and `mut=` arguments among `bound`, a bracket's arguments
+    /// bound against `decls`, the whole declared list of `name`, as
+    /// upstream's binder binds them: each in its binder's declared slot,
+    /// read back from `explicit` when it resolved them already. Each origin
+    /// argument converts to its slot's `Origin[mut=…]` type, and each `mut=`
+    /// argument is a `Bool` its origin's capability allows. A `use_` of
+    /// [`BracketUse::Type`] keeps an origin's casts in the type it names,
+    /// and binds a signature's origin naming places only the body resolves
+    /// unbound. An `OriginSet` is inferred, never supplied.
     pub(super) fn bound_bracket_origins(
         &self,
+        name: &str,
         decls: &[ParamDecl],
         bound: &[Vec<(usize, &mojito_ast::ast::ParamArg)>],
-        explicit: &ExplicitTypes,
-    ) -> Result<Vec<BoundOrigin>, TypeError> {
+        (explicit, use_): (&ExplicitTypes, BracketUse),
+    ) -> Result<BracketOrigins, TypeError> {
         let mut origins = Vec::new();
+        let mut mutabilities = Vec::new();
         for (index, (decl, arguments)) in decls.iter().zip(bound).enumerate() {
             if decl.is_argument_binder(decls) {
                 continue;
@@ -1176,51 +1182,55 @@ impl Checker {
                 .iter()
                 .filter(|(_, argument)| mojito_ast::call::unbound_marker(argument).is_none());
             for &(position, argument) in arguments {
-                match decl {
-                    ParamDecl::Origin {
-                        origin: id,
-                        mutability,
-                        ..
-                    } if *mutability != mojito_types::types::OriginMutability::Set => {
-                        if let Some(resolved) = explicit.origin(index, position) {
-                            origins.push(resolved.clone());
-                            continue;
-                        }
-                        self.convert_bracket_origin(decl, argument)?;
-                        let origin = self.explicit_origin_argument(argument)?;
-                        // A parametric binder's `mut=` is the argument's own
-                        // mutability, an `ImmOrigin(o)` conversion's `False`.
-                        let origin = match mutability {
-                            mojito_types::types::OriginMutability::Binder(_)
-                                if self.resolve_origin_param_arg(argument).is_ok_and(
-                                    |(_, own)| {
-                                        own == Some(mojito_types::origin::Mutability::Immutable)
-                                    },
-                                ) =>
-                            {
-                                mojito_types::origin::Origin::immutable(origin)
-                            }
-                            _ => origin,
-                        };
-                        origins.push(BoundOrigin {
-                            slot: index,
-                            id: *id,
-                            position,
-                            attribute: bracket_attribute(argument, &TyArg::Origin(origin.clone())),
-                            origin,
-                        });
-                    }
-                    _ => {
-                        return Err(TypeError::Unsupported(format!(
-                            "semantic parameter '{}' is inferred and cannot be supplied \
-                             explicitly",
-                            decl.name()
-                        )));
-                    }
+                if decl.is_origin_mutability_binder(decls) {
+                    mutabilities.push((index, decl, position, argument));
+                    continue;
                 }
+                let ParamDecl::Origin {
+                    origin: id,
+                    mutability,
+                    ..
+                } = decl
+                else {
+                    continue;
+                };
+                if *mutability == mojito_types::types::OriginMutability::Set {
+                    return Err(TypeError::Unsupported(format!(
+                        "semantic parameter '{}' is inferred and cannot be supplied explicitly",
+                        decl.name()
+                    )));
+                }
+                if let Some(resolved) = explicit.origin(index, position) {
+                    origins.push(resolved.clone());
+                    continue;
+                }
+                origins.push(self.bound_bracket_origin(
+                    name,
+                    (index, decl, *id),
+                    (position, argument),
+                    use_,
+                )?);
             }
         }
-        Ok(origins)
+        let mutabilities = mutabilities
+            .into_iter()
+            .map(|(index, decl, position, argument)| {
+                if let Some(resolved) = explicit.mutability(index, position) {
+                    return Ok(resolved.clone());
+                }
+                self.bound_bracket_mutability(
+                    name,
+                    decls,
+                    (index, decl),
+                    (position, argument),
+                    (&mut origins, use_),
+                )
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(BracketOrigins {
+            origins,
+            mutabilities,
+        })
     }
 
     /// `callable` with the origins its bracket bound substituted into its
@@ -2391,6 +2401,147 @@ impl Checker {
         }
     }
 
+    /// The origin argument `argument`, at source `position`, of the origin
+    /// binder `decl` declared at `index` as `id`, converted to the binder's
+    /// type ([`Self::bound_bracket_origins`]).
+    fn bound_bracket_origin(
+        &self,
+        name: &str,
+        (index, decl, id): (usize, &ParamDecl, mojito_types::origin::OriginParamId),
+        (position, argument): (usize, &mojito_ast::ast::ParamArg),
+        use_: BracketUse,
+    ) -> Result<BoundOrigin, TypeError> {
+        use mojito_types::origin::{Mutability, Origin};
+        use mojito_types::types::OriginMutability;
+        self.convert_bracket_origin(decl, argument)?;
+        self.check_origin_argument_representation(name, decl, argument)?;
+        let (origin, mutability, attribute) = match use_ {
+            BracketUse::Type(strictness) => {
+                let (origin, mutability) = match self.resolve_origin_param_arg(argument) {
+                    Ok(resolved) => super::type_resolution::immutable_slot_origin(decl, resolved),
+                    // A signature annotation may name places only the body
+                    // resolves (`origin_of(self.entries)`): an origin-shaped
+                    // argument binds its slot unbound.
+                    Err(_)
+                        if self.signature_origin_leniency.get()
+                            && super::type_resolution::syntactic_origin_argument(argument) =>
+                    {
+                        (Origin::Unbound, None)
+                    }
+                    Err(error) => return Err(error),
+                };
+                // A value-shaped origin argument of a storage annotation
+                // is no attribute of the annotation's application.
+                let attribute = (strictness == super::StorageStrictness::Off
+                    || !matches!(argument, mojito_ast::ast::ParamArg::Value(_)))
+                .then(|| TyArg::Origin(origin.clone()));
+                (origin, mutability, attribute)
+            }
+            BracketUse::Call => {
+                let origin = self.explicit_origin_argument(argument)?;
+                let own = self
+                    .resolve_origin_param_arg(argument)
+                    .ok()
+                    .and_then(|(_, own)| own);
+                // A parametric binder's `mut=` is the argument's own
+                // mutability, an `ImmOrigin(o)` conversion's `False`.
+                let origin = match decl {
+                    ParamDecl::Origin {
+                        mutability: OriginMutability::Binder(_),
+                        ..
+                    } if own == Some(Mutability::Immutable) => Origin::immutable(origin),
+                    _ => origin,
+                };
+                let attribute = bracket_attribute(argument, &TyArg::Origin(origin.clone()));
+                (origin, own, attribute)
+            }
+        };
+        Ok(BoundOrigin {
+            slot: index,
+            id,
+            position,
+            attribute,
+            origin,
+            mutability,
+        })
+    }
+
+    /// The `mut=` argument `argument`, at source `position`, of the
+    /// mutability binder `binder` declared at `index` among `decls`: a
+    /// `Bool`, `True` only where the origin `origins` bind its slot to may
+    /// be mutable. A call's `False` converts that origin to `ImmOrigin`, as
+    /// upstream passes the origin argument at the binder's type.
+    fn bound_bracket_mutability(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        (index, binder): (usize, &ParamDecl),
+        (position, argument): (usize, &mojito_ast::ast::ParamArg),
+        (origins, use_): (&mut [BoundOrigin], BracketUse),
+    ) -> Result<BoundMutability, TypeError> {
+        use mojito_types::origin::{Mutability, Origin};
+        check_origin_mutability_argument(name, decls, binder, argument, origins)?;
+        let value = self.origin_mutability_argument_value(binder, argument);
+        if let CtValue::Expr(read) = &value
+            && let Some(found) = read.meta().as_value()
+            && !found.kind().is_bool()
+        {
+            return Err(TypeError::TypeMismatch {
+                expected: "Bool".to_string(),
+                found: found.to_string(),
+                context: format!("parameter '{}' of '{name}'", binder.name()),
+            });
+        }
+        if use_ == BracketUse::Call && matches!(value, CtValue::Bool(false)) {
+            for bound in origins
+                .iter_mut()
+                .filter(|bound| governs_origin(decls, binder, bound.slot))
+            {
+                if bound.mutability != Some(Mutability::Immutable) {
+                    bound.origin = Origin::immutable(bound.origin.clone());
+                    bound.mutability = Some(Mutability::Immutable);
+                    bound.attribute = bound
+                        .attribute
+                        .as_ref()
+                        .map(|_| TyArg::Origin(bound.origin.clone()));
+                }
+            }
+        }
+        Ok(BoundMutability {
+            slot: index,
+            id: binder.id().clone(),
+            position,
+            value,
+        })
+    }
+
+    /// The value an explicit `mut=` keyword `argument` gives the origin's
+    /// mutability binder `binder`: a literal's `Bool`, the read of a value
+    /// binder in scope, and [`CtValue::Deferred`] for `_` or a spelling
+    /// that names no binder in scope, which the slot then infers.
+    fn origin_mutability_argument_value(
+        &self,
+        binder: &ParamDecl,
+        argument: &mojito_ast::ast::ParamArg,
+    ) -> CtValue {
+        use mojito_ast::ast::ParamArg;
+        let mut value = argument;
+        while let ParamArg::Named { value: inner, .. } = value {
+            value = inner;
+        }
+        match value {
+            ParamArg::Value(expression) => match &expression.kind {
+                ExprKind::Bool(literal) => Some(CtValue::Bool(*literal)),
+                ExprKind::Identifier(name) if name != "_" => {
+                    self.value_parameter_in_scope(name).map(CtValue::Expr)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+        .unwrap_or_else(|| CtValue::Deferred(binder.binder()))
+    }
+
     /// Convert bracket origin `argument` to the `Origin[mut=…]` type its
     /// binder `decl` declares, as upstream passes a bracket value: an
     /// immutable origin does not convert to a `MutOrigin` binder.
@@ -2689,4 +2840,64 @@ fn owner_value_bindings(
     let mut bindings = mojito_types::param_expr::ParamBindings::new();
     bindings.bind_value_arguments(&context, decls, targs);
     bindings
+}
+
+/// Whether the origin binder declared at `slot` among `decls` names
+/// `binder` as its mutability (`o: Origin[mut=mut]`).
+fn governs_origin(decls: &[ParamDecl], binder: &ParamDecl, slot: usize) -> bool {
+    matches!(decls.get(slot), Some(ParamDecl::Origin {
+        mutability: mojito_types::types::OriginMutability::Binder(mutability),
+        ..
+    }) if mutability.id == *binder.id())
+}
+
+/// Check a `mut=` argument binding the mutability binder `binder` of
+/// `name`: a `Bool`, or a value spelling one (`Self.mut`, `_`), and `True`
+/// only when the origin `origins` bind the slot it governs to may be
+/// mutable.
+fn check_origin_mutability_argument(
+    name: &str,
+    decls: &[ParamDecl],
+    binder: &ParamDecl,
+    argument: &mojito_ast::ast::ParamArg,
+    origins: &[BoundOrigin],
+) -> Result<(), TypeError> {
+    use mojito_ast::ast::ParamArg;
+    let mut value = argument;
+    while let ParamArg::Named { value: inner, .. } = value {
+        value = inner;
+    }
+    let mismatch = |found: &str| TypeError::TypeMismatch {
+        expected: "Bool".to_string(),
+        found: found.to_string(),
+        context: format!("parameter '{}' of '{name}'", binder.name()),
+    };
+    let literal = match value {
+        ParamArg::Value(expression) => match &expression.kind {
+            ExprKind::Bool(literal) => Some(*literal),
+            ExprKind::Int(_) => return Err(mismatch("IntLiteral")),
+            ExprKind::Float(_) => return Err(mismatch("FloatLiteral")),
+            ExprKind::Str(_) => return Err(mismatch("StringLiteral")),
+            _ => None,
+        },
+        ParamArg::Type(_) => return Err(mismatch("a type")),
+        ParamArg::Named { .. } => None,
+    };
+    let immutable_slot = origins.iter().find(|bound| {
+        bound.mutability == Some(mojito_types::origin::Mutability::Immutable)
+            && governs_origin(decls, binder, bound.slot)
+    });
+    if literal == Some(true)
+        && let Some(bound) = immutable_slot
+    {
+        return Err(TypeError::TypeMismatch {
+            expected: format!(
+                "a mutable origin for parameter '{}' of '{name}'",
+                decls[bound.slot].name()
+            ),
+            found: "an immutable origin".to_string(),
+            context: "explicit origin argument".to_string(),
+        });
+    }
+    Ok(())
 }

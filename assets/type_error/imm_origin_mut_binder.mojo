@@ -1,4 +1,4 @@
-# expect: expected a mutable origin for parameter 'o'
+# expect: value passed to 'o'
 # An `ImmOrigin(o)` argument cannot fill an `Origin[mut=True]` binder.
 struct Holder[o: Origin[mut=True]]:
     var p: Pointer[Int, Self.o]

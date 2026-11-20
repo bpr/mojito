@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct application binds its whole bracket over the struct's declared
+  list in one solve, as a call's bracket and upstream's type expression
+  do, instead of pulling its origin arguments out in a pre-pass first. A
+  keyword origin after a pack now binds the pack to what precedes it
+  (`P[o=origin_of(x)](…)` binds `*Ts` empty rather than failing to infer
+  it), an `ImmOrigin` argument for a `MutOrigin` slot reports the pin's
+  "value passed to 'o'" mismatch, and a positional runtime value in an
+  origin slot reports the origin error rather than an arity one (R2367).
+- A function's bracket binds an origin's `mut=` binder by keyword
+  (`k[mut=True, origin_of(x)]()`), a `False` binding the origin immutably,
+  where it was refused as an inferred parameter (R2367).
 - A static call's spelled receiver keeps one argument per binder of its
   struct when the callee removed some of its parameters, each removed one
   spelled `_REMOVED_ARG` as upstream's erased instance spells it, rather
@@ -1010,6 +1021,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A bracket keyword naming an infer-only parameter after a positional
+  argument is "unexpected keyword parameter", as at the pin, for calls and
+  struct applications alike (`f[Int, o=origin_of(x)]`,
+  `H[Int, origin_of(x), mut=True]`); before every positional argument it
+  still binds (R2367).
 - A trait requirement or default whose own origin binder an argument's type
   names (`def read[o: ImmOrigin](self, p: Pointer[Int, o])`) now declares,
   where it failed with "Undefined variable 'o'", and inheriting such a

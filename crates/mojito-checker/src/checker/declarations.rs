@@ -3059,8 +3059,8 @@ impl Checker {
     /// own, in the layout the constructor's declaration restates them
     /// (`Counter[4](1)` calls `Counter[4].__init__`). A bracket argument
     /// solved to a closed value is the construction's parameter attribute,
-    /// so the call lowers no run-time form for it; `partitioned` places the
-    /// forwarded `param_args` in the struct's declared list. The recorded
+    /// so the call lowers no run-time form for it; `bracket` pairs the
+    /// struct's whole declared list with its application. The recorded
     /// arguments bind the constructor's whole declared list, the struct's
     /// then its own (`own`): `arguments` solve the struct's argument view
     /// then the own one, and `own_declared` is the call's solution over
@@ -3072,7 +3072,6 @@ impl Checker {
         span: &SourceSpan,
         name: &str,
         bracket: (&[ParamDecl], &[mojito_ast::ast::ParamArg]),
-        partitioned: &super::type_resolution::PartitionedStructArgs,
         (own, parameter_names): (&[ParamDecl], &[String]),
         (arguments, own_declared): (&[TyArg], &[TyArg]),
     ) {
@@ -3082,9 +3081,9 @@ impl Checker {
         let (decls, param_args) = bracket;
         self.record_folded_bracket_attributes(
             span,
-            &partitioned.declared(crate::checker::call_inference::folded_parameter_attributes(
+            &crate::checker::call_inference::folded_parameter_attributes(
                 decls, param_args, arguments,
-            )),
+            ),
         );
         let struct_params = self
             .structs
@@ -3437,15 +3436,14 @@ impl Checker {
         let info = self.structs.get(name).ok_or_else(|| {
             TypeError::InvariantViolation(format!("constructor target '{name}' is not registered"))
         })?;
-        // Origin slots are partitioned out of the application once, here:
-        // every binder below sees origin-free arguments, and the explicit
+        // The application binds over the struct's whole declared list once,
+        // here, as upstream binds a type's list in one solve: the explicit
         // origins are checked against the arguments binding those slots
         // once a constructor is selected.
-        let mut partitioned = self.partition_struct_origin_args(name, param_args)?;
+        let mut bracket = self.struct_bracket(name, param_args)?;
         if let Some(instance) = constructed {
-            bind_instance_origins(&mut partitioned, info, instance);
+            bind_instance_origins(&mut bracket, info, instance);
         }
-        let param_args: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
         // The initializer's own list of an explicit `T.__init__[ks](…)`:
         // the construction's bracket is always the type's.
         let own_args = self.spelled_initializer_args_at(span);
@@ -3461,7 +3459,7 @@ impl Checker {
                 info,
                 constructed,
                 kwargs,
-                &partitioned,
+                (param_args, &bracket),
             );
         }
         // A hand-written `def __init__(out self, …)` is the constructor: check the
@@ -3471,9 +3469,19 @@ impl Checker {
         // argument types — exactly as the fieldwise path unifies field types.
         if let Some(sigs) = info.methods.get("__init__") {
             if info.decls().is_empty() {
-                // A bracket on a struct without parameters is the pin's
+                // A bracket on a struct without argument binders binds its
+                // origin binders alone; any other argument is the pin's
                 // "unexpected parameter".
-                self.resolve_use_params(name, &[], param_args, &[], &[])?;
+                let BoundParameters {
+                    attributes: bracket_attributes,
+                    ..
+                } = self.resolve_explicit_use_params(
+                    name,
+                    &info.params,
+                    (param_args, &bracket.explicit),
+                    &[],
+                    &[],
+                )?;
                 let mut matches = Vec::new();
                 // The reason the last candidate failed its origin binding, so a
                 // miss caused by an explicit-origin or pointer-permission
@@ -3525,7 +3533,7 @@ impl Checker {
                         name,
                         sig,
                         params,
-                        partitioned.application(&own),
+                        bracket.application(&own),
                         args,
                         kwargs,
                     )? {
@@ -3573,7 +3581,7 @@ impl Checker {
                             return_type: self.constructed_type(
                                 name,
                                 Vec::new(),
-                                &partitioned.origins,
+                                &bracket.origins,
                                 &origin_bindings,
                             ),
                             result_adapter: None,
@@ -3615,15 +3623,11 @@ impl Checker {
                 }
                 // The own list is no bracket of the construction: its
                 // arguments reach MIR in the recorded instantiation alone.
-                self.record_declared_attributes(
-                    span.clone(),
-                    &partitioned.declared(DeclaredAttributes::default()),
-                );
+                self.record_declared_attributes(span.clone(), &bracket_attributes);
                 self.record_construction_instantiation(
                     span,
                     name,
-                    (&ParamDecl::argument_view(&selected.param_decls), param_args),
-                    &partitioned,
+                    (&info.params, param_args),
                     (&selected.param_decls, &selected.parameter_names),
                     (
                         selected.instantiation.as_deref().unwrap_or_default(),
@@ -3713,7 +3717,7 @@ impl Checker {
                 let sig = &sigs[0];
                 let params = sig.params.clone();
                 let decls = info.decls().into_owned();
-                let explicit = self.explicit_type_args(name, &decls, param_args)?;
+                let explicit = &bracket.explicit;
                 let bound_slots: Vec<(usize, &Expr, &Ty)> = args
                     .iter()
                     .zip(&params)
@@ -3738,12 +3742,12 @@ impl Checker {
                     ..
                 } = self.resolve_explicit_use_params(
                     name,
-                    &decls,
-                    (param_args, &explicit),
+                    &info.params,
+                    (param_args, explicit),
                     &instance_patterns,
                     &instance_actuals,
                 )?;
-                self.record_declared_attributes(span.clone(), &partitioned.declared(attributes));
+                self.record_declared_attributes(span.clone(), &attributes);
                 if let Some(specialized) =
                     self.finish_variadic_construction(span, name, param_args, &tyargs, args, kwargs)
                 {
@@ -3762,7 +3766,7 @@ impl Checker {
                     sig,
                     &bound_slots,
                     &arg_tys,
-                    partitioned.application(&[]),
+                    bracket.application(&[]),
                 )?;
                 self.record_at(span.clone()).overload_target = Some(constructor_symbol(
                     name,
@@ -3799,8 +3803,7 @@ impl Checker {
                 self.record_construction_instantiation(
                     span,
                     name,
-                    (&decls, param_args),
-                    &partitioned,
+                    (&info.params, param_args),
                     (&sig.declared, &sig.names),
                     (
                         &tyargs
@@ -3861,7 +3864,7 @@ impl Checker {
                 }
                 let slots = (0..args.len()).map(ArgSlot::Positional).collect::<Vec<_>>();
                 let constructed =
-                    self.constructed_type(name, tyargs, &partitioned.origins, &pointer_origins);
+                    self.constructed_type(name, tyargs, &bracket.origins, &pointer_origins);
                 let exclusivity = ConstructorExclusivity {
                     callee: constructed.to_string(),
                     parameter_names: &sig.names,
@@ -3885,7 +3888,7 @@ impl Checker {
                 return Ok(constructed);
             }
             let decls = info.decls().into_owned();
-            let explicit = self.explicit_type_args(name, &decls, param_args)?;
+            let explicit = &bracket.explicit;
             let overloaded = sigs.len() > 1;
             let keyword_names: Vec<&str> = kwargs.iter().map(|k| k.name.as_str()).collect();
             // Map arguments (positional and keyword) to each candidate's
@@ -4020,8 +4023,8 @@ impl Checker {
                     }
                     None => self.resolve_explicit_use_params(
                         name,
-                        &decls,
-                        (param_args, &explicit),
+                        &info.params,
+                        (param_args, explicit),
                         &instance_patterns,
                         &instance_actuals,
                     ),
@@ -4060,10 +4063,7 @@ impl Checker {
                     ..
                 }) = resolved_use
                 {
-                    self.record_declared_attributes(
-                        span.clone(),
-                        &partitioned.declared(attributes),
-                    );
+                    self.record_declared_attributes(span.clone(), &attributes);
                     let pointer_origins = match self.bind_constructor_origins(
                         name,
                         "__init__",
@@ -4071,7 +4071,7 @@ impl Checker {
                         sig,
                         &bound_slots,
                         &arg_tys[..bound_slots.len()],
-                        partitioned.application(&[]),
+                        bracket.application(&[]),
                     ) {
                         Ok(bindings) => bindings,
                         Err(error) => {
@@ -4332,8 +4332,7 @@ impl Checker {
                 self.record_construction_instantiation(
                     span,
                     name,
-                    (&decls, param_args),
-                    &partitioned,
+                    (&info.params, param_args),
                     (&sig.declared, &sig.names),
                     (
                         &tyargs
@@ -4374,7 +4373,7 @@ impl Checker {
                 let resolve =
                     |element: &Ty| Ok(expected_at(packed).unwrap_or_else(|| element.clone()));
                 let constructed =
-                    self.constructed_type(name, tyargs, &partitioned.origins, &pointer_origins);
+                    self.constructed_type(name, tyargs, &bracket.origins, &pointer_origins);
                 let exclusivity = ConstructorExclusivity {
                     callee: constructed.to_string(),
                     parameter_names: &sig.names,
@@ -4430,7 +4429,7 @@ impl Checker {
             ordered.as_slice()
         };
         let decls = info.decls().into_owned();
-        let explicit = self.explicit_type_args(name, &decls, param_args)?;
+        let explicit = &bracket.explicit;
         let field_tys: Vec<Ty> = info.fields.iter().map(|(_, t)| t.clone()).collect();
         if field_tys.len() != args.len() {
             return Err(TypeError::ArityMismatch {
@@ -4462,8 +4461,8 @@ impl Checker {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // The origin slots were partitioned out of `param_args` above; the
-        // field types bind the struct's origin binders from the arguments.
+        // The field types bind the origin binders the bracket leaves open
+        // from the arguments.
         Self::reject_unconstrained_pack(name, &decls, param_args, constructed, &field_tys)?;
         let (instance_patterns, instance_actuals) =
             self.constructed_unification(name, constructed, &field_tys, &arg_tys);
@@ -4474,12 +4473,12 @@ impl Checker {
             ..
         } = self.resolve_explicit_use_params(
             name,
-            &decls,
-            (param_args, &explicit),
+            &info.params,
+            (param_args, explicit),
             &instance_patterns,
             &instance_actuals,
         )?;
-        self.record_declared_attributes(span.clone(), &partitioned.declared(attributes));
+        self.record_declared_attributes(span.clone(), &attributes);
         if let Some(specialized) =
             self.finish_variadic_construction(span, name, param_args, &tyargs, args, &[])
         {
@@ -4494,8 +4493,7 @@ impl Checker {
         self.record_construction_instantiation(
             span,
             name,
-            (&decls, param_args),
-            &partitioned,
+            (&info.params, param_args),
             (&[], &field_names),
             (&tyargs, &[]),
         );
@@ -4505,7 +4503,7 @@ impl Checker {
             &info.fields,
             args,
             &arg_tys,
-            &partitioned.explicit_origins,
+            &bracket.bound,
         )?;
         // A field type names the struct's own value parameters; the resolved
         // application binds them beside its type parameters.
@@ -4560,8 +4558,7 @@ impl Checker {
             // position.
             self.check_consuming(&args[i], aty, &format!("field {} of '{}'", i + 1, name))?;
         }
-        let constructed =
-            self.constructed_type(name, tyargs, &partitioned.origins, &origin_bindings);
+        let constructed = self.constructed_type(name, tyargs, &bracket.origins, &origin_bindings);
         let conventions = self.fieldwise_conventions(&info.fields);
         let ref_params = Self::fieldwise_ref_params(info);
         let slots: Vec<ArgSlot> = (0..args.len()).map(ArgSlot::Positional).collect();
@@ -5031,12 +5028,29 @@ impl Checker {
         decls: &[ParamDecl],
         param_args: &[mojito_ast::ast::ParamArg],
     ) -> Result<ExplicitTypes, TypeError> {
+        self.explicit_bracket_args(name, decls, param_args, BracketUse::Call)
+    }
+
+    /// [`Self::explicit_type_args`] of a bracket applying `use_`: a struct
+    /// type's ([`BracketUse::Type`]) keeps its origin arguments in the
+    /// type, and must bind its origin binders
+    /// ([`Self::check_struct_application`]).
+    pub(super) fn explicit_bracket_args(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        param_args: &[mojito_ast::ast::ParamArg],
+        use_: BracketUse,
+    ) -> Result<ExplicitTypes, TypeError> {
         let mut explicit = ExplicitTypes::default();
         if param_args.is_empty() || decls.is_empty() {
             return Ok(explicit);
         }
         let bound = bracket_bindings(name, decls, param_args, None)?;
-        explicit.set_origins(self.bound_bracket_origins(decls, &bound, &explicit)?);
+        explicit.set_origins(self.bound_bracket_origins(name, decls, &bound, (&explicit, use_))?);
+        if let BracketUse::Type(strictness) = use_ {
+            Self::check_struct_application(name, decls, &bound, strictness)?;
+        }
         for (index, (decl, arguments)) in decls.iter().zip(bound).enumerate() {
             if let (
                 ParamDecl::Type {
@@ -5461,9 +5475,11 @@ impl Checker {
         info: &StructInfo,
         constructed: Option<&Ty>,
         kwargs: &[mojito_ast::ast::KwArg],
-        partitioned: &super::type_resolution::PartitionedStructArgs,
+        (param_args, bracket): (
+            &[mojito_ast::ast::ParamArg],
+            &super::type_resolution::StructBracket,
+        ),
     ) -> Result<Ty, TypeError> {
-        let param_args: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
         let sigs = info.methods.get("__copyinit__");
         let sig = sigs.and_then(|sigs| sigs.iter().find(|sig| sig.params.len() == 1));
         if sig.is_none() {
@@ -5491,8 +5507,8 @@ impl Checker {
                     self.place_struct_origins(
                         &info.params,
                         view,
-                        partitioned.origins.iter().cloned(),
-                        &partitioned.mutabilities,
+                        bracket.origins.iter().cloned(),
+                        &bracket.mutabilities,
                     ),
                 )
             };
@@ -5510,10 +5526,7 @@ impl Checker {
             if let Some(instance) = instance {
                 if constructed.is_none() && !param_args.is_empty() {
                     let attributes = resolve()?.attributes;
-                    self.record_declared_attributes(
-                        span.clone(),
-                        &partitioned.declared(attributes),
-                    );
+                    self.record_declared_attributes(span.clone(), &attributes);
                 }
                 let found = self.copy_argument(name, &instance, &kwargs[0])?;
                 self.record_read_temporary_argument(&kwargs[0].value);
@@ -5568,14 +5581,14 @@ impl Checker {
             arguments: tyargs,
             attributes,
             ..
-        } = self.resolve_use_params(
+        } = self.resolve_explicit_use_params(
             name,
-            &decls,
-            param_args,
+            &info.params,
+            (param_args, &bracket.explicit),
             &params,
             std::slice::from_ref(&arg_ty),
         )?;
-        self.record_declared_attributes(span.clone(), &partitioned.declared(attributes));
+        self.record_declared_attributes(span.clone(), &attributes);
         let expected = if let Some(parameter) = params.first() {
             substitute_assoc(
                 parameter,
@@ -5592,8 +5605,8 @@ impl Checker {
                 self.place_struct_origins(
                     &info.params,
                     tyargs.clone(),
-                    partitioned.origins.iter().cloned(),
-                    &partitioned.mutabilities,
+                    bracket.origins.iter().cloned(),
+                    &bracket.mutabilities,
                 ),
             )
         };
@@ -5624,8 +5637,7 @@ impl Checker {
         self.record_construction_instantiation(
             span,
             name,
-            (&decls, param_args),
-            partitioned,
+            (&info.params, param_args),
             (&sig.declared, &sig.names),
             (
                 &tyargs
@@ -5641,11 +5653,11 @@ impl Checker {
             nominal_parts(&arg_ty)
                 .filter(|(actual, _)| *actual == name)
                 .map(|_| &arg_ty),
-            &partitioned.origins,
+            &bracket.origins,
         );
         Ok(Self::struct_instance_type(
             name,
-            self.place_struct_origins(&info.params, tyargs, origins, &partitioned.mutabilities),
+            self.place_struct_origins(&info.params, tyargs, origins, &bracket.mutabilities),
         ))
     }
 
@@ -5998,8 +6010,15 @@ impl Checker {
                     .map(|(_, arguments)| arguments.iter().cloned().map(Some).collect())
             })
         } else {
-            match self.resolve_partial_use_params(name, decls, param_args) {
-                Ok((arguments, _)) => Some(arguments),
+            match self.resolve_partial_use_params(name, &info.params, param_args) {
+                Ok((arguments, _)) => Some(
+                    arguments
+                        .into_iter()
+                        .zip(&info.params)
+                        .filter(|(_, decl)| decl.is_argument_binder(&info.params))
+                        .map(|(argument, _)| argument)
+                        .collect(),
+                ),
                 // A run-time value spelled in the brackets is wrong whichever
                 // constructor the arguments select.
                 Err(TypeError::DynamicParameterValue) => {
@@ -6593,10 +6612,20 @@ impl Checker {
         let (unbound, solve_open) =
             unbound.map_or((None, false), |(slots, solve)| (Some(slots), solve));
         let mut bound = bracket_bindings(name, declared, param_args, unbound)?;
-        let origins = self.bound_bracket_origins(declared, &bound, explicit)?;
+        let BracketOrigins {
+            origins,
+            mutabilities,
+        } = self.bound_bracket_origins(name, declared, &bound, (explicit, BracketUse::Call))?;
         let mut attributes = DeclaredAttributes::new(declared);
         for origin in &origins {
             attributes.bind(origin.slot, origin.position, origin.attribute.clone());
+        }
+        for mutability in mutabilities {
+            attributes.bind(
+                mutability.slot,
+                mutability.position,
+                Some(TyArg::Val(mutability.value)),
+            );
         }
         // The argument view's binders solve; `slots` maps each to its
         // declared slot.
@@ -7059,7 +7088,7 @@ struct ConstructorExclusivity<'a> {
     gathered: CollectedArguments<'a>,
 }
 
-/// Bind each origin slot `partitioned` leaves open to the one `instance`
+/// Bind each origin slot `bracket` leaves open to the one `instance`
 /// binds, as a spelled bracket's origin argument does: the construction of
 /// an instance with no source spelling (the initializer list `{...}` at
 /// `Span[T, o]`) is `Span[T, o](...)`, never a construction whose arguments
@@ -7067,7 +7096,7 @@ struct ConstructorExclusivity<'a> {
 /// origin (`origin_of(self)` in a signature) is the receiver argument's to
 /// bind, as it names no place of its own.
 fn bind_instance_origins(
-    partitioned: &mut super::type_resolution::PartitionedStructArgs,
+    bracket: &mut super::type_resolution::StructBracket,
     info: &StructInfo,
     instance: &Ty,
 ) {
@@ -7081,21 +7110,26 @@ fn bind_instance_origins(
     });
     for (tail, ((id, _), origin)) in info.origin_decls().zip(origins).enumerate() {
         if matches!(origin, Origin::Unbound | Origin::SelfParam)
-            || partitioned
-                .explicit_origins
-                .iter()
-                .any(|explicit| explicit.id == id)
+            || bracket.bound.iter().any(|explicit| explicit.id == id)
         {
             continue;
         }
-        partitioned
-            .explicit_origins
-            .push(super::type_resolution::ExplicitStructOrigin {
-                id,
-                origin: origin.clone(),
-                mutability: None,
-            });
-        if let Some(entry) = partitioned.origins.get_mut(tail) {
+        let slot = info
+            .params
+            .iter()
+            .position(|decl| matches!(decl, ParamDecl::Origin { origin, .. } if *origin == id))
+            .unwrap_or_default();
+        // The instance binds the slot with no bracket argument, so no
+        // source position and no attribute.
+        bracket.bound.push(BoundOrigin {
+            slot,
+            id,
+            position: 0,
+            attribute: None,
+            origin: origin.clone(),
+            mutability: None,
+        });
+        if let Some(entry) = bracket.origins.get_mut(tail) {
             *entry = origin.clone();
         }
     }

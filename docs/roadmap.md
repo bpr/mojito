@@ -2904,8 +2904,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   origin argument**
 
   `S[ImmOrigin[_mlir_origin=o._mlir_origin]()]` over `struct S[o:
-  ImmOrigin]` is rejected ("type 'S' expects 0 type argument(s), got
-  1"), where the pin reads it as the origin `ImmOrigin(o)`.
+  ImmOrigin]` is rejected ("expected origin_of(place) or a builtin Origin
+  value, found a runtime value"), where the pin reads it as the origin
+  `ImmOrigin(o)`.
   - `origin_construction_attribute` (`checker/origins/binders.rs`) reads
     only an `Origin[_mlir_origin=__mlir_attr[…]]()` construction, so a
     construction over a raw read (`X._mlir_origin`) or a raw binder names
@@ -10537,8 +10538,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   where the pin builds `View[False, …]`, and the checked MIR then fails
   verification.
   - The funnel is `infer_construction` (`checker/declarations.rs`):
-    `partition_struct_origin_args` collects the explicit origin's
-    mutability, but the `mut=` value `place_struct_origins`
+    `struct_bracket` collects the explicit origin's mutability, but the `mut=` value `place_struct_origins`
     (`checker/origins/construct.rs`) places comes from the constructor
     argument (`Pointer(to=x)`, mutable).
   - Probe: `assets/ok/immutable_origin_struct_cast_of_immutable_origin.mojo`
@@ -10985,38 +10985,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `types_compatible` (`mir/verify/types.rs`) compares struct
     arguments with origins set aside, so one side holding none passes.
   - Found while landing R2364 (2026-11-19).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R2367 A struct application partitions its origin arguments in a
-  pre-pass, where upstream binds its whole bracket in one solve**
-
-  `PartitionedStructArgs` (`checker/type_resolution.rs`) pulls a struct
-  application's origin arguments out of its bracket and hands the rest to
-  `resolve_use_params` over the argument view, where upstream binds every
-  declared parameter in one solve, as Mojito's calls already do
-  (`bind_bracket_params`, `bound_bracket_origins`).
-  - Probe: `P[o=origin_of(x)](Pointer(to=x))` over `struct P[*Ts:
-    AnyType, o: ImmOrigin]` is rejected ("cannot infer type parameter
-    'Ts'"), where the pin binds `Ts` empty: once every argument is kept
-    back, the binder sees no bracket.
-  - Probe: `H[Int, origin_of(x), mut=True]` over `struct H[mut: Bool, //,
-    T: AnyType, o: Origin[mut=mut]]`, and `H[Int, o=origin_of(x)]` over
-    `struct H[o: ImmOrigin, //, T: AnyType]`, run, where the pin rejects
-    both ("unexpected keyword parameter"):
-    `partition_struct_origin_args_uncollected` keeps back a keyword
-    naming an infer-only binder wherever it sits, where the pin binds one
-    only ahead of the positional arguments (`H[o=origin_of(x), Int]`
-    runs there).
-  - The lever: pass the struct's whole `StructInfo::params` to
-    `resolve_use_params`, and move the struct-only policies into
-    `bound_bracket_origins`: the `CannotInferParam`/`NotConcrete`
-    strictness for an omitted or `_` origin, signature leniency, the
-    `ImmOrigin` slot cast, and the mutable-slot check. Then delete
-    `PartitionedStructArgs`, `StructSlots`, and the three partition
-    functions.
-  - It changes diagnostics on the `assets/type_error` origin fixtures.
-  - Found while landing R763 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

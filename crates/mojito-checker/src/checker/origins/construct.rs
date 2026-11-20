@@ -51,7 +51,7 @@ impl CalleeBinders {
 /// (`v: Origin` binding `v`'s `_mlir_origin`).
 #[derive(Clone, Copy)]
 pub(in crate::checker) struct StructApplication<'a> {
-    pub(in crate::checker) origins: &'a [super::super::type_resolution::ExplicitStructOrigin],
+    pub(in crate::checker) origins: &'a [super::super::BoundOrigin],
     pub(in crate::checker) mutabilities: &'a [(mojito_types::param_expr::ParamId, CtValue)],
     pub(in crate::checker) own: &'a [(OriginParamId, Origin)],
 }
@@ -611,7 +611,7 @@ impl Checker {
         fields: &[(String, Ty)],
         args: &[Expr],
         arg_tys: &[Ty],
-        explicit: &[super::super::type_resolution::ExplicitStructOrigin],
+        explicit: &[super::super::BoundOrigin],
     ) -> Result<ConstructorOriginBindings, TypeError> {
         let mut bindings = ConstructorOriginBindings::default();
         for (((field, pattern), expression), actual) in fields.iter().zip(args).zip(arg_tys) {
@@ -849,7 +849,7 @@ impl Checker {
         params: &[ParamDecl],
         pattern: &Ty,
         actual: &Ty,
-        explicit: &[super::super::type_resolution::ExplicitStructOrigin],
+        explicit: &[super::super::BoundOrigin],
         bindings: &mut ConstructorOriginBindings,
     ) -> Result<(), TypeError> {
         let slot_of = |id: &OriginParamId| super::super::struct_origin_decl(params, *id);

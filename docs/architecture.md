@@ -718,7 +718,11 @@ policy or data-model responsibilities to focused children:
   compile-time bracket list binds through its `match_parameter_slots`, as
   Mojo binds one: positional arguments first, each to the next parameter
   that is not infer-only (a pack takes the rest), then each keyword by
-  name, an infer-only binder included; the checker's `bracket_bindings`,
+  name, an infer-only binder included, though only ahead of every
+  positional argument (the first positional argument steps past the
+  infer-only list, so `f[Int, o=x]` is an unexpected keyword); a struct
+  type's bracket binds the same way, over its whole declared list, as a
+  call's does (`struct_bracket`); the checker's `bracket_bindings`,
   `bracket_argument_slots`, and `bound_bracket_origins` all use it.
 - `checker.rs` holds the `Checker` state, constructors, and shared prelude
   types, and coordinates checking; the single `Checker` type's methods are split
@@ -1255,12 +1259,9 @@ bracket list bound each argument to, keyed by declaration, once
 (`NodeFacts::parameter_attributes`, a `BracketBinding`): a declared-parameter
 binder answers its attributes keyed by declaration (`DeclaredAttributes` on
 `resolve_use_params`'s `BoundParameters`, each at its source position), a
-struct application placing each origin argument the partition kept back in
-its declared slot of the struct's checked list, which also declares a pack's
-implicit list binder (`PartitionedStructArgs::declared`), and an explicit
-specialization binding the callee's whole declared list in one pass, each
-origin argument in its origin binder's declared slot and every other in its
-binder's (`bind_bracket_params`, which `resolve_explicit_use_params` runs
+struct application and an explicit specialization each binding the
+callee's whole declared list in one pass, each origin and `mut=` argument
+in its binder's declared slot and every other in its binder's (`bind_bracket_params`, which `resolve_explicit_use_params` runs
 over that list: `bound_bracket_origins` binds the origin arguments, the
 argument view's binders solve to the call's arguments, and the bound
 origins `BoundParameters::origins` returns are substituted into the call's

@@ -1,5 +1,7 @@
-# expect: expects 1 type argument(s), got 2
-# Arity for a struct with origin parameters counts the origin slots.
+# expect: unexpected parameter
+# Arity for a struct with origin parameters counts the origin slots: the
+# second positional argument finds no slot once `o` is bound, the `m`
+# before `//` being infer-only.
 @fieldwise_init
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]

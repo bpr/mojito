@@ -1,4 +1,4 @@
-# expect: a mutable origin for parameter 'o' of 'TakeIter'
+# expect: value passed to 'o'
 # A slot declared Origin[mut=True] rejects a provably immutable argument.
 @fieldwise_init
 struct TakeIter[o: Origin[mut=True]]:

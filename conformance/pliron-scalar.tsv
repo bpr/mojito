@@ -473,6 +473,7 @@ assets/ok/free_function_origin_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/free_function_origin_only_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/free_iter_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/func_styles.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/function_bracket_explicit_origin_mut.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_bracket_unbound_origin_inferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_bracket_unbound_origin_marker.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_type_trait_composition.mojo	-	ineligible	no-scalar-entry-shape
@@ -1380,6 +1381,7 @@ assets/ok/string_view_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_writable_sequence.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stropping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_application_type_member_comparison.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_bracket_pack_then_keyword_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_callable_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_comptime_member_names_own_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_comptime_member_read_order.mojo	-	ineligible	no-scalar-entry-shape

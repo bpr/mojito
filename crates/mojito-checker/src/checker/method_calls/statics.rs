@@ -147,21 +147,24 @@ impl Checker {
                 .is_empty()
                 .then(|| Self::struct_instance_type(sname, Vec::new()))
         } else {
-            let partitioned = self.partition_struct_origin_args(sname, struct_targs)?;
-            self.resolve_use_params(sname, &info.decls(), &partitioned.forwarded, &[], &[])
-                .ok()
-                .map(|bound| {
-                    if let Some(application) = application {
-                        self.record_declared_attributes(
-                            application,
-                            &partitioned.declared(bound.attributes),
-                        );
-                    }
-                    Self::struct_instance_type(
-                        sname,
-                        self.place_partitioned(info, bound.arguments, None, &partitioned),
-                    )
-                })
+            let bracket = self.struct_bracket(sname, struct_targs)?;
+            self.resolve_explicit_use_params(
+                sname,
+                &info.params,
+                (struct_targs, &bracket.explicit),
+                &[],
+                &[],
+            )
+            .ok()
+            .map(|bound| {
+                if let Some(application) = application {
+                    self.record_declared_attributes(application, &bound.attributes);
+                }
+                Self::struct_instance_type(
+                    sname,
+                    self.place_struct_bracket(info, bound.arguments, None, &bracket),
+                )
+            })
         };
         let compatible = match (actual.kind(), expected.as_ref().map(Ty::kind)) {
             (_, None) => {
@@ -250,15 +253,14 @@ impl Checker {
         let info = self.structs.get(sname).ok_or_else(|| {
             TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
         })?;
-        let partitioned = self.partition_struct_origin_args(sname, struct_targs)?;
         let BoundParameters {
             arguments,
             attributes,
             ..
-        } = self.resolve_use_params(sname, &info.decls(), &partitioned.forwarded, &[], &[])?;
+        } = self.resolve_struct_use_args(sname, &info.decls(), struct_targs, &[], &[])?;
         let receiver = StaticReceiver {
-            arguments: self.place_partitioned(info, arguments, None, &partitioned),
-            attributes: partitioned.declared(attributes),
+            arguments,
+            attributes,
         };
         if record {
             self.record_static_receiver(object, sname, &receiver);
@@ -301,13 +303,11 @@ impl Checker {
         let info = self.structs.get(sname).ok_or_else(|| {
             TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
         })?;
-        // Origin slots partition out of the receiver application once, as
-        // construction does (`Span[Int, origin_of(xs)]`, `V[origin_of(w)]`):
-        // every binder below sees origin-free arguments, and the explicit
-        // origins are checked against the arguments binding those slots
-        // once a static is selected.
-        let partitioned = self.partition_struct_origin_args(sname, struct_targs)?;
-        let forwarded: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
+        // The receiver application binds over the struct's whole declared
+        // list once, as construction does (`Span[Int, origin_of(xs)]`,
+        // `V[origin_of(w)]`): the explicit origins are checked against the
+        // arguments binding those slots once a static is selected.
+        let bracket = self.struct_bracket(sname, struct_targs)?;
         let receiver_spelling = || {
             if struct_targs.is_empty() {
                 sname.to_string()
@@ -339,9 +339,8 @@ impl Checker {
             let bound = match self.static_struct_arguments(
                 sname,
                 method,
-                &info.decls(),
                 sig,
-                (forwarded, receiver),
+                (struct_targs, &bracket, receiver),
                 args,
                 kwargs,
             ) {
@@ -374,7 +373,7 @@ impl Checker {
             // type does (`View[origin_of(x)].same(p)` over `p: Pointer[T,
             // Self.o]`).
             let instance: Vec<TyArg> =
-                self.place_partitioned(info, tyargs.iter().cloned(), None, &partitioned);
+                self.place_struct_bracket(info, tyargs.iter().cloned(), None, &bracket);
             let receiver_params: Vec<Ty> = sig
                 .params
                 .iter()
@@ -548,8 +547,8 @@ impl Checker {
             .position(|(_, params)| *params == selected.param_types)
             .map(|index| candidate_struct_args.swap_remove(index))
             .map_or_else(StaticReceiver::default, |bound| StaticReceiver {
-                arguments: self.place_partitioned(info, bound.arguments, receiver, &partitioned),
-                attributes: partitioned.declared(bound.attributes),
+                arguments: self.place_struct_bracket(info, bound.arguments, receiver, &bracket),
+                attributes: bound.attributes,
             });
         self.record_declared_attributes(span.clone(), &selected.bracket_attributes);
         self.type_runtime_param_args(param_args, &selected.bracket_attributes.source_order())?;
@@ -616,7 +615,7 @@ impl Checker {
             selected,
             &candidate_sigs,
             &info.params,
-            &partitioned.explicit_origins,
+            &bracket.bound,
             args,
             kwargs,
         )
@@ -639,7 +638,7 @@ impl Checker {
         selected: MethodCallResolution,
         candidate_sigs: &[(&MethodSig, Vec<Ty>)],
         struct_params: &[ParamDecl],
-        explicit_origins: &[crate::checker::type_resolution::ExplicitStructOrigin],
+        explicit_origins: &[crate::checker::BoundOrigin],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
@@ -811,9 +810,12 @@ impl Checker {
         &self,
         sname: &str,
         method: &str,
-        decls: &[ParamDecl],
         sig: &MethodSig,
-        (struct_targs, receiver): (&[mojito_ast::ast::ParamArg], Option<&Ty>),
+        (struct_targs, bracket, receiver): (
+            &[mojito_ast::ast::ParamArg],
+            &crate::checker::type_resolution::StructBracket,
+            Option<&Ty>,
+        ),
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<BoundParameters, TypeError> {
@@ -867,6 +869,13 @@ impl Checker {
         // as a construction's instance does.
         let (patterns, actuals) =
             self.constructed_unification(sname, receiver, &patterns, &actuals);
-        self.resolve_use_params(sname, decls, struct_targs, &patterns, &actuals)
+        let params = self.structs.get(sname).map_or(&[][..], |info| &info.params);
+        self.resolve_explicit_use_params(
+            sname,
+            params,
+            (struct_targs, &bracket.explicit),
+            &patterns,
+            &actuals,
+        )
     }
 }

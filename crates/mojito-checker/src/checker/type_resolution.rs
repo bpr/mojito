@@ -60,6 +60,35 @@ pub(super) struct BoundParameters {
     pub(super) origins: Vec<BoundOrigin>,
 }
 
+/// The origin and `mut=` arguments one bracket binds over its callee's
+/// whole declared list ([`Checker::bound_bracket_origins`]).
+#[derive(Default)]
+pub(super) struct BracketOrigins {
+    pub(super) origins: Vec<BoundOrigin>,
+    pub(super) mutabilities: Vec<BoundMutability>,
+}
+
+/// What a bracket applies: a callee, whose origin arguments bind its
+/// signature, or a struct type at the given strictness, whose origin
+/// arguments are part of the type's identity.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum BracketUse {
+    Call,
+    Type(super::StorageStrictness),
+}
+
+/// One `mut=` argument a bracket binds: the declared slot of an origin's
+/// mutability binder, its identity, the argument's source position, and
+/// the `Bool` it binds ([`CtValue::Deferred`] where it leaves the binder to
+/// its origin).
+#[derive(Clone)]
+pub(super) struct BoundMutability {
+    pub(super) slot: usize,
+    pub(super) id: mojito_types::param_expr::ParamId,
+    pub(super) position: usize,
+    pub(super) value: CtValue,
+}
+
 /// The explicit arguments of a call's bracket, resolved once before its
 /// run-time arguments are typed: the substitution an argument display
 /// solves under, the bracket's origin arguments bound in their declared
@@ -74,6 +103,8 @@ pub(super) struct ExplicitTypes {
     resolved: Vec<(usize, usize, BoundArgument)>,
     /// The origin arguments, each bound in its binder's declared slot.
     origins: Vec<BoundOrigin>,
+    /// The `mut=` arguments, each bound in its binder's declared slot.
+    mutabilities: Vec<BoundMutability>,
 }
 
 impl ExplicitTypes {
@@ -105,9 +136,23 @@ impl ExplicitTypes {
         &self.origins
     }
 
-    /// Record the origin arguments the bracket bound.
-    pub(super) fn set_origins(&mut self, origins: Vec<BoundOrigin>) {
-        self.origins = origins;
+    /// The `mut=` argument at `position` bound to the mutability binder
+    /// declared at `slot`.
+    pub(super) fn mutability(&self, slot: usize, position: usize) -> Option<&BoundMutability> {
+        self.mutabilities
+            .iter()
+            .find(|bound| (bound.slot, bound.position) == (slot, position))
+    }
+
+    /// The `mut=` arguments the bracket bound.
+    pub(super) fn mutabilities(&self) -> &[BoundMutability] {
+        &self.mutabilities
+    }
+
+    /// Record the origin and `mut=` arguments the bracket bound.
+    pub(super) fn set_origins(&mut self, bound: BracketOrigins) {
+        self.origins = bound.origins;
+        self.mutabilities = bound.mutabilities;
     }
 }
 
@@ -388,18 +433,6 @@ impl DeclaredAttributes {
         }
     }
 
-    /// These attributes, bound over a sub-list of the bracket whose `i`th
-    /// argument sits at source position `positions[i]`, at the bracket's
-    /// positions.
-    pub(super) fn relocated(mut self, positions: &[usize]) -> Self {
-        for bound in self.slots.iter_mut().flatten() {
-            if let Some(&position) = positions.get(bound.position) {
-                bound.position = position;
-            }
-        }
-        self
-    }
-
     /// The binding the checked node records
     /// ([`mojito_checked::checked::NodeFacts::parameter_attributes`]).
     pub(super) fn binding(&self) -> mojito_checked::checked::BracketBinding {
@@ -513,45 +546,27 @@ pub(super) struct BoundOrigin {
     pub(super) position: usize,
     pub(super) attribute: Option<TyArg>,
     pub(super) origin: mojito_types::origin::Origin,
+    /// The argument's capability when known (`None` for a symbolic one):
+    /// an `ImmOrigin(o)` cast binds the slot immutably whatever `o` allows.
+    pub(super) mutability: Option<mojito_types::origin::Mutability>,
 }
 
-/// One explicit origin argument a struct application supplied, resolved
-/// against its slot: the slot's index in the declaration's full parameter
-/// list (the `OriginParamId` domain of the struct's own binders) and the
-/// origin the argument names (its mutability was already validated against
-/// the slot by `accept_origin_argument`).
-pub(in crate::checker) struct ExplicitStructOrigin {
-    pub(in crate::checker) id: mojito_types::origin::OriginParamId,
-    pub(in crate::checker) origin: mojito_types::origin::Origin,
-    /// The argument's capability when known (`None` for a symbolic one): an
-    /// `ImmOrigin(o)` cast binds the slot immutably whatever `o` allows.
-    pub(in crate::checker) mutability: Option<mojito_types::origin::Mutability>,
-}
-
-/// A struct application's compile-time arguments with the origin slots
-/// partitioned out: `forwarded` is exactly what the origin-erased binder
-/// sees, `explicit_origins` the validated origin arguments, and `origins`
-/// the application's origin arguments — one per origin binder, in declared
-/// order, `Origin::Unbound` where the application left it to inference.
-pub(super) struct PartitionedStructArgs {
-    pub(super) forwarded: Vec<mojito_ast::ast::ParamArg>,
-    pub(super) explicit_origins: Vec<ExplicitStructOrigin>,
+/// A struct application's bracket bound over the struct's whole declared
+/// list ([`Checker::struct_bracket`]): the explicit arguments its binder
+/// reads back, and the origin and `mut=` arguments the application fixes.
+pub(super) struct StructBracket {
+    pub(super) explicit: ExplicitTypes,
+    /// One origin per origin binder, in declared order, `Origin::Unbound`
+    /// where the application leaves it to inference.
     pub(super) origins: Vec<mojito_types::origin::Origin>,
-    /// The value an explicit `mut=` keyword gives an origin's mutability
-    /// binder, by the binder's identity.
+    /// The origin arguments that bind an origin, which a construction's
+    /// arguments are checked against.
+    pub(super) bound: Vec<BoundOrigin>,
+    /// The value each `mut=` argument gives its binder, by identity.
     pub(super) mutabilities: Vec<(mojito_types::param_expr::ParamId, CtValue)>,
-    /// The source position of each `forwarded` argument.
-    positions: Vec<usize>,
-    /// The arguments kept back from the binder, each bound in its binder's
-    /// slot of the struct's checked list (`StructInfo::params`): an origin
-    /// argument to its attribute, an origin's `mut=` binder to none.
-    kept: DeclaredAttributes,
-    /// The declared slot of each binder the origin-erased binder binds
-    /// ([`ParamDecl::argument_binders`]), in order, and the name of each.
-    slots: StructSlots,
 }
 
-impl PartitionedStructArgs {
+impl StructBracket {
     /// The application a construction's origin binding checks the selected
     /// initializer against, beside `own`, the initializer's own origin
     /// binders its instantiation bound.
@@ -563,44 +578,11 @@ impl PartitionedStructArgs {
         )],
     ) -> super::origins::StructApplication<'a> {
         super::origins::StructApplication {
-            origins: &self.explicit_origins,
+            origins: &self.bound,
             mutabilities: &self.mutabilities,
             own,
         }
     }
-
-    /// The application's attributes over the struct's whole declared list:
-    /// `bound`, the origin-erased binder's over `forwarded`, each in its
-    /// binder's declared slot, beside the kept-back origin arguments in
-    /// theirs.
-    pub(super) fn declared(&self, bound: DeclaredAttributes) -> DeclaredAttributes {
-        let mut declared = DeclaredAttributes::default();
-        for (index, slot) in self.kept.slots.iter().enumerate() {
-            for attribute in slot {
-                declared.bind(index, attribute.position, attribute.attribute.clone());
-            }
-        }
-        let bound = bound.relocated(&self.positions);
-        for (index, slot) in bound.slots.into_iter().enumerate() {
-            let index = self.slots.binders.get(index).copied().unwrap_or(index);
-            for attribute in slot {
-                declared.bind(index, attribute.position, attribute.attribute);
-            }
-        }
-        for (index, name) in self.slots.names.iter().enumerate() {
-            declared.declare(index, name);
-        }
-        declared
-    }
-}
-
-/// Where a struct's argument binders sit in its checked parameter list
-/// ([`PartitionedStructArgs::slots`]).
-#[derive(Clone, Default)]
-pub(super) struct StructSlots {
-    binders: Vec<usize>,
-    /// The name of each declared parameter, by slot.
-    names: Vec<String>,
 }
 
 impl Checker {
@@ -2202,14 +2184,13 @@ impl Checker {
         Ok(None)
     }
 
-    /// Resolve a struct application's explicit compile-time arguments,
-    /// accepting origin arguments in the slots the struct's checked list
-    /// declares (`decls` is its argument view, so `resolve_use_params` alone
-    /// cannot see them). The resolved arguments hold each origin argument at
-    /// its binder's position: origin arguments are part of the struct's
-    /// checked identity, and a slot the application leaves to inference is
-    /// `Origin::Unbound`. An application supplying exactly the non-origin
-    /// explicit count omits the origin slots entirely.
+    /// Resolve a struct application's explicit compile-time arguments over
+    /// the struct's whole declared list, in one solve, as upstream binds a
+    /// type's parameter list ([`Self::struct_bracket`]). The resolved
+    /// arguments hold each origin argument at its binder's position:
+    /// origin arguments are part of the struct's checked identity, and a
+    /// slot the application leaves to inference is `Origin::Unbound`.
+    /// `decls` binds a name no struct declares.
     pub(super) fn resolve_struct_use_args(
         &self,
         name: &str,
@@ -2218,209 +2199,154 @@ impl Checker {
         patterns: &[Ty],
         actuals: &[Ty],
     ) -> Result<BoundParameters, TypeError> {
-        let partitioned = self.partition_struct_origin_args(name, args)?;
+        let Some(info) = self.structs.get(name) else {
+            return self.resolve_use_params(name, decls, args, patterns, actuals);
+        };
+        let bracket = self.struct_bracket(name, args)?;
         let BoundParameters {
             subst,
             arguments,
             attributes,
             ..
-        } = self.resolve_use_params(name, decls, &partitioned.forwarded, patterns, actuals)?;
-        let arguments = self.place_struct_origins(
-            self.structs.get(name).map_or(decls, |info| &info.params),
-            arguments,
-            partitioned.origins.iter().cloned(),
-            &partitioned.mutabilities,
-        );
+        } = self.resolve_explicit_use_params(
+            name,
+            &info.params,
+            (args, &bracket.explicit),
+            patterns,
+            actuals,
+        )?;
         Ok(BoundParameters {
             subst,
-            arguments,
-            attributes: partitioned.declared(attributes),
+            arguments: self.place_struct_bracket(info, arguments, None, &bracket),
+            attributes,
             origins: Vec::new(),
         })
     }
 
-    /// Partition a struct application's explicit compile-time arguments into
-    /// the origin binders the struct's checked list declares and the
-    /// arguments the origin-erased binder sees (see
-    /// [`Self::resolve_struct_use_args`], the annotation-side consumer; the
-    /// constructor-call funnel in `infer_construction` is the other). Each
-    /// resolvable origin argument is validated against its binder, becomes
-    /// its slot's entry, and is returned so a constructor call can check the
-    /// arguments binding that slot against it.
-    pub(super) fn partition_struct_origin_args(
+    /// The explicit arguments of struct `name`'s application `args`, bound
+    /// over its whole declared list as a type's bracket
+    /// ([`BracketUse::Type`]): each origin and `mut=` argument in its
+    /// binder's slot, and each type argument resolved once, for
+    /// [`Self::resolve_explicit_use_params`] to read back. A type
+    /// application must bind its origin binders
+    /// ([`Self::check_struct_application`]).
+    pub(super) fn struct_bracket(
         &self,
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<PartitionedStructArgs, TypeError> {
+    ) -> Result<StructBracket, TypeError> {
+        let params = self.struct_params(name);
         // Only the outermost application of a collected storage annotation
         // reports its demands; nested applications resolve uncollected.
         let collecting = self.storage_origin_demands.take();
-        let result = self.partition_struct_origin_args_uncollected(name, args);
+        let strictness = self.application_strictness();
+        let explicit = self.explicit_bracket_args(name, params, args, BracketUse::Type(strictness));
         if let Some(mut demands) = collecting {
-            if let Ok(partitioned) = &result {
-                let params = self.struct_params(name);
-                demands.extend(partitioned.explicit_origins.iter().filter_map(|explicit| {
-                    super::struct_origin_decl(params, explicit.id)
-                        .map(|decl| (decl.name().to_string(), explicit.origin.clone()))
-                }));
+            if let Ok(explicit) = &explicit {
+                demands.extend(
+                    explicit
+                        .origins()
+                        .iter()
+                        .filter(|bound| bound.origin != mojito_types::origin::Origin::Unbound)
+                        .map(|bound| (params[bound.slot].name().to_string(), bound.origin.clone())),
+                );
             }
             self.storage_origin_demands.replace(Some(demands));
         }
-        result
-    }
-
-    /// Keep back the keyword arguments naming a binder the origin-erased
-    /// binder does not see — an infer-only origin binder (`origin=o`), which
-    /// binds its own slot, or the `mut` binder an origin binder's mutability
-    /// names (`mut=Self.mut`) — as upstream binds every declared parameter
-    /// by keyword, then partition the rest
-    /// ([`Self::partition_carried_struct_args`]).
-    fn partition_struct_origin_args_uncollected(
-        &self,
-        name: &str,
-        args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<PartitionedStructArgs, TypeError> {
-        use mojito_ast::ast::ParamArg;
-        use mojito_ast::call::CompileTimeParam as _;
-        let params = self.struct_params(name);
-        let erased_param = |argument: &ParamArg| match argument {
-            ParamArg::Named { name: keyword, .. } => params.iter().enumerate().find(|(_, decl)| {
-                decl.name() == keyword
-                    && ((decl.infer_only() && decl.is_origin())
-                        || decl.is_origin_mutability_binder(params))
-            }),
-            _ => None,
-        };
-        if !args.iter().any(|argument| erased_param(argument).is_some()) {
-            return self.partition_carried_struct_args(name, args);
-        }
-        let mut kept = DeclaredAttributes::default();
-        let mut binders = Vec::new();
-        let mut inferred = Vec::new();
-        let mut carried = Vec::new();
-        let mut carried_positions = Vec::new();
-        for (position, argument) in args.iter().enumerate() {
-            let Some((slot, decl)) = erased_param(argument) else {
-                carried.push(argument.clone());
-                carried_positions.push(position);
-                continue;
-            };
-            let ParamDecl::Origin { origin: id, .. } = decl else {
-                binders.push((decl, slot, position, argument));
-                continue;
-            };
-            let (origin, mutability) = if origin_placeholder(argument) {
-                (mojito_types::origin::Origin::Unbound, None)
-            } else {
-                match self.resolve_origin_param_arg(argument) {
-                    Ok(resolved) => resolved,
-                    Err(_)
-                        if self.signature_origin_leniency.get()
-                            && syntactic_origin_argument(argument) =>
-                    {
-                        (mojito_types::origin::Origin::Unbound, None)
-                    }
-                    Err(error) => return Err(error),
-                }
-            };
-            let attribute =
-                self.accept_origin_argument(name, decl, argument, origin.clone(), mutability)?;
-            kept.bind(slot, position, attribute);
-            if origin != mojito_types::origin::Origin::Unbound {
-                inferred.push(ExplicitStructOrigin {
-                    id: *id,
-                    origin,
-                    mutability,
-                });
-            }
-        }
-        let mut partitioned = self.partition_carried_struct_args(name, &carried)?;
-        // An infer-only origin bound by keyword fills its own slot.
-        for origin in inferred {
-            if let Some(entry) = super::struct_origin_decls(params)
-                .position(|(id, _)| id == origin.id)
-                .and_then(|at| partitioned.origins.get_mut(at))
-            {
-                *entry = origin.origin.clone();
-            }
-            partitioned.explicit_origins.push(origin);
-        }
-        for (binder, slot, position, argument) in binders {
-            check_origin_mutability_argument(
-                name,
-                params,
-                binder,
-                argument,
-                &partitioned.explicit_origins,
-            )?;
-            let value = self.origin_mutability_argument_value(binder, argument);
-            if let CtValue::Expr(read) = &value
-                && let Some(found) = read.meta().as_value()
-                && !found.kind().is_bool()
-            {
-                return Err(TypeError::TypeMismatch {
-                    expected: "Bool".to_string(),
-                    found: found.to_string(),
-                    context: format!("parameter '{}' of '{name}'", binder.name()),
-                });
-            }
-            kept.bind(slot, position, Some(TyArg::Val(value.clone())));
-            partitioned.mutabilities.push((binder.id().clone(), value));
-        }
-        partitioned.positions = partitioned
-            .positions
+        let explicit = explicit?;
+        let bound: Vec<BoundOrigin> = explicit
+            .origins()
             .iter()
-            .map(|&at| carried_positions[at])
+            .filter(|bound| bound.origin != mojito_types::origin::Origin::Unbound)
+            .cloned()
             .collect();
-        kept.merge(std::mem::take(&mut partitioned.kept).relocated(&carried_positions));
-        partitioned.kept = kept;
-        Ok(partitioned)
+        let origins = super::struct_origin_decls(params)
+            .map(|(id, _)| {
+                bound
+                    .iter()
+                    .find(|origin| origin.id == id)
+                    .map_or(mojito_types::origin::Origin::Unbound, |origin| {
+                        origin.origin.clone()
+                    })
+            })
+            .collect();
+        let mutabilities = explicit
+            .mutabilities()
+            .iter()
+            .map(|bound| (bound.id.clone(), bound.value.clone()))
+            .collect();
+        Ok(StructBracket {
+            explicit,
+            origins,
+            bound,
+            mutabilities,
+        })
     }
 
-    /// The instance of the struct `info` an application partitioned as
-    /// `partitioned` names, its argument binders taking `view` and its
-    /// origin binders the origins of `instance`, when there is one, else
-    /// the application's ([`Self::place_struct_origins`]).
-    pub(super) fn place_partitioned(
+    /// The instance of the struct `info` an application bound as `bracket`
+    /// names, its argument binders taking `view` and its origin binders the
+    /// origins of `instance`, when there is one, else the application's
+    /// ([`Self::place_struct_origins`]).
+    pub(super) fn place_struct_bracket(
         &self,
         info: &super::StructInfo,
         view: impl IntoIterator<Item = TyArg>,
         instance: Option<&Ty>,
-        partitioned: &PartitionedStructArgs,
+        bracket: &StructBracket,
     ) -> Vec<TyArg> {
         self.place_struct_origins(
             &info.params,
             view,
-            super::StructInfo::instance_origins_or(instance, &partitioned.origins),
-            &partitioned.mutabilities,
+            super::StructInfo::instance_origins_or(instance, &bracket.origins),
+            &bracket.mutabilities,
         )
     }
 
-    /// The value an explicit `mut=` keyword `argument` gives the origin's
-    /// mutability binder `binder`: a literal's `Bool`, the read of a value
-    /// binder in scope, and [`CtValue::Deferred`] for `_` or a spelling
-    /// that names no binder in scope, which the slot then infers.
-    fn origin_mutability_argument_value(
-        &self,
-        binder: &ParamDecl,
-        argument: &mojito_ast::ast::ParamArg,
-    ) -> CtValue {
-        use mojito_ast::ast::ParamArg;
-        let mut value = argument;
-        while let ParamArg::Named { value: inner, .. } = value {
-            value = inner;
+    /// Check that a type application of `name` binds its declared list
+    /// `params`, as upstream's type expression must ("use '[]' to bind
+    /// missing parameters"): unless the position leaves parameters to
+    /// inference ([`Self::application_strictness`]), a nonempty bracket
+    /// binds each explicit origin binder, and a concrete position spells
+    /// none as `_`. A pack the bracket's positional arguments fill leaves
+    /// the origin binders after it to keywords, so a bracket naming none of
+    /// them binds the pack alone.
+    pub(super) fn check_struct_application(
+        name: &str,
+        params: &[ParamDecl],
+        bound: &[Vec<(usize, &mojito_ast::ast::ParamArg)>],
+        strictness: super::StorageStrictness,
+    ) -> Result<(), TypeError> {
+        use mojito_ast::call::CompileTimeParam as _;
+        if strictness == super::StorageStrictness::Off || bound.iter().all(Vec::is_empty) {
+            return Ok(());
         }
-        match value {
-            ParamArg::Value(expression) => match &expression.kind {
-                ExprKind::Bool(literal) => Some(CtValue::Bool(*literal)),
-                ExprKind::Identifier(name) if name != "_" => {
-                    self.value_parameter_in_scope(name).map(CtValue::Expr)
-                }
-                _ => None,
-            },
-            _ => None,
+        let explicit_origins = || {
+            params
+                .iter()
+                .zip(bound)
+                .filter(|(decl, _)| decl.is_origin() && !decl.infer_only())
+        };
+        let packed = params
+            .iter()
+            .any(|decl| !decl.infer_only() && decl.variadic())
+            && explicit_origins().all(|(_, arguments)| arguments.is_empty());
+        if packed {
+            return Ok(());
         }
-        .unwrap_or_else(|| CtValue::Deferred(binder.binder()))
+        for (decl, arguments) in explicit_origins() {
+            let Some(&(_, argument)) = arguments.first() else {
+                return Err(TypeError::CannotInferParam {
+                    name: name.to_string(),
+                    param: decl.name().to_string(),
+                });
+            };
+            if strictness == super::StorageStrictness::Full
+                && mojito_ast::call::unbound_marker(argument).is_some()
+            {
+                return Err(TypeError::NotConcrete(format!("{name}[_]")));
+            }
+        }
+        Ok(())
     }
 
     /// The checked parameter list of struct `name`, empty for a struct not
@@ -2429,264 +2355,6 @@ impl Checker {
         self.structs
             .get(name)
             .map_or(&[], |info| info.params.as_slice())
-    }
-
-    /// Partition the arguments binding the parameters the struct type
-    /// carries: its explicit origin binders, and the origin-erased binder's.
-    fn partition_carried_struct_args(
-        &self,
-        name: &str,
-        args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<PartitionedStructArgs, TypeError> {
-        use mojito_ast::ast::ParamArg;
-        use mojito_ast::call::CompileTimeParam as _;
-        use mojito_types::origin::Origin;
-        let params = self.struct_params(name);
-        let slots = struct_slots(params);
-        let explicit: Vec<(usize, &ParamDecl)> = params
-            .iter()
-            .enumerate()
-            .filter(|(_, decl)| !decl.infer_only())
-            .collect();
-        let origin_slots = explicit.iter().filter(|(_, decl)| decl.is_origin()).count();
-        // Every declared origin in slot order, infer-only ones included:
-        // each binder's bound origin, or unbound.
-        let tail_len = super::struct_origin_decls(params).count();
-        let tail_of = |explicit_origins: &[ExplicitStructOrigin]| -> Vec<Origin> {
-            super::struct_origin_decls(params)
-                .map(|(id, _)| {
-                    explicit_origins
-                        .iter()
-                        .find(|origin| origin.id == id)
-                        .map_or(Origin::Unbound, |origin| origin.origin.clone())
-                })
-                .collect()
-        };
-        let forward_all = || PartitionedStructArgs {
-            forwarded: args.to_vec(),
-            positions: (0..args.len()).collect(),
-            kept: DeclaredAttributes::default(),
-            slots: slots.clone(),
-            explicit_origins: Vec::new(),
-            origins: vec![Origin::Unbound; tail_len],
-            mutabilities: Vec::new(),
-        };
-        let strict = self.application_strictness();
-        // A variadic explicit list's positional alignment is the
-        // erased-decl binder's, so only a keyword can name an origin binder
-        // after the pack, as upstream's pack swallows every positional
-        // argument.
-        let names_origin = args.iter().any(|argument| {
-            matches!(argument, ParamArg::Named { name: keyword, .. }
-                if explicit.iter().any(|(_, decl)| decl.is_origin() && decl.name() == keyword))
-        });
-        if origin_slots == 0
-            || args.is_empty()
-            || (explicit.iter().any(|(_, decl)| decl.variadic()) && !names_origin)
-        {
-            return Ok(forward_all());
-        }
-        let any_named = args.iter().any(|a| matches!(a, ParamArg::Named { .. }));
-        if !any_named {
-            let non_origin = explicit.len() - origin_slots;
-            // Positional arguments bind in order, so a prefix that supplies
-            // an origin binder and leaves only defaulted non-origin binders
-            // after it (`GraphemeSliceIter[ImmStaticOrigin]` over `forward:
-            // Bool = True`) is a full supply of that prefix.
-            let defaulted_suffix = args.len() < explicit.len()
-                && explicit[args.len()..]
-                    .iter()
-                    .all(|(_, decl)| declares_default(decl))
-                && explicit.iter().zip(args).any(|((_, decl), argument)| {
-                    decl.is_origin()
-                        && (origin_placeholder(argument)
-                            || self.resolve_origin_param_arg(argument).is_ok())
-                });
-            if args.len() == non_origin && !defaulted_suffix {
-                if strict != super::StorageStrictness::Off {
-                    let (_, omitted) = explicit
-                        .iter()
-                        .find(|(_, decl)| decl.is_origin())
-                        .expect("origin_slots > 0");
-                    return Err(TypeError::CannotInferParam {
-                        name: name.to_string(),
-                        param: omitted.name().to_string(),
-                    });
-                }
-                return Ok(forward_all());
-            }
-            if args.len() != explicit.len() && !defaulted_suffix {
-                return Err(TypeError::WrongTypeArgCount {
-                    name: name.to_string(),
-                    expected: explicit.len(),
-                    got: args.len(),
-                });
-            }
-            // Full positional supply. Every origin binder's argument must
-            // RESOLVE as an origin for this interpretation to hold; a
-            // non-origin argument in an origin slot means the application is
-            // an ordinary over-application (e.g. an infer-only binder spelled
-            // explicitly), which the erased-decl binder diagnoses.
-            let mut resolved = Vec::with_capacity(origin_slots);
-            let (mut positions, mut kept) = (Vec::new(), DeclaredAttributes::default());
-            for (position, (&(slot, decl), argument)) in explicit.iter().zip(args).enumerate() {
-                if !decl.is_origin() {
-                    positions.push(position);
-                    continue;
-                }
-                // Upstream's placeholder spellings (`_`, `...`) mark the slot
-                // explicitly inferred: the application is complete (no
-                // partial-application rejection), the slot resolves from the
-                // initializer or call context, and concrete-storage positions
-                // reject exactly like an omitted slot.
-                if origin_placeholder(argument) {
-                    if strict == super::StorageStrictness::Full {
-                        return Err(TypeError::NotConcrete(format!("{name}[_]")));
-                    }
-                    let attribute = self.accept_origin_argument(
-                        name,
-                        decl,
-                        argument,
-                        mojito_types::origin::Origin::Unbound,
-                        None,
-                    )?;
-                    kept.bind(slot, position, attribute);
-                    continue;
-                }
-                match self.resolve_origin_param_arg(argument) {
-                    Ok(origin) => resolved.push((
-                        position,
-                        slot,
-                        decl,
-                        argument,
-                        immutable_slot_origin(decl, origin),
-                    )),
-                    Err(error) => {
-                        // A signature annotation may name places only the body
-                        // can resolve (`origin_of(self.entries)`): accept an
-                        // origin-shaped argument syntactically and erase it.
-                        if self.signature_origin_leniency.get()
-                            && syntactic_origin_argument(argument)
-                        {
-                            let attribute = self.accept_origin_argument(
-                                name,
-                                decl,
-                                argument,
-                                mojito_types::origin::Origin::Unbound,
-                                None,
-                            )?;
-                            kept.bind(slot, position, attribute);
-                            continue;
-                        }
-                        // An origin-shaped argument that does not resolve,
-                        // or a named origin's use, is an origin diagnostic,
-                        // never an arity mismatch against the origin-erased
-                        // binder.
-                        if syntactic_origin_argument(argument)
-                            || self.named_origin_value(argument).is_some()
-                        {
-                            return Err(error);
-                        }
-                        return Ok(forward_all());
-                    }
-                }
-            }
-            let mut explicit_origins = Vec::with_capacity(resolved.len());
-            for (position, slot, decl, argument, (origin, mutability)) in resolved {
-                let attribute =
-                    self.accept_origin_argument(name, decl, argument, origin.clone(), mutability)?;
-                kept.bind(slot, position, attribute);
-                if let Some(id) = declared_origin_id(decl) {
-                    explicit_origins.push(ExplicitStructOrigin {
-                        id,
-                        origin,
-                        mutability,
-                    });
-                }
-            }
-            let forwarded: Vec<mojito_ast::ast::ParamArg> = explicit
-                .iter()
-                .zip(args)
-                .filter(|((_, decl), _)| !decl.is_origin())
-                .map(|(_, argument)| argument.clone())
-                .collect();
-            let origins = tail_of(&explicit_origins);
-            return Ok(PartitionedStructArgs {
-                forwarded,
-                explicit_origins,
-                origins,
-                positions,
-                kept,
-                slots,
-                mutabilities: Vec::new(),
-            });
-        }
-        // Keyword spellings: extract named origin arguments wherever they
-        // appear; everything else forwards to the erased-decl binder.
-        let mut forwarded = Vec::with_capacity(args.len());
-        let (mut positions, mut kept) = (Vec::new(), DeclaredAttributes::default());
-        let mut explicit_origins = Vec::new();
-        let mut supplied_origins: Vec<usize> = Vec::new();
-        for (position, argument) in args.iter().enumerate() {
-            if let ParamArg::Named { name: keyword, .. } = argument
-                && let Some(&(slot, decl)) = explicit
-                    .iter()
-                    .find(|(_, decl)| decl.name() == keyword && decl.is_origin())
-            {
-                if origin_placeholder(argument) {
-                    if strict == super::StorageStrictness::Full {
-                        return Err(TypeError::NotConcrete(format!("{name}[_]")));
-                    }
-                    let attribute = self.accept_origin_argument(
-                        name,
-                        decl,
-                        argument,
-                        mojito_types::origin::Origin::Unbound,
-                        None,
-                    )?;
-                    kept.bind(slot, position, attribute);
-                    supplied_origins.push(slot);
-                    continue;
-                }
-                let (origin, mutability) = self
-                    .resolve_origin_param_arg(argument)
-                    .map(|origin| immutable_slot_origin(decl, origin))?;
-                let attribute =
-                    self.accept_origin_argument(name, decl, argument, origin.clone(), mutability)?;
-                kept.bind(slot, position, attribute);
-                supplied_origins.push(slot);
-                if let Some(id) = declared_origin_id(decl) {
-                    explicit_origins.push(ExplicitStructOrigin {
-                        id,
-                        origin,
-                        mutability,
-                    });
-                }
-                continue;
-            }
-            positions.push(position);
-            forwarded.push(argument.clone());
-        }
-        if strict != super::StorageStrictness::Off
-            && let Some((_, omitted)) = explicit
-                .iter()
-                .find(|(slot, decl)| decl.is_origin() && !supplied_origins.contains(slot))
-        {
-            return Err(TypeError::CannotInferParam {
-                name: name.to_string(),
-                param: omitted.name().to_string(),
-            });
-        }
-        let origins = tail_of(&explicit_origins);
-        Ok(PartitionedStructArgs {
-            forwarded,
-            explicit_origins,
-            origins,
-            positions,
-            kept,
-            slots,
-            mutabilities: Vec::new(),
-        })
     }
 
     /// Resolve a return annotation: explicit origin slots must be applied
@@ -2798,71 +2466,49 @@ impl Checker {
         }
     }
 
-    fn accept_origin_argument(
+    /// Reject `argument`, an origin argument of binder `decl` of `name`,
+    /// when it is not the binder's representation: the raw `!lit.origin`
+    /// an `X._mlir_origin` reads and the `Origin` value `X` are distinct
+    /// types, and each binder takes only its own.
+    pub(super) fn check_origin_argument_representation(
         &self,
-        struct_name: &str,
+        name: &str,
         decl: &ParamDecl,
         argument: &mojito_ast::ast::ParamArg,
-        origin: mojito_types::origin::Origin,
-        mutability: Option<mojito_types::origin::Mutability>,
-    ) -> Result<Option<TyArg>, TypeError> {
-        let requires_mut = declared_mutability(decl) == Some(true);
-        if requires_mut
-            && matches!(
-                mutability,
-                Some(mojito_types::origin::Mutability::Immutable)
-            )
-        {
-            return Err(TypeError::TypeMismatch {
-                expected: format!(
-                    "a mutable origin for parameter '{}' of '{struct_name}'",
-                    decl.name()
-                ),
-                found: "an immutable origin".to_string(),
-                context: "explicit origin argument".to_string(),
-            });
-        }
+    ) -> Result<(), TypeError> {
+        use mojito_types::origin::Mutability;
         let mut value = argument;
         while let mojito_ast::ast::ParamArg::Named { value: inner, .. } = value {
             value = inner;
         }
-        // The raw `!lit.origin` an `X._mlir_origin` reads and the `Origin`
-        // value `X` are distinct types: each binder takes only its own.
-        if let ParamDecl::Origin {
+        let ParamDecl::Origin {
             mutability: declared,
             lit,
             ..
         } = decl
-            && !origin_placeholder(value)
-            && self.origin_argument_is_raw(value) != *lit
-        {
-            use mojito_types::origin::Mutability;
-            // The argument's own mutability, before an immutable slot
-            // narrowed it.
-            let own = self
-                .resolve_origin_param_arg(value)
-                .map_or(mutability, |(_, own)| own);
-            let fixed = match own {
-                Some(Mutability::Mutable) => Some(true),
-                Some(Mutability::Immutable) => Some(false),
-                _ => None,
-            };
-            let expected = match declared {
-                OriginMutability::Fixed(fixed) => super::origin_value_type(Some(*fixed), *lit),
-                other => other.binder_type(*lit),
-            };
-            return Err(TypeError::TypeMismatch {
-                expected,
-                found: super::origin_value_type(fixed, !*lit),
-                context: format!("value passed to '{}' of '{struct_name}'", decl.name()),
-            });
+        else {
+            return Ok(());
+        };
+        if origin_placeholder(value) || self.origin_argument_is_raw(value) == *lit {
+            return Ok(());
         }
-        let attribute = TyArg::Origin(origin);
-        Ok(match value {
-            mojito_ast::ast::ParamArg::Value(_) => (self.strict_storage_annotation.get()
-                == super::StorageStrictness::Off)
-                .then_some(attribute),
-            _ => Some(attribute),
+        let fixed = match self
+            .resolve_origin_param_arg(value)
+            .ok()
+            .and_then(|(_, own)| own)
+        {
+            Some(Mutability::Mutable) => Some(true),
+            Some(Mutability::Immutable) => Some(false),
+            _ => None,
+        };
+        let expected = match declared {
+            OriginMutability::Fixed(fixed) => super::origin_value_type(Some(*fixed), *lit),
+            other => other.binder_type(*lit),
+        };
+        Err(TypeError::TypeMismatch {
+            expected,
+            found: super::origin_value_type(fixed, !*lit),
+            context: format!("value passed to '{}' of '{name}'", decl.name()),
         })
     }
 
@@ -6068,7 +5714,7 @@ fn origin_placeholder(argument: &mojito_ast::ast::ParamArg) -> bool {
 /// slot given an origin not already immutable binds its `ImmOrigin(o)`
 /// cast, as upstream's implicit conversion of the argument to the slot's
 /// type makes it, and as an explicit `ImmOrigin(o)` resolves.
-fn immutable_slot_origin(
+pub(super) fn immutable_slot_origin(
     decl: &ParamDecl,
     (origin, mutability): (
         mojito_types::origin::Origin,
@@ -6093,7 +5739,7 @@ fn immutable_slot_origin(
 /// Whether an application argument is syntactically origin-shaped — an
 /// `origin_of(...)` call, a binder name (`o`, `Self.o`), or a projected origin
 /// expression — regardless of whether its places resolve in this context.
-fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
+pub(super) fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
     let mut value = argument;
     while let mojito_ast::ast::ParamArg::Named { value: inner, .. } = value {
         value = inner;
@@ -6129,32 +5775,6 @@ fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
     }
 }
 
-/// Where the binders of `params`, a struct's checked list, sit: the slot
-/// of each binder the origin-erased binder binds, and each binder's name.
-fn struct_slots(params: &[ParamDecl]) -> StructSlots {
-    StructSlots {
-        names: params
-            .iter()
-            .map(|decl| mojito_ast::call::CompileTimeParam::keyword(decl).to_string())
-            .collect(),
-        binders: params
-            .iter()
-            .enumerate()
-            .filter(|(_, decl)| decl.is_argument_binder(params))
-            .map(|(index, _)| index)
-            .collect(),
-    }
-}
-
-/// The `OriginParamId` an origin binder declares; `None` for any other
-/// binder.
-const fn declared_origin_id(decl: &ParamDecl) -> Option<mojito_types::origin::OriginParamId> {
-    match decl {
-        ParamDecl::Origin { origin, .. } => Some(*origin),
-        _ => None,
-    }
-}
-
 /// The mutability an origin binder fixes (`MutOrigin`, `ImmOrigin`);
 /// `None` for a parametric or inferred one, or any other binder.
 const fn declared_mutability(decl: &ParamDecl) -> Option<bool> {
@@ -6165,78 +5785,6 @@ const fn declared_mutability(decl: &ParamDecl) -> Option<bool> {
         } => Some(*fixed),
         _ => None,
     }
-}
-
-/// Whether a type or value binder declares a default, which a positional
-/// application may leave off the end.
-const fn declares_default(decl: &ParamDecl) -> bool {
-    match decl {
-        ParamDecl::Type { default, .. } => default.is_some(),
-        ParamDecl::Value {
-            default,
-            callable_default,
-            ..
-        } => default.is_some() || callable_default.is_some(),
-        ParamDecl::Origin { .. } => false,
-    }
-}
-
-/// Check a keyword argument binding the `mut` binder of an origin slot:
-/// a Bool, or a value spelling one (`Self.mut`, `_`), and `True` only
-/// when the origin the application binds the slot to may be mutable.
-fn check_origin_mutability_argument(
-    struct_name: &str,
-    params: &[ParamDecl],
-    binder: &ParamDecl,
-    argument: &mojito_ast::ast::ParamArg,
-    explicit_origins: &[ExplicitStructOrigin],
-) -> Result<(), TypeError> {
-    use mojito_ast::ast::ParamArg;
-    let mut value = argument;
-    while let ParamArg::Named { value: inner, .. } = value {
-        value = inner;
-    }
-    let mismatch = |found: &str| TypeError::TypeMismatch {
-        expected: "Bool".to_string(),
-        found: found.to_string(),
-        context: format!("parameter '{}' of '{struct_name}'", binder.name()),
-    };
-    let literal = match value {
-        ParamArg::Value(expression) => match &expression.kind {
-            ExprKind::Bool(literal) => Some(*literal),
-            ExprKind::Identifier(_) | ExprKind::Member { .. } => None,
-            ExprKind::Int(_) => return Err(mismatch("IntLiteral")),
-            ExprKind::Float(_) => return Err(mismatch("FloatLiteral")),
-            ExprKind::Str(_) => return Err(mismatch("StringLiteral")),
-            _ => None,
-        },
-        ParamArg::Type(_) => return Err(mismatch("a type")),
-        ParamArg::Named { .. } => None,
-    };
-    let immutable_slot = explicit_origins.iter().find_map(|explicit| {
-        if explicit.mutability != Some(mojito_types::origin::Mutability::Immutable) {
-            return None;
-        }
-        super::struct_origin_decl(params, explicit.id).filter(|slot| {
-            matches!(slot, ParamDecl::Origin {
-                mutability: mojito_types::types::OriginMutability::Binder(mutability),
-                ..
-            } if mutability.id == *binder.id())
-        })
-    });
-    if literal == Some(true)
-        && let Some(slot) = immutable_slot
-    {
-        return Err(TypeError::TypeMismatch {
-            expected: format!(
-                "a mutable origin for parameter '{}' of '{struct_name}'",
-                slot.name()
-            ),
-            found: "an immutable origin".to_string(),
-            context: "explicit origin argument".to_string(),
-        });
-    }
-    Ok(())
 }
 
 /// The first of a generator's own binders a read value names

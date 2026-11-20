@@ -1,7 +1,7 @@
-# expect: expects 0 type argument(s), got 1
-# A runtime value cannot occupy an origin slot: the origin interpretation
-# fails to resolve, and the application falls back to the erased-declaration
-# binder's arity diagnostic.
+# expect: found a runtime value
+# A runtime value cannot occupy an origin slot: the positional argument
+# binds the origin binder `o`, as upstream binds the whole list, and fails
+# to resolve as an origin.
 @fieldwise_init
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]

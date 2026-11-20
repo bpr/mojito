@@ -332,8 +332,11 @@ pub fn effective_keyword_only_index<P: DeclaredParam>(
 /// that is not infer-only; a pack takes every positional argument from its
 /// slot on. Each keyword then binds its parameter by name, an infer-only one
 /// included. Where a keyword is written plays no part, so `C[b=2, 1]` binds
-/// `1` to `a`. The first positional mismatch is reported before any keyword
-/// one.
+/// `1` to `a`, except that an infer-only parameter binds by keyword only
+/// ahead of every positional argument: the first positional argument steps
+/// past the infer-only list, as upstream's binder does, so `f[Int, o=x]`
+/// is an unexpected keyword where `f[o=x, Int]` binds. The first
+/// positional mismatch is reported before any keyword one.
 pub fn match_parameter_slots<P: CompileTimeParam>(
     params: &[P],
     keywords: &[Option<&str>],
@@ -392,15 +395,20 @@ pub fn bind_parameter_slots<P: CompileTimeParam>(
             Some(Ok(index))
         })
         .collect();
+    let first_positional = keywords.iter().position(Option::is_none);
     positional
         .into_iter()
         .zip(keywords)
-        .map(|(slot, keyword)| {
+        .enumerate()
+        .map(|(position, (slot, keyword))| {
             slot.unwrap_or_else(|| {
                 let keyword = keyword.unwrap_or_default();
+                let after_positional = first_positional.is_some_and(|first| first < position);
                 match params.iter().position(|param| param.keyword() == keyword) {
                     None => Err(ParamMatchError::UnknownKeyword(keyword.to_string())),
-                    Some(index) if filled[index] => {
+                    Some(index)
+                        if filled[index] || (after_positional && params[index].infer_only()) =>
+                    {
                         Err(ParamMatchError::UnexpectedKeyword(keyword.to_string()))
                     }
                     Some(index) => {
@@ -572,6 +580,19 @@ mod tests {
                 expected: 1,
                 got: 2,
             })
+        );
+    }
+
+    #[test]
+    fn match_parameter_slots_binds_an_infer_only_keyword_only_before_positionals() {
+        let params = [Param("o", true, false), Param("T", false, false)];
+        assert_eq!(
+            match_parameter_slots(&params, &[Some("o"), None]),
+            Ok(vec![0, 1])
+        );
+        assert_eq!(
+            match_parameter_slots(&params, &[None, Some("o")]),
+            Err(ParamMatchError::UnexpectedKeyword("o".to_string()))
         );
     }
 
