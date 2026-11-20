@@ -265,9 +265,8 @@ impl Checker {
                 }
             };
             let ref_return = sig
-                .ref_return
-                .as_ref()
-                .map(|reference| instantiated.bound_ref_return(self, reference));
+                .call_ref_return()
+                .map(|reference| instantiated.bound_ref_return(self, &reference));
             let declared_ret = instantiated
                 .bound_result(self, &self.substitute_at_instance(&sig.ret, info, targs));
             let MethodInstantiation {
@@ -489,9 +488,8 @@ impl Checker {
                 }
             };
             let ref_return = sig
-                .ref_return
-                .as_ref()
-                .map(|reference| instantiated.bound_ref_return(self, reference));
+                .call_ref_return()
+                .map(|reference| instantiated.bound_ref_return(self, &reference));
             let declared_ret =
                 instantiated.bound_result(self, &self.substitute_self_members(&sig.ret, obj_ty));
             let MethodInstantiation {

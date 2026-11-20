@@ -154,7 +154,7 @@ impl Checker {
                  already be declared)"
             )));
         };
-        let callee_ref = callee.ref_return.as_ref().expect("filtered above");
+        let callee_ref = &callee.call_ref_return().expect("filtered above");
         let parameter_rooted = matches!(base, SigOrigin::Param(_));
         let receiver = if segs.is_empty() {
             base

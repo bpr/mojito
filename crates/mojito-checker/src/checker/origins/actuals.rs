@@ -818,7 +818,7 @@ impl Checker {
                     .get(method)?
                     .iter()
                     .find(|signature| signature.ref_return.is_some())?;
-                let declared = signature.ref_return.as_ref()?;
+                let declared = &signature.call_ref_return()?;
                 // The callee's `self` is the receiver, not the enclosing
                 // method's `self`: a self-rooted contract
                 // (`ref[origin_of(self)._get_owned_interior["element"]]`)

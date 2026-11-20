@@ -3428,7 +3428,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lower_parameterized_member`, `constraints.rs`). Origin signatures
   read their binders from a classified list only, through
   `origins::origin_decl` and `origin_decl_mutability` (`origins/sig.rs`):
-  `callable_origin_signature`, `lower_ref_param_sigs`, `lower_ref_sig`,
+  `lower_ref_param_sigs`, `lower_ref_sig`,
   `view_return_origins`, `sig_origin_for_binder`,
   `lower_sig_origin_expression` and `ref_binding_is_writable`
   (`origins/subst.rs`), `lower_ref_sig_resolved` and
@@ -3436,7 +3436,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `validate_origin_signature` (`origins/interior.rs`, run on the list
   once it is classified), and `function_signature_type`
   (`type_resolution.rs`), whose context `lower_anonymous_callable_type`
-  builds. A checker site holding a
+  builds. A contract over a callable's own origin binder names the binder
+  (`SigOrigin::Bound(Origin::Param(o))`); `origins::bind_ref_binders`
+  (`origins/subst.rs`) binds the binders a call leaves open from the `ref`
+  arguments naming them, for `solve_call_origins_with_bool_bindings`
+  (`origins/solve.rs`), `MethodSig::call_ref_return` (`checker.rs`), and a
+  body's return check, and `bind_sig_origin` rebinds the ones a bracket
+  binds (`Checker::bind_bracket_origins`, `generics.rs`). A checker site holding a
   declared AST list (`enclosing_type_params`, a parameterized member's or
   generic alias's `params`) looks an origin binder up through
   `Checker::origin_binder`/`origin_binder_at` (`generics.rs`), which

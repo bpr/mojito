@@ -509,7 +509,6 @@ pub(super) const VALUE_PACK_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("*valu
 #[derive(Clone)]
 pub(super) struct BoundOrigin {
     pub(super) slot: usize,
-    pub(super) binder: String,
     pub(super) id: mojito_types::origin::OriginParamId,
     pub(super) position: usize,
     pub(super) attribute: Option<TyArg>,

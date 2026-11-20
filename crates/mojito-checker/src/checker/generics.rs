@@ -1186,7 +1186,6 @@ impl Checker {
                         let origin = self.explicit_origin_argument(argument)?;
                         origins.push(BoundOrigin {
                             slot: index,
-                            binder: decl.name().to_string(),
                             id: *id,
                             position,
                             attribute: bracket_attribute(argument, &TyArg::Origin(origin.clone())),
@@ -1210,12 +1209,8 @@ impl Checker {
     /// signature, as upstream substitutes a bound declared list: each
     /// parameter, collector, and result type naming a bound origin binder
     /// (`Span[Int, o]`, `Pointer[Pointer[Int, o], …]`), and each `ref`
-    /// contract over the parameters `signature` lists for that binder.
-    pub(super) fn bind_bracket_origins(
-        callable: Ty,
-        origins: &[BoundOrigin],
-        signature: Option<&CallableOriginSignature>,
-    ) -> Ty {
+    /// contract over one.
+    pub(super) fn bind_bracket_origins(callable: Ty, origins: &[BoundOrigin]) -> Ty {
         if origins.is_empty() || callable.callable().is_none() {
             return callable;
         }
@@ -1223,19 +1218,7 @@ impl Checker {
             .iter()
             .map(|bound| (bound.id, bound.origin.clone()))
             .collect();
-        let references = signature.map_or_else(Vec::new, |signature| {
-            origins
-                .iter()
-                .filter_map(|bound| {
-                    let parameter = signature
-                        .origins
-                        .iter()
-                        .find(|parameter| parameter.name == bound.binder)?;
-                    Some((parameter.slots.clone(), bound.origin.clone()))
-                })
-                .collect::<Vec<_>>()
-        });
-        bind_callable_origins(bind_callable_ref_origins(callable, &references), &tails)
+        bind_callable_origins(bind_callable_ref_origins(callable, &tails), &tails)
     }
 
     /// Materialize the monomorphic checked view of an explicitly specialized
@@ -1248,9 +1231,8 @@ impl Checker {
         name: &str,
         callable: Ty,
         arguments: &[mojito_ast::ast::ParamArg],
-        signature: Option<&CallableOriginSignature>,
     ) -> Result<(Ty, Vec<TyArg>), TypeError> {
-        self.bind_generic_callable_value(name, callable, arguments, signature)
+        self.bind_generic_callable_value(name, callable, arguments)
             .map(|(contract, arguments, _)| (contract, arguments))
     }
 
@@ -1261,7 +1243,6 @@ impl Checker {
         name: &str,
         callable: Ty,
         arguments: &[mojito_ast::ast::ParamArg],
-        signature: Option<&CallableOriginSignature>,
     ) -> Result<(Ty, Vec<TyArg>, Vec<ParamDecl>), TypeError> {
         let TyKind::GenericFunc(generic) = callable.kind() else {
             return Ok((callable, Vec::new(), Vec::new()));
@@ -1281,7 +1262,7 @@ impl Checker {
             })
             .cloned()
             .collect();
-        let bound = Self::bind_bracket_origins(callable.clone(), &origins, signature);
+        let bound = Self::bind_bracket_origins(callable.clone(), &origins);
         let Some(GenericFuncTy { decls, func }) = bound.as_generic_func() else {
             return Ok((bound, tyargs, open));
         };
@@ -1301,7 +1282,6 @@ impl Checker {
         name: &str,
         arguments: &[mojito_ast::ast::ParamArg],
         callable: Ty,
-        signature: Option<&CallableOriginSignature>,
     ) -> Result<(Ty, Vec<TyArg>), TypeError> {
         // The pinned compiler accepts explicit Origin specialization of a
         // stateless nested function as a value but rejects materializing one
@@ -1331,7 +1311,7 @@ impl Checker {
             // call of the value infers them.
             TyKind::GenericFunc(_) => {
                 let (contract, arguments, open) =
-                    self.bind_generic_callable_value(name, callable, arguments, signature)?;
+                    self.bind_generic_callable_value(name, callable, arguments)?;
                 let contract = match contract.into_kind() {
                     TyKind::Func(func) if !open.is_empty() => {
                         TyKind::GenericFunc(Box::new(GenericFuncTy {
@@ -1474,79 +1454,69 @@ impl Checker {
         let Some(CallableValueCandidates {
             name,
             callable,
-            signatures,
             targets,
         }) = self.callable_value_candidates(span, source, record)?
         else {
             return Ok(None);
         };
         let name = name.as_str();
-        let ((selected, instance_arguments), target) =
-            if let TyKind::Overload(candidates) = callable.kind() {
-                let expected = expected.ok_or_else(|| TypeError::BadCall {
-                    func: name.to_string(),
-                    reason: "an overloaded function value requires a contextual callable type"
-                        .to_string(),
-                })?;
-                // Each candidate is specialized inside a probe; the one that
-                // fits is specialized again below, which alone keeps its facts.
-                let mut matches = candidates
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, candidate)| {
-                        self.probe(|| {
-                            self.specialize_callable_value_candidate(
-                                name,
-                                arguments,
-                                candidate.clone(),
-                                signatures.get(index),
-                            )
+        let ((selected, instance_arguments), target) = if let TyKind::Overload(candidates) =
+            callable.kind()
+        {
+            let expected = expected.ok_or_else(|| TypeError::BadCall {
+                func: name.to_string(),
+                reason: "an overloaded function value requires a contextual callable type"
+                    .to_string(),
+            })?;
+            // Each candidate is specialized inside a probe; the one that
+            // fits is specialized again below, which alone keeps its facts.
+            let mut matches = candidates
+                .iter()
+                .enumerate()
+                .filter_map(|(index, candidate)| {
+                    self.probe(|| {
+                        self.specialize_callable_value_candidate(name, arguments, candidate.clone())
                             .ok()
                             .filter(|(specialized, _)| self.value_coerces(specialized, expected))
-                        })
-                        .and_then(|_| targets.get(index).cloned().flatten())
-                        .map(|target| (index, target))
                     })
-                    .collect::<Vec<_>>();
-                let (index, target) = match matches.len() {
-                    0 => {
-                        return Err(TypeError::TypeMismatch {
-                            expected: expected.to_string(),
-                            found: format!("specialization of overload({name})"),
-                            context: "overloaded callable value".to_string(),
-                        });
-                    }
-                    1 => matches.pop().expect("one callable-value candidate"),
-                    _ => {
-                        return Err(TypeError::BadCall {
-                            func: name.to_string(),
-                            reason: format!(
-                                "multiple specialized overloads fit expected type '{expected}'"
-                            ),
-                        });
-                    }
-                };
-                let specialized = self.specialize_callable_value_candidate(
-                    name,
-                    arguments,
-                    candidates[index].clone(),
-                    signatures.get(index),
-                )?;
-                (specialized, target)
-            } else {
-                let specialized = self.specialize_callable_value_candidate(
-                    name,
-                    arguments,
-                    callable,
-                    signatures.first(),
-                )?;
-                let target = targets
-                    .into_iter()
-                    .next()
-                    .flatten()
-                    .unwrap_or_else(|| name.to_string());
-                (specialized, target)
+                    .and_then(|_| targets.get(index).cloned().flatten())
+                    .map(|target| (index, target))
+                })
+                .collect::<Vec<_>>();
+            let (index, target) = match matches.len() {
+                0 => {
+                    return Err(TypeError::TypeMismatch {
+                        expected: expected.to_string(),
+                        found: format!("specialization of overload({name})"),
+                        context: "overloaded callable value".to_string(),
+                    });
+                }
+                1 => matches.pop().expect("one callable-value candidate"),
+                _ => {
+                    return Err(TypeError::BadCall {
+                        func: name.to_string(),
+                        reason: format!(
+                            "multiple specialized overloads fit expected type '{expected}'"
+                        ),
+                    });
+                }
             };
+            let specialized = self.specialize_callable_value_candidate(
+                name,
+                arguments,
+                candidates[index].clone(),
+            )?;
+            (specialized, target)
+        } else {
+            let specialized =
+                self.specialize_callable_value_candidate(name, arguments, callable)?;
+            let target = targets
+                .into_iter()
+                .next()
+                .flatten()
+                .unwrap_or_else(|| name.to_string());
+            (specialized, target)
+        };
         Ok(Some((selected, instance_arguments, target)))
     }
 
@@ -2192,7 +2162,6 @@ impl Checker {
                 };
                 return Ok(Some(CallableValueCandidates {
                     name: name.to_string(),
-                    signatures: self.lookup_callable_origins(name).unwrap_or_default(),
                     callable,
                     targets,
                 }));
@@ -2254,7 +2223,6 @@ impl Checker {
         Ok(Some(CallableValueCandidates {
             name: format!("{owner}.{method}"),
             callable,
-            signatures: Vec::new(),
             targets,
         }))
     }
@@ -2413,7 +2381,6 @@ struct CallableValueCandidates {
     /// The spelling diagnostics and parameter binding name the value by.
     name: String,
     callable: Ty,
-    signatures: Vec<CallableOriginSignature>,
     /// Per candidate (one for a callable that is no `Overload`), the
     /// symbol it lowers to; `None` for a candidate that names none.
     targets: Vec<Option<String>>,
@@ -2556,15 +2523,12 @@ fn substitute_at_with(
     )
 }
 
-/// `callable` with each `ref` contract over the parameters a binding lists
-/// rebound to that binding's origin ([`bind_sig_origin`]).
+/// `callable` with each `ref` contract over a bound origin binder rebound to
+/// the origin `tails` binds it to.
 fn bind_callable_ref_origins(
     mut callable: Ty,
-    bindings: &[(Vec<usize>, mojito_types::origin::Origin)],
+    tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 ) -> Ty {
-    if bindings.is_empty() {
-        return callable;
-    }
     callable.update(|kind| {
         let Some(FuncTy {
             ref_params,
@@ -2574,11 +2538,12 @@ fn bind_callable_ref_origins(
         else {
             return;
         };
-        for signature in ref_params.iter_mut().flatten() {
-            signature.origin = bind_sig_origin(&signature.origin, bindings);
-        }
-        if let Some(signature) = ref_return {
-            signature.origin = bind_sig_origin(&signature.origin, bindings);
+        for signature in ref_params
+            .iter_mut()
+            .flatten()
+            .chain(ref_return.as_deref_mut())
+        {
+            signature.origin = bind_sig_origin(&signature.origin, tails);
         }
     });
     callable

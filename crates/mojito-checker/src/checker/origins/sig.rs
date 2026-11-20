@@ -367,39 +367,13 @@ pub(in crate::checker) fn lower_ref_param_sigs(
         .collect()
 }
 
-/// The origin signature of a callable declaring `type_params`, classified
-/// as `decls`: one [`CallableOriginParam`] per `Origin` binder of `decls`,
-/// in declared order, with the value parameters whose clause names it.
+/// The origin signature of a callable declaring `type_params`: its source
+/// binder names and its erased-origin `availability` constraints.
 pub(in crate::checker) fn callable_origin_signature(
     type_params: &[mojito_ast::ast::TypeParam],
-    decls: &[ParamDecl],
-    params: &[&FnParam],
     availability: Vec<GenericConstraint>,
 ) -> CallableOriginSignature {
-    let origins = decls
-        .iter()
-        .filter(|decl| decl.is_origin() && !is_origin_set(decl))
-        .map(|parameter| CallableOriginParam {
-            name: parameter.name().to_string(),
-            slots: params
-                .iter()
-                .enumerate()
-                .filter_map(|(index, value_parameter)| {
-                    value_parameter
-                        .origin
-                        .as_ref()
-                        .is_some_and(|origin| {
-                            origin.iter().any(|expression| {
-                                origin_binder_name(expression) == Some(parameter.name())
-                            })
-                        })
-                        .then_some(index)
-                })
-                .collect(),
-        })
-        .collect::<Vec<_>>();
     CallableOriginSignature {
-        origins,
         binder_names: type_params
             .iter()
             .map(|parameter| parameter.name.clone())
@@ -523,6 +497,10 @@ impl Checker {
                 _ => SigMutability::Immutable,
             })
         };
+        // A binder the result names stands for the `ref` parameters bound
+        // through it, as a call binds it.
+        let ref_params =
+            lower_ref_param_sigs(decls, params, struct_params, self).unwrap_or_default();
         let mut slots = Vec::new();
         let mut positional = explicit.iter();
         for argument in arguments {
@@ -562,7 +540,10 @@ impl Checker {
                 continue;
             }
             let spec: mojito_ast::ast::OriginSpec = vec![expression.clone()];
-            let Ok(mut sig) = lower_ref_sig(&spec, decls, params, struct_params, self) else {
+            let Ok(sig) = lower_ref_sig(&spec, decls, params, struct_params, self) else {
+                continue;
+            };
+            let Some(mut sig) = bind_ref_binders(&ref_params, Some(&sig), &|_| true).1 else {
                 continue;
             };
             if sig.mutability == SigMutability::Infer
@@ -711,6 +692,13 @@ pub(in crate::checker) fn lower_ref_sig(
                     return Err(unqualified_struct_binder(name));
                 }
                 mutability = origin_decl_mutability(decl, decls);
+                // The callable's own binder names itself, as upstream's
+                // contract does; a call binds it from the `ref` arguments
+                // whose clauses name it ([`bind_ref_binders`]).
+                if (origin_id.0 as usize) >= struct_params {
+                    members.push(SigOrigin::Bound(Origin::Param(origin_id)));
+                    continue;
+                }
                 let first_member = members.len();
                 for (index, param) in params.iter().enumerate() {
                     if param.origin.as_ref().is_some_and(|origin| {
@@ -724,9 +712,7 @@ pub(in crate::checker) fn lower_ref_sig(
                 // that checked semantic binder directly in the method contract
                 // instead of collapsing it to an empty inferred union.
                 if members.len() == first_member {
-                    members.push(SigOrigin::Bound(mojito_types::origin::Origin::Param(
-                        origin_id,
-                    )));
+                    members.push(SigOrigin::Bound(Origin::Param(origin_id)));
                 }
             }
             ExprKind::Call { name, args, .. } if name == "origin_of" => {
@@ -853,16 +839,23 @@ pub(in crate::checker) fn origin_decl_mutability(
     }
 }
 
-/// The contract-level origin a named struct/callable origin binder denotes:
-/// the value parameter(s) carrying it, else the checked semantic binder
-/// itself (an enclosing struct origin bound only by reference-valued fields).
+/// The contract-level origin a named origin binder denotes: a callable's
+/// own binder (declared at or past `struct_params`) itself; an enclosing
+/// struct's, the value parameter(s) carrying it, else the checked semantic
+/// binder itself (one bound only by reference-valued fields).
 pub(in crate::checker) fn sig_origin_for_binder(
     name: &str,
     decls: &[ParamDecl],
     params: &[&FnParam],
+    struct_params: usize,
 ) -> Option<mojito_types::origin::SigOrigin> {
     use mojito_types::origin::SigOrigin;
     let (_, origin_id) = origin_decl(decls, name)?;
+    if (origin_id.0 as usize) >= struct_params {
+        return Some(SigOrigin::Bound(mojito_types::origin::Origin::Param(
+            origin_id,
+        )));
+    }
     let members = params
         .iter()
         .enumerate()

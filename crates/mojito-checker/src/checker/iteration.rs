@@ -786,9 +786,9 @@ impl Checker {
         let referent = instantiate(&signature.ret);
         let mut semantic_arguments = receiver_arguments.to_vec();
         semantic_arguments.extend(method_arguments);
-        let reference_result = signature.ref_return.as_ref().map(|reference| {
+        let reference_result = signature.call_ref_return().map(|reference| {
             instantiate_iterator_reference(
-                reference,
+                &reference,
                 referent.clone(),
                 &semantic_arguments,
                 &info.instance_origin_bindings(receiver_arguments),

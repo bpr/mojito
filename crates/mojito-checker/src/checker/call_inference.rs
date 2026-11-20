@@ -1382,12 +1382,8 @@ impl Checker {
         };
         let contract = self.closure_contract(&ty).unwrap_or_else(|| ty.clone());
         if indirect_target.is_some() && matches!(contract.kind(), TyKind::GenericFunc(_)) {
-            let (contract, arguments) = self.instantiate_generic_callable_value(
-                name,
-                contract,
-                param_args,
-                origin_signatures.first(),
-            )?;
+            let (contract, arguments) =
+                self.instantiate_generic_callable_value(name, contract, param_args)?;
             self.record_at(span.clone()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::InstantiatedCallableContract {
                     contract,
@@ -1748,7 +1744,7 @@ impl Checker {
         // arguments bind, and infer the compile-time parameters left open.
         if let Some(generic) = ty.as_generic_func() {
             let explicit = self.explicit_type_args(name, &generic.decls, param_args)?;
-            let bound = Self::bind_bracket_origins(ty.clone(), explicit.origins(), signature);
+            let bound = Self::bind_bracket_origins(ty.clone(), explicit.origins());
             return self.infer_generic_call(
                 span,
                 name,
@@ -1970,9 +1966,12 @@ impl Checker {
             .solve_call_origins_with_bool_bindings(
                 &slots,
                 &conventions,
-                &ref_params,
-                self.bind_ref_sig_pack_origin(ref_return.as_deref(), &overflow, args)?
-                    .as_ref(),
+                (
+                    &ref_params,
+                    self.bind_ref_sig_pack_origin(ref_return.as_deref(), &overflow, args)?
+                        .as_ref(),
+                    &|_| false,
+                ),
                 args,
                 kwargs,
                 true,
@@ -2277,13 +2276,17 @@ impl Checker {
             }
         }
         self.check_owned_collector(name, &overflow, args)?;
+        let open = |id| binds_from_arguments(binders, &explicit, id);
         let (effective_conventions, return_ref, bool_bindings) = self
             .solve_call_origins_with_bool_bindings(
                 &slots,
                 conventions,
-                ref_params,
-                self.bind_ref_sig_pack_origin(ref_return.as_deref(), &overflow, args)?
-                    .as_ref(),
+                (
+                    ref_params,
+                    self.bind_ref_sig_pack_origin(ref_return.as_deref(), &overflow, args)?
+                        .as_ref(),
+                    &open,
+                ),
                 args,
                 kwargs,
                 true,
@@ -2986,6 +2989,19 @@ enum CandidateOutcome {
 }
 
 const PARAM_LIST_ADDRESS: &str = "__param_list_address";
+
+/// Whether origin binder `id` of the declared list `binders` is one a call
+/// binds from its arguments: one its bracket (`explicit`) left open.
+fn binds_from_arguments(
+    binders: &[ParamDecl],
+    explicit: &ExplicitTypes,
+    id: mojito_types::origin::OriginParamId,
+) -> bool {
+    binders
+        .iter()
+        .any(|decl| matches!(decl, ParamDecl::Origin { origin, .. } if *origin == id))
+        && !explicit.origins().iter().any(|bound| bound.id == id)
+}
 
 /// Reject a use of the declaration `signature` describes when it is
 /// `@unavailable`, with its decorator's message.

@@ -1275,7 +1275,13 @@ method's parameters and result through `bind_struct_origins` and binds the
 origin binders its bracket left open in `resolve_call_params`'s one solve,
 as a free call's: a method's declared origin binder is numbered past its
 struct's parameters, as its signature names it
-(`classify_param_list_after`)); a
+(`classify_param_list_after`); a `ref [o]` contract over the callable's own
+binder names the binder itself, `SigOrigin::Bound(Origin::Param(o))`
+(`lower_ref_sig`), as upstream's contract names its parameter, so the
+bracket's substitution rebinds it and the call's origin solve binds a
+binder left open to the union of the `ref` arguments whose clauses name it
+(`bind_ref_binders`, read by `solve_call_origins_with_bool_bindings`,
+`MethodSig::call_ref_return`, and a body's return check)); a
 compiler builtin's binder
 (`applied_type`'s collection, pointer, `SIMD`, and storage types,
 `external_call`, `reflect`, the `Variant` storage methods, the

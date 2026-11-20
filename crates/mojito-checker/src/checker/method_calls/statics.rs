@@ -409,9 +409,8 @@ impl Checker {
                 Err(_) => continue,
             };
             let ref_return = sig
-                .ref_return
-                .as_ref()
-                .map(|reference| instantiated.bound_ref_return(self, reference));
+                .call_ref_return()
+                .map(|reference| instantiated.bound_ref_return(self, &reference));
             let declared_ret = instantiated.bound_result(
                 self,
                 &self.substitute_at_instance(&sig.ret, info, &instance),
@@ -691,13 +690,16 @@ impl Checker {
         let (effective_conventions, returned, _) = self.solve_call_origins_with_bool_bindings(
             &selected.slots,
             &selected.conventions,
-            &selected.ref_params,
-            self.bind_ref_sig_pack_origin(
-                selected.ref_return.as_ref(),
-                &selected.positional_overflow,
-                args,
-            )?
-            .as_ref(),
+            (
+                &selected.ref_params,
+                self.bind_ref_sig_pack_origin(
+                    selected.ref_return.as_ref(),
+                    &selected.positional_overflow,
+                    args,
+                )?
+                .as_ref(),
+                &|_| true,
+            ),
             args,
             kwargs,
             true,

@@ -3129,6 +3129,13 @@ struct MethodSig {
 }
 
 impl MethodSig {
+    /// Its `ref` result contract as a call reads it: each of its own origin
+    /// binders the contract names bound from the `ref` arguments naming it
+    /// ([`origins::bind_ref_binders`]).
+    fn call_ref_return(&self) -> Option<mojito_types::origin::RefSig> {
+        origins::bind_ref_binders(&self.ref_params, self.ref_return.as_ref(), &|_| true).1
+    }
+
     /// The parameters a call binds by position, in declared order
     /// ([`ParamDecl::argument_binders`]): a call infers the origins from
     /// places instead.
@@ -4120,22 +4127,10 @@ impl CapturePolicy {
     }
 }
 
-/// The `ref` contracts one origin binder of a callable declaration names:
-/// each value parameter whose `ref [o]` clause names the binder, which a
-/// contract over the binder lists in its stead (`SigOrigin::Param`). A call
-/// whose bracket binds the binder rebinds those contracts to the origin it
-/// bound ([`Checker::bind_bracket_origins`]).
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct CallableOriginParam {
-    name: String,
-    slots: Vec<usize>,
-}
-
 /// Origin-specialization metadata for one declaration in an overload set.
 /// Entries are registered in the same order as `TyKind::Overload` candidates.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct CallableOriginSignature {
-    origins: Vec<CallableOriginParam>,
     /// The name of each source compile-time parameter, by source slot: the
     /// `Bool` binder an origin's `mut=` names is keyed by its slot.
     binder_names: Vec<String>,

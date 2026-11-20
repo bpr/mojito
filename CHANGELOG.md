@@ -1671,6 +1671,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `ref [o]` contract over a callable's own origin binder now names the
+  binder, as upstream's does, instead of the parameters whose clauses share
+  it, so a callable type alone says which binder each contract is over. A
+  call binds the binder from those `ref` arguments, and a bracket
+  (`pick[origin_of(y)]`) rebinds the contracts through the type alone
+  (R2356).
 - Preparation no longer folds an alias-typed origin binder's bound into the
   `Origin` spelling: the check alone classifies it, and compile-time
   applicability and trait-default forwarding read the classified list. A

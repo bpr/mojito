@@ -6,6 +6,14 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// One call's `ref` contracts: per argument slot, the result's, and which
+/// of the callee's origin binders the call binds from its arguments.
+pub(in crate::checker) type CallRefContracts<'a> = (
+    &'a [Option<mojito_types::origin::RefSig>],
+    Option<&'a mojito_types::origin::RefSig>,
+    &'a dyn Fn(mojito_types::origin::OriginParamId) -> bool,
+);
+
 pub(super) fn collect_origin_params(
     origin: &mojito_types::origin::Origin,
     out: &mut Vec<mojito_types::origin::OriginParamId>,

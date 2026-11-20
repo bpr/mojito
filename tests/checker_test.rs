@@ -11028,6 +11028,52 @@ fn function_and_method_param_lists_declare_origin_binders_in_place() {
 }
 
 #[test]
+fn a_ref_contract_names_its_origin_binder_and_a_call_binds_it_from_the_ref_arguments() {
+    // `pick`'s type names its binder `o` in each `ref [o]` contract, as
+    // upstream's does, and the call binds `o` from both `ref` arguments.
+    let source = "def pick[o: Origin](ref [o] a: Int, ref [o] b: Int) -> ref [o] Int:\n    return b\n\ndef main():\n    var x = 1\n    var y = 2\n    ref both = pick(x, y)\n    print(both)\n";
+    let checked = checked_with_std(source).expect("check a binder-named ref contract");
+    let declared = |name: &str| {
+        checked
+            .declarations()
+            .iter()
+            .find(|declaration| {
+                declaration.name == name && !from_library(declaration.location.source.as_deref())
+            })
+            .and_then(|declaration| declaration.ty.clone())
+            .unwrap_or_else(|| panic!("declaration '{name}'"))
+    };
+    let pick = declared("pick");
+    let func = pick
+        .as_generic_func()
+        .map(|generic| &generic.func)
+        .unwrap_or_else(|| panic!("'pick' has type {pick:?}"));
+    let binder = mojito::origin::SigOrigin::Bound(mojito::origin::Origin::Param(
+        mojito::origin::OriginParamId(0),
+    ));
+    assert!(
+        func.ref_params
+            .iter()
+            .chain(std::iter::once(&func.ref_return.as_deref().cloned()))
+            .all(|signature| signature
+                .as_ref()
+                .is_some_and(|signature| signature.origin == binder)),
+        "'pick' has contracts {:?} -> {:?}",
+        func.ref_params,
+        func.ref_return
+    );
+    let both = declared("both");
+    assert!(
+        matches!(
+            both.kind(),
+            mojito::TyKind::Ref(reference)
+                if matches!(&reference.origin, mojito::origin::Origin::Union(members) if members.len() == 2)
+        ),
+        "'both' has type {both:?}"
+    );
+}
+
+#[test]
 fn a_callee_origin_binder_bound_from_an_argument_roots_its_reference_result() {
     // A generic function's and a method's own binder, bound from a pointer
     // argument, make the `ref[o]` result borrow the pointee's storage, not

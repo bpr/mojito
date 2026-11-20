@@ -506,9 +506,8 @@ impl Checker {
                 }
             };
             let ref_return = sig
-                .ref_return
-                .as_ref()
-                .map(|reference| instantiated.bound_ref_return(self, reference));
+                .call_ref_return()
+                .map(|reference| instantiated.bound_ref_return(self, &reference));
             let declared_ret = instantiated.bound_result(self, &sig.ret.clone());
             let MethodInstantiation {
                 params,

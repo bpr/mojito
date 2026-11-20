@@ -4225,6 +4225,10 @@ impl Checker {
                 availability: Vec::new(),
             },
         );
+        // The body judges a returned reference against its own parameters,
+        // each binder the contract names standing for the parameters bound
+        // through it.
+        let body_ref_return = bind_ref_binders(&ref_params, ref_return.as_ref(), &|_| true).1;
         let func = FuncTy {
             environment: initial_environment,
             params: params
@@ -4247,7 +4251,7 @@ impl Checker {
             error: declared_error.clone(),
             conventions: caller_regular.iter().map(|p| p.convention).collect(),
             ref_params,
-            ref_return: ref_return.clone().map(Box::new),
+            ref_return: ref_return.map(Box::new),
             transfers: TransferSet::default(),
         };
         // Upstream's function with any declared parameter, origins
@@ -4255,12 +4259,8 @@ impl Checker {
         // A call binds no erased origin-mutability binder, so a clause
         // reading one is no application's.
         let clauses_apply = erased_origin_constraints.is_empty();
-        let mut origin_signature = callable_origin_signature(
-            type_params,
-            &decls,
-            caller_regular,
-            erased_origin_constraints,
-        );
+        let mut origin_signature =
+            callable_origin_signature(type_params, erased_origin_constraints);
         origin_signature.view_return =
             self.view_return_origins(ret_anno.as_ref(), &decls, regular, 0, None);
         let fn_ty = Ty::new(if decls.is_empty() {
@@ -4285,7 +4285,7 @@ impl Checker {
             param_tys,
             ret_ty,
             function_assumptions,
-            ref_return,
+            ref_return: body_ref_return,
             declared_error,
             unavailable,
             fn_ty,
@@ -5022,6 +5022,8 @@ struct DefSignature {
     param_tys: Vec<Ty>,
     ret_ty: Ty,
     function_assumptions: Vec<ParamExpr>,
+    /// The result's `ref` contract as its body judges a return, over the
+    /// parameters each binder it names is bound through.
     ref_return: Option<mojito_types::origin::RefSig>,
     declared_error: Option<Ty>,
     unavailable: Option<String>,

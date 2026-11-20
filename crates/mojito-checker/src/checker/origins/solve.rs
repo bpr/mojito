@@ -225,8 +225,7 @@ impl Checker {
         let (conventions, returned, _) = self.solve_call_origins_with_bool_bindings(
             slots,
             conventions,
-            signatures,
-            return_signature,
+            (signatures, return_signature, &|_| true),
             args,
             kwargs,
             false,
@@ -234,18 +233,22 @@ impl Checker {
         Ok((conventions, returned))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Solve one call's `ref` contracts against its arguments. `contracts`
+    /// are the per-slot and result contracts, with the callee's origin
+    /// binders the call binds (those `open` admits) bound from the `ref`
+    /// arguments naming them ([`bind_ref_binders`]).
     pub(in crate::checker) fn solve_call_origins_with_bool_bindings(
         &self,
         slots: &[ArgSlot],
         conventions: &[Option<ArgConvention>],
-        signatures: &[Option<mojito_types::origin::RefSig>],
-        return_signature: Option<&mojito_types::origin::RefSig>,
+        (signatures, return_signature, open): CallRefContracts<'_>,
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
         carrier_slots: bool,
     ) -> Result<SolvedCallOrigins, TypeError> {
         use mojito_types::origin::{Mutability, Origin, RefTy, SigMutability};
+        let (signatures, return_signature) = bind_ref_binders(signatures, return_signature, open);
+        let (signatures, return_signature) = (&signatures[..], return_signature.as_ref());
         let mut effective = conventions.to_vec();
         let mut origins = vec![None; slots.len()];
         let mut mutable = vec![false; slots.len()];

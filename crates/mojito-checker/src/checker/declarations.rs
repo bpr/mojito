@@ -2157,6 +2157,25 @@ impl Checker {
             )?),
             _ => None,
         };
+        // The body judges a returned reference against its own parameters,
+        // each binder the contract names standing for the parameters bound
+        // through it.
+        let ref_return = match ref_return {
+            Some(signature) => {
+                bind_ref_binders(
+                    &lower_ref_param_sigs(
+                        &self.enclosing_param_decls,
+                        &regular,
+                        self.enclosing_struct_type_params.get(),
+                        self,
+                    )?,
+                    Some(&signature),
+                    &|_| true,
+                )
+                .1
+            }
+            None => None,
+        };
         // A default may name the method's own value parameters
         // (`x: Int = Self.n + j`), bound around the defaults as in the body.
         let declared = self.classify_param_list(owner, &m.type_params)?;

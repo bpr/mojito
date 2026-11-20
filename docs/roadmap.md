@@ -4617,6 +4617,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     equal; upstream compares the two signatures up to their own binders.
   - Probe: the `ref[o] p: Int` form of the same requirement fails the
     same way.
+  - Probe: a `ref [o]` contract names its binder by declared id
+    (`SigOrigin::Bound(Origin::Param(o))`), which a conformer's method
+    numbers past its struct's origin parameters while the requirement
+    numbers from zero, so the `ref_return` comparison must map the two
+    binder lists too.
   - Found while landing R2342 (2026-11-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10784,26 +10789,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     sites would let those rows go too.
   - Found while landing R630 (2026-10-13).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2356 A `ref [o]` contract names the parameters sharing its
-  origin binder, where upstream's names the binder**
-
-  `lower_ref_sig` (`checker/origins/sig.rs`) lowers `ref [o] x` and `->
-  ref [o] T` to the union of `SigOrigin::Param` over every parameter
-  whose clause names `o`, so a callable type alone cannot say which
-  binder a contract is over.
-  - Probe: `CallableOriginSignature::origins` (`checker.rs`) keeps each
-    binder's parameter list beside the type, and `bind_bracket_origins`
-    (`checker/generics.rs`) needs it to substitute `pick[origin_of(y)]`'s
-    origin into the `ref` contracts, so `infer_callable_ty` takes the
-    signature beside the type.
-  - The lever: lower a binder in a `ref` clause to the binder by its
-    declared slot (`SigOrigin::Bound(Origin::Param(id))`), have call
-    origin solving bind it from the `ref` arguments as it binds pointer
-    origins, and delete `CallableOriginSignature::origins`.
-  - Found while landing R2352 (2026-11-19).
-  - Depends on R2346.
   - Model: Opus, Not Planned.
 
 - [ ] **R2358 A `#kgen.bind_params` cannot bind an origin binder, where

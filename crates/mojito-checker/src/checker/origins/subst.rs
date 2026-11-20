@@ -46,7 +46,7 @@ pub(in crate::checker) fn lower_sig_origin_expression(
             if let Some(index) = params.iter().position(|parameter| parameter.name == *name) {
                 return Ok(SigOrigin::Param(index));
             }
-            if let Some(origin) = sig_origin_for_binder(name, decls, params) {
+            if let Some(origin) = sig_origin_for_binder(name, decls, params, struct_params) {
                 if !name.starts_with("__")
                     && origin_decl(decls, name)
                         .is_some_and(|(_, id)| (id.0 as usize) < struct_params)
@@ -62,7 +62,8 @@ pub(in crate::checker) fn lower_sig_origin_expression(
         // `Self.o._get_owned_interior["element"]`.
         ExprKind::Member { object, field }
             if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
-                && let Some(origin) = sig_origin_for_binder(field, decls, params) =>
+                && let Some(origin) =
+                    sig_origin_for_binder(field, decls, params, struct_params) =>
         {
             Ok(origin)
         }
@@ -314,29 +315,83 @@ pub(in crate::checker) fn map_delegated_sig_origin(
     }
 }
 
-/// Replace the slot-relative parts belonging to source `Origin` parameters
-/// with the concrete caller origins captured by a specialized function value.
+/// A call's `ref` contracts, `signatures` per argument slot and `result`,
+/// with each origin binder `open` admits bound from the `ref` arguments
+/// whose own clause names it, as upstream's call infers a binder from the
+/// arguments passed to it: the contract over the binder names those slots'
+/// union (`SigOrigin::Param`), which the call's solve resolves to their
+/// origins. A binder no parameter's clause names keeps its own name, for
+/// pointer and struct-tail solving to bind.
+pub(in crate::checker) fn bind_ref_binders(
+    signatures: &[Option<mojito_types::origin::RefSig>],
+    result: Option<&mojito_types::origin::RefSig>,
+    open: &dyn Fn(mojito_types::origin::OriginParamId) -> bool,
+) -> (
+    Vec<Option<mojito_types::origin::RefSig>>,
+    Option<mojito_types::origin::RefSig>,
+) {
+    use mojito_types::origin::{Origin, OriginParamId, RefSig, SigOrigin};
+    fn bind(origin: &SigOrigin, slots: &HashMap<OriginParamId, Vec<usize>>) -> SigOrigin {
+        match origin {
+            SigOrigin::Bound(Origin::Param(id)) => slots.get(id).map_or_else(
+                || origin.clone(),
+                |slots| match slots.as_slice() {
+                    [single] => SigOrigin::Param(*single),
+                    _ => SigOrigin::union(slots.iter().copied().map(SigOrigin::Param)),
+                },
+            ),
+            SigOrigin::Projected(base, path) => {
+                SigOrigin::Projected(Box::new(bind(base, slots)), path.clone())
+            }
+            SigOrigin::Union(members) => {
+                SigOrigin::union(members.iter().map(|member| bind(member, slots)))
+            }
+            other => other.clone(),
+        }
+    }
+    let mut slots = HashMap::<OriginParamId, Vec<usize>>::new();
+    for (index, signature) in signatures.iter().enumerate() {
+        if let Some(RefSig {
+            origin: SigOrigin::Bound(Origin::Param(id)),
+            ..
+        }) = signature
+            && open(*id)
+        {
+            slots.entry(*id).or_default().push(index);
+        }
+    }
+    let rebind = |signature: &RefSig| RefSig {
+        origin: bind(&signature.origin, &slots),
+        mutability: signature.mutability.clone(),
+    };
+    (
+        signatures
+            .iter()
+            .map(|signature| signature.as_ref().map(rebind))
+            .collect(),
+        result.map(rebind),
+    )
+}
+
+/// `signature` with each contract over an origin binder `tails` binds
+/// naming the bound origin instead (`g[origin_of(xs)]` over
+/// `-> ref [o] Int`).
 pub(in crate::checker) fn bind_sig_origin(
     signature: &mojito_types::origin::SigOrigin,
-    bindings: &[(Vec<usize>, mojito_types::origin::Origin)],
+    tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
 ) -> mojito_types::origin::SigOrigin {
-    use mojito_types::origin::SigOrigin;
+    use mojito_types::origin::{Origin, SigOrigin};
     match signature {
-        SigOrigin::Param(index) => bindings
-            .iter()
-            .find(|(slots, _)| slots.contains(index))
-            .map_or_else(
-                || signature.clone(),
-                |(_, origin)| SigOrigin::Bound(origin.clone()),
-            ),
-        SigOrigin::Projected(base, path) => {
-            SigOrigin::Projected(Box::new(bind_sig_origin(base, bindings)), path.clone())
-        }
-        SigOrigin::Union(members) => SigOrigin::union(
-            members
-                .iter()
-                .map(|member| bind_sig_origin(member, bindings)),
+        SigOrigin::Bound(Origin::Param(id)) => tails.get(id).map_or_else(
+            || signature.clone(),
+            |origin| SigOrigin::Bound(origin.clone()),
         ),
+        SigOrigin::Projected(base, path) => {
+            SigOrigin::Projected(Box::new(bind_sig_origin(base, tails)), path.clone())
+        }
+        SigOrigin::Union(members) => {
+            SigOrigin::union(members.iter().map(|member| bind_sig_origin(member, tails)))
+        }
         _ => signature.clone(),
     }
 }
