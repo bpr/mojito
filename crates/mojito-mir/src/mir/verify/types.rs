@@ -138,6 +138,15 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     {
         return true;
     }
+    // So does a generator over origin binders alone, the runtime closure a
+    // reference to such a function is: its binders erase like any origin,
+    // so two whose signatures agree slot by slot are one value.
+    if let (Some(found), Some(expected)) = (
+        origin_generator_signature(found),
+        origin_generator_signature(expected),
+    ) {
+        return types_compatible(&found, &expected);
+    }
     // So does a reference's: a specialized instance erases the origins of
     // its type arguments, so a `ref T` element slot holds a reference of any
     // origin with the same mutability.
@@ -744,6 +753,15 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
 
 /// `ty` with every reference origin in its callable signature spelled alike,
 /// keeping each reference's mutability.
+/// The signature of `ty` when it is a generator whose declared binders are
+/// all origins, with binders numbered by position.
+fn origin_generator_signature(ty: &Ty) -> Option<Ty> {
+    let generic = ty.as_generic_func()?;
+    generic
+        .binds_only_origins()
+        .then(|| TyKind::Func(Box::new(generic.func.clone())).into())
+}
+
 fn signature_origins_erased(ty: &Ty) -> Ty {
     let mut erased = ty.clone();
     if erased.as_func().is_none() {

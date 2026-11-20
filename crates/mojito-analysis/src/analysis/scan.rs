@@ -228,8 +228,7 @@ pub(super) fn is_droppable_root(f: &MirFunction, v: VarId) -> bool {
 /// destructor, release storage). Scalars, pointers, and references die
 /// silently, so they need no instruction.
 pub(super) fn field_needs_drop(ty: &mojito_types::types::Ty) -> bool {
-    use mojito_types::types::TyKind;
-    may_alias_owned_storage(ty) || matches!(ty.kind(), TyKind::Func(_))
+    may_alias_owned_storage(ty) || ty.is_runtime_function()
 }
 
 /// A set of small dense indices (variables or registers) as a bit vector,

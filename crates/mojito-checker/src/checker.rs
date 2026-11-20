@@ -412,18 +412,6 @@ pub(crate) fn is_unbound_parametric_function(ty: &Ty) -> bool {
     first_unbound_parameter(ty).is_some()
 }
 
-/// The runtime closure a reference to `ty` materializes: a generic function
-/// whose only unbound binders are origins is its signature, as the pin
-/// materializes one; any other type is itself.
-pub(crate) fn runtime_closure_ty(ty: &Ty) -> Ty {
-    match ty.kind() {
-        TyKind::GenericFunc(generic) if !is_unbound_parametric_function(ty) => {
-            TyKind::Func(Box::new(generic.func.clone())).into()
-        }
-        _ => ty.clone(),
-    }
-}
-
 /// The module holding the functions the compiler calls by module path.
 pub(crate) const STUBS_MODULE: &str = "std.builtin._stubs";
 

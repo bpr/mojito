@@ -228,7 +228,7 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
 /// type closed over its own binders is a concrete type argument
 /// (`OptionalReg[G]`, a `Pointer[G]` element, an instruction's operand).
 fn require_concrete_value(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
-    if matches!(ty.kind(), TyKind::GenericFunc(_)) {
+    if matches!(ty.kind(), TyKind::GenericFunc(_)) && !ty.is_runtime_function() {
         errors.push(format!(
             "{head} {role} keeps symbolic type `{ty}` in elaborated MIR"
         ));

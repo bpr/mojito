@@ -1471,6 +1471,7 @@ impl Checker {
         // upstream folds a call of a `#kgen.func.symbol` constant; a local
         // one calls its slot.
         if let Some(function) = folded.filter(|_| self.binding_scope(name) == Some(0)) {
+            let arguments = self.folded_call_arguments(&span, &ty, &function);
             let mut record = self.record_at(span.clone());
             record.overload_target = Some(function.symbol.clone());
             if !function.is_bare() {
@@ -1480,7 +1481,7 @@ impl Checker {
                         parameter_names: Vec::new(),
                         parameter_types: Vec::new(),
                         variadic: None,
-                        arguments: function.arguments,
+                        arguments,
                     });
             }
         }
@@ -1489,6 +1490,46 @@ impl Checker {
             self.require_call_error(span, format!("call to raising function '{name}'"), error)?;
         }
         Ok(ret)
+    }
+
+    /// The whole declared list of `function`, the symbol a module constant
+    /// folds to, as the call at `span` through that constant's value of
+    /// type `value` binds it: the bracket's arguments, and in each origin
+    /// slot the bracket left open, the origin this call inferred for the
+    /// generator `value` is over it.
+    fn folded_call_arguments(
+        &self,
+        span: &SourceSpan,
+        value: &Ty,
+        function: &mojito_types::ct::FuncSymbolRef,
+    ) -> Vec<TyArg> {
+        let open = value.as_generic_func().map(|generic| &generic.decls);
+        let declared = self
+            .lookup(&function.symbol)
+            .and_then(Ty::as_generic_func)
+            .map(|generic| generic.decls.clone());
+        let inferred = self.fact(span, |facts| {
+            facts
+                .generic_instantiation
+                .as_ref()
+                .map(|instantiation| &instantiation.arguments)
+        });
+        let (Some(open), Some(declared), Some(inferred)) = (open, declared, inferred) else {
+            return function.arguments.clone();
+        };
+        if function.arguments.len() + open.len() != declared.len() {
+            return function.arguments.clone();
+        }
+        let mut bound = function.arguments.iter();
+        declared
+            .iter()
+            .filter_map(|decl| {
+                open.iter()
+                    .position(|candidate| candidate.id() == decl.id())
+                    .map_or_else(|| bound.next(), |slot| inferred.get(slot))
+                    .cloned()
+            })
+            .collect()
     }
 
     /// Record a direct callable's runtime parameters for the call at `span`;
@@ -1840,24 +1881,9 @@ impl Checker {
             matched.positional_overflow,
             matched.keyword_overflow,
         );
-        // The callee's own origin binders bind from the arguments before each
-        // argument coerces, and the result carries what they bound;
-        // `declared` keeps the type parameters abstract.
-        let origin_arguments = CalleeOriginArguments {
-            slots: &slots,
-            overflow: &overflow,
-            args,
-            kwargs,
-        };
-        let (params, declared, bound_variadic, bindings) = self.substitute_callee_pointer_origins(
-            name,
-            &names,
-            params,
-            variadic.as_ref(),
-            &origin_arguments,
-        )?;
-        let (ret, ref_return) =
-            self.bound_callee_result(bindings.as_ref(), &ret, ref_return.as_deref());
+        // A function type declares no origin binder: a callee over one is
+        // a generator, whose call binds it in the one solve.
+        let declared = params.clone();
         let mut score = 0;
         let mut existentials = mojito_types::types::TySubst::new();
         for (i, slot) in slots.iter().enumerate() {
@@ -1893,13 +1919,8 @@ impl Checker {
         }
         let collected = match &variadic {
             Some(element) => {
-                let (collected_score, collected) = self.check_collected_arguments(
-                    name,
-                    element,
-                    bound_variadic.as_ref(),
-                    &overflow,
-                    args,
-                )?;
+                let (collected_score, collected) =
+                    self.check_collected_arguments(name, element, &overflow, args)?;
                 score += collected_score;
                 collected
             }
@@ -2607,15 +2628,13 @@ impl Checker {
     }
 
     /// Check each argument a `*args` collector gathers at `overflow` against
-    /// its element type — `bound`, the element with the callee's origin
-    /// binders substituted, where the call bound any — returning the
+    /// its element type, returning the
     /// conversion score and each element's declared and found types for the
     /// exclusivity rule.
     fn check_collected_arguments<'a>(
         &self,
         name: &str,
         element: &Ty,
-        bound: Option<&Ty>,
         overflow: &[usize],
         args: &'a [Expr],
     ) -> Result<(usize, CollectedElements<'a>), TypeError> {
@@ -2627,12 +2646,11 @@ impl Checker {
         let mut score = 0;
         let mut collected = Vec::new();
         for (pack_index, &position) in overflow.iter().enumerate() {
-            let source = bound.unwrap_or(element);
-            let expected = match source.kind() {
+            let expected = match element.kind() {
                 TyKind::RuntimePack(elements) => elements
                     .get(pack_index)
                     .ok_or_else(|| arity_mismatch(elements.len()))?,
-                _ => source,
+                _ => element,
             };
             let argument = &args[position];
             let found = self.infer_with_expected(argument, expected, true)?;
@@ -2674,85 +2692,6 @@ impl Checker {
             args,
             &format!("'{name}'"),
         )
-    }
-
-    /// Bind a callee's own origin binders named by its parameters — a
-    /// `Pointer[T, o]`, a `ref[o]` referent, or a struct carrying `o` in its
-    /// origin tail (`List[RefBox[o]]`) — from the arguments filling those
-    /// slots and those its `*args` collector gathers, and substitute the
-    /// bindings into `params` and the collector's element type before each
-    /// argument coerces. Returns the bound parameters, the bound declared
-    /// spellings (type parameters left abstract, for the exclusivity rule),
-    /// the bound element type, and the bindings, which the result carries
-    /// too.
-    pub(super) fn substitute_callee_pointer_origins(
-        &self,
-        name: &str,
-        names: &[String],
-        params: Vec<Ty>,
-        variadic: Option<&Ty>,
-        arguments: &CalleeOriginArguments<'_>,
-    ) -> Result<CalleeOriginSubstitution, TypeError> {
-        let mut origin_bound: Vec<(usize, Ty)> = Vec::new();
-        for (index, slot) in arguments.slots.iter().enumerate() {
-            if !params
-                .get(index)
-                .is_some_and(super::origins::names_origin_binder)
-            {
-                continue;
-            }
-            let argument = match slot {
-                ArgSlot::Positional(position) => &arguments.args[*position],
-                ArgSlot::Keyword(position) => &arguments.kwargs[*position].value,
-                ArgSlot::Default => continue,
-            };
-            origin_bound.push((index, self.infer(argument)?));
-        }
-        // Each collected argument binds against the collector's element
-        // (a pack's own element), appended past the regular parameters.
-        let mut patterns = params.clone();
-        let mut pattern_names = names.to_vec();
-        for (pack_index, &position) in arguments.overflow.iter().enumerate() {
-            let element = match variadic.map(Ty::kind) {
-                Some(TyKind::RuntimePack(elements)) => elements.get(pack_index),
-                _ => variadic,
-            };
-            let Some(element) =
-                element.filter(|element| super::origins::names_origin_binder(element))
-            else {
-                continue;
-            };
-            origin_bound.push((patterns.len(), self.infer(&arguments.args[position])?));
-            patterns.push(element.clone());
-            pattern_names.push(
-                self.collector_names
-                    .get(name)
-                    .map_or("args", String::as_str)
-                    .to_string(),
-            );
-        }
-        if origin_bound.is_empty() {
-            let declared = params.clone();
-            return Ok((params, declared, None, None));
-        }
-        let bound: Vec<(usize, &Ty)> = origin_bound
-            .iter()
-            .map(|(index, ty)| (*index, ty))
-            .collect();
-        let bindings = Self::bind_callee_origins(
-            name,
-            &pattern_names,
-            &patterns,
-            &bound,
-            super::origins::CalleeBinders::Every,
-        )?;
-        if bindings.is_empty() {
-            let declared = params.clone();
-            return Ok((params, declared, None, None));
-        }
-        let bound_variadic = variadic.map(|element| bindings.substitute(element));
-        let bound = bindings.substitute_all(&params);
-        Ok((bound.clone(), bound, bound_variadic, Some(bindings)))
     }
 
     /// `__param_list_address[*values]()`: a `Pointer[E, ImmStaticOrigin]` to
@@ -2992,31 +2931,12 @@ pub(super) fn folded_parameter_attributes(
     folded
 }
 
-/// The arguments of a call whose callee's origin binders bind: the regular
-/// slots and the positions its `*args` collector gathers.
-pub(super) struct CalleeOriginArguments<'a> {
-    pub(super) slots: &'a [ArgSlot],
-    pub(super) overflow: &'a [usize],
-    pub(super) args: &'a [Expr],
-    pub(super) kwargs: &'a [mojito_ast::ast::KwArg],
-}
-
 /// What a call's one solve bound: its declared list's type and value
 /// binders, and the origin binders its arguments' places bound.
 pub(super) struct SolvedCall {
     pub(super) bound: BoundParameters,
     pub(super) origins: Option<super::origins::ConstructorOriginBindings>,
 }
-
-/// A call's origin-bound parameters, their declared spellings for the
-/// exclusivity rule, its bound `*args` element type, and the bindings, when
-/// any parameter or collected argument names a binder.
-pub(super) type CalleeOriginSubstitution = (
-    Vec<Ty>,
-    Vec<Ty>,
-    Option<Ty>,
-    Option<super::origins::ConstructorOriginBindings>,
-);
 
 /// A generic callee's origin-bound argument patterns, parameters, `*args`
 /// element, result, and `ref` result contract.

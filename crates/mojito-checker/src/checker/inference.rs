@@ -1276,11 +1276,12 @@ impl Checker {
                     }
                 }
                 // A function whose only unbound binders are origins reads as
-                // the runtime closure the pin materializes from it.
+                // the generator it is, the runtime closure each call through
+                // it binds.
                 self.lookup(name)
                     .map(|ty| match ty.kind() {
                         TyKind::Ref(reference) => reference.referent.clone(),
-                        _ => super::runtime_closure_ty(ty),
+                        _ => ty.clone(),
                     })
                     .map(|ty| self.bake_value_transfer_effects(name, ty))
                     .map_or_else(

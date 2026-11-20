@@ -1603,7 +1603,9 @@ impl Checker {
                 .push(constraint);
         }
 
-        if ParamDecl::argument_binders(&decls).next().is_none() {
+        // Any declared list makes the type a generator over it, as
+        // upstream's is, origin binders alone included.
+        if decls.is_empty() {
             return Ok(checked);
         }
         let TyKind::Func(func) = checked.kind() else {

@@ -1250,8 +1250,21 @@ impl Checker {
         arguments: &[mojito_ast::ast::ParamArg],
         signature: Option<&CallableOriginSignature>,
     ) -> Result<(Ty, Vec<TyArg>), TypeError> {
+        self.bind_generic_callable_value(name, callable, arguments, signature)
+            .map(|(contract, arguments, _)| (contract, arguments))
+    }
+
+    /// [`Self::instantiate_generic_callable_value`] with the origin binders
+    /// its bracket left open, which the contract still names.
+    fn bind_generic_callable_value(
+        &self,
+        name: &str,
+        callable: Ty,
+        arguments: &[mojito_ast::ast::ParamArg],
+        signature: Option<&CallableOriginSignature>,
+    ) -> Result<(Ty, Vec<TyArg>, Vec<ParamDecl>), TypeError> {
         let TyKind::GenericFunc(generic) = callable.kind() else {
-            return Ok((callable, Vec::new()));
+            return Ok((callable, Vec::new(), Vec::new()));
         };
         let BoundParameters {
             subst,
@@ -1259,9 +1272,18 @@ impl Checker {
             origins,
             ..
         } = self.resolve_use_params(name, &generic.decls, arguments, &[], &[])?;
+        let open = generic
+            .decls
+            .iter()
+            .filter(|decl| {
+                matches!(decl, ParamDecl::Origin { origin, .. }
+                    if !origins.iter().any(|bound| bound.id == *origin))
+            })
+            .cloned()
+            .collect();
         let bound = Self::bind_bracket_origins(callable.clone(), &origins, signature);
         let Some(GenericFuncTy { decls, func }) = bound.as_generic_func() else {
-            return Ok((bound, tyargs));
+            return Ok((bound, tyargs, open));
         };
         let decls = ParamDecl::argument_view(decls);
         let values = DependentValues::own(&self.param_context, &decls, &tyargs);
@@ -1271,7 +1293,7 @@ impl Checker {
             self.resolve_dependent_ty(&substituted, &values)
         };
         let contract = TyKind::Func(Box::new(func.try_map_types(resolve)?));
-        Ok((contract.into(), tyargs))
+        Ok((contract.into(), tyargs, open))
     }
 
     pub(super) fn specialize_callable_value_candidate(
@@ -1304,8 +1326,22 @@ impl Checker {
             {
                 Ok((callable, Vec::new()))
             }
+            // A bracket leaving origin binders open (`first[_, 6]`) binds a
+            // generator over them, as upstream's partial binding is: each
+            // call of the value infers them.
             TyKind::GenericFunc(_) => {
-                self.instantiate_generic_callable_value(name, callable, arguments, signature)
+                let (contract, arguments, open) =
+                    self.bind_generic_callable_value(name, callable, arguments, signature)?;
+                let contract = match contract.into_kind() {
+                    TyKind::Func(func) if !open.is_empty() => {
+                        TyKind::GenericFunc(Box::new(GenericFuncTy {
+                            decls: open,
+                            func: *func,
+                        }))
+                    }
+                    other => other,
+                };
+                Ok((contract.into(), arguments))
             }
             TyKind::Func(_) if arguments.is_empty() => Ok((callable, Vec::new())),
             TyKind::Func(_) => Err(TypeError::WrongTypeArgCount {

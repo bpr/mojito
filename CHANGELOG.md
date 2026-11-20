@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A function type declaring only origin parameters is a generator over
+  them, as upstream's is, so a runtime parameter declares one (`f:
+  def[o: ImmOrigin](Pointer[Int, o]) thin -> Int`) and `apply(first, 3)`
+  runs, each call through `f` inferring its origin. A function value whose
+  open parameters are origins (`var g = first`, `comptime k = first[_,
+  6]`) is that generator too, so its calls bind the origins in the one
+  solve a named function's does, and `k(Pointer(to=y))` now runs instead
+  of failing MIR verification (R2355).
 - An origin binder is a value parameter of its `Origin[mut=m,
   _mlir_origin=o]` type, as upstream's is, in its signature and body: `o.mut`,
   `type_of(o)`, `ImmOrigin(o)`, `o.unsafe_mut_cast[m]()`, `var v = o`, a

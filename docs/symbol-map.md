@@ -785,11 +785,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   over `declared_origin_binders`; methods through
   `instantiate_method_generics`, whose declared origin binders
   `classify_param_list_after` numbers past the struct's parameters, as the
-  signature names them), beside their type and value binders, while a
-  concrete call (a function value whose open parameters are only origins)
-  still binds every binder its parameters name in a pass before the
-  arguments check, `substitute_callee_pointer_origins`
-  (`CalleeBinders::Every`), and
+  signature names them), beside their type and value binders, a function
+  value whose open parameters are only origins included, since its type is
+  the generator over them, and
   `ConstructorOriginBindings::substitute_ref_sig` carries the bindings, and
   a mut-parametric binder's mutability, into the `ref` result), the argument exclusivity rule
   (`origins/exclusivity.rs`: `check_argument_origin_exclusivity` judges every

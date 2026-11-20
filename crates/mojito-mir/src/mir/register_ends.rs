@@ -729,8 +729,7 @@ pub fn owned_register(ty: &Ty, declarations: &MirDeclarations) -> bool {
             | TyKind::AnyStruct(_)
             | TyKind::Trait(_)
             | TyKind::TypeType
-            | TyKind::Func(_)
-    );
+    ) || ty.is_runtime_function();
     !untracked && !declarations.drop_runs_no_code(ty)
 }
 

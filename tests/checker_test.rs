@@ -5257,6 +5257,13 @@ fn rejects_parametric_function_types_as_runtime_parameter_annotations() {
 }
 
 #[test]
+fn accepts_origin_only_parametric_function_types_as_runtime_parameter_annotations() {
+    ok_std(
+        "def first[o: ImmOrigin](p: Pointer[Int, o]) -> Int:\n    return p[]\n\ndef apply(f: def[o: ImmOrigin](Pointer[Int, o]) thin -> Int, x: Int) -> Int:\n    return f(Pointer(to=x))\n\ndef main():\n    print(apply(first, 3))\n",
+    );
+}
+
+#[test]
 fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effects() {
     let structural = err_std(
         "@fieldwise_init\nstruct Structural:\n    def __call__(self, value: Int) -> Int:\n        return value\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(Structural()))\n",

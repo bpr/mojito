@@ -2278,11 +2278,15 @@ declared position, origin parameters counted. A struct's list in the check
 type's (`GenericFuncTy::decls`, the function's `GenericSite`), and a
 method's (`MethodSig::declared`, its `GenericSite`) hold the origin
 binders. A function with any binder, origins included, is a
-`GenericFunc` over that list, as upstream's is a generator over it; a
-reference to one whose only unbound binders are origins reads as its
-signature's `Func`, the runtime closure the pin materializes
-(`runtime_closure_ty`), while a callable type whose only binders are
-origins stays a non-generic `Func`. Every parameter list MIR lowers holds the whole list too: a
+`GenericFunc` over that list, as upstream's is a generator over it, and
+so is a callable type with any binder (`lower_anonymous_callable_type`);
+a function value whose open binders are origins alone (a reference, or a
+partial binding leaving them `_`) is a runtime value of the generator
+over them (`GenericFuncTy::binds_only_origins`), so a runtime parameter
+may declare one and each call through it binds them in the one solve.
+Elaboration erases those origins, as it erases every origin: an instance
+holds the generator's signature as a `Func` (`mono::substitute_ty`), and
+an indirect call through it keeps no compile-time metadata. Every parameter list MIR lowers holds the whole list too: a
 function's and method's (`CheckedSignature::parameters`), a struct row,
 an initializer's struct prefix, and a synthesized member's. A body's
 value scope binds every value binder of the whole list, an origin's

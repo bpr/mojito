@@ -731,9 +731,7 @@ impl<'a> Flatten<'a> {
         if matches!(
             node.op(),
             CheckedOp::Member { .. } | CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. }
-        ) && node
-            .ty()
-            .is_some_and(|ty| matches!(ty.kind(), TyKind::Func(_)))
+        ) && node.ty().is_some_and(|ty| ty.is_runtime_function())
             && selected_call(&node.checked.adjustments).is_none()
             && let Some(function) = resolved_callable(&node.checked.adjustments)
         {

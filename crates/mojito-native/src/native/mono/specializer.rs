@@ -3552,6 +3552,7 @@ impl<'a> Specializer<'a> {
                     param_decls: contract,
                     resolved,
                     instantiated_args,
+                    instantiated_contract,
                     spread,
                     ..
                 } => {
@@ -3685,6 +3686,15 @@ impl<'a> Specializer<'a> {
                             spread: spread.take(),
                         };
                         continue;
+                    }
+                    // A runtime value's generator declares origins alone,
+                    // which erase: the call through it binds nothing the
+                    // instance keeps.
+                    if contract.iter().all(ParamDecl::is_origin) {
+                        param_arg_regs.clear();
+                        instantiated_args.clear();
+                        contract.clear();
+                        *instantiated_contract = None;
                     }
                     let Some(receiver) = function.reg_types.get(&callee.0) else {
                         continue;

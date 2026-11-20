@@ -4595,15 +4595,6 @@ impl Checker {
             .iter()
             .enumerate()
             .map(|(slot, parameter)| {
-                if matches!(
-                    &parameter.ty,
-                    SourceType::Func { type_params, .. } if !type_params.is_empty()
-                ) {
-                    return Err(TypeError::Unsupported(
-                        "a runtime parameter cannot use a parametric function type; declare it as a compile-time callable parameter"
-                            .to_string(),
-                    ));
-                }
                 // The initialized-local rule for parameter annotations
                 // (pin-attested): bare infers per call, a partial application
                 // omitting an origin slot rejects, a placeholder is inferred
@@ -4621,6 +4612,19 @@ impl Checker {
                     resolved
                 };
                 let resolved = existential_at_slot(resolved?, slot);
+                // A runtime value of a parametric function type is the
+                // closure a reference materializes, so its open parameters
+                // are origins alone, each call inferring them.
+                if matches!(
+                    &parameter.ty,
+                    SourceType::Func { type_params, .. } if !type_params.is_empty()
+                ) && super::is_unbound_parametric_function(&resolved)
+                {
+                    return Err(TypeError::Unsupported(
+                        "a runtime parameter cannot use a parametric function type over a non-origin parameter; declare it as a compile-time callable parameter"
+                            .to_string(),
+                    ));
+                }
                 let declared = match parameter.kind {
                     mojito_ast::ast::ParamKind::Variadic => {
                         mojito_types::types::variadic_collector_type(

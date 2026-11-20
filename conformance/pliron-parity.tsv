@@ -862,6 +862,7 @@ assets/ok/origin_delegated_parameter_receiver.mojo	main	exe-differential	sanitiz
 assets/ok/origin_implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/origin_mlir_origin_parameter.mojo	main	exe-differential	sanitized
 assets/ok/origin_mutability_binder_body_read.mojo	main	exe-differential	sanitized
+assets/ok/origin_only_function_type_runtime_parameter.mojo	main	exe-differential	sanitized
 assets/ok/origin_parameter_before_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/origin_parameterized_alias_binder.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_initialized_local.mojo	main	exe-differential	sanitized

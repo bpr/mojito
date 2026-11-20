@@ -391,7 +391,7 @@ fn requirement_type(requirement: &CtMemberReq) -> String {
 /// the generic function type a `def[...]` contract's `__call__` must match.
 fn method_generic_callable_ty(method: &MethodSig) -> Ty {
     let func = method_func_ty(method, mojito_types::origin::CallableEnvironment::Default);
-    if method.decls().is_empty() {
+    if method.declared.is_empty() {
         return TyKind::Func(Box::new(func)).into();
     }
     TyKind::GenericFunc(Box::new(GenericFuncTy {

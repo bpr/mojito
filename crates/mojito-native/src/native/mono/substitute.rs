@@ -491,6 +491,12 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         // A generic callable remains as a transient storage type until its
         // statically named producer and dependent call sites are rewritten.
         // `ensure_concrete_function` rejects it if any executable use survives.
+        // A generator over origin binders alone is a runtime closure's type,
+        // and its origins erase: the instance holds its signature.
+        TyKind::GenericFunc(generic) if generic.binds_only_origins() => substitute_ty(
+            &TyKind::Func(Box::new(generic.func.clone())).into(),
+            bindings,
+        )?,
         TyKind::GenericFunc(_) => ty.clone(),
         TyKind::SelfType | TyKind::Infer => {
             return Err(unsupported(format!("unresolved type `{ty}`")));

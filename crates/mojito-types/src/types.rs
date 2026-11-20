@@ -1753,6 +1753,25 @@ impl GenericFuncTy {
     pub fn argument_binders(&self) -> impl Iterator<Item = &ParamDecl> {
         ParamDecl::argument_binders(&self.decls)
     }
+
+    /// Whether every declared binder is an origin: a runtime closure's
+    /// type, whose binders erase from the runtime ABI and each call infers.
+    pub fn binds_only_origins(&self) -> bool {
+        self.decls.iter().all(ParamDecl::is_origin)
+    }
+}
+
+impl Ty {
+    /// Whether a value of this type is a runtime function value: a
+    /// function type, or a generator over origin binders alone
+    /// ([`GenericFuncTy::binds_only_origins`]).
+    pub fn is_runtime_function(&self) -> bool {
+        match self.kind() {
+            TyKind::Func(_) => true,
+            TyKind::GenericFunc(generic) => generic.binds_only_origins(),
+            _ => false,
+        }
+    }
 }
 
 impl Deref for GenericFuncTy {
