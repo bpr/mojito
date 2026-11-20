@@ -195,6 +195,13 @@ impl StructDeclaration {
         ParamDecl::argument_view(&self.param_decls)
     }
 
+    /// The binders an elaborated instance holds by position besides its
+    /// origins ([`ParamDecl::instance_view`]): the argument binders and each
+    /// origin's `mut=` binder, in declared order.
+    pub fn instance_view(&self) -> std::borrow::Cow<'_, [ParamDecl]> {
+        ParamDecl::instance_view(&self.param_decls)
+    }
+
     /// The arguments `arguments`, an instance of the struct, give its
     /// argument binders ([`Self::argument_view`]), position by position
     /// ([`ParamDecl::instance_argument_view`]).

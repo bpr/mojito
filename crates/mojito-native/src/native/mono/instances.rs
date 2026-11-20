@@ -24,12 +24,10 @@ impl Specializer<'_> {
         {
             return None;
         }
-        let view = struct_decl.argument_view();
-        let position = view
-            .iter()
-            .position(|decl| matches!(decl, ParamDecl::Value { name, .. } if name == field))?;
-        let type_args = struct_decl.view_arguments(type_args);
-        let TyArg::Val(value) = ParamDecl::aligned_argument(&view, &type_args, position)? else {
+        // An origin's `mut=` binder reads its slot as any value binder does.
+        let (_, TyArg::Val(value)) = ParamDecl::aligned_pairs(&struct_decl.param_decls, type_args)
+            .find(|(decl, _)| matches!(decl, ParamDecl::Value { name, .. } if name == field))?
+        else {
             return None;
         };
         match value {

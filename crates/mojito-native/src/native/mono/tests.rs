@@ -3464,3 +3464,37 @@ fn conformance_bracket_argument_keys_its_instance_by_the_answer() {
     // `Int` conforms and `Plain` does not.
     assert_eq!(instances, ["f$mono$Vfalse", "f$mono$Vtrue"]);
 }
+
+#[test]
+fn a_closed_origin_mutability_keys_its_struct_instance() {
+    let source = "struct Q[mut: Bool, //, origin: Origin[mut=mut]]:\n\
+         \x20   var n: Int\n\
+         \x20   def __init__(out self, n: Int):\n\
+         \x20       self.n = n\n\
+         \x20   def h(self) -> Bool:\n\
+         \x20       return Self.origin.mut\n\
+         def main():\n\
+         \x20   var x = 1\n\
+         \x20   print(Q[origin_of(x)](4).h())\n\
+         \x20   print(Q[ImmutAnyOrigin](4).h())\n";
+    let specialized = specialized_main(source);
+    let instances = |slot: &str| {
+        specialized
+            .program
+            .declarations
+            .structs
+            .iter()
+            .any(|declaration| declaration.name == format!("Q$mono${slot}"))
+    };
+    assert!(
+        instances("Vtrue") && instances("Vfalse"),
+        "`Q[True, o]` and `Q[False, o]` are two instances: {:?}",
+        specialized
+            .program
+            .declarations
+            .structs
+            .iter()
+            .map(|declaration| &declaration.name)
+            .collect::<Vec<_>>()
+    );
+}

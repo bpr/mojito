@@ -2183,8 +2183,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   below-the-checker form under `static_mutability_slot`;
   `aligned_pairs`/`aligned_argument` pair a list of
   binders with an instance's arguments by kind, a struct's whole declared
-  list with an instance of any shape, an erased one or an elaborated one
-  without its `mut=` slots included; `instance_argument_view` is an
+  list with an instance of any shape, an erased one or an argument view
+  without its `mut=` slots included; `instance_binders`/`instance_view`
+  (and `StructDeclaration::instance_view`) are the binders an elaborated
+  instance holds by position, every one but an origin; `instance_argument_view` is an
   instance's arguments for its argument binders, which the checker reads
   through `StructInfo::view_arguments` and MIR and the elaborator through
   `StructDeclaration::view_arguments`. The checker's comparisons leave a
@@ -2192,9 +2194,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `types::defer_origin_decided_mutability`); a layout ignores every one
   (`types::defer_mutability_arguments`, read by
   `MirDeclarations::translated_type` and the checker's rebind check); the
-  elaborator erases them with the origins (`StructCatalog::without_mutability`,
-  in `substitute_ty` and `unify`) and binds a member's read of one from its
-  owner instance (`unify::bind_mutability_args`), and `inline-parametric`
+  elaborator keys an instance on each closed one
+  (`StructCatalog::closed_mutability`, in `substitute_ty`), erasing one no
+  binding decides to `_REMOVED_ARG`, spells a member's owner arguments with
+  them (`unify::owner_argument`, `owner_instance_ty`,
+  `Specializer::enqueue`, `bind_static_receiver`), and binds a member's read
+  of one from its owner instance (`unify::bind_mutability_args`, an erased
+  slot left removed), and `inline-parametric`
   binds a callee's (`Arguments::mutabilities`). MIR text 1.206's
   `nested::upgrade_struct_instance_arguments` moves an older artifact's
   origin tail into place, and 1.209's

@@ -3968,6 +3968,24 @@ impl ParamDecl {
             .filter(move |decl| decl.is_argument_binder(decls))
     }
 
+    /// The binders of `decls` an elaborated struct instance holds by
+    /// position besides its origins: every binder but an origin, in declared
+    /// order, an origin's `mut=` binder included, as upstream's distinct
+    /// `Q[True, o]` and `Q[False, o]` instances key it.
+    pub fn instance_binders(decls: &[Self]) -> impl Iterator<Item = &Self> + '_ {
+        decls.iter().filter(|decl| !decl.is_origin())
+    }
+
+    /// [`Self::instance_binders`] as a list, borrowing `decls` when every
+    /// binder is one.
+    pub fn instance_view(decls: &[Self]) -> std::borrow::Cow<'_, [Self]> {
+        if decls.iter().any(Self::is_origin) {
+            std::borrow::Cow::Owned(Self::instance_binders(decls).cloned().collect())
+        } else {
+            std::borrow::Cow::Borrowed(decls)
+        }
+    }
+
     /// The binders of `decls` an origin binder names as its mutability
     /// ([`Self::is_origin_mutability_binder`]), in declared order: values a
     /// body reads and a checked instance holds at their positions
@@ -4170,7 +4188,8 @@ impl ParamDecl {
     /// spelling of any shape pairs with: an origin binder pairs with
     /// nothing in an erased spelling (one carrying no origin), and an
     /// origin's `mut=` binder ([`Self::is_origin_mutability_binder`]) with
-    /// nothing in an elaborated instance, which erases it with its origin.
+    /// nothing in a spelling that leaves its slot out (a call's argument
+    /// view).
     pub fn aligned_pairs<'d, 'a>(
         decls: &'d [Self],
         arguments: &'a [TyArg],

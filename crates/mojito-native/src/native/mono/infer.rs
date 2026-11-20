@@ -544,7 +544,10 @@ impl Specializer<'_> {
         let Some(struct_decl) = self.structs.get(template) else {
             return Ok(());
         };
-        if struct_decl.argument_binders().next().is_none() {
+        if ParamDecl::instance_binders(&struct_decl.param_decls)
+            .next()
+            .is_none()
+        {
             return Ok(());
         }
         bind_mutability_args(&struct_decl.param_decls, &arguments, bindings);
@@ -564,17 +567,17 @@ impl Specializer<'_> {
             // An erased argument (`S[_REMOVED_ARG]`, spelled where the body
             // removed the parameter it named) binds nothing and names the
             // erased instance.
-            let view = struct_decl.argument_view();
-            let arguments = struct_decl.view_arguments(&arguments);
-            let owner_arguments = view
-                .iter()
-                .enumerate()
-                .map(|(position, decl)| {
-                    match ParamDecl::aligned_argument(&view, &arguments, position) {
-                        Some(TyArg::Val(CtValue::RemovedArg)) => {
-                            Ok(InstanceArg::Value(CtValue::RemovedArg))
-                        }
-                        _ => bound_argument(decl, bindings, template),
+            let decls = &struct_decl.param_decls;
+            let erased: Vec<&ParamDecl> = ParamDecl::aligned_pairs(decls, &arguments)
+                .filter(|(_, argument)| matches!(argument, TyArg::Val(CtValue::RemovedArg)))
+                .map(|(decl, _)| decl)
+                .collect();
+            let owner_arguments = ParamDecl::instance_binders(decls)
+                .map(|decl| {
+                    if erased.iter().any(|erased| erased.id() == decl.id()) {
+                        Ok(InstanceArg::Value(CtValue::RemovedArg))
+                    } else {
+                        owner_argument(decl, decls, bindings, template)
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()?;

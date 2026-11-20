@@ -316,10 +316,8 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 }
                 return Ok(TyKind::Struct(name.clone(), Vec::new()).into());
             }
-            // Each origin's `mut=` argument erases with the origin it
-            // follows: an instance is keyed on neither.
-            let unslotted = bindings.structs.without_mutability(name, original);
-            let original: &[TyArg] = &unslotted;
+            let slotted = closed_mutability_arguments(name, original, bindings);
+            let original: &[TyArg] = &slotted;
             // An argument that names a parameter the instance removed is
             // erased whole, as upstream's generator spells `_REMOVED_ARG`;
             // a struct type argument erases its own arguments instead.
@@ -841,6 +839,39 @@ fn substitute_address_space(slot: &AddressSpaceSlot, bindings: &Bindings) -> Add
         .and_then(|expr| eval_ct(expr, bindings).ok())
         .and_then(|value| AddressSpaceSlot::of_value(&value))
         .unwrap_or_else(|| slot.clone())
+}
+
+/// `original`, an application of the struct `name`, with each origin's
+/// `mut=` argument closed for the instance it keys: a slot naming a binder
+/// the generator removed erases, one its origin decides is that origin's
+/// mutability, one over the instance's own origin binder (a member's
+/// `Self`) takes the binder's bound value, and one no binder decides (an
+/// unbound origin's) erases ([`StructCatalog::closed_mutability`]).
+fn closed_mutability_arguments(name: &str, original: &[TyArg], bindings: &Bindings) -> Vec<TyArg> {
+    bindings
+        .structs
+        .closed_mutability(name, original, |value, origin| match value {
+            CtValue::Deferred(binder) if bindings.removed.contains(binder) => {
+                Some(CtValue::RemovedArg)
+            }
+            CtValue::Expr(_) if erases_whole(&TyArg::Val(value.clone()), bindings) => {
+                Some(CtValue::RemovedArg)
+            }
+            _ if let Some(mutable) =
+                origin.and_then(mojito_types::origin::Origin::static_mutability) =>
+            {
+                Some(CtValue::Bool(mutable))
+            }
+            _ if origin
+                .is_none_or(|origin| matches!(origin, mojito_types::origin::Origin::Unbound)) =>
+            {
+                None
+            }
+            CtValue::Deferred(binder) => bindings.values.get(binder).cloned(),
+            CtValue::Expr(expr) => closed_argument(expr, bindings).ok(),
+            _ => None,
+        })
+        .into_owned()
 }
 
 /// Whether the struct argument `arg` names a parameter the instance

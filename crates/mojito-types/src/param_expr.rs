@@ -5093,12 +5093,14 @@ impl MetaTy {
     }
 
     /// A frozen struct constant is typed by bare name, while its parameter
-    /// declares the resolved instance type.
+    /// declares the resolved instance type; or it is typed by the
+    /// elaborated instance (`StringSpan$mono$…`) of the template its
+    /// parameter's declared spelling applies.
     pub fn is_unresolved_struct(&self, declared: &Self) -> bool {
         matches!(
             (self.as_value().map(Ty::kind), declared.as_value().map(Ty::kind)),
             (Some(TyKind::Struct(found, _)), Some(TyKind::Struct(expected, _)))
-                if found == expected
+                if crate::types::struct_template(found) == crate::types::struct_template(expected)
         )
     }
 }

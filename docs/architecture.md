@@ -3294,12 +3294,23 @@ an instance's arguments by kind (`ParamDecl::aligned_pairs`,
 `aligned_argument`): an argument view, which declares no
 origin binder, skips the instance's origins, and a list that declares them in
 place reads them where they sit. The whole declared list pairs with an
-instance of any shape, an erased one (no origin) or an elaborated one, which
-erases its `mut=` slots with its origins (`StructCatalog::without_mutability`
-in `substitute_ty` and `unify`), so a reader keyed by the argument view takes
+instance of any shape, an erased one (no origin) or a call's argument view
+(no `mut=` slot), so a reader keyed by the argument view takes
 an instance's arguments through `ParamDecl::instance_argument_view`
 (`StructInfo::view_arguments`, `StructDeclaration::view_arguments`) rather
-than skipping arguments by kind. The MIR
+than skipping arguments by kind. An elaborated instance keeps each `mut=`
+slot, as upstream's `Q[True, o]` and `Q[False, o]` are distinct types: the
+elaborator keys it on every binder but the origins
+(`ParamDecl::instance_binders`, `StructDeclaration::instance_view`),
+`substitute_ty` closes the slot (`StructCatalog::closed_mutability`) to the
+`Bool` its origin decides or a member's receiver bound, and erases one no
+binding decides, or one naming a binder the generator removed, to
+`_REMOVED_ARG` (`CtValue::RemovedArg`), as upstream's generator spells a
+parameter it does not bind. A closed instance then meets the erased one at
+a call edge whose parameter declares no binder for the slot (`Span[T, _]`,
+R2376): `unify_arg` agrees `_REMOVED_ARG` with any value, the verifier's
+`erased_struct_agrees` admits the edge, and the VM thaws a frozen value of
+the closed instance as the erased one its parameter declares. The MIR
 verifier rejects an instance of a struct declaring an origin binder that holds
 other than one argument per declared parameter, each origin and each `mut=`
 value at its binder's position (`verify/scope.rs`,

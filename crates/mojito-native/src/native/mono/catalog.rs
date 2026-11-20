@@ -183,39 +183,69 @@ impl StructCatalog {
         }
     }
 
-    /// `arguments`, an instance of the struct `name`, without the `mut=`
-    /// argument of each of its origins: an elaborated instance is keyed on
-    /// neither an origin nor the `mut=` value that follows it. `arguments`
-    /// as they stand when they hold no such argument.
-    pub(super) fn without_mutability<'a>(
+    /// `arguments`, an instance of the struct `name`, with each origin's
+    /// `mut=` argument closed: a known `Bool` stays, and any other slot is
+    /// what `close` answers from the slot and the origin argument it
+    /// governs (a member's `Self`, whose receiver bound the binder), or
+    /// erased ([`CtValue::RemovedArg`]) where it answers nothing, as
+    /// upstream's generator spells a parameter it does not bind. An
+    /// elaborated instance is keyed on the closed slot and on no origin.
+    /// `arguments` as they stand when they hold no such slot.
+    pub(super) fn closed_mutability<'a>(
         &self,
         name: &str,
         arguments: &'a [TyArg],
+        close: impl Fn(&CtValue, Option<&mojito_types::origin::Origin>) -> Option<CtValue>,
     ) -> std::borrow::Cow<'a, [TyArg]> {
-        match self.declaration(name).filter(|declaration| {
+        let Some(declaration) = self.declaration(name).filter(|declaration| {
             declaration.param_decls.len() == arguments.len()
                 && declaration
                     .param_decls
                     .iter()
                     .any(|decl| decl.is_origin_mutability_binder(&declaration.param_decls))
-        }) {
-            Some(declaration) => std::borrow::Cow::Owned(
-                declaration
-                    .param_decls
-                    .iter()
-                    .zip(arguments)
-                    .filter(|(decl, _)| !decl.is_origin_mutability_binder(&declaration.param_decls))
-                    .map(|(_, argument)| argument.clone())
-                    .collect(),
-            ),
-            None => std::borrow::Cow::Borrowed(arguments),
-        }
+        }) else {
+            return std::borrow::Cow::Borrowed(arguments);
+        };
+        let decls = &declaration.param_decls;
+        let governed = |decl: &ParamDecl| {
+            decls
+                .iter()
+                .zip(arguments)
+                .find_map(|(candidate, argument)| match (candidate, argument) {
+                    (
+                        ParamDecl::Origin {
+                            mutability: mojito_types::types::OriginMutability::Binder(binder),
+                            ..
+                        },
+                        TyArg::Origin(origin),
+                    ) if binder.id == *decl.id() => Some(origin),
+                    _ => None,
+                })
+        };
+        std::borrow::Cow::Owned(
+            decls
+                .iter()
+                .zip(arguments)
+                .map(|(decl, argument)| match argument {
+                    TyArg::Val(value) if decl.is_origin_mutability_binder(decls) => {
+                        TyArg::Val(match value {
+                            CtValue::Bool(_) | CtValue::RemovedArg => value.clone(),
+                            _ => close(value, governed(decl)).unwrap_or(CtValue::RemovedArg),
+                        })
+                    }
+                    _ => argument.clone(),
+                })
+                .collect(),
+        )
     }
 
     /// Whether the struct `name` is a generic template, which substitution
     /// renames a concrete application of to its instance symbol.
     pub(super) fn is_generic(&self, name: &str) -> bool {
-        self.declaration(name)
-            .is_some_and(|declaration| declaration.argument_binders().next().is_some())
+        self.declaration(name).is_some_and(|declaration| {
+            ParamDecl::instance_binders(&declaration.param_decls)
+                .next()
+                .is_some()
+        })
     }
 }

@@ -7186,6 +7186,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     where the pin prints `_FlushingWriteBuffer[{}, {},
     std.io.file_descriptor.RawFileDescriptor, 4096 : SIMD[DType.int, 1]]`:
     the infer-only origin and writer parameters are omitted.
+  - Probe: `reflect[A[origin_of(x)]].name()` for `struct A[mut: Bool, //,
+    o: Origin[mut=mut]]` prints `A[True, {}]`, where the pin prints
+    `A[True, {}, {}]`: the origin's implicit `_mlir_origin` binder again.
   - The module paths in these probes are R1679's.
   - Found while landing R1669 (2026-10-30).
   - Depends on nothing.
@@ -11088,41 +11091,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2423 An elaborated struct instance erases a closed `mut=`
-  argument, so no member is specialized per mutability**
-
-  `substitute_ty` (`mojito-native/src/native/mono/substitute.rs`) strips
-  every `mut=` argument through `StructCatalog::without_mutability`, so
-  `Q[True, o]` and `Q[False, o]` elaborate to one instance and a method
-  reading `Self.mut` keeps an unbound parameter constant, where upstream's
-  are distinct types whose member generator keeps `mut` when its body
-  reads it.
-  - Lever: keep the closed (`CtValue::Bool`) slot in the elaborated
-    arguments and the `instance_symbol` key; drop `without_mutability`
-    on both `unify` sides (`mono/unify.rs`) so pattern and actual agree in
-    arity; count `mut=` binders in `StructCatalog::is_generic`.
-  - Spell owner arguments with the `mut=` binder in
-    `owner_instance_ty`, `bind_static_receiver` (`mono/infer.rs`), and
-    both owner arms of `Specializer::enqueue`; a `Deferred` slot still
-    binds nothing (`unify_arg`'s Deferred arm).
-  - Audit the readers that assume an elaborated instance holds no slot:
-    `rg "is_origin_mutability_binder|without_mutability|CtValue::Deferred"
-    crates/mojito-native crates/mojito-analysis crates/mojito-mir
-    crates/mojito-checked`.
-  - Instance symbols change, so MIR snapshots and Pliron goldens are
-    updated in the same task.
-  - Probe: `reflect[A[origin_of(a)]].name()` still prints `reflect.A[True,
-    {}]`, and two `Span`s differing only in a closed `mut=` are two
-    elaborated instances.
-  - Probe: `scripts/smoke` stays clean on both backends; a partial
-    prototype failed 51 of 54 fixtures on "expected `VariadicList[…]`,
-    found `VariadicList$mono$…[false, Int, false]`".
-  - The plan is `R2422-a-struct-s-origin-mutability-binder-plan.md`,
-    slice E.
-  - Found while planning R2422 (2026-11-20).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2375 A `mut=` value a binder decides is deferred in a checked
   instance and erased from an elaborated one, where upstream's instance
   carries the binder's value**
@@ -11131,9 +11099,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   mutability itself (`Checker::origin_mutability_slot`), so an origin
   binder's `mut=` (`o: Origin[mut=m]`), a `ref` parameter's implicit
   `self_is_mut`, and `Self`'s own (`StructInfo::self_arguments`) are
-  `CtValue::Deferred`, and the elaborator erases every slot with its
-  origin (`StructCatalog::without_mutability`), so no instance is
-  specialized per mutability.
+  `CtValue::Deferred`, and the elaborator keys an instance on a closed
+  slot only, erasing a deferred one it cannot close to `_REMOVED_ARG`
+  (`StructCatalog::closed_mutability`).
   - The lever: write the binder's read where a binder decides it, and bind
     it on every path that substitutes an instance into a member's types:
     `substitute_at_with`, `resolve_parameterized_member`,
@@ -11144,7 +11112,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     binds"), which is why it is deferred today.
   - A `ref` parameter's mutability binder becomes a value binder a body
     and its instance read, as upstream's `self_is_mut` is.
-  - Keying elaborated instances on a closed slot is R2423; this entry
+  - The elaborator already keys an instance on a closed slot; this entry
     writes the binder-decided slots it then keys on.
   - Probe: `reflect[type_of(s)].name()` in `def f[m: Bool, //, o:
     Origin[mut=m]](s: Span[Int, o])`, called with `Span(xs)` and with an
@@ -11182,6 +11150,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     called with `Span(xs)` and with an `ImmOrigin` span, prints
     `std.span.Span[mut, SIMD[DType.int, 1], {}]` twice, where the pin
     prints `True` then `False` in that slot.
+  - Today a closed `Span[True, …]` passed to such a parameter reaches the
+    callee's one `_REMOVED_ARG` instance: `unify_arg` agrees the erased
+    slot with any value, the verifier's `erased_struct_agrees` admits the
+    edge, and the VM's `thaw` names a frozen argument by the erased
+    instance. Per-call specialization replaces that edge.
   - Found while landing R2372 (2026-11-19).
   - Landing it unblocks R2396, which retires the pre-check origin
     spelling.

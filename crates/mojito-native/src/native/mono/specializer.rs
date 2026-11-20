@@ -490,12 +490,11 @@ impl<'a> Specializer<'a> {
                 let decls = self
                     .structs
                     .get(owner_template.as_str())
-                    .map(|owner| owner.argument_view())
+                    .map(|owner| owner.param_decls.as_slice())
                     .unwrap_or_default();
-                arguments = decls
-                    .iter()
+                arguments = ParamDecl::instance_binders(decls)
                     .filter(|decl| !removed.contains(decl.id()))
-                    .map(|decl| bound_argument(decl, &bindings, template))
+                    .map(|decl| owner_argument(decl, decls, &bindings, template))
                     .chain(arguments.into_iter().map(Ok))
                     .collect::<Result<_, _>>()?;
                 None
@@ -517,11 +516,10 @@ impl<'a> Specializer<'a> {
                 let decls = self
                     .structs
                     .get(owner_template.as_str())
-                    .map(|owner| owner.argument_view())
+                    .map(|owner| owner.param_decls.as_slice())
                     .unwrap_or_default();
-                arguments = decls
-                    .iter()
-                    .map(|decl| bound_argument(decl, &bindings, template))
+                arguments = ParamDecl::instance_binders(decls)
+                    .map(|decl| owner_argument(decl, decls, &bindings, template))
                     .chain(arguments.into_iter().map(Ok))
                     .collect::<Result<_, _>>()?;
                 None
@@ -1208,7 +1206,15 @@ impl<'a> Specializer<'a> {
                 && substitute_ty(receiver, &probe).is_err()
             {
                 let mut arguments = arguments.clone();
-                erase(&owner.argument_view(), &mut arguments);
+                let view = owner.argument_view();
+                erase(
+                    if arguments.len() == owner.param_decls.len() {
+                        &owner.param_decls
+                    } else {
+                        &view
+                    },
+                    &mut arguments,
+                );
                 *receiver = TyKind::Struct(name.clone(), arguments).into();
             }
         }
@@ -2585,11 +2591,14 @@ impl<'a> Specializer<'a> {
             }
             // A non-generic constructor needs no instance, but this default may
             // be the only thing that reaches it, so it is enqueued like any
-            // other concrete callee.
+            // other concrete callee. A struct keyed on its origins' `mut=`
+            // alone binds no constructor parameter from the default's
+            // type, whose slot no binder decides.
             if arguments.is_empty()
-                || !self
+                || self
                     .struct_catalog
-                    .is_generic(nominal_template(struct_name))
+                    .declaration(nominal_template(struct_name))
+                    .is_none_or(|declaration| declaration.argument_binders().next().is_none())
             {
                 let Some(body) = self.functions.get(target.as_str()) else {
                     continue;
@@ -3050,10 +3059,8 @@ impl<'a> Specializer<'a> {
             root = enclosing;
         }
         let (owner, _) = mojito_symbol::symbol::split_method_symbol(root)?;
-        let decls = &self.structs.get(owner)?.argument_view();
-        if decls.is_empty() {
-            return None;
-        }
+        let decls = &self.structs.get(owner)?.param_decls;
+        ParamDecl::instance_binders(decls).next()?;
         owner_instance_ty(owner, decls, bindings)
             .ok()
             .map(|ty| (owner.to_string(), ty))
@@ -4387,19 +4394,19 @@ impl<'a> Specializer<'a> {
             }
             _ => &[],
         };
-        let erased: Vec<&mojito_types::param_expr::ParamId> = template
-            .argument_binders()
-            .enumerate()
-            .filter(|(position, decl)| {
-                bindings
-                    .removed
-                    .iter()
-                    .any(|binder| binder.id == *decl.id())
-                    || matches!(arguments.get(*position), Some(TyArg::Ty(argument))
-                        if mojito_types::types::erases_an_argument(argument))
-            })
-            .map(|(_, decl)| decl.id())
-            .collect();
+        let erased: Vec<&mojito_types::param_expr::ParamId> =
+            ParamDecl::aligned_pairs(&template.param_decls, arguments)
+                .filter(|(decl, argument)| {
+                    !decl.is_origin()
+                        && (bindings
+                            .removed
+                            .iter()
+                            .any(|binder| binder.id == *decl.id())
+                            || matches!(argument, TyArg::Ty(argument)
+                                if mojito_types::types::erases_an_argument(argument)))
+                })
+                .map(|(decl, _)| decl.id())
+                .collect();
         !erased.is_empty()
             && self
                 .functions

@@ -56,6 +56,23 @@ pub(super) fn ordered_arguments(
         .collect()
 }
 
+/// The argument an elaborated instance of a struct declaring `decls` holds
+/// for its binder `decl` ([`ParamDecl::instance_binders`]) under
+/// `bindings`: an origin's `mut=` binder no binding decides is erased
+/// ([`CtValue::RemovedArg`]), as upstream's generator spells a parameter it
+/// does not bind, and any other is its [`bound_argument`].
+pub(super) fn owner_argument(
+    decl: &ParamDecl,
+    decls: &[ParamDecl],
+    bindings: &Bindings,
+    target: &str,
+) -> Result<InstanceArg, MonoError> {
+    if decl.is_origin_mutability_binder(decls) && !bindings.values.contains_key(&decl.binder()) {
+        return Ok(InstanceArg::Value(CtValue::RemovedArg));
+    }
+    bound_argument(decl, bindings, target)
+}
+
 /// The instance argument `bindings` give the parameter `decl` of `target`.
 pub(super) fn bound_argument(
     decl: &ParamDecl,
@@ -90,7 +107,8 @@ pub(super) fn bound_argument(
 /// The instance type of the struct `template` under `bindings`, named as
 /// [`substitute_ty`] names an application of it: a bound pack spells its
 /// elements one by one for a struct that binds its pack elementwise
-/// (`Tuple`), and as one list for any other.
+/// (`Tuple`), and as one list for any other. `decls` is the struct's whole
+/// declared list, whose [`ParamDecl::instance_binders`] the instance holds.
 pub(super) fn owner_instance_ty(
     template: &str,
     decls: &[ParamDecl],
@@ -98,10 +116,8 @@ pub(super) fn owner_instance_ty(
 ) -> Result<Ty, MonoError> {
     let elementwise = mojito_types::types::binds_pack_elementwise(template);
     let mut arguments = Vec::new();
-    for (decl, argument) in decls
-        .iter()
-        .zip(ordered_arguments(decls, bindings, template)?)
-    {
+    for decl in ParamDecl::instance_binders(decls) {
+        let argument = owner_argument(decl, decls, bindings, template)?;
         match (decl, argument) {
             (ParamDecl::Type { variadic: true, .. }, InstanceArg::Ty(pack))
                 if matches!(pack.kind(), TyKind::RuntimePack(_)) =>
@@ -350,11 +366,25 @@ pub(super) fn bind_mutability_args(
         return;
     }
     for (decl, argument) in decls.iter().zip(arguments) {
-        if let TyArg::Val(value) = argument
-            && decl.is_origin_mutability_binder(decls)
-            && !matches!(value, CtValue::Deferred(_) | CtValue::Expr(_))
-        {
-            bindings.values.insert(decl.binder(), value.clone());
+        let TyArg::Val(value) = argument else {
+            continue;
+        };
+        if !decl.is_origin_mutability_binder(decls) {
+            continue;
+        }
+        match value {
+            CtValue::Deferred(_) | CtValue::Expr(_) => {}
+            // An erased slot leaves the binder unbound, as an erased
+            // instance's `_REMOVED_ARG` leaves any parameter.
+            CtValue::RemovedArg => {
+                let binder = decl.binder();
+                if !bindings.values.contains_key(&binder) && !bindings.removed.contains(&binder) {
+                    bindings.removed.push(binder);
+                }
+            }
+            _ => {
+                bindings.values.insert(decl.binder(), value.clone());
+            }
         }
     }
 }
@@ -543,8 +573,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             )
         }
         struct_ty if let Some((pn, pa)) = struct_ty.as_non_simd_struct() => {
-            let unslotted = bindings.structs.without_mutability(pn, pa);
-            unify_struct(pattern, pn, &unslotted, actual, bindings)
+            unify_struct(pattern, pn, pa, actual, bindings)
         }
         TyKind::Tuple(p) | TyKind::RuntimePack(p) | TyKind::Variant(p) => match actual.kind() {
             // Storage spreading a pack (`Tuple[*Ts]`,
@@ -788,6 +817,20 @@ pub(super) fn unify_arg(
         // binds nothing, as an unbound origin does.
         (TyArg::Val(CtValue::Deferred(_)), TyArg::Val(_))
         | (TyArg::Val(_), TyArg::Val(CtValue::Deferred(_))) => Ok(()),
+        // An erased value stands in for a value binder the instance does not
+        // hold, which it binds to nothing, as an erased type argument does.
+        (TyArg::Val(CtValue::Expr(expr)), TyArg::Val(CtValue::RemovedArg))
+            if let Some(binder) = expr.as_decl_ref() =>
+        {
+            if !bindings.values.contains_key(binder) && !bindings.removed.contains(binder) {
+                bindings.removed.push(binder.clone());
+            }
+            Ok(())
+        }
+        // An erased value agrees with any, as upstream's `_REMOVED_ARG`
+        // stands for every argument its generator does not bind.
+        (TyArg::Val(CtValue::RemovedArg), TyArg::Val(_))
+        | (TyArg::Val(_), TyArg::Val(CtValue::RemovedArg)) => Ok(()),
         // A direct reference binds; any other residual must already agree
         // with the actual once the environment closes it.
         (TyArg::Val(CtValue::Expr(expr)), TyArg::Val(value)) => match expr.as_decl_ref() {
@@ -1060,7 +1103,7 @@ fn push_bound_sugar(
 }
 
 /// [`unify`] of the struct pattern `pattern`, the template `pn` applied to
-/// `pa` (its `mut=` arguments left out), against `actual`.
+/// `pa`, against `actual`.
 fn unify_struct(
     pattern: &Ty,
     pn: &str,
@@ -1133,12 +1176,9 @@ fn unify_struct(
                     None => Err(format!("expected `{pattern}`, found `{actual}`")),
                 }
             }
-            // The actual's `mut=` arguments leave with the pattern's.
             struct_ty
                 if let Some((an, aa)) = struct_ty.as_non_simd_struct()
                     && nominal_template(pn) == nominal_template(an)
-                    && let structs = Rc::clone(&bindings.structs)
-                    && let aa = structs.without_mutability(an, aa)
                     && pa.len() == aa.len() =>
             {
                 pa.iter()

@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An elaborated struct instance keeps a closed origin `mut=` argument
+  (R2423), as upstream's `Q[True, o]` and `Q[False, o]` are distinct
+  types: each mutability is its own instance, and a member reading
+  `Self.origin.mut` answers `True` or `False` per instance on both
+  backends, where it failed to elaborate. A slot no binding decides is
+  erased to `_REMOVED_ARG`, which the call edge into a bare `Span[T, _]`
+  or `StringSpan` parameter accepts until R2376 specializes it per call
+  (`assets/ok/struct_mutability_instances.mojo`).
+
 - Roadmap: R2422 (`Self.mut` over a struct's origin binder) is planned and
   now depends on R2423, the elaborator keeping a closed `mut=` argument
   in a struct instance; the duplicate R2373 is folded into R2422. No

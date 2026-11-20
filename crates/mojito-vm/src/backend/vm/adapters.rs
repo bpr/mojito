@@ -231,6 +231,29 @@ impl VmBackend {
             {
                 return self.thaw(prog, value, Some(ty));
             }
+            // A value of an instance the program does not declare, bound
+            // where its template's erased instance is expected
+            // (`Span[True, T]` at `Span[_REMOVED_ARG, T]`), is a value of
+            // that instance, which lays out as one.
+            CtValue::Struct { name, fields }
+                if !prog.structs.contains_key(name)
+                    && let Some((expected, _)) =
+                        target.and_then(|target| target.kind().as_non_simd_struct())
+                    && expected != name
+                    && prog.structs.contains_key(expected)
+                    && mojito_types::types::struct_template(expected)
+                        == mojito_types::types::struct_template(name)
+                    && target.is_some_and(mojito_types::types::erases_an_argument) =>
+            {
+                return self.thaw(
+                    prog,
+                    &CtValue::Struct {
+                        name: expected.clone(),
+                        fields: fields.clone(),
+                    },
+                    target,
+                );
+            }
             CtValue::Struct { name, fields } => {
                 let declared = prog.structs.get(name).map(|definition| &definition.fields);
                 let fields = fields
