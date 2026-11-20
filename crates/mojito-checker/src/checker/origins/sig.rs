@@ -41,6 +41,94 @@ pub(in crate::checker) trait OriginDecls {
     /// ([`Checker::origin_conversion`]), and whether its result is
     /// mutable; `None` for an expression that is no such conversion.
     fn conversion<'e>(&self, expr: &'e Expr) -> Option<Result<(&'e Expr, bool), TypeError>>;
+
+    /// The address space a `ref[...]` clause operand
+    /// [`is_address_space_operand`] names ([`Checker::address_space_arg`]).
+    fn address_space(
+        &self,
+        expr: &Expr,
+    ) -> Result<mojito_types::types::AddressSpaceSlot, TypeError>;
+}
+
+/// Whether the `ref[...]` clause operand `expr` is the reference's address
+/// space rather than one of its origins. Upstream classifies a
+/// specifier's operands by type: an `AddressSpace` value — spelled through
+/// the type (`AddressSpace.GENERIC`, `AddressSpace(1)`, `.GENERIC`), or a
+/// binder `decls` declares of type `AddressSpace` (`a`, `Self.a`) — is the
+/// address space, in any position; every other operand is an origin.
+pub(in crate::checker) fn is_address_space_operand(expr: &Expr, decls: &[ParamDecl]) -> bool {
+    let names_type = |expression: &Expr| {
+        matches!(&expression.kind, ExprKind::Identifier(name)
+            if name == mojito_types::types::ADDRESS_SPACE_TYPE_NAME)
+    };
+    match &expr.kind {
+        ExprKind::Call { name, .. } => name == mojito_types::types::ADDRESS_SPACE_TYPE_NAME,
+        ExprKind::Member { object, .. } if names_type(object) => true,
+        _ if super::super::inference::contextual_root_span(expr).is_some() => true,
+        _ => origin_binder_name(expr).is_some_and(|name| {
+            decls.iter().any(|decl| {
+                matches!(decl, ParamDecl::Value { name: declared, ty, .. }
+                    if declared == name && mojito_types::types::is_address_space(ty))
+            })
+        }),
+    }
+}
+
+/// The origin operands of the `ref[...]` clause `spec`, its address-space
+/// operand ([`is_address_space_operand`]) dropped: `None` for a clause
+/// naming no origin, whose origin infers as a bare `ref`'s does
+/// (`ref[AddressSpace.GENERIC] x`).
+pub(in crate::checker) fn clause_origins<'s>(
+    spec: Option<&'s [Expr]>,
+    decls: &[ParamDecl],
+) -> Option<std::borrow::Cow<'s, [Expr]>> {
+    let spec = spec?;
+    let origins = if spec
+        .iter()
+        .any(|operand| is_address_space_operand(operand, decls))
+    {
+        std::borrow::Cow::Owned(
+            spec.iter()
+                .filter(|operand| !is_address_space_operand(operand, decls))
+                .cloned()
+                .collect(),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(spec)
+    };
+    (!origins.is_empty()).then_some(origins)
+}
+
+/// The `ref[...]` clause `spec` split by operand type: its origin operands
+/// and the address space it names, `AddressSpace.GENERIC` when it names
+/// none. A second address-space operand is the pin's error.
+pub(in crate::checker) fn split_ref_clause<'s>(
+    spec: &'s [Expr],
+    decls: &[ParamDecl],
+    values: &dyn OriginDecls,
+) -> Result<
+    (
+        std::borrow::Cow<'s, [Expr]>,
+        mojito_types::types::AddressSpaceSlot,
+    ),
+    TypeError,
+> {
+    let mut spaces = spec
+        .iter()
+        .filter(|operand| is_address_space_operand(operand, decls));
+    let address_space = match (spaces.next(), spaces.next()) {
+        (None, _) => mojito_types::types::AddressSpaceSlot::GENERIC,
+        (Some(operand), None) => values.address_space(operand)?,
+        (Some(_), Some(_)) => {
+            return Err(TypeError::Unsupported(
+                "address space must be specified once; remove duplicate address space \
+                 specifications"
+                    .to_string(),
+            ));
+        }
+    };
+    let origins = clause_origins(Some(spec), decls).unwrap_or_default();
+    Ok((origins, address_space))
 }
 
 /// Whether `argument` is a raw `!lit.origin` rather than an `Origin`
@@ -361,6 +449,7 @@ pub(in crate::checker) fn lower_ref_param_sigs(
                 None => Ok(Some(mojito_types::origin::RefSig {
                     origin: mojito_types::origin::SigOrigin::Infer,
                     mutability: mojito_types::origin::SigMutability::Infer,
+                    address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                 })),
             }
         })
@@ -590,10 +679,11 @@ pub(in crate::checker) fn lower_ref_sig(
     values: &dyn OriginDecls,
 ) -> Result<mojito_types::origin::RefSig, TypeError> {
     use mojito_types::origin::{Origin, RefSig, SigMutability, SigOrigin};
+    let (spec, address_space) = split_ref_clause(spec, decls, values)?;
     let mut members = Vec::new();
     let mut mutability = SigMutability::Infer;
     let mut cast = None;
-    for expression in spec {
+    for expression in spec.iter() {
         // A mutability cast (`ImmOrigin(o)`, `o.unsafe_mut_cast[m]()`)
         // wraps one member; unwrap it and pin the whole signature's
         // capability, the outermost cast's, after the member lowers
@@ -684,8 +774,8 @@ pub(in crate::checker) fn lower_ref_sig(
                 }
                 let first_member = members.len();
                 for (index, param) in params.iter().enumerate() {
-                    if param.origin.as_ref().is_some_and(|origin| {
-                        matches!(origin.as_slice(), [expression] if origin_binder_name(expression) == Some(name.as_str()))
+                    if clause_origins(param.origin.as_deref(), decls).is_some_and(|origin| {
+                        matches!(&*origin, [expression] if origin_binder_name(expression) == Some(name.as_str()))
                     }) {
                         members.push(SigOrigin::Param(index));
                     }
@@ -724,8 +814,8 @@ pub(in crate::checker) fn lower_ref_sig(
                 mutability = origin_decl_mutability(decl, decls);
                 let first_member = members.len();
                 for (index, param) in params.iter().enumerate() {
-                    if param.origin.as_ref().is_some_and(|origin| {
-                        matches!(origin.as_slice(), [expression] if origin_binder_name(expression) == Some(field.as_str()))
+                    if clause_origins(param.origin.as_deref(), decls).is_some_and(|origin| {
+                        matches!(&*origin, [expression] if origin_binder_name(expression) == Some(field.as_str()))
                     }) {
                         members.push(SigOrigin::Param(index));
                     }
@@ -771,7 +861,11 @@ pub(in crate::checker) fn lower_ref_sig(
     if let Some(cast) = cast {
         mutability = cast;
     }
-    Ok(RefSig { origin, mutability })
+    Ok(RefSig {
+        origin,
+        mutability,
+        address_space,
+    })
 }
 
 /// The `Origin` binder `name` declares in the classified list `decls`

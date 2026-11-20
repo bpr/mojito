@@ -310,6 +310,13 @@ impl Checker {
                 }
                 continue;
             }
+            let close_space = |ty: &Ty| {
+                self.close_method_values(
+                    &substitute(&self.substitute_at_instance(ty, info, targs), &method_subst),
+                    &sig.decls(),
+                    &method_arguments,
+                )
+            };
             if let Ok(scored) = self.score_method_call(
                 sig,
                 &params,
@@ -388,8 +395,13 @@ impl Checker {
                     } else {
                         None
                     },
-                    ref_params: sig.ref_params.clone(),
-                    ref_return,
+                    ref_params: super::super::call_inference::close_ref_sigs(
+                        &sig.ref_params,
+                        &close_space,
+                    ),
+                    ref_return: ref_return.map(|signature| {
+                        super::super::call_inference::close_ref_space(signature, &close_space)
+                    }),
                     parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     instantiation: instantiation.clone(),
                     declared_instantiation: declared_instantiation.clone(),
@@ -546,6 +558,13 @@ impl Checker {
                 &sig.decls(),
                 &method_arguments,
             );
+            let close_space = |ty: &Ty| {
+                self.close_method_values(
+                    &substitute(&self.substitute_self_members(ty, obj_ty), &method_subst),
+                    &sig.decls(),
+                    &method_arguments,
+                )
+            };
             matches.push(MethodCallResolution {
                 conversion_score: scored.rank,
                 simd_erasures: scored.simd_erasures,
@@ -590,8 +609,13 @@ impl Checker {
                 // already spells `Self`; the runtime retargets the receiver
                 // prefix once the concrete type is known.
                 lowered_name: Some(method_lowered_name("__trait_dispatch", method, &sig, None)),
-                ref_params: sig.ref_params.clone(),
-                ref_return,
+                ref_params: super::super::call_inference::close_ref_sigs(
+                    &sig.ref_params,
+                    &close_space,
+                ),
+                ref_return: ref_return.map(|signature| {
+                    super::super::call_inference::close_ref_space(signature, &close_space)
+                }),
                 param_types: params,
                 param_decls: sig.declared.clone(),
                 parametric_origin_writes: sig.parametric_origin_writes.clone(),

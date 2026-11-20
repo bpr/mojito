@@ -1996,6 +1996,9 @@ impl Checker {
         let mut use_names = Vec::new();
         let mut arg_tys = Vec::new();
         let mut arg_exprs = Vec::new();
+        // What the one solve reads: a `ref` argument whose clause names an
+        // `AddressSpace` binder solves as the reference it lends.
+        let (mut solve_params, mut solve_actuals) = (Vec::new(), Vec::new());
         for (i, slot) in slots.iter().enumerate() {
             let arg = match slot {
                 ArgSlot::Positional(p) => &args[*p],
@@ -2007,6 +2010,14 @@ impl Checker {
             use_names.push(names[i].clone());
             let actual = self.solving_argument_ty(arg, parameter, decls, &explicit.subst)?;
             let actual = self.callable_bound_argument(name, &names[i], arg, actual, parameter)?;
+            let (solve_param, solve_actual) = self.reference_solve_pair(
+                ref_params.get(i).and_then(Option::as_ref),
+                parameter,
+                &actual,
+                arg,
+            );
+            solve_params.push(solve_param);
+            solve_actuals.push(solve_actual);
             arg_tys.push(actual);
             arg_exprs.push(arg);
         }
@@ -2058,8 +2069,11 @@ impl Checker {
             name,
             binders,
             (param_args, &explicit),
-            (&use_names, &use_params),
-            &arg_tys,
+            (
+                &use_names,
+                &[&solve_params[..], &use_params[solve_params.len()..]].concat(),
+            ),
+            &[&solve_actuals[..], &arg_tys[solve_actuals.len()..]].concat(),
         )?;
         let (use_params, params, variadic, ret, ref_return) =
             self.bound_generic_callee(func, origins.as_ref(), &use_params);
@@ -2101,35 +2115,12 @@ impl Checker {
             conversions += conversion_count(&actual, &expected);
         }
         if let Some(element) = kw_variadic.as_ref() {
-            let expected = resolve(element)?;
-            for (index, actual) in keyword_actuals {
-                let expression = &kwargs[index].value;
-                if !self.record_implicit_conversion(expression, &actual, &expected)? {
-                    return Err(TypeError::TypeMismatch {
-                        expected: expected.to_string(),
-                        found: actual.to_string(),
-                        context: format!(
-                            "keyword '{}' collected by '{}'",
-                            kwargs[index].name, name
-                        ),
-                    });
-                }
-                self.check_consuming(
-                    expression,
-                    &actual,
-                    &format!("keyword '{}' collected by '{name}'", kwargs[index].name),
-                )?;
-                conversions += conversion_count(&actual, &expected);
-            }
-            if let Some(actual) = forwarded_element
-                && actual != expected
-            {
-                return Err(TypeError::TypeMismatch {
-                    expected: format!("StringDict[{expected}]"),
-                    found: format!("StringDict[{actual}]"),
-                    context: format!("forwarded keyword arguments to '{name}'"),
-                });
-            }
+            conversions += self.check_collected_keywords(
+                name,
+                &resolve(element)?,
+                (keyword_actuals, forwarded_element),
+                kwargs,
+            )?;
         }
         for (i, slot) in slots.iter().enumerate() {
             if let Some(Some(ArgConvention::Var | ArgConvention::Deinit)) = conventions.get(i) {
@@ -2150,13 +2141,20 @@ impl Checker {
         }
         self.check_owned_collector(name, &overflow, args)?;
         let open = |id| binds_from_arguments(binders, &explicit, id);
+        // The `ref` contracts at the solved binders: a clause's
+        // `AddressSpace` binder closes to the space the call bound.
+        let close = |ty: &Ty| resolve(ty).unwrap_or_else(|_| ty.clone());
+        let ref_params = close_ref_sigs(ref_params, &close);
+        let ref_return = ref_return
+            .as_deref()
+            .map(|signature| close_ref_space(signature.clone(), &close));
         let (effective_conventions, return_ref, bool_bindings) = self
             .solve_call_origins_with_bool_bindings(
                 &slots,
                 conventions,
                 (
-                    ref_params,
-                    self.bind_ref_sig_pack_origin(ref_return.as_deref(), &overflow, args)?
+                    &ref_params,
+                    self.bind_ref_sig_pack_origin(ref_return.as_ref(), &overflow, args)?
                         .as_ref(),
                     &open,
                 ),
@@ -2198,7 +2196,7 @@ impl Checker {
             args,
             kwargs,
         )?;
-        let facts = self.declared_slots(conventions, ref_params, params, &bound);
+        let facts = self.declared_slots(conventions, &ref_params, params, &bound);
         let gathered = self.gathered_arguments(name, &overflow);
         self.record_call_conventions(span, &slots, &effective_conventions, &facts, gathered);
         self.record_argument_borrows(&slots, &effective_conventions, gathered, args, kwargs, None);
@@ -2763,6 +2761,75 @@ impl Checker {
         }
     }
 
+    /// Check the keywords a `**kwargs` collector gathers against its
+    /// solved element `expected`, and a forwarded collector's element
+    /// (`forwarded`); the conversions they take.
+    fn check_collected_keywords(
+        &self,
+        name: &str,
+        expected: &Ty,
+        (keyword_actuals, forwarded): (Vec<(usize, Ty)>, Option<Ty>),
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<usize, TypeError> {
+        let mut conversions = 0;
+        for (index, actual) in keyword_actuals {
+            let expression = &kwargs[index].value;
+            if !self.record_implicit_conversion(expression, &actual, expected)? {
+                return Err(TypeError::TypeMismatch {
+                    expected: expected.to_string(),
+                    found: actual.to_string(),
+                    context: format!("keyword '{}' collected by '{}'", kwargs[index].name, name),
+                });
+            }
+            self.check_consuming(
+                expression,
+                &actual,
+                &format!("keyword '{}' collected by '{name}'", kwargs[index].name),
+            )?;
+            conversions += conversion_count(&actual, expected);
+        }
+        if let Some(actual) = forwarded
+            && actual != *expected
+        {
+            return Err(TypeError::TypeMismatch {
+                expected: format!("StringDict[{expected}]"),
+                found: format!("StringDict[{actual}]"),
+                context: format!("forwarded keyword arguments to '{name}'"),
+            });
+        }
+        Ok(conversions)
+    }
+
+    /// The `(pattern, actual)` the call's one solve reads for `argument`:
+    /// a `ref` argument whose clause names an `AddressSpace` binder
+    /// (`ref[_, a] x`) solves as upstream's `!lit.ref<T, origin, a>`
+    /// against the reference it lends, binding `a` to the space its place
+    /// lives in; any other as its parameter type against its own.
+    pub(super) fn reference_solve_pair(
+        &self,
+        signature: Option<&mojito_types::origin::RefSig>,
+        parameter: &Ty,
+        actual: &Ty,
+        argument: &Expr,
+    ) -> (Ty, Ty) {
+        let Some(signature) = signature.filter(|signature| signature.address_space.is_symbolic())
+        else {
+            return (parameter.clone(), actual.clone());
+        };
+        let reference = |referent: &Ty, address_space| {
+            Ty::from(TyKind::Ref(mojito_types::origin::RefTy {
+                referent: referent.clone(),
+                origin: mojito_types::origin::Origin::Static,
+                mutability: mojito_types::origin::Mutability::Immutable,
+                address_space,
+            }))
+        };
+        (
+            reference(parameter, signature.address_space.clone()),
+            reference(actual, self.place_address_space(argument)),
+        )
+    }
+
     /// A generic callee's argument patterns `use_params`, parameters,
     /// `*args` element, result, and `ref` result contract with the origin
     /// binders its call's solve bound (`origins`) substituted, its type
@@ -2868,6 +2935,81 @@ pub(super) struct SolvedCall {
     pub(super) origins: Option<super::origins::ConstructorOriginBindings>,
 }
 
+/// `signatures` with each address space closed by `close`
+/// ([`close_ref_space`]).
+pub(super) fn close_ref_sigs(
+    signatures: &[Option<mojito_types::origin::RefSig>],
+    close: &dyn Fn(&Ty) -> Ty,
+) -> Vec<Option<mojito_types::origin::RefSig>> {
+    signatures
+        .iter()
+        .map(|signature| {
+            signature
+                .clone()
+                .map(|signature| close_ref_space(signature, close))
+        })
+        .collect()
+}
+
+/// `signature` with a symbolic address space closed as the call closes
+/// its result type (`close`): at the call's bound binders, and a method's
+/// at its receiver's struct arguments (`ref[Self.o, Self.a]`).
+pub(super) fn close_ref_space(
+    mut signature: mojito_types::origin::RefSig,
+    close: &dyn Fn(&Ty) -> Ty,
+) -> mojito_types::origin::RefSig {
+    if !signature.address_space.is_symbolic() {
+        return signature;
+    }
+    let closed = close(&Ty::from(TyKind::Ref(mojito_types::origin::RefTy {
+        referent: Ty::none(),
+        origin: mojito_types::origin::Origin::Static,
+        mutability: mojito_types::origin::Mutability::Immutable,
+        address_space: signature.address_space.clone(),
+    })));
+    if let TyKind::Ref(closed) = closed.kind() {
+        signature.address_space = closed.address_space.clone();
+    }
+    signature
+}
+
+/// Rewrite the solver's slot-indexed `ref` argument mismatch, of an exact
+/// origin or of an address space, into upstream's call diagnostic naming
+/// the function and the parameter.
+pub(super) fn name_ref_origin_mismatch(
+    error: TypeError,
+    func: &str,
+    names: &[String],
+) -> TypeError {
+    match error {
+        TypeError::RefOriginMismatch {
+            slot,
+            ty,
+            expected,
+            actual,
+        } => TypeError::BadCall {
+            func: func.to_string(),
+            reason: format!(
+                "value passed to '{}' cannot be converted from '{ty}' to ref '{ty}'\nnote: operand origin '{actual}' doesn't match expected origin '{expected}'",
+                names.get(slot).map_or("argument", String::as_str)
+            ),
+        },
+        TypeError::RefAddressSpaceMismatch {
+            slot,
+            ty,
+            expected,
+            actual,
+        } => TypeError::BadCall {
+            func: func.to_string(),
+            reason: format!(
+                "value passed to '{}' cannot be converted from '{ty}' to ref '{ty}'\nnote: operand address space '{actual}' doesn't match expected address space '{expected}'",
+                names.get(slot).map_or("argument", String::as_str)
+            ),
+        },
+        other => other,
+    }
+}
+
 /// A generic callee's origin-bound argument patterns, parameters, `*args`
 /// element, result, and `ref` result contract.
 type GenericCalleeOrigins = (
@@ -2950,26 +3092,6 @@ fn bracket_argument_slots(
         |_| vec![None; param_args.len()],
         |slots| slots.into_iter().map(Some).collect(),
     )
-}
-
-/// Rewrite the solver's slot-indexed exact-origin mismatch into upstream's
-/// call diagnostic naming the function and the parameter.
-fn name_ref_origin_mismatch(error: TypeError, func: &str, names: &[String]) -> TypeError {
-    match error {
-        TypeError::RefOriginMismatch {
-            slot,
-            ty,
-            expected,
-            actual,
-        } => TypeError::BadCall {
-            func: func.to_string(),
-            reason: format!(
-                "value passed to '{}' cannot be converted from '{ty}' to ref '{ty}'\nnote: operand origin '{actual}' doesn't match expected origin '{expected}'",
-                names.get(slot).map_or("argument", String::as_str)
-            ),
-        },
-        other => other,
-    }
 }
 
 /// Current Mojo does not infer a generic function's specialization from the

@@ -1146,11 +1146,14 @@ impl PointerOrigin {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-/// Checked reference type: referent, storage origin, and access permission.
+/// Checked reference type `!lit.ref<referent, origin, address_space>`:
+/// referent, storage origin, access permission, and the address space its
+/// storage lives in.
 pub struct RefTy {
     pub referent: crate::types::Ty,
     pub origin: Origin,
     pub mutability: Mutability,
+    pub address_space: crate::types::AddressSpaceSlot,
 }
 
 /// An origin in a callable contract. Unlike [`Origin`], roots name parameter
@@ -1199,10 +1202,13 @@ pub enum SigMutability {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-/// Reference result or parameter contract retained in a callable signature.
+/// Reference result or parameter contract retained in a callable signature:
+/// the origins and the one address space a `ref[...]` clause names
+/// (`AddressSpace.GENERIC` when it names none).
 pub struct RefSig {
     pub origin: SigOrigin,
     pub mutability: SigMutability,
+    pub address_space: crate::types::AddressSpaceSlot,
 }
 
 impl Origin {

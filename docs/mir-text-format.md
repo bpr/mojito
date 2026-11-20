@@ -1289,6 +1289,12 @@ which reads with those origin binders appended
 (`nested::upgrade_closure_storage_origins`). The package format moves to
 `mojito-package 242`.
 
+Schema 1.217 gives the reference type `ref` and the callable contract
+`ref_sig` the same optional `address_space` field: the space a reference's
+storage lives in, and the space a `ref[origin, address_space]` clause names.
+It is omitted for the generic space, so every older record reads unchanged.
+The package format moves to `mojito-package 245`.
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and

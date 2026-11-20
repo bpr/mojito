@@ -38,15 +38,16 @@ impl Checker {
                 } else {
                     mojito_types::origin::Mutability::Immutable
                 },
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
             },
         );
     }
 
-    /// Record the inferred mutability binder of the parameter `name` bound
-    /// at `slot` (the receiver counted), when it is a `ref` parameter with
-    /// no origin clause, which upstream gives an inferred
-    /// `Origin[mut=m]` binder: a reference reached through it carries `m`
-    /// ([`Checker::reference_actual`]).
+    /// Record the address space the `ref` parameter `name`'s clause names
+    /// on its handle, and its inferred mutability binder (bound at `slot`,
+    /// the receiver counted) when the clause names no origin, which
+    /// upstream gives an inferred `Origin[mut=m]` binder: a reference
+    /// reached through it carries `m` ([`Checker::reference_actual`]).
     pub(in crate::checker) fn register_reference_binder(
         &mut self,
         name: &str,
@@ -54,7 +55,23 @@ impl Checker {
         origin: Option<&[Expr]>,
         slot: usize,
     ) {
-        if convention != Some(ArgConvention::Ref) || origin.is_some() {
+        if convention != Some(ArgConvention::Ref) {
+            return;
+        }
+        let address_space = origin
+            .and_then(|spec| split_ref_clause(spec, &self.enclosing_param_decls, self).ok())
+            .map_or(
+                mojito_types::types::AddressSpaceSlot::GENERIC,
+                |(_, space)| space,
+            );
+        if !address_space.is_generic()
+            && let Some(handle) = self
+                .binding_scope(name)
+                .and_then(|scope| self.reference_parameter_scopes[scope].get_mut(name))
+        {
+            handle.address_space = address_space;
+        }
+        if clause_origins(origin, &self.enclosing_param_decls).is_some() {
             return;
         }
         let (Some(owner), Ok(slot)) = (self.lookup_owner(name), u32::try_from(slot)) else {
@@ -98,7 +115,8 @@ impl Checker {
         &self,
         origin: Option<&[Expr]>,
     ) -> Option<mojito_types::origin::PointerOrigin> {
-        let [expression] = origin? else {
+        let origins = clause_origins(origin, &self.enclosing_param_decls)?;
+        let [expression] = &*origins else {
             return None;
         };
         let name = origin_binder_name(expression)?;

@@ -2657,6 +2657,7 @@ impl ParamContext {
             referent,
             origin: crate::origin::Origin::Static,
             mutability: crate::origin::Mutability::Immutable,
+            address_space: crate::types::AddressSpaceSlot::GENERIC,
         });
         Ok(self.make(
             MetaTy::value(reference.into()),

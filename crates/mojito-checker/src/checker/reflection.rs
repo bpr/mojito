@@ -457,6 +457,7 @@ impl Checker {
             referent: field_ty.clone(),
             mutability: actual.mutability,
             origin: actual.origin,
+            address_space: actual.address_space,
         };
         let mut record = self.record_at(expr.source_span());
         record.adjustment = Some(Box::new(SemanticAdjustment::ReferenceResult { reference }));

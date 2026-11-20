@@ -1129,8 +1129,9 @@ pub enum TyKind {
 }
 
 /// A node is sized for its common variants: the callable payloads, the
-/// largest, sit behind a box.
-const _: () = assert!(std::mem::size_of::<TyKind>() <= 72);
+/// largest, sit behind a box. A reference, which carries its origin and its
+/// address space inline as `!lit.ref` does, is the widest unboxed one.
+const _: () = assert!(std::mem::size_of::<TyKind>() <= 80);
 
 /// A type in mojito's semantic lattice: a handle to immutable, shared storage.
 ///
@@ -7079,6 +7080,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = substitute(&reference.referent, subst);
+            reference.address_space = substitute_address_space(&reference.address_space, subst);
             TyKind::Ref(reference).into()
         }
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
@@ -8985,6 +8987,8 @@ fn expand_packs<S: std::hash::BuildHasher>(
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = recurse(&reference.referent);
+            reference.address_space =
+                expand_address_space(&reference.address_space, subst, packs, values);
             TyKind::Ref(reference).into()
         }
         TyKind::Dependent(dependent) => {
@@ -10077,6 +10081,7 @@ mod encoding_tests {
                 ref_params: vec![Some(RefSig {
                     origin: SigOrigin::Bound(Origin::Param(crate::origin::OriginParamId(0))),
                     mutability: SigMutability::Immutable,
+                    address_space: crate::types::AddressSpaceSlot::GENERIC,
                 })],
                 ref_return: None,
                 transfers: TransferSet::default(),

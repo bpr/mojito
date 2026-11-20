@@ -842,6 +842,7 @@ mod interior_origin_tests {
                 referent: Ty::int(),
                 origin: mojito_types::origin::Origin::Untracked { mutable: false },
                 mutability: mojito_types::origin::Mutability::Immutable,
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
             })
             .into(),
         );

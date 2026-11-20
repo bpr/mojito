@@ -1728,6 +1728,7 @@ impl<'a> Flatten<'a> {
             referent: ty.clone(),
             origin: mojito_types::origin::Origin::Static,
             mutability,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         }));
         let handle = self.fresh_typed(location, Some(var), reference.clone());
         self.emit(MirInstr::StoreToMem { dest: handle, src });

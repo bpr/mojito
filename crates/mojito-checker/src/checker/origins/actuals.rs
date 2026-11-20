@@ -189,10 +189,8 @@ impl Checker {
         // exact `ref[ImmUntrackedOrigin]` clause binds — while a tracked one
         // keeps the holder's place identity for loans.
         if let Some(pointer) = dereferenced_pointer(expr)
-            && let Some(origin) = self
-                .infer(pointer)
-                .ok()
-                .and_then(|ty| ty.kind().pointer_origin())
+            && let Some(pointer_ty) = self.infer(pointer).ok()
+            && let Some(origin) = pointer_ty.kind().pointer_origin()
         {
             use mojito_types::origin::PointerOrigin;
             let mutability = match (self.pointer_write_capability(pointer, &origin), &origin) {
@@ -215,6 +213,11 @@ impl Checker {
                 referent: self.infer(expr)?,
                 origin,
                 mutability,
+                address_space: pointer_ty
+                    .kind()
+                    .pointer_address_space()
+                    .cloned()
+                    .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC),
             });
         }
 
@@ -224,7 +227,35 @@ impl Checker {
             referent: self.infer(expr)?,
             origin: Origin::Place(place),
             mutability,
+            address_space: self.place_address_space(expr),
         })
+    }
+
+    /// The address space the place `expr` lives in: its storage's, read
+    /// through the fields down to a reference (a `ref` binding, parameter,
+    /// or result) or a pointer dereference, `AddressSpace.GENERIC` for a
+    /// local's.
+    pub(in crate::checker) fn place_address_space(
+        &self,
+        expr: &Expr,
+    ) -> mojito_types::types::AddressSpaceSlot {
+        let mut base = expr;
+        loop {
+            if let Some(reference) = self.infer_reference_value(base) {
+                return reference.address_space;
+            }
+            if let Some(pointer) = dereferenced_pointer(base) {
+                return self
+                    .infer(pointer)
+                    .ok()
+                    .and_then(|ty| ty.kind().pointer_address_space().cloned())
+                    .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
+            }
+            match &base.kind {
+                ExprKind::Member { object, .. } => base = object,
+                _ => return mojito_types::types::AddressSpaceSlot::GENERIC,
+            }
+        }
     }
 
     /// [`Self::reference_actual`], extended with upstream's temporary-lifetime
@@ -256,6 +287,7 @@ impl Checker {
                     path: Vec::new(),
                 }),
                 mutability: Mutability::Immutable,
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
             });
         }
         match self.reference_actual(expr) {
@@ -267,6 +299,7 @@ impl Checker {
                     referent,
                     origin: Origin::Place(self.materialize_borrow_place(expr, true)?),
                     mutability: Mutability::Mutable,
+                    address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                 })
             }
             other => other,
@@ -1046,7 +1079,8 @@ impl Checker {
         collector: Option<&str>,
     ) -> Result<mojito_types::origin::RefSig, TypeError> {
         use mojito_types::origin::{Origin, OriginParamId, RefSig, SigMutability, SigOrigin};
-        let (pack, rest): (Vec<&Expr>, Vec<&Expr>) = spec.iter().partition(|member| {
+        let (origins, address_space) = super::sig::split_ref_clause(spec, decls, self)?;
+        let (pack, rest): (Vec<&Expr>, Vec<&Expr>) = origins.iter().partition(|member| {
             collector.is_some_and(|collector| super::sig::names_pack_origin(member, collector))
         });
         if !pack.is_empty() {
@@ -1066,12 +1100,16 @@ impl Checker {
             return Ok(RefSig {
                 origin,
                 mutability: SigMutability::Immutable,
+                address_space,
             });
         }
-        if let [member] = spec.as_slice()
+        if let [member] = &*origins
             && let Some(resolved) = self.delegated_call_ref_sig(member, decls, params)?
         {
-            return Ok(resolved);
+            return Ok(RefSig {
+                address_space,
+                ..resolved
+            });
         }
         lower_ref_sig(spec, decls, params, struct_params, self)
     }

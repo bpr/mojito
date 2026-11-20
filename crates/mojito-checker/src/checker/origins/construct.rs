@@ -138,6 +138,7 @@ impl ConstructorOriginBindings {
         mojito_types::origin::RefSig {
             origin: self.substitute_sig_origin(&signature.origin),
             mutability,
+            address_space: signature.address_space.clone(),
         }
     }
 
@@ -632,6 +633,7 @@ impl Checker {
                             referent: declared.referent.clone(),
                             origin,
                             mutability: declared.mutability,
+                            address_space: declared.address_space.clone(),
                         }));
                         &reference_actual
                     }

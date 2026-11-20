@@ -192,6 +192,7 @@ fn consumed_place_handle(place: &MirPlace, ty: Ty) -> Ty {
                 referent: ty,
                 origin: mojito_types::origin::Origin::Untracked { mutable: true },
                 mutability: mojito_types::origin::Mutability::Mutable,
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
             })
             .into()
         })

@@ -1621,9 +1621,10 @@ impl Checker {
         if let Ok(signature) = lower_ref_sig(spec, decls, params, 0, self) {
             return Ok(signature);
         }
+        let (spec, address_space) = origins::split_ref_clause(spec, decls, self)?;
         let mut members = Vec::new();
         let mut bound_mutability = Vec::new();
-        for expression in spec {
+        for expression in spec.iter() {
             match &expression.kind {
                 ExprKind::Call {
                     name,
@@ -1671,7 +1672,11 @@ impl Checker {
         } else {
             SigMutability::Mutable
         };
-        Ok(RefSig { origin, mutability })
+        Ok(RefSig {
+            origin,
+            mutability,
+            address_space,
+        })
     }
 
     fn lower_callable_ref_param_sigs(
@@ -1690,6 +1695,7 @@ impl Checker {
                     None => Ok(Some(mojito_types::origin::RefSig {
                         origin: mojito_types::origin::SigOrigin::Infer,
                         mutability: mojito_types::origin::SigMutability::Infer,
+                        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                     })),
                 }
             })

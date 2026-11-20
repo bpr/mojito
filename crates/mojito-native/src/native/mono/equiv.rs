@@ -151,7 +151,9 @@ pub(super) fn owner_covered_prefix(
 pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
     match (a.kind(), b.kind()) {
         (TyKind::Ref(a), TyKind::Ref(b)) => {
-            a.mutability == b.mutability && ty_equal_modulo_origins(&a.referent, &b.referent)
+            a.mutability == b.mutability
+                && a.address_space == b.address_space
+                && ty_equal_modulo_origins(&a.referent, &b.referent)
         }
         (
             TyKind::Pointer {

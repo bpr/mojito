@@ -1382,6 +1382,7 @@ pub fn mir_place_handle_ty(
                 mutable: mutability != mojito_types::origin::Mutability::Immutable,
             },
             mutability,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         })
         .into(),
     )
@@ -1851,6 +1852,7 @@ fn lower_fieldwise_members(
                 } else {
                     mojito_types::origin::Mutability::Immutable
                 },
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
             })
             .into();
             reg_types.insert(reg.0, reference);
@@ -4340,6 +4342,7 @@ impl<'a> Flatten<'a> {
                     } else {
                         mojito_types::origin::Mutability::Immutable
                     },
+                    address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                 })
                 .into(),
             };

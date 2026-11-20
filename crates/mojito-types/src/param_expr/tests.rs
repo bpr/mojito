@@ -1262,6 +1262,7 @@ fn load_from_mem_reads_a_reference() {
         referent: Ty::int(),
         origin: crate::origin::Origin::Static,
         mutability: crate::origin::Mutability::Immutable,
+        address_space: crate::types::AddressSpaceSlot::GENERIC,
     });
     let application = context.apply("get", &[n], MetaTy::value(reference.into()));
     let read = context.load_from_mem(&application).expect("a read builds");

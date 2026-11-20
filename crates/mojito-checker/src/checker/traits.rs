@@ -2985,7 +2985,11 @@ impl Checker {
                         .map_or(SigMutability::Infer, |decl| {
                             super::origins::origin_decl_mutability(decl, &info.params)
                         });
-                    return Some(RefSig { origin, mutability });
+                    return Some(RefSig {
+                        origin,
+                        mutability,
+                        address_space: reference.address_space.clone(),
+                    });
                 }
                 Some(RefSig {
                     origin: concrete_sig_origin(&reference.origin),
@@ -2994,6 +2998,7 @@ impl Checker {
                         Mutability::Immutable => SigMutability::Immutable,
                         Mutability::Param(_) => SigMutability::Infer,
                     },
+                    address_space: reference.address_space.clone(),
                 })
             })
             .collect()

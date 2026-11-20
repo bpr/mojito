@@ -363,6 +363,7 @@ pub(in crate::checker) fn bind_ref_binders(
     let rebind = |signature: &RefSig| RefSig {
         origin: bind(&signature.origin, &slots),
         mutability: signature.mutability.clone(),
+        address_space: signature.address_space.clone(),
     };
     (
         signatures
@@ -519,6 +520,7 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
             referent: substitute_pointer_origin_params(&reference.referent, bindings),
             origin: reference.origin.clone(),
             mutability: reference.mutability,
+            address_space: reference.address_space.clone(),
         })
         .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(
@@ -607,6 +609,7 @@ pub(in crate::checker) fn bind_pointer_origins(
             referent: recur(&reference.referent),
             origin: reference.origin.clone(),
             mutability: reference.mutability,
+            address_space: reference.address_space.clone(),
         })
         .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
@@ -669,6 +672,7 @@ pub(in crate::checker) fn substitute_struct_origins(
             referent: recur(&reference.referent),
             origin: reference.origin.clone(),
             mutability: reference.mutability,
+            address_space: reference.address_space.clone(),
         })
         .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
@@ -894,10 +898,8 @@ pub(in crate::checker) fn ref_binding_is_writable(
     if convention != Some(ArgConvention::Ref) {
         return parameter_is_writable(&convention);
     }
-    let Some(expression) = origin.and_then(|expressions| match expressions {
-        [expression] => Some(expression),
-        _ => None,
-    }) else {
+    let origins = clause_origins(origin, decls);
+    let Some([expression]) = origins.as_deref() else {
         return false;
     };
     let Some(origin_name) = origin_binder_name(expression) else {

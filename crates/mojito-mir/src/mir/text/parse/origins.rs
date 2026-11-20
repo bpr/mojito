@@ -159,11 +159,16 @@ impl Decoder {
         let referent = self.req(value, fields, "referent", Self::ty)?;
         let origin = self.req(value, fields, "origin", Self::origin)?;
         let mutability = self.req(value, fields, "mutability", Self::mutability)?;
-        self.unknown(fields, &["referent", "origin", "mutability"]);
+        let address_space = self.address_space_slot(fields)?;
+        self.unknown(
+            fields,
+            &["referent", "origin", "mutability", "address_space"],
+        );
         Some(RefTy {
             referent,
             origin,
             mutability,
+            address_space,
         })
     }
 
@@ -196,8 +201,13 @@ impl Decoder {
         let fields = self.record(value, "ref_sig").ok()?;
         let origin = self.req(value, fields, "origin", Self::sig_origin)?;
         let mutability = self.req(value, fields, "mutability", Self::sig_mutability)?;
-        self.unknown(fields, &["origin", "mutability"]);
-        Some(RefSig { origin, mutability })
+        let address_space = self.address_space_slot(fields)?;
+        self.unknown(fields, &["origin", "mutability", "address_space"]);
+        Some(RefSig {
+            origin,
+            mutability,
+            address_space,
+        })
     }
 
     pub(super) fn sig_origin(&mut self, value: &Value) -> Option<SigOrigin> {

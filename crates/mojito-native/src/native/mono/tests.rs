@@ -671,11 +671,13 @@ fn binding_solutions_ignore_reference_origins() {
         referent: referent.clone(),
         origin: mojito_types::origin::Origin::Static,
         mutability: mojito_types::origin::Mutability::Immutable,
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
     }));
     let second = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
         referent,
         origin: mojito_types::origin::Origin::Untracked { mutable: false },
         mutability: mojito_types::origin::Mutability::Immutable,
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
     }));
     let mut bindings = Bindings::default();
     bind_type(&test_binder("T"), &first, &mut bindings).unwrap();
@@ -686,6 +688,7 @@ fn binding_solutions_ignore_reference_origins() {
         referent: Ty::int(),
         origin: mojito_types::origin::Origin::Static,
         mutability: mojito_types::origin::Mutability::Mutable,
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
     }));
     assert!(bind_type(&test_binder("T"), &mutable, &mut bindings).is_err());
 }

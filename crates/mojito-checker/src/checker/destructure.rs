@@ -105,6 +105,7 @@ impl Checker {
                         path: Vec::new(),
                     }),
                     mutability: Mutability::Immutable,
+                    address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                 })
             }
             source => source,

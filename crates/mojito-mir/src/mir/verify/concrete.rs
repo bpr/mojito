@@ -863,6 +863,7 @@ mod tests {
             referent: Ty::int(),
             origin: Origin::Untracked { mutable: true },
             mutability: Mutability::Mutable,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         })
         .into()
     }

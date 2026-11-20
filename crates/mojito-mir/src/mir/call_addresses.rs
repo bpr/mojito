@@ -445,6 +445,7 @@ pub fn stored_handle(place: &MirPlace, mutability: Mutability) -> Option<(MirPla
         } else {
             stored.mutability
         },
+        address_space: stored.address_space.clone(),
     })
     .into();
     Some((place.clone(), handle))

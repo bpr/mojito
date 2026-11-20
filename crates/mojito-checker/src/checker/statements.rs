@@ -1461,6 +1461,7 @@ impl Checker {
                         referent: element.ty.clone(),
                         origin: source.origin.clone(),
                         mutability: source.mutability,
+                        address_space: source.address_space.clone(),
                     },
                 };
                 element.ty = reference.referent.clone();
@@ -2839,6 +2840,13 @@ impl Checker {
                 if let (Some(e), Some(Some((signature, parameter_owners, self_owner)))) =
                     (expr, self.return_ref_contracts.last())
                 {
+                    if let (Some(found), Some(expected)) = (
+                        self.place_address_space(e).known(),
+                        signature.address_space.known(),
+                    ) && found != expected
+                    {
+                        return Err(TypeError::ReturnAddressSpaceIncompatible { found, expected });
+                    }
                     let actual = if let Some(origin) = self.returned_reference_parameter_origin(e) {
                         origin
                     } else {
@@ -4430,6 +4438,7 @@ impl Checker {
                             referent: field.ty.clone(),
                             origin: mojito_types::origin::Origin::Param(reference.origin),
                             mutability: reference.mutability,
+                            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                         })
                         .into()
                     },

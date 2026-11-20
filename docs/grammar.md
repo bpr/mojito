@@ -310,7 +310,8 @@ where_clause: 'where' expression
 capture_entry:
     | [('imm' | 'mut' | 'ref' | 'var')] NAME ['^']
     | ('imm' | 'mut' | 'ref' | 'var') ['^']
-origin_spec: '[' ','.expression+ ']'   # an expression, a named origin, origin_of(...), or '_'
+origin_spec: '[' ','.expression+ ']'   # origins (an expression, a named origin, origin_of(...), or '_'),
+                                       # plus at most one AddressSpace operand, in any position
 reference_binding: 'ref' NAME '=' expression
 ```
 
@@ -343,7 +344,13 @@ diagnostic (`'read' was removed; use 'imm'`), matching upstream's removal;
 Ordering is parsed leniently. The **`ref` convention** (parametric-mutability
 reference) may carry an **origin specifier** — `ref[origin] x` — whose contents (an
 arbitrary expression treated as `origin_of(...)`, a named origin, or `_` for an unbound
-origin) are retained in the AST for checked resolution. A member may be wrapped in
+origin) are retained in the AST for checked resolution. The checker classifies the
+operands by type, as upstream does: one whose type is `AddressSpace`
+(`AddressSpace.GENERIC`, `AddressSpace(1)`, or a binder `a: AddressSpace`) is the
+reference's address space, in any position and at most once (`ref[o, a] x`,
+`ref[AddressSpace.GENERIC] x`); every other operand is an origin, the origins
+forming a union. A specifier naming no address space, and a bare `ref`, is in
+`AddressSpace.GENERIC`; one naming no origin infers it as a bare `ref` does. A member may be wrapped in
 the immutable-origin capability cast `ImmOrigin(origin)` (equivalently
 `Origin[mut=False](origin)`), which pins the reference's capability
 to read-only independent of the inner origin parameter's own `mut=` while
@@ -1358,7 +1365,9 @@ value" at the pin). In a bracket list, a construction continues the postfix
 chain it starts, so `rebind[TypeList[Ts.values]()[i]](x)` passes the
 subscript as its argument.
 A **reference type** `ref[origin] T` parses into `Type::Ref` with its origin
-retained. Signature checking substitutes parameter/receiver origins at calls and
+specifier retained; the specifier's operands classify as a parameter's do (an
+`AddressSpace` operand is the result's address space, upstream's
+`ref[Self.origin, Self.address_space] Self.T`). Signature checking substitutes parameter/receiver origins at calls and
 rejects invalid escapes. `ref` is contextual here — it is the reference form only
 when a type-starting token follows.
 

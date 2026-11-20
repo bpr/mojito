@@ -285,6 +285,20 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             let actual = self.materialized_reference_actual(expression)?;
+            // A `ref` parameter takes a place in the address space its
+            // clause names, `AddressSpace.GENERIC` when it names none.
+            if let (Some(expected), Some(found)) = (
+                signature.address_space.known(),
+                actual.address_space.known(),
+            ) && expected != found
+            {
+                return Err(TypeError::RefAddressSpaceMismatch {
+                    slot: index,
+                    ty: actual.referent.to_string(),
+                    expected,
+                    actual: found,
+                });
+            }
             let is_mutable = actual.mutability == Mutability::Mutable;
             let requires_mutable = matches!(signature.mutability, SigMutability::Mutable);
             if requires_mutable && !is_mutable {
@@ -469,6 +483,7 @@ impl Checker {
                 referent: Ty::none(), // replaced by the caller's declared return type
                 origin,
                 mutability,
+                address_space: signature.address_space.clone(),
             }
         });
         let mut bool_bindings = HashMap::new();
@@ -528,6 +543,7 @@ impl Checker {
                 Ok(mojito_types::origin::RefSig {
                     origin: self.bind_sig_pack_origin(&signature.origin, overflow, args)?,
                     mutability: signature.mutability.clone(),
+                    address_space: signature.address_space.clone(),
                 })
             })
             .transpose()

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `ref[...]` specifier takes upstream's address-space operand (R2409):
+  its operands are classified by type, so `ref[o, a] x`,
+  `ref[AddressSpace.GENERIC] x`, and upstream's `-> ref[Self.origin,
+  Self.address_space] Self.T` are accepted where each failed with
+  "Undefined variable". A reference carries its space: a call deduces an
+  `AddressSpace` binder from the place a `ref` argument lends, and a `ref`
+  parameter, a bare one included, rejects a place in another space with
+  the pin's diagnostic, as does a `return` of one. A bare `ref` no longer
+  takes a place reached through a non-generic pointer. MIR schema 1.217
+  adds an optional `address_space` field to `ref` and `ref_sig`; the
+  package format moves to `mojito-package 245`.
 - Pointers carry upstream's address space (R2204). `std.memory` and the
   prelude export the bundled `AddressSpace`, whose cases print by name and
   compare by index. `Pointer[T, o, address_space=a]`, `!kgen.pointer<T,

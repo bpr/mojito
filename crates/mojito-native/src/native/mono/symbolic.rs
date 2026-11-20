@@ -356,7 +356,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         {
             matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))
         }
-        TyKind::Ref(v) => is_symbolic(&v.referent),
+        TyKind::Ref(v) => v.address_space.is_symbolic() || is_symbolic(&v.referent),
         kind if let Some((dtype, width)) = kind
             .as_simd()
             .or_else(|| mojito_types::types::kgen_simd_slots(kind)) =>

@@ -688,23 +688,31 @@ impl Checker {
         // on an instance call (statics return before that shared tail). A
         // static has no receiver, so its return origin names argument slots
         // exactly as a free function's does.
-        let (effective_conventions, returned, _) = self.solve_call_origins_with_bool_bindings(
-            &selected.slots,
-            &selected.conventions,
-            (
-                &selected.ref_params,
-                self.bind_ref_sig_pack_origin(
-                    selected.ref_return.as_ref(),
-                    &selected.positional_overflow,
-                    args,
-                )?
-                .as_ref(),
-                &|_| true,
-            ),
-            args,
-            kwargs,
-            true,
-        )?;
+        let (effective_conventions, returned, _) = self
+            .solve_call_origins_with_bool_bindings(
+                &selected.slots,
+                &selected.conventions,
+                (
+                    &selected.ref_params,
+                    self.bind_ref_sig_pack_origin(
+                        selected.ref_return.as_ref(),
+                        &selected.positional_overflow,
+                        args,
+                    )?
+                    .as_ref(),
+                    &|_| true,
+                ),
+                args,
+                kwargs,
+                true,
+            )
+            .map_err(|error| {
+                super::super::call_inference::name_ref_origin_mismatch(
+                    error,
+                    method,
+                    &selected.parameter_names,
+                )
+            })?;
         if let Some(mut reference) = returned {
             reference.referent = selected.return_type.clone();
             self.record_at(span.clone()).adjustment = Some(Box::new(

@@ -816,9 +816,10 @@ impl Decoder {
         }
     }
 
-    /// A pointer type's optional `address_space` (schema 1.216): a known
-    /// space's number or a template's `ct_expr(...)`, generic when absent.
-    fn address_space_slot(
+    /// A pointer type's, a `ref`'s, or a `ref_sig`'s optional
+    /// `address_space` (schemas 1.216 and 1.217): a known space's number or
+    /// a template's `ct_expr(...)`, generic when absent.
+    pub(super) fn address_space_slot(
         &mut self,
         fields: &[Field],
     ) -> Option<mojito_types::types::AddressSpaceSlot> {

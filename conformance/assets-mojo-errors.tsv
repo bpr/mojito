@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1262
+# swept-count	1266
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
@@ -993,7 +993,11 @@ assets/type_error/rebind_type_of_target_mismatch.mojo	compile-reject	agree	error
 assets/type_error/rebound_view_origin_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'P[origin_of(ys)]' value to 'P[origin_of(xs)]'
 assets/type_error/receiver_aliases_alias_spelled_view.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'string' argument in 'write_string' call
 assets/type_error/receiver_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'sink' argument in 'stash' call
+assets/type_error/ref_address_space_duplicate.mojo	compile-reject	agree	error: address space must be specified once; remove duplicate address space specifications
+assets/type_error/ref_address_space_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'Int' to ref 'Int'
 assets/type_error/ref_argument_aliases_pack_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'b' argument and passed immutably to 'rest' argument in 'r' call
+assets/type_error/ref_bare_rejects_other_address_space.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'Int' to ref 'Int'
+assets/type_error/ref_return_address_space_mismatch.mojo	compile-reject	agree	error: cannot return reference with incompatible address space: '0' vs '1'
 assets/type_error/reference_binding_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/reference_binding_write_linear_parameter.mojo	compile-reject	agree	error: value abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
 assets/type_error/reference_call_immutable_assignment_target.mojo	compile-reject	agree	error: expression must be mutable in assignment

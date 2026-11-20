@@ -118,6 +118,7 @@ fn reference_ty(referent: Ty, mutability: mojito::Mutability) -> Ty {
             mutable: !matches!(mutability, mojito::Mutability::Immutable),
         },
         mutability,
+        address_space: mojito::types::AddressSpaceSlot::GENERIC,
     })
     .into()
 }
@@ -2422,6 +2423,7 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
         ref_return: Some(Box::new(mojito::origin::RefSig {
             origin: mojito::origin::SigOrigin::Static,
             mutability: mojito::origin::SigMutability::Mutable,
+            address_space: mojito::types::AddressSpaceSlot::GENERIC,
         })),
         transfers: TransferSet::default(),
     }));
@@ -2429,6 +2431,7 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
         referent: Ty::int(),
         origin: mojito::Origin::Untracked { mutable: false },
         mutability: mojito::Mutability::Immutable,
+        address_space: mojito::types::AddressSpaceSlot::GENERIC,
     });
     let f = function(
         block(

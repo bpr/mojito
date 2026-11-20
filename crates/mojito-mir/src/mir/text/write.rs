@@ -2753,8 +2753,9 @@ fn array_size_slot(size: &mojito_types::types::ArraySize) -> String {
     }
 }
 
-/// A pointer type's fields, then its `address_space` (schema 1.216): a
-/// known space's number, a template's `ct_expr(...)`, omitted when generic.
+/// A pointer type's fields, then its `address_space` (schema 1.216; a
+/// `ref` and a `ref_sig`'s from schema 1.217): a known space's number, a
+/// template's `ct_expr(...)`, omitted when generic.
 fn with_address_space<'a>(
     mut fields: Vec<(&'a str, String)>,
     address_space: &mojito_types::types::AddressSpaceSlot,
@@ -3226,11 +3227,14 @@ fn pointer_origin(value: &PointerOrigin) -> String {
 fn ref_ty(value: &RefTy) -> String {
     record(
         "ref",
-        &[
-            ("referent", ty_value(&value.referent)),
-            ("origin", origin(&value.origin)),
-            ("mutability", mutability_value(value.mutability)),
-        ],
+        &with_address_space(
+            vec![
+                ("referent", ty_value(&value.referent)),
+                ("origin", origin(&value.origin)),
+                ("mutability", mutability_value(value.mutability)),
+            ],
+            &value.address_space,
+        ),
     )
 }
 fn mutability_value(value: Mutability) -> String {
@@ -3243,10 +3247,13 @@ fn mutability_value(value: Mutability) -> String {
 fn ref_sig(value: &RefSig) -> String {
     record(
         "ref_sig",
-        &[
-            ("origin", sig_origin(&value.origin)),
-            ("mutability", sig_mutability(&value.mutability)),
-        ],
+        &with_address_space(
+            vec![
+                ("origin", sig_origin(&value.origin)),
+                ("mutability", sig_mutability(&value.mutability)),
+            ],
+            &value.address_space,
+        ),
     )
 }
 fn sig_origin(value: &SigOrigin) -> String {

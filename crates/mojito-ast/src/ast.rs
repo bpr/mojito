@@ -265,9 +265,10 @@ pub enum Type {
         where_clauses: Vec<Expr>,
     },
     /// A **reference type** `ref [origin] T` (Mojo's parametric-mutability
-    /// reference — used in a `ref[origin]` return type). The origin specifier is
-    /// parsed but **discarded** (origins are not modeled); `ty` is the referent
-    /// type. Parsed; the checker flags a `ref` annotation as unsupported.
+    /// reference: a `ref[origin]` result, or a direct `ref` field). The
+    /// specifier's operands are the reference's origins plus at most one
+    /// `AddressSpace`, which the checker tells apart by type; `referent` is
+    /// the referent type.
     Ref {
         referent: Box<Self>,
         origin: Option<OriginSpec>,

@@ -669,6 +669,22 @@ pub enum TypeError {
         expected: String,
         actual: String,
     },
+    /// A `ref` parameter received a place in an address space other than
+    /// the one its clause names (`AddressSpace.GENERIC` for a clause naming
+    /// none). The call site rewrites it into a `BadCall` naming the
+    /// function and parameter.
+    RefAddressSpaceMismatch {
+        slot: usize,
+        ty: String,
+        expected: u32,
+        actual: u32,
+    },
+    /// A reference-returning body returned a place in an address space
+    /// other than the one its result clause names.
+    ReturnAddressSpaceIncompatible {
+        found: u32,
+        expected: u32,
+    },
 }
 
 impl fmt::Display for LexError {
@@ -1339,6 +1355,19 @@ impl fmt::Display for TypeError {
             } => write!(
                 f,
                 "value passed to argument {slot} cannot be converted from '{ty}' to ref '{ty}'\nnote: operand origin '{actual}' doesn't match expected origin '{expected}'"
+            ),
+            Self::RefAddressSpaceMismatch {
+                slot,
+                ty,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "value passed to argument {slot} cannot be converted from '{ty}' to ref '{ty}'\nnote: operand address space '{actual}' doesn't match expected address space '{expected}'"
+            ),
+            Self::ReturnAddressSpaceIncompatible { found, expected } => write!(
+                f,
+                "cannot return reference with incompatible address space: '{found}' vs '{expected}'"
             ),
         }
     }

@@ -1149,6 +1149,7 @@ assets/ok/rebind_var_forget_deinit.mojo	main	exe-differential	sanitized
 assets/ok/receiver_origin_iterator_argument.mojo	main	exe-differential	sanitized
 assets/ok/receiver_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/recursive_argument_instances.mojo	main	exe-differential	sanitized
+assets/ok/ref_address_space_clause.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_operand_passes_stored_handle.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_owned_subscript_result.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized

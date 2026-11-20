@@ -23,7 +23,7 @@ pub(in crate::checker) fn validate_origin_signature(
         .collect();
     let value_params: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
     let validate = |spec: &mojito_ast::ast::OriginSpec| {
-        for expr in spec {
+        for expr in clause_origins(Some(spec), decls).unwrap_or_default().iter() {
             validate_origin_expr(expr, &origin_params, &value_params, values)?;
         }
         Ok::<(), TypeError>(())

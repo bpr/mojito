@@ -2110,6 +2110,7 @@ mod pointer_storage_tests {
             referent: Ty::int(),
             origin: mojito_types::origin::Origin::Static,
             mutability: mojito_types::origin::Mutability::Immutable,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         }));
         let thawed = vm.thaw(&empty_program(), &frozen, Some(&ty)).expect("thaw");
         assert!(matches!(

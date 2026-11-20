@@ -3919,6 +3919,7 @@ impl Checker {
                 referent: result,
                 origin: mojito_types::origin::Origin::Static,
                 mutability: mojito_types::origin::Mutability::Immutable,
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
             });
             let application = self.param_context.apply(
                 function.symbol()?,

@@ -1521,6 +1521,7 @@ pub(super) mod tests {
             referent,
             origin: mojito_types::origin::Origin::Untracked { mutable: false },
             mutability: mojito_types::origin::Mutability::Immutable,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         }
     }
 

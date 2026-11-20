@@ -875,6 +875,7 @@ fn closure_storage(
                         referent,
                         origin: mojito_types::origin::Origin::Param(origin_param(reference.origin)),
                         mutability: reference.mutability,
+                        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                     })
                     .into()
                 }
@@ -1253,6 +1254,7 @@ fn lower_storage_call_witness(
             referent: method.ret_ty.clone(),
             origin: mojito_types::origin::Origin::Untracked { mutable: false },
             mutability: mojito_types::origin::Mutability::Immutable,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         });
     let dest = register(&reference.clone().map_or_else(
         || method.ret_ty.clone(),

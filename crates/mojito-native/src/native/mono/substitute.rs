@@ -444,6 +444,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         TyKind::Ref(value) => {
             let mut value = value.clone();
             value.referent = substitute_ty(&value.referent, bindings)?;
+            value.address_space = substitute_address_space(&value.address_space, bindings);
             TyKind::Ref(value).into()
         }
         TyKind::Dependent(dependent) => {
@@ -547,8 +548,13 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                     .map(|t| substitute_ty(t, bindings))
                     .transpose()?,
                 conventions: conventions.clone(),
-                ref_params: ref_params.clone(),
-                ref_return: ref_return.clone(),
+                ref_params: ref_params
+                    .iter()
+                    .map(|sig| sig.as_ref().map(|sig| substitute_ref_sig(sig, bindings)))
+                    .collect(),
+                ref_return: ref_return
+                    .as_deref()
+                    .map(|sig| Box::new(substitute_ref_sig(sig, bindings))),
                 transfers: transfers.clone(),
             }))
             .into()
@@ -814,6 +820,18 @@ pub(super) fn removed_parameter_read(binder: &ParamRef) -> String {
          struct argument (`_REMOVED_ARG`)",
         binder.name
     )
+}
+
+/// A callable `ref` contract at the instance's bindings: its address
+/// space closes as a pointer's does.
+fn substitute_ref_sig(
+    sig: &mojito_types::origin::RefSig,
+    bindings: &Bindings,
+) -> mojito_types::origin::RefSig {
+    mojito_types::origin::RefSig {
+        address_space: substitute_address_space(&sig.address_space, bindings),
+        ..sig.clone()
+    }
 }
 
 /// A pointer's address-space slot at the instance's bindings: a binder

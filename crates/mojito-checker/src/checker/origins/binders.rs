@@ -217,7 +217,11 @@ impl Checker {
             },
             SigMutability::Infer => SigMutability::Infer,
         };
-        Ok(Some(RefSig { origin, mutability }))
+        Ok(Some(RefSig {
+            origin,
+            mutability,
+            address_space: callee_ref.address_space.clone(),
+        }))
     }
 
     /// Whether `origin` is rooted only in storage that is writable at this
@@ -923,6 +927,13 @@ impl super::OriginDecls for Checker {
                 )),
             })
         })
+    }
+
+    fn address_space(
+        &self,
+        expr: &Expr,
+    ) -> Result<mojito_types::types::AddressSpaceSlot, TypeError> {
+        self.address_space_arg(&mojito_ast::ast::ParamArg::Value(expr.clone()))
     }
 }
 

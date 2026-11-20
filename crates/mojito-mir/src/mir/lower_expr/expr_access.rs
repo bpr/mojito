@@ -696,6 +696,11 @@ impl<'a> Flatten<'a> {
         let Some(referent) = pointer_ty.kind().pointer_element().cloned() else {
             return false;
         };
+        let address_space = pointer_ty
+            .kind()
+            .pointer_address_space()
+            .cloned()
+            .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
         let origin = pointer_ty
             .kind()
             .pointer_origin()
@@ -726,6 +731,7 @@ impl<'a> Flatten<'a> {
                 referent,
                 origin,
                 mutability: mojito_types::origin::Mutability::Immutable,
+                address_space,
             })
             .into(),
         );

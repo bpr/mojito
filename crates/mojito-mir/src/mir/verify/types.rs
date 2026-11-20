@@ -172,6 +172,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if let (TyKind::Ref(found_reference), TyKind::Ref(expected_reference)) =
         (found.kind(), expected.kind())
         && found_reference.mutability == expected_reference.mutability
+        && found_reference.address_space == expected_reference.address_space
     {
         return types_compatible(&found_reference.referent, &expected_reference.referent);
     }
@@ -596,6 +597,8 @@ pub(super) fn instantiate_checked_type(
                 value_arguments,
                 bound_values,
             )?;
+            reference.address_space =
+                instantiate_address_space(&reference.address_space, value_arguments)?;
             TyKind::Ref(reference).into()
         }
         TyKind::Assoc { base, name, args } => TyKind::Assoc {

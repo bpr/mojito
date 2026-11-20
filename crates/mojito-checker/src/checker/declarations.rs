@@ -2036,10 +2036,13 @@ impl Checker {
         // conversion).
         let implicit_convention_ok = match &m.params.first().and_then(|p| p.convention) {
             None | Some(ArgConvention::Var) => true,
-            Some(ArgConvention::Ref) => m
-                .params
-                .first()
-                .is_some_and(|parameter| parameter.origin.is_some()),
+            Some(ArgConvention::Ref) => m.params.first().is_some_and(|parameter| {
+                super::origins::clause_origins(
+                    parameter.origin.as_deref(),
+                    &self.enclosing_param_decls,
+                )
+                .is_some()
+            }),
             Some(_) => false,
         };
         // Upstream accepts an `@implicit` initializer callable with one

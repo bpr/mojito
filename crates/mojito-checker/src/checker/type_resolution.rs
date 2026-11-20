@@ -1109,7 +1109,9 @@ impl Checker {
                         "reference-valued fields require an explicit origin".to_string(),
                     )
                 })?;
-                let [origin_expr] = spec.as_slice() else {
+                let (origins, address_space) =
+                    super::origins::split_ref_clause(spec, &self.enclosing_param_decls, self)?;
+                let [origin_expr] = &*origins else {
                     return Err(TypeError::Unsupported(
                         "reference-valued fields currently require one origin parameter"
                             .to_string(),
@@ -1142,6 +1144,7 @@ impl Checker {
                             referent: self.resolve_ty_from_anno(referent)?,
                             origin,
                             mutability: mojito_types::origin::Mutability::Immutable,
+                            address_space,
                         })
                         .into());
                     }
@@ -1155,6 +1158,7 @@ impl Checker {
                     referent: self.resolve_ty_from_anno(referent)?,
                     origin: mojito_types::origin::Origin::Param(id),
                     mutability: super::generics::origin_binder_mutability(&decl, id),
+                    address_space,
                 })
                 .into()
             }
@@ -2811,10 +2815,14 @@ impl Checker {
                 origin.clone(),
                 address_space.clone(),
             ),
+            // A reference's space closes at the bound `AddressSpace` binder.
             TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
                 referent: self.resolve_dependent_ty(&reference.referent, values)?,
                 origin: reference.origin.clone(),
                 mutability: reference.mutability,
+                address_space: reference
+                    .address_space
+                    .map_or_keep(|space| self.param_context.replace(space, &values.bindings)),
             })
             .into(),
             // A nested generic callable owns its own value-binder scope. Leave

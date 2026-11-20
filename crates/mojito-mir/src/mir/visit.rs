@@ -850,6 +850,7 @@ mod tests {
                 referent: Ty::int(),
                 origin: mojito_types::origin::Origin::Untracked { mutable: false },
                 mutability: mojito_types::origin::Mutability::Immutable,
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
             })),
             result_adapter: None,
             args: Vec::new(),

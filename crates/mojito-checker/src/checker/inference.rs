@@ -647,6 +647,7 @@ impl Checker {
                                 mojito_types::origin::Mutability::Immutable
                             },
                             origin: mojito_types::origin::Origin::Place(origin),
+                            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                         })
                 }),
             ExprKind::Index { object, index } => match self.index_storage_ty(object, index)? {
@@ -668,6 +669,7 @@ impl Checker {
                             mojito_types::origin::Mutability::Immutable
                         },
                         origin: mojito_types::origin::Origin::Place(origin),
+                        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                     }),
             },
             _ => None,

@@ -411,14 +411,22 @@ impl Checker {
             args,
             &format!("method '{method}'"),
         )?;
-        let (effective_conventions, solved_return) = self.solve_call_origins(
-            &resolved.slots,
-            &resolved.conventions,
-            &resolved.ref_params,
-            resolved.ref_return.as_ref(),
-            args,
-            kwargs,
-        )?;
+        let (effective_conventions, solved_return) = self
+            .solve_call_origins(
+                &resolved.slots,
+                &resolved.conventions,
+                &resolved.ref_params,
+                resolved.ref_return.as_ref(),
+                args,
+                kwargs,
+            )
+            .map_err(|error| {
+                super::super::call_inference::name_ref_origin_mismatch(
+                    error,
+                    method,
+                    &resolved.parameter_names,
+                )
+            })?;
         let copied_reads = resolved
             .slots
             .iter()
@@ -627,6 +635,7 @@ impl Checker {
             referent: resolved.return_type.clone(),
             origin,
             mutability: mutable,
+            address_space: signature.address_space.clone(),
         };
         self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ReferenceResult {

@@ -111,15 +111,21 @@ impl<'a> Flatten<'a> {
             lowering.emit(MirInstr::PointerConvert { dest, value });
             dest
         };
-        let reference = |referent: Ty, mutability: Mutability| -> Ty {
-            TyKind::Ref(RefTy {
+        let reference = |lowering: &Self, pointer: Reg, referent: Ty, mutability: Mutability| {
+            let address_space = lowering
+                .f
+                .reg_types
+                .get(&pointer.0)
+                .and_then(|ty| ty.kind().pointer_address_space().cloned())
+                .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
+            Ty::from(TyKind::Ref(RefTy {
                 referent,
                 origin: Origin::Untracked {
                     mutable: mutability == Mutability::Mutable,
                 },
                 mutability,
-            })
-            .into()
+                address_space,
+            }))
         };
         match (op, operands.as_slice()) {
             (PointerOp::LitRefToPointer | PointerOp::LitRefFromPointer, [value]) => {
@@ -171,7 +177,8 @@ impl<'a> Flatten<'a> {
                 dest
             }
             (PointerOp::Load, [pointer]) => {
-                let handle = retyped(self, *pointer, reference(ty.clone(), Mutability::Immutable));
+                let handle_ty = reference(self, *pointer, ty.clone(), Mutability::Immutable);
+                let handle = retyped(self, *pointer, handle_ty);
                 let dest = self.fresh_typed(location.clone(), None, ty);
                 self.emit(MirInstr::ReadRef {
                     dest,
@@ -184,7 +191,8 @@ impl<'a> Flatten<'a> {
                     Some(TyKind::KgenPointer { element, .. }) => element.clone(),
                     _ => unreachable!("a checked `pop.store` writes through a `!kgen.pointer`"),
                 };
-                let handle = retyped(self, *pointer, reference(element, Mutability::Mutable));
+                let handle_ty = reference(self, *pointer, element, Mutability::Mutable);
+                let handle = retyped(self, *pointer, handle_ty);
                 self.emit(MirInstr::WriteRef {
                     reference: handle,
                     value: *value,

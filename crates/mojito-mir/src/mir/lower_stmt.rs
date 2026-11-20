@@ -460,6 +460,7 @@ impl<'a> Flatten<'a> {
             referent: value_ty,
             origin: mojito_types::origin::Origin::Place(ref_origin),
             mutability: mojito_types::origin::Mutability::Immutable,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         }));
         self.var_types.insert(dest, ref_ty.clone());
         self.iteration_sources.insert(dest, place.clone());
@@ -1884,6 +1885,7 @@ impl<'a> Flatten<'a> {
                         .and_then(|origin| origin.as_origin())
                         .unwrap_or(mojito_types::origin::Origin::Untracked { mutable: true }),
                     mutability: mojito_types::origin::Mutability::Mutable,
+                    address_space: kind.pointer_address_space()?.clone(),
                 };
                 let converted = self.fresh_typed(
                     target.location(),

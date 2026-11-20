@@ -213,10 +213,12 @@ fn type_families_reprint_byte_identically() {
                 vec![OriginSeg::Interior("element".into())],
             ),
             mutability: SigMutability::BoolParam(1),
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         })],
         ref_return: Some(Box::new(RefSig {
             origin: SigOrigin::Union(vec![SigOrigin::Self_, SigOrigin::Static]),
             mutability: SigMutability::Infer,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         })),
         transfers: TransferSet(vec![TransferEffect {
             dest: SigOrigin::Param(1),
@@ -360,6 +362,7 @@ fn type_families_reprint_byte_identically() {
                     referent: TyKind::Struct("List".into(), vec![TyArg::Ty(Ty::int())]).into(),
                     origin: Origin::Untracked { mutable: true },
                     mutability: Mutability::Mutable,
+                    address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                 })
                 .into(),
             ],
@@ -1040,6 +1043,7 @@ fn sample_subscript_call() -> MirSubscriptCall {
                 path: vec![OriginSeg::Interior("element".into())],
             }),
             mutability: Mutability::Mutable,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         }),
         param_arg_regs: vec![
             MirParamArg {
@@ -1260,6 +1264,7 @@ fn instruction_families_reprint_byte_identically() {
                 referent: Ty::int(),
                 origin: Origin::Static,
                 mutability: Mutability::Param(OriginParamId(0)),
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
             })),
             result_adapter: Some(MirResultAdapter::new(
                 CheckedResultAdapter::CopyIteratorReference,
@@ -3251,6 +3256,7 @@ fn compile_time_memory_round_trips() {
         referent: Ty::int(),
         origin: mojito_types::origin::Origin::Static,
         mutability: mojito_types::origin::Mutability::Immutable,
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
     }));
     let program = program_with(vec![(
         "main".into(),
@@ -5483,6 +5489,7 @@ fn an_artifact_older_than_1_214_declares_its_closure_storage_origins() {
         referent: Ty::int(),
         origin: Origin::Param(OriginParamId(1)),
         mutability: mojito_types::origin::Mutability::Mutable,
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
     })
     .into();
     let mut program = program_with(Vec::new());

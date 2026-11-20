@@ -165,8 +165,10 @@ pub fn lower_ty(
         } => Ok(LowerTy::Scalar(ScalarTy::of_dtype(*dtype))),
         // Only the generic address space lowers: upstream's `ptr
         // addrspace(N)` for any other is R2406's.
-        kind if let Some(address_space) = kind.pointer_address_space()
-            && !address_space.is_generic() =>
+        kind if let Some(address_space) = kind.pointer_address_space().or(match kind {
+            TyKind::Ref(reference) => Some(&reference.address_space),
+            _ => None,
+        }) && !address_space.is_generic() =>
         {
             Err(PlironError {
                 function: Some(function.to_string()),

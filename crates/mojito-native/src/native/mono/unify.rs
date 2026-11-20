@@ -603,21 +603,8 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             ) else {
                 return Err(format!("expected `{pattern}`, found `{actual}`"));
             };
-            match (
-                pattern_space.expr().and_then(ParamExpr::as_decl_ref),
-                actual_space.known(),
-            ) {
-                (Some(binder), Some(space)) => bind_value(
-                    binder,
-                    &mojito_types::types::address_space_value(space),
-                    bindings,
-                )?,
-                (None, Some(space))
-                    if pattern_space.known().is_some_and(|known| known != space) =>
-                {
-                    return Err(format!("expected `{pattern}`, found `{actual}`"));
-                }
-                _ => {}
+            if !unify_address_space(pattern_space, actual_space, bindings)? {
+                return Err(format!("expected `{pattern}`, found `{actual}`"));
             }
             unify(p, a, bindings)
         }
@@ -630,7 +617,10 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
         TyKind::Ref(p) => match actual.kind() {
-            TyKind::Ref(a) if p.mutability == a.mutability => {
+            TyKind::Ref(a)
+                if p.mutability == a.mutability
+                    && unify_address_space(&p.address_space, &a.address_space, bindings)? =>
+            {
                 unify(&p.referent, &a.referent, bindings)
             }
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
@@ -1166,5 +1156,29 @@ fn pointer_like_element(ty: &Ty) -> Option<&Ty> {
         | TyKind::KgenPointer { element, .. }
         | TyKind::LitRef { element, .. } => Some(element),
         _ => None,
+    }
+}
+
+/// Bind a binder address space (`address_space=a`, `ref[_, a]`) from the
+/// actual's known space; `false` when two known spaces disagree.
+fn unify_address_space(
+    pattern: &mojito_types::types::AddressSpaceSlot,
+    actual: &mojito_types::types::AddressSpaceSlot,
+    bindings: &mut Bindings,
+) -> Result<bool, String> {
+    match (
+        pattern.expr().and_then(ParamExpr::as_decl_ref),
+        actual.known(),
+    ) {
+        (Some(binder), Some(space)) => {
+            bind_value(
+                binder,
+                &mojito_types::types::address_space_value(space),
+                bindings,
+            )?;
+            Ok(true)
+        }
+        (None, Some(space)) => Ok(pattern.known().is_none_or(|known| known == space)),
+        _ => Ok(true),
     }
 }

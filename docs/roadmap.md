@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2412**.
+Next free ID: **R2413**.
 
 ## Ordered Work
 
@@ -3056,6 +3056,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: the same with `p.unsafe_address_space_cast[AddressSpace.GENERIC]()`.
   - Probe: binding the cast first (`var q = p.unsafe_bitcast[Int]()`,
     `print(q[])`, `print(p[])`) fails the same way.
+  - Probe: `var p = Pointer(to=y).unsafe_address_space_cast[
+    AddressSpace.GLOBAL]()`, then `f(y)` for any `f`, then `p[]`, fails
+    the same way, where the pin runs it.
   - Each cast records a `PointerOriginCast` or `PointerConvert` adjustment
     over the receiver, which ownership analysis reads as a fresh access to
     the pointee's place rather than a copy of `p`.
@@ -10426,19 +10429,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2409 A `ref[origin, address_space]` specifier is rejected**
+- [ ] **R2412 A `ref[...] self` receiver clause is no callable contract**
 
-  `def g(ref[_, AddressSpace.GENERIC] x: Int)` fails with "Undefined
-  variable 'AddressSpace'", where the pin runs it.
-  - Upstream's `Pointer.__getitem__` spells its result `ref[Self.origin,
-    Self.address_space] Self.T`, as do `__init__(ref[...] to:)` and the
-    offset subscripts (`std/memory/pointer.mojo`).
-  - Cause: an origin clause reads only origins and parameter places, and
-    `RefTy` carries no address space where `TyKind::Pointer`'s
-    `AddressSpaceSlot` now does.
-  - Lever: give `RefTy` the slot and read the clause's second operand as
-    an `AddressSpace`; update `docs/grammar.md` first.
-  - Found while landing R2204 (2026-11-20).
+  `def space[a: AddressSpace](ref[_, a] self) -> Int` called as
+  `s.space()` fails with "no overload matches the supplied arguments",
+  where the pin prints `0` (and `1` through a `GLOBAL` pointer's `q[]`).
+  - Cause: a method's receiver clause (`self_origin`) is read only for
+    validation and writability. `with_receiver_parameter` gives the
+    receiver no `RefSig`, so a call neither binds the clause's binders
+    from the receiver's place nor checks the place against it.
+  - Probe: `def get(ref[_, AddressSpace.GLOBAL] self)` called on a local
+    is accepted. The pin rejects it ("operand address space '0' doesn't
+    match expected address space '1'").
+  - Probe: a bare `ref self` method called through a `GLOBAL` pointer's
+    `q[].get()` is accepted. The pin rejects it the other way round.
+  - Probe: upstream's `Span` and `Array` members take
+    `ref[origin, address_space] self` (`collections/span.mojo`,
+    `collections/array.mojo`).
+  - Lever: lower the receiver clause to a `RefSig` in the receiver slot
+    and solve it with the arguments' (`solve_call_origins`,
+    `reference_solve_pair`).
+  - Found while landing R2409 (2026-11-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

@@ -1070,6 +1070,7 @@ fn instantiate_iterator_reference(
         referent,
         origin,
         mutability,
+        address_space: signature.address_space.clone(),
     }
 }
 

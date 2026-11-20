@@ -569,6 +569,14 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
             solve_value_args(pattern_element, element, out);
         }
         (TyKind::Ref(pattern_reference), TyKind::Ref(actual_reference)) => {
+            if let Some(reference) = pattern_reference
+                .address_space
+                .expr()
+                .and_then(ParamExpr::as_decl_ref)
+            {
+                out.entry(reference.name.to_string())
+                    .or_insert_with(|| actual_reference.address_space.value());
+            }
             solve_value_args(&pattern_reference.referent, &actual_reference.referent, out);
         }
         (TyKind::Ref(pattern_reference), _) => {
@@ -833,6 +841,7 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = recur(&reference.referent);
+            reference.address_space = space(&reference.address_space);
             TyKind::Ref(reference).into()
         }
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
@@ -1904,7 +1913,6 @@ impl Checker {
                 ArgSlot::Keyword(position) => &kwargs[*position].value,
                 ArgSlot::Default => continue,
             };
-            patterns.push(params[index].clone());
             pattern_names.push(signature.names[index].clone());
             let actual = self.solving_argument_ty(
                 expression,
@@ -1919,6 +1927,13 @@ impl Checker {
                 actual,
                 &params[index],
             )?;
+            let (pattern, actual) = self.reference_solve_pair(
+                signature.ref_params.get(index).and_then(Option::as_ref),
+                &params[index],
+                &actual,
+                expression,
+            );
+            patterns.push(pattern);
             actuals.push(actual);
         }
         if let Some(element) = variadic {
@@ -2718,6 +2733,7 @@ fn with_receiver_parameter(
     let shift = |sig: &RefSig| RefSig {
         origin: receiver_shifted_origin(&sig.origin),
         mutability: sig.mutability.clone(),
+        address_space: sig.address_space.clone(),
     };
     func.ref_params = std::iter::once(None)
         .chain(func.ref_params.iter().map(|sig| sig.as_ref().map(shift)))
