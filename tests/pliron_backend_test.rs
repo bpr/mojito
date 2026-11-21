@@ -1137,13 +1137,6 @@ fn native_error(src: &str, entries: &[&str]) -> String {
 fn unsupported_constructs_produce_contextual_diagnostics() {
     // (source, entries, phrases the diagnostic must contain)
     let cases: &[(&str, &[&str], &[&str])] = &[
-        // Pointer element arithmetic lowers; a pointer comparison keeps a
-        // contextual rejection. It is read, so no pass erases it as dead.
-        (
-            "from std.memory.alloc import unsafe_alloc\n\ndef compute() -> Int:\n    var p = unsafe_alloc[Int](2)\n    var q = p + 1\n    var d = q - 1\n    print(d == p)\n    p.unsafe_free()\n    return 1\n",
-            &["compute"],
-            &["operator `Eq` on Pointer operands"],
-        ),
         // A `ref` argument in a non-generic space crosses a call boundary
         // whose MIR records no space; upstream passes `ptr addrspace(3)`
         // (R2432).

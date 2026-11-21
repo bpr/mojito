@@ -51,6 +51,7 @@ impl Checker {
         let mut predicate = None;
         let mut result_type = None;
         let mut fastmath = None;
+        let mut exact = false;
         for argument in param_args {
             let mojito_ast::ast::ParamArg::Named {
                 name: attribute,
@@ -67,6 +68,14 @@ impl Checker {
                 }
                 "_type" => result_type = Some(value.as_ref()),
                 "fastmathFlags" => fastmath = Some(value.as_ref()),
+                "isExact" => {
+                    if mlir_attribute(value) != Some("unit") {
+                        return Err(invalid(
+                            "attribute 'isExact' takes '__mlir_attr.`unit`'".to_string(),
+                        ));
+                    }
+                    exact = true;
+                }
                 _ => {
                     return Err(invalid(format!(
                         "attribute '{attribute}' is not an inherent attribute of '{name}'"
@@ -96,6 +105,11 @@ impl Checker {
             Some(value) => Some(self.fastmath_flags(name, value)?),
             None => None,
         };
+        if exact && !op.takes_exact_flag() {
+            return Err(invalid(format!(
+                "attribute 'isExact' is not an inherent attribute of '{name}'"
+            )));
+        }
         if args.len() != op.arity() {
             return Err(invalid(format!(
                 "op takes {} operand(s), got {}",

@@ -239,6 +239,14 @@ impl MlirOp {
         )
     }
 
+    /// Whether the op takes the unit `isExact` attribute: upstream's
+    /// `pop.div` holds it as an inherent attribute, a promise that the
+    /// division leaves no remainder, so the quotient it names is the
+    /// plain one.
+    pub const fn takes_exact_flag(self) -> bool {
+        matches!(self, Self::PopDiv)
+    }
+
     /// Whether the op names its result type with a `_type` attribute.
     pub const fn takes_result_type(self) -> bool {
         matches!(

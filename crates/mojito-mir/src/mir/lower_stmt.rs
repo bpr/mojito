@@ -3947,8 +3947,7 @@ impl<'a> Flatten<'a> {
     }
 
     /// Apply a builtin augmented operator to `cur`, `place`'s current
-    /// value, and the lowered `value`. A pointer's offset converts at `Int`,
-    /// as upstream's `Pointer.__add__` reads `index(offset)`.
+    /// value, and the lowered `value`.
     fn augmented_operation(
         &mut self,
         op: InfixOp,
@@ -3956,12 +3955,7 @@ impl<'a> Flatten<'a> {
         cur: Reg,
         value: Node<'a>,
     ) -> Reg {
-        let mut rhs = self.expr(value);
-        if self.f.reg_types.get(&cur.0).is_some_and(Ty::is_pointer)
-            || place.ty().is_some_and(|ty| ty.is_pointer())
-        {
-            rhs = self.materialize_register(rhs, &Ty::int(), value.location());
-        }
+        let rhs = self.expr(value);
         let res = self.fresh(place.location(), None);
         self.emit(MirInstr::BinOp {
             op,

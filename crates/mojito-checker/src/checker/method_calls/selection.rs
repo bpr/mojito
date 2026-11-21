@@ -526,8 +526,17 @@ impl Checker {
         // String)` over a generic `m[T: Writable](self, a: T)`. `decls` holds
         // the method's own bracket list only — a struct's parameters live in
         // `StructInfo::decls` — and a parameter no per-call clone bakes does
-        // not make the candidate generic.
-        let baked = baked_decl_count(&signature.decls()) + inferred_origin_count(&signature.params);
+        // not make the candidate generic. Its origin binders count too,
+        // the implicit one a `Pointer[T, _]` parameter declares among them,
+        // so `p == q` over two pointers of one origin selects `__eq__(self,
+        // rhs: Self)` beside `__eq__(self, rhs: Pointer[Self.T, _])`.
+        let baked = baked_decl_count(&signature.decls())
+            + signature
+                .declared
+                .iter()
+                .filter(|decl| decl.is_origin())
+                .count()
+            + inferred_origin_count(&signature.params);
         Ok(MethodCallScore {
             rank: overload_rank(
                 score,

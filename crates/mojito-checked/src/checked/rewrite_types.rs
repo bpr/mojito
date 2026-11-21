@@ -772,7 +772,6 @@ impl RewriteTypes for SemanticAdjustment {
                 mutable: _,
                 materialized: _,
             }
-            | Self::PointerOffset { materialized: _ }
             | Self::InteriorReference { origin: _ }
             | Self::InvalidateInteriors { invalidations: _ } => {}
         }

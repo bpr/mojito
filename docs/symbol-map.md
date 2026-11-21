@@ -862,8 +862,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`mojito-mir/src/mir/facts.rs`) answers for a place and a union alike;
   `PointerOrigin::single_place` is the one
   representation predicate for a pointer to one known place, which the
-  checker's offset and arithmetic rules (`check_pointer_offset`,
-  `infer_pointer_method`, `infer_infix`), MIR's `origin_bearing_pointer`,
+  checker's subscript offset rule (`check_pointer_offset`), MIR's
+  `origin_bearing_pointer`,
   and the VM's `single_pointee_pointer` share,
   `lower_ref_sig_resolved`; `origins/sig.rs`'s `check_result_origins` is the
   one rule for which parameter or receiver a result may name the origin

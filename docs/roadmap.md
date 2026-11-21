@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2466**.
+Next free ID: **R2469**.
 
 ## Ordered Work
 
@@ -4047,6 +4047,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     warnings the CLI prints.
   - `checker/decorators.rs` accepts both decorators silently.
   - Probe: `conformance/probes/decorator_warnings.mojo`.
+  - Probe: `p + 1` over a `Pointer` calls upstream's
+    `@deprecated(use=unsafe_offset)` `__add__` silently, where the pin
+    warns "'__add__' is deprecated, use 'unsafe_offset' instead".
   - Found while landing R192 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5182,6 +5185,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     -> Int)` fails with "'Pointer[Int, MutUnsafeAnyOrigin,
     address_space=_]' is not concrete", where the pin accepts it.
   - Found while landing R2410 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2466 A leading-dot operand in a `where` comparison is
+  rejected**
+
+  `def f(self) where Self.a == .GENERIC:` over `struct S[a: AddressSpace =
+  .GENERIC]` stops the check with "a comparison of struct values is no
+  generic proposition", where the pin reads `.GENERIC` as
+  `AddressSpace.GENERIC`.
+  - Spelled `AddressSpace.GENERIC`, the clause checks, and a `comptime if
+    Self.a == .GENERIC` and a run-time `b == .GENERIC` already work.
+  - Lever: `Checker::infix_value` (`checker/constraints.rs`) roots a
+    leading-dot right operand only beside a `DType`
+    (`with_contextual_root(right, "DType")`). Root it at the left struct
+    operand's type, as the run-time operator check does, and check
+    `Checker::struct_comparison`, which builds the comparison first.
+  - Upstream's `Pointer` memory members spell their clauses this way
+    (`where Self.mut and Self.address_space == .GENERIC`).
+  - Found while landing R2207 (2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7885,28 +7908,32 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2212 An origin-bearing `Pointer` rejects address arithmetic and
-  comparison, where the pin runs them**
+- [ ] **R2212 A pointer to one checked value cannot step off its
+  value, where the pin computes the address**
 
-  Mojito rejects them as undefined on a pointer to one checked value,
-  where upstream's `Pointer` bodies have no such rule.
-  - Probe: `var p = Pointer(to=x)` then `print(p.unsafe_offset(0)[])` is
-    rejected ("not supported on an origin-bearing Pointer to a single
-    place", `infer_pointer_method`, `checker/method_calls/builtin_types.rs`);
-    the pin prints `4`.
-  - Probe: `print(Pointer(to=x) == Pointer(to=x))` is rejected ("not
-    supported on an origin-bearing Pointer", `infer_infix`,
-    `checker/operators.rs`); the pin prints `True`.
-  - `check_pointer_offset` (`checker/indexing.rs`) applies the same rule
-    to a non-zero `p[i]`.
-  - The rule reaches only a pointer whose origin is one known place
-    (`PointerOrigin::single_place`); an origin binder's pointer, which a
-    call may bind to heap storage, already offsets and compares.
-  - R2207 retires the rule with the checker's address members.
+  The checker and the VM both treat a pointer whose origin is one known
+  place as a handle to one value (`PointerOrigin::single_place`), where
+  upstream's `Pointer` is one `!kgen.pointer` address whatever its origin.
+  - The checker rejects a non-zero `p[i]` (`check_pointer_offset`,
+    `checker/indexing.rs`: "an origin-bearing Pointer designates a single
+    value").
+  - The VM traps on a non-zero offset of a place pointer outside an
+    indexed projection (`offset_place_projection`,
+    `mojito-vm/src/backend/vm/references.rs`), since a place handle has no
+    element offset.
+  - Probe: `var p = Pointer(to=x)` then `var q = p.unsafe_offset(1); print(
+    q.unsafe_offset(-1)[], p < q, q - p)` traps on the VM ("a place pointer
+    designates a single value"), where the pin and `--backend pliron`
+    print `4 True 1`.
+  - Probe: `print(Int(p.unsafe_offset(1)) - Int(p))` traps likewise, where
+    the pin prints `8`.
+  - The address members and comparisons themselves run the declared
+    bodies, and no checker rule rejects them any more.
   - Found while planning R1681 (2026-11-14).
   - Ledger name: `pointer-origin-bearing-arithmetic`.
-  - Depends on R2207.
-  - Model: Opus, Not Planned.
+  - Depends on R2208 (the subscript rule), R2437 (a place pointer's VM
+    address).
+  - Model: Fable, Not Planned.
 
 - [ ] **R2437 A place pointer's VM address keys each projected place to
   its own allocation, where upstream's adds the projection's byte offset**
@@ -10054,28 +10081,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2445 `p += n` and `p -= n` over a `Pointer` run, where the pin's
-  `Pointer` has no `__iadd__` or `__isub__`**
-
-  An augmented offset of a pointer place runs, where the pin reports
-  "'Pointer[Int, MutUntrackedOrigin]' does not implement the '__iadd__'
-  method" (`__isub__` for `-=`).
-  - Cause: the augmented operator over a pointer falls back to the
-    builtin binary pointer offset (`Flatten::augmented_operation`,
-    `mir/lower_stmt.rs`, and the checker's typing of that offset), not a
-    lookup of the declared struct's `__iadd__`, which upstream's
-    `Pointer` does not declare.
-  - Withdraw the rule, so the augmented form falls to the declared
-    struct's members as the pin's does.
-  - Probe: `assets/ok/pointer_augmented_literal_offset.mojo` and the `-=`
-    lines of `assets/ok/pointer_subtract_offset.mojo`; respell them as
-    `p = p + n`, or move them to `assets/type_error`.
-  - Find any other site by deleting the rule and running
-    `scripts/smoke --suites`.
-  - Found while landing R2416 (2026-11-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2456 An instance method named through its type reports a
   missing attribute**
 
@@ -10947,34 +10952,54 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2207 `Pointer`'s address and memory members are checker rules,
-  where upstream's are bodies of the declared struct**
+- [ ] **R2467 `Pointer`'s memory members are checker rules, where
+  upstream's are bodies of the declared struct**
 
-  `__int__`, `unsafe_offset`, the comparisons, `unsafe_write`, `write`,
-  `unsafe_write_move_from`, `unsafe_take_pointee`,
-  `unsafe_deinit_pointee`, `free`, `load`, and `store` are arms of
-  `infer_pointer_method`, with five `SemanticAdjustment`s
-  (`PointerOffset`, `PointerWrite`, `PointerWriteMoveFrom`,
-  `PointerStorageTake`, `PointerStorageDestroy`).
-  - The declared `where` clauses (`Self.mut and conforms_to(Self.T,
-    Movable)`) replace `check_pointer_take_source` and
-    `check_pointer_overwrite`.
-  - Upstream's `__eq__` is `Int(self) == Int(rhs)` and its `unsafe_write`
-    goes through `Pointer(to=self[i])`, so both need the VM to address a
-    place pointer.
-  - Re-probe R2027.
-  - Probe: declaring upstream's comparisons in `std/memory/pointer.mojo`
-    fails: `not (self == rhs)` hits the rule ("pointer arithmetic and
-    comparison are not supported on an origin-bearing Pointer"), and
-    `Comparable` reports "method '__eq__' does not match the signature
-    required by trait 'Comparable'".
-  - Probe: a pointer offset's result at a by-address generic parameter
-    (`Int(buf + 1)`, `f(q + 0)` or `f(buf.unsafe_offset(1))` over `def
-    f[T: Intable](v: T)`) fails MIR verification ("received by address
-    but passes a Pointer value"), where a declared member's call result
-    passes as its temporary's address (`f(mk(q))` runs).
-  - Found while planning R1681 (2026-11-14).
-  - Depends on R2206, R1665, R2196, R2024.
+  `unsafe_write` (positional and `copy=`), `unsafe_write_move_from`,
+  `unsafe_take_pointee`, and `unsafe_deinit_pointee` are arms of
+  `infer_pointer_method` (`method_calls/builtin_types.rs`), with the
+  `PointerWrite`, `PointerWriteMoveFrom`, `PointerStorageTake`, and
+  `PointerStorageDestroy` adjustments.
+  - Declare upstream's bodies verbatim (`unsafe_deinit_pointee`,
+    `unsafe_deinit_pointee_with`, `unsafe_take_pointee`, the three
+    `unsafe_write`s, `unsafe_write_move_from`), each with its `where`
+    clause, and retire the arms and `check_pointer_take_source`.
+  - `__get_address_as_owned_value(k)` is typed as the spelled
+    `Pointer(_mlir_value=k).unsafe_take_pointee()` (`infer_address_builtin`,
+    `checker/operators.rs`). With the member declared, its body calls the
+    builtin and the checker recurses without end, so the builtin must
+    record its own take first.
+  - `SemanticAdjustment::PointerWrite { copy: false }` is also the
+    `__get_address_as_uninit_lvalue` fact and stays.
+  - The `where` clauses reach `List.deinit_with`, `Array.deinit_with`,
+    `Optional.deinit_with` (an `AnyType` element is not `Movable`), and
+    `Array.__init__`'s `unsafe_write(Self.T())`: respell them as upstream's.
+  - Retiring `check_pointer_take_source` follows the pin, so R2029 and the
+    `pointer_take_tracked_nontrivial` non-goal close with it.
+  - Re-probe R2027: via a declared body, `unsafe_write` of a call result
+    runs its move as at the pin.
+  - Probe: `unsafe_write(1)` through an `as_imm()` pointer reports the
+    pin's "no matching method in call to 'unsafe_write'", where Mojito
+    reports its own immutable-write rule.
+  - Found while landing R2207 (2026-11-21).
+  - Depends on R2466 (`Self.address_space == .GENERIC`), R2375
+    (`where Self.mut`).
+  - Model: Fable, Planned.
+
+- [ ] **R2468 `@__allow_legacy_custom_self_type` is not modelled, so
+  `Pointer.write` stays a checker rule**
+
+  Upstream's `write[U: Movable, //](self: Pointer[U, _], var value: U, /)`
+  declares a `self` typed by an application of its own struct, which
+  Mojito rejects ("'self' argument must have type 'Self'").
+  - Model the decorator: a `self` whose type applies the enclosing struct
+    with its own binders, read as a conditional receiver.
+  - Then declare `write` verbatim and retire its `infer_pointer_method` arm
+    and `check_pointer_overwrite`.
+  - The same decorator gates `unsafe_free`, `unsafe_load`/`unsafe_store`,
+    and `swap_pointees`, which can follow once it lands.
+  - Found while landing R2207 (2026-11-21).
+  - Depends on R2467.
   - Model: Fable, Not Planned.
 
 - [ ] **R2208 `Pointer(to=)` and `p[]` are checker rules, where upstream's
@@ -10994,7 +11019,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     rule.
   - Re-probe R133 and R537.
   - Found while planning R1681 (2026-11-14).
-  - Depends on R2207.
+  - Depends on R2207, R2467 (the subscript stores share
+    `check_pointer_write` and `destroy_pointee`).
   - Model: Fable, Not Planned.
 
 - [ ] **R2460 A `Pointer`'s union origin cannot name an origin binder or
@@ -11404,6 +11430,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `_DictKeyIter[iterable_mut, …]`, where the pin prints `True`.
   - Probe: the type of `xs.__iter__()` over a `var xs` list literal prints
     `_ArrayIter[iterable_mut, …]`.
+  - Probe: `def g(self) where Self.mut` on `struct Q[mut: Bool, //, o:
+    Origin[mut=mut]]`, called as `Q[MutUntrackedOrigin](4).g()` or
+    `Q[origin_of(y)](4).g()`, reports "cannot prove constraint 'mut ==
+    true'", where the pin runs it. `Checker::method_constraint_result`
+    (`generics.rs`) binds the receiver's deferred `mut=` slot. Upstream's
+    `Pointer` memory members need this clause (R2467).
+  - Probe: `where type_of(src).mut` over an argument `src: Pointer[Self.T,
+    _]` needs the same read for an argument's infer-only binder
+    (upstream's `unsafe_write_move_from`).
   - Found while landing R2372 (2026-11-19).
   - Depends on R2423.
   - Model: Fable, Not Planned.

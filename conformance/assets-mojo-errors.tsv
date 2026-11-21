@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1311
+# swept-count	1313
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -963,6 +963,7 @@ assets/type_error/parametric_static_method_value_unbound.mojo	compile-reject	agr
 assets/type_error/pointer_address_as_owned_value_not_kgen_pointer.mojo	compile-reject	agree	error: operand must have '!kgen.pointer<T>' type, not 'ref[x] Int'
 assets/type_error/pointer_address_space_hole_not_concrete.mojo	compile-reject	agree	error: 'Pointer[Int, origin_of(x), address_space=_]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/pointer_address_space_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Pointer[Int, origin_of(x), address_space=AddressSpace.LOCAL]' value to 'Pointer[Int, origin_of(x)]'
+assets/type_error/pointer_augmented_offset_rejected.mojo	compile-reject	agree	error: 'Pointer[Int, MutUntrackedOrigin]' does not implement the '__iadd__' method
 assets/type_error/pointer_bracket_mut_keyword_after_positional.mojo	compile-reject	agree	error: unexpected keyword parameter 'mut'
 assets/type_error/pointer_bracket_mut_true_imm_origin.mojo	compile-reject	agree	error: value passed to 'origin' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/pointer_bracket_positional_address_space.mojo	compile-reject	agree	error: unexpected parameter
@@ -999,6 +1000,7 @@ assets/type_error/pointer_param_symbolic_origin_write.mojo	compile-reject	agree	
 assets/type_error/pointer_placeholder_immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_placeholder_mutable_forward.mojo	compile-reject	agree	error: invalid call to 'w': value passed to 'q' cannot be converted from 'Pointer[Int, origin]' to 'MutPointer[Int, q.origin]'
 assets/type_error/pointer_placeholder_return.mojo	compile-reject	agree	error: 'Pointer[Int, _]' is not concrete, use '[]' to bind missing parameters
+assets/type_error/pointer_subtract_int_rejected.mojo	compile-reject	agree	error: invalid call to '__sub__': value passed to 'rhs' cannot be converted from 'IntLiteral[1]' to 'Pointer[Int, rhs.origin]', it depends on an unresolved parameter 'rhs.origin.mut'
 assets/type_error/pointer_take_tracked_nontrivial.mojo	runs	subset	the pin runs it; Mojito rejects: requires a trivially destructible element
 assets/type_error/pointer_to_place_offset_rejected.mojo	runs	subset	the pin runs it;Mojito rejects: designates a single value
 assets/type_error/pointer_to_ref_param_write_rejected.mojo	compile-reject	agree	error: expression must be mutable in assignment

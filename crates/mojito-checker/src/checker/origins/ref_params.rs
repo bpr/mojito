@@ -678,16 +678,9 @@ impl Checker {
                 if let Some(bound) = self.call_result_bound_origins(expression) {
                     return bound;
                 }
-                // A declared member's pointer result (a cast) carries exactly
-                // the origin its checked type names; an offset forwards its
-                // receiver's below.
-                if !self.has_fact(&expression.source_span(), |facts| {
-                    matches!(
-                        facts.adjustment.as_deref(),
-                        Some(mojito_checked::checked::SemanticAdjustment::PointerOffset { .. })
-                    )
-                }) && let Some(origins) = self.pointer_result_origins(expression)
-                {
+                // A declared member's pointer result (a cast or an offset)
+                // carries exactly the origin its checked type names.
+                if let Some(origins) = self.pointer_result_origins(expression) {
                     return origins;
                 }
                 // A method whose selected contract returns an origin-bearing
@@ -707,15 +700,6 @@ impl Checker {
                 let adjustment = self.fact(&expression.source_span(), |facts| {
                     facts.adjustment.as_deref()
                 });
-                // `unsafe_offset` preserves provenance: the offset pointer
-                // carries whatever its receiver carried.
-                if let (
-                    Some(mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }),
-                    ExprKind::MethodCall { object, .. },
-                ) = (&adjustment, &expression.kind)
-                {
-                    return self.aggregate_origins(object);
-                }
                 // A method returning a ref-field struct (a borrowing
                 // view/iterator) carries its receiver's origins, exactly as a
                 // view-typed slice result does, and a named or element

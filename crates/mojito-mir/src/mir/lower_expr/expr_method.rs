@@ -500,34 +500,6 @@ impl<'a> Flatten<'a> {
                 }
             }
         }
-        // `pointer.unsafe_offset(i)` is provenance-preserving element
-        // arithmetic: the ordinary pointer `+` operation, its literal
-        // offset converted at `Int` as upstream's `index(idx)` does.
-        if node.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }
-            )
-        }) {
-            let pointer = self.expr(object);
-            let offset = self.index_operand(
-                *args
-                    .first()
-                    .expect("checked unsafe_offset has one argument"),
-            );
-            let dest = self.fresh(call.location(), None);
-            self.emit(MirInstr::BinOp {
-                op: mojito_ast::ast::InfixOp::Add,
-                dest,
-                a: pointer,
-                b: offset,
-                resolved: None,
-                raises: None,
-                refined_bound: None,
-                fastmath: None,
-            });
-            return Some(dest);
-        }
         // `pointer.unsafe_write(value)` / `unsafe_write(copy=v)`
         // initializes the pointee at offset 0 — the same store family
         // as `pointer[] = value`; a copied pointer subscript passes its

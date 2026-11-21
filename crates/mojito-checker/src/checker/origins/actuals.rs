@@ -602,10 +602,7 @@ impl Checker {
                 || self.has_fact(&root.source_span(), |facts| {
                     matches!(
                         facts.adjustment.as_deref(),
-                        Some(
-                            mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
-                                | mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }
-                        )
+                        Some(mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. })
                     )
                 })
         };
@@ -670,7 +667,6 @@ impl Checker {
                 | mojito_checked::checked::SemanticAdjustment::PointerToPlace {
                     materialized, ..
                 }
-                | mojito_checked::checked::SemanticAdjustment::PointerOffset { materialized }
                 | mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses {
                     materialized,
                     ..
@@ -704,8 +700,7 @@ impl Checker {
         }
     }
 
-    /// Record a pointer-valued adjustment (`PointerToPlace`, `PointerOffset`)
-    /// at `span`, keeping the hidden holder an earlier inference of the span
+    /// Record a pointer-valued adjustment (`PointerToPlace`) at `span`, keeping the hidden holder an earlier inference of the span
     /// materialized for a dereference of it.
     pub(in crate::checker) fn record_pointer_adjustment(
         &self,
@@ -716,8 +711,7 @@ impl Checker {
         let mut record = self.record_at(span);
         if let Some(owner) = record.adjustment.as_deref().and_then(|established| {
             mojito_checked::checked::materialized_borrow_owner(std::slice::from_ref(established))
-        }) && let SemanticAdjustment::PointerToPlace { materialized, .. }
-        | SemanticAdjustment::PointerOffset { materialized } = &mut adjustment
+        }) && let SemanticAdjustment::PointerToPlace { materialized, .. } = &mut adjustment
         {
             *materialized = Some(owner);
         }

@@ -236,39 +236,6 @@ impl Checker {
                 .err()
                 .unwrap_or_else(|| bad_infix_operator(op, &lt, &rt)));
         }
-        // Arithmetic and identity comparison reason about allocation layout,
-        // which an origin-bearing pointer to a single checked value does not
-        // have; Mojo leaves such use undefined, so Mojito rejects it early.
-        let origin_bearing = |ty: &Ty| {
-            ty.kind()
-                .pointer_origin()
-                .is_some_and(|origin| origin.single_place())
-        };
-        if matches!(op, Add | Sub | Eq | Ne)
-            && (origin_bearing(&lt) || origin_bearing(&rt))
-            && (lt.is_pointer() || rt.is_pointer())
-        {
-            return Err(TypeError::Unsupported(
-                "pointer arithmetic and comparison are not supported on an \
-                 origin-bearing Pointer"
-                    .to_string(),
-            ));
-        }
-        if let Some(element) = lt.pointer_element() {
-            match (op, rt.kind()) {
-                (Add | Sub, kind) if kind.is_int() || kind.is_int_literal() => {
-                    return Ok(lt.clone());
-                }
-                (Sub, other) if other.pointer_element() == Some(element) => {
-                    return Ok(Ty::int());
-                }
-                (Eq | Ne, other) if other.pointer_element() == Some(element) => {
-                    return Ok(Ty::bool());
-                }
-                _ => {}
-            }
-        }
-
         // An operator over a type parameter or a projection is the call of
         // the requirement its bounds (or an assumed conformance) declare,
         // `a.__add__(b)`, else the right operand's reflected `b.__radd__(a)`,

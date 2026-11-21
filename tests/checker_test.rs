@@ -5864,16 +5864,11 @@ fn origin_bearing_pointer_rejects_allocation_operations() {
         err("def main():\n    var x = 1\n    var p = Pointer(to=x)\n    print(p[1])\n"),
         TypeError::Unsupported(message) if message.contains("only offset 0")
     ));
-    assert!(matches!(
-        err("def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = p + 1\n"),
-        TypeError::Unsupported(message) if message.contains("arithmetic and comparison")
-    ));
-    assert!(matches!(
-        err(
-            "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = Pointer(to=x)\n    print(p == q)\n"
-        ),
-        TypeError::Unsupported(message) if message.contains("arithmetic and comparison")
-    ));
+    // Address arithmetic and comparison are the declared struct's bodies,
+    // which compare and offset any pointer's address, as at the pin.
+    ok_std(
+        "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = Pointer(to=x)\n    print(p == q, p.unsafe_offset(0) <= q)\n",
+    );
     assert!(matches!(
         err("def main():\n    var x = 1\n    var p = Pointer(to=x)\n    p.free()\n"),
         TypeError::Unsupported(message) if message.contains("does not own an allocation")
@@ -6943,13 +6938,11 @@ fn unsafe_pointer_method_vocabulary_typechecks() {
     ok(
         "def main():\n    var x = 1\n    var q = Pointer(to=x)\n    q.unsafe_write(9)\n    print(x)\n",
     );
-    // Arithmetic stays rejected on origin-bearing pointers.
-    assert!(matches!(
-        err(
-            "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = p.unsafe_offset(1)\n"
-        ),
-        TypeError::Unsupported(message) if message.contains("arithmetic and comparison")
-    ));
+    // An offset of an origin-bearing pointer is the declared body's, as at
+    // the pin.
+    ok_std(
+        "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = p.unsafe_offset(1)\n",
+    );
     // Pointee take/deinit require the allocation-owning untracked origin.
     ok(
         "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var v = p.unsafe_take_pointee()\n",

@@ -1405,12 +1405,6 @@ pub enum SemanticAdjustment {
     PointerStorageDestroy {
         element: Ty,
     },
-    /// `pointer.unsafe_offset(i)`: provenance-preserving element arithmetic,
-    /// lowered as the ordinary pointer `+` operation.
-    PointerOffset {
-        /// A materialized dereference holder, as on `PointerToPlace`.
-        materialized: Option<mojito_types::origin::OwnerId>,
-    },
     /// Construct compiler-private inline uninit storage (`__UninitStorage[T]()`
     /// or `__UninitStorage[T](value^)`). Only bundled standard-library sources
     /// may acquire this adjustment.
@@ -7567,9 +7561,6 @@ pub fn materialized_borrow_owner(
         | SemanticAdjustment::PointerToPlace {
             materialized: Some(owner),
             ..
-        }
-        | SemanticAdjustment::PointerOffset {
-            materialized: Some(owner),
         }
         | SemanticAdjustment::CallableCaptureAccesses {
             materialized: Some(owner),

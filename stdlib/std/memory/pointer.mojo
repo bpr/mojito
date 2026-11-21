@@ -1,11 +1,11 @@
 # std.memory.pointer — upstream's `Pointer` and its aliases, ported with
 # these departures. The compiler folds every application of the struct into
-# its own pointer type, and its rules still answer `Pointer(to=)`, `p[]`,
-# the address members, and the operators (R2207, R2208); a member or an
-# initializer keyword no rule answers, the casts included, reaches its body
-# here. Conformances
-# `DevicePassable`, `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable`
-# are absent from the bundle, and `Comparable` waits on the members below.
+# its own pointer type, and its rules still answer `Pointer(to=)`, `p[]`
+# (R2208), and the memory members below; a member or an initializer keyword
+# no rule answers, the casts, address members, and comparisons included,
+# reaches its body here. Conformances `DevicePassable`,
+# `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable` are absent from
+# the bundle.
 # Members omitted, by blocker:
 # - `__merge_with__`: its result `origin_of(Self.origin, other_type.origin)`
 #   is `origin_of` over origin values (R1299), and its `other_type` bound is
@@ -15,11 +15,11 @@
 # - `as_unsafe_any_origin`: `UnsafeAnyOrigin[mut=Self.mut]` keeps no
 #   symbolic `mut` (R2384).
 # - `__bool__`: `@unavailable` on a method is rejected (R1162).
-# - the comparisons, `__add__`, `__sub__`, `offset_from`, the memory
-#   members (`unsafe_write*`, `unsafe_take_pointee`, `unsafe_deinit_pointee*`,
-#   `unsafe_free`, `swap_pointees`, `unsafe_load`, `unsafe_store`, and the
-#   strided, gather, and scatter forms): the compiler's rules answer them
-#   (R2207), and `@__allow_legacy_custom_self_type` is not modelled.
+# - the memory members (`unsafe_write*`, `unsafe_take_pointee`,
+#   `unsafe_deinit_pointee*`, `unsafe_free`, `swap_pointees`, `unsafe_load`,
+#   `unsafe_store`, and the strided, gather, and scatter forms): the
+#   compiler's rules answer them (R2467), and
+#   `@__allow_legacy_custom_self_type` is not modelled (R2468).
 # - the indexed and keyword `__getitem__`s and
 #   `_get_ref_with_unsafe_interior_origin`: the subscript rule (R2208).
 # - `unsafe_as_noalias` and `_as_origin_superset`: `where O.contains[…]`
@@ -47,7 +47,7 @@ from std.memory import Pointer
 
 from std.collections.optional import Optional
 from std.builtin.int import Indexer, index
-from std.sys import bit_width_of
+from std.sys import bit_width_of, size_of
 from std.builtin.debug_assert import debug_assert
 from std.memory.address_space import AddressSpace
 from std.builtin.format_int import _write_int
@@ -186,6 +186,7 @@ struct Pointer[
     *,
     address_space: AddressSpace = .GENERIC,
 ](
+    Comparable,
     ImplicitlyCopyable,
     Intable,
     TrivialRegisterPassable,
@@ -314,6 +315,257 @@ struct Pointer[
             ](self._mlir_value)
         )
 
+    @doc_hidden
+    @inline(.nodebug)
+    @deprecated(use=unsafe_offset)
+    def __add__[I: Indexer, //](self, offset: I) -> Self:
+        """Return a pointer at an offset from the current one.
+
+        Parameters:
+            I: A type that can be used as an index.
+
+        Args:
+            offset: The offset index.
+
+        Returns:
+            An offset pointer.
+        """
+        return self.unsafe_offset(offset)
+
+    @doc_hidden
+    @__unsafe_nested_origins_read_only
+    @inline(.always)
+    def __sub__(
+        self,
+        rhs: Pointer[Self.T, _, address_space=Self.address_space],
+    ) -> Int:
+        """Returns the signed distance from `rhs` to `self` in elements of
+        `T` (not bytes), such that `rhs.unsafe_offset(result)` produces a
+        pointer equal to `self`.
+
+        This is the operator form of `offset_from()`. Its documentation is
+        duplicated here because LSP hover shows this operator's own
+        docstring rather than the method's; keep the two in sync.
+
+        Constraints:
+            The pointee type `T` must not be zero-sized.
+
+        Args:
+            rhs: The pointer to measure the distance from.
+
+        Returns:
+            The signed element distance from `rhs` to `self`.
+
+        Safety:
+
+        - Both pointers must point into the same allocation (or one past
+          its end); the distance between pointers into unrelated
+          allocations is not meaningful.
+        - The byte distance between the two pointers must be an exact
+          multiple of `size_of[T]()`. Violating this is undefined
+          behavior.
+
+        Examples:
+
+        ```mojo
+        from std.memory.alloc import alloc, dealloc, Layout
+
+        var allocation = alloc(Layout[Int32](length=4))
+        var ptr = allocation.unsafe_ptr()
+        var end = ptr.unsafe_offset(3)
+        print(end - ptr)  # => 3
+        print(ptr - end)  # => -3
+        dealloc(allocation^)
+        ```
+        """
+        return self.offset_from(rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    @stable(since="1.3")
+    def __eq__(
+        self,
+        rhs: Pointer[Self.T, _, address_space=Self.address_space],
+    ) -> Bool:
+        """Returns True if the two pointer addresses are equal.
+
+        Args:
+            rhs: The other pointer.
+
+        Returns:
+            True if the two pointer addresses are equal and False otherwise.
+        """
+        return Int(self) == Int(rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    @stable(since="1.3")
+    def __eq__(self, rhs: Self) -> Bool:
+        """Returns True if the two pointers are equal.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if the two pointers are equal and False otherwise.
+        """
+        return Int(self) == Int(rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    @stable(since="1.3")
+    def __ne__(
+        self,
+        rhs: Pointer[Self.T, _, address_space=Self.address_space],
+    ) -> Bool:
+        """Returns True if the two pointers are not equal.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if the two pointers are not equal and False otherwise.
+        """
+        return not (self == rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    @stable(since="1.3")
+    def __ne__(self, rhs: Self) -> Bool:
+        """Returns True if the two pointers are not equal.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if the two pointers are not equal and False otherwise.
+        """
+        return not (self == rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    def __lt__(
+        self,
+        rhs: Pointer[Self.T, _, address_space=Self.address_space],
+    ) -> Bool:
+        """Returns True if this pointer represents a lower address than rhs.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if this pointer represents a lower address and False otherwise.
+        """
+        return Int(self) < Int(rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    def __lt__(self, rhs: Self) -> Bool:
+        """Returns True if this pointer represents a lower address than rhs.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if this pointer represents a lower address and False otherwise.
+        """
+        return Int(self) < Int(rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    def __le__(
+        self,
+        rhs: Pointer[Self.T, _, address_space=Self.address_space],
+    ) -> Bool:
+        """Returns True if this pointer represents a lower than or equal
+           address than rhs.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if this pointer represents a lower address and False otherwise.
+        """
+        return Int(self) <= Int(rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    def __le__(self, rhs: Self) -> Bool:
+        """Returns True if this pointer represents a lower than or equal
+           address than rhs.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if this pointer represents a lower address and False otherwise.
+        """
+        return Int(self) <= Int(rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    def __gt__(
+        self,
+        rhs: Pointer[Self.T, _, address_space=Self.address_space],
+    ) -> Bool:
+        """Returns True if this pointer represents a higher address than rhs.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if this pointer represents a higher than or equal address and
+            False otherwise.
+        """
+        return Int(self) > Int(rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    def __gt__(self, rhs: Self) -> Bool:
+        """Returns True if this pointer represents a higher address than rhs.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if this pointer represents a higher than or equal address and
+            False otherwise.
+        """
+        return Int(self) > Int(rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    def __ge__(
+        self,
+        rhs: Pointer[Self.T, _, address_space=Self.address_space],
+    ) -> Bool:
+        """Returns True if this pointer represents a higher than or equal
+           address than rhs.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if this pointer represents a higher than or equal address and
+            False otherwise.
+        """
+        return Int(self) >= Int(rhs)
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    def __ge__(self, rhs: Self) -> Bool:
+        """Returns True if this pointer represents a higher than or equal
+           address than rhs.
+
+        Args:
+            rhs: The value of the other pointer.
+
+        Returns:
+            True if this pointer represents a higher than or equal address and
+            False otherwise.
+        """
+        return Int(self) >= Int(rhs)
+
     @inline(.always)
     def __int__(self) -> Int:
         """Returns the pointer address as an integer.
@@ -343,6 +595,61 @@ struct Pointer[
                 self._mlir_value, index(offset)._mlir_value
             )
         }
+
+    @__unsafe_nested_origins_read_only
+    @inline(.always)
+    def offset_from(
+        self,
+        other: Pointer[Self.T, _, address_space=Self.address_space],
+    ) -> Int:
+        """Returns the signed distance from `other` to `self` in elements of
+        `T` (not bytes), such that `other.unsafe_offset(result)` produces a
+        pointer equal to `self`.
+
+        Constraints:
+            The pointee type `T` must not be zero-sized.
+
+        Args:
+            other: The pointer to measure the distance from.
+
+        Returns:
+            The signed element distance from `other` to `self`.
+
+        Safety:
+
+        - Both pointers must point into the same allocation (or one past
+          its end); the distance between pointers into unrelated
+          allocations is not meaningful.
+        - The byte distance between the two pointers must be an exact
+          multiple of `size_of[T]()`. Violating this is undefined
+          behavior.
+
+        Examples:
+
+        ```mojo
+        from std.memory.alloc import alloc, dealloc, Layout
+
+        var allocation = alloc(Layout[Int32](length=4))
+        var ptr = allocation.unsafe_ptr()
+        var end = ptr.unsafe_offset(3)
+        print(end.offset_from(ptr))  # => 3
+        print(ptr - end)  # => -3
+        dealloc(allocation^)
+        ```
+        """
+        comptime assert (
+            size_of[Self.T]() > 0
+        ), "offset_from() requires a non-zero-sized pointee type"
+        var byte_diff = Int(self) - Int(other)
+        debug_assert(
+            byte_diff % size_of[Self.T]() == 0,
+            "pointer difference is not a multiple of the element size",
+        )
+        return Int(
+            mlir_value=__mlir_op.`pop.div`[isExact=__mlir_attr.`unit`](
+                byte_diff._mlir_value, size_of[Self.T]()._mlir_value
+            )
+        )
 
     @always_inline("builtin")
     @stable(since="1.3")

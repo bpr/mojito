@@ -1,7 +1,9 @@
-# Mojito's augmented pointer offset converts its literal operand at `Int`,
-# as upstream's `Pointer.__add__` reads `index(offset)`: over a local,
-# a struct's pointer field, and a `mut` pointer parameter, which the
-# assignment stores through. Upstream prints `4`, `5`, and `4`.
+# A pointer offset by a literal through upstream's `unsafe_offset`, which
+# reads `index(offset)`, stored back over a local, a struct's pointer field,
+# and a `mut` pointer parameter, which the assignment stores through. The
+# augmented `p += 1` is rejected, as upstream's `Pointer` declares no
+# `__iadd__` (`type_error/pointer_augmented_offset_rejected.mojo`).
+# Upstream prints `4`, `5`, and `4`.
 from std.memory.alloc import unsafe_alloc
 
 
@@ -13,7 +15,7 @@ struct H:
 
 
 def advance(mut p: Pointer[Int, MutUntrackedOrigin]):
-    p += 1
+    p = p.unsafe_offset(1)
 
 
 def main():
@@ -22,10 +24,10 @@ def main():
     buf[1] = 4
     buf[2] = 5
     var p = buf
-    p += 1
+    p = p.unsafe_offset(1)
     print(p[])
     var h = H(buf)
-    h.p += 2
+    h.p = h.p.unsafe_offset(2)
     print(h.p[])
     var q = buf
     advance(q)

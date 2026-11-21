@@ -3218,17 +3218,18 @@ impl<'a> Specializer<'a> {
                 *instruction = dunder_method_call(*dest, *a, op.dunder(), None, raises, Vec::new());
             }
             // A comparison through a bound names its requirement, which a
-            // struct instance (a `SIMD` among them) answers with its
-            // witness dunder below; any other builtin answers it itself.
+            // struct instance (a `SIMD` among them) or a `Pointer` answers
+            // with its witness dunder below; any other builtin answers it
+            // itself.
             if let MirInstr::BinOp { a, resolved, .. } = instruction
-                && resolved
+                && let Some(dispatch) = resolved
                     .as_deref()
-                    .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
+                    .filter(|symbol| mojito_symbol::symbol::is_trait_dispatch_symbol(symbol))
                 && !function
                     .reg_types
                     .get(&a.0)
                     .map(peel_refs)
-                    .is_some_and(declared_operator_receiver)
+                    .is_some_and(|ty| self.witness_operator_receiver(ty, dispatch))
             {
                 *resolved = None;
             }
@@ -3254,7 +3255,12 @@ impl<'a> Specializer<'a> {
                     .reg_types
                     .get(&a.0)
                     .map(peel_refs)
-                    .is_some_and(declared_operator_receiver)
+                    .is_some_and(|ty| {
+                        resolved.as_deref().map_or_else(
+                            || declared_operator_receiver(ty),
+                            |dispatch| self.witness_operator_receiver(ty, dispatch),
+                        )
+                    })
             {
                 let (resolved, raises) = (resolved.take(), raises.take());
                 *instruction = dunder_method_call(*dest, *a, method, resolved, raises, vec![*b]);
@@ -3279,8 +3285,13 @@ impl<'a> Specializer<'a> {
                 && kwargs.is_empty()
                 && let [other] = args.as_slice()
                 && let Some(op) = comparison_of_dunder(method)
-                && !(function.reg_types.get(&recv.0).map(peel_refs))
-                    .is_none_or(|ty| ty.kind().is_non_simd_struct() || ty.is_simd())
+                && !(function.reg_types.get(&recv.0).map(peel_refs)).is_none_or(|ty| {
+                    ty.kind().is_non_simd_struct()
+                        || ty.is_simd()
+                        || resolved
+                            .as_deref()
+                            .is_some_and(|dispatch| self.declares_witness(ty, dispatch))
+                })
             {
                 *instruction = MirInstr::BinOp {
                     op,

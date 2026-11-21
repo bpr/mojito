@@ -6,12 +6,10 @@ use super::*;
 use mojito_types::types::TyKind;
 
 /// The members of the declared `Pointer` a checker rule answers ahead of
-/// the declaration: `infer_pointer_method`'s arms, the operator and
-/// subscript rules, the construction rules, and the static rules. A member
+/// the declaration: `infer_pointer_method`'s arms, the subscript rules,
+/// the construction rules, and the static rules. A member
 /// off this list resolves to the declared body.
 pub(in crate::checker) const POINTER_RULE_MEMBERS: &[&str] = &[
-    "__int__",
-    "unsafe_offset",
     "unsafe_write",
     "write",
     "unsafe_write_move_from",
@@ -19,16 +17,6 @@ pub(in crate::checker) const POINTER_RULE_MEMBERS: &[&str] = &[
     "unsafe_deinit_pointee",
     "free",
     "unsafe_free",
-    "__eq__",
-    "__ne__",
-    "__lt__",
-    "__le__",
-    "__gt__",
-    "__ge__",
-    "__add__",
-    "__sub__",
-    "__iadd__",
-    "__isub__",
     "__getitem__",
     "__setitem__",
     "__init__",
@@ -59,8 +47,8 @@ pub(in crate::checker) fn pointer_rule_construction(kwargs: &[mojito_ast::ast::K
 }
 
 impl Checker {
-    /// Type a `Pointer[T]` instance method: the public `unsafe_*` operation
-    /// vocabulary (offset, write, take/deinit pointee, free) plus the
+    /// Type a `Pointer[T]` instance method: the public `unsafe_*` memory
+    /// vocabulary (write, take/deinit pointee, free) plus the
     /// deprecated `free()` bridge. Indexed load/store remain ordinary public
     /// pointer subscript syntax.
     #[allow(clippy::too_many_arguments)]
@@ -91,44 +79,6 @@ impl Checker {
             });
         }
         match method {
-            // `Intable.__int__()`: the address, upstream's
-            // `pop.pointer_to_index`.
-            "__int__" => {
-                no_arguments(method, args)?;
-                self.record_builtin_read_receiver(object);
-                Ok(Ty::int())
-            }
-            "unsafe_offset" => {
-                if origin.single_place() {
-                    return Err(TypeError::Unsupported(
-                        "pointer arithmetic and comparison are not supported on an \
-                         origin-bearing Pointer to a single place"
-                            .to_string(),
-                    ));
-                }
-                if args.len() != 1 {
-                    return Err(TypeError::ArityMismatch {
-                        name: "unsafe_offset".to_string(),
-                        expected: 1,
-                        got: args.len(),
-                    });
-                }
-                let offset = self.infer(&args[0])?;
-                if !self.coerces_by_origins(&offset, &Ty::int()) {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "Int".to_string(),
-                        found: offset.to_string(),
-                        context: "argument to 'Pointer.unsafe_offset'".to_string(),
-                    });
-                }
-                self.record_pointer_adjustment(
-                    span.clone(),
-                    mojito_checked::checked::SemanticAdjustment::PointerOffset {
-                        materialized: None,
-                    },
-                );
-                Ok(pointer(elem.clone(), origin.clone()))
-            }
             // `write` overwrites a pointee whose type has no destructor, so
             // it is `unsafe_write`'s store where upstream's `where
             // IsTriviallyDeinitable[U]` holds.

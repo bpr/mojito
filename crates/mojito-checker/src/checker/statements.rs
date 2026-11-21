@@ -2070,15 +2070,18 @@ impl Checker {
                         "immutable reference field".to_string(),
                     ));
                 }
-                // A user-defined value, or a `SIMD` or `Bool` declaring the
-                // operator's in-place dunder, dispatches augmented assignment
-                // to it (`x += y` → `x.__iadd__(y)`), which mutates `mut
-                // self`; Mojo does not fall back to the binary operator. Any
-                // other target keeps the operator path below.
+                // A user-defined value, a `Pointer`, or a `SIMD` or `Bool`
+                // declaring the operator's in-place dunder, dispatches
+                // augmented assignment to it (`x += y` → `x.__iadd__(y)`),
+                // which mutates `mut self`; Mojo does not fall back to the
+                // binary operator, so `p += 1` over a `Pointer`, which
+                // declares no `__iadd__`, is rejected. Any other target keeps
+                // the operator path below.
                 let inplace_operand = target
                     .kind()
                     .as_non_simd_struct()
                     .is_some_and(|(name, _)| self.structs.contains_key(name))
+                    || target.is_pointer()
                     || self.bound_inplace_operator(&target, *op)
                     || op.inplace_dunder().is_some_and(|dunder| {
                         self.declared_receiver_member(&target, dunder).is_some()

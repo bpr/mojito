@@ -171,6 +171,10 @@ pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig
     got_shape.defaults.clone_from(&required.defaults);
     got_shape.positional_only = required.positional_only;
     got_shape.synthesized_default = required.synthesized_default;
+    // `@__unsafe_nested_origins_read_only` decides how the witness's own
+    // calls count the origins their argument types carry, not its type: a
+    // call through the bound counts them as the requirement declares.
+    got_shape.nested_origins = required.nested_origins;
     // A collector is never bound by name, so a witness may rename it, and a
     // call through the bound binds a positional parameter by the
     // requirement's name, so the witness may rename that too.

@@ -1,8 +1,9 @@
-# A pointer offsets backwards through upstream's `Pointer.__sub__`, which
-# reads `index(offset)`, and Mojito's `-=`: `p - 1` over a local,
-# `-=` over a local, a struct's pointer field, and a `mut` pointer
-# parameter, and `-` by a runtime `Int`. Upstream prints `4`, `3`, `4`,
-# `4`, and `3`.
+# A pointer offsets backwards through upstream's `unsafe_offset` by a
+# negative index: over a local, stored back over a local, a struct's pointer
+# field, and a `mut` pointer parameter, and by a runtime `Int`. Upstream's
+# `__sub__` takes only a pointer, so `p - 1` is rejected
+# (`type_error/pointer_subtract_int_rejected.mojo`), and it declares no
+# `__isub__`. Upstream prints `4`, `3`, `4`, `4`, and `3`.
 from std.memory.alloc import unsafe_alloc
 
 
@@ -14,7 +15,7 @@ struct H:
 
 
 def retreat(mut p: Pointer[Int, MutUntrackedOrigin]):
-    p -= 1
+    p = p.unsafe_offset(-1)
 
 
 def main():
@@ -22,18 +23,18 @@ def main():
     buf[0] = 3
     buf[1] = 4
     buf[2] = 5
-    var end = buf + 2
-    var p = end - 1
+    var end = buf.unsafe_offset(2)
+    var p = end.unsafe_offset(-1)
     print(p[])
     var q = end
-    q -= 2
+    q = q.unsafe_offset(-2)
     print(q[])
     var h = H(end)
-    h.p -= 1
+    h.p = h.p.unsafe_offset(-1)
     print(h.p[])
     var r = end
     retreat(r)
     print(r[])
     var n = 2
-    print((end - n)[])
+    print(end.unsafe_offset(-n)[])
     buf.unsafe_free()

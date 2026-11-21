@@ -1322,6 +1322,11 @@ or unsafe-any origins), and a record whose members normalize to fewer, or
 name an origin binder or the receiver, is a parse error. Every older record
 reads unchanged. The package format moves to `mojito-package 250` (R2429).
 
+The package format moves to `mojito-package 251` with schema 1.220
+unchanged: the packaged checked facts lose the `PointerOffset` adjustment,
+since `Pointer.unsafe_offset` and the pointer operators now run the declared
+bodies (R2207).
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and

@@ -103,6 +103,14 @@ impl Specializer<'_> {
             .is_some_and(|target| self.functions.contains_key(target))
     }
 
+    /// Whether an operator through a bound, naming the requirement
+    /// `dispatch`, calls `receiver`'s witness dunder: a struct instance's
+    /// always, and a `Pointer`'s, which declares its comparisons.
+    pub(super) fn witness_operator_receiver(&self, receiver: &Ty, dispatch: &str) -> bool {
+        matches!(receiver.kind(), mojito_types::types::TyKind::Struct(..))
+            || receiver.is_pointer() && self.declares_witness(receiver, dispatch)
+    }
+
     /// Whether a display method takes the `Writable` protocol's writer; any
     /// other `write_to` is an ordinary overload and never serves display.
     pub(super) fn writes_protocol(&self, target: &str) -> bool {

@@ -1667,18 +1667,6 @@ impl<'a> Flatten<'a> {
                 {
                     return loans;
                 }
-                // `unsafe_offset` preserves provenance: forward the receiver's
-                // loans onto the offset pointer.
-                if let Some(object) = method_object
-                    && node.adjustments().iter().any(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }
-                        )
-                    })
-                {
-                    return self.aggregate_borrows(object);
-                }
                 // A method returning a ref-field struct (a borrowing
                 // view/iterator) lends its receiver to the result, exactly as
                 // a view-typed slice result does: a chained temporary

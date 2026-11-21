@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Pointer`'s comparisons, `-`, `offset_from`, `__int__`, `unsafe_offset`,
+  and the deprecated `+` run upstream's bodies, declared verbatim in
+  `std/memory/pointer.mojo`, and `Pointer` conforms to `Comparable`, where
+  checker rules answered them (R2207). `p < q`, `q - p`, a
+  `Comparable`-bound generic over pointers, and a comparison or
+  `unsafe_offset(0)` of a pointer to one checked value now run on both
+  backends, and an offset passed to a generic parameter received by address
+  verifies (`assets/ok/pointer_declared_comparisons.mojo`,
+  `assets/ok/pointer_offset_by_address_generic.mojo`). A same-origin pointer
+  selects the `rhs: Self` overload, since a method's origin binders now
+  count toward its parameter signature, and a witness's
+  `@__unsafe_nested_origins_read_only` no longer fails a trait conformance.
+  `pop.div` accepts upstream's unit `isExact` attribute. The package format
+  is `mojito-package 251`.
+
 - Upstream's address builtin `__get_address_as_uninit_lvalue(k) = value`
   is accepted, as at the pin (R2024): the value initializes the place a
   `!kgen.pointer` addresses without destroying what it held, and need not
@@ -2119,6 +2134,13 @@ to evolve under the `0.x` compatibility rules.
   (`assets/ok/literal_dunder_instances.mojo`).
 
 ### Changed
+
+- `p += n`, `p -= n`, and `p - n` over a `Pointer` are rejected, as at the
+  pin, whose `Pointer` declares no `__iadd__`/`__isub__` and whose `__sub__`
+  takes only a pointer (R2207, R2445;
+  `assets/type_error/pointer_augmented_offset_rejected.mojo`,
+  `assets/type_error/pointer_subtract_int_rejected.mojo`); `unsafe_offset`
+  steps either way.
 
 - The one-argument `Pointer[T]` in a type position is rejected with the
   pin's "'Pointer' failed to infer parameter 'origin'" (R2417), where it
