@@ -689,7 +689,7 @@ struct String(
     Writable,
     Writer,
 ):
-    var data: Pointer[Byte]
+    var data: Pointer[Byte, MutUntrackedOrigin]
     var size: Int
     var cap: Int
 

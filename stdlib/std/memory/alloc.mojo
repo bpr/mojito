@@ -99,15 +99,16 @@ def unsafe_alloc[T: AnyType](count: Int, *, alignment: Int = 0) -> Pointer[T, Mu
     return _RawAlloc[T](count, alignment).ptr
 
 
-# The single crossing to the compiler's heap primitive. A constructor rather
-# than a free helper because expression-position `Pointer[T]` with a
-# bare generic parameter parses as runtime indexing; `Self.T` in a struct
-# body does not.
+# The single crossing to the compiler's heap primitive, the compiler-private
+# static `Pointer[T, MutUntrackedOrigin].alloc[_aligned]`. A constructor
+# rather than a free helper because an expression-position `Pointer[...]`
+# with a bare generic parameter parses as runtime indexing; `Self.T` in a
+# struct body does not.
 struct _RawAlloc[T: AnyType](Movable):
     var ptr: Pointer[Self.T, MutUntrackedOrigin]
 
     def __init__(out self, count: Int, alignment: Int):
         if alignment == 0:
-            self.ptr = Pointer[Self.T].alloc(count)
+            self.ptr = Pointer[Self.T, MutUntrackedOrigin].alloc(count)
         else:
-            self.ptr = Pointer[Self.T].alloc_aligned(count, alignment)
+            self.ptr = Pointer[Self.T, MutUntrackedOrigin].alloc_aligned(count, alignment)

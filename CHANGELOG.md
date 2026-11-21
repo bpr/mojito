@@ -1992,6 +1992,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The one-argument `Pointer[T]` in a type position is rejected with the
+  pin's "'Pointer' failed to infer parameter 'origin'" (R2417), where it
+  silently meant `MutUntrackedOrigin`: a local, parameter, field,
+  `comptime` alias, nested type argument, or `mut=`-only bracket must bind
+  the origin or unbind it with `_`. In expression position `Pointer[Int]`
+  is the partial application `Pointer[Int, _]`: `Pointer[Int](to=x)` still
+  runs, `Pointer[Int].unsafe_dangling()` fails to infer the parent
+  struct's `mut`, and an unknown member reports "'Pointer[Int, _]' value
+  has no attribute". The bundled `Optional`, `Array`, and `String` storage
+  and the heap crossing spell `MutUntrackedOrigin`.
+
 - `UnsafePointer` is no longer a name (R2416): the pin declares none, so
   `def f(p: UnsafePointer[Int, _])` reports "unknown type 'UnsafePointer'",
   where it ran as a `Pointer`, and a user struct named `UnsafePointer` is

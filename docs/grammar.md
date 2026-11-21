@@ -1685,9 +1685,15 @@ protocol conformances are synthesized conditionally from its elements.
 
 `Pointer[T, origin]` is the built-in low-level pointer — a handle to contiguous
 heap storage of element type `T`. The pin declares no `UnsafePointer`, so that
-name is unknown unless a program declares it; `MutPointer`/`ImmPointer` fix the origin argument's mutability; the
-one-argument `Pointer[T]` spelling resolves to `MutUntrackedOrigin`, the origin
-of heap allocations. Unlike the value-type collections, a pointer **aliases**:
+name is unknown unless a program declares it; `MutPointer`/`ImmPointer` fix the origin argument's mutability.
+`origin` has no default: a type position must bind it (`MutUntrackedOrigin`
+is the origin of heap allocations) or unbind it with `_` or `...`, and one
+leaving it open (`var y: Pointer[Int] = p`, a field, a parameter, a
+`comptime` alias, a nested type argument) fails to infer it, as the pin
+reports. In expression position `Pointer[T]` is the partial application
+`Pointer[T, _]`: `Pointer[Int](to=x)` infers the origin from its
+initializer, while a static call through it (`Pointer[Int].unsafe_dangling()`)
+fails to infer the parent struct's parameters. Unlike the value-type collections, a pointer **aliases**:
 copying it preserves allocation identity and the typed element offset, so two copies
 refer to the *same* storage (this is what lets
 a value-type struct own mutable heap storage, e.g. a self-hosted `List`).
@@ -1702,7 +1708,8 @@ a value-type struct own mutable heap storage, e.g. a self-hosted `List`).
   from `std.memory`. The static `Pointer[T].alloc[_aligned]` surface is
   rejected in user code with the pin's "'Pointer[Int, _]' value has no
   attribute 'alloc'" — it survives only as the compiler-private heap
-  primitive inside bundled stdlib sources.
+  primitive `Pointer[T, MutUntrackedOrigin].alloc[_aligned]` inside bundled
+  stdlib sources.
 - **Dereference**: the empty subscript `ptr[]` reads, and `ptr[] = e` (and
   `ptr[] += e`) writes, the pointee at offset 0 — current Mojo's direct
   dereference spelling. Empty brackets on a non-pointer value are a checker
@@ -1729,7 +1736,7 @@ a value-type struct own mutable heap storage, e.g. a self-hosted `List`).
 - **`free()`** (deprecated upstream alias of `unsafe_free()`): invalidates the
   allocation and every alias. Non-base frees,
   double frees, use-after-free, and out-of-allocation access are runtime errors.
-- **Dangling**: `Pointer[T].unsafe_dangling()` creates a non-null placeholder
+- **Dangling**: `Pointer[T, origin].unsafe_dangling()` creates a non-null placeholder
   that can be stored but not dereferenced or freed (the pre-rename
   `dangling()` spelling rejects with a rename hint).
 

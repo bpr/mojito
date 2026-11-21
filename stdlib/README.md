@@ -22,7 +22,7 @@ A program always imports the library as `std`, wherever its search roots
 point, as upstream's toolchain does.
 
 - `std/collections/array.mojo` — a fixed-size `Array[T: AnyType, length: Int]`
-  backed by an `Pointer[T]`, with conditional
+  backed by a `Pointer[T, MutUntrackedOrigin]`, with conditional
   `Copyable`/`Movable`/`Deinitable`/`Equatable`/`Iterable`/`IterableOwned`/
   `Writable` conformances. Construction is the checker-driven variadic literal
   constructor (`[a, b, c]` displays), keyword `fill`, `copy:`, and
@@ -34,8 +34,8 @@ point, as upstream's toolchain does.
   `ref[iterable_origin] Array[T, length]`); owned iteration moves the buffer
   into `_ArrayOwnedIter`, whose methods are where-gated so the `T: AnyType`
   template stays checkable.
-- `std/collections/list.mojo` — a generic, growable `List[T]` backed by an
-  `Pointer[T]`, with the full value-type lifecycle (ordinary `__init__`,
+- `std/collections/list.mojo` — a generic, growable `List[T]` backed by a
+  `Pointer[T, MutUntrackedOrigin]`, with the full value-type lifecycle (ordinary `__init__`,
   `__init__(..., copy:)`, and `__init__(..., deinit move:)`), subscript read/write
   (`__getitem__`/`__setitem__`), `__len__`, and the iterator protocol
   (`__iter__(ref self)` → a borrowing

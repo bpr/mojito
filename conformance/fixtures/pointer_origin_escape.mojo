@@ -1,7 +1,8 @@
 # Both implementations reject returning a pointer whose inferred origin is a
-# local: the pinned nightly removed implicit widening to unsafe-any origins,
-# and Mojito reports the escape directly.
-def escape() -> Pointer[Int]:
+# local as the untracked heap origin: the pinned nightly reports that the
+# local's origin does not convert to `MutUntrackedOrigin`, and Mojito reports
+# the escape directly.
+def escape() -> Pointer[Int, MutUntrackedOrigin]:
     var local = 7
     return Pointer(to=local)
 

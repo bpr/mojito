@@ -1332,6 +1332,17 @@ impl Checker {
                 .is_ok_and(|built| *built.meta() == MetaTy::Type)
     }
 
+    /// The pin's verdict on a type application that leaves a parameter it
+    /// cannot infer open (`Pointer[Int]`, whose `origin` has no default).
+    pub(super) fn uninferred_type_application(&self, expr: &Expr) -> Option<TypeError> {
+        if !self.may_denote_type(expr) {
+            return None;
+        }
+        self.build_ct(expr, Recording::Silent)
+            .err()
+            .filter(|error| matches!(error, TypeError::CannotInferParam { .. }))
+    }
+
     /// `type_of(operand)`, upstream's `MagicFunctionNode::emitTypeOf`: the
     /// type of the operand, which is typed without being evaluated (inside a
     /// probe, as upstream emits it into a block it then erases). A trait or a

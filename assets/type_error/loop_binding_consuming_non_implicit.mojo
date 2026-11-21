@@ -4,7 +4,7 @@
 from std.memory.alloc import unsafe_alloc
 
 struct Buf(Copyable, Movable):
-    var data: Pointer[Byte]
+    var data: Pointer[Byte, MutUntrackedOrigin]
 
     def __init__(out self, seed: Int):
         self.data = unsafe_alloc[Byte](1)
@@ -18,7 +18,7 @@ struct Buf(Copyable, Movable):
         self.data = move.data^
 
     def __deinit__(deinit self):
-        self.data.free()
+        self.data.unsafe_free()
 
 def main() raises:
     var a = List[Buf]()

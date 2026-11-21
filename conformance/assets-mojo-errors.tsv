@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1284
+# swept-count	1288
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/function_bracket_explicit_mut_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
@@ -730,7 +730,7 @@ assets/type_error/llvm_intrinsic_scalef_at_compile_time.mojo	compile-reject	agre
 assets/type_error/llvm_intrinsic_stepvector_bool.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
 assets/type_error/llvm_intrinsic_tan_at_compile_time.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/llvm_intrinsic_unknown_name.mojo	compile-reject	agree	error: could not find LLVM intrinsic: "llvm.no.such.thing" : !kgen.string
-assets/type_error/loop_binding_consuming_non_implicit.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/type_error/loop_binding_consuming_non_implicit.mojo	compile-reject	agree	error: value of type '_ListIter[Buf, origin_of(a)].Element' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/loop_immutable_binding_mutation.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/mapping_key_ref_write.mojo	runs	subset	the pin runs it;Mojito rejects: must be mutable
 assets/type_error/match_bare_binding_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -952,7 +952,7 @@ assets/type_error/pointer_bracket_mut_keyword_after_positional.mojo	compile-reje
 assets/type_error/pointer_bracket_mut_true_imm_origin.mojo	compile-reject	agree	error: value passed to 'origin' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/pointer_bracket_positional_address_space.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/pointer_construction_bracket_origin_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
-assets/type_error/pointer_escape.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/type_error/pointer_escape.mojo	compile-reject	agree	error: cannot implicitly convert 'Pointer[Int, origin_of(local)]' value to 'Pointer[Int, MutUntrackedOrigin]'
 assets/type_error/pointer_field_bare_origin_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_field_fieldwise_mut_true_immutable_place.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pointer_field_imm_origin_cast_nested_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -973,6 +973,10 @@ assets/type_error/pointer_kgen_pointer_subscript.mojo	compile-reject	agree	error
 assets/type_error/pointer_lit_ref_not_its_referent.mojo	compile-reject	agree	error: cannot implicitly convert 'ref[x] Int' value to 'Int'
 assets/type_error/pointer_lit_ref_origin_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pointer_litref_as_mvalue_not_lit_ref.mojo	compile-reject	agree	error: operand isn't a '!lit.ref' type 'Int'
+assets/type_error/pointer_one_argument_field_origin_uninferred.mojo	compile-reject	agree	error: 'Pointer' failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/type_error/pointer_one_argument_local_origin_uninferred.mojo	compile-reject	agree	error: 'Pointer' failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/type_error/pointer_one_argument_parameter_origin_uninferred.mojo	compile-reject	agree	error: 'Pointer' failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
+assets/type_error/pointer_one_argument_static_uninferred.mojo	compile-reject	agree	error: invalid call to 'unsafe_dangling': failed to infer parameter 'mut' of parent struct 'Pointer'
 assets/type_error/pointer_origin_cast_no_downgrade.mojo	compile-reject	agree	error: invalid call to 'unsafe_origin_cast': value passed to 'target_origin' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/pointer_origin_cast_no_upgrade.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_param_symbolic_origin_ref_result_write.mojo	compile-reject	agree	error: expression must be mutable in assignment

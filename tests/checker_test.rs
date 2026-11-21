@@ -5849,7 +5849,7 @@ fn origin_bearing_pointer_rejects_allocation_operations() {
 fn returned_place_pointer_is_a_precise_escape_error() {
     assert!(matches!(
         err(
-            "def escape() -> Pointer[Int]:\n    var local = 7\n    return Pointer(to=local)\n\ndef main():\n    print(1)\n"
+            "def escape() -> Pointer[Int, MutUntrackedOrigin]:\n    var local = 7\n    return Pointer(to=local)\n\ndef main():\n    print(1)\n"
         ),
         TypeError::PointerEscapesOrigin
     ));
@@ -6729,22 +6729,32 @@ fn truthiness_test_is_a_bool_call_in_the_enclosing_effect_context() {
 #[test]
 fn unsafe_pointer_typing() {
     // alloc + index read/write + free type-check.
-    ok(
-        "def main():\n    var p: Pointer[Int] = Pointer[Int].alloc(4)\n    p[0] = 1\n    var x: Int = p[0]\n    p.free()\n",
+    ok_std(
+        "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](4)\n    p[0] = 1\n    var x: Int = p[0]\n    p.free()\n",
     );
-    // `alloc` needs an Int count.
+    // `unsafe_alloc` needs an Int count.
     assert!(matches!(
-        err("def main():\n    var p: Pointer[Int] = Pointer[Int].alloc(\"x\")\n"),
+        err_std(
+            "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](\"x\")\n"
+        ),
         TypeError::TypeMismatch { .. }
     ));
-    // A bare parameterized type is a type value, which a `var` cannot hold.
+    // A complete parameterized type is a type value, which a `var` cannot
+    // hold…
+    assert!(matches!(
+        err_std("def main():\n    var x = Pointer[Int, MutUntrackedOrigin]\n    print(1)\n"),
+        TypeError::DynamicTypeValue(_)
+    ));
+    // …and one leaving `origin` open fails to infer it first, as the pin does.
     assert!(matches!(
         err("def main():\n    var x = Pointer[Int]\n    print(1)\n"),
-        TypeError::DynamicTypeValue(_)
+        TypeError::CannotInferParam { ref name, ref param } if name == "Pointer" && param == "origin"
     ));
     // A store must match the pointee type.
     assert!(matches!(
-        err("def main():\n    var p: Pointer[Int] = Pointer[Int].alloc(1)\n    p[0] = \"no\"\n"),
+        err_std(
+            "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](1)\n    p[0] = \"no\"\n"
+        ),
         TypeError::TypeMismatch { .. }
     ));
 }
@@ -6772,10 +6782,21 @@ fn unsafe_pointer_is_an_unknown_name() {
 
 #[test]
 fn pointer_names_resolve_to_one_builtin_type() {
-    // The one-argument spelling is the mutable untracked origin.
-    ok_std(
-        "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](1)\n    p[unsafe_offset=0] = 1\n    var q: Pointer[Int] = p\n    q.unsafe_free()\n",
-    );
+    // `origin` has no default: a type position leaving it open fails to
+    // infer it, as a local, a field, and a parameter…
+    for source in [
+        "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](1)\n    var q: Pointer[Int] = p\n    q.unsafe_free()\n",
+        "struct S:\n    var data: Pointer[Int]\n",
+        "def f(p: Pointer[Int]) -> Int:\n    return p[]\n",
+    ] {
+        assert!(
+            matches!(err_std(source), TypeError::CannotInferParam { ref name, ref param } if name == "Pointer" && param == "origin"),
+            "{source}"
+        );
+    }
+    // …while an expression `Pointer[Int]` is the partial application its
+    // initializer completes.
+    ok_std("def main():\n    var x = 1\n    var p = Pointer[Int](to=x)\n    print(p[])\n");
     // `Pointer(to=x)` is the current spelling of the place-pointer constructor.
     ok("def main():\n    var x = 42\n    var p = Pointer(to=x)\n    print(p[0])\n");
     // The prelude's mutability-fixing aliases accept a matching origin
@@ -6910,14 +6931,14 @@ fn unsafe_pointer_method_vocabulary_typechecks() {
     // The element is spelled through a generic application because a bare
     // user-struct name in a bracket parameter list parses as runtime indexing.
     assert!(matches!(
-        err(
-            "@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = Pointer[Linear[Int]].alloc(1)\n    p.unsafe_deinit_pointee()\n",
+        err_std(
+            "from std.memory.alloc import unsafe_alloc\n\n@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = unsafe_alloc[Linear[Int]](1)\n    p.unsafe_deinit_pointee()\n",
         ),
         TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Deinitable"
     ));
     assert!(matches!(
-        err(
-            "@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = Pointer[Linear[Int]].alloc(1)\n    var v = Linear[Int]()\n    p.unsafe_write(copy=v)\n    v^.finish()\n    p.unsafe_free()\n",
+        err_std(
+            "from std.memory.alloc import unsafe_alloc\n\n@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = unsafe_alloc[Linear[Int]](1)\n    var v = Linear[Int]()\n    p.unsafe_write(copy=v)\n    v^.finish()\n    p.unsafe_free()\n",
         ),
         TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Copyable"
     ));
@@ -6969,10 +6990,10 @@ fn retired_pointer_storage_method_spellings_stay_gone() {
     // unsafe_offset(i).unsafe_take_pointee()/unsafe_deinit_pointee().
     for method in ["take", "destroy"] {
         let source = format!(
-            "def main():\n    var p = Pointer[Int].alloc(1)\n    p[0] = 7\n    var result = p.{method}(0)\n"
+            "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p = unsafe_alloc[Int](1)\n    p[0] = 7\n    var result = p.{method}(0)\n"
         );
         assert!(
-            matches!(err(&source), TypeError::NoSuchMethod { method: ref found, .. } if found == method),
+            matches!(err_std(&source), TypeError::NoSuchMethod { method: ref found, .. } if found == method),
             "source unexpectedly acquired Pointer.{method}"
         );
     }
@@ -6981,7 +7002,15 @@ fn retired_pointer_storage_method_spellings_stay_gone() {
         err("def main():\n    var p = Pointer[Int].dangling()\n"),
         TypeError::Unsupported(message) if message.contains("unsafe_dangling")
     ));
-    ok("def main():\n    var p = Pointer[Int].unsafe_dangling()\n    print(1)\n");
+    // The partial application `Pointer[Int, _]` cannot infer the parent
+    // struct's parameters for `unsafe_dangling`, which a full bracket binds.
+    assert!(matches!(
+        err("def main():\n    var p = Pointer[Int].unsafe_dangling()\n"),
+        TypeError::BadCall { reason, .. } if reason.contains("failed to infer parameter 'mut'")
+    ));
+    ok_std(
+        "def main():\n    var p = Pointer[Int, MutUntrackedOrigin].unsafe_dangling()\n    print(1)\n",
+    );
 }
 
 #[test]
@@ -7033,7 +7062,7 @@ fn generic_hand_written_init() {
     );
     // A Pointer field of the type parameter, allocated with `Self.T`.
     ok(
-        "from std.memory.alloc import unsafe_alloc\n\nstruct Buf[T: Copyable & Movable]:\n    var data: Pointer[Self.T]\n    def __init__(out self):\n        self.data = unsafe_alloc[Self.T](4)\n    def set0(mut self, v: Self.T):\n        self.data[0] = v.copy()\n    def get0(self) -> Self.T:\n        return self.data[0].copy()\n\ndef main():\n    var b: Buf[Int] = Buf[Int]()\n    b.set0(9)\n    print(b.get0())\n",
+        "from std.memory.alloc import unsafe_alloc\n\nstruct Buf[T: Copyable & Movable]:\n    var data: Pointer[Self.T, MutUntrackedOrigin]\n    def __init__(out self):\n        self.data = unsafe_alloc[Self.T](4)\n    def set0(mut self, v: Self.T):\n        self.data[0] = v.copy()\n    def get0(self) -> Self.T:\n        return self.data[0].copy()\n\ndef main():\n    var b: Buf[Int] = Buf[Int]()\n    b.set0(9)\n    print(b.get0())\n",
     );
     // A wrong-typed constructor argument is still rejected (solved T = Int here).
     assert!(matches!(

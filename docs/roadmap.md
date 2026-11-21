@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2447**.
+Next free ID: **R2448**.
 
 ## Ordered Work
 
@@ -9815,21 +9815,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2417 The one-argument `Pointer[T]` is accepted, where the pin
-  cannot infer its origin**
+- [ ] **R2447 The bundled heap crossing is a compiler-private static
+  `Pointer[T, MutUntrackedOrigin].alloc`, where upstream's `alloc` calls
+  `_malloc`**
 
-  `var y: Pointer[Int] = p` runs, where the pin reports "'Pointer' failed
-  to infer parameter 'origin'".
-  - `pointer_type` maps the one-argument spelling to
-    `MutUntrackedOrigin`.
-  - The bundled `Optional`, `Array`, and `String` storage fields and
-    `alloc.mojo`'s `Pointer[Self.T].alloc(count)` depend on it.
-  - Respell them with an explicit `MutUntrackedOrigin` and upstream's
-    `alloc(Layout…)`, then reject the spelling.
-  - Probe: `Pointer[T].alloc` and `alloc_aligned` go with it.
-  - Found while planning R2205 (2026-11-20).
-  - Depends on R2416.
-  - Model: Fable, Not Planned.
+  `std/memory/alloc.mojo`'s `_RawAlloc` allocates through a static
+  `alloc`/`alloc_aligned` the checker answers on `Pointer`, which the
+  pin's `Pointer` does not declare, where upstream's `alloc` calls
+  `_malloc` from `std.memory.memory`.
+  - The lever is `_RawAlloc` and `infer_static_method`'s `alloc` arm
+    (`checker/method_calls/statics.rs`), which `is_bundled_stdlib_source`
+    gates; the VM and Pliron lower the primitive.
+  - Declare upstream's `_malloc` (its `pop`/external crossing) and route
+    `_RawAlloc` through it, then delete the static arm.
+  - Related: R146 (the path gate) and R36 (`Layout` alignment).
+  - Found while landing R2417 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2444 `Pointer.free()` resolves, where the pin's `Pointer` has only
   `unsafe_free`**
@@ -13226,7 +13228,7 @@ residue found inside a task moves to the task that owns its fix.
 - [ ] **R1421 `Optional` stores its value in a heap allocation, where
   upstream's holds it inline**
 
-  Mojito's `Optional[T]` is an `Pointer[T]` to one heap slot plus a
+  Mojito's `Optional[T]` is a `Pointer[T, MutUntrackedOrigin]` to one heap slot plus a
   size, allocated even when empty, where upstream's is a
   `Variant[_NoneType, T]` held inline.
   - Every `Optional` costs an allocation and a free, and a struct holding
@@ -14180,12 +14182,12 @@ Track: `tooling`.
 
 - [ ] **R146 Naming the bundled stdlib with `-I` breaks every program**
 
-  Problem: `mojito run -I stdlib FILE` fails with `'Pointer[T, _]' value
-  has no attribute 'alloc'` even for a program that only prints, and
+  Problem: `mojito run -I stdlib FILE` fails with `'Pointer[T,
+  MutUntrackedOrigin]' value has no attribute 'alloc'` even for a program that only prints, and
   so do the legacy flat facades (`from list import List`) that `-I stdlib`
   exists to serve.
   - `stdlib/std/memory/alloc.mojo` keeps the one sanctioned
-    `Pointer[T].alloc` crossing, allowed only when
+    `Pointer[T, MutUntrackedOrigin].alloc` crossing (R2447), allowed only when
     `is_bundled_stdlib_source` in
     `crates/mojito-checker/src/checker/overload_support.rs` says the file is
     bundled.

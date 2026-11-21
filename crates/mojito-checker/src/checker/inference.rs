@@ -3519,7 +3519,7 @@ pub(super) fn contextual_member_name(expression: &Expr) -> String {
 
 /// The error for a type application read as a runtime value
 /// (`print(Pair[1, 2])`): a type is only valid as a static-method receiver
-/// (`Pointer[T].alloc(…)`), typed in `infer_method_call`.
+/// (`Pointer[T, o].unsafe_dangling()`), typed in `infer_method_call`.
 pub(super) fn type_read_as_value(name: &str) -> TypeError {
     TypeError::TypeMismatch {
         expected: "a value".to_string(),

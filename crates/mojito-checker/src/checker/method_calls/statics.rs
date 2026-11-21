@@ -15,11 +15,13 @@ pub(super) struct StaticReceiver {
 
 impl Checker {
     /// Type a static method on a parameterized built-in type. Currently only
-    /// `Pointer[T].unsafe_dangling()` and the compiler-private heap primitive
-    /// `Pointer[T].alloc(count: Int) -> Pointer[T]` (plus `alloc_aligned`),
-    /// reachable only from bundled standard-library sources: the pin's
-    /// `Pointer` declares no static allocation, so user code allocates
-    /// through `std.memory`.
+    /// `Pointer[T, origin].unsafe_dangling()` and the compiler-private heap
+    /// primitive `Pointer[T, MutUntrackedOrigin].alloc(count: Int)` (plus
+    /// `alloc_aligned`), reachable only from bundled standard-library
+    /// sources: the pin's `Pointer` declares no static allocation, so user
+    /// code allocates through `std.memory`. A bracket binding no origin is
+    /// the partial application `Pointer[T, _]`: the pin looks the attribute
+    /// up on it first, then fails to infer the parent struct's parameters.
     pub(in crate::checker) fn infer_static_method(
         &self,
         receiver: &SourceSpan,
@@ -35,6 +37,21 @@ impl Checker {
                 method: method.to_string(),
             });
         }
+        let bracket = self.pointer_bracket(targs)?;
+        if let (Some(element), None) = (&bracket.element, &bracket.origin) {
+            let user_source = source.is_some() && !is_bundled_stdlib_source(source);
+            return Err(match method {
+                "dangling" => dangling_renamed(),
+                "alloc" | "alloc_aligned" if !user_source => {
+                    uninferred_parent_parameter(method, bracket.mutability)
+                }
+                "unsafe_dangling" => uninferred_parent_parameter(method, bracket.mutability),
+                _ => TypeError::NoTypeAttribute {
+                    type_name: format!("{}[{element}, _]", mojito_types::types::POINTER_TYPE_NAME),
+                    attribute: method.to_string(),
+                },
+            });
+        }
         let (ptr_ty, attributes) = self.pointer_type(targs)?;
         self.record_declared_attributes(receiver.clone(), &attributes);
         match method {
@@ -43,14 +60,8 @@ impl Checker {
                 // seam, which retains the primitive; every linked user file
                 // carries its path and must allocate through std.memory.
                 if source.is_some() && !is_bundled_stdlib_source(source) {
-                    let type_name = match ptr_ty.pointer_element() {
-                        Some(element) if self.pointer_bracket(targs)?.origin.is_none() => {
-                            format!("{}[{element}, _]", mojito_types::types::POINTER_TYPE_NAME)
-                        }
-                        _ => ptr_ty.to_string(),
-                    };
                     return Err(TypeError::NoTypeAttribute {
-                        type_name,
+                        type_name: ptr_ty.to_string(),
                         attribute: method.to_string(),
                     });
                 }
@@ -85,9 +96,7 @@ impl Checker {
                 Ok(ptr_ty)
             }
             // The pre-rename spelling is gone upstream and stays gone here.
-            "dangling" => Err(TypeError::Unsupported(
-                "'dangling()' was renamed in Mojo; use 'Pointer[T].unsafe_dangling()'".to_string(),
-            )),
+            "dangling" => Err(dangling_renamed()),
             _ => Err(TypeError::NoSuchMethod {
                 object_type: ptr_ty.to_string(),
                 method: method.to_string(),
@@ -889,5 +898,26 @@ impl Checker {
             &patterns,
             &actuals,
         )
+    }
+}
+
+/// The pre-rename `Pointer.dangling()` spelling, gone upstream.
+fn dangling_renamed() -> TypeError {
+    TypeError::Unsupported(
+        "'dangling()' was renamed in Mojo; use 'Pointer[T, origin].unsafe_dangling()'".to_string(),
+    )
+}
+
+/// A static call through the partial application `Pointer[T, _]`: the pin
+/// infers `mut` first, then the origin a `mut=` literal leaves open.
+fn uninferred_parent_parameter(method: &str, mutability: Option<bool>) -> TypeError {
+    let parameter = if mutability.is_some() {
+        "origin"
+    } else {
+        "mut"
+    };
+    TypeError::BadCall {
+        func: method.to_string(),
+        reason: format!("failed to infer parameter '{parameter}' of parent struct 'Pointer'"),
     }
 }

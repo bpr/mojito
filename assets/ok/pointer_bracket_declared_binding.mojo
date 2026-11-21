@@ -3,7 +3,8 @@
 # address_space: AddressSpace = .GENERIC]`: keywords bind any slot by name,
 # `mut=` only ahead of the positionals, and `mut=False` passes the origin
 # as immutable. A bracketed `Pointer[...](to=x)` names the instance the
-# place's pointer converts to.
+# place's pointer converts to; `Pointer[Int](to=x)` is the partial
+# application whose initializer infers the origin.
 from std.memory import AddressSpace
 
 
@@ -36,5 +37,6 @@ def main():
     print(j[], j.mut, k[], k.mut, l[], l.mut)
     var m = Pointer[Int, MutAnyOrigin](to=x)
     m[] = 7
-    print(x, m[])
+    var n = Pointer[Int](to=x)
+    print(x, m[], n[])
     print(address_is_set(p), address_is_set(p.as_imm()))

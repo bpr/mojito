@@ -542,7 +542,7 @@ pub(super) fn bundled_struct_source<'a>(
     })
 }
 
-/// Static `Pointer[T].alloc[_aligned]` is the compiler's heap primitive,
+/// Static `Pointer[T, MutUntrackedOrigin].alloc[_aligned]` is the compiler's heap primitive,
 /// retired from source-language API by the current layout-based model (the
 /// audited head rejects it). The `std/memory/` package modules (`alloc.mojo`,
 /// the allocation crossing; `maybe_uninit.mojo`, which names the

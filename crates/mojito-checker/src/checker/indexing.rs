@@ -243,7 +243,7 @@ impl Checker {
                 }
                 // A pointer is a value: a store through it needs its origin's
                 // mutable capability (`check_pointer_write` below), not a
-                // mutable binding, so `def w(p: Pointer[Int]): p[0] = 2`
+                // mutable binding, so `def w(p: MutPointer[Int, _]): p[0] = 2`
                 // writes through the parameter as upstream does.
                 let inferred = self.infer(object)?;
                 let obj_ty = match inferred.kind() {

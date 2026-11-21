@@ -4189,9 +4189,10 @@ impl Checker {
         Ok(hasher)
     }
 
-    /// Resolve a `Pointer[...]` bracket by [`Self::pointer_bracket`]. A bracket naming
-    /// no origin is the one-argument compatibility spelling, which resolves
-    /// to the untracked origin of heap allocations until R2417 withdraws it.
+    /// Resolve a `Pointer[...]` bracket by [`Self::pointer_bracket`]. The pin's
+    /// `origin` has no default, so a type position must bind it (or unbind
+    /// it explicitly with `_` or `...`); a bracket leaving it open fails to
+    /// infer it, as the pin reports.
     pub(super) fn pointer_type(
         &self,
         args: &[mojito_ast::ast::ParamArg],
@@ -4203,12 +4204,12 @@ impl Checker {
                 reason: "failed to infer parameter 'T'".to_string(),
             });
         };
-        let origin =
-            bracket
-                .origin
-                .unwrap_or_else(|| mojito_types::origin::PointerOrigin::Untracked {
-                    mutable: bracket.mutability != Some(false),
-                });
+        let Some(origin) = bracket.origin else {
+            return Err(TypeError::CannotInferParam {
+                name: mojito_types::types::POINTER_TYPE_NAME.to_string(),
+                param: "origin".to_string(),
+            });
+        };
         let address_space = bracket
             .address_space
             .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);

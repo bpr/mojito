@@ -1609,9 +1609,15 @@ impl Checker {
                 if value
                     .bracket_application()
                     .is_some_and(|(source, _)| self.lookup(source).is_none())
-                    && self.denotes_type_value(value)
                 {
-                    return Err(TypeError::DynamicTypeValue(name.clone()));
+                    if self.denotes_type_value(value) {
+                        return Err(TypeError::DynamicTypeValue(name.clone()));
+                    }
+                    // An application leaving a parameter open (`Pointer[Int]`)
+                    // fails to infer it before it is a value at all.
+                    if let Some(error) = self.uninferred_type_application(value) {
+                        return Err(error);
+                    }
                 }
                 self.register_named_bindings(value)?;
                 let (contextual, origin_demands) = match ty.as_ref() {

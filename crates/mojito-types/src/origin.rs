@@ -706,14 +706,10 @@ impl Mutability {
     }
 }
 
-/// Provenance retained by an origin-bearing unsafe pointer type.
+/// The pointer projection a clone origin binder re-applies for a caller place.
 ///
-/// The one-argument `Pointer[T]` compatibility spelling resolves to the
-/// mutable untracked origin (`MutUntrackedOrigin`, the origin of heap
-/// allocations); all spellings remain explicit through checked HIR/MIR and are
-/// erased only by the VM value representation.
-/// The pointer projection a clone origin binder re-applies when it stands
-/// for a caller place ([`PointerOrigin::clone_bindable_place`]): the place's
+/// When the binder stands for a caller place
+/// ([`PointerOrigin::clone_bindable_place`]), it carries the place's
 /// mutability, then the interior-generation tags and terminal `._subtree`
 /// below the base place the binder binds.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
