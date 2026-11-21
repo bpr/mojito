@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2476**.
+Next free ID: **R2480**.
 
 ## Ordered Work
 
@@ -3976,6 +3976,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `p + 1` over a `Pointer` calls upstream's
     `@deprecated(use=unsafe_offset)` `__add__` silently, where the pin
     warns "'__add__' is deprecated, use 'unsafe_offset' instead".
+  - Probe: `p[0]` over `Pointer(to=x)` warns at the pin that positional
+    `__getitem__` is deprecated, once R2473 dispatches it.
   - Found while landing R192 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7840,6 +7842,31 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2476 A keyword subscript store through a `ref` getter is
+  rejected**
+
+  `s[k=0] = 5` and `s[k=0] += 2`, over `__getitem__(ref self, *, k: Int)
+  -> ref[self.a] Int`, print `7` at the pin, where Mojito rejects them:
+  "keyword subscript assignment ('[k=…] = value') is not supported".
+  - `reject_keyword_subscript_store` (`checker/indexing.rs`) fires for
+    every keyword store, the getter-reference lvalue included.
+  - `check_subscript_reference_assignment` destructures only `Index`, and
+    the augmented path in `checker/statements.rs` takes only positional
+    arguments.
+  - MIR's augmented subscript builder (`lower_stmt.rs`) has an
+    `unreachable!` for a keyword argument, and the plain store falls to
+    "checked subscript assignment lacks descriptor metadata".
+  - Probe the pin on a keyword `__setitem__` store before deciding whether
+    that form stays rejected.
+  - Probe: the store above prints `7` on both backends, and a store
+    through an immutable `ref` keyword getter is rejected with the
+    reference-mutability message.
+  - It blocks `p[unsafe_offset=i] = v` once the pointer subscript
+    dispatches (R2473).
+  - Found while planning R2473 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2212 A pointer to one checked value cannot step off its
   value, where the pin computes the address**
 
@@ -10934,37 +10961,117 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R2477 An explicit `p.__getitem__(...)` call finds no method,
+  where upstream's declared `Pointer.__getitem__`s answer it**
+
+  `p.__getitem__()` on `Pointer(to=x)` fails with "has no method
+  '__getitem__'", where the pin runs the declared getter.
+  - `POINTER_RULE_MEMBERS` (`checker/method_calls/builtin_types.rs`) lists
+    `__getitem__`, and `member_struct` and `declared_receiver_member`
+    (`method_calls/resolution.rs`) filter every rule member.
+  - Declare upstream's keyword `__getitem__[I: Indexer](self, *,
+    unsafe_offset: I)` and the deprecated positional `__getitem__[I:
+    Indexer, //](self, offset: I)` beside the declared zero-argument one in
+    `stdlib/std/memory/pointer.mojo`, then drop `__getitem__` from the rule
+    list.
+  - The subscript syntax stays on the checker rule here (R2473): keep the
+    pointer arms of `infer_index`, `subscript_getter`, and
+    `subscript_lvalue` ahead of the nominal branch.
+  - A `ref[Self.origin]` result over a pointer whose origin is a binder
+    comes out immutable: `nominal_parts` (`mojito-types/src/types.rs`) maps
+    `Mutability::Param` to `Deferred(pointer_mut_binder())` instead of the
+    binder's `mut` read R2375 introduced.
+  - The same function's address-space slot leaves `ref[..,
+    Self.address_space]` unsubstituted in the call's `reference_result`, so
+    `mir/verify/subscripts.rs` reports a metadata mismatch.
+  - The verifier rejects the inlined getter ("MakeRef destination recovers
+    permission unavailable through its source capability"): a pointee's
+    capability is the pointer origin's, not the `read self` holder's.
+  - The VM cannot project a field through, or store through, the
+    reference the getter returns over a heap pointer (`references.rs`, the
+    `exec.rs` Field and `WriteRef` arms): `p[].f` fails "cannot project
+    Field(..) through a heap pointer", and `+=` lands in a copy.
+  - Probe: `p.__getitem__()` read, store, and `+=`, a field through it, a
+    heap pointer's `__getitem__(unsafe_offset=1)`, and a
+    `FormatStruct`-shaped `o: Origin[mut=True]` holder calling a mutating
+    method through `self.p.__getitem__()` match the pin on both backends.
+  - Probe: the six `type_error` pointer-binder fixtures
+    (`mut_origin_binder_rejects_immutable_pointer` and siblings) still
+    reject when spelled as explicit calls.
+  - `R2473-p-p-i-and-p-unsafe-plan.md` (repo root, untracked) lists the
+    prototype's sites A, B, C, I, and K with their fixtures.
+  - Found while planning R2473 (2026-11-21).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R2473 `p[]`, `p[i]`, and `p[unsafe_offset=i]` are checker rules,
   where upstream's are the declared `Pointer.__getitem__`s**
 
   The pointer arms of `infer_index`, `infer_multi_subscript`, and
-  `check_set_place` (`checker/indexing.rs`) type them, with
+  `check_place_impl` (`checker/indexing.rs`) type them, with
   `check_pointer_offset` and `check_pointer_derefs`.
-  - Declare upstream's keyword `__getitem__[I: Indexer](self, *,
-    unsafe_offset: I)`, the deprecated positional `__getitem__(self,
-    offset: I)`, and `_get_ref_with_unsafe_interior_origin`, then take
-    `__getitem__` out of `POINTER_RULE_MEMBERS`.
+  - Route the three spellings, in value, place, and augmented position,
+    to the declared getters R2477 declares. They move together:
+    dispatching one alone fails with "subscript reference assignment lost
+    its getter contract".
   - `__get_litref_as_mvalue(r)` is spelled `Pointer(_mlir_value=r)[]`
-    (`infer_spelled_address_builtin`, `checker/operators.rs`), so that
-    spelled node must stay the primitive, or the declared `__getitem__`
-    calls itself forever.
-  - The value position, the place position, and the keyword form move
-    together: dispatching one alone fails with "subscript reference
-    assignment lost its getter contract".
-  - Delete the pointer-keyword helpers
-    (`places.rs::pointer_offset_keyword_subscript` and its users in
-    `origins/actuals.rs`, `origins/interior.rs`), the pointer arms in
-    `origins/exclusivity.rs` and `origins/ref_params.rs`, and the pointer
-    callers of `materialize_temporary_holder`.
+    (`infer_spelled_address_builtin`, `checker/operators.rs`). Mark that
+    node primitive with a node fact, not a shape test, or the declared
+    `__getitem__` calls itself forever. Ordinary source spelling it
+    dispatches, as at the pin.
+  - Loans and liveness must come from the getter's `ReferenceResult`.
+    The pointer-deref arms in `origins/actuals.rs` (`dereferenced_pointer`
+    and its users, the `MultiIndex` arms, `materialize_temporary_holder`'s
+    keyword walk) key on the node's shape, so owners die under the
+    reference and `ref` arguments bind wrongly.
+  - Delete them, with `places.rs::pointer_offset_keyword_subscript`,
+    `origins/interior.rs`'s keyword arm, and MIR's
+    `pointer_offset_subscript` and `pointer_keyword_subscript`
+    (`mir/facts.rs`, `calls.rs`, `lower_stmt.rs`, `expr_access.rs`).
+  - The pointer-value arms in `origins/exclusivity.rs` and
+    `origins/ref_params.rs` stay: they handle a pointer's carried loans,
+    not its subscript.
+  - The VM's checked-subscript `Index` rejects a `Pointer` receiver
+    ("checked nominal subscript receiver is Pointer", `exec.rs`).
   - Write capability comes from the `ref[Self.origin]` result's
-    mutability; `check_pointer_write` stays for `write` (R2468).
-  - Probe: `p[1]` on `Pointer(to=x)` warns that positional `__getitem__` is
-    deprecated and runs at the pin;
+    mutability. `check_pointer_write` stays for `write` (R2468).
+  - Probe: `p[1]` on `Pointer(to=x)` runs the declared offset getter and
+    traps in the VM where the pin reads the neighbouring slot (R2212).
     `assets/type_error/pointer_to_place_offset_rejected.mojo` then moves to
-    `runtime_error`, its ledger row `runs subset`.
+    `runtime_error`, with its ledger row and `docs/non-goals.md`'s
+    "rejects".
+  - Probe: every fixture spelling a pointer subscript prints what it
+    printed before. The plan file `R2473-p-p-i-and-p-unsafe-plan.md` lists
+    the 71 a prototype changed, by site.
   - Found while planning R2208 (2026-11-21).
-  - Depends on R2472.
+  - Substituting the receiver's arguments one binder at a time captures an
+    inner `Pointer` application's binders: in `Pointer.__init__(
+    unsafe_from_address: Int)`, `Pointer(to=..).unsafe_bitcast[
+    type_of(self)]()[]` mistypes once the outer `address_space :=
+    GENERIC` reaches it. Apply the arguments simultaneously rather than
+    keep the rule for pointer-to-pointer receivers.
+  - Depends on R2476 (keyword stores), R2477 (the declared getters).
   - Model: Fable, Not Planned.
+
+- [ ] **R2478 `Pointer._get_ref_with_unsafe_interior_origin` is not
+  declared**
+
+  Upstream's two overloads (`[name, base_origin]`, and `[name](self, ref
+  base: Some[AnyType])`) are missing from `stdlib/std/memory/pointer.mojo`.
+  - Each returns a reference at `base_origin._get_owned_interior[name]`
+    through `__get_litref_as_mvalue` over a spelled `!lit.ref`
+    `__mlir_type`.
+  - Nothing bundled calls it, but upstream's `List`, `Dict`, `Deque`,
+    `LinkedList`, `OwnedPointer`, and `Variant` do, so porting those
+    bodies verbatim needs it.
+  - Unverified: whether the `!lit.ref` spelling with an interior origin
+    checks today. Probe it first and file the blocker if not.
+  - Probe: `p._get_ref_with_unsafe_interior_origin["element",
+    origin_of(l)]()` over `l.unsafe_ptr()` reads and writes through it and
+    keeps `l` borrowed, as at the pin.
+  - Found while planning R2473 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2474 `__get_litref_as_mvalue` is spelled as a pointer subscript,
   so `MirIntrinsicSubscript::Pointer` stands in for upstream's builtin**
