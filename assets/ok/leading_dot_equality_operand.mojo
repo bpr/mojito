@@ -2,7 +2,11 @@
 # over a subject that is no `SumType`, take the `__eq__` parameter's type as
 # their context: a struct's `Self`, and `DType`'s (upstream's `DType.__eq__(
 # self, rhs: Self)`), in an annotated binding, a `[dt: DType]` binder's
-# `comptime if`, and a match over a type's member included.
+# `comptime if`, a `where` comparison, and a match over a type's member
+# included.
+from std.memory import AddressSpace
+
+
 struct K(Equatable, ImplicitlyCopyable):
     var v: Int
     comptime X = K(1)
@@ -22,6 +26,18 @@ def kind[dt: DType]() -> String:
     return "i8"
 
 
+struct Space[a: AddressSpace = .GENERIC]:
+    def __init__(out self):
+        pass
+
+    def generic(self) -> Int where Self.a == .GENERIC:
+        return 0
+
+
+def width[d: DType]() -> Int where d == .int64:
+    return 64
+
+
 def is_i8(d: DType) -> Bool:
     return d == .int8
 
@@ -33,6 +49,7 @@ def main():
     print(e)
     print(kind[DType.float32](), kind[DType.int16](), kind[DType.int8]())
     print(is_i8(DType.int8), is_i8(d))
+    print(Space().generic(), width[DType.int64]())
     comptime c = DType.uint8 == .uint8
     print(c)
     match d:

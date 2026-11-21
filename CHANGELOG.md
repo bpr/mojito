@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A leading-dot right operand of a `where` comparison is rooted at the left
+  operand's struct, as the run-time operator check roots it, so `where
+  Self.a == .GENERIC` over an `AddressSpace` parameter and `where d ==
+  .int64` over a `DType` binder check as their spelled forms do, where the
+  first was rejected and the second lacked evidence at every call (R2466).
+
 - `Pointer`'s comparisons, `-`, `offset_from`, `__int__`, `unsafe_offset`,
   and the deprecated `+` run upstream's bodies, declared verbatim in
   `std/memory/pointer.mojo`, and `Pointer` conforms to `Comparable`, where

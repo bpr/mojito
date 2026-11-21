@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2469**.
+Next free ID: **R2470**.
 
 ## Ordered Work
 
@@ -5188,23 +5188,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2466 A leading-dot operand in a `where` comparison is
-  rejected**
+- [ ] **R2469 A `where` comparison through an inherited trait-default
+  operator is rejected**
 
-  `def f(self) where Self.a == .GENERIC:` over `struct S[a: AddressSpace =
-  .GENERIC]` stops the check with "a comparison of struct values is no
-  generic proposition", where the pin reads `.GENERIC` as
-  `AddressSpace.GENERIC`.
-  - Spelled `AddressSpace.GENERIC`, the clause checks, and a `comptime if
-    Self.a == .GENERIC` and a run-time `b == .GENERIC` already work.
-  - Lever: `Checker::infix_value` (`checker/constraints.rs`) roots a
-    leading-dot right operand only beside a `DType`
-    (`with_contextual_root(right, "DType")`). Root it at the left struct
-    operand's type, as the run-time operator check does, and check
-    `Checker::struct_comparison`, which builds the comparison first.
-  - Upstream's `Pointer` memory members spell their clauses this way
-    (`where Self.mut and Self.address_space == .GENERIC`).
-  - Found while landing R2207 (2026-11-21).
+  `def g(self) -> Int where Self.a != AddressSpace.GENERIC` over `struct
+  S[a: AddressSpace = .GENERIC]` stops the check with "a comparison of
+  struct values is no generic proposition", where the pin compiles it.
+  - Cause: `applicable_declarations` (`checker/comptime_validation.rs`)
+    lists a struct's declared methods only, so `AddressSpace`'s `__ne__`,
+    `Equatable`'s default, has no `applicable_functions` entry. The
+    `a.__ne__(b)` call that `Checker::struct_operator_value` builds selects
+    nothing, and `Checker::struct_comparison` rejects the clause.
+  - A `comptime if Self.a != .GENERIC` and a module `comptime b =
+    AddressSpace.GENERIC != AddressSpace.GLOBAL` already work.
+  - Probe: the clause above, leading-dot (`!= .GENERIC`) or spelled,
+    checks, and `S().g()` is rejected as at the pin.
+  - Upstream's `Pointer.gather` and `Pointer.scatter` spell `Self.address_space
+    != .GENERIC` (in a `comptime if` today).
+  - Found while landing R2466 (2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

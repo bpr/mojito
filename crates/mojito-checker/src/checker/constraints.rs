@@ -2626,25 +2626,8 @@ impl Checker {
         recording: Recording,
     ) -> Result<ParamExpr, TypeError> {
         let left_built = self.build_ct(left, recording)?;
-        // `DType`'s `__eq__` and `__ne__` take `rhs: Self`, so beside a
-        // `DType` that parameter roots a leading-dot operand
-        // (`dtype == .float64`), as the run-time operator check does.
-        let rooted;
-        let right = if matches!(op, InfixOp::Eq | InfixOp::Ne)
-            && left_built
-                .meta()
-                .as_value()
-                .is_some_and(mojito_types::types::is_dtype)
-            && super::inference::contextual_root_span(right).is_some()
-        {
-            rooted = super::inference::with_contextual_root(
-                right,
-                &ExprKind::Identifier("DType".to_string()),
-            );
-            &rooted
-        } else {
-            right
-        };
+        let rooted = rooted_contextual_operand(&left_built, right);
+        let right = rooted.as_ref().unwrap_or(right);
         let right_built = self.build_ct(right, recording)?;
         // A `SIMDLength` after a vector or a literal converts to the left
         // operand's type, as it does at run time (`2 * w` is `2 * Int(w)`):
@@ -5112,6 +5095,13 @@ impl Checker {
                 Box::new(self.compile_generic_constraint(right)?),
             ),
             ExprKind::Infix(op, left, right) => {
+                let rooted = super::inference::contextual_root_span(right)
+                    .and_then(|_| {
+                        let _lifting = self.lifting_position();
+                        self.compile_dependent_ct_expr(left).ok()
+                    })
+                    .and_then(|built| rooted_contextual_operand(&built, right));
+                let right = rooted.as_ref().unwrap_or(right);
                 self.reject_type_parameter_comparison(*op, left, right)?;
                 let dtypes =
                     matches!(op, InfixOp::Eq | InfixOp::Ne) && self.compares_dtypes(left, right);
@@ -7203,6 +7193,20 @@ enum ModuleConstant<'a> {
     Int(&'a mojito_common::literal::IntLiteral),
     Value(&'a CtValue),
     Literal(&'a Expr),
+}
+
+/// The leading-dot operand `right` rooted at the struct `left` builds to
+/// (`dtype == .float64`, `Self.address_space == .GENERIC`): it has no type
+/// of its own, so the left operand's dunder types it through its `rhs:
+/// Self`, as the run-time operator check roots it. `None` when `right` is
+/// no leading-dot chain or `left` is no struct value.
+fn rooted_contextual_operand(left: &ParamExpr, right: &Expr) -> Option<Expr> {
+    super::inference::contextual_root_span(right)?;
+    let (name, _) = left.meta().as_value()?.kind().as_non_simd_struct()?;
+    Some(super::inference::with_contextual_root(
+        right,
+        &ExprKind::Identifier(name.clone()),
+    ))
 }
 
 /// Whether `value` is an `Int`, `UInt`, `Bool`, or `Float64` value: a
