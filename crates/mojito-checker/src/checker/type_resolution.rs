@@ -3871,9 +3871,6 @@ impl Checker {
                                 self.applied_argument(expr, slot_ty)
                             })?;
                         let (Some(application), Some(slot)) = (converted, slot) else {
-                            if let Some(length) = self.unregistered_simd_length(&value, ty) {
-                                return Ok(TyArg::Val(length).into());
-                            }
                             return Err(TypeError::TypeMismatch {
                                 expected: ty.to_string(),
                                 found: actual.to_string(),
@@ -5313,36 +5310,6 @@ impl Checker {
             }
             _ => error,
         }
-    }
-
-    /// The `SIMDLength` an integer `value` at the `SIMDLength` slot `ty`
-    /// converts to before that struct's initializers register (`comptime
-    /// Scalar = SIMD[_, length=1]` above the builtin bodies that read it):
-    /// `SIMDLength.__init__(Int)`'s folded body by symbol, the attribute
-    /// upstream spells there as a `#lit.struct`.
-    fn unregistered_simd_length(&self, value: &CtValue, ty: &Ty) -> Option<CtValue> {
-        if !is_simd_length(ty)
-            || self
-                .structs
-                .get(mojito_types::types::SIMD_LENGTH_TYPE_NAME)
-                .is_some_and(|info| info.methods.contains_key("__init__"))
-        {
-            return None;
-        }
-        let lanes = mojito_types::param_expr::fold::integer_value(value)?.to_i64()?;
-        let lanes = self.param_context.constant(CtValue::Int(lanes)).ok()?;
-        let length = mojito_types::types::simd_length_converted(
-            &self.param_context,
-            mojito_symbol::symbol::SIMD_LENGTH_FROM_INT,
-            &lanes,
-        )
-        .ok()?;
-        Some(
-            length
-                .as_constant()
-                .cloned()
-                .unwrap_or(CtValue::Expr(length)),
-        )
     }
 
     /// The value an index-valued bracket argument evaluates to: a

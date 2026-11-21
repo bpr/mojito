@@ -3316,6 +3316,11 @@ struct StructInfo {
     /// typed `fields` arrive later), so a `Self.<field>` in a compile-time
     /// position can be told from an unknown parameter.
     declared_field_names: Vec<String>,
+    /// The declared fields' source annotations, in order, which a
+    /// compile-time read of the fields resolves on demand before the typed
+    /// `fields` arrive (a `#lit.struct` attribute in a module alias).
+    #[serde(skip)]
+    declared_field_types: Vec<mojito_ast::ast::Type>,
     /// For each field whose SOURCE annotation applied origin-binder
     /// arguments (`var iter: EntryIter[Self.o2]`), the (callee origin-param
     /// index, enclosing origin-param index) pairs the application bound —

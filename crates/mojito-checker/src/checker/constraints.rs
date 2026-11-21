@@ -4168,6 +4168,16 @@ impl Checker {
                     .op(op, &[context.type_shape(storage), literal])
                     .map_err(param_error)
             }
+            // A typed struct attribute: the value of the named struct type
+            // whose fields its dictionary spells
+            // (`#lit.struct<{_mlir_value = 0}> : SIMDLength`).
+            (shape, [ty])
+                if let Some(fields) = shape
+                    .strip_prefix("#lit.struct<{")
+                    .and_then(|rest| rest.strip_suffix("}>:{}")) =>
+            {
+                self.lit_struct_attribute(fields, ty, recording)
+            }
             (shape, [literal]) if let Some(op) = literal_attribute_op(shape) => {
                 let literal = self.bracket_operand(literal, recording)?;
                 context.op(op, &[literal]).map_err(param_error)
@@ -4194,8 +4204,8 @@ impl Checker {
                  '#pop<float_literal_convert>' at a '!kgen.simd' type, \
                  '#pop<int_to_float_literal>', '#pop<float_to_int_literal>', \
                  '#pop<float_literal_isa>', '#pop<int_literal_bin>', \
-                 '#pop<int_literal_cmp>', '#pop<float_literal_bin>', and \
-                 '#pop<float_literal_cmp>' are read"
+                 '#pop<int_literal_cmp>', '#pop<float_literal_bin>', \
+                 '#pop<float_literal_cmp>', and a '#lit.struct' of a struct type are read"
             ))),
         }
     }
@@ -4229,6 +4239,83 @@ impl Checker {
                 "a keyword operand '{name}=' of a bracketed '__mlir_attr' is not supported"
             ))),
         }
+    }
+
+    /// The value a `#lit.struct<{field = value, …}> : T` attribute spells:
+    /// a frozen value of the non-generic struct `T`, each declared field
+    /// set once from an attribute KGEN parses at that type
+    /// ([`lit_struct_field`]), as KGEN builds a `!lit.struct` constant. An
+    /// entry naming no field is ignored, as at the pin.
+    fn lit_struct_attribute(
+        &self,
+        fields: &str,
+        ty: &ParamArg,
+        recording: Recording,
+    ) -> Result<ParamExpr, TypeError> {
+        let ty = mojito_types::types::DependentType::resolve(self.bracket_operand(ty, recording)?);
+        let Some((name, info)) = ty
+            .kind()
+            .as_non_simd_struct()
+            .filter(|(_, args)| args.is_empty())
+            .and_then(|(name, _)| self.structs.get(name).map(|info| (name, info)))
+        else {
+            return Err(TypeError::TypeMismatch {
+                expected: "a non-generic struct type".to_string(),
+                found: ty.to_string(),
+                context: "the type of a '#lit.struct' attribute".to_string(),
+            });
+        };
+        let mut spelled = split_attribute_list(fields)
+            .into_iter()
+            .map(|field| {
+                field
+                    .split_once('=')
+                    .map(|(field, value)| (field.trim(), value.trim()))
+                    .ok_or_else(|| TypeError::BadCall {
+                        func: "__mlir_attr".to_string(),
+                        reason: format!(
+                            "invalid MLIR attribute: expected 'name = value' in the \
+                             '#lit.struct' of '{name}', got '{field}'"
+                        ),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // A struct whose typed fields have not arrived (a module alias
+        // reads `SIMDLength` above the struct types) resolves its declared
+        // annotations here, as the pin resolves a declaration on demand.
+        let field_tys = if info.fields_resolved() {
+            info.fields.clone()
+        } else {
+            info.declared_field_names
+                .iter()
+                .cloned()
+                .zip(&info.declared_field_types)
+                .map(|(field, ty)| self.ty_from_anno(ty).map(|ty| (field, ty)))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let fields = field_tys
+            .iter()
+            .map(|(field, field_ty)| {
+                let at = spelled
+                    .iter()
+                    .position(|(spelled, _)| spelled == field)
+                    .ok_or_else(|| TypeError::BadCall {
+                        func: "__mlir_attr".to_string(),
+                        reason: format!(
+                            "the '#lit.struct' of '{name}' does not set its field '{field}'"
+                        ),
+                    })?;
+                let (_, value) = spelled.remove(at);
+                lit_struct_field(value, field_ty, &format!("field '{field}' of '{name}'"))
+                    .map(|value| (field.clone(), value))
+            })
+            .collect::<Result<Vec<_>, TypeError>>()?;
+        self.param_context
+            .constant(CtValue::Struct {
+                name: name.clone(),
+                fields,
+            })
+            .map_err(param_error)
     }
 
     /// The `!kgen.type` operand of a `#kgen.param.expr<rebind>` or a layout
@@ -7988,4 +8075,69 @@ fn applies_through_fields(expression: &ParamExpr) -> bool {
         mojito_types::param_expr::ParamKind::Field { base, .. } => applies_through_fields(base),
         _ => false,
     }
+}
+
+/// The entries of an attribute list, split at its top-level commas.
+fn split_attribute_list(list: &str) -> Vec<&str> {
+    let mut depth = 0_usize;
+    let mut start = 0;
+    let mut entries = Vec::new();
+    for (at, c) in list.char_indices() {
+        match c {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' | ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                entries.push(list[start..at].trim());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = list[start..].trim();
+    if !last.is_empty() || !entries.is_empty() {
+        entries.push(last);
+    }
+    entries
+}
+
+/// A `#lit.struct` field's attribute as a value of the field's type `ty`,
+/// which KGEN parses it at: an attribute with no type of its own, so a
+/// typed one is the pin's parse error. An integer is read at an `index`
+/// field and `true`/`false` at an `i1` one; any other field type is
+/// outside the subset.
+fn lit_struct_field(value: &str, ty: &Ty, field: &str) -> Result<CtValue, TypeError> {
+    let mut depth = 0_usize;
+    let typed = value.chars().any(|c| {
+        match c {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' | ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        c == ':' && depth == 0
+    });
+    if typed {
+        return Err(TypeError::BadCall {
+            func: "__mlir_attr".to_string(),
+            reason: "invalid MLIR attribute: expected '}'".to_string(),
+        });
+    }
+    let read = match ty.kind() {
+        TyKind::Index => value.parse().ok().map(CtValue::Index),
+        TyKind::I1 => match value {
+            "true" => Some(CtValue::Bool(true)),
+            "false" => Some(CtValue::Bool(false)),
+            _ => None,
+        },
+        _ => {
+            return Err(TypeError::Unsupported(format!(
+                "a '#lit.struct' attribute setting {field} of type {ty}; only an 'index' \
+                 or 'i1' field is read"
+            )));
+        }
+    };
+    read.ok_or_else(|| TypeError::TypeMismatch {
+        expected: ty.to_string(),
+        found: format!("'{value}'"),
+        context: format!("{field} in a '#lit.struct' attribute"),
+    })
 }

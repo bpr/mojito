@@ -35,9 +35,7 @@
 # (R1663). `py=` is not ported.
 # The struct declares
 # only the traits whose requirements are ported here; as upstream's, its
-# trait list has no `Floatable`. `Scalar` spells its length `1` through
-# `SIMDLength`'s
-# implicit conversion, where upstream spells the `#lit.struct` attribute.
+# trait list has no `Floatable`.
 # `cast` omits upstream's `bfloat16` branches on NVIDIA and AMD, and its
 # float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4` branches, with
 # the float8 conversion helpers they call (R2224). `Optional` and
@@ -125,7 +123,9 @@ from std.utils.numerics import nan as _nan
 # ===----------------------------------------------------------------------=== #
 # Type Aliases
 # ===----------------------------------------------------------------------=== #
-comptime Scalar = SIMD[_, length=1]
+comptime Scalar = SIMD[
+    _, length=__mlir_attr[`#lit.struct<{_mlir_value = 1}> : `, SIMDLength]
+]
 """Represents a scalar dtype."""
 
 comptime Int = Scalar[DType.int]

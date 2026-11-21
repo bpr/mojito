@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2452**.
+Next free ID: **R2454**.
 
 ## Ordered Work
 
@@ -10755,19 +10755,34 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2407 A typed `#lit.struct<{field = v}> : T` attribute is
+- [ ] **R2452 A `#lit.struct` field attribute is read only at an `index`
+  or `i1` field**
+
+  KGEN parses each field's attribute at the field's declared type, and
+  Mojito has no attribute reader keyed by an expected type, so any other
+  field type is rejected as outside the subset.
+  - Probe: `__mlir_attr[`#lit.struct<{d = #kgen.dtype.constant<si32>}> :
+    `, D]` with `struct D` declaring `var d: __mlir_type.`!kgen.dtype``.
+  - Probe: the same over a `!kgen.simd` or `!kgen.string` field.
+  - Lever: `lit_struct_field` (`checker/constraints.rs`) reads the value
+    through `typed_mlir_attribute` at the field type's MLIR spelling, which
+    needs a `Ty` to MLIR type-text inverse of `mlir_type_named`.
+  - Found while landing R2407 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2453 A `#lit.struct` of a generic struct application is
   rejected**
 
-  `A(__mlir_attr[`#lit.struct<{_mlir_value = 0}> : `, SIMDLength])` fails
-  with "not a compile-time Int constant: not an associated comptime
-  expression", where the pin builds the `SIMDLength` value.
-  - The bundled `AddressSpace.GENERIC` and `.GLOBAL` respell it
-    `AddressSpace(0)` and `AddressSpace(1)`
-    (`stdlib/std/memory/address_space.mojo`).
-  - `Scalar`'s length in `stdlib/std/simd.mojo` respells it the same way.
-  - Lever: `mlir_bracket_attribute` (`checker/constraints.rs`) builds the
-    struct value of the named type from its field list.
-  - Found while landing R2204 (2026-11-20).
+  A frozen `CtValue::Struct` carries no struct arguments, so
+  `Checker::lit_struct_attribute` builds only a non-generic struct's value,
+  where the pin builds any `!lit.struct` instance.
+  - Probe: `__mlir_attr[`#lit.struct<{x = 1}> : `, Box[Int]]` with
+    `struct Box[T: AnyType]` declaring `var x: __mlir_type.index`.
+  - `Checker::frozen_construction` has the same non-generic limit.
+  - Lever: type the constant with `ParamContext::constant_typed` at the
+    applied struct, its field types through `substitute_at`.
+  - Found while landing R2407 (2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

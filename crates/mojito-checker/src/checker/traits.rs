@@ -767,6 +767,11 @@ impl Checker {
                     .iter()
                     .map(|field| field.name.clone())
                     .collect(),
+                declared_field_types: declaration
+                    .fields
+                    .iter()
+                    .map(|field| field.ty.clone())
+                    .collect(),
                 field_origin_arguments: HashMap::new(),
                 associated: HashMap::new(),
                 associated_value_types: HashMap::new(),

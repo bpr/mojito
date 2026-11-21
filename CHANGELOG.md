@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A typed ``__mlir_attr[`#lit.struct<{field = v}> : `, T]`` attribute is
+  the value of the non-generic struct `T`, as at the pin (R2407), where it
+  was rejected as outside the subset. Each field's value is parsed at the
+  field's `index` or `i1` type, a typed value is the pin's "expected '}'",
+  and an entry naming no field is ignored. A module alias may build one
+  before the struct's field types register, so the bundled `Scalar` length
+  and `AddressSpace.GENERIC`/`.GLOBAL` are now upstream's attributes, and
+  the checker's folded `SIMDLength.__init__(Int)` fallback for `Scalar` is
+  gone.
+
 - A method's `ref[...] self` clause is the receiver's `ref` contract, as
   on any `ref` parameter (R2412): a call deduces the clause's
   `AddressSpace` and origin binders from the receiver's place, so `def

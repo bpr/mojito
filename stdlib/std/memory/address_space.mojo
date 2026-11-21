@@ -2,9 +2,7 @@
 # departures. Its `EnumLike` conformance is spelled through the bundled
 # `SumType` members (`_sum_case_names`, `_get_sum_discriminant`), as
 # `FastMathFlag`'s is; `_enum_case_types` and `_unsafe_get_enum_payload` are
-# omitted. `GENERIC` and `GLOBAL` are spelled `AddressSpace(0)` and
-# `AddressSpace(1)`, where upstream writes typed `#lit.struct` attributes
-# (R2407). `__getattr_param__` and its `std._plugin` import are omitted
+# omitted. `__getattr_param__` and its `std._plugin` import are omitted
 # (R2408), so an unknown `AddressSpace.NAME` reports a missing attribute.
 """Implements `AddressSpace`, the memory address space of a pointer.
 
@@ -38,13 +36,17 @@ struct AddressSpace(
     var _value: SIMDLength
 
     # CPU address space
-    comptime GENERIC = AddressSpace(0)
+    comptime GENERIC = AddressSpace(
+        __mlir_attr[`#lit.struct<{_mlir_value = 0}> : `, SIMDLength]
+    )
     """Generic address space. Used for CPU memory and default GPU memory."""
 
     # GPU address spaces
     # See https://docs.nvidia.com/cuda/nvvm-ir-spec/#address-space
     # And https://llvm.org/docs/AMDGPUUsage.html#address-spaces
-    comptime GLOBAL = AddressSpace(1)
+    comptime GLOBAL = AddressSpace(
+        __mlir_attr[`#lit.struct<{_mlir_value = 1}> : `, SIMDLength]
+    )
     # Address space numbers are required to align with LLVM IR.
     """Global GPU memory address space."""
     comptime SHARED = AddressSpace(3)

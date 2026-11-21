@@ -733,6 +733,7 @@ assets/ok/method_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/method_unused_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_value_parameter_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_attr_bracket.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mlir_attr_lit_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_attr_param_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_builtin_casts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_deferred_attribute.mojo	-	ineligible	no-scalar-entry-shape

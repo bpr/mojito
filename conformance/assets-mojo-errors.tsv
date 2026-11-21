@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1299
+# swept-count	1300
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_field_pointer_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_struct_tail_field_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
@@ -792,6 +792,7 @@ assets/type_error/method_signature_recursive_reference.mojo	compile-reject	agree
 assets/type_error/method_two_named_results.mojo	compile-reject	agree	error: function may not have multiple 'out' arguments
 assets/type_error/method_where_unqualified_param.mojo	compile-reject	agree	error: unqualified access to struct parameter 'T'; use 'Self.T' instead
 assets/type_error/method_where_unqualified_value_param.mojo	compile-reject	agree	error: unqualified access to struct parameter 'n'; use 'Self.n' instead
+assets/type_error/mlir_attr_lit_struct_field_type.mojo	compile-reject	agree	error: 'kgen.param.constant' op invalid use of parameter with no declaration "true"
 assets/type_error/mlir_call_llvm_intrinsic_literal_name.mojo	compile-reject	agree	error: 'pop.call_llvm_intrinsic' op attribute 'intrin' failed to satisfy constraint: TypedAttr instance String type for parameters
 assets/type_error/mlir_call_llvm_intrinsic_without_side_effects.mojo	compile-reject	agree	error: 'pop.call_llvm_intrinsic' op requires attribute 'hasSideEffects'
 assets/type_error/mlir_cast_from_builtin_storage_operand.mojo	compile-reject	agree	error: 'pop.cast_from_builtin' op cannot convert to scalar dtype index from '!kgen.scalar<index>'
