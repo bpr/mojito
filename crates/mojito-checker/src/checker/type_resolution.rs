@@ -3302,7 +3302,10 @@ impl Checker {
                     values.insert(param.name.clone(), value);
                 }
                 TyArg::Origin(origin) => {
-                    origins.insert((member.param_base + index) as u32, origin.clone());
+                    origins.insert(
+                        mojito_types::origin::OriginParamId((member.param_base + index) as u32),
+                        origin.clone(),
+                    );
                 }
             }
         }
@@ -3339,9 +3342,22 @@ impl Checker {
             types,
             values,
             ids,
-            origins,
+            origins: HashMap::new(),
         };
-        Ok(self.resolve_assoc_ty(&substitute_assoc(&template, &bindings)))
+        // The origin arguments bind the member's origin binders as an
+        // alias's bind its own: a pointer's provenance included, at the
+        // mutability each bound origin gives a parametric binder. A
+        // mutability no `Mutability` spells (a cast to a value binder,
+        // `o.unsafe_mut_cast[m]()`) keeps the binder's own.
+        let substituted = super::generics::bind_struct_origins(
+            &substitute_assoc(&template, &bindings),
+            &origins,
+            &|id, origin| {
+                self.bound_origin_mutability(origin)
+                    .or(Some(mojito_types::origin::Mutability::Param(id)))
+            },
+        );
+        Ok(self.resolve_assoc_ty(&substituted))
     }
 
     /// A struct's parameterized value member whose value is a type, read in

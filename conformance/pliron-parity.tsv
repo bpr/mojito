@@ -872,6 +872,7 @@ assets/ok/origin_mutability_binder_where_clause.mojo	main	exe-differential	sanit
 assets/ok/origin_only_function_type_runtime_parameter.mojo	main	exe-differential	sanitized
 assets/ok/origin_parameter_before_value_parameter.mojo	main	exe-differential	sanitized
 assets/ok/origin_parameterized_alias_binder.mojo	main	exe-differential	sanitized
+assets/ok/origin_parameterized_member_application.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_initialized_local.mojo	main	exe-differential	sanitized
 assets/ok/origin_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/origin_result_keeps_owner_through_call.mojo	main	exe-differential	sanitized

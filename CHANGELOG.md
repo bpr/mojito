@@ -1189,6 +1189,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct's origin-parameterized `comptime` member applied to an origin
+  binds the member's own origin binder (R2427): `type_of(s).W[origin_of(x)]`
+  over `comptime W[o: Origin] = Pointer[Int, o]` is `Pointer[Int,
+  origin_of(x)]`, and the bundled `Pointer._with_origin` and
+  `_OriginCastType` take the applied origin and its mutability, where the
+  application kept the member's binder ("expected Pointer[Int, origin#1]").
+  The two read through `type_of(p)` in a `comptime` value too, where that
+  failed with "type 'Pointer[...]' has no field '_with_origin'".
+
 - A construction that leaves a struct's origin parameter uninferred is
   rejected (R1656): `V(5)` over `struct V[mut: Bool, //, origin:
   Origin[mut=mut]]` with `def __init__(out self, k: Int)`, `V[_](5)`, and

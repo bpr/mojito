@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2435**.
+Next free ID: **R2436**.
 
 ## Ordered Work
 
@@ -2670,24 +2670,22 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2427 A struct's origin-parameterized `comptime` member applied
-  to an origin keeps the member's own binder**
+- [ ] **R2435 A pointer's origin cast to a `Bool` parameter's mutability
+  keeps the cast's own binder**
 
-  `comptime W[o: Origin] = Pointer[Int, o]` inside `struct S`, read as
-  `var q: type_of(s).W[origin_of(x)] = Pointer(to=x)`, is "expected
-  Pointer[Int, origin#1], found Pointer[Int, origin@N]", where the pin
-  prints `5`.
-  - The application's origin argument never replaces the member's
-    `Origin::Param` in its template (`resolve_parameterized_member`,
-    `checker/type_resolution.rs`).
-  - Probe: the bundled `Pointer._with_origin` (declared, upstream's) and
-    `_OriginCastType`, read as `var q: type_of(p)._with_origin[
-    origin_of(y)] = Pointer(to=y)`, fail the same way; the pin prints `6
-    True` for `q[], q.mut`.
-  - Probe: `comptime Q = type_of(p)._with_origin[origin_of(y)]` over a
-    pointer `p` is "type 'Pointer[Int, origin@N]' has no field
-    '_with_origin'": the value-position read reaches no pointer member.
-  - Found while landing R2421 (2026-11-20).
+  `p.unsafe_mut_cast[m]()` inside `def show[m: Bool](p: Pointer[Int,
+  ...])`, called as `show[True](p)`, prints `5 False` for `q[], q.mut`,
+  where the pin prints `5 True`.
+  - A pointer origin's `Mutability` (`mojito-types/origin.rs`) names a
+    closed flag or an origin binder only, so binding `_OriginCastType`'s
+    `target_origin: Origin[mut=target_mut]` to `o.unsafe_mut_cast[m]()`
+    has no mutability to give it: `resolve_parameterized_member`
+    (`checker/type_resolution.rs`) keeps the binder's own, and the
+    instance reads it as immutable.
+  - Lever: a value-binder case of `Mutability`, substituted with the
+    binder's value as `Mutability::Param` is with an origin's.
+  - Probe: the shape above.
+  - Found while landing R2427 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -1128,7 +1128,15 @@ impl Checker {
             }
             _ => {}
         }
-        let (name, arguments) = subject.kind().as_non_simd_struct()?;
+        // A pointer's members are the declared `Pointer`'s.
+        let (name, arguments) = match subject.kind().as_non_simd_struct() {
+            Some((name, arguments)) => (
+                name.as_str(),
+                std::borrow::Cow::Borrowed(arguments.as_slice()),
+            ),
+            None if subject.is_pointer() => self.member_struct(&subject, field)?,
+            None => return None,
+        };
         let info = self.structs.get(name)?;
         let member = info.parameterized_associated.get(field)?;
         let MemberTemplate::Value { decls, body } = &member.template else {
@@ -1140,7 +1148,7 @@ impl Checker {
         let label = format!("{subject}.{field}");
         Some((|| {
             let mut outer = mojito_types::param_expr::ParamBindings::new();
-            self.bind_declared(&mut outer, &info.decls(), &info.view_arguments(arguments))?;
+            self.bind_declared(&mut outer, &info.decls(), &info.view_arguments(&arguments))?;
             let (value, bound) = self.apply_parametric_value(&label, decls, body, args, outer)?;
             // A partial binding's `where` clauses wait for its application.
             if let Some(bound) = bound.into_iter().collect::<Option<Vec<_>>>() {
@@ -1148,7 +1156,7 @@ impl Checker {
                     &label,
                     &member.availability,
                     &info.decls(),
-                    &info.view_arguments(arguments),
+                    &info.view_arguments(&arguments),
                     decls,
                     decls.iter().map(ParamDecl::name).zip(&bound),
                 )?;
