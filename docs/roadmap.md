@@ -10637,27 +10637,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2197.
   - Model: Fable, Not Planned.
 
-- [ ] **R2404 The verifier admits a `UseVar` move of a reference slot into
-  a register typed as the referent**
-
-  `reference_read` (`mir/verify/concrete.rs`) exempts a moving `UseVar` of
-  a `ref`-typed slot, since a move transfers the handle, but never checks
-  that the destination is typed as that handle.
-  - A copy of a reference slot that last-use promotion turns into a move
-    therefore passes, though the register holds the handle and its
-    consumers read it as the referent.
-  - This hid R2196's `read_slot` shortcut: `ref s = p; s[] = 7` over
-    `var p = Pointer(to=x)` lowered to `var.use { var: $v2, mode: move }`
-    typed `Pointer`, then `ref.write` overwrote `p`'s slot.
-  - Lever: a moving `UseVar` of a `TyKind::Ref` slot must yield a register
-    whose type is the slot's `Ref` (or a reference to the same referent);
-    add the case to `reference_read` and its unit test.
-  - Enforce sites-first: run `scripts/smoke --suites` and `scripts/focused`
-    over the rule and fix every site it reports in the same session.
-  - Found while landing R2196 (2026-11-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1929 A read collector cannot keep alive the owner of an element
   read through a call's reference result**
 

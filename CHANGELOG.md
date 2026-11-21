@@ -1211,6 +1211,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The concrete MIR verifier now rejects a `UseVar` move of a reference
+  slot into a register typed as anything but a reference to the slot's
+  referent (R2404). A move transfers the handle, so a register typed as
+  the referent would hand the handle to consumers that read it as the
+  value, which is how R2196's `ref s = p; s[] = 7` overwrote `p`'s slot.
+
 - A bare `Pointer` or `Pointer[T, _]` parameter's origin is an infer-only
   binder, with its `mut`, that each call binds to its argument's own
   origin, as upstream's automatic parameterization declares it (R2419):

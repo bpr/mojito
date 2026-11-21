@@ -407,8 +407,10 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
 /// keeps the generic register types, so a load typed as the handle, or a
 /// `UseVar` copy of the handle, is a type re-derived from the slot rather
 /// than substituted. A referent that is itself a reference loads a handle
-/// legitimately; a move transfers the handle and a borrow addresses the
-/// slot, so neither is a read.
+/// legitimately; a borrow addresses the slot, so it is not a read. A move
+/// transfers the handle, so its register is typed as a reference to the
+/// slot's referent: a move into a register typed as the referent would hand
+/// the handle to consumers that read it as the value.
 fn reference_read(
     head: &str,
     function: &MirFunction,
@@ -443,6 +445,30 @@ fn reference_read(
         } if referent_of(var).is_some() => errors.push(format!(
             "{head} copies reference slot ${var} by `UseVar`; a reference binding is read by `LoadPlace`"
         )),
+        MirInstr::UseVar {
+            dest,
+            var,
+            mode: UseMode::Move,
+            ..
+        } => {
+            let Some(referent) = referent_of(var) else {
+                return;
+            };
+            let Some(dest_ty) = function.reg_types.get(&dest.0) else {
+                return;
+            };
+            let holds_handle = matches!(
+                dest_ty.kind(),
+                TyKind::Ref(reference) if reference.referent == referent
+            );
+            if !holds_handle {
+                errors.push(format!(
+                    "{head} moves reference slot ${var} into register %{} typed `{dest_ty}`; a \
+                     moved reference handle keeps its reference type",
+                    dest.0
+                ));
+            }
+        }
         _ => {}
     }
 }
@@ -971,6 +997,20 @@ mod tests {
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(findings[0].contains("copies reference slot $0 by `UseVar`"));
         assert!(use_var(UseMode::Move).is_empty());
+    }
+
+    #[test]
+    fn moved_reference_slot_keeps_its_reference_type() {
+        let instruction = MirInstr::UseVar {
+            dest: Reg(0),
+            var: 0,
+            mode: UseMode::Move,
+            constructor: None,
+        };
+        let findings =
+            concrete_function_findings("f", &function_with(instruction, Ty::int()), None);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains("moves reference slot $0 into register %0"));
     }
 
     #[test]
