@@ -21,8 +21,9 @@ impl Checker {
     /// `!kgen.pointer` to the one its `_type` names; `pop.offset` moves one
     /// by a `!kgen.scalar<index>` count; `pop.pointer_to_index` reads its
     /// address as a `!kgen.scalar<index>`; `pop.load` reads its
-    /// register-passable element; and `pop.store` writes a value of its
-    /// element through it. The memory ops' `alignment` and flags are
+    /// register-passable element, a bitwise copy that yields an owned
+    /// value; and `pop.store` writes the bits of a value of its element
+    /// through it, leaving its operand to be destroyed. The memory ops' `alignment` and flags are
     /// compile-time attributes; a volatile access is outside the subset.
     pub(super) fn infer_pointer_op(
         &self,
@@ -149,7 +150,7 @@ impl Checker {
             }
             PointerOp::Load => {
                 let element = pointer_element(0)?;
-                self.check_register_passable_element(name, &element)?;
+                self.check_register_passable_element(op, &element)?;
                 element
             }
             PointerOp::Store => {
@@ -160,7 +161,8 @@ impl Checker {
                         operands[0], operands[1]
                     )));
                 }
-                self.check_register_passable_element(name, &element)?;
+                self.check_register_passable_element(op, &element)?;
+                self.check_stored_operand_destroyed(&operands[0])?;
                 Ty::none()
             }
         };
@@ -183,18 +185,48 @@ impl Checker {
     }
 
     /// Check a `pop.load` or `pop.store` element: upstream returns and
-    /// takes only a register-passable value from an `__mlir_op`, and the
-    /// access copies its bits, which Mojito admits for a trivial one: a
-    /// scalar, a `TrivialRegisterPassable` struct, or a pointer.
-    fn check_register_passable_element(&self, name: &str, element: &Ty) -> Result<(), TypeError> {
+    /// takes only a register-passable value from an `__mlir_op`, a scalar,
+    /// a pointer, or any `RegisterPassable` struct, whose bits the access
+    /// copies.
+    fn check_register_passable_element(
+        &self,
+        op: PointerOp,
+        element: &Ty,
+    ) -> Result<(), TypeError> {
         let pointer = element.is_pointer() || matches!(element.kind(), TyKind::KgenPointer { .. });
-        if pointer || self.is_trivial_register_passable(element) {
+        if pointer
+            || self.register_passability(element) == super::traits::RegisterPassability::Proven
+        {
             return Ok(());
         }
-        Err(TypeError::Unsupported(format!(
-            "'{element}' cannot be moved through '__mlir_op.`{name}`': Mojito admits a \
-             trivial register-passable element"
-        )))
+        let reason = if op == PointerOp::Load {
+            format!(
+                "'{element}' cannot be returned directly from __mlir_op as it is not a \
+                 'RegisterPassable' type"
+            )
+        } else {
+            format!("cannot load non-register passable type '{element}' into SSA register")
+        };
+        Err(TypeError::BadCall {
+            func: op.name().to_string(),
+            reason,
+        })
+    }
+
+    /// Check that `pop.store`'s operand can be destroyed: the op copies
+    /// the operand's bits and leaves the owned operand behind, which is
+    /// destroyed after the op, so a type the body cannot implicitly destroy
+    /// is abandoned, as upstream reports it.
+    fn check_stored_operand_destroyed(&self, operand: &Ty) -> Result<(), TypeError> {
+        let Some(linear) = self.destruction_verdict(operand) else {
+            return Ok(());
+        };
+        let (var, message) = ("(anonymous value)".to_string(), linear.message);
+        Err(if linear.archetype {
+            TypeError::LinearAbandoned { var, message }
+        } else {
+            TypeError::Abandoned { var, message }
+        })
     }
 
     /// Check `lit.ref.from_pointer`'s `name` attribute, a `!kgen.string`

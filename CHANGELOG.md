@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The `pop.load` and `pop.store` `__mlir_op`s admit any `RegisterPassable`
+  element, as at the pin (R2405), where only a scalar, pointer, or
+  `TrivialRegisterPassable` struct was admitted. The load is a bitwise copy
+  that yields an owned value; the store writes a bitwise copy of its
+  operand without destroying the element it overwrites, and the operand is
+  destroyed after the op, so a store of an operand the body cannot destroy
+  reports the pin's "'(anonymous value)' abandoned", and a memory-only
+  element reports the pin's register-passability error.
+
 - An argument filling a slot an explicit origin argument fixes must now
   convert to that origin, as at the pin (R2430): `S[origin_of(self)](
   Pointer(to=self.x))`, a struct whose origin tail names `h.x` passed to

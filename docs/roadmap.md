@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2448**.
+Next free ID: **R2449**.
 
 ## Ordered Work
 
@@ -7635,6 +7635,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2448 `pop.store` compares its operand with the pointer's element
+  with origins erased, where the pin's verifier compares them whole**
+
+  `same_element` (`checker/method_calls/pointer_ops.rs`) accepts an
+  operand whose element differs from the pointer's only in an origin;
+  `lit.ref.from_pointer`'s result check shares it, unprobed at the pin.
+  - Probe: `__mlir_op.`pop.store`[…](Pointer(to=y), Pointer(to=p)._mlir_value)`
+    over `var p = Pointer(to=x)` fails at the pin with "'pop.store' op
+    failed to verify that pointer element type". Mojito runs it, printing
+    `4 4` for `print(p[], x)` on the VM and `9 4` natively.
+  - Lever: compare the operand and element types whole, as the MLIR
+    verifier does, after checking that no bundled body relies on the
+    erasure.
+  - Found while landing R2405 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2229 A compile-time evaluation inside a generic body prints
   where the pin prints nothing**
 
@@ -10671,28 +10688,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     record the result's owner on the element, so `build_variadic_pack`
     can keep the owner itself alive.
   - Found while landing R1921 (2026-11-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2405 `pop.load` and `pop.store` move a register-passable
-  element with no ownership, so only a trivial one is admitted**
-
-  `infer_pointer_op` (`checker/method_calls/pointer_ops.rs`) rejects a
-  `pop.load` or `pop.store` element that is no scalar,
-  `TrivialRegisterPassable` struct, or pointer, where the pin admits any
-  `RegisterPassable` one.
-  - Cause: `lower_pointer_op` (`mir/lower_expr/mlir_op.rs`) writes the
-    load as a `ref.read` and the store as a `ref.write`, so ownership
-    analysis sees a borrow, where upstream's load is a bitwise copy that
-    yields an owned value and its store consumes its operand without
-    destroying the old element.
-  - Probe: over `struct R(RegisterPassable, Movable)` with a printing
-    `__del__`, `var s = pop.load(Pointer(to=r)._mlir_value)` then a
-    `pop.store` of `R(5)` prints `3`, `del 3`, `del 5`, `5`, `del 5` at
-    the pin, and is rejected.
-  - Lever: an owned bitwise read and a consuming raw write, as
-    `PointerStorageTake` and `unsafe_write`'s store already are.
-  - Found while landing R2203 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

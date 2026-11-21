@@ -745,6 +745,7 @@ assets/ok/mlir_kgen_dtype_layer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_kgen_scalar_comptime_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_kgen_simd_address_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_op_pointer_ops.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mlir_op_pointer_ops_register_passable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_array_generic_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_array_gep.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_array_ops.mojo	-	ineligible	no-scalar-entry-shape

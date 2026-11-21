@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1291
+# swept-count	1293
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_field_pointer_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_struct_tail_field_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
@@ -814,8 +814,10 @@ assets/type_error/mlir_op_operand_types_differ.mojo	compile-reject	agree	error: 
 assets/type_error/mlir_op_select_cases_differ.mojo	compile-reject	agree	error: 'pop.select' op failed to verify that all of {trueValue, falseValue, result} have same type
 assets/type_error/mlir_op_select_condition_not_scalar.mojo	compile-reject	agree	error: 'pop.select' op operand #0 must be !kgen.scalar<bool>, but got '!kgen.simd<2, bool>'
 assets/type_error/mlir_op_select_mask_not_bool.mojo	compile-reject	agree	error: 'pop.simd.select' op operand #0 must be !kgen.simd<N, bool>, but got '!kgen.simd<4, si32>'
+assets/type_error/mlir_pointer_load_memory_only_element.mojo	compile-reject	agree	error: 'M' cannot be returned directly from __mlir_op as it is not a 'RegisterPassable' types
 assets/type_error/mlir_pointer_load_without_flags.mojo	compile-reject	agree	error: 'pop.load' op requires attribute 'isInvariant'
 assets/type_error/mlir_pointer_offset_index_operand.mojo	compile-reject	agree	error: 'pop.offset' op operand #1 must be !kgen.scalar<index>, but got 'index'
+assets/type_error/mlir_pointer_store_abandons_operand.mojo	compile-reject	agree	error: '(anonymous value)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'RegisterPassable'
 assets/type_error/mlir_pointer_store_element_mismatch.mojo	compile-reject	agree	error: 'pop.store' op failed to verify that pointer element type
 assets/type_error/mlir_pointer_to_pointer_operand.mojo	compile-reject	agree	error: unable to infer result type from MLIR operation 'lit.ref.to_pointer'
 assets/type_error/mlir_pop_array_dynamic_index.mojo	compile-reject	agree	error: cannot use a dynamic value in MLIR magic

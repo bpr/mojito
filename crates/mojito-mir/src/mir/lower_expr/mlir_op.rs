@@ -93,9 +93,13 @@ impl<'a> Flatten<'a> {
     /// instructions: the `lit.ref` conversions to `pointer.convert`,
     /// `pop.pointer.bitcast` to `pointer.bitcast`, `pop.offset` to the
     /// pointer `+` over the address as an untracked `Pointer`,
-    /// `pop.pointer_to_index` to `pop.pointer_to_index`, and `pop.load` and
-    /// `pop.store` to a `ref.read` and a `ref.write` through the address
-    /// as an untracked reference.
+    /// `pop.pointer_to_index` to `pop.pointer_to_index`, `pop.load` to a
+    /// `ref.read` through the address as an untracked reference, the
+    /// bitwise copy that yields an owned value, and `pop.store` to a
+    /// `ref.write` through it of such a copy of its operand, which stays
+    /// bound to a temporary slot drop elaboration destroys after the op:
+    /// upstream's store neither consumes its operand nor destroys the
+    /// element it overwrites.
     pub(super) fn lower_pointer_op(
         &mut self,
         call: Node<'a>,
@@ -191,11 +195,28 @@ impl<'a> Flatten<'a> {
                     Some(TyKind::KgenPointer { element, .. }) => element.clone(),
                     _ => unreachable!("a checked `pop.store` writes through a `!kgen.pointer`"),
                 };
+                let slot = self.temporary_storage(args[0], *value, false, "$store_r");
+                let place = MirPlace::root(slot, self.f.reg_types.get(&value.0).cloned());
+                let slot_handle_ty =
+                    crate::mir::mir_place_handle_ty(&place, Some(Mutability::Immutable))
+                        .unwrap_or_else(Ty::error);
+                let slot_handle = self.fresh_typed(location.clone(), Some(slot), slot_handle_ty);
+                self.emit(MirInstr::MakeRef {
+                    dest: slot_handle,
+                    place,
+                });
+                let read_ty = reference(self, slot_handle, element.clone(), Mutability::Immutable);
+                let read_handle = retyped(self, slot_handle, read_ty);
+                let bits = self.fresh_typed(location.clone(), None, element.clone());
+                self.emit(MirInstr::ReadRef {
+                    dest: bits,
+                    reference: read_handle,
+                });
                 let handle_ty = reference(self, *pointer, element, Mutability::Mutable);
                 let handle = retyped(self, *pointer, handle_ty);
                 self.emit(MirInstr::WriteRef {
                     reference: handle,
-                    value: *value,
+                    value: bits,
                 });
                 let dest = self.fresh_typed(location.clone(), None, Ty::none());
                 self.emit(MirInstr::Const {
