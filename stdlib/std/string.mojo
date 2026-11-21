@@ -1553,10 +1553,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         var length: Int = Int(
             SIMDLength(mlir_value=__mlir_op.`pop.string.size`(_kgen))
         )
-        var ptr = __mlir_op.`pop.string.address`(_kgen)
-        self._data = ptr.unsafe_mut_cast[True]().unsafe_origin_cast[
-            origin._get_owned_interior["bytes"]
-        ]()
+        self._data = __mlir_op.`pop.string.address`(_kgen)
         self._size = length
 
     @inline(.always)

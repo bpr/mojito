@@ -3862,7 +3862,14 @@ impl<'a> Flatten<'a> {
                     }
                     _ => {
                         let indirect = !constant && expression.unconverted_indirect_result();
-                        self.temporary_storage(expression, value, indirect, "$mat_r")
+                        let variable =
+                            self.temporary_storage(expression, value, indirect, "$mat_r");
+                        // The slot carries the loans the temporary holds, as
+                        // a borrow-source slot does: a pointer's keep its
+                        // pointee's storage alive while the slot is read.
+                        let loans = self.aggregate_borrows_unmaterialized(expression);
+                        self.establish_storage_loans(expression, variable, loans);
+                        variable
                     }
                 };
                 self.owner_vars.insert(owner, variable);

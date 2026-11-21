@@ -791,6 +791,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
         } => {
             if let Some(found) = cx.reg_ty(*src)
                 && !types_compatible(found, expected)
+                && !same_address(found, expected)
             {
                 errors.push(format!(
                     "{prefix}: binding of {found} to a slot of type {expected}"
@@ -1794,5 +1795,35 @@ fn verify_tuple_elements(
                 cx.prefix, element.0
             ));
         }
+    }
+}
+
+/// Whether `found` and `expected` are one address typed two ways: a
+/// `Pointer` or a reference and a `!lit.ref` to the same element in the
+/// same address space, which `lit.ref.to_pointer` retypes without changing
+/// it (a pack element's address bound to a `!lit.ref` parameter slot).
+fn same_address(found: &Ty, expected: &Ty) -> bool {
+    let address = |ty: &Ty| match ty.kind() {
+        TyKind::LitRef {
+            element,
+            address_space,
+            ..
+        } => Some((element.clone(), address_space.clone(), true)),
+        TyKind::Ref(reference) => Some((
+            reference.referent.clone(),
+            reference.address_space.clone(),
+            false,
+        )),
+        pointer => Some((
+            pointer.pointer_element()?.clone(),
+            pointer.pointer_address_space()?.clone(),
+            false,
+        )),
+    };
+    match (address(found), address(expected)) {
+        (Some((element, space, found_lit)), Some((expected_element, expected_space, lit))) => {
+            (found_lit || lit) && element == expected_element && space == expected_space
+        }
+        _ => false,
     }
 }

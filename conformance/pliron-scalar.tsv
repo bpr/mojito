@@ -1060,6 +1060,7 @@ assets/ok/pointer_aliases_declared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_augmented_literal_offset.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_bound_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_bracket_declared_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_declared_casts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_declared_import.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_declared_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_declared_parameter_reads.mojo	-	ineligible	no-scalar-entry-shape

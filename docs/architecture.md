@@ -3757,15 +3757,20 @@ aggregate. Its parameters (`p.origin`, `type_of(p).T`), `comptime`
 members (`_mlir_type`, `_mlir_lit_ref`), and conformances (`Intable`,
 `Writable`) are the declaration's, in the checker and the elaborator
 alike. The checker's rules still win for every member
-`POINTER_RULE_MEMBERS` names and for a construction by only the keywords
-`POINTER_RULE_INITIALIZERS` names, so those declared bodies are checked
-but no call selects them until R2206–R2208 retire the rules. Any other
-member (`p.as_imm()`, `p.write_to(w)`, or `write_to` through a witness
+`POINTER_RULE_MEMBERS` names (the address, memory, operator, and subscript
+members) and for a `to=` construction (`POINTER_RULE_INITIALIZERS`), so
+those declared bodies are checked but no call selects them until R2207 and
+R2208 retire the rules. Any other member (the casts, `as_imm`,
+`_get_kgen_pointer`, `p.write_to(w)`, or `write_to` through a witness
 under `print(p)`) resolves to its declared body through
 `declared_receiver_member`, and a construction by any other keyword
-(`unsafe_from_address=`) is an overload resolution over the declared
-initializers, both running the declared body on both backends, while the
-rule members keep the VM's and Pliron's intrinsic paths.
+(`_mlir_value=`, `unsafe_from_address=`, the synthesized `copy=`) is an
+overload resolution over the declared initializers, both running the
+declared body on both backends, while the rule members keep the VM's and
+Pliron's intrinsic paths. A cast's result carries the origin its checked
+type names, which `aggregate_origins` and the MIR loan facts read from the
+call's type, not an adjustment; the `_mlir_value` field read lowers to
+`pointer.convert` by its object's type, as the store does.
 
 Borrowed views (`Span`, `StringSpan`) are pointer-plus-length structs over
 that capability. Their loans flow through three checked channels: a
@@ -6156,9 +6161,12 @@ a pointer with a tracked place origin names that origin, as upstream's
 receiver's place), and a field of a reference-returning call's result is a
 place within the call's recorded result origin (`origin_place` reads its
 `ReferenceResult`). A pointer the expression forms in place
-(`PointerToPlace`, `PointerOffset`, `PointerOriginCast`) is the holder of a
-dereference place through its adjustment's `materialized` slot, which
-`record_pointer_adjustment` keeps across re-inference; an ordinary call's
+(`PointerToPlace`, `PointerOffset`) is the holder of a dereference place
+through its adjustment's `materialized` slot, which
+`record_pointer_adjustment` keeps across re-inference, and a `Pointer(...)`
+construction or a call whose pointer result has a tracked origin (a
+declared cast) through a `MaterializeBorrowSource` slot, which carries the
+call's loans; an ordinary call's
 pointer result is read through its loan-carrying `$ptr_tmp_r` slot
 (`temporary_pointer_deref`) instead: only a `Pointer(to=x)` temporary
 substitutes its place, and every other one reads the slot's handle. A read of the bound pointer

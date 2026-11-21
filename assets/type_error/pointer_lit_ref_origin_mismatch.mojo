@@ -1,6 +1,6 @@
 # A `!lit.ref`'s origin is part of its type: it builds no `Pointer` of
 # another origin.
-# expect: does not convert to
+# expect: no constructor overload matches
 def main():
     var x = 7
     var y = 8

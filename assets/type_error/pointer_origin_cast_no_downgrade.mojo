@@ -1,4 +1,4 @@
-# expect: an origin cast keeps the Pointer's capability
+# expect: cannot be converted from 'ImmOrigin' to 'MutOrigin'
 # Upstream spells the cast `unsafe_origin_cast[target_origin: Origin[mut=Self.mut]]`:
 # an immutable target cannot stand in for a mutable pointer's origin. The other
 # direction is accepted but keeps the immutable capability

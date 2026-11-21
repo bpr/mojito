@@ -110,17 +110,12 @@ impl<'a> Flatten<'a> {
         self.direct_call(call, name, args, kwargs)
     }
 
-    /// `operand`'s address retyped to `call`'s checked type, a `Pointer`, a
-    /// `!kgen.pointer`, or a `!lit.ref` (`pointer.convert`), or to a
-    /// `Pointer` to a new pointee (`pointer.bitcast`).
-    pub(super) fn pointer_convert(&mut self, call: Node<'a>, operand: Node<'a>) -> Reg {
+    /// `operand`'s address retyped to `node`'s checked type, a `Pointer`'s
+    /// `!kgen.pointer` (`p._mlir_value`, `pointer.convert`).
+    pub(super) fn pointer_convert(&mut self, node: Node<'a>, operand: Node<'a>) -> Reg {
         let value = self.expr(operand);
-        let dest = self.fresh(call.location(), None);
-        self.emit(if call.is_pointer_bitcast() {
-            MirInstr::PointerBitcast { dest, value }
-        } else {
-            MirInstr::PointerConvert { dest, value }
-        });
+        let dest = self.fresh(node.location(), None);
+        self.emit(MirInstr::PointerConvert { dest, value });
         dest
     }
 
@@ -270,12 +265,6 @@ impl<'a> Flatten<'a> {
             let dest = self.fresh(call.location(), Some(place.root));
             self.emit(MirInstr::MakeRef { dest, place });
             return Some(dest);
-        }
-        // `Pointer[T, o](_mlir_value=)` retypes its operand's address.
-        if call.is_pointer_convert()
-            && let Some((_, operand)) = kwargs.first()
-        {
-            return Some(self.pointer_convert(call, *operand));
         }
         // Compiler-private inline uninit-storage construction:
         // uninitialized, or holding a moved initial payload.
@@ -443,25 +432,6 @@ impl<'a> Flatten<'a> {
         }
         if let Some(count) = Self::checked_kgen_source_loc(call) {
             return self.lower_kgen_source_loc(call, count);
-        }
-        // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
-        // runtime value is the receiver, unchanged, and the origin
-        // parameter argument never lowers (origins erase).
-        if node.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::PointerOriginCast { .. }
-            )
-        }) && let Some(object) = callee.member_object()
-        {
-            return self.expr(object);
-        }
-        // `pointer.unsafe_bitcast[U]()` retypes the receiver's pointee
-        // (`pointer.bitcast`); its type argument never lowers.
-        if call.is_pointer_bitcast()
-            && let Some(object) = callee.member_object()
-        {
-            return self.pointer_convert(call, object);
         }
         let simd_shuffle = node
             .adjustments

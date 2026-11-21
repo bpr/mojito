@@ -1958,24 +1958,6 @@ impl Checker {
         {
             return Ok(read);
         }
-        // `p._mlir_value` is upstream's `!kgen.pointer` field of a `Pointer`.
-        if field == mojito_types::ct::MLIR_VALUE_FIELD
-            && let TyKind::Pointer {
-                element,
-                address_space,
-                ..
-            } = obj_ty.kind()
-        {
-            self.record_pointer_adjustment(
-                span,
-                mojito_checked::checked::SemanticAdjustment::PointerConvert {
-                    origin: None,
-                    materialized: None,
-                    bitcast: false,
-                },
-            );
-            return Ok(Ty::kgen_pointer(element.clone(), address_space.clone()));
-        }
         // `v.dtype` is upstream's lane-dtype parameter, the slot itself.
         if field == "dtype"
             && let Some(dtype) = simd_dtype(&obj_ty)
@@ -1986,8 +1968,17 @@ impl Checker {
             return Ok(Ty::dtype());
         }
         // A `SIMD` application is the declared struct, whose `_mlir_value`
-        // field is its `!kgen.simd` storage.
-        if let TyKind::Struct(sname, targs) = obj_ty.kind() {
+        // field is its `!kgen.simd` storage, and a pointer is the declared
+        // `Pointer`, whose `_mlir_value` is the `!kgen.pointer` it wraps.
+        let nominal = match obj_ty.kind() {
+            TyKind::Struct(sname, targs) => {
+                Some((sname.as_str(), std::borrow::Cow::Borrowed(targs.as_slice())))
+            }
+            pointer if pointer.is_pointer() => self.member_struct(&obj_ty, field),
+            _ => None,
+        };
+        if let Some((sname, targs)) = nominal {
+            let targs = targs.as_ref();
             let info = self.structs.get(sname).ok_or_else(|| {
                 TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
             })?;

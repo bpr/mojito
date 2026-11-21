@@ -11,9 +11,22 @@ impl Checker {
     /// onto the concrete receiver: the declared interior projection is
     /// appended to the receiver's place, so the returned pointer carries the
     /// receiver's interior-generation loan. Non-pointer results and
-    /// unresolvable receivers pass through unchanged.
-    pub(super) fn rebase_self_place_pointer(&self, ty: Ty, receiver: &Expr) -> Ty {
+    /// unresolvable receivers pass through unchanged, as does a result
+    /// whose `declared` type names no `origin_of(self)`: its symbolic
+    /// receiver origin is the caller's, bound through the bracket
+    /// (`p.unsafe_origin_cast[origin_of(self)]()` in a method's body).
+    pub(super) fn rebase_self_place_pointer(
+        &self,
+        ty: Ty,
+        receiver: &Expr,
+        declared: Option<&Ty>,
+    ) -> Ty {
         use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
+        let self_place =
+            |ty: &Ty| matches!(ty.as_pointer(), Some((_, PointerOrigin::SelfPlace { .. })));
+        if declared.is_some_and(|declared| !self_place(declared)) {
+            return ty;
+        }
         let Some((
             element,
             PointerOrigin::SelfPlace {

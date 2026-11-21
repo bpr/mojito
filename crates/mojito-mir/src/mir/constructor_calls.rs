@@ -99,7 +99,8 @@ fn name_in_blocks(
         if let Some(copy) =
             struct_named_copy(&block.instrs[index], registers.reg_types, declarations)
         {
-            if let MirInstr::CopyValue { dest, .. } = &copy {
+            if let MirInstr::CopyValue { dest, .. } | MirInstr::PointerConvert { dest, .. } = &copy
+            {
                 copied_values.insert(dest.0);
             }
             let copy = registers.read_through(copy);
@@ -155,7 +156,7 @@ fn name_in_blocks(
 }
 
 /// The copy a call naming the struct it builds over one `copy=` keyword
-/// (`S(copy=x)`) is; `None` for any other instruction.
+/// (`S(copy=x)`, `Pointer(copy=p)`) is; `None` for any other instruction.
 fn struct_named_copy(
     instruction: &MirInstr,
     reg_types: &HashMap<u32, Ty>,
@@ -175,6 +176,17 @@ fn struct_named_copy(
         return None;
     };
     let ty = reg_types.get(&dest.0)?;
+    // A pointer is the folded `Pointer` struct, whose synthesized copy is
+    // the same address retyped to the instance.
+    if ty.is_pointer() {
+        return (keyword == "copy"
+            && args.is_empty()
+            && struct_template(&func.0) == mojito_types::types::POINTER_TYPE_NAME)
+            .then_some(MirInstr::PointerConvert {
+                dest: *dest,
+                value: *source,
+            });
+    }
     let TyKind::Struct(name, _) = ty.kind() else {
         return None;
     };

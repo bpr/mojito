@@ -773,15 +773,6 @@ impl RewriteTypes for SemanticAdjustment {
                 materialized: _,
             }
             | Self::PointerOffset { materialized: _ }
-            | Self::PointerOriginCast {
-                origin: _,
-                materialized: _,
-            }
-            | Self::PointerConvert {
-                origin: _,
-                materialized: _,
-                bitcast: _,
-            }
             | Self::InteriorReference { origin: _ }
             | Self::InvalidateInteriors { invalidations: _ } => {}
         }

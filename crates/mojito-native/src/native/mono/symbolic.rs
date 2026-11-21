@@ -402,8 +402,15 @@ pub(super) fn function_types(function: &MirFunction) -> impl Iterator<Item = &Ty
 
 /// Collect already-substituted types named only by instructions, recursing
 /// into every region. These types need layouts or lifecycle declarations even
-/// when no register or variable carries them.
+/// when no register or variable carries them: a storage intrinsic's element,
+/// and each type a place addresses, a pointee a dereference projects
+/// through (`p[].field`) included.
 pub(super) fn push_instruction_types(block: &MirBlock, out: &mut Vec<Ty>) {
+    let _ = mojito_mir::mir::visit::walk_blocks(&mut PlaceTypes(out), block);
+    push_intrinsic_types(block, out);
+}
+
+fn push_intrinsic_types(block: &MirBlock, out: &mut Vec<Ty>) {
     for instruction in &block.instrs {
         match instruction {
             MirInstr::ConstructType { ty, .. } => {
@@ -415,10 +422,76 @@ pub(super) fn push_instruction_types(block: &MirBlock, out: &mut Vec<Ty>) {
             | MirInstr::UninitStorageDestroy { element, .. } => out.push(element.clone()),
             instruction => {
                 for region in mojito_mir::mir::instruction_regions(instruction) {
-                    push_instruction_types(region, out);
+                    push_intrinsic_types(region, out);
                 }
             }
         }
+    }
+}
+
+/// The types a body's places address ([`push_instruction_types`]).
+struct PlaceTypes<'o>(&'o mut Vec<Ty>);
+
+impl mojito_mir::mir::visit::TypeVisitor for PlaceTypes<'_> {
+    type Error = std::convert::Infallible;
+
+    fn visit_ty(
+        &mut self,
+        ty: &Ty,
+        site: mojito_mir::mir::visit::TySite,
+    ) -> Result<(), Self::Error> {
+        if site == mojito_mir::mir::visit::TySite::Place {
+            self.0.push(ty.clone());
+        }
+        Ok(())
+    }
+    fn visit_ty_arg(&mut self, _: &TyArg) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn visit_variant_alternatives(&mut self, _: &[Ty]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn visit_variant_index(
+        &mut self,
+        _: &mojito_types::types::VariantIndex,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn visit_field_step(
+        &mut self,
+        _: &mojito_mir::mir::Proj,
+        _: Option<&Ty>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn visit_lane_mask(&mut self, _: &mojito_types::types::LaneMask) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn visit_param_arg(
+        &mut self,
+        _: &mojito_mir::mir::MirParamArg,
+        _: mojito_mir::mir::visit::ParamArgSite,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn visit_param_decls(
+        &mut self,
+        _: &[ParamDecl],
+        _: mojito_mir::mir::visit::ParamDeclSite,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn visit_constant(&mut self, _: &mojito_mir::mir::Const) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn visit_param_ref(&mut self, _: &ParamRef) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn visit_sequence(
+        &mut self,
+        _: &mojito_checked::checked::ComptimeSequence,
+    ) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 

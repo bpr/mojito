@@ -122,7 +122,7 @@ impl<'a> Flatten<'a> {
     /// Read member node `e`, `object.field`.
     pub(super) fn member_expr(&mut self, e: Node<'a>, object: Node<'a>, field: &str) -> Reg {
         let node = e.checked;
-        if e.is_pointer_convert() {
+        if e.is_pointer_mlir_value_read() {
             return self.pointer_convert(e, object);
         }
         // `v.length` on a SIMD value is its `SIMDLength` parameter, after

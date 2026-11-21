@@ -2444,7 +2444,7 @@ impl<'a> Flatten<'a> {
                 if e.is_dtype_constant()
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
-                    || e.is_pointer_convert()
+                    || e.is_pointer_mlir_value_read()
                 {
                     return None;
                 }
@@ -2484,7 +2484,7 @@ impl<'a> Flatten<'a> {
                 if e.is_dtype_constant()
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
-                    || e.is_pointer_convert()
+                    || e.is_pointer_mlir_value_read()
                 {
                     return None;
                 }
@@ -2529,7 +2529,7 @@ impl<'a> Flatten<'a> {
                 if e.is_dtype_constant()
                     || e.simd_length().is_some()
                     || e.recorded_value().is_some()
-                    || e.is_pointer_convert()
+                    || e.is_pointer_mlir_value_read()
                 {
                     return None;
                 }

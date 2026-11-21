@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2431**.
+Next free ID: **R2432**.
 
 ## Ordered Work
 
@@ -3081,26 +3081,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R2344 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R2411 Reading through a pointer after a cast of it conflicts with
-  the cast**
-
-  `var p = Pointer(to=x)` then `print(p.unsafe_origin_cast[origin_of(x)]()[])`
-  and `print(p[])` fails with "access to 'x' conflicts with live reference
-  'p'", where the pin prints `5` twice.
-  - Probe: the same with `p.unsafe_bitcast[Int]()` in place of the cast.
-  - Probe: the same with `p.unsafe_address_space_cast[AddressSpace.GENERIC]()`.
-  - Probe: binding the cast first (`var q = p.unsafe_bitcast[Int]()`,
-    `print(q[])`, `print(p[])`) fails the same way.
-  - Probe: `var p = Pointer(to=y).unsafe_address_space_cast[
-    AddressSpace.GLOBAL]()`, then `f(y)` for any `f`, then `p[]`, fails
-    the same way, where the pin runs it.
-  - Each cast records a `PointerOriginCast` or `PointerConvert` adjustment
-    over the receiver, which ownership analysis reads as a fresh access to
-    the pointee's place rather than a copy of `p`.
-  - Found while landing R2204 (2026-11-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
@@ -9137,24 +9117,48 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1215 `unsafe_origin_cast` accepts a target of different
-  mutability**
+- [ ] **R1215 A receiver's symbolic origin converts to a `MutOrigin`
+  binder**
 
   Problem: `self.data.unsafe_origin_cast[origin_of(self)]()` under `ref
   self`, over a `Pointer[Int, MutUntrackedOrigin]` field, is accepted,
   where the pin rejects it: "value passed to 'target_origin' cannot be
   converted from 'Origin[mut=self_is_mut]' to 'MutOrigin'".
-  - Upstream declares `unsafe_origin_cast[target_origin: Origin[mut=mut]]`:
-    the target keeps the pointer's own mutability, and `unsafe_mut_cast`
-    is the spelling that changes it.
-  - Mojito's `unsafe_origin_cast` arm
-    (`crates/mojito-checker/src/checker/method_calls/builtin_types.rs`)
-    weakens a mutable target to an immutable pointer's capability instead
-    of matching the two.
+  - The cast is the declared body now (R2206), whose `target_origin:
+    Origin[mut=Self.mut]` reads `True` here; `convert_bracket_origin`
+    (`checker/generics.rs`) rejects only a statically immutable argument at
+    a `mut=True` binder, never a symbolic one (`self_is_mut`, the `ref self`
+    reference binder `OriginParamId::reference_binder(0)`).
+  - Adding that rejection breaks the bundled library's own casts of
+    `origin_of(self)` from an untracked mutable pointer, which upstream
+    spells `ref[origin] self` plus `unsafe_mut_cast[origin.mut]()` first:
+    `collections/{list,array,optional,set,dict,string_dict}.mojo`,
+    `string.mojo` (`unsafe_ptr`, the `StringSpan`/`CStringSlice`
+    initializers), `memory/{alloc,owned_pointer}.mojo`, and `span.mojo`.
   - The same body under `mut self` is accepted by both.
   - Found while landing R679 (2026-10-20).
-  - Depends on R2206 (its arm goes) and R2426 (the declared
-    `Origin[mut=Self.mut]` check).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2431 A static pointer cast to mutable stays immutable**
+
+  `"a".ptr().unsafe_mut_cast[True]()` passed to a `MutPointer[Byte, _]`
+  parameter fails with "expected Pointer[UInt8, MutUnsafeAnyOrigin], found
+  Pointer[UInt8, ImmStaticOrigin]", where the pin prints `97`.
+  - Cause: `PointerOrigin::Static` has no mutable form, so
+    `Origin::mut_cast(Static, True)` reads back as `ImmStaticOrigin`
+    (`PointerOrigin::from_parts`, `mojito-types/src/origin.rs`), where
+    upstream's `ImmStaticOrigin.unsafe_mut_cast[True]()` is a mutable
+    static origin.
+  - Probe: `StringSpan.__init__(out self)` (`std/string.mojo`) casts
+    `"".ptr().unsafe_mut_cast[True]()` to a symbolic
+    `origin._get_owned_interior["bytes"]`; the receiver's `Self.mut` reads
+    `False`, so the declared `unsafe_origin_cast` binder is
+    `Origin[mut=False]`, and an immutable binder converts only a
+    statically mutable argument to `ImmOrigin` (`bound_bracket_origin`,
+    `checker/generics.rs`), where upstream converts any.
+  - Found while landing R2206 (2026-11-20).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1324 A struct over a place origin converts implicitly to one over
@@ -10654,44 +10658,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2424.
   - Model: Fable, Not Planned.
 
-- [ ] **R2206 `Pointer`'s casts and conversions are checker rules, where
-  upstream's are bodies of the declared struct**
-
-  `infer_pointer_method` (`checker/method_calls/builtin_types.rs`) and
-  `infer_pointer_from_mlir_value` (`checker/operators.rs`) type
-  `unsafe_origin_cast`, `unsafe_mut_cast`, `unsafe_bitcast`,
-  `unsafe_address_space_cast`, `_get_kgen_pointer`, `copy`, the
-  `_mlir_value` field read, and the `_mlir_value=` and `copy=`
-  constructions, where `std/memory/pointer.mojo` declares upstream's
-  bodies.
-  - Retire those arms, `record_pointer_origin_cast`,
-    `infer_pointer_bitcast`, `infer_pointer_address_space_cast`, the
-    `copy=` arm of the instance-construction rule
-    (`checker/call_inference.rs`), and the `PointerOriginCast` and
-    `PointerConvert` adjustments (a `PACKAGE_FORMAT` bump).
-  - The `pointer.convert`/`pointer.bitcast` MIR instructions stay: the
-    field read lowers to `pointer.convert` keyed on the object's checked
-    type, as `lower_pointer_field_store` does the store.
-  - Loans come from the call's checked result type, not an adjustment.
-  - `as_imm` is no rule: it already reaches the casts through its body.
-  - Shrink `POINTER_RULE_MEMBERS` and `POINTER_RULE_INITIALIZERS`
-    (`method_calls/builtin_types.rs`) as the rules retire.
-  - Probe: `Pointer(copy=p)` prints `5` at the pin; today it fails with
-    "expected exactly one 'to=' keyword argument". Sent to the declared
-    initializers instead, the checker selects the synthesized copy and
-    elaboration fails, so `copy=` stays a rule keyword until this lands.
-  - A reader that rebuilds a pointer from a declared struct's
-    substitution must keep `Ty::pointer`: a bare-`ref` binder's pointer
-    at another binder's mutability (`pointer_subscript_reads_in_place.mojo`)
-    reads back from its struct parts at its own binder's.
-  - Re-probe R1215 (fixed by this plus R2426).
-  - The plan is `R2206-pointer-s-casts-and-conversions-are-plan.md`; its
-    probes re-ran unchanged on 2026-11-20.
-  - Found while planning R1681 (2026-11-14).
-  - Depends on R2420 (declared members and initializers resolve), R1656,
-    R2426, R2368.
-  - Model: Fable, Planned.
-
 - [ ] **R2207 `Pointer`'s address and memory members are checker rules,
   where upstream's are bodies of the declared struct**
 
@@ -10829,6 +10795,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `reflect[type_of(p)].field_count()` fails with "requires a
     struct type"; the pin prints `1`.
   - Re-probe R1502.
+  - The fold's symbolic `mut` argument is an anonymous deferred value
+    (`nominal_parts`), so a declared initializer's `Self` reads a pointer
+    back at its origin's own binder where the instance names another;
+    `reads_back_at_own_binder` (`checker/call_inference.rs`) accepts the
+    instance then, and goes with the variant.
   - If it does not fit one session, split it into a types-and-checker half
     and a MIR, VM, and pliron half.
   - Found while planning R1681 (2026-11-14).
@@ -10842,6 +10813,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   from, where Mojito keeps two types with two sets of rules.
   - It is cheaper after R2210, when `LitRef` is reached only through the
     `lit.ref` ops.
+  - Sites the split leaves: the MIR verifier's `same_address`
+    (`mir/verify/instr.rs`) admits a pointer or reference register bound
+    to a `!lit.ref` slot (a pack element's address at the declared
+    `Pointer(_mlir_value=)` initializer), and the VM's `var.use` reads a
+    `!lit.ref` or `!kgen.pointer` slot's handle as its value where a `ref`
+    binding's reads through.
   - Its first session plans it and files the slices.
   - Found while planning R1681 (2026-11-14).
   - Depends on R2210.

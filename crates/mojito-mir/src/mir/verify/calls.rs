@@ -927,10 +927,22 @@ pub(super) fn make_ref_target<'p>(
     match (root_capability, place.is_whole_root()) {
         (Some(_), true) if pointer_value => place.ty.as_ref().map(|target| (target, None)),
         (Some(capability), true) => Some((capability.target, Some(capability.permission))),
-        (Some(capability), false) => place
-            .ty
-            .as_ref()
-            .map(|target| (target, Some(capability.permission))),
+        // A projection through a pointer the place loads on the way
+        // (`elements[i][]`) addresses with that pointer's capability.
+        (Some(capability), false) => {
+            let permission = place
+                .proj
+                .iter()
+                .skip(1)
+                .zip(&place.projection_tys)
+                .filter(|(projection, base)| {
+                    matches!(projection, Proj::Index(_)) && base.is_pointer()
+                })
+                .filter_map(|(_, base)| reference_capability(base))
+                .next_back()
+                .map_or(capability.permission, |inner| inner.permission);
+            place.ty.as_ref().map(|target| (target, Some(permission)))
+        }
         (None, _) => place.ty.as_ref().map(|target| (target, None)),
     }
 }

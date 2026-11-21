@@ -5831,9 +5831,10 @@ fn canonical_simd_application(kind: &TyKind) -> Option<Ty> {
 /// The pointer type a `Pointer[mut, T, origin, address_space]` application
 /// denotes, closed or symbolic. A closed `mut` is the pointer's mutability;
 /// a symbolic one is the origin binder's, as upstream's
-/// `origin: Origin[mut=mut]` ties them. Any other shape (the bare template,
-/// a short application, an origin no pointer holds, a symbolic `mut` over an
-/// origin no binder roots) is not rewritten.
+/// `origin: Origin[mut=mut]` ties them, and over the receiver's origin the
+/// receiver's. Any other shape (the bare template, a short application, an
+/// origin no pointer holds, a symbolic `mut` over a fixed origin) is not
+/// rewritten.
 fn canonical_pointer_application(kind: &TyKind) -> Option<Ty> {
     let TyKind::Struct(name, args) = kind else {
         return None;
@@ -5850,13 +5851,24 @@ fn canonical_pointer_application(kind: &TyKind) -> Option<Ty> {
     if name != POINTER_TYPE_NAME {
         return None;
     }
+    // The receiver's origin (`origin_of(self)`) has the receiver's
+    // symbolic `mut`.
+    let symbolic = || {
+        origin.binder_mutability().or_else(|| {
+            matches!(
+                origin.uncast().projection_base(),
+                crate::origin::Origin::SelfParam
+            )
+            .then_some(crate::origin::Mutability::RECEIVER)
+        })
+    };
     let mutability = match mutable {
         CtValue::Bool(mutable) => crate::origin::Mutability::of(*mutable),
-        CtValue::Deferred(_) => origin.binder_mutability()?,
+        CtValue::Deferred(_) => symbolic()?,
         CtValue::Expr(expr) => match expr.as_constant() {
             Some(CtValue::Bool(mutable)) => crate::origin::Mutability::of(*mutable),
             Some(_) => return None,
-            None => origin.binder_mutability()?,
+            None => symbolic()?,
         },
         _ => return None,
     };

@@ -603,28 +603,31 @@ impl Checker {
                 },
             };
         }
-        // A pointer the expression forms in place (`Pointer(to=x)`, an
-        // origin cast, an offset) loans exactly its checked origin; any other
-        // call's pointer result reads through its own loan-carrying slot.
-        let formed_pointer = || {
-            self.has_fact(&root.source_span(), |facts| {
-                matches!(
-                    facts.adjustment.as_deref(),
-                    Some(
-                        mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
-                            | mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }
-                            | mojito_checked::checked::SemanticAdjustment::PointerOriginCast { .. }
-                            | mojito_checked::checked::SemanticAdjustment::PointerConvert { .. }
+        // A pointer the expression forms in place (a `Pointer(...)`
+        // construction, an offset) or a call returns over a tracked origin (a
+        // cast) loans exactly its checked origin; any other call's pointer
+        // result reads through its own loan-carrying slot.
+        let formed_pointer = |ty: &Ty| {
+            matches!(&root.kind, ExprKind::Call { name, .. } if name == "Pointer" || name == "UnsafePointer")
+                || ty
+                    .pointer_origin()
+                    .is_some_and(|origin| origin.as_origin().is_some())
+                || self.has_fact(&root.source_span(), |facts| {
+                    matches!(
+                        facts.adjustment.as_deref(),
+                        Some(
+                            mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
+                                | mojito_checked::checked::SemanticAdjustment::PointerOffset { .. }
+                        )
                     )
-                )
-            })
+                })
         };
         if matches!(
             root.kind,
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-        ) && match self.infer(root).as_ref().map(Ty::kind) {
-            Ok(kind) if kind.is_pointer() => formed_pointer(),
-            Ok(kind) if kind.is_non_simd_struct() => true,
+        ) && match self.infer(root) {
+            Ok(ty) if ty.is_pointer() => formed_pointer(&ty),
+            Ok(ty) if ty.kind().is_non_simd_struct() => true,
             _ => false,
         } {
             let _ = self.materialize_borrow_owner(root, mutable);
@@ -681,12 +684,6 @@ impl Checker {
                     materialized, ..
                 }
                 | mojito_checked::checked::SemanticAdjustment::PointerOffset { materialized }
-                | mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
-                    materialized, ..
-                }
-                | mojito_checked::checked::SemanticAdjustment::PointerConvert {
-                    materialized, ..
-                }
                 | mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses {
                     materialized,
                     ..
@@ -720,9 +717,9 @@ impl Checker {
         }
     }
 
-    /// Record a pointer-valued adjustment (`PointerToPlace`, `PointerOffset`,
-    /// `PointerOriginCast`, `PointerConvert`) at `span`, keeping the hidden holder an earlier
-    /// inference of the span materialized for a dereference of it.
+    /// Record a pointer-valued adjustment (`PointerToPlace`, `PointerOffset`)
+    /// at `span`, keeping the hidden holder an earlier inference of the span
+    /// materialized for a dereference of it.
     pub(in crate::checker) fn record_pointer_adjustment(
         &self,
         span: SourceSpan,
@@ -733,9 +730,7 @@ impl Checker {
         if let Some(owner) = record.adjustment.as_deref().and_then(|established| {
             mojito_checked::checked::materialized_borrow_owner(std::slice::from_ref(established))
         }) && let SemanticAdjustment::PointerToPlace { materialized, .. }
-        | SemanticAdjustment::PointerOffset { materialized }
-        | SemanticAdjustment::PointerOriginCast { materialized, .. }
-        | SemanticAdjustment::PointerConvert { materialized, .. } = &mut adjustment
+        | SemanticAdjustment::PointerOffset { materialized } = &mut adjustment
         {
             *materialized = Some(owner);
         }

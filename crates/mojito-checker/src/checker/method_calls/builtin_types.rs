@@ -10,12 +10,6 @@ use mojito_types::types::TyKind;
 /// subscript rules, the construction rules, and the static rules. A member
 /// off this list resolves to the declared body.
 pub(in crate::checker) const POINTER_RULE_MEMBERS: &[&str] = &[
-    "unsafe_origin_cast",
-    "unsafe_mut_cast",
-    "unsafe_bitcast",
-    "unsafe_address_space_cast",
-    "copy",
-    "_get_kgen_pointer",
     "__int__",
     "unsafe_offset",
     "unsafe_write",
@@ -51,10 +45,10 @@ pub(in crate::checker) fn pointer_rule_member(member: &str) -> bool {
 }
 
 /// The initializer keywords of the declared `Pointer` a checker rule
-/// answers ahead of the declaration: `to=`, `_mlir_value=`, and `copy=`. A
-/// construction by any other keyword selects among the declared
-/// initializers.
-pub(in crate::checker) const POINTER_RULE_INITIALIZERS: &[&str] = &["to", "_mlir_value", "copy"];
+/// answers ahead of the declaration: `to=`. A construction by any other
+/// keyword selects among the declared initializers, the synthesized
+/// `copy=` included.
+pub(in crate::checker) const POINTER_RULE_INITIALIZERS: &[&str] = &["to"];
 
 /// Whether a checker rule answers a `Pointer` construction by `kwargs`:
 /// one with no keyword, or with only [`POINTER_RULE_INITIALIZERS`] ones.
@@ -90,134 +84,13 @@ impl Checker {
         if !kwargs.is_empty() && method != "unsafe_write" {
             reject_kwargs(kwargs)?;
         }
-        // `unsafe_origin_cast` takes its target origin, `unsafe_mut_cast`
-        // its target mutability, `unsafe_bitcast` its target pointee, and
-        // `unsafe_address_space_cast` its target address space as the sole
-        // compile-time parameter argument; no other pointer method is
-        // parameterized.
-        if !param_args.is_empty()
-            && !matches!(
-                method,
-                "unsafe_origin_cast"
-                    | "unsafe_mut_cast"
-                    | "unsafe_bitcast"
-                    | "unsafe_address_space_cast"
-            )
-        {
+        if !param_args.is_empty() {
             return Err(TypeError::BadCall {
                 func: format!("Pointer.{method}"),
                 reason: "compile-time parameter arguments are not supported here".to_string(),
             });
         }
         match method {
-            // Provenance rebind (current Mojo's `unsafe_origin_cast`
-            // vocabulary): the runtime value is unchanged; only the checked
-            // origin moves.
-            "unsafe_origin_cast" => {
-                let [target] = param_args else {
-                    return Err(TypeError::BadCall {
-                        func: "Pointer.unsafe_origin_cast".to_string(),
-                        reason: "expected exactly one origin parameter argument".to_string(),
-                    });
-                };
-                if !args.is_empty() {
-                    return Err(TypeError::ArityMismatch {
-                        name: "unsafe_origin_cast".to_string(),
-                        expected: 0,
-                        got: args.len(),
-                    });
-                }
-                let target = self.pointer_origin_arg(target)?;
-                // Upstream's `target_origin: Origin[mut=Self.mut]` takes a
-                // mutable origin where an immutable one is expected, so only a
-                // statically mutable receiver cast to an immutable target is an
-                // error. An immutable receiver cast to a mutable origin is
-                // accepted but keeps its immutable capability. A parametric
-                // mutability resolves from the receiver at each concrete site.
-                if origin.statically_mutable() == Some(true)
-                    && target.statically_mutable() == Some(false)
-                {
-                    return Err(TypeError::Unsupported(
-                        "an origin cast keeps the Pointer's capability: the source \
-                         Pointer origin is mutable, so the target origin must be too"
-                            .to_string(),
-                    ));
-                }
-                let target = if origin.statically_mutable() == Some(false)
-                    && target.statically_mutable() == Some(true)
-                {
-                    target.immutable()
-                } else {
-                    target
-                };
-                self.record_pointer_origin_cast(span, &target);
-                Ok(pointer(elem.clone(), target))
-            }
-            // Capability rebind (upstream's `unsafe_mut_cast[target_mut]`): the
-            // runtime value is unchanged, as for an origin cast.
-            "unsafe_mut_cast" => {
-                let mut target = param_args.first();
-                while let Some(mojito_ast::ast::ParamArg::Named { value, .. }) = target {
-                    target = Some(value);
-                }
-                let Some(mojito_ast::ast::ParamArg::Value(Expr {
-                    kind: ExprKind::Bool(target_mut),
-                    ..
-                })) = target
-                else {
-                    return Err(TypeError::BadCall {
-                        func: "Pointer.unsafe_mut_cast".to_string(),
-                        reason: "expected exactly one Bool literal parameter argument".to_string(),
-                    });
-                };
-                if param_args.len() != 1 || !args.is_empty() {
-                    return Err(TypeError::ArityMismatch {
-                        name: "unsafe_mut_cast".to_string(),
-                        expected: 0,
-                        got: args.len(),
-                    });
-                }
-                let target = if *target_mut {
-                    origin.clone().mutable()
-                } else {
-                    origin.clone().immutable()
-                };
-                self.record_pointer_origin_cast(span, &target);
-                Ok(pointer(elem.clone(), target))
-            }
-            // Upstream's `unsafe_bitcast[U]()`: the same address and origin
-            // retyped to a `U` pointee (`pop.pointer.bitcast`).
-            "unsafe_bitcast" => {
-                no_arguments(method, args)?;
-                self.infer_pointer_bitcast(span, origin, address_space, param_args)
-            }
-            // Upstream's `unsafe_address_space_cast[target_address_space =
-            // Self.address_space]()`: the same address and origin in the
-            // target space (`pop.pointer.bitcast`).
-            "unsafe_address_space_cast" => {
-                no_arguments(method, args)?;
-                self.infer_pointer_address_space_cast(span, elem, origin, address_space, param_args)
-            }
-            // `Copyable.copy()`: the same pointer, lowered as an origin cast
-            // to the receiver's own origin.
-            "copy" => {
-                no_arguments("copy", args)?;
-                self.record_pointer_origin_cast(span, origin);
-                Ok(pointer(elem.clone(), origin.clone()))
-            }
-            // The `!kgen.pointer` the pointer wraps, its `_mlir_value`.
-            "_get_kgen_pointer" => {
-                no_arguments(method, args)?;
-                self.record_pointer_adjustment(
-                    span.clone(),
-                    mojito_checked::checked::SemanticAdjustment::PointerConvert {
-                        origin: None,
-                        materialized: None,
-                        bitcast: false,
-                    },
-                );
-                Ok(Ty::kgen_pointer(elem.clone(), address_space.clone()))
-            }
             // `Intable.__int__()`: the address, upstream's
             // `pop.pointer_to_index`.
             "__int__" => {
@@ -765,93 +638,6 @@ impl Checker {
             },
         ));
         Ok(Ty::none())
-    }
-
-    /// Record `pointer.unsafe_origin_cast[...]()` (or a cast-shaped rebind)
-    /// at `span`, rebinding to `origin`.
-    fn record_pointer_origin_cast(
-        &self,
-        span: &SourceSpan,
-        origin: &mojito_types::origin::PointerOrigin,
-    ) {
-        self.record_pointer_adjustment(
-            span.clone(),
-            mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
-                origin: origin.clone(),
-                materialized: None,
-            },
-        );
-    }
-
-    /// Type upstream's `unsafe_bitcast[U: AnyType]()`: the same address and
-    /// origin retyped to a `U` pointee (`pop.pointer.bitcast`), with `U`
-    /// recorded as the call's parameter attribute.
-    fn infer_pointer_bitcast(
-        &self,
-        span: &SourceSpan,
-        origin: &mojito_types::origin::PointerOrigin,
-        address_space: &mojito_types::types::AddressSpaceSlot,
-        param_args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<Ty, TypeError> {
-        let [target] = param_args else {
-            return Err(TypeError::BadCall {
-                func: "Pointer.unsafe_bitcast".to_string(),
-                reason: "expected exactly one type parameter argument".to_string(),
-            });
-        };
-        let named = match target {
-            mojito_ast::ast::ParamArg::Named { value, .. } => value.as_ref(),
-            positional => positional,
-        };
-        let element = self.type_param_argument(named, "Pointer.unsafe_bitcast")?;
-        let attributes = DeclaredAttributes::of_builtin(
-            "Pointer.unsafe_bitcast",
-            U_PARAMS,
-            param_args,
-            types_attributes(param_args, std::slice::from_ref(&element)),
-        )?;
-        self.record_declared_attributes(span.clone(), &attributes);
-        self.record_pointer_adjustment(
-            span.clone(),
-            mojito_checked::checked::SemanticAdjustment::PointerConvert {
-                origin: Some(origin.clone()),
-                materialized: None,
-                bitcast: true,
-            },
-        );
-        Ok(Ty::pointer(element, origin.clone(), address_space.clone()))
-    }
-
-    /// Type upstream's `unsafe_address_space_cast[target_address_space =
-    /// Self.address_space]()`: the same address and origin in the target
-    /// space (`pop.pointer.bitcast`).
-    fn infer_pointer_address_space_cast(
-        &self,
-        span: &SourceSpan,
-        elem: &Ty,
-        origin: &mojito_types::origin::PointerOrigin,
-        address_space: &mojito_types::types::AddressSpaceSlot,
-        param_args: &[mojito_ast::ast::ParamArg],
-    ) -> Result<Ty, TypeError> {
-        let target = match param_args {
-            [] => address_space.clone(),
-            [target] => self.address_space_arg(target)?,
-            _ => {
-                return Err(TypeError::BadCall {
-                    func: "Pointer.unsafe_address_space_cast".to_string(),
-                    reason: "expected at most one address space parameter argument".to_string(),
-                });
-            }
-        };
-        self.record_pointer_adjustment(
-            span.clone(),
-            mojito_checked::checked::SemanticAdjustment::PointerConvert {
-                origin: Some(origin.clone()),
-                materialized: None,
-                bitcast: true,
-            },
-        );
-        Ok(Ty::pointer(elem.clone(), origin.clone(), target))
     }
 
     /// Admit `method` taking the pointee `elem` out through a pointer of

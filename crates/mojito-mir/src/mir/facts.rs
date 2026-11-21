@@ -61,6 +61,17 @@ impl<'a> Node<'a> {
             .flatten()
     }
 
+    /// Whether this reads a pointer's one field, the `!kgen.pointer` it
+    /// wraps (`p._mlir_value`): the pointer's address retyped, as its store
+    /// is.
+    pub(super) fn is_pointer_mlir_value_read(self) -> bool {
+        matches!(self.op(), CheckedOp::Member { field, .. } if field == mojito_types::ct::MLIR_VALUE_FIELD)
+            && self
+                .object()
+                .and_then(Self::ty)
+                .is_some_and(|ty| ty.is_pointer())
+    }
+
     /// The object and index of a subscript: `None` when this is not one.
     pub(super) fn index_operands(self) -> Option<(Self, Self)> {
         self.object().zip(self.index())
@@ -239,28 +250,6 @@ impl<'a> Node<'a> {
                 _ => None,
             })
             .cloned()
-    }
-
-    /// Whether this retypes an address among a `Pointer`, a `!kgen.pointer`,
-    /// and a `!lit.ref` (`p._mlir_value`, `p._get_kgen_pointer()`).
-    pub(super) fn is_pointer_convert(self) -> bool {
-        self.adjustments().iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::PointerConvert { .. }
-            )
-        })
-    }
-
-    /// Whether the address is retyped to a new pointee as well
-    /// (`p.unsafe_bitcast[U]()`, `pointer.bitcast`).
-    pub(super) fn is_pointer_bitcast(self) -> bool {
-        self.adjustments().iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::PointerConvert { bitcast: true, .. }
-            )
-        })
     }
 
     /// Project `place`, the place of this member node's object, to the
@@ -1527,18 +1516,20 @@ impl<'a> Flatten<'a> {
                         setup: false,
                     }];
                 }
-                // `Pointer[T, o](_mlir_value=)` loans the place its origin
-                // names, as `Pointer(to=place)` does.
-                if let Some(mojito_checked::checked::SemanticAdjustment::PointerConvert {
-                    origin: Some(mojito_types::origin::PointerOrigin::Place { place, mutable }),
-                    ..
-                }) = node.adjustments().iter().find(|adjustment| {
-                    matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::PointerConvert { .. }
+                // A declared `Pointer` initializer (`Pointer[T, o](_mlir_value=)`)
+                // loans the place its checked result's origin names, as
+                // `Pointer(to=place)` does.
+                if super::callable_target(node.adjustments()).is_some_and(|target| {
+                    mojito_symbol::symbol::split_method_symbol(&target).is_some_and(
+                        |(owner, member)| {
+                            owner == mojito_types::types::POINTER_TYPE_NAME
+                                && member.starts_with("__init__")
+                        },
                     )
-                }) {
-                    return self.pointer_place_loan(place, *mutable, None, true);
+                }) && let Some(mojito_types::origin::PointerOrigin::Place { place, mutable }) =
+                    node.ty().and_then(|ty| ty.pointer_origin())
+                {
+                    return self.pointer_place_loan(&place, mutable, None, true);
                 }
                 // A free-function call returning a ref-field struct (a
                 // borrowing view) lends its borrowed sources to the result,
@@ -1622,23 +1613,6 @@ impl<'a> Flatten<'a> {
                     && let Some(loans) = self.borrowed_ref_arguments(node)
                 {
                     return loans;
-                }
-                let cast = node
-                    .adjustments()
-                    .iter()
-                    .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
-                            origin,
-                            ..
-                        }
-                        | mojito_checked::checked::SemanticAdjustment::PointerConvert {
-                            origin: Some(origin),
-                            ..
-                        } => Some(origin),
-                        _ => None,
-                    });
-                if let Some(mojito_types::origin::PointerOrigin::Place { place, mutable }) = cast {
-                    return self.pointer_place_loan(place, *mutable, None, false);
                 }
                 // A method whose selected contract returns an origin-bearing
                 // pointer (`xs.unsafe_ptr()`) loans that rebased place as a

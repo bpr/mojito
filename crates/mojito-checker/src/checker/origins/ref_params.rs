@@ -539,7 +539,7 @@ impl Checker {
                 {
                     return vec![Origin::Place(place)];
                 }
-                if let Some(origins) = self.pointer_convert_origins(expression) {
+                if let Some(origins) = self.pointer_result_origins(expression) {
                     return origins;
                 }
                 let mut result = Vec::new();
@@ -678,23 +678,16 @@ impl Checker {
                 if let Some(bound) = self.call_result_bound_origins(expression) {
                     return bound;
                 }
-                // An `unsafe_origin_cast` result carries exactly its rebound target
-                // origin, recorded by the checker when it typed the cast.
-                if let Some(mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
-                    origin,
-                    ..
-                }) = self
-                    .node_facts
-                    .borrow()
-                    .get(&expression.source_span())
-                    .and_then(|facts| facts.adjustment.as_deref())
+                // A declared member's pointer result (a cast) carries exactly
+                // the origin its checked type names; an offset forwards its
+                // receiver's below.
+                if !self.has_fact(&expression.source_span(), |facts| {
+                    matches!(
+                        facts.adjustment.as_deref(),
+                        Some(mojito_checked::checked::SemanticAdjustment::PointerOffset { .. })
+                    )
+                }) && let Some(origins) = self.pointer_result_origins(expression)
                 {
-                    return origin
-                        .as_origin()
-                        .map(|origin| vec![origin])
-                        .unwrap_or_default();
-                }
-                if let Some(origins) = self.pointer_convert_origins(expression) {
                     return origins;
                 }
                 // A method whose selected contract returns an origin-bearing
@@ -843,29 +836,19 @@ impl Checker {
             .collect()
     }
 
-    /// The origins a `PointerConvert` result carries: a built pointer's
-    /// origin, and none for a `!kgen.pointer`. `None` for any other
-    /// expression.
-    fn pointer_convert_origins(
+    /// The origins a call whose checked result is a pointer carries: its
+    /// origin, as its type names it, and none for a `!kgen.pointer`. `None`
+    /// for any other expression.
+    fn pointer_result_origins(
         &self,
         expression: &Expr,
     ) -> Option<Vec<mojito_types::origin::Origin>> {
-        match self
-            .node_facts
-            .borrow()
-            .get(&expression.source_span())
-            .and_then(|facts| facts.adjustment.as_deref())
-        {
-            Some(mojito_checked::checked::SemanticAdjustment::PointerConvert {
-                origin, ..
-            }) => Some(
-                origin
-                    .as_ref()
-                    .and_then(mojito_types::origin::PointerOrigin::as_origin)
-                    .into_iter()
-                    .collect(),
-            ),
-            _ => None,
+        let ty = self.fact(&expression.source_span(), |facts| facts.ty.as_ref())?;
+        match ty.kind() {
+            TyKind::KgenPointer { .. } => Some(Vec::new()),
+            kind => kind
+                .pointer_origin()
+                .map(|origin| origin.as_origin().into_iter().collect()),
         }
     }
 }

@@ -755,9 +755,21 @@ impl VmBackend {
                     } else {
                         moved
                     }
-                } else if let Value::Ref { .. } = &vars[slot] {
+                } else if let Value::Ref { .. } = &vars[slot]
+                    && !prog.mir.functions[function]
+                        .1
+                        .var_tys
+                        .get(var)
+                        .is_some_and(|ty| {
+                            matches!(
+                                ty.kind(),
+                                TyKind::LitRef { .. } | TyKind::KgenPointer { .. }
+                            )
+                        })
+                {
                     // A reference binding reads through its stored handle; a
-                    // place pointer the slot holds is its value.
+                    // place pointer the slot holds is its value, as is the
+                    // address a `!lit.ref` or `!kgen.pointer` slot holds.
                     self.read_reference(&vars[slot], frame_id, vars)?
                 } else {
                     match mode {

@@ -1,8 +1,9 @@
 # std.memory.pointer — upstream's `Pointer` and its aliases, ported with
 # these departures. The compiler folds every application of the struct into
 # its own pointer type, and its rules still answer `Pointer(to=)`, `p[]`,
-# the casts, the address members, and the operators (R2206–R2208); a member
-# or an initializer keyword no rule answers reaches its body here. Conformances
+# the address members, and the operators (R2207, R2208); a member or an
+# initializer keyword no rule answers, the casts included, reaches its body
+# here. Conformances
 # `DevicePassable`, `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable`
 # are absent from the bundle, and `Comparable` waits on the members below.
 # Members omitted, by blocker:

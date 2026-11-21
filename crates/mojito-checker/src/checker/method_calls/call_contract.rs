@@ -82,7 +82,11 @@ impl Checker {
         if reference_result.is_none() && !captures.is_empty() {
             self.record_capture_accesses(span.clone(), &captures);
         }
-        let return_type = self.rebase_self_place_pointer(resolved.return_type.clone(), object);
+        let return_type = self.rebase_self_place_pointer(
+            resolved.return_type.clone(),
+            object,
+            resolved.declared_return.as_ref(),
+        );
         if reference_result.is_none() && captures.is_empty() {
             self.record_view_result(site, resolved, &return_type);
         }

@@ -335,32 +335,8 @@ impl Checker {
             // A pointer's construction is the rule's for the keywords a
             // rule answers, and its declared initializers' otherwise; its
             // bracket is the instance's.
-            TyKind::Pointer {
-                element,
-                origin,
-                address_space,
-            } => {
+            TyKind::Pointer { .. } => {
                 let constructed = match (args, kwargs) {
-                    ([], [kwarg]) if kwarg.name == "_mlir_value" => self.pointer_from_mlir_value(
-                        span.clone(),
-                        Some((element.clone(), origin.clone())),
-                        Some(address_space.clone()),
-                        &kwarg.value,
-                    )?,
-                    // `Copyable`'s synthesized `copy` (`Self(copy=self)`):
-                    // the same address, retyped to the instance.
-                    ([], [kwarg]) if kwarg.name == "copy" => {
-                        let copied = self.infer(&kwarg.value)?;
-                        self.record_pointer_adjustment(
-                            span.clone(),
-                            mojito_checked::checked::SemanticAdjustment::PointerConvert {
-                                origin: Some(origin.clone()),
-                                materialized: None,
-                                bitcast: false,
-                            },
-                        );
-                        copied
-                    }
                     ([], [kwarg]) if kwarg.name == "to" => {
                         self.infer_pointer_to(span.clone(), &[], args, kwargs)?
                     }
@@ -378,7 +354,9 @@ impl Checker {
                     }
                     _ => self.infer_pointer_to(span.clone(), &[], args, kwargs)?,
                 };
-                if self.coerces_by_origins(&constructed, instance) {
+                if self.coerces_by_origins(&constructed, instance)
+                    || reads_back_at_own_binder(&constructed, instance)
+                {
                     Ok(instance.clone())
                 } else {
                     Err(TypeError::TypeMismatch {
@@ -3270,4 +3248,37 @@ fn bind_unbound_origin_attributes(
         attributes.bind(slot, position, Some(TyArg::Origin(bound.clone())));
     }
     Ok(())
+}
+
+/// Whether `constructed`, a declared `Pointer` initializer's `Self`, is
+/// `instance` read back from the folded struct's parts: the same element,
+/// origin, and address space, its symbolic `mut` at the origin's own binder
+/// where the instance's names another binder, which the fold's deferred
+/// `mut` argument does not carry (R2210).
+fn reads_back_at_own_binder(constructed: &Ty, instance: &Ty) -> bool {
+    use mojito_types::origin::Mutability;
+    let (
+        TyKind::Pointer {
+            element,
+            origin,
+            address_space,
+        },
+        TyKind::Pointer {
+            element: expected,
+            origin: expected_origin,
+            address_space: expected_space,
+        },
+    ) = (constructed.kind(), instance.kind())
+    else {
+        return false;
+    };
+    let ((origin, mutability), (expected_origin, expected_mutability)) =
+        (origin.parts(), expected_origin.parts());
+    element == expected
+        && address_space == expected_space
+        && origin == expected_origin
+        && matches!(
+            (mutability, expected_mutability),
+            (Mutability::Param(_), Mutability::Param(_))
+        )
 }

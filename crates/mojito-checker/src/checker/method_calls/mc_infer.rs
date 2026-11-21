@@ -273,7 +273,11 @@ impl Checker {
             || {
                 self.bind_call_result_origins(
                     span,
-                    self.rebase_self_place_pointer(resolved.return_type, object),
+                    self.rebase_self_place_pointer(
+                        resolved.return_type,
+                        object,
+                        resolved.declared_return.as_ref(),
+                    ),
                 )
             },
             |reference| reference.referent,

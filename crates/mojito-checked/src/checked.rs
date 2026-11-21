@@ -1411,29 +1411,6 @@ pub enum SemanticAdjustment {
         /// A materialized dereference holder, as on `PointerToPlace`.
         materialized: Option<mojito_types::origin::OwnerId>,
     },
-    /// `pointer.unsafe_origin_cast[...]()`: a checked provenance rebind. The runtime
-    /// value is unchanged, so lowering forwards the receiver register; the
-    /// resolved target origin is retained so aggregate-origin bookkeeping can
-    /// carry the rebound loan without re-resolving the parameter argument.
-    PointerOriginCast {
-        origin: mojito_types::origin::PointerOrigin,
-        /// A materialized dereference holder, as on `PointerToPlace`.
-        materialized: Option<mojito_types::origin::OwnerId>,
-    },
-    /// An address retyped among a `Pointer`, the `!kgen.pointer` it wraps,
-    /// and a `!lit.ref`: `p._get_kgen_pointer()`, `p._mlir_value`, and
-    /// `Pointer[T, o](_mlir_value=)`. The runtime value is unchanged;
-    /// `origin` is a built pointer's, which it lends as an origin cast's
-    /// does, and `None` for a `!kgen.pointer`, which carries none.
-    PointerConvert {
-        origin: Option<mojito_types::origin::PointerOrigin>,
-        /// A materialized dereference holder, as on `PointerToPlace`.
-        materialized: Option<mojito_types::origin::OwnerId>,
-        /// Whether the address is retyped to a new pointee as well
-        /// (`p.unsafe_bitcast[U]()`, upstream's `pop.pointer.bitcast`),
-        /// rather than among the forms of one pointee's address.
-        bitcast: bool,
-    },
     /// Construct compiler-private inline uninit storage (`__UninitStorage[T]()`
     /// or `__UninitStorage[T](value^)`). Only bundled standard-library sources
     /// may acquire this adjustment.
@@ -7578,14 +7555,6 @@ pub fn materialized_borrow_owner(
         }
         | SemanticAdjustment::PointerOffset {
             materialized: Some(owner),
-        }
-        | SemanticAdjustment::PointerOriginCast {
-            materialized: Some(owner),
-            ..
-        }
-        | SemanticAdjustment::PointerConvert {
-            materialized: Some(owner),
-            ..
         }
         | SemanticAdjustment::CallableCaptureAccesses {
             materialized: Some(owner),

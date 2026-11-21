@@ -1081,7 +1081,8 @@ pub(in crate::checker) fn callable_value_argument(
 }
 
 /// The provenance a binder pointer projected by `path` takes once its
-/// binder is bound to `tail`: a place, or (when `symbolic`) another binder,
+/// binder is bound to `tail`: a place, an untracked or static origin, which
+/// stands whole, or (when `symbolic`) another binder,
 /// with the projection re-applied below it. `None` leaves it unbound.
 fn bind_tail(
     tail: &mojito_types::origin::Origin,
@@ -1099,6 +1100,10 @@ fn bind_tail(
                 Mutability::Immutable
             },
         ),
+        // An origin naming no tracked storage has no region to project.
+        Origin::Static | Origin::Untracked { .. } | Origin::UnsafeAny { .. } => {
+            PointerOrigin::from_parts(tail.clone(), mutability)
+        }
         Origin::Param(_) | Origin::SelfParam | Origin::Projected(..)
             if symbolic
                 && matches!(tail.projection_base(), Origin::Param(_) | Origin::SelfParam) =>

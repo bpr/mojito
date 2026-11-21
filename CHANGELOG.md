@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Pointer`'s casts (`unsafe_origin_cast`, `unsafe_mut_cast`,
+  `unsafe_bitcast`, `unsafe_address_space_cast`), `_get_kgen_pointer`,
+  `copy`, and its `_mlir_value=` and `copy=` constructions are the bodies
+  `std/memory/pointer.mojo` declares, where checker rules typed them
+  (R2206); the `PointerOriginCast` and `PointerConvert` adjustments are
+  gone (package format 247). `Pointer(copy=p)` and `p.unsafe_mut_cast[m]()`
+  over a `Bool` parameter now run, a cast's target converts as the pin's
+  binder does, and reading `p[]` after `p.unsafe_bitcast[Int]()[]` or a
+  cast no longer conflicts with the cast (R2411). Along the way: a callee's
+  pointer result bound to an untracked or projected origin is substituted,
+  a body's `origin_of(self)` passed to a declared callee is no longer read
+  as the callee's receiver, a pointee a body projects through is laid out
+  natively, and the VM reads a `!lit.ref` slot's handle as its value.
+
 - A `Pointer`'s origin argument resolves as any struct's origin argument
   does (R2368): `origin_of(self)` is the receiver's one symbolic origin in
   a method's body as in its signature, so a struct view built over

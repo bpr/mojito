@@ -1295,6 +1295,12 @@ storage lives in, and the space a `ref[origin, address_space]` clause names.
 It is omitted for the generic space, so every older record reads unchanged.
 The package format moves to `mojito-package 245`.
 
+The checked adjustments `PointerOriginCast` and `PointerConvert` are gone:
+`Pointer`'s casts, `_get_kgen_pointer`, and its `_mlir_value=` and `copy=`
+constructions are calls of the declared struct's members, and a `_mlir_value`
+field read lowers to `pointer.convert` by its object's type. The package
+format moves to `mojito-package 247` (R2206).
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and

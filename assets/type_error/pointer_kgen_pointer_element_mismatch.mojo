@@ -1,5 +1,5 @@
 # A `!kgen.pointer` builds only a `Pointer` of its own element type.
-# expect: does not convert to
+# expect: no constructor overload matches
 def main():
     var x = 7
     var k = Pointer(to=x)._get_kgen_pointer()

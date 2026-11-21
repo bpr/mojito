@@ -283,31 +283,6 @@ pub(super) fn tyarg_is_symbolic(argument: &TyArg) -> bool {
     }
 }
 
-/// The binding upstream's `Pointer` binder makes of construction bracket
-/// `args` (`Pointer[origin=o](_mlir_value=k)`) once the construction bound
-/// element `element` and origin `origin`: each argument keyed by its
-/// declaration of `Pointer[mut: Bool, //, T, origin, *, address_space]`,
-/// as a declared struct's construction records its bracket.
-pub(super) fn pointer_construction_attributes(
-    args: &[mojito_ast::ast::ParamArg],
-    element: &Ty,
-    origin: &mojito_types::origin::PointerOrigin,
-) -> Result<DeclaredAttributes, TypeError> {
-    let keywords = mojito_ast::call::bracket_keywords(args);
-    let slots = mojito_ast::call::match_parameter_slots(POINTER_PARAMS, &keywords)
-        .map_err(|error| error.into_type_error("Pointer"))?;
-    let attributes = args
-        .iter()
-        .zip(slots)
-        .map(|(argument, index)| match POINTER_PARAMS[index].name {
-            "T" => bracket_attribute(argument, &TyArg::Ty(element.clone())),
-            "origin" => bracket_attribute(argument, &TyArg::Origin(origin.parts().0)),
-            _ => None,
-        })
-        .collect();
-    DeclaredAttributes::of_builtin("Pointer", POINTER_PARAMS, args, attributes)
-}
-
 /// The attribute bracket argument `argument` carries once binding resolved
 /// it to `bound`: a type-shaped argument always has one, and a
 /// value-shaped one only when it bound to a type or an origin, a run-time
@@ -549,8 +524,6 @@ pub(super) const T_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("T")];
 /// A one-type list spelled `type`: `_unqualified_type_name[type:
 /// AnyType]`, `TypeList.contains[type: AnyType]`.
 pub(super) const TYPE_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("type")];
-/// `Pointer.unsafe_bitcast[U: AnyType]`.
-pub(super) const U_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("U")];
 /// `Variant.replace[Tin: Movable & Deinitable, Tout: Movable]` and
 /// `unsafe_replace`.
 pub(super) const VARIANT_REPLACE_PARAMS: &[BuiltinParam] =

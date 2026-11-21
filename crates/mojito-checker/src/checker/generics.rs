@@ -1202,8 +1202,10 @@ impl Checker {
 
     /// The mutability a parametric origin binder (`Origin[mut=mut]`) takes
     /// when bound to `origin`: an `ImmOrigin(...)` cast's `False`, a
-    /// place's owner's, a caller's own binder's declared one (itself, when
-    /// that is parametric too), or its pack origin's.
+    /// place's owner's, the receiver's, a projection's base's, an untracked
+    /// or static origin's own, a caller's
+    /// own binder's declared one (itself, when that is parametric too), or
+    /// its pack origin's.
     pub(super) fn bound_origin_mutability(
         &self,
         origin: &mojito_types::origin::Origin,
@@ -1213,6 +1215,12 @@ impl Checker {
             Origin::MutCast(..) => origin.static_mutability().map(Mutability::of),
             Origin::Place(place) => Some(self.owner_reference_mutability(place.root)),
             Origin::SelfParam => Some(Mutability::RECEIVER),
+            // An interior or subtree projection keeps its base's `mut`.
+            Origin::Projected(base, _) => self.bound_origin_mutability(base),
+            Origin::Untracked { mutable } | Origin::UnsafeAny { mutable } => {
+                Some(Mutability::of(*mutable))
+            }
+            Origin::Static => Some(Mutability::Immutable),
             // A collector's pack origin is `Origin[mut=elt_is_mutable]`, which
             // a `read` collector, the only `VariadicPack` one, binds `False`.
             Origin::Param(id) if id.is_pack_binder() => Some(Mutability::Immutable),
@@ -2545,12 +2553,18 @@ impl Checker {
                     .ok()
                     .and_then(|(_, own)| own);
                 // A parametric binder's `mut=` is the argument's own
-                // mutability, an `ImmOrigin(o)` conversion's `False`.
+                // mutability, an `ImmOrigin(o)` conversion's `False`; an
+                // immutable binder converts a mutable argument to
+                // `ImmOrigin`.
                 let origin = match decl {
                     ParamDecl::Origin {
                         mutability: OriginMutability::Binder(_),
                         ..
                     } if own == Some(Mutability::Immutable) => Origin::immutable(origin),
+                    ParamDecl::Origin {
+                        mutability: OriginMutability::Fixed(false),
+                        ..
+                    } if own == Some(Mutability::Mutable) => Origin::immutable(origin),
                     _ => origin,
                 };
                 let attribute = bracket_attribute(argument, &TyArg::Origin(origin.clone()));
