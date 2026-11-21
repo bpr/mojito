@@ -209,6 +209,7 @@ impl Checker {
                     mojito_types::types::LitOriginMut::Known(mutable),
                 ),
                 PointerOrigin::Place { .. }
+                | PointerOrigin::Union { .. }
                 | PointerOrigin::Param { .. }
                 | PointerOrigin::SelfPlace { .. } => Origin::Place(self.origin_place(expr)?),
             };
@@ -948,6 +949,7 @@ impl Checker {
         let origin = self.infer(pointer).ok()?.kind().pointer_origin()?;
         match origin {
             PointerOrigin::Place { place, .. } => Some(Origin::Place(place)),
+            PointerOrigin::Union { members, .. } => Some(Origin::Union(members)),
             PointerOrigin::SelfPlace {
                 interior, subtree, ..
             } => {

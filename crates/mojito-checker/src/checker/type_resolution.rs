@@ -4407,7 +4407,13 @@ impl Checker {
             }
         };
         PointerOrigin::from_parts(origin.clone(), mutability).ok_or_else(|| {
-            TypeError::Unsupported(format!("the origin {origin} as a pointer's origin"))
+            TypeError::Unsupported(if matches!(origin.uncast(), Origin::Union(_)) {
+                format!(
+                    "the origin {origin}, which names an origin binder or the receiver, as a pointer's union origin"
+                )
+            } else {
+                format!("the origin {origin} as a pointer's origin")
+            })
         })
     }
 

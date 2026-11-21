@@ -9592,6 +9592,17 @@ fn fmt_pointer_origin(
 ) -> fmt::Result {
     use crate::origin::{Mutability, PointerOrigin};
     match origin {
+        PointerOrigin::Union {
+            members,
+            mutability,
+        } => {
+            let union = crate::origin::Origin::Union(members.clone());
+            if *mutability == Mutability::Immutable {
+                write!(f, "ImmOrigin({union})")?;
+            } else {
+                write!(f, "{union}")?;
+            }
+        }
         PointerOrigin::Place {
             place,
             mutable: false,
@@ -11004,13 +11015,32 @@ mod pointer_application_tests {
                 });
             }
         }
+        let union = Origin::union([
+            Origin::Place(place()),
+            Origin::Place(OriginPlace {
+                root: OwnerId(2),
+                path: Vec::new(),
+            }),
+        ]);
         for mutability in [Mutability::Mutable, Mutability::Immutable] {
             origins.push(PointerOrigin::SelfPlace {
                 mutability,
                 interior: vec!["element".to_string()],
                 subtree: false,
             });
+            origins.push(
+                PointerOrigin::from_parts(union.clone(), mutability)
+                    .expect("a union of places is a pointer origin"),
+            );
         }
+        assert_eq!(
+            PointerOrigin::from_parts(
+                Origin::union([Origin::Place(place()), Origin::Param(id)]),
+                Mutability::Mutable,
+            ),
+            None,
+            "a union naming an origin binder is not a pointer origin yet"
+        );
         for space in [
             AddressSpaceSlot::GENERIC,
             AddressSpaceSlot::Known(3),
@@ -11045,14 +11075,22 @@ mod pointer_application_tests {
                 AddressSpaceSlot::GENERIC
             )
         );
-        assert!(
-            !parts(PointerOrigin::SelfPlace {
+        assert_eq!(
+            parts(PointerOrigin::SelfPlace {
                 mutability: Mutability::Param(id),
                 interior: Vec::new(),
                 subtree: false,
-            })
-            .kind()
-            .is_pointer()
+            }),
+            Ty::pointer(
+                Ty::int(),
+                PointerOrigin::SelfPlace {
+                    mutability: Mutability::RECEIVER,
+                    interior: Vec::new(),
+                    subtree: false,
+                },
+                AddressSpaceSlot::GENERIC
+            ),
+            "the receiver's origin reads at the receiver's mutability"
         );
     }
 }

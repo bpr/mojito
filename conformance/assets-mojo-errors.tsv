@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1307
+# swept-count	1309
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -1000,6 +1000,8 @@ assets/type_error/pointer_placeholder_return.mojo	compile-reject	agree	error: 'P
 assets/type_error/pointer_take_tracked_nontrivial.mojo	runs	subset	the pin runs it; Mojito rejects: requires a trivially destructible element
 assets/type_error/pointer_to_place_offset_rejected.mojo	runs	subset	the pin runs it;Mojito rejects: designates a single value
 assets/type_error/pointer_to_ref_param_write_rejected.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/type_error/pointer_union_origin_aliasing.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed mutably to 'b' argument in 'bump' call
+assets/type_error/pointer_union_origin_narrowing.mojo	compile-reject	agree	error: cannot implicitly convert 'Pointer[Int, origin_of(x, y)]' value to 'Pointer[Int, origin_of(x)]'
 assets/type_error/pointer_unsafe_bitcast_runtime_argument.mojo	compile-reject	agree	error: invalid call to 'unsafe_bitcast': unexpected argument
 assets/type_error/pointer_unsafe_mut_cast_false_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pop_bitcast_cast_incompatible.mojo	compile-reject	agree	error: 'pop.bitcast' op input type '!kgen.scalar<ui32>' and result type '!kgen.scalar<ui16>' are cast incompatible

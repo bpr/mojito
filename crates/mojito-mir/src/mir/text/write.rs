@@ -3225,6 +3225,16 @@ fn pointer_origin(value: &PointerOrigin) -> String {
         PointerOrigin::UnsafeAny { mutable } => {
             record("pointer_unsafe_any", &[("mutable", mutable.to_string())])
         }
+        PointerOrigin::Union {
+            members,
+            mutability,
+        } => record(
+            "pointer_union",
+            &[
+                ("members", list(members.iter().map(origin))),
+                ("mutability", mutability_value(*mutability)),
+            ],
+        ),
     }
 }
 fn ref_ty(value: &RefTy) -> String {

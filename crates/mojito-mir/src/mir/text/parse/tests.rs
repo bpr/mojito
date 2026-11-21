@@ -336,6 +336,23 @@ fn type_families_reprint_byte_identically() {
                     PointerOrigin::Static { mutable: false },
                     mojito_types::types::AddressSpaceSlot::Known(5),
                 ),
+                Ty::pointer(
+                    Ty::int(),
+                    PointerOrigin::Union {
+                        members: vec![
+                            Origin::Place(OriginPlace {
+                                root: OwnerId(0),
+                                path: Vec::new(),
+                            }),
+                            Origin::Place(OriginPlace {
+                                root: OwnerId(1),
+                                path: vec![OriginSeg::Field("a".into())],
+                            }),
+                        ],
+                        mutability: Mutability::Immutable,
+                    },
+                    mojito_types::types::AddressSpaceSlot::GENERIC,
+                ),
                 Ty::kgen_pointer(Ty::int(), mojito_types::types::AddressSpaceSlot::GENERIC),
                 Ty::kgen_pointer(Ty::int(), mojito_types::types::AddressSpaceSlot::Known(3)),
                 Ty::lit_ref(

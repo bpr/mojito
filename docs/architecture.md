@@ -3758,7 +3758,11 @@ binder or the receiver (`Origin::Projected`) and the unsafe-any origin
 (`Origin::UnsafeAny`), and both project through one rule
 (`Origin::owned_interior`/`subtree`). `PointerOrigin::as_origin` is the
 loan-tracked root, with the projection dropped, for the readers that ask
-which storage a loan keeps.
+which storage a loan keeps. A union origin argument over concrete members
+(`origin_of(x, y)`) is `PointerOrigin::Union`, the staged view of the
+`Origin::Union` it parts to, which R2210's struct-typed `Pointer` retires:
+its loans are each place member's (`Flatten::pointer_origin_loans`), and an
+argument carrying it carries every member place.
 
 The bundled library declares upstream's `struct Pointer`, and the
 compiler's pointer type is that struct's identity (`Ty::new` folds an

@@ -7,8 +7,9 @@
 # `DevicePassable`, `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable`
 # are absent from the bundle, and `Comparable` waits on the members below.
 # Members omitted, by blocker:
-# - `__merge_with__`: a `Pointer` cannot hold the union
-#   `origin_of(Self.origin, other_type.origin)` (R2429).
+# - `__merge_with__`: its result `origin_of(Self.origin, other_type.origin)`
+#   is `origin_of` over origin values (R1299), and its `other_type` bound is
+#   a struct metatype (R1176).
 # - the implicit mut-to-imm `__init__(other: Pointer, …)`: the compiler's
 #   builtin mut-to-imm coercion must retire with it (R2443).
 # - `as_unsafe_any_origin`: `UnsafeAnyOrigin[mut=Self.mut]` keeps no

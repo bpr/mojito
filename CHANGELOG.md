@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `Pointer` holds a union origin, as upstream's ordinary `Origin`
+  argument does (R2429): `Pointer[Int, origin_of(x, y)](to=x)` and an
+  annotated `var q: Pointer[Int, origin_of(x, y)]` run on both backends,
+  where they were rejected. The pointer converts to `ImmOrigin` of the
+  union and to a placeholder origin, is rejected when narrowed to one
+  member, carries every member into argument exclusivity, and its
+  construction keeps every member alive. MIR text schema 1.220 adds the
+  `pointer_union` record, and the package format is `mojito-package 250`.
+
 - `repr(p)` over a `Pointer` runs upstream's `write_repr_to`, declared
   verbatim in `std/memory/pointer.mojo` (R2425), printing
   `Pointer[mut=True, SIMD[DType.int, 1], address_space=AddressSpace.GENERIC](0x…)`

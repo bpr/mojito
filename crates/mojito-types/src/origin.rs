@@ -783,6 +783,15 @@ pub enum PointerOrigin {
     UnsafeAny {
         mutable: bool,
     },
+    /// `origin_of(a, b)`: the normalized [`Origin::union`] of at least two
+    /// concrete members (places, and the static, untracked, and unsafe-any
+    /// origins a union keeps). This is the staged view of the struct
+    /// argument's `Origin::Union`, until `TyKind::Pointer` carries that
+    /// argument itself.
+    Union {
+        members: Vec<Origin>,
+        mutability: Mutability,
+    },
 }
 
 impl PointerOrigin {
@@ -903,14 +912,19 @@ impl PointerOrigin {
             Self::UnsafeAny { mutable } => {
                 (Origin::UnsafeAny { mutable: *mutable }, flag(*mutable))
             }
+            Self::Union {
+                members,
+                mutability,
+            } => (Origin::Union(members.clone()), *mutability),
         }
     }
 
     /// The provenance a `Pointer` whose `origin` argument is `origin` and
     /// whose `mut` argument is `mutability` carries: an `ImmOrigin(...)`
     /// cast reads as the immutable pointer to its storage. `None` for an
-    /// origin no pointer holds (a union, an unbound slot, a malformed
-    /// projection) and for a mutability its origin contradicts.
+    /// origin no pointer holds (an unbound slot, a malformed projection, a
+    /// union with a binder or receiver member) and for a mutability its
+    /// origin contradicts.
     pub fn from_parts(origin: Origin, mutability: Mutability) -> Option<Self> {
         let flag = |mutable: bool| match mutability {
             Mutability::Mutable => mutable,
@@ -979,7 +993,16 @@ impl PointerOrigin {
             }
             Origin::Untracked { mutable } => flag(mutable).then_some(Self::Untracked { mutable }),
             Origin::UnsafeAny { mutable } => flag(mutable).then_some(Self::UnsafeAny { mutable }),
-            Origin::Union(_) | Origin::Unbound => None,
+            Origin::Union(members) => {
+                members
+                    .iter()
+                    .all(concrete_union_member)
+                    .then_some(Self::Union {
+                        members,
+                        mutability,
+                    })
+            }
+            Origin::Unbound => None,
         }
     }
 
@@ -991,6 +1014,7 @@ impl PointerOrigin {
     pub fn as_origin(&self) -> Option<Origin> {
         match self {
             Self::Place { place, .. } => Some(Origin::Place(place.clone())),
+            Self::Union { members, .. } => Some(Origin::Union(members.clone())),
             Self::Param { id, .. } => Some(Origin::Param(*id)),
             Self::SelfPlace { .. } => Some(Origin::SelfParam),
             Self::Static { .. } | Self::Untracked { .. } | Self::UnsafeAny { .. } => None,
@@ -1015,6 +1039,7 @@ impl PointerOrigin {
     /// never reach the offset rule.
     pub fn multi_element(&self) -> bool {
         match self {
+            Self::Union { .. } => false,
             Self::Place { place, .. } => {
                 matches!(place.path.last(), Some(OriginSeg::Interior(_)))
             }
@@ -1035,6 +1060,7 @@ impl PointerOrigin {
     /// the root.
     pub fn subtree(&self) -> bool {
         match self {
+            Self::Union { .. } => false,
             Self::Place { place, .. } => {
                 matches!(place.path.last(), Some(OriginSeg::Subtree))
             }
@@ -1053,8 +1079,9 @@ impl PointerOrigin {
             | Self::Untracked { mutable }
             | Self::UnsafeAny { mutable }
             | Self::Static { mutable } => Some(*mutable),
-            Self::Param { mutability, .. } | Self::SelfPlace { mutability, .. } => match mutability
-            {
+            Self::Param { mutability, .. }
+            | Self::SelfPlace { mutability, .. }
+            | Self::Union { mutability, .. } => match mutability {
                 Mutability::Mutable => Some(true),
                 Mutability::Immutable => Some(false),
                 Mutability::Param(_) => None,
@@ -1066,6 +1093,10 @@ impl PointerOrigin {
     #[must_use]
     pub fn immutable(self) -> Self {
         match self {
+            Self::Union { members, .. } => Self::Union {
+                members,
+                mutability: Mutability::Immutable,
+            },
             Self::Place { place, .. } => Self::Place {
                 place,
                 mutable: false,
@@ -1099,6 +1130,10 @@ impl PointerOrigin {
     #[must_use]
     pub fn mutable(self) -> Self {
         match self {
+            Self::Union { members, .. } => Self::Union {
+                members,
+                mutability: Mutability::Mutable,
+            },
             Self::Place { place, .. } => Self::Place {
                 place,
                 mutable: true,
@@ -1173,6 +1208,22 @@ impl PointerOrigin {
                     ..
                 } if actual_interior == interior && actual_subtree == subtree
             ),
+            Self::Union {
+                members,
+                mutability,
+            } => {
+                let (origin, own) = self.parts();
+                let origin = match origin {
+                    Origin::MutCast(inner, _) => *inner,
+                    origin => origin,
+                };
+                origin.coerces_to(&Origin::Union(members.clone()))
+                    && match mutability {
+                        Mutability::Immutable => true,
+                        Mutability::Mutable => self.statically_mutable() == Some(true),
+                        Mutability::Param(_) => own == *mutability,
+                    }
+            }
             _ => self == expected,
         }
     }
@@ -1366,6 +1417,15 @@ impl Origin {
 /// the static origin.
 const STATIC_CONSTANTS_ORIGIN: &str =
     "#lit.origin.field<#lit.static.origin : !lit.origin<false>, \"__constants__\">";
+
+/// Whether a union member designates storage no call site substitutes: a
+/// place, or a static, untracked, or unsafe-any origin, under any cast.
+fn concrete_union_member(origin: &Origin) -> bool {
+    matches!(
+        origin.uncast(),
+        Origin::Place(_) | Origin::Static | Origin::Untracked { .. } | Origin::UnsafeAny { .. }
+    )
+}
 
 fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {
     const fn tag(origin: &Origin) -> u8 {

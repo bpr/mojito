@@ -1359,9 +1359,8 @@ pub fn mir_place_handle_ty(
                     mojito_types::origin::Mutability::Immutable
                 }),
                 mojito_types::origin::PointerOrigin::Param { mutability, .. }
-                | mojito_types::origin::PointerOrigin::SelfPlace { mutability, .. } => {
-                    Some(mutability)
-                }
+                | mojito_types::origin::PointerOrigin::SelfPlace { mutability, .. }
+                | mojito_types::origin::PointerOrigin::Union { mutability, .. } => Some(mutability),
                 mojito_types::origin::PointerOrigin::Static { .. }
                 | mojito_types::origin::PointerOrigin::Untracked { .. }
                 | mojito_types::origin::PointerOrigin::UnsafeAny { .. } => None,

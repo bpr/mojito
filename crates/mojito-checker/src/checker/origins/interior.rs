@@ -112,14 +112,23 @@ impl Checker {
             _ => crate::checker::places::pointer_offset_keyword_subscript(place)
                 .map(|(object, _)| object),
         };
-        if let Some(object) = pointer_object
-            && let Some(mojito_types::origin::PointerOrigin::Place { place: origin, .. }) = self
-                .infer(object)
-                .ok()
-                .and_then(|ty| ty.kind().pointer_origin())
-        {
-            self.record_origin_invalidation(site, origin, None);
-            return;
+        let pointer_origin = pointer_object
+            .and_then(|object| self.infer(object).ok())
+            .and_then(|ty| ty.kind().pointer_origin());
+        match pointer_origin {
+            Some(mojito_types::origin::PointerOrigin::Place { place: origin, .. }) => {
+                self.record_origin_invalidation(site, origin, None);
+                return;
+            }
+            Some(mojito_types::origin::PointerOrigin::Union { members, .. }) => {
+                for member in members {
+                    if let mojito_types::origin::Origin::Place(origin) = member {
+                        self.record_origin_invalidation(site.clone(), origin, None);
+                    }
+                }
+                return;
+            }
+            _ => {}
         }
 
         if matches!(

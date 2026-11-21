@@ -24,7 +24,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::origin::{Mutability, Origin, OriginPlace, PointerOrigin, places_overlap};
+use mojito_types::origin::{Mutability, Origin, OriginPlace, places_overlap};
 use mojito_types::types::TyKind;
 
 /// How a callee reaches the origins its argument types carry.
@@ -506,9 +506,8 @@ impl Checker {
             }
             pointer if let Some((element, origin)) = pointer.as_pointer() => {
                 self.record_carried_places(access, &element);
-                if let PointerOrigin::Place { place, mutable } = origin {
-                    access.carry(&place, mutable);
-                }
+                let mutable = origin.statically_mutable();
+                self.record_origin_places(access, &origin.parts().0, mutable);
             }
             TyKind::Ref(reference) => {
                 self.record_carried_places(access, &reference.referent);

@@ -857,7 +857,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `_subtree`), read by `explicit_origin_argument` and, through the
   `PointerOrigin::{parts, from_parts}` view of a pointer's origin as its
   `Origin` plus `mut` argument, by `append_interior_tag`/`append_subtree`
-  and `bind_pointer_origins`; `PointerOrigin::single_place` is the one
+  and `bind_pointer_origins`; `PointerOrigin::Union` is a pointer's union
+  origin over concrete members, whose loans `Flatten::pointer_origin_loans`
+  (`mojito-mir/src/mir/facts.rs`) answers for a place and a union alike;
+  `PointerOrigin::single_place` is the one
   representation predicate for a pointer to one known place, which the
   checker's offset and arithmetic rules (`check_pointer_offset`,
   `infer_pointer_method`, `infer_infix`), MIR's `origin_bearing_pointer`,

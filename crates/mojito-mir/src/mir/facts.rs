@@ -1123,6 +1123,33 @@ impl<'a> Flatten<'a> {
         self.aggregate_borrows_unmaterialized(node)
     }
 
+    /// The shared loans a pointer of provenance `origin` holds on the places
+    /// it names ([`Self::pointer_place_loan`]): its place, or each place
+    /// member of its union. `None` for a provenance naming no place.
+    fn pointer_origin_loans(
+        &mut self,
+        origin: &mojito_types::origin::PointerOrigin,
+        mutable: bool,
+    ) -> Option<Vec<MirLoan>> {
+        use mojito_types::origin::{Origin, PointerOrigin};
+        match origin {
+            PointerOrigin::Place { place, .. } => {
+                Some(self.pointer_place_loan(place, mutable, None, true))
+            }
+            PointerOrigin::Union { members, .. } => Some(
+                members
+                    .iter()
+                    .filter_map(|member| match member.uncast() {
+                        Origin::Place(place) => Some(place.clone()),
+                        _ => None,
+                    })
+                    .flat_map(|place| self.pointer_place_loan(&place, mutable, None, true))
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
     /// The loan an origin-bearing pointer's concrete place induces: rooted at
     /// the owner's variable, with an interior-generation tail becoming the
     /// loan's interior domain (container mutation stales it without ordinary
@@ -1508,13 +1535,27 @@ impl<'a> Flatten<'a> {
                         return self.pointer_place_loan(&place, *mutable, Some(source), true);
                     }
                     let place = self.place(source);
-                    return vec![MirLoan {
+                    let root = place.root;
+                    let mut loans = vec![MirLoan {
                         place,
                         mutable: *mutable,
                         interior: None,
                         shared: true,
                         setup: false,
                     }];
+                    // A union origin (`Pointer[T, origin_of(x, y)](to=x)`)
+                    // also keeps its other members alive.
+                    if let Some(origin @ mojito_types::origin::PointerOrigin::Union { .. }) =
+                        node.checked.ty.as_ref().and_then(|ty| ty.pointer_origin())
+                    {
+                        loans.extend(
+                            self.pointer_origin_loans(&origin, *mutable)
+                                .into_iter()
+                                .flatten()
+                                .filter(|loan| loan.place.root != root),
+                        );
+                    }
+                    return loans;
                 }
                 // A declared `Pointer` initializer (`Pointer[T, o](_mlir_value=)`)
                 // loans the place its checked result's origin names, as
@@ -1526,10 +1567,11 @@ impl<'a> Flatten<'a> {
                                 && member.starts_with("__init__")
                         },
                     )
-                }) && let Some(mojito_types::origin::PointerOrigin::Place { place, mutable }) =
-                    node.ty().and_then(|ty| ty.pointer_origin())
+                }) && let Some(origin) = node.ty().and_then(|ty| ty.pointer_origin())
+                    && let Some(mutable) = origin.statically_mutable()
+                    && let Some(loans) = self.pointer_origin_loans(&origin, mutable)
                 {
-                    return self.pointer_place_loan(&place, mutable, None, true);
+                    return loans;
                 }
                 // A free-function call returning a ref-field struct (a
                 // borrowing view) lends its borrowed sources to the result,
@@ -1619,10 +1661,11 @@ impl<'a> Flatten<'a> {
                 // shared alias, as `Pointer(to=place)` does: copies of the
                 // returned pointer coexist.
                 if let Some(contract) = node.call_contract()
-                    && let Some(mojito_types::origin::PointerOrigin::Place { place, mutable }) =
-                        contract.result_ty.kind().pointer_origin()
+                    && let Some(origin) = contract.result_ty.kind().pointer_origin()
+                    && let Some(mutable) = origin.statically_mutable()
+                    && let Some(loans) = self.pointer_origin_loans(&origin, mutable)
                 {
-                    return self.pointer_place_loan(&place, mutable, None, true);
+                    return loans;
                 }
                 // `unsafe_offset` preserves provenance: forward the receiver's
                 // loans onto the offset pointer.

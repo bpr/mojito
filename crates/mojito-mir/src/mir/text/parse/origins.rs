@@ -140,6 +140,26 @@ impl Decoder {
                         subtree,
                     })
                 }
+                "pointer_union" => {
+                    let members = self.req(value, fields, "members", |d, v| {
+                        let values = d.list(v).ok()?;
+                        values
+                            .iter()
+                            .map(|v| d.origin(v))
+                            .collect::<Option<Vec<_>>>()
+                    })?;
+                    let mutability = self.req(value, fields, "mutability", Self::mutability)?;
+                    self.unknown(fields, &["members", "mutability"]);
+                    let origin = PointerOrigin::from_parts(Origin::union(members), mutability)
+                        .filter(|origin| matches!(origin, PointerOrigin::Union { .. }));
+                    if origin.is_none() {
+                        self.error(
+                            value.span,
+                            "`pointer_union` needs two or more concrete members",
+                        );
+                    }
+                    origin
+                }
                 "pointer_untracked" | "pointer_unsafe_any" => {
                     let mutable = self.req(value, fields, "mutable", Self::boolean)?;
                     self.unknown(fields, &["mutable"]);

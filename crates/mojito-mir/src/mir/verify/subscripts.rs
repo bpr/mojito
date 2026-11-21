@@ -156,7 +156,9 @@ pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
                 ReferencePermission::Immutable
             }
         }
-        PointerOrigin::Param { mutability, .. } | PointerOrigin::SelfPlace { mutability, .. } => {
+        PointerOrigin::Param { mutability, .. }
+        | PointerOrigin::SelfPlace { mutability, .. }
+        | PointerOrigin::Union { mutability, .. } => {
             ReferencePermission::from_mutability(mutability)
         }
         // An untracked pointer addresses its pointee with the

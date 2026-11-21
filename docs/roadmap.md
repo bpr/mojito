@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2460**.
+Next free ID: **R2463**.
 
 ## Ordered Work
 
@@ -3495,9 +3495,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `Span(l1) if c else Span(l2)` over two lists fails the same
     way; the pin prints `2`.
   - Found while landing R1848 (2026-11-06).
-  - The bundled `Pointer.__merge_with__` is not declared until R2429
-    lets a `Pointer` hold its union origin.
-  - Depends on R2429.
+  - A `Pointer` holds a union origin (R2429), but the bundled
+    `Pointer.__merge_with__` still cannot be declared: its result
+    `origin_of(Self.origin, other_type.origin)` is `origin_of` over origin
+    values (R1299), and its `other_type: type_of(Pointer[Self.T,
+    origin=_, …])` bound is a struct metatype (R1176).
+  - Depends on R2429, R1299, R1176.
   - Model: Fable, Not Planned.
 
 - [ ] **R2020 A module `comptime` constant annotated `Int` over a
@@ -6111,6 +6114,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `StructMetaType` converting to `AnyTrait`, `ExprConversions.cpp`), and
     no conformance join over the known traits.
   - Probe: `comptime T = type_of(Int)` runs at the pin (`AnyStruct[Int]`).
+  - Probe: a struct metatype as a bound. `def m[T: type_of(Int)]() -> Int`
+    called as `m[Int]()` reports "'type_of' of a type is not supported
+    yet", and `def m[other_type: type_of(W[o=_])](self)` over `struct
+    W[o: Origin]`, called as `w.m[W[origin_of(x)]]()`, reports "no
+    overload matches"; the pin prints `3` for each. The bundled
+    `Pointer.__merge_with__` needs the second (R1962).
   - Probe: `_ = type_of(1)` runs at the pin and stops with "Undefined
     variable 'type_of'": a struct read as an expression is its
     `AnyStruct` metatype (`_ = Int`, `_ = List[Int]` run), but `type_of`
@@ -10962,30 +10971,63 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2207.
   - Model: Fable, Not Planned.
 
-- [ ] **R2429 A `Pointer` cannot hold a union origin, where upstream's
-  origin parameter is an ordinary `Origin` value**
+- [ ] **R2460 A `Pointer`'s union origin cannot name an origin binder or
+  the receiver**
 
-  `Pointer[Int, origin_of(x, y)](to=x)` fails with "the origin
-  origin_of(#…) | origin_of(#…) as a pointer's origin", where the pin
-  prints `5`.
-  - A pointer's origin argument now resolves as a struct's does
-    (`resolve_origin_param_arg`), but `TyKind::Pointer` stores a
-    `PointerOrigin`, which has no union, so `PointerOrigin::from_parts`
-    returns `None` for `Origin::Union`.
-  - Mojo's shape is for `TyKind::Pointer` to carry the struct argument
-    (an `Origin` plus its `mut`, what `PointerOrigin::parts` returns), as
-    `TyKind::Ref` already carries an `Origin`; that reaches every
-    `PointerOrigin` match (`rg -c "PointerOrigin::" crates/`).
-  - If that move is too large for one session, the staged first step is a
-    `PointerOrigin::Union` variant whose `parts` is `Origin::Union`, filed
-    as the step toward the struct-argument form, never as the endpoint.
-  - Probe: `var q: Pointer[Int, origin_of(x, y)] = Pointer(to=x)` fails
-    the same way; the pin prints `5`.
-  - Probe: the bundled `Pointer.__merge_with__` (`origin=origin_of(Self.origin,
-    other_type.origin)`) cannot be declared, which R1962 needs.
-  - Found while landing R2368 (2026-11-20).
+  `Pointer[Int, origin_of(self, y)](to=y)` in a method body fails with "the
+  origin … | origin_of(self), which names an origin binder or the receiver,
+  as a pointer's union origin", where the pin prints `5`.
+  - `PointerOrigin::from_parts` (`crates/mojito-types/src/origin.rs`) builds
+    `PointerOrigin::Union` only over concrete members (places, and static,
+    untracked, and unsafe-any origins).
+  - A binder or receiver member needs call-site substitution and rebasing
+    of each union member: `rebase_self_place_pointer`,
+    `substitute_pointer_origin_params` (`checker/subst.rs`), `bind_tail`,
+    and the pointer arm of `inline_parametric.rs`.
+  - Probe: `struct S` with `def m(self, x: Int) -> Int: var y = x; var p =
+    Pointer[Int, origin_of(self, y)](to=y); return p[]`, then
+    `S(1).m(5)`.
+  - Probe: `def g[o1: Origin, o2: Origin](p: Pointer[Int, origin_of(o1,
+    o2)]) -> Int`, once R1299 lets `origin_of` read origin values.
+  - Probe: `-> Pointer[Int, origin_of(o1, o2)]` returning `{_mlir_value =
+    p._mlir_value}`, once R1299 lands.
+  - Found while landing R2429 (2026-11-21).
+  - Depends on R1299.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2461 An origin a value's type names holds no loan unless the
+  value's construction borrowed it**
+
+  `var v = V[origin_of(a, b)](7)` over `struct V[o: Origin]` destroys `a`
+  and `b` before `v`'s last use, where the pin keeps both alive until it.
+  - MIR's loans (`crates/mojito-mir/src/mir/facts.rs`) come from what a
+    construction borrows (`Pointer(to=a)`, a `ref` argument), not from the
+    origins the result's type names.
+  - Upstream's lifetime checker extends every origin a live value's type
+    carries.
+  - Probe: the `V` program above, with a `D` whose `__deinit__` prints.
+  - Probe: `var p: Pointer[D, origin_of(a, b)] = Pointer(to=a)` destroys
+    `b` before `p[]`; the constructed form `Pointer[D, origin_of(a,
+    b)](to=a)` keeps it (`assets/ok/pointer_union_origin.mojo`).
+  - Found while landing R2429 (2026-11-21).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2462 A `Pointer` annotation in a signature cannot name a
+  parameter's place**
+
+  `def one(ref a: Int) -> Pointer[Int, origin_of(a)]: return
+  Pointer(to=a)` fails with "Undefined variable 'a'", where the pin prints
+  `5` for `one(x)[]`.
+  - The same result spelled `-> Span[Int, origin_of(a)]` runs: a struct
+    argument falls back under `signature_origin_leniency`
+    (`checker/type_resolution.rs`, `checker/generics.rs`), while
+    `pointer_origin_arg` has no such path.
+  - Probe: the union form `-> Pointer[Int, origin_of(a, b)]` fails the
+    same way.
+  - Found while landing R2429 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2371 A binder typed by an `Origin` with an unbound `_mlir_origin`
   declares no implicit `_mlir_origin` binder**
@@ -11028,6 +11070,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `origin` directly (`subst.rs` 14, `generics.rs` 8, `symbol.rs`,
     `mono/substitute.rs`, and `operators.rs` 4 each, and smaller counts
     across the MIR verifier, text, VM, and pliron).
+  - The flip retires `PointerOrigin::Union`, the staged view of a union
+    origin argument (R2429): the stored `TyArg::Origin` is that
+    `Origin::Union` itself.
   - Store the origin as a `TyArg::Origin` plus a `mut` argument through
     `PointerOrigin::parts`/`from_parts`, and let
     `substitute_struct_origins` subsume `substitute_pointer_origin_params`

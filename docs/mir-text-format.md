@@ -1315,6 +1315,13 @@ opaque pointer's `Pointer$None`), the declared struct's name, where it spelled
 `Pointer.unsafe_dangling`: the pin declares no `UnsafePointer`. The package
 format moves to `mojito-package 249` (R2416).
 
+Schema 1.220 adds the pointer origin `pointer_union { members, mutability }`,
+a `Pointer` whose origin argument is a union such as `origin_of(x, y)`:
+`members` lists two or more concrete origins (places, and static, untracked,
+or unsafe-any origins), and a record whose members normalize to fewer, or
+name an origin binder or the receiver, is a parse error. Every older record
+reads unchanged. The package format moves to `mojito-package 250` (R2429).
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and
@@ -2535,8 +2542,10 @@ projection over an `origin_param` or `origin_self` base, upstream's
 `Imm/MutUnsafeAnyOrigin`, distinct from the untracked origin). Pointer origins are `pointer_place`,
 `pointer_param`, `pointer_self`, `pointer_static` (the atom for
 `ImmStaticOrigin`, `pointer_static { mutable: true }` for its mutable cast,
-schema 1.218), `pointer_untracked`, and `pointer_unsafe_any`; all fields of
-the corresponding `PointerOrigin` variant are required.
+schema 1.218), `pointer_untracked`, `pointer_unsafe_any`, and
+`pointer_union { members, mutability }` (schema 1.220: two or more concrete
+origin members, `origin_of(a, b)`); all fields of the corresponding
+`PointerOrigin` variant are required.
 
 Mutability is `immutable`, `mutable`, or `mutability_param(id)`. Signature
 origins are `sig_self`, `sig_param(index)`, `sig_bound(origin)`, `sig_static`,
