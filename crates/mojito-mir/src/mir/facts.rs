@@ -694,27 +694,6 @@ impl<'a> Node<'a> {
         origin_bearing_pointer(self.checked.ty.as_ref())
     }
 
-    /// Whether this node is a `Pointer(to=place)` construction whose checked
-    /// origin is that place, the one case where a pointer's origin also
-    /// designates its address. A construction through a `ref` binding
-    /// carries a subtree origin, which forgets the exact descendant the
-    /// runtime handle addresses.
-    pub(super) fn forms_place_address(self) -> bool {
-        matches!(self.op(), CheckedOp::Call { .. })
-            && self.adjustments().iter().any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
-                )
-            })
-            && !self.checked.ty.as_ref().is_some_and(|ty| match ty.kind() {
-                TyKind::LitRef { origin, .. } => origin.subtree(),
-                pointer => pointer
-                    .pointer_origin()
-                    .is_some_and(|origin| origin.subtree()),
-            })
-    }
-
     pub(super) fn resolved_callable(self) -> Option<String> {
         callable_target(self.adjustments())
     }
@@ -1557,9 +1536,11 @@ impl<'a> Flatten<'a> {
                     }
                     return loans;
                 }
-                // A declared `Pointer` initializer (`Pointer[T, o](_mlir_value=)`)
-                // loans the place its checked result's origin names, as
-                // `Pointer(to=place)` does.
+                // A declared `Pointer` initializer loans the place its checked
+                // result's origin names: exactly the place a `ref` argument
+                // bound (`Pointer(to=self.a)` loans `self.a`, not `self`),
+                // reborrowed through the `ref` binding a subtree origin was
+                // taken through, else the origin's owner.
                 if super::callable_target(node.adjustments()).is_some_and(|target| {
                     mojito_symbol::symbol::split_method_symbol(&target).is_some_and(
                         |(owner, member)| {
@@ -1569,9 +1550,35 @@ impl<'a> Flatten<'a> {
                     )
                 }) && let Some(origin) = node.ty().and_then(|ty| ty.pointer_origin())
                     && let Some(mutable) = origin.statically_mutable()
-                    && let Some(loans) = self.pointer_origin_loans(&origin, mutable)
                 {
-                    return loans;
+                    if let mojito_types::origin::PointerOrigin::Place { place, .. } = &origin
+                        && let Some(root) = self.owner_vars.get(&place.root).copied()
+                        && let Some(source) = node
+                            .place_address_operand()
+                            .filter(|operand| {
+                                operand.checked.category
+                                    == mojito_checked::checked::ValueCategory::Place
+                            })
+                            .map(|operand| self.place(operand))
+                            .filter(|source| source.root == root)
+                    {
+                        if matches!(
+                            place.path.last(),
+                            Some(mojito_types::origin::OriginSeg::Subtree)
+                        ) {
+                            return self.pointer_place_loan(place, mutable, Some(source), true);
+                        }
+                        return vec![MirLoan {
+                            place: source,
+                            mutable,
+                            interior: None,
+                            shared: true,
+                            setup: false,
+                        }];
+                    }
+                    if let Some(loans) = self.pointer_origin_loans(&origin, mutable) {
+                        return loans;
+                    }
                 }
                 // A free-function call returning a ref-field struct (a
                 // borrowing view) lends its borrowed sources to the result,

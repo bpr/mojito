@@ -3373,11 +3373,6 @@ struct Flatten<'a> {
     /// The runtime value contains the handles; this map transfers their static
     /// loans when an aggregate is moved or forwarded into a new binding.
     aggregate_loans: HashMap<VarId, Vec<MirLoan>>,
-    /// The place a pointer variable's value statically addresses, recorded
-    /// only when its initializer formed the pointer from that place (or
-    /// copied such a pointer). Loans say what a pointer keeps alive; this
-    /// says where it points.
-    pointer_addresses: HashMap<VarId, MirPlace>,
     /// The loans a view-constructor conversion's storage (`$conv_view_r` or its call-result slot) holds
     /// on a source that is not a named place (an accessor's reference result,
     /// an intrinsic subscript element), keyed by the converted expression's
@@ -3436,10 +3431,6 @@ struct Flatten<'a> {
     /// compile-time parameters (a thunk lifted from a condition inside the
     /// loops), read as references to the index binders they denote.
     parameter_reads: HashMap<mojito_types::origin::OwnerId, mojito_types::param_expr::ParamRef>,
-    /// Names rebound more than once, or captured by a nested `def`. A pointer
-    /// variable outside this set keeps one statically known address for its
-    /// whole live range, so deref sites may substitute that place.
-    reassigned_names: std::collections::HashSet<String>,
     returns_reference: bool,
     /// The walrus over a place whose stored value is being lowered.
     walrus_yield: Option<WalrusYield>,
@@ -3486,116 +3477,6 @@ fn comptime_iteration(
         })
 }
 
-/// Names whose binding may change after the first assignment (or that a nested
-/// `def` captures). CFG-lowered rebindings appear as `HirInstr::Bind`; opaque
-/// statements are scanned recursively.
-fn reassigned_names(
-    cfg: &Cfg,
-    nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
-) -> std::collections::HashSet<String> {
-    fn bump(counts: &mut HashMap<String, usize>, name: &str) {
-        *counts.entry(name.to_string()).or_default() += 1;
-    }
-    /// Count the names statement `id` binds; `declared` is HIR's runtime name
-    /// for the `ref` it declares, which only a top-level statement has.
-    fn scan(
-        checked: &mojito_checked::checked::CheckedTables,
-        id: CheckedStmtId,
-        declared: Option<&str>,
-        counts: &mut HashMap<String, usize>,
-    ) {
-        let identifier = |node| match checked.expression(node).map(|node| &node.op) {
-            Some(CheckedOp::Identifier(name)) => Some(name.as_str()),
-            _ => None,
-        };
-        let scan_all = |body: &[CheckedStmtId], counts: &mut HashMap<String, usize>| {
-            for inner in body {
-                scan(checked, *inner, None, counts);
-            }
-        };
-        let Some(node) = checked.statement(id) else {
-            return;
-        };
-        match &node.op {
-            CheckedStmtOp::Assign { name, .. } if name == "_" => {}
-            CheckedStmtOp::VarDecl { name, .. }
-            | CheckedStmtOp::Assign { name, .. }
-            | CheckedStmtOp::Comptime { name, .. } => bump(counts, name),
-            CheckedStmtOp::RefDecl { name, .. } => bump(counts, declared.unwrap_or(name)),
-            CheckedStmtOp::AugAssign { place, .. } | CheckedStmtOp::SetPlace { place, .. } => {
-                if let Some(name) = identifier(*place) {
-                    bump(counts, name);
-                }
-            }
-            CheckedStmtOp::Destructure { target, .. } => {
-                for name in target.declared_names() {
-                    bump(counts, name);
-                }
-                for name in target.expressions().into_iter().filter_map(identifier) {
-                    bump(counts, name);
-                }
-            }
-            CheckedStmtOp::If { branches, orelse } => {
-                for (_, body) in branches {
-                    scan_all(body, counts);
-                }
-                scan_all(orelse.as_deref().unwrap_or_default(), counts);
-            }
-            CheckedStmtOp::While { body, orelse, .. } => {
-                scan_all(body, counts);
-                scan_all(orelse.as_deref().unwrap_or_default(), counts);
-            }
-            CheckedStmtOp::Match { .. } | CheckedStmtOp::ComptimeMatch { .. } => {
-                for body in node.op.bodies() {
-                    scan_all(body, counts);
-                }
-            }
-            CheckedStmtOp::Scope(body) => scan_all(body, counts),
-            CheckedStmtOp::For {
-                var, body, orelse, ..
-            } => {
-                bump(counts, var);
-                scan_all(body, counts);
-                scan_all(orelse.as_deref().unwrap_or_default(), counts);
-            }
-            _ => {}
-        }
-    }
-    let mut counts = HashMap::new();
-    for hb in cfg.g.node_indices() {
-        for instr in &cfg.g[hb].instrs {
-            match instr {
-                HirInstr::Bind { dest, .. } | HirInstr::Declare { dest, .. } => {
-                    if let Some(name) = cfg.vars.get(*dest as usize) {
-                        bump(&mut counts, name);
-                    }
-                }
-                HirInstr::Stmt(statement) => scan(
-                    &cfg.checked,
-                    statement.node,
-                    statement
-                        .declared
-                        .and_then(|slot| cfg.vars.get(slot as usize))
-                        .map(String::as_str),
-                    &mut counts,
-                ),
-                _ => {}
-            }
-        }
-    }
-    for info in nested.values() {
-        for capture in &info.captures {
-            bump(&mut counts, &capture.name);
-            bump(&mut counts, &capture.name);
-        }
-    }
-    counts
-        .into_iter()
-        .filter(|(_, occurrences)| *occurrences > 1)
-        .map(|(name, _)| name)
-        .collect()
-}
-
 impl<'a> Flatten<'a> {
     /// Whether a variable's slot is typed as a pointer, so a projected
     /// place rooted at it addresses the pointee.
@@ -3624,50 +3505,10 @@ impl<'a> Flatten<'a> {
         handle
     }
 
-    /// The statically known address behind a stably bound origin-bearing
-    /// pointer variable ([`Self::pointer_addresses`]), never its origin's
-    /// place: an origin only keeps owners alive. Substituting the address at
-    /// deref sites touches the owner at each access — the liveness contract
-    /// `ref` aliases have — so ASAP destruction and loan conflicts stay
-    /// exact. A reassigned or captured pointer, one whose address is not
-    /// statically known (a cast, a call result), or a handle loaded from a
-    /// field reads through its runtime handle instead.
-    fn pointer_deref_place(&mut self, object: Node<'a>) -> Option<MirPlace> {
-        let name = self.name_spelled(object)?;
-        if !object.is_origin_bearing_pointer() || self.reassigned_names.contains(&name) {
-            return None;
-        }
-        let var = self.expression_var(&name, object);
-        let mut place = self.pointer_addresses.get(&var)?.clone();
-        place.through = Some(var);
-        Some(place)
-    }
-
-    /// Record or clear the address `dest`'s pointer value statically holds
-    /// after binding `value`, whose loans are `loans`: a `Pointer(to=place)`
-    /// construction addresses its single loan's place, and a copy of a named
-    /// pointer inherits that pointer's address.
-    fn record_pointer_address(&mut self, dest: VarId, value: Node<'a>, loans: &[MirLoan]) {
-        let address = match loans {
-            [loan] if value.forms_place_address() => Some(loan.place.clone()),
-            _ => self
-                .name_spelled(value)
-                .and_then(|name| self.existing_expression_var(&name, value))
-                .and_then(|var| self.pointer_addresses.get(&var).cloned()),
-        };
-        match address {
-            Some(address) => self.pointer_addresses.insert(dest, address),
-            None => self.pointer_addresses.remove(&dest),
-        };
-    }
-
     /// The read behind a call-produced origin-bearing pointer (`idp(p)[]`):
     /// the temporary is bound to a hidden `$ptr_tmp_r` slot carrying the loans
     /// its checked origin names — exactly as `var q = idp(p)` would — so the
-    /// owner outlives the read. Only a `Pointer(to=place)` temporary, whose
-    /// origin is its address, substitutes that place; every other pointer (a
-    /// cast, a call result, a subtree origin) reads through the slot's
-    /// runtime handle.
+    /// owner outlives the read through the slot's runtime handle.
     fn temporary_pointer_deref(&mut self, e: Node<'a>, object: Node<'a>) -> Option<Reg> {
         if !matches!(
             object.op(),
@@ -3682,13 +3523,9 @@ impl<'a> Flatten<'a> {
             .pointer_origin()
             .is_some_and(|origin| origin.subtree());
         let loans = self.aggregate_borrows(object);
-        let owner = match loans.as_slice() {
-            [] => return None,
-            [loan] if !subtree && object.forms_place_address() => Some(loan.place.clone()),
-            [_] => None,
-            _ if subtree => None,
-            _ => return None,
-        };
+        if loans.is_empty() || (loans.len() > 1 && !subtree) {
+            return None;
+        }
         let value = self.expr(object);
         let variable = self.var(&format!("$ptr_tmp_r{}", value.0));
         self.var_types.insert(variable, pointer_ty.clone());
@@ -3710,12 +3547,6 @@ impl<'a> Flatten<'a> {
             dest_interior: None,
         });
         self.aggregate_loans.insert(variable, loans);
-        if let Some(mut place) = owner {
-            place.through = Some(variable);
-            let dest = self.fresh(e.location(), Some(place.root));
-            self.emit(MirInstr::LoadPlace { dest, place });
-            return Some(dest);
-        }
         let reference = self.fresh_typed(object.location(), Some(variable), pointer_ty);
         self.emit(MirInstr::UseVar {
             dest: reference,
@@ -5046,7 +4877,6 @@ fn lower_cfg_nested(
                 .filter_map(|(slot, inferred)| inferred.then_some(slot as VarId))
                 .collect(),
             aggregate_loans: HashMap::new(),
-            pointer_addresses: HashMap::new(),
             conversion_view_loans: HashMap::new(),
             pending_argument_anchors: Vec::new(),
             pending_write_backs: Vec::new(),
@@ -5057,7 +4887,6 @@ fn lower_cfg_nested(
             allow_argument_anchors: false,
             operand_bindings: HashMap::new(),
             transfer_domain_loans: HashMap::new(),
-            reassigned_names: reassigned_names(cfg, nested),
             returns_reference,
             walrus_yield: None,
             walrus_destinations: HashMap::new(),

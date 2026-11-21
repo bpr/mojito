@@ -1135,10 +1135,11 @@ assets/ok/pointer_temporary_dereference_place.mojo	-	ineligible	no-scalar-entry-
 assets/ok/pointer_to_owner_twice.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
-assets/ok/pointer_to_ref_binding_twice.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_union_origin.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_to_ref_write_then_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_write_through.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_reference_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_to_rvalue.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_tuple_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_tuple_field_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_type_argument_clone_binder.mojo	-	ineligible	no-scalar-entry-shape

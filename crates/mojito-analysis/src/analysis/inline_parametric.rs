@@ -19,7 +19,9 @@
 //! Its splice ([`inline_calls`]) is `automatic-inline`'s too, which admits
 //! callees by upstream's `AutomaticInline` rule ([`Admission::Automatic`])
 //! over concrete bodies, and binds the mutability parameter a returned
-//! reference is spelled at to the call's.
+//! reference is spelled at to the call's, and the one a pointer parameter's
+//! origin is spelled at to the pointer the call passes or constructs there,
+//! through the body's references, pointers, and `!lit.ref`s alike.
 //!
 //! One run instantiates a callee once per owner type and compile-time and
 //! existential arguments: a later call binding it alike, with no callable
@@ -1912,7 +1914,10 @@ impl<'c> Inliner<'_, 'c> {
                 })
                 .unwrap_or_default(),
         );
-        for (id, mutability) in argument_mutabilities(bindings) {
+        for (id, mutability) in argument_mutabilities(bindings)
+            .into_iter()
+            .chain(pointer_mutabilities(function, callee, bindings, dest))
+        {
             mutabilities.0.entry(id).or_insert(mutability);
         }
         if !mutabilities.0.is_empty() {
@@ -3081,6 +3086,47 @@ fn argument_mutabilities(bindings: &[Binding]) -> HashMap<OriginParamId, Mutabil
         .collect()
 }
 
+/// The `mut` binder each pointer-typed parameter of `callee` spells its
+/// origin's mutability as, bound to the mutability of the pointer the call
+/// passes or constructs there: the result's for an `out` parameter, as
+/// upstream's call binds a struct's `mut` parameter from its application.
+fn pointer_mutabilities(
+    caller: &MirFunction,
+    callee: &MirFunction,
+    bindings: &[Binding],
+    dest: Reg,
+) -> HashMap<OriginParamId, Mutability> {
+    callee
+        .param_types
+        .iter()
+        .zip(bindings)
+        .filter_map(|(declared, binding)| {
+            let actual = match binding {
+                Binding::Out => caller.reg_types.get(&dest.0),
+                Binding::Value(reg) | Binding::Lent(reg) => caller.reg_types.get(&reg.0),
+                Binding::Place(place) | Binding::Part { place, .. } => place.ty.as_ref(),
+                _ => None,
+            }?;
+            let (
+                _,
+                PointerOrigin::Param {
+                    mutability: Mutability::Param(id),
+                    ..
+                }
+                | PointerOrigin::SelfPlace {
+                    mutability: Mutability::Param(id),
+                    ..
+                },
+            ) = declared.as_pointer()?
+            else {
+                return None;
+            };
+            let mutability = actual.as_pointer()?.1.statically_mutable()?;
+            Some((id, Mutability::of(mutability)))
+        })
+        .collect()
+}
+
 /// An inlined body's mutability parameters the call binds
 /// ([`bound_mutabilities`]), substituted through its types.
 struct BoundMutabilities(HashMap<OriginParamId, Mutability>);
@@ -3156,6 +3202,34 @@ impl TyRewrite for BoundMutabilities {
                 rewrite_ty(&element, self).ok()?,
                 origin,
                 address_space,
+            ));
+        }
+        // So does a `!lit.ref` the body forms over one.
+        if let TyKind::LitRef {
+            element,
+            origin:
+                origin @ (PointerOrigin::Param {
+                    mutability: Mutability::Param(id),
+                    ..
+                }
+                | PointerOrigin::SelfPlace {
+                    mutability: Mutability::Param(id),
+                    ..
+                }),
+            address_space,
+        } = ty.kind()
+        {
+            let bound = *self.0.get(id)?;
+            let mut origin = origin.clone();
+            if let PointerOrigin::Param { mutability, .. }
+            | PointerOrigin::SelfPlace { mutability, .. } = &mut origin
+            {
+                *mutability = bound;
+            }
+            return Some(Ty::lit_ref(
+                rewrite_ty(element, self).ok()?,
+                origin,
+                address_space.clone(),
             ));
         }
         let TyKind::Ref(reference) = ty.kind() else {

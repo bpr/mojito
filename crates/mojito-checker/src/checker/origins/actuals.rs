@@ -599,12 +599,6 @@ impl Checker {
                 || ty
                     .pointer_origin()
                     .is_some_and(|origin| origin.as_origin().is_some())
-                || self.has_fact(&root.source_span(), |facts| {
-                    matches!(
-                        facts.adjustment.as_deref(),
-                        Some(mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. })
-                    )
-                })
         };
         if matches!(
             root.kind,

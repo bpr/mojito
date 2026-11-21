@@ -3536,8 +3536,11 @@ fn break_crossing_try_is_a_labelled_break_in_the_try_body() {
 }
 
 #[test]
-fn pointer_construction_lowers_to_a_handle_and_owner_loan() {
+fn pointer_construction_calls_its_initializer_with_an_owner_loan() {
     use mojito::check_program;
+    // `Pointer(to=x)` is the declared initializer: the call takes `x`'s
+    // address handle, the binding loans `x`, and the dereference reads
+    // through the pointer's own handle, never a substituted owner place.
     let src = "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    print(p[0])\n";
     let program = parse(src).expect("parse");
     let checked = check_program(&program).expect("check");
@@ -3549,10 +3552,19 @@ fn pointer_construction_lowers_to_a_handle_and_owner_loan() {
         .expect("main lowered");
     let instrs: Vec<&MirInstr> = main.body.instrs.iter().collect();
     assert!(
+        instrs.iter().any(|instr| matches!(
+            instr,
+            MirInstr::Call { func, kwargs, .. }
+                if func.0.starts_with("Pointer.__init__")
+                    && kwargs.iter().any(|(name, _)| name == "to")
+        )),
+        "construction calls the declared `to=` initializer"
+    );
+    assert!(
         instrs
             .iter()
             .any(|instr| matches!(instr, MirInstr::MakeRef { .. })),
-        "construction emits a frame/slot handle"
+        "the `to=` argument passes a frame/slot handle"
     );
     assert!(
         instrs.iter().any(|instr| matches!(instr,
@@ -3560,14 +3572,6 @@ fn pointer_construction_lowers_to_a_handle_and_owner_loan() {
                 if loans.iter().any(|loan| loan.mutable && loan.interior.is_none())
         )),
         "the pointer binding carries a mutable owner loan"
-    );
-    assert!(
-        instrs.iter().any(|instr| matches!(
-            instr,
-            MirInstr::LoadPlace { place, .. } | MirInstr::MakeRef { place, .. }
-                if place.through.is_some()
-        )),
-        "a stable pointer deref substitutes the owner place through the loan"
     );
 }
 
@@ -4393,10 +4397,9 @@ def main():
 #[test]
 fn pointer_subscript_copy_passes_its_pointee_reference() {
     // A copied pointer subscript (`p[0]` over an unsafe pointer, `p[]` over
-    // an origin-bearing one) reads through the pointee's reference
-    // `pointer.convert` makes, upstream's `lit.ref.from_pointer`, so the
-    // copy takes that reference; a stably addressed pointer's pointee
-    // stays a load of its place.
+    // an origin-bearing one, a local `Pointer(to=a)` included) reads
+    // through the pointee's reference `pointer.convert` makes, upstream's
+    // `lit.ref.from_pointer`, so the copy takes that reference.
     let source = r#"
 struct C(ImplicitlyCopyable, Movable):
     var v: Int
@@ -4448,7 +4451,7 @@ def main():
                 )
         })
     };
-    for name in ["returned", "deref"] {
+    for name in ["returned", "deref", "placed"] {
         let (_, function) = checked_function(source, name);
         assert!(
             copied_through_reference(&function),
@@ -4456,16 +4459,6 @@ def main():
             function.body.instrs
         );
     }
-    let (_, function) = checked_function(source, "placed");
-    assert!(
-        !function
-            .body
-            .instrs
-            .iter()
-            .any(|instr| matches!(instr, MirInstr::PointerConvert { .. })),
-        "a place pointer's pointee loads its place: {:#?}",
-        function.body.instrs
-    );
 }
 
 #[test]

@@ -53,19 +53,6 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match name {
-            POINTER_TYPE_NAME
-                if !kwargs.is_empty()
-                    && (super::method_calls::pointer_rule_construction(kwargs)
-                        || !self.structs.contains_key(POINTER_TYPE_NAME)) =>
-            {
-                self.infer_pointer_to(span, param_args, args, kwargs)
-            }
-            POINTER_TYPE_NAME if !kwargs.is_empty() => {
-                let constructed =
-                    self.infer_construction(&span, POINTER_TYPE_NAME, param_args, args, kwargs)?;
-                self.type_runtime_param_args(param_args, &self.recorded_bracket_attributes(&span))?;
-                Ok(constructed)
-            }
             _ if self.structs.contains_key(name) => {
                 let constructed = self.infer_construction(&span, name, param_args, args, kwargs)?;
                 self.type_runtime_param_args(param_args, &self.recorded_bracket_attributes(&span))?;
@@ -333,28 +320,17 @@ impl Checker {
                     }
                     _ => constructed,
                 }),
-            // A pointer's construction is the rule's for the keywords a
-            // rule answers, and its declared initializers' otherwise; its
+            // A pointer's construction is its declared initializers'; its
             // bracket is the instance's.
             TyKind::Pointer { .. } => {
-                let constructed = match (args, kwargs) {
-                    ([], [kwarg]) if kwarg.name == "to" => {
-                        self.infer_pointer_to(span.clone(), &[], args, kwargs)?
-                    }
-                    _ if self.structs.contains_key(POINTER_TYPE_NAME)
-                        && !super::method_calls::pointer_rule_construction(kwargs) =>
-                    {
-                        self.infer_construction_of(
-                            span,
-                            POINTER_TYPE_NAME,
-                            Some(instance),
-                            &[],
-                            args,
-                            kwargs,
-                        )?
-                    }
-                    _ => self.infer_pointer_to(span.clone(), &[], args, kwargs)?,
-                };
+                let constructed = self.infer_construction_of(
+                    span,
+                    POINTER_TYPE_NAME,
+                    Some(instance),
+                    &[],
+                    args,
+                    kwargs,
+                )?;
                 if self.coerces_by_origins(&constructed, instance)
                     || reads_back_at_own_binder(&constructed, instance)
                 {

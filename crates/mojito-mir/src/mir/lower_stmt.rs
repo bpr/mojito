@@ -1674,32 +1674,23 @@ impl<'a> Flatten<'a> {
         self.flush_argument_anchors();
         // A store through an origin-bearing pointer writes its
         // address; the checker fixed the offset to 0 and required
-        // mutable provenance. A stably bound pointer substitutes its
-        // statically known address; otherwise the store goes through the handle —
+        // mutable provenance. The store goes through the handle —
         // loaded before the invalidation boundary, so a first write
         // through a subtree pointer uses its still-live generation and
         // only later uses observe the self-invalidation.
-        if let Some((object, _)) = place.pointer_offset_subscript() {
-            if let Some(target) = self.pointer_deref_place(object) {
-                self.emit_interior_invalidations(place, None);
-                self.emit(MirInstr::Store {
-                    place: target.clone(),
-                    src,
-                });
-                return Some(StoredDestination::Place(target));
+        if let Some((object, _)) = place.pointer_offset_subscript()
+            && object.is_origin_bearing_pointer()
+        {
+            let reference = self.expr(object);
+            self.emit_interior_invalidations(place, None);
+            if let Some(element) = object.ty().as_ref().and_then(Ty::pointer_element) {
+                self.destroy_pointee(place, reference, element);
             }
-            if object.is_origin_bearing_pointer() {
-                let reference = self.expr(object);
-                self.emit_interior_invalidations(place, None);
-                if let Some(element) = object.ty().as_ref().and_then(Ty::pointer_element) {
-                    self.destroy_pointee(place, reference, element);
-                }
-                self.emit(MirInstr::WriteRef {
-                    reference,
-                    value: src,
-                });
-                return Some(StoredDestination::Reference(reference));
-            }
+            self.emit(MirInstr::WriteRef {
+                reference,
+                value: src,
+            });
+            return Some(StoredDestination::Reference(reference));
         }
         if let Some(object) = pointer_field_store_object(place) {
             return Some(self.lower_pointer_field_store(object, src));
@@ -3118,22 +3109,6 @@ impl<'a> Flatten<'a> {
                         });
                     }
                 } else if let Some((object, _)) = place.pointer_offset_subscript()
-                    && let Some(target) = self.pointer_deref_place(object)
-                {
-                    // `p[0] OP= e` through a stably bound pointer: owner-place
-                    // load and store, exactly like an alias write-back.
-                    let cur = self.fresh(place.location(), Some(target.root));
-                    self.emit(MirInstr::LoadPlace {
-                        dest: cur,
-                        place: target.clone(),
-                    });
-                    let res = self.augmented_operation(*op, place, cur, value);
-                    self.emit_interior_invalidations(place, None);
-                    self.emit(MirInstr::Store {
-                        place: target,
-                        src: res,
-                    });
-                } else if let Some((object, _)) = place.pointer_offset_subscript()
                     && object.is_origin_bearing_pointer()
                 {
                     // `p[0] OP= e` through an origin-bearing pointer: read and
@@ -4047,7 +4022,6 @@ impl<'a> Flatten<'a> {
                     dest_interior: None,
                 });
             }
-            self.record_pointer_address(dest, value, &aggregate_loans);
             if aggregate_loans.is_empty() {
                 self.aggregate_loans.remove(&dest);
             } else {

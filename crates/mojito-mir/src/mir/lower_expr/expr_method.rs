@@ -106,8 +106,7 @@ impl<'a> Flatten<'a> {
     }
 
     /// Write `src` into the pointee at offset 0 of pointer `object`, an
-    /// `element`: through its statically known place, through the runtime
-    /// handle of an origin-bearing pointer, or through a synthetic binding
+    /// `element`: through the runtime handle of an origin-bearing pointer, or through a synthetic binding
     /// of a heap pointer, so chained receivers stay expressible.
     pub(in crate::mir) fn write_pointee(
         &mut self,
@@ -116,9 +115,7 @@ impl<'a> Flatten<'a> {
         element: Ty,
         src: Reg,
     ) {
-        if let Some(target) = self.pointer_deref_place(object) {
-            self.emit(MirInstr::Store { place: target, src });
-        } else if object.is_origin_bearing_pointer() {
+        if object.is_origin_bearing_pointer() {
             let reference = self.expr(object);
             self.emit(MirInstr::WriteRef {
                 reference,

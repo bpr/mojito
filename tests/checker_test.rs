@@ -6,9 +6,10 @@ use mojito::{
 
 /// Parse `source` and run the type checker, returning its result.
 fn check_source(source: &str) -> Result<(), TypeError> {
-    // `print` is the prelude's library function, as upstream's is, so a
-    // snippet that prints links the prelude.
-    if source.contains("print(") {
+    // `print` is the prelude's library function, as upstream's is, and a
+    // `Pointer` construction is the bundled struct's initializer, so a
+    // snippet that prints or constructs a pointer links the prelude.
+    if source.contains("print(") || source.contains("Pointer(") || source.contains("(to=") {
         return check_with_std(source);
     }
     let program = Parser::new(Lexer::new(source))
@@ -5808,18 +5809,14 @@ fn pointer_to_place_infers_an_origin_bearing_pointer() {
 }
 
 #[test]
-fn pointer_to_place_requires_a_single_to_keyword_place() {
-    assert!(matches!(
-        err("def main():\n    var p = Pointer(to=1 + 2)\n"),
-        TypeError::Unsupported(message) if message.contains("requires a place expression")
-    ));
+fn pointer_construction_by_to_is_the_declared_initializer() {
+    // Upstream's `__init__(out self, *, ref[Self.origin, …] to: Self.T)`
+    // takes any `ref` argument: an rvalue materializes, as at the pin.
+    ok("def main():\n    var p = Pointer(to=1 + 2)\n    print(p[])\n");
+    ok("def main():\n    var x = 1\n    var p = Pointer[Int](to=x)\n    print(p[])\n");
     assert!(matches!(
         err("def main():\n    var x = 1\n    var p = Pointer(at=x)\n"),
-        TypeError::BadCall { .. }
-    ));
-    assert!(matches!(
-        err("def main():\n    var x = 1\n    var p = Pointer[Int](to=x)\n"),
-        TypeError::Unsupported(message) if message.contains("explicit type")
+        TypeError::BadCall { reason, .. } if reason.contains("no constructor overload matches")
     ));
     // A `ref` binding is a legal source: the minted pointer carries the
     // conservative subtree of the reference's origin (nightly §7).

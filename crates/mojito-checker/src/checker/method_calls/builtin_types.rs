@@ -28,20 +28,6 @@ pub(in crate::checker) fn pointer_rule_member(member: &str) -> bool {
     POINTER_RULE_MEMBERS.contains(&member)
 }
 
-/// The initializer keywords of the declared `Pointer` a checker rule
-/// answers ahead of the declaration: `to=`. A construction by any other
-/// keyword selects among the declared initializers, the synthesized
-/// `copy=` included.
-pub(in crate::checker) const POINTER_RULE_INITIALIZERS: &[&str] = &["to"];
-
-/// Whether a checker rule answers a `Pointer` construction by `kwargs`:
-/// one with no keyword, or with only [`POINTER_RULE_INITIALIZERS`] ones.
-pub(in crate::checker) fn pointer_rule_construction(kwargs: &[mojito_ast::ast::KwArg]) -> bool {
-    kwargs
-        .iter()
-        .all(|kwarg| POINTER_RULE_INITIALIZERS.contains(&kwarg.name.as_str()))
-}
-
 impl Checker {
     /// Type the `Pointer[T]` instance members a checker rule answers:
     /// `write`, upstream's overwrite of a trivially destructible pointee,

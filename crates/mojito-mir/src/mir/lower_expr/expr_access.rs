@@ -785,9 +785,7 @@ impl<'a> Flatten<'a> {
 
     /// The borrowed read of the pointee pointer subscript node `e` names.
     /// Dereferencing an origin-bearing pointer reads its address; the
-    /// checker fixed the offset to 0. A stably bound pointer with a
-    /// statically known address substitutes that place, keeping it touched (and so
-    /// droppable) at each access; a pointer field of a call result the
+    /// checker fixed the offset to 0. A pointer field of a call result the
     /// checker materialized (`make(b).src[]`) dereferences through the
     /// temporary's hidden slot; otherwise the access reads through the
     /// runtime handle, or the pointer-intrinsic `Index` read.
@@ -797,9 +795,6 @@ impl<'a> Flatten<'a> {
         object: Node<'a>,
         index: Node<'a>,
     ) -> (Reg, Option<VarId>) {
-        if let Some(place) = self.pointer_deref_place(object) {
-            return self.pointee_place_read(e, place);
-        }
         if let Some(d) = self.temporary_pointer_deref(e, object) {
             return (d, None);
         }

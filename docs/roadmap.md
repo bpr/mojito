@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2472**.
+Next free ID: **R2475**.
 
 ## Ordered Work
 
@@ -2132,6 +2132,14 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     'l' conflicts with live reference 's'", where the pin prints `7 3`
     (found while landing R1725, 2026-10-30).
   - Probe: `conformance/probes/list_slice_span_element_store.mojo`.
+  - Probe: a pointer is the same view since `Pointer(to=)` is the declared
+    initializer. `ref rx = xs; var p = Pointer(to=rx); print(rx[0])` before
+    a use of `p` reports "access to 'xs' conflicts with live reference
+    'p'" (`assets/ownership_error/pointer_to_ref_binding_twice.mojo`, pin:
+    `3 1 2`), and `t.bump()` under a live `Pointer(to=r)` over `ref r =
+    t.a` reports the same for `t`
+    (`assets/ownership_error/pointer_to_ref_stale_after_owner_mutation.mojo`,
+    pin: `4`). Found while landing R2208 (2026-11-21).
   - Found while landing R192 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2538,22 +2546,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on R1364.
   - Model: Opus, Not Planned.
 
-- [ ] **R133 A `Pointer[T, o]` parameter cannot infer both its element type
-  and its origin**
-
-  Problem: `def idp[T: AnyType, o: MutOrigin](v: Pointer[T, o])` called with
-  `p = Pointer(to=x)` stops with "type mismatch for argument to 'idp':
-  expected Pointer[Int, origin#1], found Pointer[Int, origin@…]"; the pin
-  runs it.
-  - The element binds, but the origin parameter stays an unsolved slot.
-  - The same signature with a concrete element (`Pointer[Int, o]`) runs.
-  - The parameter order does not matter.
-  - Probe: `def h[T: AnyType, o: ImmOrigin](r: Pointer[T, o]._mlir_lit_ref)`
-    called with `__get_mvalue_as_litref(x)` fails the same way.
-  - Found while fixing a call-result pointer's dereference (2026-10-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R266 A view of a whole local's owned interior is lent as the whole
   local**
 
@@ -2858,29 +2850,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: `return self.ptr()[]` under `-> ref[self.x] Int` also needs
     R1213.
   - Found while landing R679 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1234 `Pointer(to=)` an owned value is rejected instead of
-  materializing it**
-
-  Problem: `var p = Pointer(to=make())` over `def make() -> D` is rejected
-  with "Pointer(to=...) requires a place expression", where the pin
-  materializes the temporary and keeps it alive until the pointer's last
-  use (`after`, `3`, `deinit 3`, `end`).
-  - A call returning a reference is already a place (`Pointer(to=w.get())`
-    runs), through its recorded `ReferenceResult` fact.
-  - Cause: the checker's `Pointer(to=)` arm (`checker/operators.rs`)
-    requires `origin_place` of the operand, and an rvalue has no owner for
-    the pointer's origin to name.
-  - Fix: give the rvalue a hidden owner slot whose lifetime the pointer's
-    loan extends, as a `ref` binding of a temporary
-    (`materialized_reference_actual`) already gets.
-  - Probe: `conformance/probes/pointer_to_owned_temporary.mojo`.
-  - Probe: `Pointer(to=v[1])` over a `SIMD`, and `Pointer(to=s[0])` over a
-    user value `__getitem__`, are rejected the same way, where the pin
-    points at the materialized result (`2`).
-  - Found while landing R1132 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7889,7 +7858,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     bodies, and no checker rule rejects them any more.
   - Found while planning R1681 (2026-11-14).
   - Ledger name: `pointer-origin-bearing-arithmetic`.
-  - Depends on R2208 (the subscript rule), R2437 (a place pointer's VM
+  - Depends on R2473 (the subscript rule), R2437 (a place pointer's VM
     address).
   - Model: Fable, Not Planned.
 
@@ -10940,25 +10909,77 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2208 `Pointer(to=)` and `p[]` are checker rules, where upstream's
-  are the declared struct's `__init__` and `__getitem__`**
+- [ ] **R2472 A call-result receiver of a declared `ref`-returning
+  `__getitem__` reads the wrong value**
 
-  `infer_pointer_to` (`checker/operators.rs`) and the pointer arms of
-  `infer_index`, `infer_multi_subscript`, and `check_pointer_derefs` type
-  them, with the `PointerToPlace` adjustment and
-  `MirIntrinsicSubscript::Pointer`.
-  - Upstream's `__init__(out self, *, ref[Self.origin, …] to: Self.T)`
-    infers the origin through the ordinary `ref` argument.
-  - Upstream's `__getitem__` returns a reference, as `Span`'s does.
-  - Re-express the loan on the place, the materialized-borrow holder, and
-    write capability through the struct path, or delete them.
-  - If the ownership fixtures do not hold in one session, file the
-    materialized-holder rules as their own entry rather than keeping a
-    rule.
-  - Re-probe R133 and R537.
-  - Found while planning R1681 (2026-11-14).
-  - Depends on R2207, R2467 (the subscript stores share
-    `check_pointer_write` and `destroy_pointee`).
+  `idp(p)[]`, over a user struct `P` with upstream's `Pointer` text and
+  `def idp[T: AnyType, o: MutOrigin](v: P[T, o]) -> P[T, o]`, prints `0`,
+  where `var q = idp(p); q[]` prints `4`.
+  - `Pointer` avoids it today only because `p[]` is still a rule, read
+    through `temporary_pointer_deref` (`crates/mojito-mir/src/mir.rs`).
+  - Once `p[]` dispatches to the declared `__getitem__` (R2473), `idp(p)[]`
+    on a real `Pointer` would print `0` too.
+  - Probe: `P` declares `_mlir_value: !kgen.pointer`, `__init__(out self,
+    *, ref[Self.origin] to: Self.T)` over `__get_mvalue_as_litref(to)`,
+    and `__getitem__(self) -> ref[Self.origin] Self.T` over
+    `__get_litref_as_mvalue(lit.ref.from_pointer(...))`; `main` builds
+    `P(to=x)` over `var x = 4` and prints `idp(p)[]`.
+  - Found while planning R2208 (2026-11-21).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2473 `p[]`, `p[i]`, and `p[unsafe_offset=i]` are checker rules,
+  where upstream's are the declared `Pointer.__getitem__`s**
+
+  The pointer arms of `infer_index`, `infer_multi_subscript`, and
+  `check_set_place` (`checker/indexing.rs`) type them, with
+  `check_pointer_offset` and `check_pointer_derefs`.
+  - Declare upstream's keyword `__getitem__[I: Indexer](self, *,
+    unsafe_offset: I)`, the deprecated positional `__getitem__(self,
+    offset: I)`, and `_get_ref_with_unsafe_interior_origin`, then take
+    `__getitem__` out of `POINTER_RULE_MEMBERS`.
+  - `__get_litref_as_mvalue(r)` is spelled `Pointer(_mlir_value=r)[]`
+    (`infer_spelled_address_builtin`, `checker/operators.rs`), so that
+    spelled node must stay the primitive, or the declared `__getitem__`
+    calls itself forever.
+  - The value position, the place position, and the keyword form move
+    together: dispatching one alone fails with "subscript reference
+    assignment lost its getter contract".
+  - Delete the pointer-keyword helpers
+    (`places.rs::pointer_offset_keyword_subscript` and its users in
+    `origins/actuals.rs`, `origins/interior.rs`), the pointer arms in
+    `origins/exclusivity.rs` and `origins/ref_params.rs`, and the pointer
+    callers of `materialize_temporary_holder`.
+  - Write capability comes from the `ref[Self.origin]` result's
+    mutability; `check_pointer_write` stays for `write` (R2468).
+  - Probe: `p[1]` on `Pointer(to=x)` warns that positional `__getitem__` is
+    deprecated and runs at the pin;
+    `assets/type_error/pointer_to_place_offset_rejected.mojo` then moves to
+    `runtime_error`, its ledger row `runs subset`.
+  - Found while planning R2208 (2026-11-21).
+  - Depends on R2472.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2474 `__get_litref_as_mvalue` is spelled as a pointer subscript,
+  so `MirIntrinsicSubscript::Pointer` stands in for upstream's builtin**
+
+  Upstream's `__get_litref_as_mvalue(r)` is the place a `!lit.ref` refers
+  to; Mojito spells it `Pointer(_mlir_value=r)[]` and lowers it through
+  MIR's pointer-deref machinery.
+  - Give it its own checked primitive, lowered to the reference `r`
+    already is, then retire the spelled subscript.
+  - Retire `MirIntrinsicSubscript::Pointer` (`mir/ir.rs`, MIR text, the
+    verifier, `calls.rs`, `lower_expr/expr_access.rs`), and
+    `is_origin_bearing_pointer` with its callers.
+  - The `destroy_pointee` store path for `p[] = v` (`lower_stmt.rs`)
+    becomes the ordinary store through a mutable `ref` result.
+  - Retire the VM arms (`mojito-vm/src/backend/vm/exec.rs`) and Pliron's
+    (`mojito-pliron/src/lower/instr.rs`).
+  - The MIR text schema drops the `pointer` intrinsic tag, so bump it and
+    regenerate the `tests/mir_passes/inline-parametric` goldens that spell
+    it.
+  - Found while planning R2208 (2026-11-21).
+  - Depends on R2473.
   - Model: Fable, Not Planned.
 
 - [ ] **R2460 A `Pointer`'s union origin cannot name an origin binder or
@@ -11092,7 +11113,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - If it does not fit one session, split it into a types-and-checker half
     and a MIR, VM, and pliron half.
   - Found while planning R1681 (2026-11-14).
-  - Depends on R2208, R2209.
+  - Depends on R2474, R2209.
   - Model: Fable, Not Planned.
 
 - [ ] **R2211 A `ref` binding's `TyKind::Ref` and a `!lit.ref` value's

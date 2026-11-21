@@ -1,6 +1,6 @@
 # A bracketed `Pointer[...](to=x)` takes a place whose pointer converts to
 # the bracket's instance; `x`'s origin is not `y`'s.
-# expect: no matching function in initialization
+# expect: no constructor overload matches the supplied arguments
 def main():
     var x = 5
     var y = 6

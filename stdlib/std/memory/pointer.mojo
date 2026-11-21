@@ -1,9 +1,9 @@
 # std.memory.pointer — upstream's `Pointer` and its aliases, ported with
 # these departures. The compiler folds every application of the struct into
-# its own pointer type, and its rules still answer `Pointer(to=)`, `p[]`
-# (R2208), `write`, and `unsafe_free`; a member or an initializer keyword
-# no rule answers, the casts, address members, and comparisons included,
-# reaches its body here. Conformances `DevicePassable`,
+# its own pointer type, and its rules still answer `p[]` (R2473), `write`,
+# and `unsafe_free`; every initializer, `Pointer(to=)` included, and every
+# member no rule answers, the casts, address members, and comparisons
+# included, reaches its body here. Conformances `DevicePassable`,
 # `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable` are absent from
 # the bundle. `unsafe_deinit_pointee_with` and `unsafe_write(init_with=)`
 # take an explicit `F` binder where upstream's parameter is
@@ -22,7 +22,7 @@
 #   forms: the compiler's rules answer `write` and `unsafe_free`, and
 #   `@__allow_legacy_custom_self_type` is not modelled (R2468).
 # - the indexed and keyword `__getitem__`s and
-#   `_get_ref_with_unsafe_interior_origin`: the subscript rule (R2208).
+#   `_get_ref_with_unsafe_interior_origin`: the subscript rule (R2473).
 # - `unsafe_as_noalias` and `_as_origin_superset`: `where O.contains[…]`
 #   (R2381); `unsafe_dangling`: the plugin hook.
 # - `NicheStorage`, `write_niche`, `isa_niche`, the `DevicePassable`

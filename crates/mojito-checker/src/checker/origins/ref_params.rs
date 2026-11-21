@@ -517,9 +517,9 @@ impl Checker {
                 if let Some(bound) = self.call_result_bound_origins(expression) {
                     return bound;
                 }
-                // A checked pointer construction retains exactly its source
-                // place; the checker recorded the decision when it typed the
-                // call, so a shadowed `Pointer` name cannot match here.
+                // A checked `__get_mvalue_as_litref(place)` retains exactly
+                // its source place; the checker recorded the decision when it
+                // typed the call, so a shadowed name cannot match here.
                 if self
                     .node_facts
                     .borrow()
@@ -531,10 +531,7 @@ impl Checker {
                             mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
                         )
                     })
-                    && let Some(argument) = kwargs
-                        .first()
-                        .map(|argument| &argument.value)
-                        .or_else(|| args.first())
+                    && let Some(argument) = args.first()
                     && let Ok(place) = self.origin_place(argument)
                 {
                     return vec![Origin::Place(place)];

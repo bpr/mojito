@@ -958,70 +958,9 @@ impl Checker {
         }
     }
 
-    /// Type `Pointer(to=place)`: an origin-bearing pointer to existing checked
-    /// storage. The element type is the place's type, the address space the
-    /// place's, and the origin is the place itself, so loan analysis keeps
-    /// the owner alive and rejects conflicting access. A bracket
-    /// (`Pointer[T, o](to=place)`, bound by [`Self::pointer_bracket`])
-    /// names the instance: its element must be the place's, and the place's
-    /// pointer must convert to it by origin, as upstream's initializer
-    /// takes `ref[origin, address_space] to: T`. Execution represents the
-    /// value as a frame/slot handle; only the VM erases the origin.
-    pub(super) fn infer_pointer_to(
-        &self,
-        span: SourceSpan,
-        param_args: &[mojito_ast::ast::ParamArg],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Result<Ty, TypeError> {
-        if !args.is_empty() || kwargs.len() != 1 || kwargs[0].name != "to" {
-            return Err(TypeError::BadCall {
-                func: "Pointer".to_string(),
-                reason: "expected exactly one 'to=' keyword argument".to_string(),
-            });
-        }
-        let bracket = (!param_args.is_empty())
-            .then(|| self.pointer_bracket(param_args))
-            .transpose()?;
-        let (element, origin) = self.infer_place_address(span.clone(), &kwargs[0].value)?;
-        let address_space = self.place_address_space(&kwargs[0].value);
-        let Some(bracket) = bracket else {
-            return Ok(Ty::pointer(element, origin, address_space));
-        };
-        let place = Ty::pointer(element.clone(), origin.clone(), address_space.clone());
-        let no_match = |instance: &dyn std::fmt::Display| TypeError::BadCall {
-            func: "Pointer".to_string(),
-            reason: format!(
-                "no matching function in initialization: '{place}' does not convert to \
-                 '{instance}'"
-            ),
-        };
-        if let Some(declared) = bracket
-            .element
-            .as_ref()
-            .filter(|declared| **declared != element)
-        {
-            return Err(no_match(&format!("Pointer[{declared}, ...]")));
-        }
-        let origin = bracket.origin.unwrap_or_else(|| match bracket.mutability {
-            Some(false) => origin.immutable(),
-            _ => origin,
-        });
-        let instance = Ty::pointer(
-            element,
-            origin,
-            bracket.address_space.unwrap_or(address_space),
-        );
-        if !self.coerces_by_origins(&place, &instance) {
-            return Err(no_match(&instance));
-        }
-        self.record_declared_attributes(span, &bracket.attributes);
-        Ok(instance)
-    }
-
     /// Type upstream's `__get_mvalue_as_litref(place)`: the `!lit.ref` of a
     /// place, whose origin is the place and whose address space is the
-    /// place's, as `Pointer(to=place)` takes it.
+    /// place's, as upstream's `Pointer.__init__(to=)` body takes it.
     pub(super) fn infer_mvalue_as_litref(
         &self,
         span: SourceSpan,
@@ -1217,8 +1156,8 @@ impl Checker {
     }
 
     /// The element and origin of the address of `value`, a place, as
-    /// `Pointer(to=)` and `__get_mvalue_as_litref` take it, recording the
-    /// `PointerToPlace` adjustment at `span`.
+    /// `__get_mvalue_as_litref` takes it, recording the `PointerToPlace`
+    /// adjustment at `span`.
     fn infer_place_address(
         &self,
         span: SourceSpan,
@@ -1282,7 +1221,7 @@ impl Checker {
                 }
                 other => {
                     return Err(TypeError::Unsupported(format!(
-                        "Pointer(to=...) through a 'ref' binding requires a place or \
+                        "__get_mvalue_as_litref through a 'ref' binding requires a place or \
                          origin-parameter referent; a {other} origin is not supported"
                     )));
                 }
@@ -1310,7 +1249,9 @@ impl Checker {
         let inferred = call.then(|| self.infer(value)).transpose()?;
         let place = self.origin_place(value).map_err(|error| match error {
             TypeError::UndefinedVariable(_) => error,
-            _ => TypeError::Unsupported("Pointer(to=...) requires a place expression".to_string()),
+            _ => TypeError::Unsupported(
+                "__get_mvalue_as_litref requires a place expression".to_string(),
+            ),
         })?;
         let element = inferred.map_or_else(|| self.infer(value), Ok)?;
         // A place an accessor returns by reference (`t[0]` on a `Tuple`) is

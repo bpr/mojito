@@ -2693,13 +2693,18 @@ impl Checker {
             {
                 return self.record_selected_conversion(expression, from, selected, to);
             }
-            // Re-inference keeps the owner a borrow already minted.
+            // Re-inference keeps the owner a borrow already minted, the
+            // literal's own or the temporary's a `ref` argument lent.
             let mut record = self.record_at(expression.source_span());
             let materialized = match record.adjustment.as_deref() {
                 Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral {
                     materialized,
                     ..
                 }) => *materialized,
+                Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
+                    owner,
+                    ..
+                }) => Some(*owner),
                 _ => None,
             };
             record.adjustment = Some(Box::new(

@@ -8,7 +8,7 @@
 #   end
 #
 # Observed 2026-10-20 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: rejects it ("Pointer(to=...) requires a place expression").
+# Mojito prints the same (R1234 landed with R2208, 2026-11-21).
 #
 # Run:    mojo run pointer_to_owned_temporary.mojo
 #         cargo run -- run conformance/probes/pointer_to_owned_temporary.mojo

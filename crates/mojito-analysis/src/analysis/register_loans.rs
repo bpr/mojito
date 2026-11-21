@@ -805,6 +805,11 @@ impl RegisterLoanStep {
                     ) =>
             {
                 let named = named_storage(register_types.get(&dest.0));
+                // A tracked pointer a call constructs over a `ref` argument
+                // (`Pointer(to=x)`) names that argument's storage, which
+                // the call passes as an untracked address handle.
+                let constructs_pointer = matches!(instruction, MirInstr::Call { .. })
+                    && tracked_pointer_result(register_types, dest);
                 mojito_mir::mir::call_operands(instruction)
                     .into_iter()
                     .map(|operand| operand.reg)
@@ -812,6 +817,14 @@ impl RegisterLoanStep {
                         named_storage(register_types.get(&operand.0))
                             .iter()
                             .any(|storage| named.contains(storage))
+                            || (constructs_pointer
+                                && matches!(
+                                    register_types.get(&operand.0).map(Ty::kind),
+                                    Some(TyKind::Ref(mojito_types::origin::RefTy {
+                                        origin: mojito_types::origin::Origin::Untracked { .. },
+                                        ..
+                                    }))
+                                ))
                     })
                     .collect()
             }

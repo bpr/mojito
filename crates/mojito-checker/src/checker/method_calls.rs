@@ -22,7 +22,6 @@ mod selection;
 mod statics;
 mod type_receivers;
 
-pub(in crate::checker) use builtin_types::pointer_rule_construction;
 use call_contract::SelectedMethodCall;
 pub(super) use pop_ops::mlir_attribute;
 pub(in crate::checker) use selection::call_value_adjustments;

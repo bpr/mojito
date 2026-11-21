@@ -1,6 +1,7 @@
-# expect: invalidated interior reference
-# The subtree provenance minted by `Pointer(to=ref_binding)` stales on any
-# mutation of the owner at or below the reference's base.
+# expect: conflicts with live reference
+# A mutation of the owner while a pointer taken through a `ref` binding to
+# one of its fields is live. The pin runs it and prints 4; Mojito's pointer
+# loans the referent, so the mutating call conflicts with it (R1160).
 @fieldwise_init
 struct Pair:
     var a: Int

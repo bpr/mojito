@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Pointer(to=)` is upstream's declared `__init__(out self, *, ref[Self.origin,
+  Self.address_space] to: Self.T)`, retiring the checker's rule: the origin,
+  its `mut`, and the address space are inferred through the ordinary `ref`
+  argument, so any `ref` argument constructs a pointer, an rvalue included
+  (`Pointer(to=1 + 2)`, `Pointer(to=make())`, `Pointer(to=v[1])`
+  materialize the temporary for the pointer's lifetime, as at the pin;
+  `assets/ok/pointer_to_rvalue.mojo`), and a write through a pointer taken
+  through a `ref` binding no longer stales it
+  (`assets/ok/pointer_to_ref_write_then_read.mojo`). The pointer's loan is
+  the bound place's, as a `Span`'s is, so a read of its owner beside it
+  conflicts (R1160), and a mismatched bracket origin reports "no
+  constructor overload matches the supplied arguments", naming the origin
+  as `origin_of(x)`.
+
 - `Pointer`'s memory members `unsafe_write` (positional, `copy=`, and
   `init_with=`), `unsafe_write_move_from`, `unsafe_take_pointee`,
   `unsafe_deinit_pointee`, and `unsafe_deinit_pointee_with` are upstream's

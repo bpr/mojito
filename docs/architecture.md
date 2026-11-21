@@ -3782,9 +3782,9 @@ members (`_mlir_type`, `_mlir_lit_ref`), and conformances (`Intable`,
 `Writable`) are the declaration's, in the checker and the elaborator
 alike. The checker's rules still win for every member
 `POINTER_RULE_MEMBERS` names (the subscript members, `write`, `free`,
-`unsafe_free`, and the static rules) and for a `to=` construction
-(`POINTER_RULE_INITIALIZERS`), so those declared bodies are checked but no
-call selects them until the rules retire (R2208, R2468, R2444). Any other
+`unsafe_free`, and the static rules), so those declared bodies are
+checked but no call selects them until the rules retire (R2473, R2468,
+R2444). Every initializer, `to=` included, is the declaration's. Any other
 member (the memory members `unsafe_write`, `unsafe_write_move_from`,
 `unsafe_take_pointee`, and `unsafe_deinit_pointee[_with]` over the two
 `!kgen.pointer` builtins, the address members `__int__`,
@@ -3829,10 +3829,9 @@ is false), so on a place it is one place (`PointerOrigin::single_place`,
 the one predicate the offset and arithmetic rules, MIR's deref lowering,
 and the VM's index projection share) and offsets reject; a symbolic
 `Param` origin is never one place, since a call may bind it to heap
-storage. The deref-place substitution refuses it
-(`Node::forms_place_address` never records a subtree construction's
-address — the runtime handle carries the true projection, so the checked
-origin must never re-derive one), and for overlap the terminal
+storage. A dereference reads through the runtime handle, which carries
+the true projection, so the checked origin never re-derives one, and for
+overlap the terminal
 segment is a wildcard over every descendant. Its loan is a lazy interior
 generation whose staleness predicate (`interior_origin_invalidated_by`)
 drops both directional requirements the named-generation rule keeps: a
@@ -6155,21 +6154,21 @@ aggregate is rebound, and retains the replacement generation independently.
 A stored `MutUnsafeAnyOrigin` reference is rejected because it would hide an untracked mutable
 capability behind an otherwise safe value.
 
-`Pointer(to=place)` rides the same machinery. The checker infers
-`PointerOrigin::Place` from the source place — mutability follows the owner
-binding — and the checked pointer type retains that provenance through HIR and
-MIR while the VM value stays an origin-free frame/slot handle. Construction
-lowers to `MakeRef` plus `EstablishLoans` on the pointer binding. A pointer's
-loans are its origin, which only keeps owners alive; its address is a separate
-fact (`Flatten::pointer_addresses`), recorded only when the binding's
-initializer is a `Pointer(to=place)` construction (`Node::forms_place_address`)
-or a copy of such a pointer. A stably bound pointer's `p[0]` deref substitutes
-that address (`pointer_deref_place`, `MirPlace::through` names the pointer), so
-owner liveness, ASAP destruction, and loan conflicts stay exact. A pointer whose
-address is not statically known — an `unsafe_origin_cast`, a method's pointer
-under a wider origin than the place it addresses — and reassigned or
-field-loaded pointers read and write through their runtime handles, as
-upstream's `Pointer.__getitem__` dereferences its address, never its origin. Aggregates that store place-origin pointers carry the owner
+`Pointer(to=value)` rides the same machinery. It is the declared
+`__init__(out self, *, ref[Self.origin, Self.address_space] to: Self.T)`,
+so the checker infers the origin, its `mut`, and the address space through
+the ordinary `ref` argument, as for any struct: a place lends its own
+origin, a pointer dereference the pointer's capability, and an rvalue the
+hidden slot it materializes into. The checked pointer type retains that
+provenance through HIR and MIR while the VM value stays an origin-free
+frame/slot handle; the body's `__get_mvalue_as_litref(to)` is the
+`ref.make` (`PointerToPlace`). The binding's `EstablishLoans` loans the bound
+place exactly (`aggregate_borrows`), and a pointer constructed as a call
+argument keeps that place live through the call by register-loan provenance
+(`origin_operands`, `analysis/register_loans.rs`). A pointer's loans are its
+origin, which only keeps owners alive; every dereference reads and writes
+through the runtime handle, as upstream's `Pointer.__getitem__` dereferences
+its address, never its origin. Aggregates that store place-origin pointers carry the owner
 loan exactly like reference-valued aggregates. Because an origin-bearing
 pointer designates one checked value rather than an allocation, the checker
 rejects non-zero offsets, pointer arithmetic and comparison, `free()`, writes
@@ -6195,16 +6194,11 @@ a pointer with a tracked place origin names that origin, as upstream's
 (`returned_pointer_dereference_origin`, `origin_of(self)` read at the
 receiver's place), and a field of a reference-returning call's result is a
 place within the call's recorded result origin (`origin_place` reads its
-`ReferenceResult`). A pointer the expression forms in place
-(`PointerToPlace`) is the holder of a dereference place
-through its adjustment's `materialized` slot, which
-`record_pointer_adjustment` keeps across re-inference, and a `Pointer(...)`
-construction or a call whose pointer result has a tracked origin (a
-declared cast) through a `MaterializeBorrowSource` slot, which carries the
-call's loans; an ordinary call's
-pointer result is read through its loan-carrying `$ptr_tmp_r` slot
-(`temporary_pointer_deref`) instead: only a `Pointer(to=x)` temporary
-substitutes its place, and every other one reads the slot's handle. A read of the bound pointer
+`ReferenceResult`). A `Pointer(...)` construction or a call whose pointer result has a
+tracked origin (a declared cast) is the holder of a dereference place
+through a `MaterializeBorrowSource` slot, which carries the call's loans;
+an ordinary call's pointer result is read through its loan-carrying
+`$ptr_tmp_r` slot's handle (`temporary_pointer_deref`) instead. A read of the bound pointer
 variable itself — a copy into another local, an annotated binding, or a call
 argument — is a plain `UseVar` value read of the stored handle, which both
 backends interpret as the pointee's address.

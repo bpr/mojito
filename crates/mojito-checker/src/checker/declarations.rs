@@ -3331,6 +3331,36 @@ impl Checker {
         }
     }
 
+    /// What a construction's one solve reads for each bound argument
+    /// ([`Self::reference_solve_pair`]): a `ref` argument whose clause
+    /// names an `AddressSpace` binder (`ref[Self.origin,
+    /// Self.address_space] to`) solves as the reference it lends, as a
+    /// call's does. `slots` pairs each of the leading `patterns` with its
+    /// parameter index; a pattern past them (a `*args` element) solves as
+    /// it stands.
+    pub(super) fn reference_solve_pairs(
+        &self,
+        sig: &MethodSig,
+        slots: &[(usize, &Expr, &Ty)],
+        patterns: &[Ty],
+        actuals: &[Ty],
+    ) -> (Vec<Ty>, Vec<Ty>) {
+        patterns
+            .iter()
+            .zip(actuals)
+            .enumerate()
+            .map(|(position, (pattern, actual))| match slots.get(position) {
+                Some((index, expression, _)) => self.reference_solve_pair(
+                    sig.ref_params.get(*index).and_then(Option::as_ref),
+                    pattern,
+                    actual,
+                    expression,
+                ),
+                None => (pattern.clone(), actual.clone()),
+            })
+            .unzip()
+    }
+
     /// The parameter type of `sig`, a single-parameter converting
     /// constructor of `name`, at the struct's arguments `struct_subst`
     /// solves and its own parameters solved from `source`, the converted
@@ -3806,8 +3836,14 @@ impl Checker {
                     .collect::<Result<Vec<_>, _>>()?;
                 let arg_tys = self.bound_construction_arguments(name, sig, &bound_slots, solved)?;
                 Self::reject_unconstrained_pack(name, &decls, param_args, constructed, &params)?;
-                let (instance_patterns, instance_actuals) =
-                    self.constructed_unification(name, constructed, &params, &arg_tys);
+                let (solve_patterns, solve_actuals) =
+                    self.reference_solve_pairs(sig, &bound_slots, &params, &arg_tys);
+                let (instance_patterns, instance_actuals) = self.constructed_unification(
+                    name,
+                    constructed,
+                    &solve_patterns,
+                    &solve_actuals,
+                );
                 let BoundParameters {
                     mut subst,
                     arguments: tyargs,
@@ -4062,8 +4098,14 @@ impl Checker {
                     .iter()
                     .map(|(_, pattern, _)| pattern.clone())
                     .collect();
-                let (instance_patterns, instance_actuals) =
-                    self.constructed_unification(name, constructed, &patterns, &arg_tys);
+                let (solve_patterns, solve_actuals) =
+                    self.reference_solve_pairs(sig, &bound_slots, &patterns, &arg_tys);
+                let (instance_patterns, instance_actuals) = self.constructed_unification(
+                    name,
+                    constructed,
+                    &solve_patterns,
+                    &solve_actuals,
+                );
                 let mut refined_own = None;
                 let resolved_use = Self::reject_unconstrained_pack(
                     name,

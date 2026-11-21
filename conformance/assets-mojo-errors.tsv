@@ -167,8 +167,8 @@ assets/ownership_error/partial_move_whole_reassign.mojo	compile-reject	agree	err
 assets/ownership_error/pointer_field_iterator_source_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/pointer_to_owner_across_for_loop.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/pointer_to_owner_twice_then_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
-assets/ownership_error/pointer_to_ref_second_write_rejected.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
-assets/ownership_error/pointer_to_ref_stale_after_owner_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
+assets/ownership_error/pointer_to_ref_binding_twice.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
+assets/ownership_error/pointer_to_ref_stale_after_owner_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/print_argument_read_after_move.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/reference_argument_read_after_invalidation.mojo	compile-reject	agree	error: use of invalidated interior reference 'lst["element"]'
 assets/ownership_error/reference_argument_read_after_move.mojo	compile-reject	agree	error: use of uninitialized value 'tup'

@@ -19,6 +19,9 @@ use mojito_types::types::TyKind;
 pub(in crate::checker) struct ConstructorOriginBindings {
     pub(in crate::checker) pointers: HashMap<OriginParamId, PointerOrigin>,
     pub(in crate::checker) origins: HashMap<OriginParamId, Origin>,
+    /// The capability a `ref` argument lent a binder, where it is not its
+    /// origin's storage's: a pointer dereference's is the pointer's.
+    references: HashMap<OriginParamId, Mutability>,
     /// The binders this binding binds.
     binders: CalleeBinders,
 }
@@ -262,6 +265,9 @@ impl ConstructorOriginBindings {
                 ) => Some(*mutability),
                 (None, _) => None,
             };
+        }
+        if let Some(mutability) = self.references.get(&id) {
+            return Some(*mutability);
         }
         origin_mutability(self.origins.get(&id)?, owner_mutability)
     }
@@ -671,6 +677,11 @@ impl Checker {
                         .filter(|argument| !matches!(argument, TyArg::Origin(_))),
                     origins,
                     |decl, origin| {
+                        if let Some((_, value)) =
+                            bracket.mutabilities.iter().find(|(id, _)| id == decl.id())
+                        {
+                            return value.clone();
+                        }
                         let bound = info
                             .origin_decls()
                             .find(|(_, candidate)| match candidate {
@@ -740,7 +751,7 @@ impl Checker {
             // place its own.
             if let Some(Some(PointerOrigin::Param { id, .. })) = sig.origin_binders.get(*index)
                 && let Some(slot) = super::super::struct_origin_decl(params, *id)
-                && let Some(actual) = self.reference_argument_origin(expression)
+                && let Some((actual, lent)) = self.reference_argument(expression)
             {
                 if let Some(supplied) = explicit.find(*id)
                     && !explicit.admits(&actual, &supplied.origin)
@@ -750,13 +761,36 @@ impl Checker {
                             "a reference whose origin is the supplied '{}' argument",
                             slot.name()
                         ),
-                        found: format!("a reference of origin {actual:?}"),
+                        found: format!(
+                            "a reference of origin {}",
+                            self.display_origin_with_names(&actual)
+                        ),
                         context: context(),
                     });
                 }
                 bindings.bind_origin(*id, &actual, || {
                     conflicting_binding(struct_name, slot.name())
                 })?;
+                // A `Pointer`'s place origin folds with a decided `mut`
+                // only, so a place reached through a `ref` whose `mut=`
+                // binder is out of scope (a bare `ref` parameter's) lends
+                // it immutably.
+                let lent = match lent {
+                    Some(Mutability::Param(binder))
+                        if struct_name == mojito_types::types::POINTER_TYPE_NAME
+                            && matches!(actual, Origin::Place(_))
+                            && self.origin_mutability_binder_read(binder).is_none() =>
+                    {
+                        Some(Mutability::Immutable)
+                    }
+                    Some(Mutability::Param(_)) | None => None,
+                    concrete => concrete,
+                };
+                if let Some(lent) = lent
+                    && bindings.binders.binds(*id)
+                {
+                    bindings.references.entry(*id).or_insert(lent);
+                }
             }
         }
         // A struct origin binder whose `mut=` binder the bracket fixed to
@@ -957,6 +991,7 @@ impl Checker {
         let mut bindings = ConstructorOriginBindings {
             pointers: Self::bind_callable_pointer_origins(callee, names, params, bound, &binders)?,
             origins: HashMap::new(),
+            references: HashMap::new(),
             binders,
         };
         for (id, provenance) in &bindings.pointers {
@@ -1101,18 +1136,27 @@ impl Checker {
     /// place its own storage, and a temporary the hidden slot it materializes
     /// into.
     fn reference_argument_origin(&self, expression: &Expr) -> Option<Origin> {
+        self.reference_argument(expression)
+            .map(|(origin, _)| origin)
+    }
+
+    /// [`Self::reference_argument_origin`], with the capability the
+    /// argument lends where its reference records one: a pointer
+    /// dereference lends the pointer's, not its holder's.
+    fn reference_argument(&self, expression: &Expr) -> Option<(Origin, Option<Mutability>)> {
         // A `ref [o]` parameter of the enclosing signature lends its binder.
         if let ExprKind::Identifier(name) = &expression.kind
             && let Some(PointerOrigin::Param { id, .. }) =
                 self.lookup_reference_parameter_binder(name)
         {
-            return Some(Origin::Param(id));
+            return Some((Origin::Param(id), None));
         }
         self.returned_reference_parameter_origin(expression)
+            .map(|origin| (origin, None))
             .or_else(|| {
                 self.materialized_reference_actual(expression)
                     .ok()
-                    .map(|reference| reference.origin)
+                    .map(|reference| (reference.origin, Some(reference.mutability)))
             })
     }
 
@@ -1212,7 +1256,7 @@ impl Checker {
                             "a reference whose origin is the supplied '{}' argument",
                             slot.name()
                         ),
-                        found: format!("a reference of origin {:?}", reference.origin),
+                        found: format!("a reference of origin {}", reference.origin),
                         context: context(),
                     });
                 }
@@ -1258,7 +1302,7 @@ impl Checker {
                                         "a value whose origin is the supplied '{}' argument",
                                         slot.name()
                                     ),
-                                    found: format!("a value of origin {actual:?}"),
+                                    found: format!("a value of origin {actual}"),
                                     context: context(),
                                 });
                             }

@@ -1136,10 +1136,11 @@ assets/ok/pointer_temporary_dereference_place.mojo	main	exe-differential	sanitiz
 assets/ok/pointer_to_owner_twice.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_place.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_binding.mojo	main	exe-differential	sanitized
-assets/ok/pointer_to_ref_binding_twice.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_union_origin.mojo	main	exe-differential	sanitized
+assets/ok/pointer_to_ref_write_then_read.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_ref_write_through.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_reference_call.mojo	main	exe-differential	sanitized
+assets/ok/pointer_to_rvalue.mojo	main	exe-differential	sanitized
 assets/ok/pointer_to_tuple_element.mojo	main	exe-differential	sanitized
 assets/ok/pointer_tuple_field_write.mojo	main	exe-differential	sanitized
 assets/ok/pointer_type_argument_clone_binder.mojo	main	exe-differential	sanitized
