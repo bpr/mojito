@@ -724,6 +724,7 @@ assets/ok/method_origin_binder_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_overload_parameter_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_recursion_pushed_frames.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_result_pointer_field_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/method_self_mut_origin_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_signature_calls_later_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_simd_pattern_beside_bare.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_struct_comptime_parameter_argument.mojo	-	ineligible	no-scalar-entry-shape

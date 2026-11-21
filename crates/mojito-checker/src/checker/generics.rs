@@ -1281,7 +1281,7 @@ impl Checker {
                     continue;
                 }
                 origins.push(self.bound_bracket_origin(
-                    name,
+                    (name, decls),
                     (index, decl, *id),
                     (position, argument),
                     use_,
@@ -2097,7 +2097,7 @@ impl Checker {
         }
 
         if targs.is_empty()
-            || !signature.decls().iter().any(|decl| {
+            || !signature.declared.iter().any(|decl| {
                 matches!(
                     decl,
                     ParamDecl::Value { .. }
@@ -2107,6 +2107,10 @@ impl Checker {
                         }
                         | ParamDecl::Type {
                             callable_bound: Some(_),
+                            ..
+                        }
+                        | ParamDecl::Origin {
+                            mutability: OriginMutability::Binder(_),
                             ..
                         }
                 )
@@ -2166,7 +2170,21 @@ impl Checker {
                         *ty = at_receiver;
                     }
                 }
-                ParamDecl::Origin { .. } => {}
+                // An origin binder typed by the struct's own `Bool` binder
+                // (`[t: Origin[mut=Self.mut]]`) takes the receiver's
+                // argument for it.
+                ParamDecl::Origin { mutability, .. } => {
+                    if let OriginMutability::Binder(binder) = mutability
+                        && let Some(TyArg::Val(CtValue::Bool(fixed))) = info
+                            .params
+                            .iter()
+                            .position(|decl| decl.id() == &binder.id)
+                            .and_then(|slot| targs.get(slot))
+                    {
+                        *mutability = OriginMutability::Fixed(*fixed);
+                        retyped = true;
+                    }
+                }
             }
         }
         (rewrite.closed || retyped).then_some(closed)
@@ -2488,14 +2506,14 @@ impl Checker {
     /// type ([`Self::bound_bracket_origins`]).
     fn bound_bracket_origin(
         &self,
-        name: &str,
+        (name, decls): (&str, &[ParamDecl]),
         (index, decl, id): (usize, &ParamDecl, mojito_types::origin::OriginParamId),
         (position, argument): (usize, &mojito_ast::ast::ParamArg),
         use_: BracketUse,
     ) -> Result<BoundOrigin, TypeError> {
         use mojito_types::origin::{Mutability, Origin};
         use mojito_types::types::OriginMutability;
-        self.convert_bracket_origin(decl, argument)?;
+        self.convert_bracket_origin(decls, decl, argument)?;
         self.check_origin_argument_representation(name, decl, argument)?;
         let (origin, mutability, attribute) = match use_ {
             BracketUse::Type(strictness) => {
@@ -2625,31 +2643,51 @@ impl Checker {
     }
 
     /// Convert bracket origin `argument` to the `Origin[mut=…]` type its
-    /// binder `decl` declares, as upstream passes a bracket value: an
-    /// immutable origin does not convert to a `MutOrigin` binder.
+    /// binder `decl` declares among `decls`, as upstream passes a bracket
+    /// value: an immutable origin does not convert to a `MutOrigin` binder,
+    /// and a binder whose `mut=` reads a binder outside `decls` the call
+    /// leaves symbolic (`Origin[mut=Self.mut]` through a receiver `S[_]`)
+    /// takes only an origin of that same mutability.
     fn convert_bracket_origin(
         &self,
+        decls: &[ParamDecl],
         decl: &ParamDecl,
         argument: &mojito_ast::ast::ParamArg,
     ) -> Result<(), TypeError> {
+        use mojito_types::origin::Mutability;
         let ParamDecl::Origin {
-            mutability: OriginMutability::Fixed(true),
-            lit,
-            ..
+            mutability, lit, ..
         } = decl
         else {
             return Ok(());
         };
-        let immutable = self
-            .resolve_origin_param_arg(argument)
-            .is_ok_and(|(_, own)| own == Some(mojito_types::origin::Mutability::Immutable));
-        if !immutable {
-            return Ok(());
-        }
-        Err(TypeError::TypeMismatch {
-            expected: super::origin_value_type(Some(true), *lit),
-            found: super::origin_value_type(Some(false), *lit),
-            context: format!("value passed to '{}'", decl.name()),
+        let own = || {
+            self.resolve_origin_param_arg(argument)
+                .ok()
+                .and_then(|(_, own)| own)
+        };
+        let (expected, found) = match mutability {
+            OriginMutability::Fixed(true) if own() == Some(Mutability::Immutable) => (
+                super::origin_value_type(Some(true), *lit),
+                super::origin_value_type(Some(false), *lit),
+            ),
+            OriginMutability::Binder(binder)
+                if !binder.is_unbound() && !decls.iter().any(|own| own.id() == &binder.id) =>
+            {
+                let Some(fixed @ (Mutability::Mutable | Mutability::Immutable)) = own() else {
+                    return Ok(());
+                };
+                (
+                    mutability.binder_type(*lit),
+                    super::origin_value_type(Some(fixed == Mutability::Mutable), *lit),
+                )
+            }
+            _ => return Ok(()),
+        };
+        Err(TypeError::ParamListConversion {
+            param: decl.name().to_string(),
+            from: found,
+            to: expected,
         })
     }
 }

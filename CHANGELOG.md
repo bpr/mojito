@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method's origin binder typed `Origin[mut=Self.mut]` now takes the
+  receiver's `mut` (R2426): `s.g[ImmOrigin(origin_of(y))]()` on a mutable
+  `S[origin_of(y)]` is rejected with the pin's "value passed to 't' cannot
+  be converted from 'ImmOrigin' to 'MutOrigin'", and through a receiver
+  `S[_]` an origin of known mutability is rejected against the symbolic
+  `Origin[mut=mut]`. A lone method candidate's bracket conversion failure
+  is now reported in the pin's words instead of "no overload matches".
+
 - A `Pointer[...]` bracket binds over upstream's declared list
   `[mut: Bool, //, T, origin, *, address_space]` (R2421), in an
   annotation, a signature, and a construction: `Pointer[T=Int,

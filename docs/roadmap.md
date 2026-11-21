@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2428**.
+Next free ID: **R2429**.
 
 ## Ordered Work
 
@@ -9116,28 +9116,22 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2426 An origin parameter whose `mut=` reads a binder does not
-  check its argument's mutability**
+- [ ] **R2428 An argument's origin is not checked against a mutability
+  binder the bracket already bound**
 
-  `f[t=ImmOrigin(origin_of(z))](Pointer(to=y))` over `def f[m: Bool, //,
-  o: Origin[mut=m], t: Origin[mut=m]](p: Pointer[Int, o])` prints `1`,
-  where the pin rejects it: "value passed to 't' cannot be converted from
-  'ImmOrigin' to 'MutOrigin'".
-  - `convert_bracket_origin` (`checker/generics.rs`) checks only a
-    closed `OriginMutability::Fixed(true)` binder.
-  - Lever: resolve a `Param` or `Self.mut` mutability from the call's
-    binding, the receiver's included, and check the argument against it.
-  - The converse must keep working: a `MutOrigin` passed where the binder
-    is `False` converts to its immutable form
-    (`pointer_origin_cast_no_upgrade.mojo`).
-  - Probe: `s.g[ImmOrigin(origin_of(y))]()` over `def g[t:
-    Origin[mut=Self.mut]](self)` on a mutable `S[mut, o]` is accepted,
-    likewise.
-  - Upstream's `Pointer.unsafe_origin_cast[target_origin:
-    Origin[mut=Self.mut]]` is this shape, so R2206's declared casts need it
-    to keep `pointer_origin_cast_no_downgrade.mojo` rejected and to close
-    R1215.
-  - Found while executing R2206 (2026-11-20).
+  `f[t=MutUntrackedOrigin](q)` over `def f[m: Bool, //, o: Origin[mut=m],
+  t: Origin[mut=m]](p: Pointer[Int, o])` with an immutable
+  `q: Pointer[Int, ImmUntrackedOrigin]` runs, where the pin rejects it:
+  "value passed to 'p' cannot be converted from 'Pointer[Int,
+  ImmUntrackedOrigin]' to 'Pointer[Int, o]'".
+  - The bracket's `t` binds `m = True` first, as upstream binds explicit
+    parameters before the arguments; the call's origin solve then binds
+    `o` from `q`'s place without checking it against `m`.
+  - The converse is right today and must stay so: `t=ImmOrigin(...)` binds
+    `m = False`, and a mutable `Pointer(to=y)` argument converts.
+  - Lever: when the call's solve binds an origin binder whose `mut=` binder
+    the bracket fixed, reject an immutable argument origin for `True`.
+  - Found while landing R2426 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9442,11 +9436,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     and `g.view[origin_of(a)](Pointer(to=b))` reports it where the pin
     reports the conversion of `p`
     (`method_bracket_origin_mismatch_struct_parameter.mojo`).
-  - Probe: `s.put[ImmOrigin(origin_of(a))](Pointer(to=a))` over a single
-    `def put[o: MutOrigin](self, p: Pointer[Int, o])` reports "no overload
-    matches", where the pin reports "value passed to 'o' cannot be
-    converted from 'ImmOrigin' to 'MutOrigin'"
-    (`assets/type_error/method_bracket_imm_origin_to_mut_binder.mojo`).
   - The `assets/type_error` fixtures that expect "no overload matches"
     move to the pin's words with the fix.
   - Found while landing R2115 (2026-11-12).

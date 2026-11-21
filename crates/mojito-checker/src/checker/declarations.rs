@@ -465,17 +465,7 @@ fn marks_initialized(expr: &Expr, field: &str) -> bool {
 /// binder it names, else one left to inference.
 fn origin_mut_argument(args: &[mojito_ast::ast::ParamArg]) -> OriginMutability {
     use mojito_ast::ast::ParamArg;
-    let argument = args
-        .iter()
-        .find_map(|argument| match argument {
-            ParamArg::Named { name, value } if name == "mut" => Some(value.as_ref()),
-            _ => None,
-        })
-        .or_else(|| {
-            args.first()
-                .filter(|argument| !matches!(argument, ParamArg::Named { .. }))
-        });
-    match argument {
+    match origin_mut_source(args) {
         Some(ParamArg::Value(expression)) => match &expression.kind {
             ExprKind::Bool(fixed) => OriginMutability::Fixed(*fixed),
             ExprKind::Identifier(binder) => OriginMutability::Binder(ParamRef::unbound(binder)),
@@ -483,6 +473,21 @@ fn origin_mut_argument(args: &[mojito_ast::ast::ParamArg]) -> OriginMutability {
         },
         _ => OriginMutability::Binder(ParamRef::unbound("_")),
     }
+}
+
+/// The `mut` argument an `Origin[...]` bracket `args` spells, by keyword
+/// or as its leading positional argument.
+fn origin_mut_source(args: &[mojito_ast::ast::ParamArg]) -> Option<&mojito_ast::ast::ParamArg> {
+    use mojito_ast::ast::ParamArg;
+    args.iter()
+        .find_map(|argument| match argument {
+            ParamArg::Named { name, value } if name == "mut" => Some(value.as_ref()),
+            _ => None,
+        })
+        .or_else(|| {
+            args.first()
+                .filter(|argument| !matches!(argument, ParamArg::Named { .. }))
+        })
 }
 
 /// The type an origin binder declares: the `Origin` struct (or an
@@ -1307,6 +1312,11 @@ impl Checker {
         &self,
         annotation: &SourceType,
     ) -> Result<Option<OriginBinderType>, TypeError> {
+        if let Some(binder) = self.enclosing_self_mutability(annotation) {
+            return Ok(Some(OriginBinderType::Origin(OriginMutability::Binder(
+                binder,
+            ))));
+        }
         let mutability = match self.ty_from_anno(annotation) {
             Ok(ty) => {
                 let (name, args) = match ty.kind() {
@@ -1362,6 +1372,42 @@ impl Checker {
             // unbound parameter.
             _ => OriginMutability::Binder(ParamRef::unbound("_")),
         })))
+    }
+
+    /// The enclosing struct's `Bool` binder an `Origin[mut=Self.mut]`
+    /// annotation of a method's list names, as upstream's method signature
+    /// keeps the struct's parameter symbolic until a receiver binds it.
+    fn enclosing_self_mutability(&self, annotation: &SourceType) -> Option<ParamRef> {
+        let SourceType::Named(name, args) = annotation else {
+            return None;
+        };
+        if !self.is_library_origin(name) {
+            return None;
+        }
+        let Some(mojito_ast::ast::ParamArg::Value(expression)) = origin_mut_source(args) else {
+            return None;
+        };
+        let ExprKind::Member { object, field } = &expression.kind else {
+            return None;
+        };
+        if !matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") {
+            return None;
+        }
+        self.enclosing_param_decls
+            .iter()
+            .find_map(|decl| match decl {
+                ParamDecl::Value {
+                    id,
+                    name,
+                    ty,
+                    variadic: false,
+                    ..
+                } if name == field && ty.is_bool() => Some(ParamRef {
+                    id: id.clone(),
+                    name: name.as_str().into(),
+                }),
+                _ => None,
+            })
     }
 
     /// The slot of the library `Origin`'s `mut` binder in its declared

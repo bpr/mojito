@@ -271,7 +271,7 @@ impl Checker {
                     continue;
                 }
                 Err(failure) => {
-                    if !overloaded && let Some(reason) = collector_element_failure(sig, &failure) {
+                    if !overloaded && let Some(reason) = sole_candidate_failure(sig, &failure) {
                         availability_failure.get_or_insert(reason);
                     }
                     continue;
@@ -506,8 +506,7 @@ impl Checker {
             ) {
                 Ok(instantiated) => instantiated,
                 Err(failure) => {
-                    if single_candidate
-                        && let Some(reason) = collector_element_failure(&sig, &failure)
+                    if single_candidate && let Some(reason) = sole_candidate_failure(&sig, &failure)
                     {
                         availability_failure.get_or_insert(reason);
                     }
@@ -797,6 +796,17 @@ fn math_operation_requirement(method: &str, argc: usize) -> Option<&'static str>
         ("__trunc__", 0) => "Truncable",
         _ => return None,
     })
+}
+
+/// Upstream's reason a method's sole candidate gives for rejecting a
+/// call: a bracket value its parameter's type does not take
+/// ([`TypeError::ParamListConversion`]), or a collector element's
+/// ([`collector_element_failure`]).
+fn sole_candidate_failure(sig: &MethodSig, failure: &TypeError) -> Option<String> {
+    match failure {
+        TypeError::ParamListConversion { .. } => Some(failure.to_string()),
+        _ => collector_element_failure(sig, failure),
+    }
 }
 
 /// Upstream's reason for an argument a pack collector's element bound
