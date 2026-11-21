@@ -1802,6 +1802,11 @@ fn verify_tuple_elements(
 /// `Pointer` or a reference and a `!lit.ref` to the same element in the
 /// same address space, which `lit.ref.to_pointer` retypes without changing
 /// it (a pack element's address bound to a `!lit.ref` parameter slot).
+/// The elements compare with their origins erased ([`erase_origins`]): an
+/// inlined instance's slot spells its element as the instance does, while
+/// the caller's register keeps the origins its own types name.
+///
+/// [`erase_origins`]: mojito_types::types::erase_origins
 fn same_address(found: &Ty, expected: &Ty) -> bool {
     let address = |ty: &Ty| match ty.kind() {
         TyKind::LitRef {
@@ -1822,7 +1827,11 @@ fn same_address(found: &Ty, expected: &Ty) -> bool {
     };
     match (address(found), address(expected)) {
         (Some((element, space, found_lit)), Some((expected_element, expected_space, lit))) => {
-            (found_lit || lit) && element == expected_element && space == expected_space
+            (found_lit || lit)
+                && space == expected_space
+                && (element == expected_element
+                    || mojito_types::types::erase_origins(&element)
+                        == mojito_types::types::erase_origins(&expected_element))
         }
         _ => false,
     }

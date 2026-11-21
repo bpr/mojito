@@ -643,7 +643,7 @@ impl Specializer<'_> {
                     format!("monomorphizing receiver for `{target}`: {e}"),
                 )
             })?;
-            if nominal_template(receiver_name) != receiver_name {
+            if nominal_template(receiver_name) != receiver_name || receiver.is_pointer() {
                 bindings.self_instance = Some((
                     nominal_template(receiver_name).to_string(),
                     receiver.clone(),
@@ -1037,8 +1037,10 @@ impl Specializer<'_> {
             })?;
             // An instance-named receiver carries the owner's concrete
             // identity: record it so the method instance is named under
-            // the owner and its body's bare `self` spelling resolves.
-            if nominal_template(receiver_name) != receiver_name {
+            // the owner and its body's bare `self` spelling resolves. So
+            // does a folded `Pointer`, which keeps its template's name:
+            // its kept binders, `mut` among them, key the member.
+            if nominal_template(receiver_name) != receiver_name || actual_receiver.is_pointer() {
                 bindings.self_instance = Some((
                     nominal_template(receiver_name).to_string(),
                     actual_receiver.clone(),

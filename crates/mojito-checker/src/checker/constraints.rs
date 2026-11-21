@@ -308,6 +308,7 @@ impl Checker {
         let struct_name = self
             .self_ty
             .as_ref()
+            .filter(|ty| !ty.is_simd())
             .and_then(mojito_types::types::nominal_parts)
             .map_or_else(|| "Self".to_string(), |(name, _)| name.to_string());
         let members: Vec<&StructComptime> = associated.iter().chain(&defaults).collect();
@@ -2149,7 +2150,8 @@ impl Checker {
         let Some((struct_name, _)) = self
             .self_ty
             .as_ref()
-            .and_then(|ty| ty.kind().as_non_simd_struct())
+            .filter(|ty| !ty.is_simd())
+            .and_then(mojito_types::types::nominal_parts)
         else {
             return false;
         };
@@ -2163,7 +2165,8 @@ impl Checker {
     /// instance.
     pub(super) fn instance_field_without_instance(&self, field: &str) -> Option<TypeError> {
         let self_ty = self.self_ty.as_ref()?;
-        let (name, _) = self_ty.kind().as_non_simd_struct()?;
+        let (name, _) =
+            mojito_types::types::nominal_parts(self_ty).filter(|_| !self_ty.is_simd())?;
         self.structs
             .get(name)
             .is_some_and(|info| info.declared_field_names.iter().any(|f| f == field))
@@ -7002,21 +7005,27 @@ impl Checker {
         let TyArg::Val(value) = argument else {
             return None;
         };
+        // `Self`'s arguments, read through its nominal parts so a folded
+        // `Pointer`'s `Self` names its own binders as a struct's does.
+        let self_parts = self
+            .self_ty
+            .as_ref()
+            .filter(|ty| !ty.is_simd())
+            .and_then(mojito_types::types::nominal_parts)
+            .filter(|(owner, _)| {
+                self.structs
+                    .get(owner)
+                    .is_some_and(|own| std::ptr::eq(own, info))
+            });
         let value = match value {
             CtValue::Deferred(_) if decl.is_origin_mutability_binder(&info.params) => self
                 .deferred_mutability_value(
                     &info.params,
                     arguments,
                     decl,
-                    self.self_ty
+                    self_parts
                         .as_ref()
-                        .and_then(|ty| ty.kind().as_non_simd_struct())
-                        .filter(|(owner, _)| {
-                            self.structs
-                                .get(owner)
-                                .is_some_and(|own| std::ptr::eq(own, info))
-                        })
-                        .map(|(_, self_arguments)| self_arguments.as_slice()),
+                        .map(|(_, self_arguments)| self_arguments.as_ref()),
                 )
                 .unwrap_or_else(|| value.clone()),
             _ => value.clone(),

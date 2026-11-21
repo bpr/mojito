@@ -5217,6 +5217,11 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
 /// It is the one origin erasure an instance's key and its bindings share,
 /// so an instance's body spells the types a caller binds without their
 /// origins. Origins erase from the runtime ABI and from the instance symbol.
+/// A `Pointer`'s static origin keeps the closed mutability its origin
+/// carries, since that is the struct's `mut` parameter, as a struct's
+/// closed `mut=` argument survives: `Pointer[mut=True, …]` and
+/// `Pointer[mut=False, …]` are two types. An undecided mutability erases
+/// to immutable.
 pub fn erase_origins(ty: &Ty) -> Ty {
     let recur = erase_origins;
     match ty.kind() {
@@ -5234,11 +5239,13 @@ pub fn erase_origins(ty: &Ty) -> Ty {
         )),
         TyKind::Pointer {
             element,
+            origin,
             address_space,
-            ..
         } => TyKind::Pointer {
             element: recur(element),
-            origin: crate::origin::PointerOrigin::Static { mutable: false },
+            origin: crate::origin::PointerOrigin::Static {
+                mutable: matches!(origin.parts().1, crate::origin::Mutability::Mutable),
+            },
             address_space: address_space.clone(),
         }
         .into(),
@@ -10210,6 +10217,37 @@ mod simd_slot_tests {
 #[cfg(test)]
 mod collection_representation_tests {
     use super::*;
+
+    #[test]
+    fn erase_origins_keeps_a_pointer_closed_mutability() {
+        use crate::origin::{OriginPlace, OwnerId, PointerOrigin};
+        let pointer = |mutable: bool| {
+            Ty::pointer(
+                Ty::int(),
+                PointerOrigin::Place {
+                    place: OriginPlace {
+                        root: OwnerId(1),
+                        path: Vec::new(),
+                    },
+                    mutable,
+                },
+                AddressSpaceSlot::GENERIC,
+            )
+        };
+        let erased = |mutable: bool| {
+            Ty::pointer(
+                Ty::int(),
+                PointerOrigin::Static { mutable },
+                AddressSpaceSlot::GENERIC,
+            )
+        };
+        assert_eq!(erase_origins(&pointer(true)), erased(true));
+        assert_eq!(erase_origins(&pointer(false)), erased(false));
+        assert_ne!(
+            erase_origins(&pointer(true)),
+            erase_origins(&pointer(false))
+        );
+    }
 
     #[test]
     fn public_collection_helpers_construct_only_nominal_types() {

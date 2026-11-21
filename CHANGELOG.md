@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `repr(p)` over a `Pointer` runs upstream's `write_repr_to`, declared
+  verbatim in `std/memory/pointer.mojo` (R2425), printing
+  `Pointer[mut=True, SIMD[DType.int, 1], address_space=AddressSpace.GENERIC](0x…)`
+  as the pin does, where it failed in the reflective default. A `Pointer`
+  member or a generic instance over a mutable and an immutable pointer is
+  now two instances, since origin erasure keeps the pointer's `mut` and
+  the instance symbol spells it; `Self.mut` reads inside `Pointer`; the
+  bundled `TypeNames` takes upstream's `*Ts: AnyType`; and a pack element
+  bound to an inlined `!lit.ref` slot verifies again, so `String(p)`
+  runs where it failed concrete-MIR verification.
+
 - An inferred `address_space=_` in a `Pointer` type runs as at the pin
   (R2410): a parameter's hole is an infer-only binder each call solves from
   its argument, and an initialized local's takes its initializer's space.

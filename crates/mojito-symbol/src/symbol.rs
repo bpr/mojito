@@ -1584,15 +1584,30 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // callable ABI, just like origin parameters on `ref` arguments.
         // A non-generic address space is part of the pointer's identity; the
         // generic one spells nothing, so a generic pointer's key is unchanged.
+        // An instance symbol spells the closed mutability the origin carries,
+        // the struct's `mut` parameter, as an instance struct spells its
+        // value arguments; an overload key, which `ast_raw` mirrors, does
+        // not.
         TyKind::Pointer {
             element,
+            origin,
             address_space,
-            ..
-        } => format!(
-            "Pointer${}{}",
-            ty_raw_in(element, self_ty, mode),
-            address_space_raw(address_space)
-        ),
+        } => {
+            let mutability = match (mode, origin.parts().1) {
+                (KeyMode::Instance, mojito_types::origin::Mutability::Mutable) => {
+                    format!("{}$", value_argument_raw(&CtValue::Bool(true), mode))
+                }
+                (KeyMode::Instance, mojito_types::origin::Mutability::Immutable) => {
+                    format!("{}$", value_argument_raw(&CtValue::Bool(false), mode))
+                }
+                _ => String::new(),
+            };
+            format!(
+                "Pointer${mutability}{}{}",
+                ty_raw_in(element, self_ty, mode),
+                address_space_raw(address_space)
+            )
+        }
         TyKind::KgenPointer {
             element,
             address_space,

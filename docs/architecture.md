@@ -3350,6 +3350,14 @@ bindings are its key's origin-erased form (`Bindings::erase_origins`, sharing
 the key's one erasure `mojito_types::types::erase_origins`), as upstream binds a
 type parameter to a type whose origins read `origin={ }`, so no caller's
 binders or places leak into the instance whichever caller demands it first.
+A pointer's erased origin keeps the closed mutability it carries, since that
+is upstream's `Pointer` `mut` parameter: `Pointer[mut=True, …]` and
+`Pointer[mut=False, …]` key two instances, and the instance symbol (not the
+overload key `ast_raw` mirrors) spells it (`Pointer$Vtrue$Int`). A folded
+`Pointer` receiver is an owner instance as an instance-named struct is
+(`self_instance`), so a member that keeps the struct's `mut` leads its key
+with it. A `!lit.ref` slot an inlined instance binds a pack element to
+compares its element with the caller's register's modulo erased origins.
 The post-elaboration inliner gives a value an inlined instance returns the
 call's own type where the two agree once erased, so a caller's dereference of
 `id(Pointer(to=x))` keeps `x`'s origin. The instance's own origin

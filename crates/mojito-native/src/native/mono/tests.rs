@@ -3498,3 +3498,44 @@ fn a_closed_origin_mutability_keys_its_struct_instance() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn a_pointer_mutability_keys_its_member_and_generic_instances() {
+    let source = "def show[T: Writable](t: T) -> String:\n\
+         \x20   return repr(t)\n\
+         def main():\n\
+         \x20   var x = 1\n\
+         \x20   var p = Pointer(to=x)\n\
+         \x20   var q = Pointer(to=x).as_imm()\n\
+         \x20   var s = String()\n\
+         \x20   p.write_repr_to(s)\n\
+         \x20   q.write_repr_to(s)\n\
+         \x20   print(s, show(p), show(q))\n";
+    let specialized = specialized_main(source);
+    let instances = |prefix: &str| {
+        let mut names: Vec<&str> = specialized
+            .program
+            .functions
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .filter(|name| name.starts_with(prefix))
+            .collect();
+        names.sort_unstable();
+        names
+    };
+    // The member keeps `mut`, which leads its key; the generic instance
+    // spells it in the pointer's instance symbol.
+    let members = instances("Pointer.write_repr_to");
+    assert!(
+        members.iter().any(|name| name.contains("$Vtrue$"))
+            && members.iter().any(|name| name.contains("$Vfalse$")),
+        "`Pointer.write_repr_to` has one instance per mutability: {members:?}"
+    );
+    assert_eq!(
+        instances("show$mono"),
+        [
+            "show$mono$TPointer$Vfalse$Int",
+            "show$mono$TPointer$Vtrue$Int"
+        ]
+    );
+}

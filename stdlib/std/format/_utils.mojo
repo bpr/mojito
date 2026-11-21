@@ -20,10 +20,13 @@ comptime FLUSHING_WRITE_BUFFER_BYTES = 4096
 
 
 # The comma-separated unqualified names of a type pack: `TypeNames[Int,
-# String]()` writes `SIMD[DType.int, 1], String`. The names are cut out of
-# the pack's `Tuple[...]` spelling (a pack spread expands per
-# specialization, where a variadic struct's bare `Self` would not).
-struct TypeNames[*Ts: Movable](ImplicitlyCopyable, Writable):
+# String]()` writes `SIMD[DType.int, 1], String`. Upstream's body writes
+# each element through a `{}`-capturing nested `def` and
+# `write_sequence_to`, which waits on R813; this one writes the same
+# elements with a `comptime for`.
+struct TypeNames[*Ts: AnyType](ImplicitlyCopyable, Writable):
+    """A wrapper type that writes a comma-separated list of type names."""
+
     var _unused: Int
 
     def __init__(out self):
@@ -31,10 +34,10 @@ struct TypeNames[*Ts: Movable](ImplicitlyCopyable, Writable):
 
     @inline(.always)
     def write_to(self, mut writer: Some[Writer]):
-        var full = String(_unqualified_type_name[Tuple[*Self.Ts]]())
-        # "Tuple[" is six bytes; the closing bracket is the last one.
-        var names = full[byte=6:full.byte_length() - 1]
-        writer.write(names)
+        comptime for i in range(Self.Ts.length):
+            if i > 0:
+                writer.write(", ")
+            writer.write(_unqualified_type_name[Self.Ts[i]]())
 
 
 # Upstream's builder for `Name[param, ...](field, ...)` representations. The

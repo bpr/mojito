@@ -837,8 +837,9 @@ pub fn address_pointee(ty: &mojito_types::types::Ty) -> Option<&mojito_types::ty
 ///
 /// It leaves its pointee read as the VM holds it when the two pointees are
 /// one type up to origins, a `!lit.ref` pointee counting as the `Pointer`
-/// the VM holds it as. Any other retype would need the VM's typed memory to
-/// reinterpret the value it holds, which it refuses.
+/// the VM holds it as, and a pointer pointee's mutability, which its held
+/// address does not carry, ignored. Any other retype would need the VM's
+/// typed memory to reinterpret the value it holds, which it refuses.
 pub fn pointer_bitcast_preserves_pointee(
     from: Option<&mojito_types::types::Ty>,
     to: Option<&mojito_types::types::Ty>,
@@ -849,7 +850,7 @@ pub fn pointer_bitcast_preserves_pointee(
             mojito_types::types::TyKind::KgenPointer { element, .. } => Some(element),
             _ => ty.pointer_element(),
         })
-        .map(|pointee| erase_origins(&held_pointee(pointee)))
+        .map(|pointee| held_address(&erase_origins(&held_pointee(pointee))))
     };
     match (pointee(from), pointee(to)) {
         (Some(from), Some(to)) if from == to => Ok(()),
@@ -2335,6 +2336,24 @@ const fn low_bits(bits: usize) -> u64 {
 /// The type the VM holds a `pointee` as: a `!lit.ref<T, origin>` is held
 /// as the `Pointer[T, origin]` it is built from, so a pointer to one reads
 /// the same value as a pointer to the other.
+/// `ty` with each pointer it is, or points to, at an immutable static
+/// origin: the address the VM holds for it, whose mutability is no part of
+/// the value.
+fn held_address(ty: &mojito_types::types::Ty) -> mojito_types::types::Ty {
+    match ty.kind() {
+        mojito_types::types::TyKind::Pointer {
+            element,
+            address_space,
+            ..
+        } => mojito_types::types::Ty::pointer(
+            held_address(element),
+            mojito_types::origin::PointerOrigin::Static { mutable: false },
+            address_space.clone(),
+        ),
+        _ => ty.clone(),
+    }
+}
+
 fn held_pointee(pointee: &mojito_types::types::Ty) -> mojito_types::types::Ty {
     match pointee.kind() {
         mojito_types::types::TyKind::LitRef {

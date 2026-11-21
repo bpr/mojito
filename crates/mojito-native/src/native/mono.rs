@@ -494,7 +494,10 @@ impl Bindings {
     /// whichever caller first demanded the instance: those name the caller's
     /// own binders and places, which mean nothing in the callee. The
     /// instance's own origin binders are not bindings and stay symbolic, as
-    /// upstream keeps an instance's origin parameters unspecialized.
+    /// upstream keeps an instance's origin parameters unspecialized. A bound
+    /// `Pointer` keeps the closed mutability its origin carries, its `mut`
+    /// parameter, so `T = Pointer[mut=True, …]` and `T = Pointer[mut=False,
+    /// …]` key two instances.
     fn erase_origins(&mut self) {
         self.types
             .values_mut()

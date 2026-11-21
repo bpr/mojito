@@ -13,8 +13,6 @@
 #   builtin mut-to-imm coercion must retire with it (R2443).
 # - `as_unsafe_any_origin`: `UnsafeAnyOrigin[mut=Self.mut]` keeps no
 #   symbolic `mut` (R2384).
-# - `write_repr_to`: `Named("mut", Self.mut)` binds a compile-time value to
-#   a `ref` argument (R2425).
 # - `__bool__`: `@unavailable` on a method is rejected (R1162).
 # - the comparisons, `__add__`, `__sub__`, `offset_from`, the memory
 #   members (`unsafe_write*`, `unsafe_take_pointee`, `unsafe_deinit_pointee*`,
@@ -52,6 +50,7 @@ from std.sys import bit_width_of
 from std.builtin.debug_assert import debug_assert
 from std.memory.address_space import AddressSpace
 from std.builtin.format_int import _write_int
+from std.format._utils import FormatStruct, Named, TypeNames
 
 
 comptime MutPointer[
@@ -450,3 +449,16 @@ struct Pointer[
             writer: The object to write to.
         """
         _write_int[radix=16](writer, Int(Int(self)), prefix="0x")
+
+    @inline(.never)
+    def write_repr_to(self, mut writer: Some[Writer]):
+        """Write the string representation of the Pointer.
+
+        Args:
+            writer: The object to write to.
+        """
+        FormatStruct(writer, "Pointer").params(
+            Named("mut", Self.mut),
+            TypeNames[Self.T](),
+            Named("address_space", Self.address_space),
+        ).fields(self)

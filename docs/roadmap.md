@@ -3091,7 +3091,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     hold a closed `bool`, so the attribute `Checker::named_origin_value`
     reads cannot keep a binder's mutability.
   - The bundled `Pointer.as_unsafe_any_origin` needs it
-    (`UnsafeAnyOrigin[mut=Self.mut]`), as does `write_repr_to`.
+    (`UnsafeAnyOrigin[mut=Self.mut]`).
   - Probe: declare `as_unsafe_any_origin` in `std/memory/pointer.mojo`;
     `print(Pointer(to=x).as_unsafe_any_origin()[])` then prints `5`, as
     at the pin.
@@ -10912,27 +10912,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2425 `Pointer` declares no `write_repr_to`, so `repr(p)` fails**
-
-  `repr(Pointer(to=x))` fails with "reflect[Pointer[…]].field_count()
-  requires a struct type", where the pin prints `Pointer[mut=True,
-  SIMD[DType.int, 1], address_space=AddressSpace.GENERIC](0x…)`.
-  - The declared `Writable` (R2415) has no `write_repr_to`, so the trait's
-    reflective default is the witness, and it cannot reflect over the
-    `!kgen.pointer` field.
-  - Declare upstream's `write_repr_to` verbatim in
-    `std/memory/pointer.mojo`: its `Named("mut", Self.mut)` and
-    `Named("address_space", Self.address_space)` need R2424.
-  - Widen the bundled `TypeNames[*Ts: Movable]` (`std/format/_utils.mojo`)
-    to upstream's `AnyType`, which `TypeNames[Self.T]` over `T: AnyType`
-    needs; that edit alone names a non-`Movable` type
-    (`TypeNames[Int, NM]()` prints `SIMD[DType.int, 1], NM`).
-  - Probe: `repr(Span(xs))` reaches the same reflective default through
-    its `_data` field until R2374 declares `Span.write_repr_to`.
-  - Found while landing R2415 (2026-11-20).
-  - Depends on R2424.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2207 `Pointer`'s address and memory members are checker rules,
   where upstream's are bodies of the declared struct**
 
@@ -11416,9 +11395,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     stubbed.
   - Its `fmt.Named("mut", Self.mut)` binds a compile-time value to a
     `ref` argument (R2424).
-  - Probe: `print(repr(Span(xs)))` over `xs = [1, 2]` fails with
-    "reflect[Pointer[…]].field_count() requires a struct type" (the
-    synthesized default reaches the `_data` pointer's), where the pin
+  - Probe: `print(repr(Span(xs)))` over `xs = [1, 2]` prints the
+    trait's reflective default, `Span[True, SIMD[DType.int, 1],
+    _](_data=Pointer[mut=False, …](0x…), _size=Int(2))`, where the pin
     prints `Span[mut=True, SIMD[DType.int, 1]]([Int(1), Int(2)])`.
   - Found while landing R2362's readers (2026-11-19).
   - Depends on R2422, R2424.
@@ -13559,9 +13538,6 @@ residue found inside a task moves to the task that owns its fix.
   - The bundled `FormatStruct` (`std/format/_utils.mojo`) has no
     `fields(fields_fn: Some[def[T: Writer](mut T)])` overload, and
     `Some[def[...](...)]` is rejected with "unknown type 'Some'".
-  - The bundled `TypeNames[*Ts: Movable]` is narrower than upstream's
-    `AnyType`, so it cannot name `ParameterList`'s element type; R2425
-    widens it.
   - The bundled collections' `write_repr_to` bodies write by hand too.
   - `IndexList.write_repr_to` is omitted (`stdlib/std/utils/index.mojo`):
     restore it with its `import std.format._utils as fmt`.

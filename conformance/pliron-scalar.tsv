@@ -1141,6 +1141,7 @@ assets/ok/pointer_unsafe_bitcast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_mut_cast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_write_move_from.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_write_repr.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/positional_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/predicate_alias_value_over_type_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_argument_drop_order.mojo	-	ineligible	no-scalar-entry-shape
