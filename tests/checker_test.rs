@@ -5447,7 +5447,8 @@ fn explicit_origin_argument_binds_the_result_type_origin_slots() {
         "{declarations}def run(xs: List[Int], ys: List[Int]):\n    var r = slots[origin_of(xs)](1)\n    r.unsafe_write(Span(ys))\n    r.free()\n\ndef main():\n    run([4, 5, 6], [7])\n"
     ));
     assert!(
-        matches!(error, TypeError::TypeMismatch { .. }),
+        matches!(&error, TypeError::BadCall { func, reason } if func == "unsafe_write"
+            && reason.contains("no overload matches")),
         "got {error:?}"
     );
 }
@@ -6943,32 +6944,36 @@ fn unsafe_pointer_method_vocabulary_typechecks() {
     ok_std(
         "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = p.unsafe_offset(1)\n",
     );
-    // Pointee take/deinit require the allocation-owning untracked origin.
-    ok(
+    // A take through an origin-bearing pointer is the declared body's, as
+    // at the pin.
+    ok_std(
         "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var v = p.unsafe_take_pointee()\n",
     );
-    // Writes require mutable provenance.
+    // Writes require mutable provenance: the declared `where Self.mut`.
     assert!(matches!(
-        err(
+        err_std(
             "def f(x: Int):\n    var p = Pointer(to=x)\n    p.unsafe_write(1)\n\ndef main():\n    f(3)\n"
         ),
-        TypeError::ImmutableBinding(_)
+        TypeError::BadCall { reason, .. } if reason.starts_with("violated constraint")
     ));
     // `unsafe_deinit_pointee` requires a Deinitable element, and
-    // `unsafe_write(copy=…)` a Copyable one (a linear struct is neither).
+    // `unsafe_write(copy=…)` a Copyable one (a linear struct is neither):
+    // each declared `where` clause is violated.
     // The element is spelled through a generic application because a bare
     // user-struct name in a bracket parameter list parses as runtime indexing.
     assert!(matches!(
         err_std(
             "from std.memory.alloc import unsafe_alloc\n\n@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = unsafe_alloc[Linear[Int]](1)\n    p.unsafe_deinit_pointee()\n",
         ),
-        TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Deinitable"
+        TypeError::BadCall { func, reason } if func == "unsafe_deinit_pointee"
+            && reason.starts_with("violated constraint")
     ));
     assert!(matches!(
         err_std(
             "from std.memory.alloc import unsafe_alloc\n\n@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = unsafe_alloc[Linear[Int]](1)\n    var v = Linear[Int]()\n    p.unsafe_write(copy=v)\n    v^.finish()\n    p.unsafe_free()\n",
         ),
-        TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Copyable"
+        TypeError::BadCall { func, reason } if func == "unsafe_write"
+            && reason.starts_with("violated constraint")
     ));
     // `unsafe_free` matches free()'s origin restriction.
     assert!(matches!(

@@ -46,6 +46,10 @@ const UNDEFINED_RUNS: &[&str] = &[
     // `ASSERT` mode skips the arity assert, and the native read finds
     // whatever the stack holds.
     "simd_element_list_too_few",
+    // A take through an origin-bearing pointer leaves the owner to destroy
+    // the moved-out `String` again: the pin runs it to exit 0, and the
+    // native run reads and frees whatever the allocator holds.
+    "pointer_take_tracked_nontrivial",
 ];
 
 /// The Stage 2 acceptance gate in one pass (one production compile per
@@ -529,7 +533,7 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 1961,
+            differential == 1965,
             "exe-differential coverage must cover the complete runnable inventory: {differential} != 862"
         );
         assert!(

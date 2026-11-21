@@ -1006,6 +1006,14 @@ impl Lower {
             CheckedStmtOp::Assign { name, value }
                 if name == "_" && is_metatype_value(&checked, *value) => {}
             CheckedStmtOp::Expr(value) if is_metatype_value(&checked, *value) => {}
+            // `_ = __get_address_as_owned_value(k)` destroys the pointee
+            // where it lies: the value is evaluated, and nothing is bound.
+            CheckedStmtOp::Assign { name, value }
+                if name == "_" && is_pointee_destroy(&checked, *value) =>
+            {
+                let value = self.expr(*value);
+                self.push(HirInstr::Eval(value));
+            }
             // `_` discards: each statement binds a fresh unnamed slot.
             CheckedStmtOp::Assign { name, value } if name == "_" => {
                 let value = self.expr(*value);
@@ -2131,6 +2139,17 @@ fn named_operands(op: &CheckedOp) -> Vec<CheckedNodeId> {
 }
 
 /// Whether the expression `id` is a type or a trait read as a value.
+fn is_pointee_destroy(checked: &CheckedTables, id: CheckedNodeId) -> bool {
+    checked.expression(id).is_some_and(|node| {
+        node.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::PointerStorageDestroy { .. }
+            )
+        })
+    })
+}
+
 fn is_metatype_value(checked: &CheckedTables, id: CheckedNodeId) -> bool {
     checked
         .expression(id)

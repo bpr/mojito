@@ -330,7 +330,7 @@ struct Optional[T: AnyType](
 
     def deinit_with[F: def(var Self.T)](deinit self, deinit_func: F, /):
         if self._size == 1:
-            deinit_func(self.data.unsafe_take_pointee())
+            self.data.unsafe_deinit_pointee_with(deinit_func)
         self.data.unsafe_free()
 
     def map[

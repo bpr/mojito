@@ -1393,9 +1393,10 @@ pub enum SemanticAdjustment {
         /// `MaterializeBorrowSource`), and one span carries one adjustment.
         materialized: Option<mojito_types::origin::OwnerId>,
     },
-    /// Move one initialized element out of compiler-private raw collection
-    /// storage, leaving that heap slot uninitialized. Only bundled collection
-    /// sources may acquire this adjustment.
+    /// `__get_address_as_owned_value(k)`: move the pointee out of the
+    /// address, leaving it uninitialized, and transfer it as a `var`
+    /// holding it would be. The node is the take the check spelled over
+    /// `Pointer[origin=MutUntrackedOrigin](_mlir_value=k)`.
     PointerStorageTake {
         element: Ty,
     },
@@ -1427,20 +1428,14 @@ pub enum SemanticAdjustment {
     UninitStorageDestroy {
         element: Ty,
     },
-    /// `pointer.unsafe_write(value)` / `unsafe_write(copy=v)`: initialize the
-    /// pointee at offset 0 with a moved (or copied) value, lowered onto the
-    /// same store family as `pointer[] = value`. On the place of an
-    /// assignment `__get_address_as_uninit_lvalue(k) = value`, whose node is
-    /// the pointer the check spelled for `k`, it marks the assignment as
-    /// that pointer's moved write: the pointee is initialized, never
-    /// destroyed first.
+    /// `pointer.write(value)`: initialize the pointee at offset 0 with a
+    /// moved value, lowered onto the same store family as `pointer[] =
+    /// value`. On the place of an assignment
+    /// `__get_address_as_uninit_lvalue(k) = value`, whose node is the
+    /// pointer the check spelled for `k`, it marks the assignment as that
+    /// pointer's moved write: the pointee is initialized, never destroyed
+    /// first.
     PointerWrite {
-        element: Ty,
-        copy: bool,
-    },
-    /// `pointer.unsafe_write_move_from(src)`: take `src`'s pointee and move
-    /// it, with one move initializer, into the pointee at offset 0.
-    PointerWriteMoveFrom {
         element: Ty,
     },
     /// How each of a subscript's arguments is built. `None` denotes an
@@ -6289,14 +6284,10 @@ impl<'a> ArenaBuilder<'a> {
                     .map(|iteration| SemanticAdjustment::ComptimeIteration(iteration.clone())),
             )
             .collect();
-        let initialization =
-            facts
-                .pointee_initialization
-                .clone()
-                .map(|element| SemanticAdjustment::PointerWrite {
-                    element,
-                    copy: false,
-                });
+        let initialization = facts
+            .pointee_initialization
+            .clone()
+            .map(|element| SemanticAdjustment::PointerWrite { element });
         self.nodes[node.0 as usize].adjustments.extend(conversions);
         self.nodes[node.0 as usize].adjustments.extend(place_uses);
         self.nodes[node.0 as usize].adjustments.extend(loops);

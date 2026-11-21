@@ -583,21 +583,6 @@ pub(super) fn is_bundled_private_storage_source(source: Option<&str>) -> bool {
         || source == stdlib.join("std/utils/variant.mojo")
 }
 
-/// The bundled modules that take a pointee with a destructor through an
-/// origin-bearing pointer (R2029): the private-storage modules
-/// ([`is_bundled_private_storage_source`]), and `std/builtin/rebind.mojo`,
-/// whose `rebind_var` takes its rebound operand and then ends the operand
-/// with `forget_deinit`.
-pub(super) fn is_bundled_pointer_take_source(source: Option<&str>) -> bool {
-    is_bundled_private_storage_source(source)
-        || mojito_module::module::bundled_root()
-            .zip(source)
-            .is_some_and(|(root, source)| {
-                Path::new(stamped_source_module(source))
-                    == root.join("stdlib/std/builtin/rebind.mojo")
-            })
-}
-
 /// The bundled modules that spell upstream's `lit.ownership.mark_initialized`
 /// and `lit.ownership.mark_destroyed`: those reaching compiler-private storage
 /// ([`is_bundled_private_storage_source`]); `std/simd.mojo` and

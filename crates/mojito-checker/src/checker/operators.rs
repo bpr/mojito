@@ -1051,11 +1051,13 @@ impl Checker {
     /// upstream's `Pointer` declares over the builtin: the place a
     /// `!lit.ref` refers to is the dereference `Pointer(_mlir_value=r)[]`,
     /// of `r`'s element under `r`'s origin; the owned value a
-    /// `!kgen.pointer` holds is the take
-    /// `Pointer[origin=MutUntrackedOrigin](_mlir_value=k)
-    /// .unsafe_take_pointee()`, which moves it out of the address, leaving
-    /// it uninitialized, and, as the address carries no origin, lends and
-    /// ends no checked storage. An uninitialized lvalue is only assigned
+    /// `!kgen.pointer` holds is the pointee taken out of the address,
+    /// leaving it uninitialized, and transferred as a `var` holding it
+    /// would be. The take is the primitive upstream's declared
+    /// `Pointer.unsafe_take_pointee` body calls, so it is recorded on the
+    /// receiver `Pointer[origin=MutUntrackedOrigin](_mlir_value=k)`
+    /// directly rather than dispatched to that member; as the address
+    /// carries no origin, it lends and ends no checked storage. An uninitialized lvalue is only assigned
     /// ([`Self::check_uninit_lvalue_assignment`]): a read of one is the
     /// pin's use of an uninitialized value.
     pub(super) fn infer_address_builtin(
@@ -1088,6 +1090,36 @@ impl Checker {
             return None;
         }
         Some(self.infer_spelled_address_builtin(call, name, litref, param_args, args, kwargs))
+    }
+
+    /// Record the discard `_ = value` of upstream's
+    /// `__get_address_as_owned_value(k)` as the destruction of `k`'s
+    /// pointee where it lies: the owned value a discard ends is destroyed
+    /// in place, with no move out of the address, so the take becomes
+    /// [`mojito_checked::checked::SemanticAdjustment::PointerStorageDestroy`]
+    /// and the statement binds nothing. Any other `value` is left alone.
+    pub(super) fn record_discarded_owned_address_value(&self, value: &Expr) {
+        let Some(take) = self.spelled_construction(value) else {
+            return;
+        };
+        let span = take.source_span();
+        let element = self.fact(&span, |facts| match facts.adjustment.as_deref() {
+            Some(mojito_checked::checked::SemanticAdjustment::PointerStorageTake { element }) => {
+                Some(element)
+            }
+            _ => None,
+        });
+        let Some(element) = element else {
+            return;
+        };
+        {
+            let mut facts = self.record_at(span);
+            facts.adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::PointerStorageDestroy { element },
+            ));
+            facts.ty = Some(Ty::none());
+        }
+        self.record_at(value.source_span()).ty = Some(Ty::none());
     }
 
     /// Check `place = value` when `place` is upstream's
@@ -1303,7 +1335,9 @@ impl Checker {
 
     /// Check the address builtin `name` at `call` as the pointer operation
     /// [`Self::infer_address_builtin`] spells it: a `!lit.ref` operand's
-    /// dereference when `litref`, else a `!kgen.pointer` operand's take.
+    /// dereference when `litref`, else a `!kgen.pointer` operand's take,
+    /// the [`mojito_checked::checked::SemanticAdjustment::PointerStorageTake`]
+    /// primitive recorded without member dispatch.
     fn infer_spelled_address_builtin(
         &self,
         call: &Expr,
@@ -1341,13 +1375,31 @@ impl Checker {
                 index: Box::new(spelled_node(call, 3, ExprKind::EmptySubscript, call.span)),
             }
         } else {
-            let (operand, _) = self.kgen_pointer_operand(name, param_args, args, kwargs)?;
-            ExprKind::MethodCall {
-                object: Box::new(untracked_pointer_spelling(call, operand)),
-                method: "unsafe_take_pointee".to_string(),
-                args: Vec::new(),
-                kwargs: Vec::new(),
-            }
+            let (operand, found) = self.kgen_pointer_operand(name, param_args, args, kwargs)?;
+            let element = found.kind().kgen_pointee().cloned().ok_or_else(|| {
+                TypeError::InvariantViolation(format!("'{found}' has no pointee"))
+            })?;
+            let receiver = untracked_pointer_spelling(call, operand);
+            self.infer(&receiver)?;
+            let take = spelled_node(
+                call,
+                0,
+                ExprKind::MethodCall {
+                    object: Box::new(receiver),
+                    method: "unsafe_take_pointee".to_string(),
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                },
+                call.span,
+            );
+            self.record_at(take.source_span()).ty = Some(element.clone());
+            self.record_at(take.source_span()).adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::PointerStorageTake {
+                    element: element.clone(),
+                },
+            ));
+            self.record_spelled_construction(call, take, &element);
+            return Ok(element);
         };
         self.infer_spelled(call, spelled_node(call, 0, spelled, call.span))
     }

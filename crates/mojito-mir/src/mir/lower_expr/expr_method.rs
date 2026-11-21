@@ -382,32 +382,51 @@ impl<'a> Flatten<'a> {
                 _ => None,
             });
         if let Some((take, element)) = pointer_storage {
+            debug_assert!(args.is_empty() && kwargs.is_empty());
             let pointer = self.expr(object);
-            // Compiler-private `take(i)`/`destroy(i)` pass the slot
-            // index; the public zero-argument pointee operations
-            // (`unsafe_take_pointee`/`unsafe_deinit_pointee`) fix it
-            // to the dereference offset 0.
-            let index = match args.first() {
-                Some(index) => self.index_operand(*index),
-                None => self.constant(call, Const::Int(0)),
-            };
-            debug_assert!(kwargs.is_empty());
-            let dest = self.fresh(call.location(), None);
-            self.emit(if take {
-                MirInstr::PointerStorageTake {
-                    dest,
-                    pointer,
-                    index,
-                    element,
-                }
-            } else {
-                MirInstr::PointerStorageDestroy {
+            let index = self.constant(call, Const::Int(0));
+            if !take {
+                let dest = self.fresh(call.location(), None);
+                self.emit(MirInstr::PointerStorageDestroy {
                     dest,
                     pointer,
                     index,
                     element,
                     destructor: None,
-                }
+                });
+                return Some(dest);
+            }
+            // `__get_address_as_owned_value(k)`: the pointee is taken out
+            // of the address and transferred as a `var` holding it would
+            // be, so a bound or returned value runs its move initializer
+            // and an owned argument or a discard takes the slot itself.
+            let taken = self.fresh_typed(call.location(), None, element.clone());
+            self.emit(MirInstr::PointerStorageTake {
+                dest: taken,
+                pointer,
+                index,
+                element: element.clone(),
+            });
+            let var = self.fresh_var();
+            self.var_types.insert(var, element.clone());
+            self.emit(MirInstr::DefVar {
+                var,
+                src: taken,
+                binding_ty: Some(element.clone()),
+                in_place: false,
+            });
+            let forwarded =
+                self.operand_binding(call) == Some(crate::mir::call_results::OperandBinding::Owned);
+            let dest = self.fresh_typed(call.location(), Some(var), element);
+            self.emit(MirInstr::UseVar {
+                dest,
+                var,
+                mode: if forwarded {
+                    UseMode::Forward
+                } else {
+                    UseMode::Move
+                },
+                constructor: None,
             });
             return Some(dest);
         }
@@ -500,89 +519,24 @@ impl<'a> Flatten<'a> {
                 }
             }
         }
-        // `pointer.unsafe_write(value)` / `unsafe_write(copy=v)`
-        // initializes the pointee at offset 0 — the same store family
-        // as `pointer[] = value`; a copied pointer subscript passes its
-        // pointee's reference to the copy. An origin-bearing pointer writes its
-        // pointee (its address substituted when statically known, else
-        // through the runtime handle); a heap pointer stores through a
-        // synthetic binding so chained receivers stay expressible.
+        // `pointer.write(value)` initializes the pointee at offset 0 — the
+        // same store family as `pointer[] = value`. An origin-bearing
+        // pointer writes its pointee (its address substituted when
+        // statically known, else through the runtime handle); a heap
+        // pointer stores through a synthetic binding so chained receivers
+        // stay expressible.
         let pointer_write = node
             .adjustments
             .iter()
             .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::PointerWrite { element, copy } => {
-                    Some((element.clone(), *copy))
-                }
-                _ => None,
-            });
-        if let Some((element, copy)) = pointer_write {
-            let value_expr = args
-                .first()
-                .or_else(|| kwargs.first().map(|(_, value)| value))
-                .expect("checked unsafe_write has one value");
-            let src = if copy {
-                let value = self.read_operand(*value_expr);
-                self.pointee_reference_read(*value_expr, value);
-                let copied = self.fresh_typed(call.location(), None, element.clone());
-                self.emit(MirInstr::CopyValue {
-                    dest: copied,
-                    value,
-                    constructor: None,
-                });
-                copied
-            } else {
-                self.expr(*value_expr)
-            };
-            self.write_pointee(call, object, element, src);
-            let dest = self.fresh_typed(call.location(), None, Ty::none());
-            self.emit(MirInstr::Const {
-                dest,
-                k: Const::None,
-            });
-            return Some(dest);
-        }
-        // `dst.unsafe_write_move_from(src)`: upstream's
-        // `__get_address_as_owned_value(src)` is the constructor-free take;
-        // the owned value is then moved out of its binding, which names the
-        // element's move initializer, into the receiver's slot.
-        let move_from = node
-            .adjustments
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::PointerWriteMoveFrom { element } => {
+                mojito_checked::checked::SemanticAdjustment::PointerWrite { element } => {
                     Some(element.clone())
                 }
                 _ => None,
             });
-        if let Some(element) = move_from {
-            let source = *args
-                .first()
-                .expect("checked unsafe_write_move_from has one source");
-            let pointer = self.expr(source);
-            let index = self.constant(call, Const::Int(0));
-            let taken = self.fresh_typed(call.location(), None, element.clone());
-            self.emit(MirInstr::PointerStorageTake {
-                dest: taken,
-                pointer,
-                index,
-                element: element.clone(),
-            });
-            let var = self.fresh_var();
-            self.var_types.insert(var, element.clone());
-            self.emit(MirInstr::DefVar {
-                var,
-                src: taken,
-                binding_ty: Some(element.clone()),
-                in_place: false,
-            });
-            let src = self.fresh_typed(call.location(), Some(var), element.clone());
-            self.emit(MirInstr::UseVar {
-                dest: src,
-                var,
-                mode: UseMode::Move,
-                constructor: None,
-            });
+        if let Some(element) = pointer_write {
+            let value = *args.first().expect("checked write has one value");
+            let src = self.expr(value);
             self.write_pointee(call, object, element, src);
             let dest = self.fresh_typed(call.location(), None, Ty::none());
             self.emit(MirInstr::Const {

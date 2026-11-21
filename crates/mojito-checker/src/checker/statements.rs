@@ -1806,6 +1806,7 @@ impl Checker {
                     // The discard destroys the value implicitly: a linear
                     // one is abandoned there, as a statement expression's is.
                     self.record_unconsumed_temporary(value);
+                    self.record_discarded_owned_address_value(value);
                     return Ok(());
                 }
                 self.check_capture_access(name, true)?;

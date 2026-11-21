@@ -172,7 +172,7 @@ Mojito may reject valid Mojo.
   is the one to cite: the pin runs it to completion printing dangling addresses,
   so the strictness is catching real undefined behavior rather than rejecting a
   sound program.
-- Six `runtime_error` fixtures trap on use-after-free, double-free, and reads of
+- Seven `runtime_error` fixtures trap on use-after-free, double-free, and reads of
   uninitialized `MaybeUninit` storage; the pin runs each one to exit 0.
 - `external_call_unknown_callee.mojo` names Mojito's own mechanism, the libc
   allowlist, which has no upstream counterpart to agree with.
@@ -183,10 +183,6 @@ Mojito may reject valid Mojo.
   single local, which the pin reads from the neighbouring stack slot.
 - `span_implicit_return_escape.mojo` rejects returning a frame-local `List` as a
   `Span`; the pin returns a dangling view.
-- `pointer_take_tracked_nontrivial.mojo` rejects `unsafe_take_pointee()` of a
-  `String` through `Pointer(to=s)`. The pin moves the value out and leaves `s`
-  to be destroyed again; Mojito allows a tracked take only for a trivially
-  destructible element.
 - `typelist_index_out_of_range.mojo` bounds-checks a `TypeList` index. The pin
   has no check and yields the malformed type `Int, Bool[2]`, failing only at a
   later use.

@@ -1,11 +1,13 @@
 # std.memory.pointer — upstream's `Pointer` and its aliases, ported with
 # these departures. The compiler folds every application of the struct into
 # its own pointer type, and its rules still answer `Pointer(to=)`, `p[]`
-# (R2208), and the memory members below; a member or an initializer keyword
+# (R2208), `write`, and `unsafe_free`; a member or an initializer keyword
 # no rule answers, the casts, address members, and comparisons included,
 # reaches its body here. Conformances `DevicePassable`,
 # `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable` are absent from
-# the bundle.
+# the bundle. `unsafe_deinit_pointee_with` and `unsafe_write(init_with=)`
+# take an explicit `F` binder where upstream's parameter is
+# `Some[def(...)]` (R813).
 # Members omitted, by blocker:
 # - `__merge_with__`: its result `origin_of(Self.origin, other_type.origin)`
 #   is `origin_of` over origin values (R1299), and its `other_type` bound is
@@ -15,10 +17,9 @@
 # - `as_unsafe_any_origin`: `UnsafeAnyOrigin[mut=Self.mut]` keeps no
 #   symbolic `mut` (R2384).
 # - `__bool__`: `@unavailable` on a method is rejected (R1162).
-# - the memory members (`unsafe_write*`, `unsafe_take_pointee`,
-#   `unsafe_deinit_pointee*`, `unsafe_free`, `swap_pointees`, `unsafe_load`,
-#   `unsafe_store`, and the strided, gather, and scatter forms): the
-#   compiler's rules answer them (R2467), and
+# - the memory members `write`, `unsafe_free`, `swap_pointees`,
+#   `unsafe_load`, `unsafe_store`, and the strided, gather, and scatter
+#   forms: the compiler's rules answer `write` and `unsafe_free`, and
 #   `@__allow_legacy_custom_self_type` is not modelled (R2468).
 # - the indexed and keyword `__getitem__`s and
 #   `_get_ref_with_unsafe_interior_origin`: the subscript rule (R2208).
@@ -748,6 +749,280 @@ struct Pointer[
                 ]._mlir_type,
             ](self._mlir_value)
         }
+
+    @inline(.always)
+    def unsafe_deinit_pointee(
+        self,
+    ) where (
+        Self.mut
+        and Self.address_space == .GENERIC
+        and conforms_to(Self.T, Deinitable)
+    ):
+        """Destroys the pointed-to value.
+
+        This is equivalent to `_ = self.unsafe_take_pointee()` but doesn't
+        require `Movable` and is more efficient because it doesn't invoke a
+        move constructor.
+
+        Safety:
+
+        - This runs the pointee's deinitializer and leaves the pointee
+          memory uninitialized. Subsequent reads of this pointer are
+          invalid until a new valid value is written using an
+          `unsafe_write()` method.
+        - `self` must point to a valid, initialized instance of `T`.
+          Calling this on a pointer to uninitialized memory is undefined
+          behavior.
+        """
+        var this = self.unsafe_address_space_cast[.GENERIC]()
+        _ = __get_address_as_owned_value(this._mlir_value)
+
+    @inline(.always)
+    def unsafe_deinit_pointee_with[
+        F: def(var Self.T)
+    ](self, deinit_func: F, /) where Self.mut and Self.address_space == .GENERIC:
+        """Destroys the pointed-to value using a user-provided deinitializer
+        function.
+
+        This can be used to destroy non-`Deinitable` values in-place
+        without moving.
+
+        Args:
+            deinit_func: A function that takes ownership of the pointee value
+                for the purpose of deinitializing it.
+
+        Safety:
+
+        - This runs `deinit_func` on the pointee and leaves the pointee
+          memory uninitialized. Subsequent reads of this pointer are
+          invalid until a new valid value is written using an
+          `unsafe_write()` method.
+        - `self` must point to a valid, initialized instance of
+          `Self.T`. Calling this on a pointer to uninitialized memory
+          is undefined behavior.
+        """
+        var this = self.unsafe_address_space_cast[.GENERIC]()
+        deinit_func(__get_address_as_owned_value(this._mlir_value))
+
+    @inline(.always)
+    def unsafe_take_pointee(
+        self,
+    ) -> Self.T where (
+        Self.mut
+        and Self.address_space == .GENERIC
+        and conforms_to(Self.T, Movable)
+    ):
+        """Move the value at the pointer out, leaving it uninitialized.
+
+        This performs a _consuming_ move, ending the origin of the value stored
+        in this pointer memory location. Subsequent reads of this pointer are
+        not valid. If a new valid value is stored using `unsafe_write()`, then
+        reading from this pointer becomes valid again.
+
+        Returns:
+            The value at the pointer.
+
+        Safety:
+
+        - `self` must point to a valid, initialized instance of `Self.T`.
+          Calling this on a pointer to uninitialized memory is undefined
+          behavior.
+        - This moves the pointee out without running its destructor and
+          leaves the pointee memory uninitialized. Subsequent reads of this
+          pointer are invalid until a new valid value is written using an
+          `unsafe_write()` method.
+        """
+        return __get_address_as_owned_value(
+            self.unsafe_address_space_cast[.GENERIC]()._mlir_value
+        )
+
+    @inline(.always)
+    def unsafe_write[
+        F: def() -> Self.T
+    ](
+        self,
+        *,
+        init_with: F,
+    ) where Self.mut and Self.address_space == .GENERIC:
+        """Initializes the pointee in place using the value returned by `f`.
+
+        The value returned by `init_with` is constructed directly into the pointer's
+        memory location rather than being constructed elsewhere and then
+        moved, so `Self.T` does not need to be `Movable`.
+
+        Example:
+
+        ```mojo
+        from std.memory.alloc import alloc, dealloc, Layout
+
+        @fieldwise_init
+        struct Pinned(not Movable):
+            var value: Int
+
+        var allocation = alloc(Layout[Pinned].single())
+        var ptr = allocation.unsafe_ptr()
+        ptr.unsafe_write(init_with=lambda () -> Pinned: Pinned(7))
+        print(ptr[].value)  # => 7
+        ptr.unsafe_deinit_pointee()
+        dealloc(allocation^)
+        ```
+
+        Args:
+            init_with: A function that constructs and returns the value to emplace.
+
+        Safety:
+
+        - `self` must point to writable memory for `Self.T` that does not
+          currently hold a valid, live value. Writing into memory that
+          already holds one overwrites it without running its destructor,
+          leaking any resources it owned.
+        """
+        __get_address_as_uninit_lvalue(
+            self.unsafe_address_space_cast[.GENERIC]()._mlir_value
+        ) = init_with()
+
+    @inline(.always)
+    def unsafe_write(
+        self, var value: Self.T, /
+    ) where (
+        Self.mut
+        and Self.address_space == .GENERIC
+        and conforms_to(Self.T, Movable)
+    ):
+        """Write `value` into the pointer location, moving from `value`.
+
+        The pointer memory location is assumed to contain uninitialized data,
+        and consequently the current contents of this pointer are not
+        deinitialized before writing `value`.
+
+        Example:
+
+        ```mojo
+        from std.memory.alloc import alloc, dealloc, Layout
+
+        var allocation = alloc(Layout[String].single())
+        var ptr = allocation.unsafe_ptr()
+        ptr.unsafe_write("foo")
+        print(ptr[])  # => foo
+        ptr.unsafe_deinit_pointee()
+        dealloc(allocation^)
+        ```
+
+        If `Self.T` is trivially deinitializable (for example, `Int`), prefer
+        `write()` instead: it overwrites safely, since there's no
+        destructor that a previous value could leak.
+
+        Args:
+            value: The value to emplace.
+
+        Safety:
+
+        - `self` must point to writable memory for `Self.T` that does not
+          currently hold a valid, live value. Writing into memory that
+          already holds one overwrites it without running its destructor,
+          leaking any resources it owned.
+        """
+        __get_address_as_uninit_lvalue(
+            self.unsafe_address_space_cast[.GENERIC]()._mlir_value
+        ) = (value^)
+
+    @inline(.always)
+    def unsafe_write(
+        self, *, copy: Self.T
+    ) where (
+        Self.mut
+        and Self.address_space == .GENERIC
+        and conforms_to(Self.T, Copyable)
+    ):
+        """Write a copy of `copy` into the pointer location.
+
+        The pointer memory location is assumed to contain uninitialized data,
+        and consequently the current contents of this pointer are not deinitialized
+        before writing the copy.
+
+        When compared to calling the positional `unsafe_write()` overload with
+        a value you copied yourself, this avoids an extra move on the callee
+        side.
+
+        Args:
+            copy: The value to copy.
+
+        Safety:
+
+        - `self` must point to writable memory for `Self.T` that does not
+          currently hold a valid, live value. Writing into memory that
+          already holds one overwrites it without running its destructor,
+          leaking any resources it owned.
+        """
+        __get_address_as_uninit_lvalue(
+            self.unsafe_address_space_cast[.GENERIC]()._mlir_value
+        ) = copy.copy()
+
+    @inline(.always)
+    def unsafe_write_move_from(
+        self, src: Pointer[Self.T, _]
+    ) where (
+        Self.mut
+        and Self.address_space == .GENERIC
+        and type_of(src).mut
+        and conforms_to(Self.T, Movable)
+    ):
+        """Moves the value `src` points to into the memory location pointed to
+        by `self`.
+
+        The `self` pointer memory location is assumed to contain uninitialized
+        data prior to this assignment, and consequently the current contents of
+        this pointer are not destructed before writing the value from the `src`
+        pointer.
+
+        Ownership of the value is logically transferred from `src` into `self`'s
+        pointer location.
+
+        After this call, the `src` pointee value should be treated as
+        uninitialized data. Subsequent reads of or destructor calls on the `src`
+        pointee value are invalid, unless and until a new valid value has been
+        written into the `src` pointer's memory location using an
+        `unsafe_write()` method.
+
+        This transfers the value out of `src` and into `self` using at most one
+        move constructor call.
+
+        Example:
+
+        ```mojo
+        from std.memory.alloc import alloc, dealloc, Layout
+
+        var a_allocation = alloc(Layout[String].single())
+        var b_allocation = alloc(Layout[String].single())
+        var a_ptr = a_allocation.unsafe_ptr()
+        var b_ptr = b_allocation.unsafe_ptr()
+
+        # Initialize A pointee
+        a_ptr.unsafe_write("foo")
+
+        # Perform the move
+        b_ptr.unsafe_write_move_from(a_ptr)
+
+        # Clean up
+        b_ptr.unsafe_deinit_pointee()
+        dealloc(a_allocation^)
+        dealloc(b_allocation^)
+        ```
+
+        Safety:
+
+        * `src` must point to a valid, initialized instance of `Self.T`.
+        * `self` must point to writable memory for `Self.T`. The pointee
+          contents of `self` should be uninitialized; if `self` was previously
+          written with a valid value, that value will be overwritten and its
+          destructor will NOT be run.
+
+        Args:
+            src: Source pointer that the value will be moved from.
+        """
+        __get_address_as_uninit_lvalue(
+            self.unsafe_address_space_cast[.GENERIC]()._mlir_value
+        ) = __get_address_as_owned_value(src._mlir_value)
 
     @inline(.never)
     def write_to(self, mut writer: Some[Writer]):

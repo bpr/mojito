@@ -1111,6 +1111,7 @@ assets/ok/pointer_field_view_ref_yield.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_returned.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_wrapper_iterator_protocol.mojo	main	exe-differential	sanitized
 assets/ok/pointer_immutable_conversion.mojo	main	exe-differential	sanitized
+assets/ok/pointer_memory_members_declared.mojo	main	exe-differential	sanitized
 assets/ok/pointer_mlir_values.mojo	main	exe-differential	sanitized
 assets/ok/pointer_offset_by_address_generic.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_argument_resolves_as_struct_argument.mojo	main	exe-differential	sanitized
@@ -1127,6 +1128,8 @@ assets/ok/pointer_subscript_operand_keeps_owner.mojo	main	exe-differential	sanit
 assets/ok/pointer_subscript_reads_in_place.mojo	main	exe-differential	sanitized
 assets/ok/pointer_subtract_offset.mojo	main	exe-differential	sanitized
 assets/ok/pointer_take_pointee_tracked.mojo	main	exe-differential	sanitized
+assets/ok/pointer_take_runs_move_initializer.mojo	main	exe-differential	sanitized
+assets/ok/pointer_take_tracked_destructor.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temp_argument_loan_return.mojo	main	exe-differential	sanitized
 assets/ok/pointer_temporary_dereference_place.mojo	main	exe-differential	sanitized
@@ -1146,6 +1149,7 @@ assets/ok/pointer_union_origin.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_bitcast.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_mut_cast.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized
+assets/ok/pointer_write_init_with.mojo	main	exe-differential	sanitized
 assets/ok/pointer_write_move_from.mojo	main	exe-differential	sanitized
 assets/ok/pointer_write_repr.mojo	main	exe-differential	sanitized
 assets/ok/positional_only.mojo	main	exe-differential	sanitized
@@ -1999,6 +2003,7 @@ assets/runtime_error/pliron_raise_unhandled.mojo	main,__toplevel__	error-differe
 assets/runtime_error/pliron_trap_pow_negative.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/pointer_dangling.mojo	main,__toplevel__	error-differential	category=PointerDangling
 assets/runtime_error/pointer_double_free.mojo	main,__toplevel__	error-differential	category=PointerDoubleFree
+assets/runtime_error/pointer_take_tracked_nontrivial.mojo	main,__toplevel__	undefined	vm-category=PointerUseAfterFree
 assets/runtime_error/pointer_use_after_free.mojo	main,__toplevel__	error-differential	category=PointerUseAfterFree
 assets/runtime_error/simd_element_list_too_few.mojo	main,__toplevel__	undefined	vm-category=PointerDangling
 assets/runtime_error/span_index_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort

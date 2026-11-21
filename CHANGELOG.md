@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Pointer`'s memory members `unsafe_write` (positional, `copy=`, and
+  `init_with=`), `unsafe_write_move_from`, `unsafe_take_pointee`,
+  `unsafe_deinit_pointee`, and `unsafe_deinit_pointee_with` are upstream's
+  declared bodies with their `where` clauses, retiring the checker's rules,
+  so `init_with=` builds a non-`Movable` element in place
+  (`assets/ok/pointer_write_init_with.mojo`) and a call through an
+  immutable pointer or over an element a clause excludes violates the
+  constraint as at the pin. `__get_address_as_owned_value(k)` takes the
+  pointee as a `var` transfer, so a take bound, returned, or written runs
+  one move initializer as at the pin
+  (`assets/ok/pointer_take_runs_move_initializer.mojo`), and a discard
+  destroys it where it lies. A take through an origin-bearing pointer to an
+  element with a destructor is accepted as at the pin
+  (`assets/ok/pointer_take_tracked_destructor.mojo`), leaving the owner's
+  second destruction to the caller
+  (`assets/runtime_error/pointer_take_tracked_nontrivial.mojo`).
+
 - A `mut=` value an origin binder decides is the binder's read in a checked
   instance, as upstream's instance carries it, where it was deferred: inside
   `def f[m: Bool, //, o: Origin[mut=m]](s: Span[Int, o])`, `s` reflects

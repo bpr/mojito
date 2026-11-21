@@ -1642,54 +1642,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2027 `Pointer.unsafe_take_pointee()` and `unsafe_write` of a
-  call result run no move initializer, where the pin runs one each**
-
-  `pointer.take` and the `ref.write`/`store` an `unsafe_write` lowers to
-  carry no `constructor`, so the value is relocated, where upstream's
-  `__get_address_as_owned_value` and its `init_pointee_move` each move it.
-  - Probe: over an `M` whose move initializer adds 1 and prints,
-    `pb.unsafe_write(pa.unsafe_take_pointee())` prints nothing where the
-    pin prints `move 12 / move 13`, and `var x = pb.unsafe_take_pointee()`
-    prints nothing where the pin prints `move 14`.
-  - `unsafe_write(x^)` and `unsafe_write_move_from` already run one, as
-    at the pin.
-  - So `Tuple.reverse`, `concat`, and `consume_elements` run no element
-    move initializer.
-  - Same family as R1047: name the constructor on the instruction and
-    run it in both backends.
-  - Found while landing R341 (2026-11-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2029 Taking or destroying a pointee with a destructor through an
-  origin-bearing pointer is rejected outside six bundled modules, where
-  the pin accepts it**
-
-  `check_pointer_take_source` (`checker/method_calls/builtin_types.rs`)
-  requires a trivially destructible element for `unsafe_take_pointee`,
-  `unsafe_deinit_pointee`, and `unsafe_write_move_from` unless the origin is
-  untracked or the call is in a module `is_bundled_pointer_take_source`
-  lists (`tuple`, `_enum`, `variadics`, `maybe_uninit`, `variant`, and
-  `rebind`, whose `rebind_var` takes its operand through
-  `Pointer(to=dest_ref)`).
-  - Probe: `var b = Pointer(to=a).unsafe_take_pointee()` over a local `N`
-    with a destructor, then `Pointer(to=a).unsafe_write(N(2))`: the pin
-    prints `took 1 / del 1 / del 2 / end`, Mojito reports "requires a
-    trivially destructible element".
-  - Lifting the gate means the ownership analysis must accept a
-    pointer-side take of a tracked slot as upstream does, leaving soundness
-    to the caller.
-  - Probe: `_ListIterOwned` (`list.mojo`) spells upstream's
-    `self._list.unsafe_ptr().unsafe_offset(i).unsafe_take_pointee()` in
-    `__next__` through the raw `_list._storage._alloc._ptr`, and its
-    `__deinit__` loops `unsafe_deinit_pointee` there instead of upstream's
-    `Span(self._list)._unchecked_subspan(...).unsafe_deinit_elements()`,
-    which the bundled `Span` lacks and would hit this gate.
-  - Found while landing R359 (2026-11-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1048 Returning a named `out` result runs its move initializer,
   which the pin does not**
 
@@ -4783,6 +4735,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     'set'", with a "candidate not viable: violated constraint" note.
   - `assets/type_error/variant_set_linear_alternative.mojo` expects only the
     note's prefix until this is fixed.
+  - Probe: `unsafe_take_pointee()` through an `as_imm()` pointer notes
+    "expected 'mut == true and 0 == address_space._value._mlir_value ==
+    true and conforms_to(T, Movable)'", where the pin quotes "mut and
+    (address_space == AddressSpace.GENERIC) and conforms_to(T, Movable)"
+    (found while landing R2467, 2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9777,6 +9734,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
     constructor overload matches … expected a mutable origin"
     (`assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo`),
     where the pin reports "no matching function in initialization".
+  - Probe: `unsafe_write(1)` through an `as_imm()` pointer reports
+    "invalid call to 'unsafe_write': violated constraint", where the pin
+    reports "no matching method in call to 'unsafe_write'";
+    `assets/type_error/pointer_write_immutable_rejected.mojo` expects only
+    "call to 'unsafe_write'" until this lands (found while landing R2467,
+    2026-11-21).
   - The `assets/type_error` fixtures that expect "no overload matches"
     move to the pin's words with the fix.
   - Found while landing R2115 (2026-11-12).
@@ -10953,40 +10916,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2467 `Pointer`'s memory members are checker rules, where
-  upstream's are bodies of the declared struct**
-
-  `unsafe_write` (positional and `copy=`), `unsafe_write_move_from`,
-  `unsafe_take_pointee`, and `unsafe_deinit_pointee` are arms of
-  `infer_pointer_method` (`method_calls/builtin_types.rs`), with the
-  `PointerWrite`, `PointerWriteMoveFrom`, `PointerStorageTake`, and
-  `PointerStorageDestroy` adjustments.
-  - Declare upstream's bodies verbatim (`unsafe_deinit_pointee`,
-    `unsafe_deinit_pointee_with`, `unsafe_take_pointee`, the three
-    `unsafe_write`s, `unsafe_write_move_from`), each with its `where`
-    clause, and retire the arms and `check_pointer_take_source`.
-  - `__get_address_as_owned_value(k)` is typed as the spelled
-    `Pointer(_mlir_value=k).unsafe_take_pointee()` (`infer_address_builtin`,
-    `checker/operators.rs`). With the member declared, its body calls the
-    builtin and the checker recurses without end, so the builtin must
-    record its own take first.
-  - `SemanticAdjustment::PointerWrite { copy: false }` is also the
-    `__get_address_as_uninit_lvalue` fact and stays.
-  - The `where` clauses reach `List.deinit_with`, `Array.deinit_with`,
-    `Optional.deinit_with` (an `AnyType` element is not `Movable`), and
-    `Array.__init__`'s `unsafe_write(Self.T())`: respell them as upstream's.
-  - Retiring `check_pointer_take_source` follows the pin, so R2029 and the
-    `pointer_take_tracked_nontrivial` non-goal close with it.
-  - Re-probe R2027: via a declared body, `unsafe_write` of a call result
-    runs its move as at the pin.
-  - Probe: `unsafe_write(1)` through an `as_imm()` pointer reports the
-    pin's "no matching method in call to 'unsafe_write'", where Mojito
-    reports its own immutable-write rule.
-  - Found while landing R2207 (2026-11-21).
-  - Depends on R2466 (`Self.address_space == .GENERIC`), R2375
-    (`where Self.mut`).
-  - Model: Fable, Planned.
-
 - [ ] **R2468 `@__allow_legacy_custom_self_type` is not modelled, so
   `Pointer.write` stays a checker rule**
 
@@ -10999,8 +10928,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and `check_pointer_overwrite`.
   - The same decorator gates `unsafe_free`, `unsafe_load`/`unsafe_store`,
     and `swap_pointees`, which can follow once it lands.
+  - Probe: the bundled `Span` lacks upstream's
+    `unsafe_deinit_elements_with` and `unsafe_deinit_elements` (declared
+    with `self: MutSpan[U, _]` under the decorator), so `List.deinit_with`
+    inlines the former's loop and `_ListIterOwned.__deinit__` loops
+    `unsafe_deinit_pointee` where upstream calls
+    `Span(self._list)._unchecked_subspan(...).unsafe_deinit_elements()`
+    (`stdlib/std/collections/list.mojo`; found while landing R2467,
+    2026-11-21).
   - Found while landing R2207 (2026-11-21).
-  - Depends on R2467.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2208 `Pointer(to=)` and `p[]` are checker rules, where upstream's
@@ -13663,6 +13600,11 @@ residue found inside a task moves to the task that owns its fix.
     `[F: def(var Self.T)]` binder where upstream spells
     `Some[def(var Self.T)]`; respell them when it lands (found while
     landing R1433, 2026-11-03).
+  - Probe: `Pointer.unsafe_deinit_pointee_with` and
+    `Pointer.unsafe_write(init_with=)` (`std/memory/pointer.mojo`) spell
+    `[F: def(var Self.T)]` and `[F: def() -> Self.T]` binders where
+    upstream spells `Some[def(var Self.T)]` and `Some[def() -> Self.T]`
+    (found while landing R2467, 2026-11-21).
   - Found while landing R493 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.

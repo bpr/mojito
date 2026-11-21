@@ -703,10 +703,7 @@ impl RewriteTypes for SemanticAdjustment {
             Self::UninitStorageDestroy { element } => {
                 element.rewrite_types(rewrite);
             }
-            Self::PointerWrite { element, copy: _ } => {
-                element.rewrite_types(rewrite);
-            }
-            Self::PointerWriteMoveFrom { element } => {
+            Self::PointerWrite { element } => {
                 element.rewrite_types(rewrite);
             }
             Self::SliceDescriptors {

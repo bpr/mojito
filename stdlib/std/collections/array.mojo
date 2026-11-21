@@ -1,8 +1,8 @@
 # A self-hosted fixed-size Array.  Every slot in `[0, length)` is initialized
 # for the whole life of the value; the private `_size` field only diverges from
 # `Self.length` when owned iteration moves the storage out, so `__deinit__`
-# loops to `_size`, not the comptime length.  `unsafe_offset(i).unsafe_take_pointee()` and
-# `unsafe_offset(i).unsafe_deinit_pointee()` are the public raw-pointer
+# loops to `_size`, not the comptime length.  `Pointer`'s declared
+# `unsafe_write`s and `unsafe_deinit_pointee()` are the public raw-pointer
 # vocabulary over storage this Array owns.
 
 from std.memory.alloc import unsafe_alloc
@@ -146,7 +146,9 @@ struct Array[T: AnyType, length: Int](
         self.data = unsafe_alloc[Self.T](Self.length)
         var i = 0
         while i < Self.length:
-            self.data.unsafe_offset(i).unsafe_write(Self.T())
+            self.data.unsafe_offset(i).unsafe_write(
+                init_with=lambda () -> Self.T: Self.T()
+            )
             i += 1
 
     @inline(.always)
@@ -187,7 +189,14 @@ struct Array[T: AnyType, length: Int](
     def deinit_with[F: def(var Self.T)](deinit self, deinit_func: F, /):
         var i = 0
         while i < self._size:
-            deinit_func(self.data.unsafe_offset(i).unsafe_take_pointee())
+            # TODO(MOCO-4111): `deinit_func` cannot convert to
+            # `Pointer.unsafe_deinit_pointee_with` since `Pointer` is
+            # bound on `T: AnyType` but `Array` has `T: Movable`.
+            deinit_func(
+                __get_address_as_owned_value(
+                    self.data.unsafe_offset(i)._get_kgen_pointer()
+                )
+            )
             i += 1
         self.data.unsafe_free()
         self._size = 0

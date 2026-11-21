@@ -10,11 +10,7 @@ use mojito_types::types::TyKind;
 /// the construction rules, and the static rules. A member
 /// off this list resolves to the declared body.
 pub(in crate::checker) const POINTER_RULE_MEMBERS: &[&str] = &[
-    "unsafe_write",
     "write",
-    "unsafe_write_move_from",
-    "unsafe_take_pointee",
-    "unsafe_deinit_pointee",
     "free",
     "unsafe_free",
     "__getitem__",
@@ -47,10 +43,11 @@ pub(in crate::checker) fn pointer_rule_construction(kwargs: &[mojito_ast::ast::K
 }
 
 impl Checker {
-    /// Type a `Pointer[T]` instance method: the public `unsafe_*` memory
-    /// vocabulary (write, take/deinit pointee, free) plus the
-    /// deprecated `free()` bridge. Indexed load/store remain ordinary public
-    /// pointer subscript syntax.
+    /// Type the `Pointer[T]` instance members a checker rule answers:
+    /// `write`, upstream's overwrite of a trivially destructible pointee,
+    /// and the `free()`/`unsafe_free()` deallocation. Indexed load/store
+    /// remain ordinary public pointer subscript syntax; every other memory
+    /// member is a body of the declared struct.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::checker) fn infer_pointer_method(
         &self,
@@ -67,11 +64,7 @@ impl Checker {
         let pointer = |element: Ty, origin: mojito_types::origin::PointerOrigin| {
             Ty::pointer(element, origin, address_space.clone())
         };
-        // `unsafe_write` accepts the keyword `copy=` overload; every other
-        // pointer method is positional-only.
-        if !kwargs.is_empty() && method != "unsafe_write" {
-            reject_kwargs(kwargs)?;
-        }
+        reject_kwargs(kwargs)?;
         if !param_args.is_empty() {
             return Err(TypeError::BadCall {
                 func: format!("Pointer.{method}"),
@@ -79,58 +72,31 @@ impl Checker {
             });
         }
         match method {
-            // `write` overwrites a pointee whose type has no destructor, so
-            // it is `unsafe_write`'s store where upstream's `where
-            // IsTriviallyDeinitable[U]` holds.
-            "unsafe_write" | "write" => {
+            // `write` overwrites a pointee whose type has no destructor:
+            // upstream's `where IsTriviallyDeinitable[U]` moved store.
+            "write" => {
                 self.check_pointer_write(object, origin)?;
-                if method == "write" {
-                    self.check_pointer_overwrite(elem)?;
-                }
-                let (value, copy) = match (args, kwargs) {
-                    ([value], []) => (value, false),
-                    ([], [keyword]) if keyword.name == "copy" => (&keyword.value, true),
-                    _ => {
-                        return Err(TypeError::BadCall {
-                            func: "Pointer.unsafe_write".to_string(),
-                            reason: "expected one positional value or a single 'copy=' \
-                                     keyword argument"
-                                .to_string(),
-                        });
-                    }
-                };
-                if copy && !self.is_copyable(elem) {
-                    return Err(TypeError::TraitNotSatisfied {
-                        param: "T".to_string(),
-                        ty: elem.to_string(),
-                        trait_name: "Copyable".to_string(),
-                        reason: self.trait_failure_reason(elem, "Copyable"),
+                self.check_pointer_overwrite(elem)?;
+                let [value] = args else {
+                    return Err(TypeError::BadCall {
+                        func: "Pointer.write".to_string(),
+                        reason: "expected one positional value".to_string(),
                     });
-                }
-                if copy {
-                    self.copyable_reference_result_reads
-                        .borrow_mut()
-                        .insert(value.source_span());
-                }
+                };
                 let vty = self.infer_with_expected(value, elem, true)?;
                 if !self.record_implicit_conversion(value, &vty, elem)? {
                     return Err(TypeError::TypeMismatch {
                         expected: elem.to_string(),
                         found: vty.to_string(),
-                        context: "value written through 'Pointer.unsafe_write'".to_string(),
+                        context: "value written through 'Pointer.write'".to_string(),
                     });
                 }
                 let receiver = pointer(elem.clone(), origin.clone());
-                let (name, slot, convention) = if copy {
-                    ("copy", ArgSlot::Keyword(0), None)
-                } else {
-                    ("value", ArgSlot::Positional(0), Some(ArgConvention::Var))
-                };
                 let bound = [elem.clone()];
                 self.check_argument_origin_exclusivity(
                     &ExclusivityCallee {
                         name: method,
-                        parameter_names: &[name.to_string()],
+                        parameter_names: &["value".to_string()],
                         declared: &bound,
                         bound: &bound,
                         nested_origins: NestedOrigins::AsDeclared,
@@ -143,72 +109,17 @@ impl Checker {
                         declared: &receiver,
                         bound: &receiver,
                     }),
-                    &[convention],
-                    &[slot],
+                    &[Some(ArgConvention::Var)],
+                    &[ArgSlot::Positional(0)],
                     args,
                     kwargs,
                 )?;
-                // `copy=` binds upstream's `init_pointee_copy(value: T)` read
-                // slot: a place is lent where it lies, so the write's copy
-                // is the one copy. Its declared `T` is bound by no
-                // register-passable trait, so the slot is by address.
-                if copy {
-                    self.record_call_conventions(
-                        span,
-                        &[slot],
-                        &[convention],
-                        &crate::checker::places::DeclaredSlots {
-                            by_address: vec![true],
-                            writes: vec![false],
-                        },
-                        Gathered::NONE,
-                    );
-                    self.record_argument_borrows(
-                        &[slot],
-                        &[convention],
-                        Gathered::NONE,
-                        args,
-                        kwargs,
-                        None,
-                    );
-                }
                 self.record_at(span.clone()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::PointerWrite {
                         element: elem.clone(),
-                        copy,
                     },
                 ));
                 Ok(Ty::none())
-            }
-            "unsafe_write_move_from" => {
-                self.infer_pointer_write_move_from(span, object, elem, origin, address_space, args)
-            }
-            "unsafe_take_pointee" | "unsafe_deinit_pointee" => {
-                self.check_pointer_take_source(span, method, elem, origin)?;
-                no_arguments(method, args)?;
-                if method == "unsafe_deinit_pointee" && !self.is_deinitable(elem) {
-                    return Err(TypeError::TraitNotSatisfied {
-                        param: "T".to_string(),
-                        ty: elem.to_string(),
-                        trait_name: "Deinitable".to_string(),
-                        reason: self.trait_failure_reason(elem, "Deinitable"),
-                    });
-                }
-                let adjustment = if method == "unsafe_take_pointee" {
-                    mojito_checked::checked::SemanticAdjustment::PointerStorageTake {
-                        element: elem.clone(),
-                    }
-                } else {
-                    mojito_checked::checked::SemanticAdjustment::PointerStorageDestroy {
-                        element: elem.clone(),
-                    }
-                };
-                self.record_at(span.clone()).adjustment = Some(Box::new(adjustment));
-                Ok(if method == "unsafe_take_pointee" {
-                    elem.clone()
-                } else {
-                    Ty::none()
-                })
             }
             "free" | "unsafe_free" => {
                 if origin.as_origin().is_some() {
@@ -544,87 +455,6 @@ impl Checker {
         Ok(ret)
     }
 
-    /// Type `object.unsafe_write_move_from(args)` on a `Pointer[elem]` of
-    /// `origin`: upstream's `__get_address_as_uninit_lvalue(self) =
-    /// __get_address_as_owned_value(src)`, the source pointee taken and
-    /// moved, with one move initializer, into the receiver's slot.
-    fn infer_pointer_write_move_from(
-        &self,
-        span: &SourceSpan,
-        object: &Expr,
-        elem: &Ty,
-        origin: &mojito_types::origin::PointerOrigin,
-        address_space: &mojito_types::types::AddressSpaceSlot,
-        args: &[Expr],
-    ) -> Result<Ty, TypeError> {
-        self.check_pointer_write(object, origin)?;
-        let [source] = args else {
-            return Err(TypeError::ArityMismatch {
-                name: "unsafe_write_move_from".to_string(),
-                expected: 1,
-                got: args.len(),
-            });
-        };
-        let receiver = Ty::pointer(elem.clone(), origin.clone(), address_space.clone());
-        let found = self.infer_with_expected(source, &receiver, true)?;
-        let Some((source_elem, source_origin)) = found.as_pointer() else {
-            return Err(pointer_move_source_mismatch(elem, &found));
-        };
-        if &source_elem != elem || found.kind().pointer_address_space() != Some(address_space) {
-            return Err(pointer_move_source_mismatch(elem, &found));
-        }
-        self.check_pointer_take_source(span, "unsafe_write_move_from", elem, &source_origin)?;
-        if !self.is_movable(elem) {
-            return Err(TypeError::TraitNotSatisfied {
-                param: "T".to_string(),
-                ty: elem.to_string(),
-                trait_name: "Movable".to_string(),
-                reason: self.trait_failure_reason(elem, "Movable"),
-            });
-        }
-        self.record_at(span.clone()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::PointerWriteMoveFrom {
-                element: elem.clone(),
-            },
-        ));
-        Ok(Ty::none())
-    }
-
-    /// Admit `method` taking the pointee `elem` out through a pointer of
-    /// `origin`. Upstream requires only a mutable pointer. An origin-bearing
-    /// pointee still belongs to its checked storage, which would destroy it
-    /// again, so a tracked origin is accepted only for a trivially
-    /// destructible element, or in the bundled modules
-    /// `is_bundled_pointer_take_source` lists, which end that storage
-    /// without destroying it (R2029).
-    fn check_pointer_take_source(
-        &self,
-        span: &SourceSpan,
-        method: &str,
-        elem: &Ty,
-        origin: &mojito_types::origin::PointerOrigin,
-    ) -> Result<(), TypeError> {
-        let untracked = matches!(
-            origin,
-            mojito_types::origin::PointerOrigin::Untracked { mutable: true }
-        ) || super::super::overload_support::is_bundled_pointer_take_source(
-            span.source.as_deref(),
-        );
-        if origin.statically_mutable() == Some(false) {
-            return Err(TypeError::Unsupported(format!(
-                "{method}() requires a Pointer with a mutable origin"
-            )));
-        }
-        if !untracked && !self.is_trivially(mojito_types::types::TrivialLifecycle::Deinitable, elem)
-        {
-            return Err(TypeError::Unsupported(format!(
-                "{method}() through an origin-bearing Pointer requires a trivially \
-                 destructible element; '{elem}' is owned by its checked storage"
-            )));
-        }
-        Ok(())
-    }
-
     /// Require the pointee `elem` a `Pointer.write` overwrites to have no
     /// destructor, as upstream's `where IsTriviallyDeinitable[U]` does.
     fn check_pointer_overwrite(&self, elem: &Ty) -> Result<(), TypeError> {
@@ -648,14 +478,4 @@ fn no_arguments(method: &str, args: &[Expr]) -> Result<(), TypeError> {
         expected: 0,
         got: args.len(),
     })
-}
-
-/// The mismatch for a `Pointer.unsafe_write_move_from` source of type
-/// `found` where a pointer to `elem` is required.
-fn pointer_move_source_mismatch(elem: &Ty, found: &Ty) -> TypeError {
-    TypeError::TypeMismatch {
-        expected: format!("Pointer[{elem}, _]"),
-        found: found.to_string(),
-        context: "source of 'Pointer.unsafe_write_move_from'".to_string(),
-    }
 }

@@ -1647,16 +1647,14 @@ impl<'a> Flatten<'a> {
     ) -> Option<StoredDestination> {
         // `__get_address_as_uninit_lvalue(k) = value`: the place is the
         // pointer the check spelled for `k`, and the value initializes its
-        // pointee as that pointer's `unsafe_write(value)` does, destroying
-        // nothing first.
+        // pointee, destroying nothing first.
         if let Some(element) = place
             .adjustments()
             .iter()
             .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::PointerWrite {
-                    element,
-                    copy: false,
-                } => Some(element.clone()),
+                mojito_checked::checked::SemanticAdjustment::PointerWrite { element } => {
+                    Some(element.clone())
+                }
                 _ => None,
             })
         {

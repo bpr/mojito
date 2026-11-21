@@ -5,8 +5,8 @@
 # `[_len, capacity())` are not.
 # `unsafe_offset(i).unsafe_take_pointee()`
 # moves an initialized slot out and `unsafe_offset(i).unsafe_deinit_pointee()`
-# destroys one in place — the public raw-pointer vocabulary over storage this
-# List owns.
+# destroys one in place — `Pointer`'s declared raw-pointer vocabulary over
+# storage this List owns.
 
 from std.string import check_bounds, check_slice_bounds
 from std.builtin.builtin_slice import ContiguousSlice, StridedSlice
@@ -126,9 +126,11 @@ struct _ListIterOwned[T: Movable & Deinitable](
         if self._index >= len(self._list):
             raise StopIteration()
         self._index += 1
-        return self._list._storage._alloc._ptr.unsafe_offset(
-            self._index - 1
-        ).unsafe_take_pointee()
+        return (
+            self._list.unsafe_ptr()
+            .unsafe_offset(self._index - 1)
+            .unsafe_take_pointee()
+        )
 
     def __len__(self) -> Int:
         return len(self._list) - self._index
@@ -482,14 +484,15 @@ struct List[T: AnyType](
 
     # Consuming teardown for any element: each element is handed to the
     # caller-supplied consuming handler (no `Deinitable` requirement), then
-    # the buffer is freed. The caller's trailing consumption sees the drained
-    # write-back state, so only trivial residual fields remain.
+    # the buffer is freed. The loop is the body of upstream's
+    # `Span(self).unsafe_deinit_elements_with(deinit_func)`, inlined because
+    # the bundled `Span` lacks that member (R2468).
     def deinit_with[F: def(var Self.T)](deinit self, deinit_func: F, /):
         var i = 0
         while i < self._len:
-            deinit_func(
-                self._storage._alloc._ptr.unsafe_offset(i).unsafe_take_pointee()
-            )
+            self._storage._alloc._ptr.unsafe_offset(
+                i
+            ).unsafe_deinit_pointee_with(deinit_func)
             i += 1
         dealloc(self._storage^)
 

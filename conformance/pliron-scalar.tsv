@@ -1110,6 +1110,7 @@ assets/ok/pointer_field_view_ref_yield.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_returned.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_wrapper_iterator_protocol.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_immutable_conversion.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_memory_members_declared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_mlir_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_offset_by_address_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_origin_argument_resolves_as_struct_argument.mojo	-	ineligible	no-scalar-entry-shape
@@ -1126,6 +1127,8 @@ assets/ok/pointer_subscript_operand_keeps_owner.mojo	-	ineligible	no-scalar-entr
 assets/ok/pointer_subscript_reads_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_subtract_offset.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_take_pointee_tracked.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_take_runs_move_initializer.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_take_tracked_destructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temporary_dereference_place.mojo	-	ineligible	no-scalar-entry-shape
@@ -1145,6 +1148,7 @@ assets/ok/pointer_union_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_bitcast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_mut_cast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_write_init_with.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_write_move_from.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_write_repr.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/positional_only.mojo	-	ineligible	no-scalar-entry-shape
@@ -1974,6 +1978,7 @@ assets/runtime_error/pliron_raise_unhandled.mojo	-	ineligible	no-scalar-entry-sh
 assets/runtime_error/pliron_trap_pow_negative.mojo	main	trap-differential	category=Abort
 assets/runtime_error/pointer_dangling.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pointer_double_free.mojo	-	ineligible	no-scalar-entry-shape
+assets/runtime_error/pointer_take_tracked_nontrivial.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/pointer_use_after_free.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/simd_element_list_too_few.mojo	-	ineligible	no-scalar-entry-shape
 assets/runtime_error/span_index_out_of_range.mojo	-	ineligible	no-scalar-entry-shape
