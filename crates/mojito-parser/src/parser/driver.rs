@@ -184,10 +184,10 @@ fn reject_comptime_statement_outside_function(statement: &Stmt) -> Result<(), Pa
         Ok(())
     };
     match &statement.kind {
-        StmtKind::ComptimeIf { .. } => Err(ParseError::Message(
-            "'comptime if' must be contained in a function".to_string(),
-        )
-        .at(statement.span)),
+        StmtKind::ComptimeIf { .. } | StmtKind::ComptimeMatch { if_case: true, .. } => Err(
+            ParseError::Message("'comptime if' must be contained in a function".to_string())
+                .at(statement.span),
+        ),
         StmtKind::ComptimeMatch { .. } => Err(ParseError::Message(
             "'comptime match' must be contained in a function".to_string(),
         )

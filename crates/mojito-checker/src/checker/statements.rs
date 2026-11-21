@@ -1169,8 +1169,9 @@ impl Checker {
         Ok(())
     }
 
-    /// The boolean expression of a condition. A `case` condition reaching
-    /// here is a `comptime if case`, rejected until R1248 lands.
+    /// The boolean expression of a condition. The parser builds a `comptime
+    /// if case` branch as a `comptime match`, and the `if` and `while` paths
+    /// check a `case` condition themselves, so one reaching here is rejected.
     pub(super) fn boolean_condition<'c>(
         condition: &'c mojito_ast::ast::Condition,
         statement: &str,
@@ -2549,7 +2550,7 @@ impl Checker {
             StmtKind::Match { subject, cases } => {
                 self.check_match(stmt, subject, cases, ret, in_loop)
             }
-            StmtKind::ComptimeMatch { subject, cases } => {
+            StmtKind::ComptimeMatch { subject, cases, .. } => {
                 self.check_comptime_match(stmt, subject, cases, ret, in_loop)
             }
 

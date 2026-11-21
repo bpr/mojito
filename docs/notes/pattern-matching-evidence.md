@@ -143,4 +143,7 @@ bundled traits use the same spellings under the proposal's member names.
   enum type`), so Mojito's subset boundary matches.
 - *Compile-time conditional-pattern statements*: `comptime if case` exists
   upstream (`ParserStmts.cpp` diagnoses `variable binding ... in 'comptime
-  if case' must be a compile-time value`); Mojito rejects it (R1248).
+  if case' must be a compile-time value`), and the pin's other diagnostics
+  for it are `comptime match`'s (`cannot use a dynamic value in 'match'
+  subject`, `'var' bindings are not supported in 'comptime match'`); Mojito
+  builds each pattern branch as that `comptime match`.

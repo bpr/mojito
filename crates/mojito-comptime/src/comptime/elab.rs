@@ -71,9 +71,14 @@ fn elaborated_stmt(stmt: &Stmt, packs: Packs<'_>) -> Stmt {
             iter: iter.clone(),
             body: block(body, packs),
         },
-        StmtKind::ComptimeMatch { subject, cases } if packs.is_some() => StmtKind::ComptimeMatch {
+        StmtKind::ComptimeMatch {
+            subject,
+            cases,
+            if_case,
+        } if packs.is_some() => StmtKind::ComptimeMatch {
             subject: subject.clone(),
             cases: match_cases(cases, packs),
+            if_case: *if_case,
         },
         StmtKind::If { branches, orelse } => StmtKind::If {
             branches: branches

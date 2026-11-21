@@ -70,7 +70,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
             walk_target(visitor, target);
             walk_expr(visitor, value);
         }
-        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases, .. } => {
             walk_expr(visitor, subject);
             for case in cases {
                 walk_case(visitor, case);
@@ -917,7 +917,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             walk_target_mut(visitor, target);
             walk_expr_mut(visitor, value);
         }
-        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases, .. } => {
             walk_expr_mut(visitor, subject);
             for case in cases {
                 walk_pattern_mut(visitor, &mut case.pattern);

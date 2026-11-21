@@ -483,7 +483,11 @@ impl Checker {
             concluded: verdict.concluding.is_some(),
             unreachable: verdict.unreachable,
         });
-        facts.match_warnings = (!verdict.warnings.is_empty()).then_some(verdict.warnings);
+        // A `comptime if case` branch reports no coverage warning, as
+        // upstream's does not.
+        let spelled_if = matches!(stmt.kind, StmtKind::ComptimeMatch { if_case: true, .. });
+        facts.match_warnings =
+            (!spelled_if && !verdict.warnings.is_empty()).then_some(verdict.warnings);
         Ok(())
     }
 

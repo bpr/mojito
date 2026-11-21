@@ -3710,23 +3710,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1248 `comptime if case` is a parse error**
-
-  Problem: `comptime if case 3 = n:` inside `def f[n: Int]()` fails to
-  parse ("'comptime if case' is not supported; use 'comptime match'"),
-  where the pin tests the pattern at compile time and prints `three`.
-  - The pin requires a binding to be a compile-time value (`variable
-    binding ... in 'comptime if case' must be a compile-time value`).
-  - `parse_comptime` (`parser/stmts.rs`) rejects it after parsing the
-    whole chain, so the error lands on the token after the statement (the
-    next `def`, `7:1`) rather than at the `case`.
-  - Lever: `check_comptime_cases`'s compile-time mode with one case per
-    branch, as `comptime match` emits `hlcf.comptime.if`.
-  - `boolean_condition` (`checker/statements.rs`) names this entry.
-  - Found while landing R1140 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1119 `Defaultable` supplies a default `__init__()`**
 
   Problem: a struct that conforms to `Defaultable` without writing an

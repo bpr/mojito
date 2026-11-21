@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_ast::ast::{MatchCase, MatchPattern, MatchPatternKind};
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// Consume one raw lexer item even when it is an error, guaranteeing forward
@@ -334,19 +335,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         match self.peek_token()? {
             Some(Token::If) => {
                 let (branches, orelse) = self.parse_if_rest()?;
-                // The pin's `comptime if case` is not supported: a
-                // compile-time condition folds as an expression, which a
-                // pattern test is not.
-                if branches
-                    .iter()
-                    .any(|(condition, _)| condition.pattern().is_some())
-                {
-                    return Err(ParseError::UnexpectedToken(
-                        Token::Case,
-                        "'comptime if case' is not supported; use 'comptime match'".into(),
-                    ));
-                }
-                Ok(StmtKind::ComptimeIf { branches, orelse })
+                Ok(comptime_if_chain(branches, orelse))
             }
             Some(Token::Match) => self.parse_match(true),
             // The expression form `comptime(expr)` in statement position.
@@ -1047,5 +1036,68 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
         }
         Ok(body)
+    }
+}
+
+/// The statement a `comptime if` chain builds: a run of boolean branches
+/// stays a `comptime if`, and a `case pattern = value` branch is the
+/// `comptime match value` upstream checks it as — the pattern's case, then
+/// the rest of the chain as its `case _` — so that a pattern branch is
+/// tested in compile-time mode and its bindings are compile-time values.
+fn comptime_if_chain(
+    mut branches: Vec<(Condition, Vec<Stmt>)>,
+    orelse: Option<Vec<Stmt>>,
+) -> StmtKind {
+    let Some(first_case) = branches
+        .iter()
+        .position(|(condition, _)| condition.pattern().is_some())
+    else {
+        return StmtKind::ComptimeIf { branches, orelse };
+    };
+    let mut rest = branches.split_off(first_case);
+    let (condition, body) = rest.remove(0);
+    let Condition::Case { pattern, value } = condition else {
+        return StmtKind::ComptimeIf { branches, orelse };
+    };
+    let fallback = match rest.first() {
+        Some((condition, _)) => {
+            let span = condition.value().span;
+            Some((vec![Stmt::new(comptime_if_chain(rest, orelse), span)], span))
+        }
+        None => orelse.map(|body| {
+            let span = body
+                .first()
+                .map_or(pattern.span, |statement| statement.span);
+            (body, span)
+        }),
+    };
+    let span = (
+        pattern.span.0,
+        body.last()
+            .map_or(pattern.span.1, |statement| statement.span.1),
+    );
+    let mut cases = vec![MatchCase {
+        pattern: *pattern,
+        guard: None,
+        body,
+        span,
+    }];
+    cases.extend(fallback.map(|(body, span)| MatchCase {
+        pattern: MatchPattern::new(MatchPatternKind::Wildcard, span),
+        guard: None,
+        body,
+        span,
+    }));
+    let pattern_match = StmtKind::ComptimeMatch {
+        subject: value,
+        cases,
+        if_case: true,
+    };
+    if branches.is_empty() {
+        return pattern_match;
+    }
+    StmtKind::ComptimeIf {
+        branches,
+        orelse: Some(vec![Stmt::new(pattern_match, span)]),
     }
 }

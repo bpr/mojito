@@ -3193,10 +3193,6 @@ fn rejects_malformed_match_forms() {
             "def f(x: Int):\n    match x:\n    case P(0, *y): pass\n",
             "positional or unpacked",
         ),
-        (
-            "def f(x: Int):\n    comptime if case 1 = x:\n        pass\n",
-            "comptime if case",
-        ),
     ] {
         let mut parser = Parser::new(Lexer::new(source));
         let error = parser.parse_program().expect_err(source).to_string();
@@ -3232,6 +3228,41 @@ fn parses_case_conditions_and_comptime_match() {
     assert!(matches!(
         &body[2].kind,
         StmtKind::ComptimeMatch { cases, .. } if cases.len() == 2
+    ));
+}
+
+#[test]
+fn comptime_if_case_parses_as_comptime_match() {
+    let stmts = parse(
+        "def f[n: Int]():\n    comptime if n > 9:\n        pass\n    elif case 3 = n:\n        pass\n    elif n > 5:\n        pass\n    else:\n        pass\n",
+    );
+    let StmtKind::Def { body, .. } = &stmts[0].kind else {
+        panic!("expected a def");
+    };
+    let StmtKind::ComptimeIf {
+        branches,
+        orelse: Some(orelse),
+    } = &body[0].kind
+    else {
+        panic!("expected a comptime if");
+    };
+    assert_eq!(branches.len(), 1);
+    let StmtKind::ComptimeMatch {
+        cases,
+        if_case: true,
+        ..
+    } = &orelse[0].kind
+    else {
+        panic!("expected the case branch as a comptime match");
+    };
+    assert!(matches!(
+        &cases[0].pattern.kind,
+        MatchPatternKind::Literal { .. }
+    ));
+    assert!(matches!(&cases[1].pattern.kind, MatchPatternKind::Wildcard));
+    assert!(matches!(
+        &cases[1].body[0].kind,
+        StmtKind::ComptimeIf { branches, orelse: Some(_) } if branches.len() == 1
     ));
 }
 

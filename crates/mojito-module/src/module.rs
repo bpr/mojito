@@ -2793,7 +2793,7 @@ fn rewrite_stmt(
                 rewrite_expr(message, names, namespaces);
             }
         }
-        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases, .. } => {
             rewrite_expr(subject, names, namespaces);
             for case in cases {
                 for value in case.pattern.expressions_mut() {

@@ -854,9 +854,10 @@ A boolean condition is any `expression` (the checker requires `Bool`). A
 `while case .Some(item) = next():`) evaluates its right-hand side when the
 branch is reached and succeeds when the pattern matches, binding the
 pattern's names in that body only; a `while case` re-evaluates per
-iteration and runs its `else` on the first failure. The pin accepts
-`comptime if case`; Mojito parses it as an error (write `comptime match`;
-roadmap R1248). `while` / `for`
+iteration and runs its `else` on the first failure. A `comptime if`
+chain's `case` branch is built, as upstream checks it, as a `comptime match`
+over the value (`StmtKind::ComptimeMatch` with `if_case`): the pattern's case,
+then the rest of the chain as its `case _`. `while` / `for`
 support loop `else`; `break` bypasses it. A `for` target is upstream's
 `parseTargetListExpr`: the destructuring `target_item` grammar of an
 assignment, where a comma list forms a tuple and a star is valid only inside a

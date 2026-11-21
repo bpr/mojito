@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `comptime if case pattern = value:` runs as at the pin (R1248), where it
+  was a parse error reported at the next statement. Each pattern branch is
+  built as upstream checks it, a `comptime match` over the value with the
+  pattern's case and the rest of the chain as `case _`, so it tests at
+  compile time, mixes with boolean `elif` branches, rejects a run-time value
+  and a `var` binding with `comptime match`'s texts, and, as at the pin,
+  reports no coverage warning.
+
 - A typed ``__mlir_attr[`#lit.struct<{field = v}> : `, T]`` attribute is
   the value of the non-generic struct `T`, as at the pin (R2407), where it
   was rejected as outside the subset. Each field's value is parsed at the

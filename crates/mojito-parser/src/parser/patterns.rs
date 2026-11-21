@@ -60,7 +60,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             ));
         }
         Ok(if comptime {
-            StmtKind::ComptimeMatch { subject, cases }
+            StmtKind::ComptimeMatch {
+                subject,
+                cases,
+                if_case: false,
+            }
         } else {
             StmtKind::Match { subject, cases }
         })

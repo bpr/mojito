@@ -124,7 +124,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             retype_target(target, subs);
             retype_expr(value, subs);
         }
-        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases, .. } => {
             retype_expr(subject, subs);
             for case in cases {
                 for value in case.pattern.expressions_mut() {

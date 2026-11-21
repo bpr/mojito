@@ -1158,7 +1158,7 @@ fn check_stmt(
         // Each case is a `comptime if` arm, run from the entry state; the
         // fall-through, unless a case concludes the match, is the missing
         // `else`.
-        StmtKind::ComptimeMatch { subject, cases } => {
+        StmtKind::ComptimeMatch { subject, cases, .. } => {
             let plan = node_facts
                 .get(&stmt.source_span())
                 .and_then(|facts| facts.match_plan.as_ref());

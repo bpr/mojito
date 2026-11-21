@@ -2066,6 +2066,12 @@ pub enum StmtKind {
     ComptimeMatch {
         subject: Expr,
         cases: Vec<MatchCase>,
+        /// The statement spells a `comptime if case pattern = value` branch,
+        /// which the parser builds as this match: its pattern's case, then
+        /// the rest of the chain as a `case _`. Upstream checks the spelling
+        /// as a `comptime match` that reports no coverage warning.
+        #[serde(default)]
+        if_case: bool,
     },
     /// `comptime for var in iter: <body>` — a **compile-time (unrolled) loop**
     /// (Mojo's modern spelling; the older `@parameter for` is deprecated). Same
@@ -3037,7 +3043,7 @@ pub fn lambdas_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Expr>) {
             lambdas_in_expr(iter, out);
         }
         StmtKind::ComptimeFor { iter, .. } => lambdas_in_expr(iter, out),
-        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+        StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases, .. } => {
             lambdas_in_expr(subject, out);
             for case in cases {
                 for value in case.pattern.expressions() {
@@ -3554,7 +3560,8 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         self.expr(message);
                     }
                 }
-                StmtKind::Match { subject, cases } | StmtKind::ComptimeMatch { subject, cases } => {
+                StmtKind::Match { subject, cases }
+                | StmtKind::ComptimeMatch { subject, cases, .. } => {
                     self.expr(subject);
                     for case in cases {
                         self.pattern(&mut case.pattern);
