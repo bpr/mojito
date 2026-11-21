@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2464**.
+Next free ID: **R2465**.
 
 ## Ordered Work
 
@@ -852,6 +852,23 @@ How much generic instantiation multiplies a program, and proof that a pass
 which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
+
+- [ ] **R2464 8 fixtures stopped elaborating after batch 3**
+
+  The instantiation ratchet finds `assets/ok` fixtures that elaborated at the last baseline and now fail to compile.
+  - Probe: `assets/ok/immutable_origin_struct_argument_exclusivity.mojo` (failed: run error: invalid checked program: after pre-elaboration pass `inline-parametric`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; after pre-elaboration pass `sroa`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; after pre-elaboration pass `mem-2-reg`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; after pre-elaboration pass `sccp`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; after pre-elaboration pass `canonicalize`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; after pre-elaboration pass `canonicalize`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; MIR function 'main': MakeRef destination recovers permission unavailable through its source capability).
+  - Probe: `assets/ok/initializer_list_keyword_entries.mojo` (failed: run error: invalid call to 'Span': no constructor overload matches the supplied arguments (type mismatch for argument 'unsafe_ptr' to 'Span.__init__': expected a pointer whose origin is the supplied 'origin' argument, found a pointer of origin origin_of(#335.xs.<element>))).
+  - Probe: `assets/ok/list_unsafe_uninit_length.mojo` (failed: run error: unsupported feature: an origin-bearing Pointer designates a single value; only offset 0 can be dereferenced).
+  - Probe: `assets/ok/nominal_string_bytes_peek_split.mojo` (failed: run error: unsupported feature: an origin-bearing Pointer designates a single value; only offset 0 can be dereferenced).
+  - Probe: `assets/ok/rebind_across_origin_arguments.mojo` (failed: run error: Elaboration error: function instantiation of `main` failed: rebind input type 'View$mono$Vfalse[false]' does not match result type 'View$mono$Vtrue[true]').
+  - Probe: `assets/ok/span_pointer_construction.mojo` (failed: run error: invalid call to 'Span': no constructor overload matches the supplied arguments (type mismatch for argument 'unsafe_ptr' to 'Span.__init__': expected a pointer whose origin is the supplied 'origin' argument, found a pointer of origin origin_of(#324.items.<element>))).
+  - Probe: `assets/ok/template_method_for_loop.mojo` (failed: run error: type mismatch for field 'src' of 'ShelfIter': expected a pointer whose origin is the supplied 'o' argument, found a pointer of origin origin_of(#325~)).
+  - Probe: `assets/ok/temporary_receiver_view.mojo` (failed: run error: access to '(expression temporary)' conflicts with live reference 'view').
+  - Ratchet log: `target/run-batches/20261120-073546/batch3-ratchet.log`.
+  - Fix the regression, or delete this entry and file one entry per cause in the track that owns it.
+  - Filed by `scripts/run-batches` (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2193 Concrete instructions grew 4.49% over batches 5 to 7**
 
