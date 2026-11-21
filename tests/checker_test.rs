@@ -7527,6 +7527,25 @@ fn self_origin_requirement_resolves_concretely_and_rejects_a_mismatch() {
 }
 
 #[test]
+fn ref_clause_requirement_matches_a_parametric_struct_witness() {
+    // A requirement's own origin binder and a parametric struct's witness
+    // number it differently; the `ref` contracts (receiver and parameter)
+    // compare by the binder's position, so the witness conforms.
+    ok_std(
+        "trait T:\n    def g[o: Origin](self, ref[o] x: Int) -> Int: ...\n    def h[o: Origin](ref[o] self) -> Int: ...\n\nstruct S[n: Int](T):\n    var x: Int\n    def __init__(out self):\n        self.x = Self.n\n    def g[o: Origin](self, ref[o] x: Int) -> Int:\n        return x\n    def h[o: Origin](ref[o] self) -> Int:\n        return self.x\n",
+    );
+}
+
+#[test]
+fn requirement_ref_clause_reads_its_address_space_binder() {
+    // A requirement's `ref[_, a]` clauses, the receiver's among them, lower
+    // with the requirement's own `AddressSpace` binder in scope.
+    ok_std(
+        "trait T:\n    def g[a: AddressSpace](self, ref[_, a] x: Int) -> Int: ...\n    def space[a: AddressSpace](ref[_, a] self) -> Int: ...\n\nstruct S(T):\n    var x: Int\n    def __init__(out self):\n        self.x = 1\n    def g[a: AddressSpace](self, ref[_, a] x: Int) -> Int:\n        return Int(a._value) + x\n    def space[a: AddressSpace](ref[_, a] self) -> Int:\n        return Int(a._value)\n",
+    );
+}
+
+#[test]
 fn conformer_may_return_the_parameterized_associated_application_directly() {
     // A conforming struct spells the application as its own return type
     // (`-> Self.IterType[origin_of(self)]`). With the concrete struct substituted

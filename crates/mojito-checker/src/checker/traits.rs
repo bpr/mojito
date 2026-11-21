@@ -518,6 +518,13 @@ impl Checker {
             self,
         )?;
         let decls = ParamDecl::argument_decls(&declared);
+        let regular: Vec<_> = m
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| param.kind == mojito_ast::ast::ParamKind::Regular)
+            .collect();
+        let regular_params: Vec<_> = regular.iter().map(|(_, param)| *param).collect();
         // The signature reads an origin binder as a value (`Pointer[T, o]`).
         self.push_param_scope(&ParamDecl::signature_scope(&declared));
         let saved_type_params = self.enclosing_type_params.clone();
@@ -557,12 +564,41 @@ impl Checker {
                     "'where' clauses on trait methods are not supported".to_string(),
                 ));
             }
-            Ok((defaults, all_types, ret, error))
+            // The `ref` clauses read the method's value binders
+            // (`ref[_, a] self`), in scope only here.
+            let ref_return = match &m.ret {
+                Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
+                    origin.as_ref().ok_or_else(|| {
+                        TypeError::Unsupported("reference return requires an origin".to_string())
+                    })?,
+                    &declared,
+                    &regular_params,
+                    0,
+                    this,
+                )?),
+                _ => None,
+            };
+            let ref_params = lower_ref_param_sigs(&declared, &regular_params, 0, this)?;
+            let self_ref = lower_ref_convention_sig(
+                m.self_convention,
+                m.self_origin.as_ref(),
+                &declared,
+                &regular_params,
+                0,
+                this,
+            )?;
+            Ok((
+                defaults,
+                all_types,
+                ret,
+                error,
+                (self_ref, ref_params, ref_return),
+            ))
         });
         self.pop_param_scope();
         self.enclosing_type_params = saved_type_params;
         self.enclosing_param_decls = saved_decls;
-        let (defaults, all_types, ret, error) = signature?;
+        let (defaults, all_types, ret, error, (self_ref, ref_params, ref_return)) = signature?;
         self.check_result_origins(
             m.ret.as_ref(),
             &m.params,
@@ -576,26 +612,6 @@ impl Checker {
                 &format!("trait method '{}.{}' keyword collector", name, m.name),
             )?;
         }
-        let regular: Vec<_> = m
-            .params
-            .iter()
-            .enumerate()
-            .filter(|(_, param)| param.kind == mojito_ast::ast::ParamKind::Regular)
-            .collect();
-        let regular_params: Vec<_> = regular.iter().map(|(_, param)| *param).collect();
-        let ref_return = match &m.ret {
-            Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
-                origin.as_ref().ok_or_else(|| {
-                    TypeError::Unsupported("reference return requires an origin".to_string())
-                })?,
-                &declared,
-                &regular_params,
-                0,
-                self,
-            )?),
-            _ => None,
-        };
-        let ref_params = lower_ref_param_sigs(&declared, &regular_params, 0, self)?;
         let sig = MethodSig {
             declared,
             availability: Vec::new(),
@@ -627,6 +643,7 @@ impl Checker {
             error,
             self_convention: m.self_convention,
             refined_self: None,
+            self_ref,
             ref_params,
             ref_return,
             view_return_interior: view_return_interior_tags(m.ret.as_ref()),
@@ -2223,6 +2240,7 @@ impl Checker {
                 .map(|error| self.requirement_ty_at(error, self_ty)),
             self_convention: req_sig.self_convention,
             refined_self: None,
+            self_ref: req_sig.self_ref.clone(),
             ref_params: req_sig.ref_params.clone(),
             ref_return: req_sig.ref_return.clone(),
             view_return_interior: req_sig.view_return_interior.clone(),

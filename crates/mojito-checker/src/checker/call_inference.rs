@@ -3128,6 +3128,13 @@ pub(super) fn name_ref_origin_mismatch(
                 names.get(slot).map_or("argument", String::as_str)
             ),
         },
+        TypeError::RefMutabilityMismatch { slot, ty } => TypeError::BadCall {
+            func: func.to_string(),
+            reason: format!(
+                "value passed to '{}' cannot be converted from '{ty}' to ref '{ty}'\nnote: operand mutability 'False' doesn't match expected mutability 'True'",
+                names.get(slot).map_or("argument", String::as_str)
+            ),
+        },
         other => other,
     }
 }

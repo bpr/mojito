@@ -411,6 +411,15 @@ impl Checker {
             args,
             &format!("method '{method}'"),
         )?;
+        if let Some(self_ref) = &resolved.self_ref {
+            self.check_receiver_ref(object, self_ref).map_err(|error| {
+                super::super::call_inference::name_ref_origin_mismatch(
+                    error,
+                    method,
+                    &["self".to_string()],
+                )
+            })?;
+        }
         let (effective_conventions, solved_return) = self
             .solve_call_origins(
                 &resolved.slots,

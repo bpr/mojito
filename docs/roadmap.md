@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2449**.
+Next free ID: **R2452**.
 
 ## Ordered Work
 
@@ -2800,6 +2800,13 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     from `def view2[o: MutOrigin](ref[o] x: Int)` is "expected
     Pointer[Int, origin#0], found Pointer[Int, origin@N]": `origin_of(x)`
     of a `ref[o] x` is not `o`.
+  - A `ref[o]` result over a receiver-bound `o` (`def first[o:
+    Origin](ref[o] self) -> ref[o] Self: return self`) borrows the
+    receiver since R2412; the probes above remain.
+  - Once it lands, the bundled `OwnedPointer.ptr`/`unsafe_ptr` (`ref[origin]
+    self`), `OwnedPointer.__getitem__` (`ref[AddressSpace.GENERIC] self`),
+    and upstream's `Array.unsafe_ptr` (`ref[origin, address_space] self`)
+    can spell upstream's receiver clauses.
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4624,7 +4631,48 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `a.pick[2]()`: the inliner folds the call to `PBox.pick`, but `fp`
     keeps `n` (two instances), where the pin and the direct call
     `b.pick[2]()` remove it.
+  - Probe: `u.space()` in `def f[U: T](u: U)`, for a requirement
+    `def space[a: AddressSpace](ref[_, a] self) -> Int` the call deduces
+    from the receiver's place, checks but fails elaboration ("in
+    `S.space`: unsupported monomorphization cannot resolve parameter
+    `a`"), where the pin prints `0`.
   - Found while landing a function applied in a signature (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2449 A subscript's MIR call carries no deduced compile-time
+  arguments**
+
+  `s[5]` over `def __getitem__[a: AddressSpace](ref[_, a] self, i: Int)`
+  fails MIR verification ("required compile-time value parameter 'a' is
+  missing"), where the pin prints `5` (and `6` through a `GLOBAL`
+  pointer's `q[][5]`); `s.__getitem__(5)` runs.
+  - Cause: `MirSubscriptCall` holds only the bracket's `param_arg_regs`,
+    no `instantiated_args`, so a binder the check deduced (here from the
+    receiver's place) never reaches the verifier or the elaborator.
+  - `MirInstr::MethodCall` carries `instantiated_args`; the subscript
+    call should carry them the same way, through the MIR text form, the
+    verifier (`verify/subscripts.rs`), and `native::mono`.
+  - Probe: the same for `__setitem__` and a slice's accessor.
+  - Found while landing R2412 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2450 The iteration protocol reads no receiver `ref` clause**
+
+  `for v in s` over `def __iter__[a: AddressSpace](ref[_, a] self) -> It`
+  is rejected ("expected a borrowed '__iter__' method"), where the pin
+  prints `1`.
+  - Cause: `instantiate_iteration_method` (`checker/iteration.rs`)
+    resolves the protocol methods by type, with no receiver expression,
+    so it neither deduces a receiver clause's binders nor checks the
+    iterable's place against the clause, as a method call now does
+    (`Checker::check_receiver_ref`).
+  - Probe: `for v in q[]` over a bare `ref self` `__iter__`, `q` a
+    `GLOBAL` pointer, is not checked against `AddressSpace.GENERIC`.
+  - Lever: pass the iterable expression from `loop_site_protocol` to
+    `instantiate_method_generics` and the receiver check.
+  - Found while landing R2412 (2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10691,27 +10739,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2412 A `ref[...] self` receiver clause is no callable contract**
+- [ ] **R2451 A method's receiver is held apart from its parameter list**
 
-  `def space[a: AddressSpace](ref[_, a] self) -> Int` called as
-  `s.space()` fails with "no overload matches the supplied arguments",
-  where the pin prints `0` (and `1` through a `GLOBAL` pointer's `q[]`).
-  - Cause: a method's receiver clause (`self_origin`) is read only for
-    validation and writability. `with_receiver_parameter` gives the
-    receiver no `RefSig`, so a call neither binds the clause's binders
-    from the receiver's place nor checks the place against it.
-  - Probe: `def get(ref[_, AddressSpace.GLOBAL] self)` called on a local
-    is accepted. The pin rejects it ("operand address space '0' doesn't
-    match expected address space '1'").
-  - Probe: a bare `ref self` method called through a `GLOBAL` pointer's
-    `q[].get()` is accepted. The pin rejects it the other way round.
-  - Probe: upstream's `Span` and `Array` members take
-    `ref[origin, address_space] self` (`collections/span.mojo`,
-    `collections/array.mojo`).
-  - Lever: lower the receiver clause to a `RefSig` in the receiver slot
-    and solve it with the arguments' (`solve_call_origins`,
-    `reference_solve_pair`).
-  - Found while landing R2409 (2026-11-20).
+  Upstream's receiver is a method's argument 0, its convention and `ref`
+  clause that argument's type, where `MethodSig` keeps it apart
+  (`has_self`, `self_convention`, `self_ref`, `receiver_index`).
+  - So every rule over arguments needs a receiver twin: the receiver's
+    `ref` contract is solved by its own pair in
+    `instantiate_method_generics` and checked by
+    `Checker::check_receiver_ref`, beside the slots' loop.
+  - Lever: store the argument-0 view `with_receiver_parameter` already
+    builds for a method value as the signature itself, and read the
+    receiver as slot 0 everywhere.
+  - Found while landing R2412 (2026-11-21).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

@@ -372,6 +372,7 @@ impl Checker {
                             param_args,
                             args,
                             kwargs,
+                            None,
                         ) {
                             Err(dynamic @ TypeError::DynamicParameterValue) => dynamic,
                             _ => error,
@@ -415,6 +416,7 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
+                None,
             ) {
                 Ok(instantiation) => instantiation,
                 Err(error) if single_candidate => return Err(error),
@@ -517,6 +519,7 @@ impl Checker {
                     } else {
                         None
                     },
+                    self_ref: None,
                     ref_params: sig.ref_params.clone(),
                     ref_return,
                     param_types: params,

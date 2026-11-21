@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A method's `ref[...] self` clause is the receiver's `ref` contract, as
+  on any `ref` parameter (R2412): a call deduces the clause's
+  `AddressSpace` and origin binders from the receiver's place, so `def
+  space[a: AddressSpace](ref[_, a] self)` runs through `s.space()`,
+  `q[].space()`, `S.space(s)`, and an operator, where every candidate was
+  dropped. A receiver in another address space (a bare `ref self` is
+  `GENERIC`), one not of the clause's exact or bracket-bound origin, and a
+  read-only receiver of a mutable clause are rejected with the pin's
+  diagnostics, where they ran (a read-only receiver was written through).
+  A `ref[o]` result over a receiver-bound `o` borrows the receiver, and a
+  requirement's `ref` clauses lower with its own binders in scope and
+  compare with a parametric struct's witness by binder position.
+
 - The `pop.load` and `pop.store` `__mlir_op`s admit any `RegisterPassable`
   element, as at the pin (R2405), where only a scalar, pointer, or
   `TrivialRegisterPassable` struct was admitted. The load is a bitwise copy

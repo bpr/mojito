@@ -247,6 +247,39 @@ impl Checker {
         Ok((conventions, returned))
     }
 
+    /// Check the receiver `object` against its `ref` contract `signature`
+    /// (a method's `self_ref`, its bracket's origins bound), as any `ref`
+    /// argument is checked against its clause: its place's address space,
+    /// the mutability the clause's origin requires, and an exact or bound
+    /// origin. The receiver is argument 0 of `names`' call.
+    pub(in crate::checker) fn check_receiver_ref(
+        &self,
+        object: &Expr,
+        signature: &mojito_types::origin::RefSig,
+    ) -> Result<(), TypeError> {
+        let actual = self.materialized_reference_actual(object)?;
+        check_ref_actual(signature, &actual, 0)?;
+        let origin_mismatch = |expected: String| TypeError::RefOriginMismatch {
+            slot: 0,
+            ty: actual.referent.to_string(),
+            expected,
+            actual: spelled_origin(object).unwrap_or_else(|| actual.origin.to_string()),
+        };
+        if let Some(expected) = exact_origin_mismatch(&signature.origin, &actual.origin) {
+            return Err(origin_mismatch(expected.to_string()));
+        }
+        // A binder the call left open (`ref[o] self` with no bracket) is
+        // the receiver's own origin.
+        if sig_origin_has_bound(&signature.origin) && !sig_origin_has_open_binder(&signature.origin)
+        {
+            let allowed = substitute_sig_origin(&signature.origin, &[]);
+            if !origin_is_declared(&actual.origin, &allowed) {
+                return Err(origin_mismatch(self.display_origin_with_names(&allowed)));
+            }
+        }
+        Ok(())
+    }
+
     /// Solve one call's `ref` contracts against its arguments. `contracts`
     /// are the per-slot and result contracts, with the callee's origin
     /// binders the call binds (those `open` admits) bound from the `ref`
@@ -299,27 +332,13 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             let actual = self.materialized_reference_actual(expression)?;
-            // A `ref` parameter takes a place in the address space its
-            // clause names, `AddressSpace.GENERIC` when it names none.
-            if let (Some(expected), Some(found)) = (
-                signature.address_space.known(),
-                actual.address_space.known(),
-            ) && expected != found
-            {
-                return Err(TypeError::RefAddressSpaceMismatch {
-                    slot: index,
-                    ty: actual.referent.to_string(),
-                    expected,
-                    actual: found,
-                });
-            }
+            check_ref_actual(signature, &actual, index).map_err(|error| match error {
+                TypeError::RefMutabilityMismatch { .. } => {
+                    TypeError::ImmutableBinding("reference argument".to_string())
+                }
+                error => error,
+            })?;
             let is_mutable = actual.mutability == Mutability::Mutable;
-            let requires_mutable = matches!(signature.mutability, SigMutability::Mutable);
-            if requires_mutable && !is_mutable {
-                return Err(TypeError::ImmutableBinding(
-                    "reference argument".to_string(),
-                ));
-            }
             origins[index] = Some(actual.origin);
             if let Mutability::Param(parameter) = actual.mutability
                 && matches!(
@@ -663,6 +682,62 @@ impl Checker {
 /// The declared exact origin `signature` demands when `actual` does not
 /// carry it: `Static` needs a static actual; `Untracked { mutable }` needs an
 /// untracked actual whose permission covers the demand.
+/// Check `actual`, the place passed in argument `slot`, against its `ref`
+/// contract `signature`: the address space its clause names
+/// (`AddressSpace.GENERIC` when it names none), and the mutability a
+/// mutable clause origin requires.
+fn check_ref_actual(
+    signature: &mojito_types::origin::RefSig,
+    actual: &mojito_types::origin::RefTy,
+    slot: usize,
+) -> Result<(), TypeError> {
+    if let (Some(expected), Some(found)) = (
+        signature.address_space.known(),
+        actual.address_space.known(),
+    ) && expected != found
+    {
+        return Err(TypeError::RefAddressSpaceMismatch {
+            slot,
+            ty: actual.referent.to_string(),
+            expected,
+            actual: found,
+        });
+    }
+    if matches!(
+        signature.mutability,
+        mojito_types::origin::SigMutability::Mutable
+    ) && actual.mutability != mojito_types::origin::Mutability::Mutable
+    {
+        return Err(TypeError::RefMutabilityMismatch {
+            slot,
+            ty: actual.referent.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Whether `signature` names an origin binder a call has not bound.
+fn sig_origin_has_open_binder(signature: &mojito_types::origin::SigOrigin) -> bool {
+    use mojito_types::origin::SigOrigin;
+    match signature {
+        SigOrigin::Bound(origin) => origin_has_param(origin),
+        SigOrigin::Projected(base, _) => sig_origin_has_open_binder(base),
+        SigOrigin::Union(members) => members.iter().any(sig_origin_has_open_binder),
+        _ => false,
+    }
+}
+
+/// Whether `origin` names an origin parameter.
+fn origin_has_param(origin: &mojito_types::origin::Origin) -> bool {
+    use mojito_types::origin::Origin;
+    match origin {
+        Origin::Param(_) => true,
+        Origin::Union(members) => members.iter().any(origin_has_param),
+        Origin::MutCast(inner, _) => origin_has_param(inner),
+        _ => false,
+    }
+}
+
 fn exact_origin_mismatch(
     signature: &mojito_types::origin::SigOrigin,
     actual: &mojito_types::origin::Origin,

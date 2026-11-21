@@ -477,19 +477,42 @@ pub(in crate::checker) fn lower_ref_param_sigs(
     params
         .iter()
         .map(|param| {
-            if param.convention != Some(ArgConvention::Ref) {
-                return Ok(None);
-            }
-            match &param.origin {
-                Some(spec) => lower_ref_sig(spec, decls, params, struct_params, values).map(Some),
-                None => Ok(Some(mojito_types::origin::RefSig {
-                    origin: mojito_types::origin::SigOrigin::Infer,
-                    mutability: mojito_types::origin::SigMutability::Infer,
-                    address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
-                })),
-            }
+            lower_ref_convention_sig(
+                param.convention,
+                param.origin.as_ref(),
+                decls,
+                params,
+                struct_params,
+                values,
+            )
         })
         .collect()
+}
+
+/// The `ref` contract of one argument passed by `convention`: its clause
+/// `origin` lowered, a bare `ref` inferring its origin and mutability in
+/// `AddressSpace.GENERIC`, and `None` for any other convention. The
+/// receiver's is lowered the same way, as upstream types argument 0, its
+/// clause's binders read beside the method's regular `params`.
+pub(in crate::checker) fn lower_ref_convention_sig(
+    convention: Option<ArgConvention>,
+    origin: Option<&mojito_ast::ast::OriginSpec>,
+    decls: &[ParamDecl],
+    params: &[&FnParam],
+    struct_params: usize,
+    values: &dyn OriginDecls,
+) -> Result<Option<mojito_types::origin::RefSig>, TypeError> {
+    if convention != Some(ArgConvention::Ref) {
+        return Ok(None);
+    }
+    match origin {
+        Some(spec) => lower_ref_sig(spec, decls, params, struct_params, values).map(Some),
+        None => Ok(Some(mojito_types::origin::RefSig {
+            origin: mojito_types::origin::SigOrigin::Infer,
+            mutability: mojito_types::origin::SigMutability::Infer,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+        })),
+    }
 }
 
 impl Checker {
@@ -574,6 +597,7 @@ impl Checker {
         params: &[&FnParam],
         struct_params: usize,
         self_convention: Option<ArgConvention>,
+        self_ref: Option<&mojito_types::origin::RefSig>,
     ) -> Vec<ViewReturnOrigin> {
         use mojito_types::origin::{SigMutability, SigOrigin};
         let Some(SourceType::Named(name, arguments)) = ret else {
@@ -651,7 +675,9 @@ impl Checker {
             let Ok(sig) = lower_ref_sig(&spec, decls, params, struct_params, self) else {
                 continue;
             };
-            let Some(mut sig) = bind_ref_binders(&ref_params, Some(&sig), &|_| true).1 else {
+            let Some(mut sig) =
+                bind_ref_binders_with_receiver(self_ref, &ref_params, Some(&sig), &|_| true).1
+            else {
                 continue;
             };
             if sig.mutability == SigMutability::Infer

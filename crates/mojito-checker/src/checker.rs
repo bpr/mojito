@@ -3143,6 +3143,11 @@ struct MethodSig {
     /// free) or a type over the initializer's own binders, which defines
     /// it. `None` for an unannotated receiver and for `Self`.
     refined_self: Option<Ty>,
+    /// The receiver's `ref` contract, as upstream types argument 0: a
+    /// `ref[...] self` clause lowered as a `ref` parameter's, a bare `ref
+    /// self` inferring its origin and mutability in `AddressSpace.GENERIC`.
+    /// `None` for every other convention.
+    self_ref: Option<mojito_types::origin::RefSig>,
     ref_params: Vec<Option<mojito_types::origin::RefSig>>,
     ref_return: Option<mojito_types::origin::RefSig>,
     /// The owned-interior tags a struct-typed view return projects on the
@@ -3178,10 +3183,16 @@ struct MethodSig {
 
 impl MethodSig {
     /// Its `ref` result contract as a call reads it: each of its own origin
-    /// binders the contract names bound from the `ref` arguments naming it
-    /// ([`origins::bind_ref_binders`]).
+    /// binders the contract names bound from the `ref` arguments naming it,
+    /// the receiver among them ([`origins::bind_ref_binders_with_receiver`]).
     fn call_ref_return(&self) -> Option<mojito_types::origin::RefSig> {
-        origins::bind_ref_binders(&self.ref_params, self.ref_return.as_ref(), &|_| true).1
+        origins::bind_ref_binders_with_receiver(
+            self.self_ref.as_ref(),
+            &self.ref_params,
+            self.ref_return.as_ref(),
+            &|_| true,
+        )
+        .1
     }
 
     /// The parameters a call binds by position, in declared order
@@ -3222,6 +3233,7 @@ impl MethodSig {
             error: None,
             self_convention: None,
             refined_self: None,
+            self_ref: None,
             ref_params: vec![None; len],
             ref_return: None,
             view_return_interior: Vec::new(),
@@ -3962,6 +3974,9 @@ struct MethodCallResolution {
     mutates_receiver: bool,
     consumes_receiver: bool,
     lowered_name: Option<String>,
+    /// See [`MethodSig::self_ref`], with the binders the call bound
+    /// substituted.
+    self_ref: Option<mojito_types::origin::RefSig>,
     ref_params: Vec<Option<mojito_types::origin::RefSig>>,
     ref_return: Option<mojito_types::origin::RefSig>,
     param_types: Vec<Ty>,
@@ -4250,6 +4265,20 @@ impl MethodInstantiation {
                 .substitute_result(&ty, &|_, origin| checker.bound_origin_mutability(origin)),
             None => ty,
         }
+    }
+
+    /// The receiver's `ref` contract with the origins the bracket bound
+    /// (`t.first[origin_of(s)]()`) and the call solved substituted.
+    fn bound_self_ref(
+        &self,
+        checker: &Checker,
+        reference: &mojito_types::origin::RefSig,
+    ) -> mojito_types::origin::RefSig {
+        let bracketed = mojito_types::origin::RefSig {
+            origin: origins::bind_sig_origin(&reference.origin, &self.bracket_origins),
+            ..reference.clone()
+        };
+        self.bound_ref_return(checker, &bracketed)
     }
 
     /// The declared `ref` result contract with the method's bound origin

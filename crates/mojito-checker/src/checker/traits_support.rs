@@ -215,17 +215,7 @@ pub(super) fn canonical_availability(method: &MethodSig) -> Vec<GenericConstrain
             )
     };
     let context = ParamContext::detached();
-    let mut renamed = mojito_types::param_expr::ParamBindings::new();
-    for (index, decl) in method.decls().iter().enumerate() {
-        renamed.bind(
-            decl.id().clone(),
-            context.decl_ref(
-                canonical_id(index),
-                &format!("${index}"),
-                decl.binder_meta(),
-            ),
-        );
-    }
+    let renamed = canonical_binder_refs(method);
     let operand = |operand: &ConstraintOperand| match operand {
         ConstraintOperand::Expr(expr) => ConstraintOperand::Expr(
             context
@@ -298,6 +288,7 @@ fn canonical_method_shape(method: &MethodSig) -> MethodSig {
         // binder ids name its owner.
         let mut shape = method.clone();
         shape.declared = decls.into_owned();
+        canonicalize_ref_sigs(method, &mut shape);
         return shape;
     }
     let mut types = method.params.clone();
@@ -322,7 +313,89 @@ fn canonical_method_shape(method: &MethodSig) -> MethodSig {
         .then(|| types.pop().expect("collector type"));
     shape.ret = types.pop().expect("return type");
     shape.params = types;
+    canonicalize_ref_sigs(method, &mut shape);
     shape
+}
+
+/// Each of `method`'s own argument binders as a reference to its
+/// position, the identity [`canonical_method_shape`] and
+/// [`canonical_availability`] give it.
+fn canonical_binder_refs(method: &MethodSig) -> mojito_types::param_expr::ParamBindings {
+    let context = ParamContext::detached();
+    let mut renamed = mojito_types::param_expr::ParamBindings::new();
+    for (index, decl) in method.decls().iter().enumerate() {
+        renamed.bind(
+            decl.id().clone(),
+            context.decl_ref(
+                ParamId::new(mojito_types::types::CONTRACT_BINDER_OWNER, index),
+                &format!("${index}"),
+                decl.binder_meta(),
+            ),
+        );
+    }
+    renamed
+}
+
+/// `method`'s `ref` contracts (receiver, parameters, result) with its own
+/// binders named by position: each origin binder by its place among the
+/// declared origin binders, each value binder an address space reads by
+/// [`canonical_binder_refs`]. A method's own origin ids are numbered past
+/// its owner's, so a requirement and a parametric struct's witness spell
+/// one binder differently.
+fn canonicalize_ref_sigs(method: &MethodSig, shape: &mut MethodSig) {
+    use mojito_types::origin::{Origin, OriginParamId, RefSig, SigOrigin};
+    fn rename(origin: &SigOrigin, origins: &HashMap<OriginParamId, OriginParamId>) -> SigOrigin {
+        match origin {
+            SigOrigin::Bound(Origin::Param(id)) => {
+                SigOrigin::Bound(Origin::Param(origins.get(id).copied().unwrap_or(*id)))
+            }
+            SigOrigin::Projected(base, path) => {
+                SigOrigin::Projected(Box::new(rename(base, origins)), path.clone())
+            }
+            SigOrigin::Union(members) => SigOrigin::Union(
+                members
+                    .iter()
+                    .map(|member| rename(member, origins))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+    // Above every declared, reference-mutability, and pack binder id.
+    const CANONICAL_ORIGIN_BASE: u32 = 1 << 24;
+    let origins: HashMap<OriginParamId, OriginParamId> = method
+        .declared
+        .iter()
+        .filter_map(|decl| match decl {
+            ParamDecl::Origin { origin, .. } => Some(*origin),
+            _ => None,
+        })
+        .zip(0u32..)
+        .map(|(id, index)| (id, OriginParamId(CANONICAL_ORIGIN_BASE + index)))
+        .collect();
+    let context = ParamContext::detached();
+    let values = canonical_binder_refs(method);
+    let canonical = |sig: &RefSig| RefSig {
+        origin: rename(&sig.origin, &origins),
+        mutability: sig.mutability.clone(),
+        address_space: match &sig.address_space {
+            mojito_types::types::AddressSpaceSlot::Expr(expr) => {
+                mojito_types::types::AddressSpaceSlot::Expr(
+                    context
+                        .replace(expr, &values)
+                        .unwrap_or_else(|_| expr.clone()),
+                )
+            }
+            known @ mojito_types::types::AddressSpaceSlot::Known(_) => known.clone(),
+        },
+    };
+    shape.self_ref = method.self_ref.as_ref().map(canonical);
+    shape.ref_params = method
+        .ref_params
+        .iter()
+        .map(|sig| sig.as_ref().map(canonical))
+        .collect();
+    shape.ref_return = method.ref_return.as_ref().map(canonical);
 }
 
 /// `method` with each existential parameter (`hasher: Some[Hasher]`) bound

@@ -713,6 +713,14 @@ impl Checker {
             .collect();
         let regular_params: Vec<&FnParam> = regular.iter().map(|(_, param)| *param).collect();
         let named_result = mojito_ast::ast::named_result(&method.params);
+        let self_ref = lower_ref_convention_sig(
+            method.self_convention,
+            method.self_origin.as_ref(),
+            &self.enclosing_param_decls,
+            &regular_params,
+            self.enclosing_struct_type_params.get(),
+            self,
+        )?;
         Ok(MethodSig {
             availability,
             declared: decls,
@@ -786,6 +794,7 @@ impl Checker {
                 &regular_params,
                 self.enclosing_struct_type_params.get(),
                 method.self_convention,
+                self_ref.as_ref(),
             ),
             implicit: method
                 .decorators
@@ -804,6 +813,7 @@ impl Checker {
             ),
             nested_origins: NestedOrigins::of(&method.decorators),
             overload: None,
+            self_ref,
         })
     }
 
@@ -2211,7 +2221,16 @@ impl Checker {
         // through it.
         let ref_return = match ref_return {
             Some(signature) => {
-                bind_ref_binders(
+                bind_ref_binders_with_receiver(
+                    lower_ref_convention_sig(
+                        m.self_convention,
+                        m.self_origin.as_ref(),
+                        &self.enclosing_param_decls,
+                        &regular,
+                        self.enclosing_struct_type_params.get(),
+                        self,
+                    )?
+                    .as_ref(),
                     &lower_ref_param_sigs(
                         &self.enclosing_param_decls,
                         &regular,
@@ -3564,6 +3583,7 @@ impl Checker {
                         &own_args,
                         args,
                         kwargs,
+                        None,
                     )
                     else {
                         continue;
@@ -3652,6 +3672,7 @@ impl Checker {
                                 sig,
                                 self.self_instance_ty(name).as_ref(),
                             )),
+                            self_ref: None,
                             ref_params: sig.ref_params.clone(),
                             ref_return: None,
                             param_types: params,

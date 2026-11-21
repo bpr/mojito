@@ -4827,52 +4827,61 @@ impl Checker {
         Ok((mojito_types::types::tuple_type(elements), attributes))
     }
 
+    /// Upstream's spelling of an origin in a diagnostic: a place as
+    /// `origin_of(<place>)` through the names in scope, the enclosing
+    /// struct's own binder by its name.
+    pub(super) fn display_origin_with_names(
+        &self,
+        origin: &mojito_types::origin::Origin,
+    ) -> String {
+        use mojito_types::origin::{Origin, OriginSeg};
+        match origin.uncast() {
+            Origin::Place(place) => {
+                let mut text = self
+                    .owner_name(place.root)
+                    .map_or_else(|| format!("#{}", place.root.0), str::to_string);
+                for segment in &place.path {
+                    match segment {
+                        OriginSeg::Field(name) => {
+                            text.push('.');
+                            text.push_str(name);
+                        }
+                        OriginSeg::AnyIndex => text.push_str("[_]"),
+                        OriginSeg::Interior(tag) => {
+                            text.push_str("._get_owned_interior[\"");
+                            text.push_str(tag);
+                            text.push_str("\"]");
+                        }
+                        OriginSeg::Subtree => {}
+                    }
+                }
+                format!("origin_of({text})")
+            }
+            // The enclosing struct's own binder spells as its name
+            // (`RefBox[origin]`), as upstream prints it.
+            Origin::Param(id) => self
+                .self_ty
+                .as_ref()
+                .and_then(|ty| match ty.kind() {
+                    struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                        self.structs.get(name)
+                    }
+                    _ => None,
+                })
+                .and_then(|info| info.origin_decl(*id))
+                .map_or_else(|| origin.to_string(), |decl| decl.name().to_string()),
+            other => other.to_string(),
+        }
+    }
+
     /// Upstream's spelling of a checked type in a diagnostic, with each struct
     /// origin argument rendered as `origin_of(<place>)` through the names in
     /// scope (`P[origin_of(xs)]`), `Self.o`-style binders as `origin#N`, and an
     /// unbound slot as `_`. An `ImmOrigin(o)` cast spells as `o`, as
     /// upstream prints the cast's provenance.
     pub(super) fn display_ty_with_origin_names(&self, ty: &Ty) -> String {
-        use mojito_types::origin::{Origin, OriginSeg};
-        let origin_text = |origin: &Origin| -> String {
-            match origin.uncast() {
-                Origin::Place(place) => {
-                    let mut text = self
-                        .owner_name(place.root)
-                        .map_or_else(|| format!("#{}", place.root.0), str::to_string);
-                    for segment in &place.path {
-                        match segment {
-                            OriginSeg::Field(name) => {
-                                text.push('.');
-                                text.push_str(name);
-                            }
-                            OriginSeg::AnyIndex => text.push_str("[_]"),
-                            OriginSeg::Interior(tag) => {
-                                text.push_str("._get_owned_interior[\"");
-                                text.push_str(tag);
-                                text.push_str("\"]");
-                            }
-                            OriginSeg::Subtree => {}
-                        }
-                    }
-                    format!("origin_of({text})")
-                }
-                // The enclosing struct's own binder spells as its name
-                // (`RefBox[origin]`), as upstream prints it.
-                Origin::Param(id) => self
-                    .self_ty
-                    .as_ref()
-                    .and_then(|ty| match ty.kind() {
-                        struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
-                            self.structs.get(name)
-                        }
-                        _ => None,
-                    })
-                    .and_then(|info| info.origin_decl(*id))
-                    .map_or_else(|| origin.to_string(), |decl| decl.name().to_string()),
-                other => other.to_string(),
-            }
-        };
+        let origin_text =
+            |origin: &mojito_types::origin::Origin| self.display_origin_with_names(origin);
         match ty.kind() {
             struct_ty
                 if let Some((name, args)) = struct_ty.as_non_simd_struct()

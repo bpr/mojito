@@ -1283,9 +1283,14 @@ struct's parameters, as its signature names it
 binder names the binder itself, `SigOrigin::Bound(Origin::Param(o))`
 (`lower_ref_sig`), as upstream's contract names its parameter, so the
 bracket's substitution rebinds it and the call's origin solve binds a
-binder left open to the union of the `ref` arguments whose clauses name it
-(`bind_ref_binders`, read by `solve_call_origins_with_bool_bindings`,
-`MethodSig::call_ref_return`, and a body's return check)); a
+binder left open to the union of the `ref` arguments whose clauses name it,
+the receiver (`SigOrigin::Self_`) among them when its `ref[o] self` clause
+does (`bind_ref_binders`, `bind_ref_binders_with_receiver`, read by
+`solve_call_origins_with_bool_bindings`, `MethodSig::call_ref_return`, and
+a body's return check)); the receiver's clause is its own `ref` contract
+(`MethodSig::self_ref`), whose binders the call deduces from the receiver's
+place beside the arguments' and against which
+`Checker::check_receiver_ref` checks the receiver; a
 compiler builtin's binder
 (`applied_type`'s collection, pointer, `SIMD`, and storage types,
 `external_call`, `reflect`, the `Variant` storage methods, the

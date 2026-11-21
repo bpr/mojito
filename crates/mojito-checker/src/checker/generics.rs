@@ -1885,6 +1885,7 @@ impl Checker {
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
+        receiver: Option<(&Ty, &Expr)>,
     ) -> Result<MethodInstantiation, TypeError> {
         // The bracket binds the method's whole declared list, as a free
         // call's does, and the origins it bound are substituted into the
@@ -1967,6 +1968,17 @@ impl Checker {
         let mut patterns = Vec::new();
         let mut pattern_names = Vec::new();
         let mut actuals = Vec::new();
+        // The receiver is argument 0: its clause's binders (`ref[_, a]
+        // self`) are deduced from its place, as a `ref` parameter's are.
+        if let (Some(self_ref), Some((receiver_ty, receiver))) = (&signature.self_ref, receiver)
+            && self_ref.address_space.is_symbolic()
+        {
+            let (pattern, actual) =
+                self.reference_solve_pair(Some(self_ref), receiver_ty, receiver_ty, receiver);
+            pattern_names.push("self".to_string());
+            patterns.push(pattern);
+            actuals.push(actual);
+        }
         for (index, slot) in matched.slots.iter().enumerate() {
             let expression = match slot {
                 ArgSlot::Positional(position) => &args[*position],
@@ -2827,7 +2839,7 @@ fn method_value_ty(sig: &MethodSig, owner: &Ty) -> Ty {
     if is_initializer_sig(sig) {
         func.ret = sig.refined_self.clone().unwrap_or_else(|| owner.clone());
     } else if sig.has_self {
-        func = with_receiver_parameter(func, sig.self_convention, owner);
+        func = with_receiver_parameter(func, sig.self_convention, sig.self_ref.as_ref(), owner);
     }
     if sig.decls().is_empty() {
         return TyKind::Func(Box::new(func)).into();
@@ -2840,12 +2852,14 @@ fn method_value_ty(sig: &MethodSig, owner: &Ty) -> Ty {
 }
 
 /// `func`, a method's call surface, with its `self` receiver of type
-/// `owner` passed under `convention` as the leading positional parameter:
-/// each reference contract naming the receiver names that parameter, and
-/// every other parameter's index moves past it.
+/// `owner` passed under `convention` and `ref` contract `self_ref` as the
+/// leading positional parameter: each reference contract naming the
+/// receiver names that parameter, and every other parameter's index moves
+/// past it.
 fn with_receiver_parameter(
     mut func: FuncTy,
     convention: Option<mojito_ast::ast::ArgConvention>,
+    self_ref: Option<&RefSig>,
     owner: &Ty,
 ) -> FuncTy {
     let shift = |sig: &RefSig| RefSig {
@@ -2853,7 +2867,7 @@ fn with_receiver_parameter(
         mutability: sig.mutability.clone(),
         address_space: sig.address_space.clone(),
     };
-    func.ref_params = std::iter::once(None)
+    func.ref_params = std::iter::once(self_ref.map(shift))
         .chain(func.ref_params.iter().map(|sig| sig.as_ref().map(shift)))
         .collect();
     func.ref_return = func.ref_return.as_deref().map(|sig| Box::new(shift(sig)));

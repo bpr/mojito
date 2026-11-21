@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1293
+# swept-count	1299
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_field_pointer_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_struct_tail_field_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
@@ -1023,6 +1023,12 @@ assets/type_error/ref_address_space_duplicate.mojo	compile-reject	agree	error: a
 assets/type_error/ref_address_space_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'Int' to ref 'Int'
 assets/type_error/ref_argument_aliases_pack_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'b' argument and passed immutably to 'rest' argument in 'r' call
 assets/type_error/ref_bare_rejects_other_address_space.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'Int' to ref 'Int'
+assets/type_error/ref_receiver_address_space_mismatch.mojo	compile-reject	agree	error: invalid call to 'get': value passed to 'self' cannot be converted from 'S' to ref 'S'
+assets/type_error/ref_receiver_bare_rejects_other_address_space.mojo	compile-reject	agree	error: invalid call to 'get': value passed to 'self' cannot be converted from 'S' to ref 'S'
+assets/type_error/ref_receiver_bound_origin_mismatch.mojo	compile-reject	agree	error: invalid call to 'first': value passed to 'self' cannot be converted from 'S' to ref 'S'
+assets/type_error/ref_receiver_exact_origin_mismatch.mojo	compile-reject	agree	error: invalid call to 'get': value passed to 'self' cannot be converted from 'S' to ref 'S'
+assets/type_error/ref_receiver_explicit_address_space_mismatch.mojo	compile-reject	agree	error: invalid call to 'space': value passed to 'self' cannot be converted from 'S' to ref 'S'
+assets/type_error/ref_receiver_mutable_origin_rejects_read.mojo	compile-reject	agree	error: invalid call to 'wr': value passed to 'self' cannot be converted from 'S' to ref 'S'
 assets/type_error/ref_return_address_space_mismatch.mojo	compile-reject	agree	error: cannot return reference with incompatible address space: '0' vs '1'
 assets/type_error/reference_binding_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/reference_binding_write_linear_parameter.mojo	compile-reject	agree	error: value abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'

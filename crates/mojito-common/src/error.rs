@@ -679,6 +679,14 @@ pub enum TypeError {
         expected: u32,
         actual: u32,
     },
+    /// A `ref` receiver whose clause's origin is mutable
+    /// (`ref[o] self` over `o: MutOrigin`) received an immutable place. The
+    /// call site rewrites it into a `BadCall` naming the function and
+    /// parameter.
+    RefMutabilityMismatch {
+        slot: usize,
+        ty: String,
+    },
     /// A reference-returning body returned a place in an address space
     /// other than the one its result clause names.
     ReturnAddressSpaceIncompatible {
@@ -1364,6 +1372,10 @@ impl fmt::Display for TypeError {
             } => write!(
                 f,
                 "value passed to argument {slot} cannot be converted from '{ty}' to ref '{ty}'\nnote: operand address space '{actual}' doesn't match expected address space '{expected}'"
+            ),
+            Self::RefMutabilityMismatch { slot, ty } => write!(
+                f,
+                "value passed to argument {slot} cannot be converted from '{ty}' to ref '{ty}'\nnote: operand mutability 'False' doesn't match expected mutability 'True'"
             ),
             Self::ReturnAddressSpaceIncompatible { found, expected } => write!(
                 f,

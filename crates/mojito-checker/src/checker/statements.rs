@@ -4277,7 +4277,14 @@ impl Checker {
         let clauses_apply =
             ParamDecl::mutability_binders(&decls).all(|binder| binder.constraints().is_empty());
         let origin_signature = CallableOriginSignature {
-            view_return: self.view_return_origins(ret_anno.as_ref(), &decls, regular, 0, None),
+            view_return: self.view_return_origins(
+                ret_anno.as_ref(),
+                &decls,
+                regular,
+                0,
+                None,
+                None,
+            ),
             unavailable: unavailable.clone(),
         };
         let fn_ty = Ty::new(if decls.is_empty() {

@@ -206,6 +206,7 @@ impl Checker {
             object,
             method,
             call,
+            obj_ty,
             ..
         } = site;
         let MethodCallArguments {
@@ -254,6 +255,7 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
+                Some((obj_ty, object)),
             ) {
                 Ok(instantiated) => instantiated,
                 // A runtime value where a subscript accessor takes a
@@ -280,6 +282,10 @@ impl Checker {
             let ref_return = sig
                 .call_ref_return()
                 .map(|reference| instantiated.bound_ref_return(self, &reference));
+            let self_ref = sig
+                .self_ref
+                .as_ref()
+                .map(|reference| instantiated.bound_self_ref(self, reference));
             let declared_ret = instantiated
                 .bound_result(self, &self.substitute_at_instance(&sig.ret, info, targs));
             let MethodInstantiation {
@@ -408,6 +414,9 @@ impl Checker {
                     } else {
                         None
                     },
+                    self_ref: self_ref.map(|signature| {
+                        super::super::call_inference::close_ref_space(signature, &close_space)
+                    }),
                     ref_params: super::super::call_inference::close_ref_sigs(
                         &sig.ref_params,
                         &close_space,
@@ -503,6 +512,7 @@ impl Checker {
                 param_args,
                 args,
                 kwargs,
+                Some((obj_ty, object)),
             ) {
                 Ok(instantiated) => instantiated,
                 Err(failure) => {
@@ -516,6 +526,10 @@ impl Checker {
             let ref_return = sig
                 .call_ref_return()
                 .map(|reference| instantiated.bound_ref_return(self, &reference));
+            let self_ref = sig
+                .self_ref
+                .as_ref()
+                .map(|reference| instantiated.bound_self_ref(self, reference));
             let declared_ret =
                 instantiated.bound_result(self, &self.substitute_self_members(&sig.ret, obj_ty));
             let MethodInstantiation {
@@ -621,6 +635,9 @@ impl Checker {
                 // already spells `Self`; the runtime retargets the receiver
                 // prefix once the concrete type is known.
                 lowered_name: Some(method_lowered_name("__trait_dispatch", method, &sig, None)),
+                self_ref: self_ref.map(|signature| {
+                    super::super::call_inference::close_ref_space(signature, &close_space)
+                }),
                 ref_params: super::super::call_inference::close_ref_sigs(
                     &sig.ref_params,
                     &close_space,
@@ -768,6 +785,7 @@ fn intrinsic_resolution(
         mutates_receiver: false,
         consumes_receiver: false,
         lowered_name: None,
+        self_ref: None,
         ref_params: vec![],
         ref_return: None,
         param_types,

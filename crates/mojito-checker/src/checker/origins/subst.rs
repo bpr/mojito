@@ -330,25 +330,64 @@ pub(in crate::checker) fn bind_ref_binders(
     Vec<Option<mojito_types::origin::RefSig>>,
     Option<mojito_types::origin::RefSig>,
 ) {
+    bind_ref_binders_with_receiver(None, signatures, result, open)
+}
+
+/// [`bind_ref_binders`] for a method, whose receiver is argument 0: a
+/// binder the receiver's clause `receiver` names (`ref[o] self`) also
+/// stands for the receiver (`SigOrigin::Self_`), joined with the slots
+/// naming it.
+pub(in crate::checker) fn bind_ref_binders_with_receiver(
+    receiver: Option<&mojito_types::origin::RefSig>,
+    signatures: &[Option<mojito_types::origin::RefSig>],
+    result: Option<&mojito_types::origin::RefSig>,
+    open: &dyn Fn(mojito_types::origin::OriginParamId) -> bool,
+) -> (
+    Vec<Option<mojito_types::origin::RefSig>>,
+    Option<mojito_types::origin::RefSig>,
+) {
     use mojito_types::origin::{Origin, OriginParamId, RefSig, SigOrigin};
-    fn bind(origin: &SigOrigin, slots: &HashMap<OriginParamId, Vec<usize>>) -> SigOrigin {
+    fn bind(
+        origin: &SigOrigin,
+        slots: &HashMap<OriginParamId, Vec<usize>>,
+        receiver: Option<OriginParamId>,
+    ) -> SigOrigin {
         match origin {
-            SigOrigin::Bound(Origin::Param(id)) => slots.get(id).map_or_else(
-                || origin.clone(),
-                |slots| match slots.as_slice() {
-                    [single] => SigOrigin::Param(*single),
-                    _ => SigOrigin::union(slots.iter().copied().map(SigOrigin::Param)),
-                },
-            ),
+            SigOrigin::Bound(Origin::Param(id)) => {
+                let named: Vec<SigOrigin> = (receiver == Some(*id))
+                    .then_some(SigOrigin::Self_)
+                    .into_iter()
+                    .chain(
+                        slots
+                            .get(id)
+                            .into_iter()
+                            .flatten()
+                            .copied()
+                            .map(SigOrigin::Param),
+                    )
+                    .collect();
+                match named.len() {
+                    0 => origin.clone(),
+                    1 => named.into_iter().next().expect("one binding"),
+                    _ => SigOrigin::union(named),
+                }
+            }
             SigOrigin::Projected(base, path) => {
-                SigOrigin::Projected(Box::new(bind(base, slots)), path.clone())
+                SigOrigin::Projected(Box::new(bind(base, slots, receiver)), path.clone())
             }
             SigOrigin::Union(members) => {
-                SigOrigin::union(members.iter().map(|member| bind(member, slots)))
+                SigOrigin::union(members.iter().map(|member| bind(member, slots, receiver)))
             }
             other => other.clone(),
         }
     }
+    let receiver = match receiver {
+        Some(RefSig {
+            origin: SigOrigin::Bound(Origin::Param(id)),
+            ..
+        }) if open(*id) => Some(*id),
+        _ => None,
+    };
     let mut slots = HashMap::<OriginParamId, Vec<usize>>::new();
     for (index, signature) in signatures.iter().enumerate() {
         if let Some(RefSig {
@@ -361,7 +400,7 @@ pub(in crate::checker) fn bind_ref_binders(
         }
     }
     let rebind = |signature: &RefSig| RefSig {
-        origin: bind(&signature.origin, &slots),
+        origin: bind(&signature.origin, &slots, receiver),
         mutability: signature.mutability.clone(),
         address_space: signature.address_space.clone(),
     };
