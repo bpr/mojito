@@ -971,6 +971,7 @@ assets/ok/parameter_list_raw_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_only_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_shadows_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_value_consuming_receiver.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parameter_value_ref_argument_materializes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_concrete.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_self_origin.mojo	-	ineligible	no-scalar-entry-shape

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2436**.
+Next free ID: **R2437**.
 
 ## Ordered Work
 
@@ -531,6 +531,24 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: `bump3(mut a: Int, b: Int)` holding that assert and `a = a +
     b`, spliced into `H` as `var s = x; bump3(s, x); return s`: pin 17,
     Mojito 18. Without the assert both price it 17.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2436 `inline-parametric` splicing an `@inline(.always)`
+  initializer applied to an explicit `AnyOrigin` gives a `ref.make` a
+  `Pointer` register**
+
+  `Named[Int, ImmutAnyOrigin]("k", x)` over a local `x` fails MIR
+  verification with "MakeRef destination has non-reference-capability type
+  Pointer[Int, ImmUnsafeAnyOrigin]", where the pin prints `k=5` for
+  `print(n)`.
+  - The same struct without `@inline(.always)` on its `__init__` runs, and
+    so does `Named[Int, origin_of(x)]`, so the gap is in how the splice
+    substitutes an any-origin argument into the callee's `ref[Self.o]`
+    registers.
+  - Probe: a local copy of the bundled `Named` (`std/format/_utils.mojo`)
+    with `@inline(.always)` on `__init__` fails the same way.
+  - Found while landing R2424 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4940,27 +4958,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `def k() -> Int: return` is rejected by both ("cannot
     implicitly convert 'None' value to 'Int'" at the pin).
   - Found while landing R2097 (2026-11-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2424 A compile-time value bound to a `ref` argument fails MIR
-  verification or overload resolution**
-
-  `g(K)` over `def g(ref x: Int)` and `comptime K = 4` fails with "argument
-  0 of 'g' has type IntLiteral[4], declared Int", where the pin prints `4`.
-  - Upstream materializes the parameter value into a temporary of the
-    argument's declared type and lends that temporary's address.
-  - Mojito lends a place of the value's literal type, so the reference's
-    type disagrees with the declared one.
-  - Probe: `g(k)` inside `def h[k: Int]()`, called `h[7]()`, likewise; the
-    pin prints `7`.
-  - Probe: `s.write(Named("k", K))` (`Named.__init__` takes `ref[Self.o]
-    value: Self.T`) fails with "MakeRef destination targets Int,
-    incompatible with place storage IntLiteral[4]"; the pin prints `k=4`.
-  - Probe: `FormatStruct(writer, "R").params(Named("k", Self.k))` in a
-    struct's `write_repr_to` fails with "invalid call to 'params': no
-    overload matches"; the pin prints `R[k=1](255)`.
-  - Found while landing R2415 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

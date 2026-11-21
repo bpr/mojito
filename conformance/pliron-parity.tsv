@@ -972,6 +972,7 @@ assets/ok/parameter_list_raw_values.mojo	main	exe-differential	sanitized
 assets/ok/parameter_only_overloads.mojo	main	exe-differential	sanitized
 assets/ok/parameter_shadows_function.mojo	main	exe-differential	sanitized
 assets/ok/parameter_value_consuming_receiver.mojo	main	exe-differential	sanitized
+assets/ok/parameter_value_ref_argument_materializes.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_concrete.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin.mojo	main	exe-differential	sanitized

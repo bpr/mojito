@@ -271,11 +271,12 @@ impl Checker {
     ) -> Result<mojito_types::origin::RefTy, TypeError> {
         use mojito_types::origin::{Mutability, Origin, OriginPlace, RefTy};
         // A compile-time value (a value parameter, a `comptime for`
-        // variable) or a field chain off one is a parameter constant, not
-        // storage: a borrow of it
-        // materializes the constant into a temporary, as upstream's
-        // `kgen.param.constant` does.
-        if self.is_parameter_read(expr)
+        // variable, a struct's own value parameter `Self.k`, a type's
+        // compile-time member `T.S`) or a field chain off one is a
+        // parameter constant, not storage: a borrow of it materializes the
+        // constant into a temporary, as upstream's `kgen.param.constant`
+        // does.
+        if (self.is_parameter_read(expr) || self.is_parameter_value_read(expr))
             && let referent = self.infer(expr)?
             && self.is_materialized_parameter_read(expr)
         {

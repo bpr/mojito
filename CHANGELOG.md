@@ -1189,6 +1189,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct's own value parameter (`Self.k`), its `comptime` member
+  (`Self.N`), and a type's `comptime` member (`T.S`) bound to a `ref`
+  argument materialize into a temporary the callee borrows, as upstream's
+  `kgen.param.constant` does (R2424), so `FormatStruct(writer,
+  "R").params(Named("k", Self.k))` prints `R[k=1]`, where the borrow
+  rooted at `Self` ("Undefined variable 'Self'") or left `Named`'s origin
+  uninferred ("no overload matches").
+
 - A struct's origin-parameterized `comptime` member applied to an origin
   binds the member's own origin binder (R2427): `type_of(s).W[origin_of(x)]`
   over `comptime W[o: Origin] = Pointer[Int, o]` is `Pointer[Int,
