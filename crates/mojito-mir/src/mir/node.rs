@@ -132,6 +132,23 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// The argument a call binds from `source`: its positional or keyword
+    /// argument at that index; `None` for a defaulted parameter.
+    pub(super) fn argument_at(
+        self,
+        source: mojito_checked::checked::CheckedCallArgumentSource,
+    ) -> Option<Self> {
+        match source {
+            mojito_checked::checked::CheckedCallArgumentSource::Positional(index) => {
+                self.args().get(index).copied()
+            }
+            mojito_checked::checked::CheckedCallArgumentSource::Keyword(index) => {
+                self.kwargs().get(index).map(|(_, value)| *value)
+            }
+            mojito_checked::checked::CheckedCallArgumentSource::Default => None,
+        }
+    }
+
     /// The place whose address a `Pointer(to=place)` or
     /// `__get_mvalue_as_litref(place)` takes: its `to=` keyword or its one
     /// positional argument.

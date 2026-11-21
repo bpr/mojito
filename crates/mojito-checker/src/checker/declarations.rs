@@ -2677,9 +2677,9 @@ impl Checker {
     /// field arguments; value parameters must be supplied explicitly.
     /// Record the `ref [origin]` constructor-argument borrows for a
     /// construction call: the constructed aggregate keeps each lent place
-    /// alive through the binding's loans (a view constructor's contract).
-    /// Positional slots only; keyword-bound reference parameters have no
-    /// current stdlib surface.
+    /// alive through the binding's loans (a view constructor's contract),
+    /// however the argument was spelled: a keyword `ref[Self.origin] to`
+    /// lends as a positional one does.
     pub(in crate::checker) fn record_constructor_reference_borrows(
         &self,
         span: &SourceSpan,
@@ -2689,11 +2689,17 @@ impl Checker {
         let mut arguments = Vec::new();
         for (parameter, signature) in ref_params.iter().enumerate() {
             let Some(signature) = signature else { continue };
-            let Some(ArgSlot::Positional(index)) = slots.get(parameter) else {
-                continue;
+            let source = match slots.get(parameter) {
+                Some(ArgSlot::Positional(index)) => {
+                    mojito_checked::checked::CheckedCallArgumentSource::Positional(*index)
+                }
+                Some(ArgSlot::Keyword(index)) => {
+                    mojito_checked::checked::CheckedCallArgumentSource::Keyword(*index)
+                }
+                Some(ArgSlot::Default) | None => continue,
             };
             arguments.push((
-                *index,
+                source,
                 signature.mutability == mojito_types::origin::SigMutability::Mutable,
             ));
         }

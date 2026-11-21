@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2475**.
+Next free ID: **R2476**.
 
 ## Ordered Work
 
@@ -2140,6 +2140,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     t.a` reports the same for `t`
     (`assets/ownership_error/pointer_to_ref_stale_after_owner_mutation.mojo`,
     pin: `4`). Found while landing R2208 (2026-11-21).
+  - Probe: a store to the owner itself. `var p = Pointer(to=x); x = 5;
+    print(p[])` reports "access to 'x' conflicts with live reference 'p'",
+    where the pin prints `5`; a user view built by `P(to=x)` or `P(x)` over
+    a `ref[Self.origin] to` parameter reports the same (found while landing
+    R2472, 2026-11-21).
   - Found while landing R192 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10909,22 +10914,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2472 A call-result receiver of a declared `ref`-returning
-  `__getitem__` reads the wrong value**
+- [ ] **R2475 A construction's `ref[origin]` loan comes from two rules,
+  where upstream derives it from the result type's origin**
 
-  `idp(p)[]`, over a user struct `P` with upstream's `Pointer` text and
-  `def idp[T: AnyType, o: MutOrigin](v: P[T, o]) -> P[T, o]`, prints `0`,
-  where `var q = idp(p); q[]` prints `4`.
-  - `Pointer` avoids it today only because `p[]` is still a rule, read
-    through `temporary_pointer_deref` (`crates/mojito-mir/src/mir.rs`).
-  - Once `p[]` dispatches to the declared `__getitem__` (R2473), `idp(p)[]`
-    on a real `Pointer` would print `0` too.
-  - Probe: `P` declares `_mlir_value: !kgen.pointer`, `__init__(out self,
-    *, ref[Self.origin] to: Self.T)` over `__get_mvalue_as_litref(to)`,
-    and `__getitem__(self) -> ref[Self.origin] Self.T` over
-    `__get_litref_as_mvalue(lit.ref.from_pointer(...))`; `main` builds
-    `P(to=x)` over `var x = 4` and prints `idp(p)[]`.
-  - Found while planning R2208 (2026-11-21).
+  `aggregate_borrows_unmaterialized` (`crates/mojito-mir/src/mir/facts.rs`)
+  loans a declared `Pointer` initializer through its own arm and every other
+  construction through `borrowed_ref_arguments`.
+  - The `Pointer` arm's loans are shared, cover a union origin's other
+    members, and reborrow a `Subtree` place through its `ref` binding.
+  - `borrowed_ref_arguments`' loans are whole-place and `shared: false`,
+    with no union members.
+  - Probe: dropping the `declared_pointer_init` guard in front of
+    `borrowed_ref_arguments` changes `assets/ok/pointer_union_origin.mojo`'s
+    drop order and rejects `assets/ok/pointer_temporary_dereference_place.mojo`
+    ("conflicts with live reference '$mat_r32'").
+  - One rule over the constructed value's origin should replace both, and
+    the `Pointer` arm and the guard should go.
+  - Found while landing R2472 (2026-11-21).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

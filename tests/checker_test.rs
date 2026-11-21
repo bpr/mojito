@@ -10825,12 +10825,30 @@ fn fieldwise_ref_field_construction_binds_as_its_synthesized_init_call() {
     )));
     assert!(has(&|adjustment| matches!(
         adjustment,
-        SemanticAdjustment::BorrowRefArguments { arguments, .. } if arguments == &[(0, true)]
+        SemanticAdjustment::BorrowRefArguments { arguments, .. }
+            if arguments == &[(mojito::checked::CheckedCallArgumentSource::Positional(0), true)]
     )));
     assert!(has(&|adjustment| matches!(
         adjustment,
         SemanticAdjustment::RetainCallPlace
     )));
+}
+
+#[test]
+fn keyword_ref_constructor_argument_lends_like_a_positional_one() {
+    // A keyword-only `ref [Self.o] to` lends its argument's place to the
+    // constructed value, recorded by the argument's keyword source.
+    let source = "struct H[o: MutOrigin](ImplicitlyCopyable):\n    var r: Pointer[Int, Self.o]\n\n    def __init__(out self, *, ref[Self.o] to: Int):\n        self.r = Pointer(to=to)\n\ndef main():\n    var x = 4\n    var h = H(to=x)\n    print(h.r[])\n";
+    let checked = checked_with_std(source).expect("check");
+    assert!(own_expressions(&checked).any(|expression| {
+        expression.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                SemanticAdjustment::BorrowRefArguments { arguments, .. }
+                    if arguments == &[(mojito::checked::CheckedCallArgumentSource::Keyword(0), true)]
+            )
+        })
+    }));
 }
 
 #[test]

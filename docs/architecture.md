@@ -3805,8 +3805,8 @@ call's type, not an adjustment; the `_mlir_value` field read lowers to
 
 Borrowed views (`Span`, `StringSpan`) are pointer-plus-length structs over
 that capability. Their loans flow through three checked channels: a
-constructor's `ref [origin]` parameter records `BorrowRefArguments` (the
-binding loans each lent place), a view-typed subscript result records
+constructor's `ref [origin]` parameter, bound positionally or by keyword,
+records `BorrowRefArguments` (the binding loans each lent place), a view-typed subscript result records
 `BorrowViewResult` (the result inherits the receiver's loans, falling back
 to the receiver's own place for a plain owner), and `unsafe_origin_cast`/
 `unsafe_offset` results carry their rebound or forwarded origins through the

@@ -1473,10 +1473,21 @@ impl<'a> Flatten<'a> {
         };
         match node.op() {
             CheckedOp::Call { .. } => {
+                let declared_pointer_init =
+                    super::callable_target(node.adjustments()).is_some_and(|target| {
+                        mojito_symbol::symbol::split_method_symbol(&target).is_some_and(
+                            |(owner, member)| {
+                                owner == mojito_types::types::POINTER_TYPE_NAME
+                                    && member.starts_with("__init__")
+                            },
+                        )
+                    });
                 // A view construction borrows the places its `ref [origin]`
                 // parameters bound (the checker recorded the argument
-                // indexes), so the stored aggregate keeps its source alive.
-                if let Some(loans) = self.borrowed_ref_arguments(node) {
+                // sources), so the stored aggregate keeps its source alive.
+                // A declared `Pointer` initializer loans through its own arm
+                // below, from its checked result's origin.
+                if !declared_pointer_init && let Some(loans) = self.borrowed_ref_arguments(node) {
                     return loans;
                 }
                 // A checked pointer construction loans exactly its source
@@ -1541,14 +1552,8 @@ impl<'a> Flatten<'a> {
                 // bound (`Pointer(to=self.a)` loans `self.a`, not `self`),
                 // reborrowed through the `ref` binding a subtree origin was
                 // taken through, else the origin's owner.
-                if super::callable_target(node.adjustments()).is_some_and(|target| {
-                    mojito_symbol::symbol::split_method_symbol(&target).is_some_and(
-                        |(owner, member)| {
-                            owner == mojito_types::types::POINTER_TYPE_NAME
-                                && member.starts_with("__init__")
-                        },
-                    )
-                }) && let Some(origin) = node.ty().and_then(|ty| ty.pointer_origin())
+                if declared_pointer_init
+                    && let Some(origin) = node.ty().and_then(|ty| ty.pointer_origin())
                     && let Some(mutable) = origin.statically_mutable()
                 {
                     if let mojito_types::origin::PointerOrigin::Place { place, .. } = &origin
@@ -1771,7 +1776,7 @@ impl<'a> Flatten<'a> {
     }
 
     /// The loans of the places a call binds to its `ref [origin]`
-    /// parameters (the argument indexes the checker recorded), when it
+    /// parameters (the argument sources the checker recorded), when it
     /// records any and some argument is there to lend.
     fn borrowed_ref_arguments(&mut self, node: Node<'a>) -> Option<Vec<MirLoan>> {
         let Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
@@ -1785,11 +1790,10 @@ impl<'a> Flatten<'a> {
         else {
             return None;
         };
-        let args = node.args();
         let loans = arguments
             .iter()
-            .filter_map(|&(index, mutable)| {
-                args.get(index).map(|&argument| MirLoan {
+            .filter_map(|&(source, mutable)| {
+                node.argument_at(source).map(|argument| MirLoan {
                     place: self.place(argument),
                     mutable,
                     interior: None,

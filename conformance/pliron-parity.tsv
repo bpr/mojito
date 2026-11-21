@@ -1187,6 +1187,7 @@ assets/ok/ref_binding_owned_subscript_result.mojo	main	exe-differential	sanitize
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_to_pointer_reads_pointer.mojo	main	exe-differential	sanitized
+assets/ok/ref_keyword_constructor_keeps_owner.mojo	main	exe-differential	sanitized
 assets/ok/ref_param.mojo	main	exe-differential	sanitized
 assets/ok/ref_receiver_address_space.mojo	main	exe-differential	sanitized
 assets/ok/ref_result_field_value_copy.mojo	main	exe-differential	sanitized

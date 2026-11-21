@@ -893,9 +893,10 @@ pub enum SemanticAdjustment {
     /// Constructor arguments bound to origin-solving `ref` parameters: the
     /// constructed aggregate borrows each listed argument's place, so the
     /// binding's loans keep the source alive (a view constructor's whole
-    /// contract). Entries are (positional argument index, loan mutability).
+    /// contract). Entries are (argument source, loan mutability), a
+    /// keyword argument lending exactly as a positional one does.
     BorrowRefArguments {
-        arguments: Vec<(usize, bool)>,
+        arguments: Vec<(CheckedCallArgumentSource, bool)>,
         /// The same call as a temporary receiver of a `ref[self]`-returning
         /// method (`FormatStruct(writer, "P").params(...)`): it is also a
         /// materialized borrow source (see `MaterializeBorrowSource`), and

@@ -1360,6 +1360,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A keyword `ref[Self.origin]` constructor argument now lends its place to
+  the constructed value as a positional one does (R2472), so `x` stays live
+  behind `var p = P(to=x)`: `idp(p)[]`, `var y = p[]`, and `rd(p)` print the
+  pin's `4` instead of reading a destroyed `x`
+  (`assets/ok/ref_keyword_constructor_keeps_owner.mojo`).
 - Eight `assets/ok` fixtures lost in batch 3 run again on both backends
   (R2464). An explicit origin slot reads an owner's interior storage
   (`self.items.unsafe_ptr()`) and a `Pointer(to=r)` over a `ref r`
