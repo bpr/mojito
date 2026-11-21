@@ -436,6 +436,7 @@ impl Checker {
                 subst: method_subst,
                 arguments: method_arguments,
                 declared: declared_arguments,
+                values: call_values,
                 attributes: bracket_attributes,
                 ..
             } = instantiated;
@@ -447,8 +448,8 @@ impl Checker {
                 declared_instantiation
                     .as_deref()
                     .unwrap_or(&method_arguments),
-                &info.decls(),
-                &info.view_arguments(tyargs),
+                &info.params,
+                tyargs,
             ) {
                 if single_candidate
                     && availability_failure.is_none()
@@ -497,8 +498,7 @@ impl Checker {
                             ),
                             &method_subst,
                         ),
-                        &sig.decls(),
-                        &method_arguments,
+                        &call_values,
                     ),
                     result_adapter: None,
                     raises: sig.raises,

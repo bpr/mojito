@@ -3551,10 +3551,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`ParamDecl::origin_value_ty`, which `ParamDecl::binder_meta` reads, and
   the origin arms of `annotations::value_scope`,
   `Checker::self_param_ct_value`, and `Checker::infer_member`'s `Self.o`);
-  a function's or method's signature resolves under its argument and
-  origin binders (`ParamDecl::signature_scope`, read by
-  `def_signature_owned_by` and the struct method signature in `traits.rs`,
-  so `where o.mut` reads the binder)
+  a function's or method's signature resolves under its whole list, `mut=`
+  binders included (`def_signature_owned_by` and the struct method
+  signature in `traits.rs`), so `where o.mut` reads the binder and an
+  instance slot the binder decides holds its read
+  (`Checker::origin_mutability_slot`, `origins/construct.rs`), which every
+  call path binds over the callee's whole list (`Checker::call_values`,
+  `Checker::resolve_call_dependent_ty`) and defers where the call leaves it
+  open (`Checker::defer_mutability_reads`)
   (`Checker::declare_value_parameters`, `scopes.rs`; `check_def_inner`,
   `statements.rs`; `check_method`, `bind_and_check_method`,
   `declarations.rs`). The elaborator keys an instance on the read ones
@@ -3568,8 +3572,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`ParamDecl::generator_clause_constraints`), whose clauses a call checks
   over its solved whole-list arguments
   (`Checker::validate_mutability_clauses`, `call_inference.rs`) and a
-  signature compiles with the `mut=` binders open
-  (`Checker::with_mutability_binders`, `constraints.rs`).
+  signature compiles in its whole-list scope. A method's `where` clause
+  reads its struct's whole list (`Checker::method_constraint_result`,
+  `generics.rs`), so `where Self.mut` reads the receiver's `mut=`
+  argument.
   MIR lowers the whole lists (`CheckedSignature::parameters`, a struct
   row, an initializer's struct prefix); code below the check that aligns
   a declaration's binders with arguments reads

@@ -4263,6 +4263,9 @@ struct MethodInstantiation {
     /// The method's whole declared list's arguments, origins in place
     /// ([`Checker::declared_call_arguments`]).
     declared: Vec<TyArg>,
+    /// The value bindings the call substitutes into the method's types
+    /// ([`Checker::call_values`]).
+    values: origins::CallValues,
     /// What each of the call's bracket arguments bound to.
     attributes: DeclaredAttributes,
     /// The method's own origin binders, bound from the arguments' types.

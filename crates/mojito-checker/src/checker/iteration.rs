@@ -743,6 +743,7 @@ impl Checker {
             kw_variadic,
             subst: method_subst,
             arguments: method_arguments,
+            values: call_values,
             ..
         } = self
             .instantiate_method_generics(
@@ -766,8 +767,8 @@ impl Checker {
         if !self.method_constraints_apply(
             signature,
             &method_arguments,
-            &info.decls(),
-            &info.view_arguments(receiver_arguments),
+            &info.params,
+            receiver_arguments,
         ) {
             return None;
         }
@@ -782,6 +783,7 @@ impl Checker {
         let instantiate = |ty: &Ty| {
             let substituted = substitute(&substitute(ty, &receiver_subst), &method_subst);
             self.resolve_dependent_ty(&substituted, &values)
+                .and_then(|closed| self.resolve_call_dependent_ty(&closed, &call_values))
                 .unwrap_or(substituted)
         };
         let referent = instantiate(&signature.ret);

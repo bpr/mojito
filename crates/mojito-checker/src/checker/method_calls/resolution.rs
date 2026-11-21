@@ -295,6 +295,7 @@ impl Checker {
                 subst: method_subst,
                 arguments: method_arguments,
                 declared: declared_arguments,
+                values: call_values,
                 attributes: bracket_attributes,
                 ..
             } = instantiated;
@@ -306,8 +307,8 @@ impl Checker {
                 declared_instantiation
                     .as_deref()
                     .unwrap_or(&method_arguments),
-                &info.decls(),
-                &info.view_arguments(targs),
+                &info.params,
+                targs,
             ) {
                 // A candidate the arguments would have
                 // selected reports its failed availability
@@ -332,8 +333,7 @@ impl Checker {
             let close_space = |ty: &Ty| {
                 self.close_method_values(
                     &substitute(&self.substitute_at_instance(ty, info, targs), &method_subst),
-                    &sig.decls(),
-                    &method_arguments,
+                    &call_values,
                 )
             };
             if let Ok(scored) = self.score_method_call(
@@ -382,8 +382,7 @@ impl Checker {
                                 ),
                             ],
                         ),
-                        &sig.decls(),
-                        &method_arguments,
+                        &call_values,
                     ),
                     result_adapter: None,
                     raises: sig.raises,
@@ -539,6 +538,7 @@ impl Checker {
                 subst: method_subst,
                 arguments: method_arguments,
                 declared: declared_arguments,
+                values: call_values,
                 attributes: bracket_attributes,
                 ..
             } = instantiated;
@@ -579,16 +579,12 @@ impl Checker {
             ) else {
                 continue;
             };
-            let return_type = self.close_method_values(
-                &substitute(&declared_ret, &method_subst),
-                &sig.decls(),
-                &method_arguments,
-            );
+            let return_type =
+                self.close_method_values(&substitute(&declared_ret, &method_subst), &call_values);
             let close_space = |ty: &Ty| {
                 self.close_method_values(
                     &substitute(&self.substitute_self_members(ty, obj_ty), &method_subst),
-                    &sig.decls(),
-                    &method_arguments,
+                    &call_values,
                 )
             };
             matches.push(MethodCallResolution {
@@ -616,8 +612,7 @@ impl Checker {
                 error: sig.error.as_ref().map(|error| {
                     self.close_method_values(
                         &substitute(&self.substitute_self_members(error, obj_ty), &method_subst),
-                        &sig.decls(),
-                        &method_arguments,
+                        &call_values,
                     )
                 }),
                 mutates_receiver: matches!(

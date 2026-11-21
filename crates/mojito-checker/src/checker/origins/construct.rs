@@ -23,6 +23,16 @@ pub(in crate::checker) struct ConstructorOriginBindings {
     binders: CalleeBinders,
 }
 
+/// The value bindings a call substitutes into its callee's types
+/// ([`Checker::call_values`]): `values`, and the callee `mut=` binders the
+/// call leaves `open`, whose reads [`Checker::defer_mutability_reads`]
+/// defers.
+#[derive(Default)]
+pub(in crate::checker) struct CallValues {
+    pub(in crate::checker) values: DependentValues,
+    pub(in crate::checker) open: Vec<mojito_types::param_expr::ParamId>,
+}
+
 /// The origin binders a callee's call binds from its arguments: every one
 /// its parameters name (a function value's contract), or exactly those a
 /// declared list declares, a method's numbered past its struct's, which its
@@ -378,8 +388,8 @@ impl Checker {
                     TyArg::Val(governed.map_or_else(
                         || CtValue::Deferred(decl.binder()),
                         |id| match bracket.get(&id) {
-                            Some(origin) => self.call_mutability_argument(decl, origin, None),
-                            None => self.call_mutability_argument(
+                            Some(origin) => self.origin_mutability_slot(decl, origin, None),
+                            None => self.origin_mutability_slot(
                                 decl,
                                 &origin(id).unwrap_or(Origin::Unbound),
                                 bound(id),
@@ -401,9 +411,11 @@ impl Checker {
     /// a static origin's `False`), else `bound`, the mutability a
     /// construction's arguments bound, when there is one, else the
     /// origin's own (a place's owner's). A mutability nothing decides
-    /// yet (an unbound origin's) or a binder decides (an origin binder's,
-    /// a `ref` parameter's) is [`CtValue::Deferred`], following its origin
-    /// as `Origin::Unbound` and `Origin::Param` do.
+    /// yet (an unbound origin's) or a binder out of scope decides (a `ref`
+    /// parameter's) is [`CtValue::Deferred`], following its origin as
+    /// `Origin::Unbound` and `Origin::Param` do; a `mut=` binder in scope
+    /// (`o: Origin[mut=m]`) decides it as its read, which the instance
+    /// holds, as upstream's does.
     pub(in crate::checker) fn origin_mutability_slot(
         &self,
         decl: &ParamDecl,
@@ -417,11 +429,105 @@ impl Checker {
         {
             Some(Mutability::Mutable) => CtValue::Bool(true),
             Some(Mutability::Immutable) => CtValue::Bool(false),
+            Some(Mutability::Param(id))
+                if let Some(read) = self.origin_mutability_binder_read(id) =>
+            {
+                CtValue::Expr(read)
+            }
             Some(Mutability::Param(_)) | None => origin.symbolic_cast_mutability().map_or_else(
                 || CtValue::Deferred(decl.binder()),
                 |read| CtValue::Expr(read.clone()),
             ),
         }
+    }
+
+    /// How a call of a callee declaring the whole list `binders`, with
+    /// `declared` its solved arguments over that list
+    /// ([`Self::declared_call_arguments`]), binds the callee's value
+    /// binders in the types it substitutes: over the whole list, its `mut=`
+    /// binders among them, as upstream's call binds every declared
+    /// parameter, else over the argument view `decls` and its solutions
+    /// `arguments`. A `mut=` binder the call leaves open (a
+    /// [`CtValue::Deferred`] value) is listed for
+    /// [`Self::defer_mutability_reads`].
+    pub(in crate::checker) fn call_values(
+        &self,
+        (binders, declared): (&[ParamDecl], &[TyArg]),
+        decls: &[ParamDecl],
+        arguments: &[TyArg],
+    ) -> CallValues {
+        let whole = declared.len() == binders.len();
+        let values = if whole {
+            DependentValues::own(&self.param_context, binders, declared)
+        } else {
+            DependentValues::own(&self.param_context, decls, arguments)
+        };
+        let open = binders
+            .iter()
+            .enumerate()
+            .filter(|(index, decl)| {
+                decl.is_origin_mutability_binder(binders)
+                    && (!whole || matches!(declared[*index], TyArg::Val(CtValue::Deferred(_))))
+            })
+            .map(|(_, decl)| decl.id().clone())
+            .collect();
+        CallValues { values, open }
+    }
+
+    /// `ty`, a callee's type a call substituted, with every struct
+    /// instance's `mut=` slot that still reads a callee `mut=` binder the
+    /// call left `open` ([`Self::call_values`]) deferred again, as its
+    /// governed origin is: the callee's binder is out of the caller's scope.
+    pub(in crate::checker) fn defer_mutability_reads(
+        &self,
+        ty: Ty,
+        open: &[mojito_types::param_expr::ParamId],
+    ) -> Ty {
+        if open.is_empty() {
+            return ty;
+        }
+        mojito_types::types::map_struct_arguments(&ty, &|name, arguments| {
+            let Some(info) = self.structs.get(name) else {
+                return arguments;
+            };
+            let params = &info.params;
+            let deferred: Vec<Option<ParamRef>> = ParamDecl::aligned_pairs(params, &arguments)
+                .map(|(decl, argument)| match argument {
+                    TyArg::Val(CtValue::Expr(read))
+                        if decl.is_origin_mutability_binder(params)
+                            && read
+                                .free_parameters()
+                                .iter()
+                                .any(|reference| open.contains(&reference.id)) =>
+                    {
+                        Some(decl.binder())
+                    }
+                    _ => None,
+                })
+                .collect();
+            if deferred.iter().all(Option::is_none) || deferred.len() != arguments.len() {
+                return arguments;
+            }
+            arguments
+                .into_iter()
+                .zip(deferred)
+                .map(|(argument, deferred)| {
+                    deferred.map_or(argument, |binder| TyArg::Val(CtValue::Deferred(binder)))
+                })
+                .collect()
+        })
+    }
+
+    /// `ty` resolved at a call's `values` ([`Self::call_values`]): its
+    /// dependent values closed, and every `mut=` read the call left open
+    /// deferred.
+    pub(in crate::checker) fn resolve_call_dependent_ty(
+        &self,
+        ty: &Ty,
+        values: &CallValues,
+    ) -> Result<Ty, TypeError> {
+        self.resolve_dependent_ty(ty, &values.values)
+            .map(|resolved| self.defer_mutability_reads(resolved, &values.open))
     }
 
     /// The value a struct application's `mut=` slot `decl` holds when it
@@ -453,7 +559,7 @@ impl Checker {
                 _ => None,
             };
         }
-        Some(self.call_mutability_argument(decl, origin, None))
+        Some(self.origin_mutability_slot(decl, origin, None))
             .filter(|value| !matches!(value, CtValue::Deferred(_)))
     }
 
@@ -953,25 +1059,6 @@ impl Checker {
                 ..
             } => self.fold_origin_mut_cast(&Origin::immutable(origin)),
             _ => origin,
-        }
-    }
-
-    /// The value a call passes an origin's `mut=` binder `decl` whose
-    /// governed origin it binds to `origin`: the
-    /// [`Self::origin_mutability_slot`] value, or, where the caller's own
-    /// `mut=` binder decides it, a read of that binder, which the caller's
-    /// instance closes.
-    fn call_mutability_argument(
-        &self,
-        decl: &ParamDecl,
-        origin: &Origin,
-        bound: Option<Mutability>,
-    ) -> CtValue {
-        match bound.or_else(|| self.decided_origin_mutability(origin)) {
-            Some(Mutability::Param(id)) => self
-                .origin_mutability_binder_read(id)
-                .map_or_else(|| CtValue::Deferred(decl.binder()), CtValue::Expr),
-            _ => self.origin_mutability_slot(decl, origin, bound),
         }
     }
 

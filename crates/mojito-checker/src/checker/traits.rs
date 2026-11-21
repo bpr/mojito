@@ -526,7 +526,7 @@ impl Checker {
             .collect();
         let regular_params: Vec<_> = regular.iter().map(|(_, param)| *param).collect();
         // The signature reads an origin binder as a value (`Pointer[T, o]`).
-        self.push_param_scope(&ParamDecl::signature_scope(&declared));
+        self.push_param_scope(&declared);
         let saved_type_params = self.enclosing_type_params.clone();
         let saved_decls = self.enclosing_param_decls.clone();
         self.enclosing_type_params.extend(m.type_params.clone());
@@ -1593,7 +1593,7 @@ impl Checker {
             self.enclosing_type_params.len(),
         )?;
         // The signature reads an origin binder as a value (`where o.mut`).
-        self.push_param_scope(&ParamDecl::signature_scope(&method_decls));
+        self.push_param_scope(&method_decls);
         let saved_method_type_params = self.enclosing_type_params.clone();
         let saved_method_decls = self.enclosing_param_decls.clone();
         let saved_struct_count = self
@@ -1643,10 +1643,7 @@ impl Checker {
         method_decls: Vec<ParamDecl>,
     ) -> Result<(Vec<Ty>, MethodSig), TypeError> {
         self.method_gate(name, m)
-            .and_then(|gate| {
-                self.with_mutability_binders(&method_decls, |this| this.method_clauses(m, false))
-                    .map(|free| (free, gate))
-            })
+            .and_then(|gate| self.method_clauses(m, false).map(|free| (free, gate)))
             .and_then(|(free, gate)| {
                 let mut facts = Vec::new();
                 for clause in free.iter().map(|(_, clause)| clause).chain(&gate) {
@@ -1657,9 +1654,7 @@ impl Checker {
                 let signature = self.in_signature_scope(receiver.as_ref(), |this| {
                     let all_types = this.param_tys(&m.params)?;
                     let mut clauses = free;
-                    clauses.extend(this.with_mutability_binders(&method_decls, |this| {
-                        this.method_clauses(m, true)
-                    })?);
+                    clauses.extend(this.method_clauses(m, true)?);
                     clauses.sort_by_key(|(index, _)| *index);
                     let availability = clauses
                         .into_iter()

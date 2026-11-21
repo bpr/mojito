@@ -3,6 +3,7 @@
 //! element typing. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
 use super::constraints::LACKING_EVIDENCE;
+use super::origins::CallValues;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_symbol::symbol::TypeKey;
@@ -2122,11 +2123,18 @@ impl Checker {
         let (use_params, params, variadic, ret, ref_return) =
             self.bound_generic_callee(func, origins.as_ref(), &use_params);
         let params = &params;
-        let values = DependentValues::own(&self.param_context, decls, &tyargs);
+        let bracket = explicit
+            .origins()
+            .iter()
+            .map(|bound| (bound.id, bound.origin.clone()))
+            .collect();
+        let declared = self.declared_call_arguments(binders, &tyargs, &bracket, origins.as_ref());
+        let CallValues { values, open } = self.call_values((binders, &declared), decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = super::generics::expand_solved_packs(ty, decls, &tyargs);
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
             self.resolve_dependent_ty(&substituted, &values)
+                .map(|resolved| self.defer_mutability_reads(resolved, &open))
         };
         self.record_pack_element_conversions(decls, &tyargs, &use_params, &arg_tys, &arg_exprs)?;
         let (mut conversions, mut simd_erasures) = (0, 0);
@@ -2258,7 +2266,7 @@ impl Checker {
         attributes.merge(folded_parameter_attributes(binders, param_args, &tyargs));
         // An overload candidate's write here is undone with its probe; the
         // selected candidate's re-run is the only one kept.
-        let solved = (&binders[..], &explicit, origins.as_ref(), &bool_bindings);
+        let solved = (&binders[..], declared, &bool_bindings);
         self.record_generic_application(span, name, generic, (param_args, decls), &tyargs, solved)?;
         Ok((
             result,
@@ -2341,8 +2349,8 @@ impl Checker {
     /// closed inferred application retargets to by exact name instead of
     /// requesting a discovery round of its own (an earlier round minted it
     /// for another occurrence), or the application, with those arguments,
-    /// each origin binder's from the bracket or the arguments' places
-    /// `origins` bound it to ([`Self::declared_call_arguments`]).
+    /// `declared`, its solved arguments over the whole list
+    /// ([`Self::declared_call_arguments`]).
     fn record_generic_application(
         &self,
         span: &SourceSpan,
@@ -2350,22 +2358,11 @@ impl Checker {
         generic: &Ty,
         (param_args, decls): (&[mojito_ast::ast::ParamArg], &[ParamDecl]),
         tyargs: &[TyArg],
-        (binders, explicit, origins, ref_mutability): (
-            &[ParamDecl],
-            &ExplicitTypes,
-            Option<&super::origins::ConstructorOriginBindings>,
-            &HashMap<usize, bool>,
-        ),
+        (binders, declared, ref_mutability): (&[ParamDecl], Vec<TyArg>, &HashMap<usize, bool>),
     ) -> Result<(), TypeError> {
         let Some(func) = generic.as_generic_func() else {
             return Ok(());
         };
-        let bracket = explicit
-            .origins()
-            .iter()
-            .map(|bound| (bound.id, bound.origin.clone()))
-            .collect();
-        let declared = self.declared_call_arguments(binders, tyargs, &bracket, origins);
         self.validate_mutability_clauses(name, binders, &declared, ref_mutability)?;
         if param_args.is_empty()
             && let Some(clone) = self.existing_def_clone(name, decls, tyargs)

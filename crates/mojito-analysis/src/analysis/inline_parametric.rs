@@ -4247,6 +4247,10 @@ fn instantiated<'c>(
     if owner.is_none()
         && declaration.argument_binders().next().is_none()
         && arguments.existentials.is_empty()
+        && arguments
+            .mutabilities(&declaration.param_decls)
+            .next()
+            .is_none()
     {
         return arguments
             .binding(&declaration.param_decls)

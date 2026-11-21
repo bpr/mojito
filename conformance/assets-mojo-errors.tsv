@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1313
+# swept-count	1314
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -60,6 +60,7 @@ assets/type_error/none_type_to_none_argument.mojo	compile-reject	agree	error: in
 assets/type_error/none_type_to_none_return.mojo	compile-reject	agree	error: cannot implicitly convert 'NoneType' value to 'None' in return value
 assets/type_error/none_value_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'None' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/origin_binder_value_not_int.mojo	compile-reject	agree	error: cannot implicitly convert 'ImmOrigin' value to 'Int'
+assets/type_error/origin_binder_where_self_mut_immutable.mojo	compile-reject	agree	error: invalid call to 'get': violated constraint
 assets/type_error/origin_generic_value_unapplied.mojo	compile-reject	agree	error: value passed to 'o' cannot be converted from '__generator_type[*, mut: Bool] Origin[mut=mut]' to 'Origin[mut=$0]', it depends on an unresolved parameter '$0'
 assets/type_error/origin_mutability_binder_function_value.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
 assets/type_error/origin_mutability_binder_method_where_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'm': violated constraint

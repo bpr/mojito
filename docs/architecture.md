@@ -3278,10 +3278,15 @@ binder holds its slot in place too (`Span[True, Int, o]`), so
 `Span[mut=True, …]` and `Span[mut=False, …]` are two types: the origin's
 mutability where the checker decides it (a place's owner's, a cast's or a
 static origin's `False`, an explicit `mut=` keyword's value), and
-`CtValue::Deferred` naming the struct's own binder where it does not, which
-is to the `mut=` value what `Origin::Unbound` is to the origin: an unbound
-origin's, and an origin binder's or a `ref` parameter's, whose mutability
-is a binder the checker leaves to the call. A closure storage declares an
+the read of the enclosing `mut=` binder that decides it (`Span[m, Int, o]`
+in `def f[m: Bool, //, o: Origin[mut=m]](s: Span[Int, o])`, whose signature
+scope holds `m`), and `CtValue::Deferred` naming the struct's own binder
+where neither does, which is to the `mut=` value what `Origin::Unbound` is
+to the origin: an unbound origin's, a `ref` parameter's, and `Self`'s own
+in a struct body. A call binds its callee's `mut=` binders over the whole
+declared list (`Checker::call_values`, from `declared_call_arguments`) in
+every type it substitutes, and defers a read of one the call leaves open
+(`Checker::defer_mutability_reads`), so no callee binder reaches a caller. A closure storage declares an
 origin binder per captured reference after the enclosing binders it is
 applied to (`CheckedClosureStorage::origin_parameters`), so its instance's
 captured origins sit at their binders as any struct's do. The checker builds an instance through `ParamDecl::place_origins_with`

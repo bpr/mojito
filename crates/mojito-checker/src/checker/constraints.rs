@@ -1887,46 +1887,6 @@ impl Checker {
         self.push_param_scope_as(decls, type_scope(decls));
     }
 
-    /// `compile` run with the origin `mut=` binders of `decls`, a
-    /// generator's whole declared list, open in the innermost scope as the
-    /// declared binders they are, as a `where` clause reads one (`m: Bool,
-    /// //, o: Origin[mut=m]`) that a call binds in its solved arguments
-    /// over the whole list. The scope holds them for the clauses alone.
-    pub(super) fn with_mutability_binders<R>(
-        &self,
-        decls: &[ParamDecl],
-        compile: impl FnOnce(&Self) -> R,
-    ) -> R {
-        let shadowed: Vec<(String, Option<ParamExpr>)> = {
-            let mut scopes = self.param_scopes.borrow_mut();
-            let Some(scope) = scopes.values.last_mut() else {
-                drop(scopes);
-                return compile(self);
-            };
-            ParamDecl::mutability_binders(decls)
-                .map(|parameter| {
-                    let name = parameter.name();
-                    let reference = ParamContext::detached().decl_ref(
-                        parameter.id().clone(),
-                        name,
-                        MetaTy::Value(Ty::bool()),
-                    );
-                    (name.to_string(), scope.insert(name.to_string(), reference))
-                })
-                .collect()
-        };
-        let compiled = compile(self);
-        if let Some(scope) = self.param_scopes.borrow_mut().values.last_mut() {
-            for (name, previous) in shadowed {
-                match previous {
-                    Some(previous) => scope.insert(name, previous),
-                    None => scope.remove(&name),
-                };
-            }
-        }
-        compiled
-    }
-
     /// How many declaration scopes are open.
     pub(super) fn param_depth(&self) -> usize {
         self.param_scopes.borrow().types.len()

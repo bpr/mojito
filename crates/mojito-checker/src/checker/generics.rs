@@ -1446,12 +1446,16 @@ impl Checker {
                 open,
             });
         };
+        let values = self.call_values(
+            (decls, &declared),
+            &ParamDecl::argument_view(decls),
+            &tyargs,
+        );
         let decls = ParamDecl::argument_view(decls);
-        let values = DependentValues::own(&self.param_context, &decls, &tyargs);
         let resolve = |ty: &Ty| {
             let expanded = expand_solved_packs(ty, &decls, &tyargs);
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
-            self.resolve_dependent_ty(&substituted, &values)
+            self.resolve_call_dependent_ty(&substituted, &values)
         };
         let contract = TyKind::Func(Box::new(func.try_map_types(resolve)?));
         Ok(BoundCallableValue {
@@ -1922,6 +1926,7 @@ impl Checker {
                 subst: HashMap::new(),
                 arguments: Vec::new(),
                 declared: Vec::new(),
+                values: CallValues::default(),
                 attributes,
                 origin_bindings: None,
                 bracket_origins,
@@ -2070,11 +2075,21 @@ impl Checker {
         let params = params.as_slice();
         let bound_variadic = variadic.map(bound);
         let variadic = bound_variadic.as_ref();
-        let values = DependentValues::own(&self.param_context, &signature.decls(), &tyargs);
+        let declared = self.declared_call_arguments(
+            &signature.declared,
+            &tyargs,
+            &bracket_origins,
+            origin_bindings.as_ref(),
+        );
+        let values = self.call_values(
+            (&signature.declared, &declared),
+            &signature.decls(),
+            &tyargs,
+        );
         let resolve = |ty: &Ty| {
             let expanded = expand_solved_packs(ty, &signature.decls(), &tyargs);
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
-            self.resolve_dependent_ty(&substituted, &values)
+            self.resolve_call_dependent_ty(&substituted, &values)
         };
         // A method-level type pack (`*args: *Ts`) inferred from the overflow
         // arguments resolves to the heterogeneous element list, so each
@@ -2109,12 +2124,6 @@ impl Checker {
             }
             _ => variadic.map(resolve).transpose()?,
         };
-        let declared = self.declared_call_arguments(
-            &signature.declared,
-            &tyargs,
-            &bracket_origins,
-            origin_bindings.as_ref(),
-        );
         Ok(MethodInstantiation {
             params: params.iter().map(resolve).collect::<Result<Vec<_>, _>>()?,
             variadic: resolved_variadic,
@@ -2122,6 +2131,7 @@ impl Checker {
             subst,
             arguments: tyargs,
             declared,
+            values,
             attributes,
             origin_bindings,
             bracket_origins,
@@ -2266,19 +2276,14 @@ impl Checker {
     /// ([`Checker::resolve_assoc_ty`]) and the method's own value binders
     /// closed at a call's solved arguments (`Scalar[dt]` at `dt =
     /// DType.int16` is `Int16`), as a generic `def`'s result closes; a binder
-    /// the call leaves symbolic stays as it stands.
-    pub(super) fn close_method_values(
-        &self,
-        ty: &Ty,
-        decls: &[ParamDecl],
-        arguments: &[TyArg],
-    ) -> Ty {
+    /// the call leaves symbolic stays as it stands, but a `mut=` binder's
+    /// read is deferred ([`Checker::call_values`]).
+    pub(super) fn close_method_values(&self, ty: &Ty, values: &CallValues) -> Ty {
         let ty = self.resolve_assoc_ty(ty);
-        let values = DependentValues::own(&self.param_context, decls, arguments);
-        if values.is_empty() {
+        if values.values.is_empty() && values.open.is_empty() {
             return ty;
         }
-        self.resolve_dependent_ty(&ty, &values).unwrap_or(ty)
+        self.resolve_call_dependent_ty(&ty, values).unwrap_or(ty)
     }
 
     /// Type the `DType` arguments a method call's brackets spell

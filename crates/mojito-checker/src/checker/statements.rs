@@ -4082,7 +4082,7 @@ impl Checker {
         // bare `T`), and value parameters as the typed references a
         // dependent parameter expression names (`Buf[n + 1]`), an origin
         // binder among them (`where o.mut`).
-        self.push_param_scope(&ParamDecl::signature_scope(&decls));
+        self.push_param_scope(&decls);
         let enclosing_self = self.self_ty.clone();
         self.bind_trait_self();
         let signature = self.def_signature_in_scope(stmt, shape, decls, unavailable, required);
@@ -4162,12 +4162,10 @@ impl Checker {
             // `mut=` binders.
             let compiled = match emitted {
                 Some(emitted) => emitted,
-                None => this.with_mutability_binders(&decls, |this| {
-                    where_clauses
-                        .iter()
-                        .map(|condition| this.compile_where_clause(condition))
-                        .collect::<Result<Vec<_>, _>>()
-                })?,
+                None => where_clauses
+                    .iter()
+                    .map(|condition| this.compile_where_clause(condition))
+                    .collect::<Result<Vec<_>, _>>()?,
             };
             Ok((param_tys, ret_ty, compiled))
         })?;

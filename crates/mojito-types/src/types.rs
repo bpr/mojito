@@ -4007,18 +4007,6 @@ impl ParamDecl {
             .filter(move |decl| decl.is_origin_mutability_binder(decls))
     }
 
-    /// The binders of `decls` a signature reads by name: the argument
-    /// binders and the origin binders, each a value of its `Origin` type,
-    /// but not an origin's `mut=` binder, which a call binds from the
-    /// origin it infers.
-    pub fn signature_scope(decls: &[Self]) -> Vec<Self> {
-        decls
-            .iter()
-            .filter(|decl| !decl.is_origin_mutability_binder(decls))
-            .cloned()
-            .collect()
-    }
-
     /// [`Self::argument_binders`], owned.
     pub fn argument_decls(decls: &[Self]) -> Vec<Self> {
         Self::argument_binders(decls).cloned().collect()

@@ -1,6 +1,7 @@
 //! Declaration collection, signature construction, and body-checking support.
 
 use super::decorators::DecoratorSite;
+use super::origins::CallValues;
 use super::patterns::StmtReach;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -3227,12 +3228,7 @@ impl Checker {
                 )
                 .is_ok()
                     && self
-                        .method_constraint_result(
-                            sig,
-                            &[],
-                            &info.decls(),
-                            &info.view_arguments(arguments),
-                        )
+                        .method_constraint_result(sig, &[], &info.params, arguments)
                         .is_ok()
                     && sig.refined_self.as_ref().is_none_or(|refined| {
                         self.self_instance_ty(name).is_some_and(|instance| {
@@ -6000,20 +5996,23 @@ impl Checker {
                 .map_or_else(|| pattern.clone(), |origins| origins.substitute(pattern));
             super::generics::solve_value_args(&pattern, actual, &mut solved);
         }
-        let (mutability_decls, mutability_values): (Vec<ParamDecl>, Vec<TyArg>) =
-            ParamDecl::mutability_binders(&sig.declared)
-                .filter_map(|decl| {
-                    solved
-                        .get(decl.name())
-                        .map(|value| (decl.clone(), TyArg::Val(value.clone())))
-                })
-                .unzip();
-        let valued: Vec<ParamDecl> = decls.iter().cloned().chain(mutability_decls).collect();
-        let values: Vec<TyArg> = arguments.iter().cloned().chain(mutability_values).collect();
-        let declared_arguments =
+        let mut declared_arguments =
             self.declared_call_arguments(&declared, &arguments, &bracket, origins.as_ref());
+        if declared_arguments.len() == declared.len() {
+            for (argument, decl) in declared_arguments.iter_mut().zip(&declared) {
+                if matches!(argument, TyArg::Val(CtValue::Deferred(_)))
+                    && decl.is_origin_mutability_binder(&declared)
+                    && let Some(value) = solved.get(decl.name())
+                {
+                    *argument = TyArg::Val(value.clone());
+                }
+            }
+        }
+        let CallValues { values, open } =
+            self.call_values((&declared, &declared_arguments), &decls, &arguments);
         Ok(OwnParameters {
-            values: DependentValues::own(&self.param_context, &valued, &values),
+            values,
+            open,
             subst,
             arguments,
             declared: declared_arguments,
@@ -7053,6 +7052,9 @@ struct OwnParameters {
     bracket: HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
     /// The own origin binders the arguments' places bound.
     origins: Option<ConstructorOriginBindings>,
+    /// The own `mut=` binders the construction leaves open
+    /// ([`Checker::call_values`]).
+    open: Vec<mojito_types::param_expr::ParamId>,
 }
 
 impl OwnParameters {
@@ -7066,11 +7068,13 @@ impl OwnParameters {
             .origins
             .as_ref()
             .map_or_else(|| ty.clone(), |origins| origins.substitute(ty));
-        if self.arguments.is_empty() {
+        if self.arguments.is_empty() && self.values.is_empty() && self.open.is_empty() {
             return Ok(ty.clone());
         }
         let substituted = checker.resolve_assoc_ty(&substitute(ty, &self.subst));
-        checker.resolve_dependent_ty(&substituted, &self.values)
+        checker
+            .resolve_dependent_ty(&substituted, &self.values)
+            .map(|resolved| checker.defer_mutability_reads(resolved, &self.open))
     }
 }
 

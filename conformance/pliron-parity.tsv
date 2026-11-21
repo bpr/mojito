@@ -859,6 +859,7 @@ assets/ok/optional_value_protocols.mojo	main	exe-differential	sanitized
 assets/ok/origin_alias_binder_comptime_application.mojo	main	exe-differential	sanitized
 assets/ok/origin_argument_alias_bodies.mojo	main	exe-differential	sanitized
 assets/ok/origin_argument_direct_applications.mojo	main	exe-differential	sanitized
+assets/ok/origin_binder_decided_mutability.mojo	main	exe-differential	sanitized
 assets/ok/origin_binder_mutable_ref_result.mojo	main	exe-differential	sanitized
 assets/ok/origin_binder_ref_result_keeps_pointer_source.mojo	main	exe-differential	sanitized
 assets/ok/origin_binder_result_keeps_argument.mojo	main	exe-differential	sanitized

@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `mut=` value an origin binder decides is the binder's read in a checked
+  instance, as upstream's instance carries it, where it was deferred: inside
+  `def f[m: Bool, //, o: Origin[mut=m]](s: Span[Int, o])`, `s` reflects
+  `Span[True, …]` or `Span[False, …]` per call, and a free function's,
+  method's, static method's, and constructor's call binds the callee's
+  `mut=` binders in every type it substitutes, deferring one it leaves open
+  (`assets/ok/origin_binder_decided_mutability.mojo`). A struct's `where
+  Self.mut` reads the receiver's `mut=` argument, so `Q[origin_of(y)](4).g()`
+  runs and an immutable receiver violates it
+  (`assets/type_error/origin_binder_where_self_mut_immutable.mojo`).
+  `Self`'s own slot and a `ref` parameter's stay deferred (R2470, R2471).
+
 - A leading-dot right operand of a `where` comparison is rooted at the left
   operand's struct, as the run-time operator check roots it, so `where
   Self.a == .GENERIC` over an `AddressSpace` parameter and `where d ==

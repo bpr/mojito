@@ -517,6 +517,7 @@ impl Checker {
                 subst: method_subst,
                 arguments: method_arguments,
                 declared: declared_arguments,
+                values: call_values,
                 attributes: bracket_attributes,
                 ..
             } = instantiated;
@@ -577,8 +578,7 @@ impl Checker {
                             ),
                             &method_subst,
                         ),
-                        &sig.decls(),
-                        &method_arguments,
+                        &call_values,
                     ),
                     result_adapter: None,
                     raises: sig.raises,

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2470**.
+Next free ID: **R2472**.
 
 ## Ordered Work
 
@@ -11400,49 +11400,71 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2375 A `mut=` value a binder decides is deferred in a checked
-  instance and erased from an elaborated one, where upstream's instance
-  carries the binder's value**
+- [ ] **R2470 `Self`'s own `mut=` slot is deferred inside a struct's
+  members, where upstream's `Self` carries the struct's `mut=` binder**
 
-  The checker writes an instance's `mut=` slot only where it decides the
-  mutability itself (`Checker::origin_mutability_slot`), so an origin
-  binder's `mut=` (`o: Origin[mut=m]`), a `ref` parameter's implicit
-  `self_is_mut`, and `Self`'s own (`StructInfo::self_arguments`) are
-  `CtValue::Deferred`, and the elaborator keys an instance on a closed
-  slot only, erasing a deferred one it cannot close to `_REMOVED_ARG`
-  (`StructCatalog::closed_mutability`).
-  - The lever: write the binder's read where a binder decides it, and bind
-    it on every path that substitutes an instance into a member's types:
-    `substitute_at_with`, `resolve_parameterized_member`,
-    `OwnParameters::apply`, and the `substitute(…, &struct_subst(…))`
-    readers (`rg struct_subst crates/mojito-checker`); a read the checker
-    leaves unbound leaks into a caller's MIR ("names parameter
-    `iterable_mut` of `_DictKeyIter` that no enclosing declaration
-    binds"), which is why it is deferred today.
-  - A `ref` parameter's mutability binder becomes a value binder a body
-    and its instance read, as upstream's `self_is_mut` is.
-  - The elaborator already keys an instance on a closed slot; this entry
-    writes the binder-decided slots it then keys on.
-  - Probe: `reflect[type_of(s)].name()` in `def f[m: Bool, //, o:
-    Origin[mut=m]](s: Span[Int, o])`, called with `Span(xs)` and with an
-    `ImmOrigin` span, prints `std.span.Span[mut, SIMD[DType.int, 1], {}]`
-    twice, where the pin prints `True` then `False` in that slot.
+  Inside a member of `struct Q[mut: Bool, //, o: Origin[mut=mut]]`, `Self`
+  is `Q[Deferred(mut), o]`, so a body's type over `Self.o` reflects the
+  binder's name.
+  - `ParamDecl::self_arguments` (`mojito-types/src/types.rs`) and
+    `StructInfo::self_arguments` (`checker.rs`) write `Deferred` for a
+    `mut=` binder.
+  - The struct's `mut=` binder is no value parameter in a member's scope,
+    so `Checker::origin_mutability_slot` cannot write its read.
+  - The lever: `self_arguments` writes the binder's own argument, and the
+    binder joins a member's signature and body scope.
+  - Then every reader that substitutes an instance into a member type
+    must bind values too: the `struct_subst(` sites (`rg -n
+    "struct_subst\(" crates/mojito-checker/src`) need one value-binding
+    companion, as `substitute_at_with` binds through
+    `solved_value_bindings`.
+  - The `self_arguments == Some(arguments)` arm of
+    `Checker::deferred_mutability_value` then goes.
+  - Probe: `print(reflect[Self].name())` and `reflect[Span[Int,
+    Self.o]].name()` in a method of `Q`, called on `Q[origin_of(xs)](1)`
+    and on `Q[ImmOrigin(origin_of(xs))](1)`, print `Q[mut, {}]` and
+    `Span[mut, …]` for both, where the pin prints `True` then `False` in
+    that slot.
+  - Probe: a member reading `Self.mut` over that binder is rejected as
+    "'mut' is not a compile-time constant here", where the pin reads the
+    origin's mutability (the bundled `Span`'s `write_repr_to`, R2374).
+  - Found while landing R2375 (2026-11-21).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2471 A `ref` parameter declares no `x_is_mut` value binder, so
+  its mutability cannot be read as a value or bound into an instance**
+
+  Upstream's `ref x: T` and `ref self` declare an implicit `x_is_mut:
+  Bool` (`self_is_mut`) and an origin over it. Mojito models that
+  mutability only as `Mutability::Param` in reference types
+  (`OriginParamId::reference_binder`, `Mutability::RECEIVER`).
+  - A value read of it is impossible, and an instance over the
+    parameter's origin keeps a `Deferred` `mut=` slot.
+  - `resolve_parameterized_member` (`type_resolution.rs`) binds a
+    member's `iterable_origin` from `origin_of(self)` and leaves its
+    `iterable_mut`.
+  - The lever: the implicit binder is a `ParamDecl::Value` in the callee's
+    declared list, `origin_mutability_binder_read` finds it, and a call
+    binds it from the argument place's mutability beside the origin
+    (`Checker::call_values` then binds it like any `mut=` binder).
+  - It changes every `ref` callee's identity and instance count, and the
+    MIR text of every `ref` signature, so `inline_parametric`'s
+    `argument_mutabilities` and the elaborator's keying read the value
+    binder.
   - Probe: `reflect[type_of(d.keys())].name()` over a `var d` prints
     `_DictKeyIter[iterable_mut, …]`, where the pin prints `True`.
-  - Probe: the type of `xs.__iter__()` over a `var xs` list literal prints
-    `_ArrayIter[iterable_mut, …]`.
-  - Probe: `def g(self) where Self.mut` on `struct Q[mut: Bool, //, o:
-    Origin[mut=mut]]`, called as `Q[MutUntrackedOrigin](4).g()` or
-    `Q[origin_of(y)](4).g()`, reports "cannot prove constraint 'mut ==
-    true'", where the pin runs it. `Checker::method_constraint_result`
-    (`generics.rs`) binds the receiver's deferred `mut=` slot. Upstream's
-    `Pointer` memory members need this clause (R2467).
-  - Probe: `where type_of(src).mut` over an argument `src: Pointer[Self.T,
-    _]` needs the same read for an argument's infer-only binder
-    (upstream's `unsafe_write_move_from`).
-  - Found while landing R2372 (2026-11-19).
-  - Depends on R2423.
-  - Model: Fable, Not Planned.
+  - Probe: `reflect[type_of(xs.__iter__())].name()` over `var xs = [1,
+    2]` prints `_ArrayIter[iterable_mut, …]`, where the pin prints `True`.
+  - Probe: `Pointer(to=self).mut` in a `ref self` method and
+    `Pointer(to=x).mut` in `def r(ref x: Int)`, called on a `var` and
+    from a read-only caller, print `False` four times, where the pin
+    prints `True True False False`.
+  - Probe: `var f = r` for that `r` is rejected at the pin with
+    "parameter 'x_is_mut' … is not bound", naming the binder.
+  - Found while landing R2375 (2026-11-21).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R2376 A parameter typed by a struct with an unbound origin
   declares no implicit binder for that origin's `mut=`, where upstream's
@@ -11507,7 +11529,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     _](_data=Pointer[mut=False, …](0x…), _size=Int(2))`, where the pin
     prints `Span[mut=True, SIMD[DType.int, 1]]([Int(1), Int(2)])`.
   - Found while landing R2362's readers (2026-11-19).
-  - Depends on R2422, R2424.
+  - Depends on R2422, R2424, R2470 (`Self.mut` in a member).
   - Model: Opus, Not Planned.
 
 - [ ] **R2402 An instance spelling may carry its struct's type and value
