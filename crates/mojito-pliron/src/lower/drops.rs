@@ -124,7 +124,7 @@ impl<'a> FnLowering<'a> {
                 if !self.needs_named_drop(&ty, destructor) {
                     return Ok(());
                 }
-                let ptr = self.reg_value(ctx, reg, ScalarTy::Ptr)?;
+                let ptr = self.reg_value(ctx, reg, ScalarTy::PTR)?;
                 self.emit_drop(ctx, ptr, &ty, destructor)
             }
         }
@@ -205,7 +205,7 @@ impl<'a> FnLowering<'a> {
             // The library `Error` is its message `String`, laid out as the
             // runtime's `MjError`: dropping it frees the message buffer.
             kind if kind.is_error() => {
-                let handle = ScalarTy::Ptr.handle(ctx);
+                let handle = ScalarTy::PTR.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
                 self.emit_free(ctx, data.get_result(ctx));

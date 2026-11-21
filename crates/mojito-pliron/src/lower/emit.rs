@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
+use mojito_types::types::{AddressSpaceSlot, TyKind};
 
 impl FnLowering<'_> {
     /// Mask a shift amount with `& 63`, matching the VM's
@@ -186,7 +186,7 @@ impl FnLowering<'_> {
         if self.referent_scalar_ty(reg)?.is_none() {
             return self.reg_value(ctx, reg, expected);
         }
-        let pointer = self.reg_value(ctx, reg, ScalarTy::Ptr)?;
+        let pointer = self.reg_value(ctx, reg, ScalarTy::PTR)?;
         let load = LoadOp::new(ctx, pointer, expected.handle(ctx));
         self.append(ctx, load.get_operation(), Some(reg));
         Ok(load.get_result(ctx))
@@ -293,15 +293,16 @@ impl FnLowering<'_> {
                 ),
                 self.reg_span(span_reg),
             )),
-            (ExactNum::Int(literal), ScalarTy::Bool | ScalarTy::Ptr | ScalarTy::Dtype) => Err(self
-                .unsupported(
+            (ExactNum::Int(literal), ScalarTy::Bool | ScalarTy::Ptr(_) | ScalarTy::Dtype) => {
+                Err(self.unsupported(
                     format!(
                         "integer literal `{}` used as {}",
                         literal.as_bigint(),
                         expected.name()
                     ),
                     self.reg_span(span_reg),
-                )),
+                ))
+            }
         }
     }
 
@@ -427,6 +428,47 @@ impl FnLowering<'_> {
 
     pub(super) fn unsupported_reg(&self, construct: String, dest: Reg) -> PlironError {
         self.unsupported(construct, self.reg_span(dest))
+    }
+
+    /// Reject the pointer `value` of `reg` at an ABI boundary whose MIR
+    /// records no address space (a `ref`/`mut` parameter, a `ref` result,
+    /// an `external_call` pointer): there the boundary is a generic `ptr`,
+    /// where upstream passes the operand's `ptr addrspace(N)` (R2432). The
+    /// lowered value is read rather than the register's type, which a
+    /// reference formed over a place does not give its space (R2434).
+    pub(super) fn require_generic_at_boundary(
+        &self,
+        ctx: &Context,
+        value: Value,
+        reg: Reg,
+        boundary: &str,
+    ) -> Result<Value, PlironError> {
+        match value_address_space(ctx, value) {
+            0 => Ok(value),
+            space => Err(self.unsupported_reg(
+                format!(
+                    "a pointer or reference in {} at {boundary}, whose native ABI records no \
+                     address space (R2432)",
+                    AddressSpaceSlot::Known(space)
+                ),
+                reg,
+            )),
+        }
+    }
+
+    /// The lowered type of the pointer or reference `ty`, upstream's
+    /// `ptr addrspace(N)` in its space: what a load of a pointer held in
+    /// memory produces.
+    pub(super) fn pointer_handle(
+        &self,
+        ctx: &Context,
+        ty: &Ty,
+        at: Reg,
+    ) -> Result<TypeHandle, PlironError> {
+        let space = address_space_slot(ty).ok_or_else(|| {
+            self.unsupported_reg(format!("a pointer load of the non-pointer `{ty}`"), at)
+        })?;
+        Ok(pointer_scalar(self.name, ty, space, self.reg_span(at))?.handle(ctx))
     }
 }
 

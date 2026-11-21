@@ -91,6 +91,23 @@ impl Triple {
     pub const fn pointer_align(self) -> u64 {
         self.pointer_size()
     }
+
+    /// Size in bytes of a pointer in address space `space`, the data
+    /// layout's `p<space>` entry (x86-64's `p270`/`p271` are 32-bit).
+    pub const fn pointer_size_in(self, space: u32) -> u64 {
+        match (self, space) {
+            (Self::X86_64UnknownLinuxGnu, 270 | 271) => 4,
+            _ => self.pointer_size(),
+        }
+    }
+
+    /// Alignment in bytes of a pointer in address space `space`.
+    pub const fn pointer_align_in(self, space: u32) -> u64 {
+        match (self, space) {
+            (Self::X86_64UnknownLinuxGnu, 270 | 271) => 4,
+            _ => self.pointer_align(),
+        }
+    }
 }
 
 /// The target CPU: a CPU name from the pin's table, plus the user's

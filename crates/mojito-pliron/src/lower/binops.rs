@@ -58,7 +58,7 @@ impl FnLowering<'_> {
             .as_ref()
             .and_then(Ty::pointer_element)
         {
-            let ptr = self.reg_value(ctx, a, ScalarTy::Ptr)?;
+            let ptr = self.reg_value(ctx, a, ScalarTy::PTR)?;
             let index = self.reg_value(ctx, b, ScalarTy::Int)?;
             let index = match op {
                 InfixOp::Add => index,
@@ -112,7 +112,7 @@ impl FnLowering<'_> {
                 self.lower_narrow_float_binop(ctx, (dtype, op), dest, (lhs, rhs), fastmath)
             }
             ScalarTy::Sized(dtype) => self.lower_sized_int_binop(ctx, op, dest, lhs, rhs, dtype),
-            ScalarTy::Ptr | ScalarTy::Dtype => Err(self.unsupported_reg(
+            ScalarTy::Ptr(_) | ScalarTy::Dtype => Err(self.unsupported_reg(
                 format!("operator `{op:?}` on {} operands", operand_ty.name()),
                 dest,
             )),

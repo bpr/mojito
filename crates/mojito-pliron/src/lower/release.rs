@@ -50,7 +50,7 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         match ty.kind() {
             pointer if pointer.is_pointer() => {
-                let handle = ScalarTy::Ptr.handle(ctx);
+                let handle = ScalarTy::PTR.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
                 self.emit_free(ctx, data.get_result(ctx));
@@ -59,7 +59,7 @@ impl FnLowering<'_> {
             // A String's buffer and an error's message buffer both sit at
             // offset 0 (MjString/MjError agree on the data-first layout).
             kind if kind.is_error() => {
-                let handle = ScalarTy::Ptr.handle(ctx);
+                let handle = ScalarTy::PTR.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
                 self.emit_free(ctx, data.get_result(ctx));
@@ -69,7 +69,7 @@ impl FnLowering<'_> {
                 if let Some((name, _)) = struct_ty.as_non_simd_struct()
                     && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
-                let handle = ScalarTy::Ptr.handle(ctx);
+                let handle = ScalarTy::PTR.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
                 self.emit_free(ctx, data.get_result(ctx));
@@ -152,7 +152,7 @@ impl FnLowering<'_> {
         ptr: Value,
         dest: Reg,
     ) -> (Value, Value) {
-        let ptr_handle = ScalarTy::Ptr.handle(ctx);
+        let ptr_handle = ScalarTy::PTR.handle(ctx);
         let data = LoadOp::new(ctx, ptr, ptr_handle);
         self.append(ctx, data.get_operation(), Some(dest));
         let size_address = self.gep_byte(ctx, ptr, 8, dest);
@@ -228,7 +228,7 @@ impl FnLowering<'_> {
         call.get_result(ctx)
     }
 
-    /// `llvm.memset.p0.i64(dest, 0, len, volatile=false)`: zero storage.
+    /// `llvm.memset.p{d}.i64(dest, 0, len, volatile=false)`: zero storage.
     /// Droppable variable slots zero at entry so a flag-guarded drop or
     /// release path never reads undefined bytes, and the intrinsic use keeps
     /// mem2reg from promoting a slot whose stores sit in since-pruned blocks.
@@ -236,7 +236,7 @@ impl FnLowering<'_> {
         if len == 0 {
             return;
         }
-        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let ptr_ty = dest.get_type(ctx);
         let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
         let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
         let i1_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
@@ -250,14 +250,18 @@ impl FnLowering<'_> {
         let volatile = self.bool_constant(ctx, false);
         let call = CallIntrinsicOp::new(
             ctx,
-            StringAttr::new("llvm.memset.p0.i64".to_string()),
+            StringAttr::new(format!(
+                "llvm.memset.p{}.i64",
+                value_address_space(ctx, dest)
+            )),
             fn_ty,
             vec![dest, zero.get_result(ctx), len_value, volatile],
         );
         self.append(ctx, call.get_operation(), None);
     }
 
-    /// `llvm.memcpy` with a runtime byte count.
+    /// `llvm.memcpy` with a runtime byte count, its overload named by each
+    /// operand's address space.
     pub(super) fn mem_copy_dynamic(
         &mut self,
         ctx: &mut Context,
@@ -266,15 +270,20 @@ impl FnLowering<'_> {
         len: Value,
         span_reg: Reg,
     ) {
-        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let (dest_ty, src_ty) = (dest_ptr.get_type(ctx), src.get_type(ctx));
         let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
         let i1_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
         let void = VoidType::get(ctx).to_handle();
-        let fn_ty = FuncType::get(ctx, void, vec![ptr_ty, ptr_ty, i64_ty, i1_ty], false);
+        let fn_ty = FuncType::get(ctx, void, vec![dest_ty, src_ty, i64_ty, i1_ty], false);
         let volatile = self.bool_constant(ctx, false);
+        let name = format!(
+            "llvm.memcpy.p{}.p{}.i64",
+            value_address_space(ctx, dest_ptr),
+            value_address_space(ctx, src)
+        );
         let call = CallIntrinsicOp::new(
             ctx,
-            StringAttr::new("llvm.memcpy.p0.p0.i64".to_string()),
+            StringAttr::new(name),
             fn_ty,
             vec![dest_ptr, src, len, volatile],
         );

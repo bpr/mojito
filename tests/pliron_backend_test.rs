@@ -1144,12 +1144,13 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
             &["compute"],
             &["operator `Eq` on Pointer operands"],
         ),
-        // Only the generic address space lowers; upstream's `ptr
-        // addrspace(N)` is R2406's.
+        // A `ref` argument in a non-generic space crosses a call boundary
+        // whose MIR records no space; upstream passes `ptr addrspace(3)`
+        // (R2432).
         (
-            "from std.memory import AddressSpace\n\ndef compute() -> Int:\n    var x = 5\n    var q = Pointer(to=x).unsafe_address_space_cast[AddressSpace.SHARED]()\n    return q.unsafe_address_space_cast[AddressSpace.GENERIC]()[]\n",
+            "from std.memory import AddressSpace\n\n@no_inline\ndef sp[a: AddressSpace](ref[_, a] x: Int) -> Int:\n    return Int(a) + x\n\ndef compute() -> Int:\n    var x = 3\n    var q = Pointer(to=x).unsafe_address_space_cast[AddressSpace.SHARED]()\n    return sp(q[])\n",
             &["compute"],
-            &["address space AddressSpace.SHARED", "R2406"],
+            &["AddressSpace.SHARED", "`ref` or `mut` argument", "R2432"],
         ),
     ];
     for (src, entries, phrases) in cases {

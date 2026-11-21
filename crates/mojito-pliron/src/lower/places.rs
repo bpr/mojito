@@ -99,7 +99,7 @@ impl FnLowering<'_> {
         let (mut ty, mut address, projected) = if let Some((recorded_ty, projected)) =
             recorded_prefix
         {
-            let handle = ScalarTy::Ptr.handle(ctx);
+            let handle = self.pointer_handle(ctx, &through_ty, dest)?;
             let load = LoadOp::new(ctx, through_slot, handle);
             self.append(ctx, load.get_operation(), Some(dest));
             (recorded_ty, load.get_result(ctx), projected)
@@ -109,7 +109,7 @@ impl FnLowering<'_> {
                 // aliased slot already IS the referent address.
                 pointer if pointer.is_pointer() && ref_param_root => (designated_ty, through_slot),
                 kind if kind.is_pointer() || matches!(kind, TyKind::Ref(_)) => {
-                    let handle = ScalarTy::Ptr.handle(ctx);
+                    let handle = self.pointer_handle(ctx, &through_ty, dest)?;
                     let load = LoadOp::new(ctx, through_slot, handle);
                     self.append(ctx, load.get_operation(), Some(dest));
                     (designated_ty, load.get_result(ctx))
@@ -135,7 +135,7 @@ impl FnLowering<'_> {
                     address = self.gep_byte(ctx, address, offset, dest);
                     offset = 0;
                 }
-                let ptr_ty = ScalarTy::Ptr.handle(ctx);
+                let ptr_ty = self.pointer_handle(ctx, &ty, dest)?;
                 let load = LoadOp::new(ctx, address, ptr_ty);
                 self.append(ctx, load.get_operation(), Some(dest));
                 address = load.get_result(ctx);
@@ -250,7 +250,7 @@ impl FnLowering<'_> {
                         address = self.gep_byte(ctx, address, offset, dest);
                         offset = 0;
                     }
-                    let ptr_handle = ScalarTy::Ptr.handle(ctx);
+                    let ptr_handle = self.pointer_handle(ctx, &ty, dest)?;
                     let load = LoadOp::new(ctx, address, ptr_handle);
                     self.append(ctx, load.get_operation(), Some(dest));
                     address = self.pointer_element_address(
@@ -596,7 +596,7 @@ impl FnLowering<'_> {
             .layout_of(element)
             .map_err(|error| self.unsupported_reg(format!("array element layout ({error})"), dest))?
             .size;
-        let base = self.reg_value(ctx, array, ScalarTy::Ptr)?;
+        let base = self.reg_value(ctx, array, ScalarTy::PTR)?;
         let index = self.reg_value(ctx, index, ScalarTy::Int)?;
         let size = self.uint_constant(ctx, stride);
         let bytes = MulOp::new_with_overflow_flag(ctx, index, size, no_overflow_flags());

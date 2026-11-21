@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::{SimdDtype, SimdWidth, TyKind};
+use mojito_types::types::{AddressSpaceSlot, SimdDtype, SimdWidth, TyKind};
 
 impl Locator {
     pub(crate) fn new(ctx: &Context, sources: &[(String, String)]) -> Self {
@@ -52,6 +52,10 @@ impl Locator {
 }
 
 impl ScalarTy {
+    /// A pointer in the generic address space: every runtime-owned address
+    /// (allocas, runtime buffers, the C ABI table's `ptr`).
+    pub(super) const PTR: Self = Self::Ptr(0);
+
     /// The scalar lowering of a width-1 SIMD dtype.
     pub(super) const fn of_dtype(dtype: Dtype) -> Self {
         match dtype {
@@ -80,7 +84,7 @@ impl ScalarTy {
             Self::Int | Self::UInt => IntegerType::get(ctx, 64, Signedness::Signless).into(),
             Self::Float64 => FP64Type::get(ctx).into(),
             Self::Bool => IntegerType::get(ctx, 1, Signedness::Signless).into(),
-            Self::Ptr => PointerType::get(ctx, 0).into(),
+            Self::Ptr(space) => PointerType::get(ctx, space).into(),
             Self::Dtype => IntegerType::get(ctx, 8, Signedness::Signless).into(),
             Self::Sized(Dtype::Float16) => FP16Type::get(ctx).into(),
             Self::Sized(Dtype::Float32) => FP32Type::get(ctx).into(),
@@ -98,7 +102,7 @@ impl ScalarTy {
             Self::UInt => RetKind::U64,
             Self::Float64 => RetKind::F64,
             Self::Bool => RetKind::Bool,
-            Self::Ptr => RetKind::Ptr,
+            Self::Ptr(_) => RetKind::Ptr,
             // The typed JIT harness reads a `DType` return as its code byte.
             Self::Dtype => RetKind::Sized(Dtype::UInt8),
             Self::Sized(dtype) => RetKind::Sized(dtype),
@@ -111,7 +115,7 @@ impl ScalarTy {
             Self::UInt => "UInt",
             Self::Float64 => "Float64",
             Self::Bool => "Bool",
-            Self::Ptr => "Pointer",
+            Self::Ptr(_) => "Pointer",
             Self::Dtype => "DType",
             Self::Sized(dtype) => dtype.scalar_alias().unwrap_or_else(|| dtype.name()),
         }
@@ -163,30 +167,12 @@ pub fn lower_ty(
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(1),
         } => Ok(LowerTy::Scalar(ScalarTy::of_dtype(*dtype))),
-        // Only the generic address space lowers: upstream's `ptr
-        // addrspace(N)` for any other is R2406's.
-        kind if let Some(address_space) = kind.pointer_address_space().or(match kind {
-            TyKind::Ref(reference) => Some(&reference.address_space),
-            _ => None,
-        }) && !address_space.is_generic() =>
-        {
-            Err(PlironError {
-                function: Some(function.to_string()),
-                kind: PlironErrorKind::Unsupported {
-                    construct: format!(
-                        "a pointer in the address space {address_space} (`{ty}`); only \
-                         AddressSpace.GENERIC lowers natively (R2406)"
-                    ),
-                },
-                location,
-            })
-        }
         // Origins and ownership facts erase after validation; a pointer is
-        // one opaque target pointer regardless of its element type.
-        TyKind::KgenPointer { .. } | TyKind::LitRef { .. } | TyKind::Ref(_) => {
-            Ok(LowerTy::Scalar(ScalarTy::Ptr))
-        }
-        pointer if pointer.is_pointer() => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
+        // one opaque target pointer in its address space, upstream's
+        // `ptr addrspace(N)`, regardless of its element type.
+        _ if let Some(space) = address_space_slot(ty) => Ok(LowerTy::Scalar(pointer_scalar(
+            function, ty, space, location,
+        )?)),
         // A `!kgen.generator` is a trivial register type that holds nothing,
         // and a `Never` register is never written: its call ends the block.
         TyKind::None | TyKind::Never | TyKind::Generator(_) => Ok(LowerTy::ZeroSized),
@@ -236,4 +222,40 @@ pub fn lower_ty(
             location,
         }),
     }
+}
+
+/// The address-space slot of a `Pointer`, a `!kgen.pointer`, a `!lit.ref`,
+/// or a reference.
+pub(super) fn address_space_slot(ty: &Ty) -> Option<&AddressSpaceSlot> {
+    match ty.kind() {
+        TyKind::Ref(reference) => Some(&reference.address_space),
+        kind => kind.pointer_address_space(),
+    }
+}
+
+/// The `Ptr` scalar of the pointer or reference type `ty` in `space`. A
+/// space elaboration left symbolic is a broken invariant, reported rather
+/// than guessed.
+pub(super) fn pointer_scalar(
+    function: &str,
+    ty: &Ty,
+    space: &AddressSpaceSlot,
+    location: Option<SourceSpan>,
+) -> Result<ScalarTy, PlironError> {
+    space.known().map(ScalarTy::Ptr).ok_or_else(|| PlironError {
+        function: Some(function.to_string()),
+        kind: PlironErrorKind::Unsupported {
+            construct: format!("a pointer in the unresolved address space {space} (`{ty}`)"),
+        },
+        location,
+    })
+}
+
+/// The address space of the pointer value `value`.
+pub(super) fn value_address_space(ctx: &Context, value: Value) -> u32 {
+    value
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<PointerType>()
+        .map_or(0, PointerType::address_space)
 }

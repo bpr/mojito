@@ -40,26 +40,6 @@ fn output(source: &str) -> String {
 }
 
 #[test]
-fn a_pointer_runs_in_any_address_space() {
-    // The VM holds abstract addresses, so a pointer cast to another space
-    // reads its place as the pin's host run does (an `addrspace(3)` load),
-    // and a binder deduces the space.
-    assert_eq!(
-        output(concat!(
-            "from std.memory import AddressSpace\n",
-            "def space_of[a: AddressSpace](p: Pointer[Int, _, address_space=a]) -> Int:\n",
-            "    return Int(a)\n",
-            "def main():\n",
-            "    var x = 5\n",
-            "    var q = Pointer(to=x).unsafe_address_space_cast[AddressSpace.SHARED]()\n",
-            "    print(q[], space_of(q))\n",
-            "    print(q.unsafe_address_space_cast[AddressSpace.GENERIC]()[])\n",
-        )),
-        "5 3\n5\n"
-    );
-}
-
-#[test]
 fn bounded_trait_dispatch_preserves_raising_effects_at_runtime() {
     assert_eq!(
         output(

@@ -722,7 +722,7 @@ pub(super) fn reference_outcome(
         layout: composed.layout,
         ok_offset: composed.offsets[1],
         err_offset: composed.offsets[2],
-        ok: LowerTy::Scalar(ScalarTy::Ptr),
+        ok: LowerTy::Scalar(ScalarTy::PTR),
         ok_is_reference: true,
     })
 }

@@ -16,7 +16,7 @@
 //! stage, compile-time lists, callables — reject with [`LayoutError::Unsupported`] so
 //! backends surface a contextual diagnostic instead of guessing.
 
-use mojito_types::types::TyKind;
+use mojito_types::types::{AddressSpaceSlot, TyKind};
 use std::collections::HashMap;
 
 use crate::target::NativeTarget;
@@ -154,10 +154,10 @@ impl LayoutCx<'_> {
                 Ok(Layout::new(element.size * size, element.align))
             }
             TyKind::Variant(alternatives) => Ok(self.variant_layout(alternatives)?.layout),
-            TyKind::KgenPointer { .. } | TyKind::LitRef { .. } | TyKind::Ref(_) => {
-                Ok(self.pointer())
+            TyKind::Ref(reference) => self.pointer_in(ty, &reference.address_space),
+            pointer if let Some(space) = pointer.pointer_address_space() => {
+                self.pointer_in(ty, space)
             }
-            pointer if pointer.is_pointer() => Ok(self.pointer()),
             // One address per element, the `!kgen.struct` of pointers
             // upstream lowers a `!lit.ref.pack` to.
             TyKind::LitRefPack { elements, .. } => {
@@ -230,6 +230,19 @@ impl LayoutCx<'_> {
     /// The runtime's `MjError { message: MjString }`.
     fn mj_error(&self) -> Layout {
         compose(&[self.mj_string()]).layout
+    }
+
+    /// A pointer in address space `space`, by the data layout's entry for
+    /// it; a space only an instantiation can close has no layout.
+    fn pointer_in(&self, ty: &Ty, space: &AddressSpaceSlot) -> Result<Layout, LayoutError> {
+        let space = space
+            .known()
+            .ok_or_else(|| LayoutError::Symbolic(ty.to_string()))?;
+        let triple = self.target.triple;
+        Ok(Layout::new(
+            triple.pointer_size_in(space),
+            triple.pointer_align_in(space),
+        ))
     }
 
     const fn pointer(&self) -> Layout {
@@ -462,12 +475,19 @@ mod tests {
             layout_of(&Ty::new(TyKind::KgenString)),
             Ok(Layout::new(16, 8))
         );
-        let pointer = Ty::pointer(
-            Ty::int(),
-            PointerOrigin::Static,
-            mojito_types::types::AddressSpaceSlot::GENERIC,
-        );
+        let pointer = Ty::pointer(Ty::int(), PointerOrigin::Static, AddressSpaceSlot::GENERIC);
         assert_eq!(layout_of(&pointer), Ok(Layout::new(8, 8)));
+        // A pointer takes its address space's data-layout entry: x86-64's
+        // `p270` is 32-bit, `AddressSpace.SHARED` the default 64.
+        let in_space = |space| {
+            Ty::pointer(
+                Ty::int(),
+                PointerOrigin::Static,
+                AddressSpaceSlot::Known(space),
+            )
+        };
+        assert_eq!(layout_of(&in_space(270)), Ok(Layout::new(4, 4)));
+        assert_eq!(layout_of(&in_space(3)), Ok(Layout::new(8, 8)));
         // A reference pack is one address per element, whatever each holds.
         let pack = Ty::new(TyKind::LitRefPack {
             elements: vec![Ty::bool(), Ty::string_literal_of("s"), Ty::int()],

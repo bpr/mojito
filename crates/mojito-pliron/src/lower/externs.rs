@@ -89,7 +89,7 @@ impl FnLowering<'_> {
                 };
                 (self.reg_value(ctx, reg, ScalarTy::Sized(dtype))?, from)
             }
-            Some(ScalarTy::Ptr | ScalarTy::Float64 | ScalarTy::Dtype) => {
+            Some(ScalarTy::Ptr(_) | ScalarTy::Float64 | ScalarTy::Dtype) => {
                 return Err(self.unsupported_reg(
                     "non-integer argument at an integer external_call parameter".into(),
                     dest,
@@ -109,7 +109,15 @@ impl FnLowering<'_> {
     ) -> Result<Value, PlironError> {
         let ty = self.func.reg_types.get(&reg.0).cloned();
         match ty.as_ref() {
-            Some(ty) if ty.is_pointer() => self.reg_value(ctx, reg, ScalarTy::Ptr),
+            Some(ty) if ty.is_pointer() => {
+                let pointer = self.reg_value(ctx, reg, ScalarTy::PTR)?;
+                self.require_generic_at_boundary(
+                    ctx,
+                    pointer,
+                    reg,
+                    "an `external_call` pointer argument",
+                )
+            }
             Some(ty) if ty.kind().is_non_simd_struct() => {
                 let Some((name, _)) = ty.kind().as_non_simd_struct() else {
                     unreachable!("matched above");
@@ -118,22 +126,31 @@ impl FnLowering<'_> {
                     decl.fields
                         .iter()
                         .find(|(_, field_ty)| field_ty.is_pointer())
-                        .map(|(field, _)| field.clone())
+                        .cloned()
                 });
-                let Some(field) = field else {
+                let Some((field, field_ty)) = field else {
                     return Err(self.unsupported_reg(
                         format!("`{ty}` is not a pointer-carrying view for external_call"),
                         dest,
                     ));
                 };
+                if let Some(space) = address_space_slot(&field_ty).filter(|s| !s.is_generic()) {
+                    return Err(self.unsupported_reg(
+                        format!(
+                            "a pointer or reference in {space} at an `external_call` pointer \
+                             argument, whose native ABI records no address space (R2432)"
+                        ),
+                        dest,
+                    ));
+                }
                 // A held view is its pointer field.
                 if self.holds_struct_value(reg) {
-                    return self.reg_value(ctx, reg, ScalarTy::Ptr);
+                    return self.reg_value(ctx, reg, ScalarTy::PTR);
                 }
                 let storage = self.reg_ptr(ctx, reg)?;
                 let (offset, _) = self.field_offset(ty, &field, dest)?;
                 let address = self.gep_byte(ctx, storage, offset, dest);
-                let ptr_handle = ScalarTy::Ptr.handle(ctx);
+                let ptr_handle = ScalarTy::PTR.handle(ctx);
                 let load = LoadOp::new(ctx, address, ptr_handle);
                 self.append(ctx, load.get_operation(), Some(dest));
                 Ok(load.get_result(ctx))

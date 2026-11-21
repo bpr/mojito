@@ -86,20 +86,24 @@ impl FnLowering<'_> {
         dest: Reg,
     ) -> Result<Value, PlironError> {
         if !self.is_reference_operand(reg) {
-            return self.arg_value(ctx, reg, expected, owned, dest);
+            let value = self.arg_value(ctx, reg, expected, owned, dest)?;
+            return Ok(self.generic_argument(ctx, value, expected, dest));
         }
         if owned {
             return Err(self.unsupported_reg("consuming argument passed by reference".into(), dest));
         }
         match expected {
             LowerTy::Scalar(scalar) => {
-                let address = self.reg_value(ctx, reg, ScalarTy::Ptr)?;
+                let address = self.reg_value(ctx, reg, ScalarTy::PTR)?;
                 let handle = scalar.handle(ctx);
                 let load = LoadOp::new(ctx, address, handle);
                 self.append(ctx, load.get_operation(), Some(dest));
                 Ok(load.get_result(ctx))
             }
-            LowerTy::Aggregate { .. } => self.reg_value(ctx, reg, ScalarTy::Ptr),
+            LowerTy::Aggregate { .. } => {
+                let address = self.reg_value(ctx, reg, ScalarTy::PTR)?;
+                Ok(self.generic_argument(ctx, address, expected, dest))
+            }
             LowerTy::ZeroSized => Err(self.unsupported_reg("zero-sized argument".into(), dest)),
         }
     }
@@ -118,7 +122,8 @@ impl FnLowering<'_> {
                 self.unsupported_reg("by-address argument that is not a reference".into(), dest)
             );
         }
-        self.reg_value(ctx, reg, ScalarTy::Ptr)
+        let pointer = self.reg_value(ctx, reg, ScalarTy::PTR)?;
+        self.require_generic_at_boundary(ctx, pointer, reg, "a `ref` or `mut` argument")
     }
 
     /// Transfer an owning `{data, len}` Array temporary into the List
@@ -130,7 +135,7 @@ impl FnLowering<'_> {
         dest: Reg,
     ) -> Result<Value, PlironError> {
         let array = self.reg_ptr(ctx, reg)?;
-        let ptr_ty = ScalarTy::Ptr.handle(ctx);
+        let ptr_ty = ScalarTy::PTR.handle(ctx);
         let data = LoadOp::new(ctx, array, ptr_ty);
         self.append(ctx, data.get_operation(), Some(dest));
         let len_address = self.offset_address(ctx, array, 8);
@@ -540,7 +545,8 @@ impl FnLowering<'_> {
         self.mem_copy(ctx, dest, src, layout.size, anchor);
     }
 
-    /// `llvm.memcpy.p0.p0.i64(dest, src, len, volatile=false)`.
+    /// `llvm.memcpy.p{d}.p{s}.i64(dest, src, len, volatile=false)`, its
+    /// overload named by each operand's address space.
     pub(super) fn mem_copy(
         &mut self,
         ctx: &mut Context,
@@ -552,20 +558,8 @@ impl FnLowering<'_> {
         if len == 0 {
             return;
         }
-        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let i1_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-        let void = VoidType::get(ctx).to_handle();
-        let fn_ty = FuncType::get(ctx, void, vec![ptr_ty, ptr_ty, i64_ty, i1_ty], false);
         let len_value = self.uint_constant(ctx, len);
-        let volatile = self.bool_constant(ctx, false);
-        let call = CallIntrinsicOp::new(
-            ctx,
-            StringAttr::new("llvm.memcpy.p0.p0.i64".to_string()),
-            fn_ty,
-            vec![dest, src, len_value, volatile],
-        );
-        self.append(ctx, call.get_operation(), Some(span_reg));
+        self.mem_copy_dynamic(ctx, dest, src, len_value, span_reg);
     }
 
     /// Fresh typed scalar storage hoisted to the entry block. Scalar slots
@@ -640,6 +634,28 @@ impl FnLowering<'_> {
             self.func.reg_types.get(&reg.0).map(Ty::kind),
             Some(TyKind::Ref(_))
         )
+    }
+
+    /// The by-value argument `value` lowered as `expected`: an aggregate
+    /// held in another address space passes a copy in generic storage, the
+    /// generic `ptr` its callee's slot binds; a by-value slot reads its
+    /// argument, so the copy is the value.
+    fn generic_argument(
+        &mut self,
+        ctx: &mut Context,
+        value: Value,
+        expected: &LowerTy,
+        dest: Reg,
+    ) -> Value {
+        let LowerTy::Aggregate { ty, layout } = expected else {
+            return value;
+        };
+        if value_address_space(ctx, value) == 0 {
+            return value;
+        }
+        let storage = self.value_storage(ctx, ty, *layout);
+        self.copy_value(ctx, storage, value, ty, *layout, dest);
+        storage
     }
 }
 

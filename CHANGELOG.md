@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The native backend lowers a `Pointer`, `!kgen.pointer`, or reference in
+  any address space to upstream's `ptr addrspace(N)` (R2406): a cast
+  between spaces is an `addrspacecast`, a copy out of a space a
+  `memcpy.p0.pN`, and a struct field, load, store, and by-value argument in
+  `AddressSpace.SHARED` run as at the pin, where they failed with "only
+  AddressSpace.GENERIC lowers natively". `size_of` a pointer in
+  `AddressSpace(270)` or `(271)` is 4 on both backends, as x86-64's data
+  layout says, where it was 8. A non-generic `ref`/`mut` argument or `ref`
+  result is still rejected natively (R2432).
+
 - `Pointer`'s casts (`unsafe_origin_cast`, `unsafe_mut_cast`,
   `unsafe_bitcast`, `unsafe_address_space_cast`), `_get_kgen_pointer`,
   `copy`, and its `_mlir_value=` and `copy=` constructions are the bodies

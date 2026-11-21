@@ -50,7 +50,7 @@ impl FnLowering<'_> {
         };
         match self.func.reg_types.get(&arg.0).map(Ty::kind) {
             Some(mojito_types::types::TyKind::Ref(reference)) if is_string(&reference.referent) => {
-                self.reg_value(ctx, arg, ScalarTy::Ptr).map(Some)
+                self.reg_value(ctx, arg, ScalarTy::PTR).map(Some)
             }
             Some(_) if self.func.reg_types.get(&arg.0).is_some_and(is_string) => {
                 self.reg_ptr(ctx, arg).map(Some)
@@ -73,7 +73,7 @@ impl FnLowering<'_> {
     ) -> Result<(Value, Value), PlironError> {
         match ty {
             ScalarTy::Dtype => Ok(self.dtype_text(ctx, value, repr, dest)),
-            ScalarTy::Ptr => Err(self.unsupported_reg("display of a Pointer".into(), dest)),
+            ScalarTy::Ptr(_) => Err(self.unsupported_reg("display of a Pointer".into(), dest)),
             ScalarTy::Bool => {
                 Err(self.unsupported_reg("display of a `Bool` value without its type".into(), dest))
             }

@@ -53,6 +53,10 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         value: Option<Reg>,
     ) -> Result<(), PlironError> {
+        if let Some(reg) = value.filter(|_| self.func.returns_reference) {
+            let pointer = self.reg_value(ctx, reg, ScalarTy::PTR)?;
+            self.require_generic_at_boundary(ctx, pointer, reg, "a `ref` result")?;
+        }
         if let Some(outcome) = self.signatures[self.name].outcome.clone() {
             return self.lower_raising_return(ctx, value, &outcome);
         }

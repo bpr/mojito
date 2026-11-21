@@ -32,7 +32,7 @@ impl FnLowering<'_> {
         out: Reg,
     ) -> Result<(), PlironError> {
         let value = self.reg_value(ctx, value, ScalarTy::Float64)?;
-        let out = self.reg_value(ctx, out, ScalarTy::Ptr)?;
+        let out = self.reg_value(ctx, out, ScalarTy::PTR)?;
         let func_ty = self.shared.ensure_rt(ctx, "mjrt_fmt_f64");
         let call = CallOp::new(
             ctx,
@@ -288,7 +288,8 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         match method {
             "free" | "unsafe_free" if args.is_empty() => {
-                let ptr = self.reg_value(ctx, recv, ScalarTy::Ptr)?;
+                let ptr = self.reg_value(ctx, recv, ScalarTy::PTR)?;
+                let ptr = self.generic_address(ctx, ptr, dest);
                 let free_ty = self.shared.ensure_rt(ctx, "mjrt_free");
                 let call = CallOp::new(
                     ctx,
@@ -302,7 +303,7 @@ impl FnLowering<'_> {
             }
             "copy" if args.is_empty() => self.lower_copy_value(ctx, dest, recv, None),
             "__int__" if args.is_empty() => {
-                let ptr = self.reg_value(ctx, recv, ScalarTy::Ptr)?;
+                let ptr = self.reg_value(ctx, recv, ScalarTy::PTR)?;
                 let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
                 let cast = PtrToIntOp::new(ctx, ptr, i64_ty);
                 self.define(ctx, dest, cast.get_operation(), cast.get_result(ctx))

@@ -3,9 +3,35 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
+use mojito_types::types::{AddressSpaceSlot, TyKind};
 
 impl FnLowering<'_> {
+    /// A pointer retyped (`pop.pointer.bitcast`, a `Pointer`/`!kgen.pointer`/
+    /// `!lit.ref` conversion): the one `ptr` within its address space,
+    /// upstream's `addrspacecast` from one space to another.
+    pub(super) fn lower_pointer_retype(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        value: Reg,
+    ) -> Result<(), PlironError> {
+        let space = |reg: Reg| {
+            self.func
+                .reg_types
+                .get(&reg.0)
+                .and_then(address_space_slot)
+                .and_then(AddressSpaceSlot::known)
+        };
+        match (space(value), space(dest)) {
+            (Some(from), Some(to)) if from != to => {
+                let source = self.reg_value(ctx, value, ScalarTy::Ptr(from))?;
+                let cast = AddrSpaceCastOp::new(ctx, source, ScalarTy::Ptr(to).handle(ctx));
+                self.define(ctx, dest, cast.get_operation(), cast.get_result(ctx))
+            }
+            _ => self.lower_copy_value(ctx, dest, value, None),
+        }
+    }
+
     /// `p[i]` over the pointer subscript intrinsic: load the element at
     /// `p + i * sizeof(element)` — the VM's unchecked heap read.
     pub(super) fn lower_pointer_index(
@@ -21,7 +47,7 @@ impl FnLowering<'_> {
                 self.unsupported_reg("pointer subscript on a non-pointer base".into(), dest)
             );
         };
-        let ptr = self.reg_value(ctx, base, ScalarTy::Ptr)?;
+        let ptr = self.reg_value(ctx, base, ScalarTy::PTR)?;
         let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
         // A pointer subscript borrows its pointee, as upstream's
         // `ref`-returning `__getitem__` does; the checked `value.copy`
@@ -76,6 +102,22 @@ impl FnLowering<'_> {
         Ok(gep.get_result(ctx))
     }
 
+    /// `pointer` as the runtime's generic `ptr`: an address in another
+    /// space goes through an `addrspacecast`.
+    pub(super) fn generic_address(
+        &mut self,
+        ctx: &mut Context,
+        pointer: Value,
+        span: Reg,
+    ) -> Value {
+        if value_address_space(ctx, pointer) == 0 {
+            return pointer;
+        }
+        let cast = AddrSpaceCastOp::new(ctx, pointer, ScalarTy::PTR.handle(ctx));
+        self.append(ctx, cast.get_operation(), Some(span));
+        cast.get_result(ctx)
+    }
+
     /// Classify a raw-pointer dereference through the runtime allocation
     /// registry before LLVM touches the address.
     pub(super) fn guard_pointer_dereference(
@@ -84,6 +126,7 @@ impl FnLowering<'_> {
         pointer: Value,
         span: Reg,
     ) -> Result<(), PlironError> {
+        let pointer = self.generic_address(ctx, pointer, span);
         let status_ty = self.shared.ensure_rt(ctx, "mjrt_pointer_status");
         let call = CallOp::new(
             ctx,
@@ -127,7 +170,7 @@ impl FnLowering<'_> {
         index: Reg,
         element: &Ty,
     ) -> Result<(), PlironError> {
-        let ptr = self.reg_value(ctx, pointer, ScalarTy::Ptr)?;
+        let ptr = self.reg_value(ctx, pointer, ScalarTy::PTR)?;
         let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
         self.load_moved_from(ctx, address, element, dest)?;
         Ok(())
@@ -147,7 +190,7 @@ impl FnLowering<'_> {
         element: &Ty,
         destructor: Option<&str>,
     ) -> Result<(), PlironError> {
-        let ptr = self.reg_value(ctx, pointer, ScalarTy::Ptr)?;
+        let ptr = self.reg_value(ctx, pointer, ScalarTy::PTR)?;
         let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
         self.emit_drop(ctx, address, element, destructor)?;
         self.erased.insert(dest.0);
@@ -457,6 +500,28 @@ impl FnLowering<'_> {
             .try_into()
             .expect("mangled names are identifier-safe");
         let func_ty = signature.func_ty;
+        // The constructor's slots are generic `ptr`s: a source or
+        // destination in another address space goes through generic
+        // storage, a byte copy either side of the call.
+        let staged = match signature.params.get(1) {
+            Some(LowerTy::Aggregate { ty, layout }) => Some((ty.clone(), *layout)),
+            _ => None,
+        };
+        let stage = |this: &mut Self, ctx: &mut Context, value: Value| match &staged {
+            Some((ty, layout)) if value_address_space(ctx, value) != 0 => {
+                Some((this.value_storage(ctx, ty, *layout), ty.clone(), *layout))
+            }
+            _ => None,
+        };
+        let src = match stage(self, ctx, src) {
+            Some((storage, ty, layout)) => {
+                self.copy_value(ctx, storage, src, &ty, layout, span);
+                storage
+            }
+            None => src,
+        };
+        let dst_stage = stage(self, ctx, dst);
+        let call_dst = dst_stage.as_ref().map_or(dst, |(storage, _, _)| *storage);
         let source = match (signature.params.get(1), signature.ref_params.get(1)) {
             (Some(LowerTy::Scalar(scalar)), by_ref) if !by_ref.copied().unwrap_or(false) => {
                 let handle = scalar.handle(ctx);
@@ -470,9 +535,12 @@ impl FnLowering<'_> {
             ctx,
             CallOpCallable::Direct(callee),
             func_ty,
-            vec![dst, source],
+            vec![call_dst, source],
         );
         self.append(ctx, call.get_operation(), Some(span));
+        if let Some((storage, ty, layout)) = dst_stage {
+            self.copy_value(ctx, dst, storage, &ty, layout, span);
+        }
         Ok(())
     }
 

@@ -608,6 +608,21 @@ impl FnLowering<'_> {
         if variadic.is_some() {
             return Err(self.unsupported_reg("variadic indirect-call contract".into(), dest));
         }
+        if let Some(space) = ref_params
+            .iter()
+            .flatten()
+            .chain(ref_return.as_deref())
+            .map(|sig| &sig.address_space)
+            .find(|space| !space.is_generic())
+        {
+            return Err(self.unsupported_reg(
+                format!(
+                    "a `ref` in {space} in an indirect-call contract, whose native ABI records \
+                     no address space (R2432)"
+                ),
+                dest,
+            ));
+        }
         let returns_reference = ref_return.is_some();
         let (result, returns_value, sret, outcome) = if returns_reference && *raises {
             let outcome =

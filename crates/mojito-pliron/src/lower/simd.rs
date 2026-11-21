@@ -130,7 +130,7 @@ impl FnLowering<'_> {
                 return Err(self.unsupported_reg("SIMD cast width mismatch".into(), dest));
             }
             let source_ty = ScalarTy::of_dtype(source_dtype);
-            if source_ty == ScalarTy::Ptr {
+            if matches!(source_ty, ScalarTy::Ptr(_)) {
                 return Err(self.unsupported_reg("SIMD cast of a pointer operand".into(), dest));
             }
             let source = self.simd_load_vector(ctx, value, source_dtype, width, dest)?;
@@ -145,7 +145,7 @@ impl FnLowering<'_> {
         let source = self.concrete_scalar_ty(value)?.ok_or_else(|| {
             self.unsupported_reg("SIMD cast of an unmaterialized literal".into(), dest)
         })?;
-        if source == ScalarTy::Ptr {
+        if matches!(source, ScalarTy::Ptr(_)) {
             return Err(
                 self.unsupported_reg(format!("SIMD cast of a {} operand", source.name()), dest)
             );
@@ -177,8 +177,8 @@ impl FnLowering<'_> {
         else {
             return Err(self.unsupported_reg("SIMD bitcast source type".into(), dest));
         };
-        if ScalarTy::of_dtype(source_dtype) == ScalarTy::Ptr
-            || ScalarTy::of_dtype(dtype) == ScalarTy::Ptr
+        if matches!(ScalarTy::of_dtype(source_dtype), ScalarTy::Ptr(_))
+            || matches!(ScalarTy::of_dtype(dtype), ScalarTy::Ptr(_))
         {
             return Err(self.unsupported_reg("SIMD bitcast of a pointer lane".into(), dest));
         }
@@ -601,7 +601,7 @@ impl FnLowering<'_> {
             ScalarTy::Int | ScalarTy::UInt | ScalarTy::Sized(_) => {
                 self.sized_int_binop_value(ctx, op, lhs, rhs, dtype, Some(width), dest)?
             }
-            ScalarTy::Ptr | ScalarTy::Dtype => {
+            ScalarTy::Ptr(_) | ScalarTy::Dtype => {
                 return Err(self.unsupported_reg(format!("SIMD binary operator `{op:?}`"), dest));
             }
         };
@@ -676,7 +676,7 @@ impl FnLowering<'_> {
                 return Err(self
                     .unsupported_reg(format!("`pop.{}` takes one operand", op.mnemonic()), dest));
             };
-            let ptr = self.reg_value(ctx, *pointer, ScalarTy::Ptr)?;
+            let ptr = self.reg_value(ctx, *pointer, ScalarTy::PTR)?;
             let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
             let cast = PtrToIntOp::new(ctx, ptr, i64_ty);
             return self.define(ctx, dest, cast.get_operation(), cast.get_result(ctx));

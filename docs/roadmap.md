@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2432**.
+Next free ID: **R2435**.
 
 ## Ordered Work
 
@@ -974,28 +974,54 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2406 Pliron lowers only pointers in the generic address space**
+- [ ] **R2434 A reference MIR forms over a place drops the place's address
+  space**
 
-  A `Pointer`, `!kgen.pointer`, or `!lit.ref` in any address space but
-  `AddressSpace.GENERIC` fails natively ("a pointer in the address space
-  AddressSpace.SHARED ...; only AddressSpace.GENERIC lowers natively"),
-  where the pin lowers it to `ptr addrspace(N)` and runs it on the host.
-  - Probe: `Pointer(to=x).unsafe_address_space_cast[AddressSpace.SHARED]()`
-    then `q[]` prints `5` at the pin and on the VM. The pin's `--emit llvm`
-    shows `addrspacecast ptr %3 to ptr addrspace(3)` and `load i64, ptr
-    addrspace(3)`.
-  - Pinned by `pliron_backend_test::unsupported_constructs_produce_contextual_diagnostics`
-    and `evaluator_test::a_pointer_runs_in_any_address_space`.
-  - Lever: `ScalarTy::Ptr` carries the space (`lower/types.rs` and its
-    users), and a cross-space `pointer.bitcast` lowers to
-    `llvm.addrspacecast`. Pliron 0.20 has `PointerType::get(ctx, as)`.
-  - Layout: x86-64's `p270`/`p271` spaces are 32-bit
-    (`mojito-native-core/src/layout.rs` gives every space the target
-    pointer's layout today).
-  - When it lands, move the non-generic program into `assets/ok`.
-  - Found while landing R2204 (2026-11-20).
+  `ref.make` over a place reached through a pointer in
+  `AddressSpace.SHARED` types its register as a generic `ref`, where
+  upstream's `!lit.ref` carries the place's space.
+  - Probe: `sp(q[])`, with `q` a SHARED `Pointer[Int]` and
+    `def sp[a: AddressSpace](ref[_, a] x: Int)`, gives `%r8: ref {referent:
+    Int, ...}` with no `address_space` in `emit-mir`. The checker deduces
+    `a = SHARED` from the same place.
+  - Native lowering builds that register's value as `ptr addrspace(3)`, so
+    Pliron reads a lowered value's space rather than the register type
+    (`emit.rs::require_generic_at_boundary`).
+  - Cause: `mir_place_handle_ty` (`mojito-mir/src/mir.rs`) and the other
+    MIR builders of a `RefTy` (`nested.rs`, `drop_calls.rs`,
+    `lower_stmt.rs`, `calls.rs`) hardcode `AddressSpaceSlot::GENERIC`.
+  - Lever: give a handle the space of the last pointer or reference its
+    place goes through, as `Checker::place_address_space` does for the
+    checker.
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2432 A `ref` parameter or `ref` result in a non-generic address
+  space has no MIR space, so Pliron rejects it at the call boundary**
+
+  Natively, a `ref`/`mut` argument, a `ref` result, an indirect-call `ref`
+  contract, or an `external_call` pointer in `AddressSpace.SHARED` fails
+  with "... whose native ABI records no address space (R2432)". The pin
+  passes and returns `ptr addrspace(3)` there.
+  - Probe: `@no_inline def get(self) -> ref[Self.o, Self.a] Int` over a
+    SHARED `Pointer` field, then `print(w.get())`, prints `3` at the pin
+    and on the VM.
+  - Probe: `@no_inline def sp[a: AddressSpace](ref[_, a] x: Int)` called as
+    `sp(q[])` over a SHARED pointer prints `6` at the pin.
+  - Probe: `@no_inline def bump[a: AddressSpace](mut x: Int)` called as
+    `bump[AddressSpace.SHARED](q[])` prints `4` at the pin. How the pin
+    lowers that `mut` argument is not yet probed with `--emit llvm`.
+  - Pinned by `pliron_backend_test::unsupported_constructs_produce_contextual_diagnostics`.
+  - Cause: `MirFunction::ref_params` is `Vec<bool>` and
+    `returns_reference` is `bool`, as are `CheckedDeclaration`'s two fields.
+    Only a function type's `RefSig` carries a space.
+  - Lever: carry each `ref` parameter's and the result's
+    `AddressSpaceSlot` from the checker into `CheckedDeclaration` and
+    `MirFunction`, with a MIR text schema bump and mono substitution.
+    `module_env.rs::declare_function`, the call operands, closure thunks,
+    and the `calls.rs` contract ABI then read it.
+  - Depends on R2434 (a caller's register must carry the space it passes).
+  - Model: Fable, Planned.
 
 - [ ] **R2054 A `for ref` target assigned in its body has no slot type,
   so Pliron rejects the loop**
@@ -7528,6 +7554,25 @@ fixture. Each entry's `Ledger name` is the slug `conformance/cases.tsv` uses
 for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R2433 A value that is not implicitly trivially copyable is copied or
+  moved across a non-default address space**
+
+  Mojito accepts copying such a value out of a non-default address space,
+  or copying or moving it into one, where the pin rejects both.
+  - Probe: `var t = q[].copy()` over a `Pointer[Pair, ...,
+    address_space=AddressSpace.SHARED]`, `Pair` only `Copyable`, fails at
+    the pin with "non-implicitly trivially copyable value cannot be copied
+    from a non-default address space". Mojito runs it.
+  - Probe: `q[] = String("bye")` through a SHARED `Pointer[String]` fails
+    at the pin with "value of type 'String' cannot be copied or moved into
+    a non-default address space". The VM runs it and the native backend
+    fails IR verification.
+  - Lever: the checker's copy and assignment rules read the source or
+    target place's space (`Checker::place_address_space`) and require
+    `ImplicitlyCopyable` trivial copyability there.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2229 A compile-time evaluation inside a generic body prints
   where the pin prints nothing**

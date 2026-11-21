@@ -269,7 +269,7 @@ impl FnLowering<'_> {
                     self.mir_declarations,
                     self.reg_span(arg),
                 )? {
-                    let pointer = self.reg_value(ctx, arg, ScalarTy::Ptr)?;
+                    let pointer = self.reg_value(ctx, arg, ScalarTy::PTR)?;
                     let handle = scalar.handle(ctx);
                     let load = LoadOp::new(ctx, pointer, handle);
                     self.append(ctx, load.get_operation(), Some(dest));
@@ -297,7 +297,7 @@ impl FnLowering<'_> {
     ) -> Result<Value, PlironError> {
         let (address, ty) = self.place_address(ctx, place, anchor)?;
         if matches!(ty.kind(), TyKind::Ref(_)) {
-            let handle = ScalarTy::Ptr.handle(ctx);
+            let handle = self.pointer_handle(ctx, &ty, anchor)?;
             let load = LoadOp::new(ctx, address, handle);
             self.append(ctx, load.get_operation(), Some(anchor));
             Ok(load.get_result(ctx))

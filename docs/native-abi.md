@@ -197,7 +197,13 @@ Rules:
 - A generator value (`__generator_type[...]`, upstream's `!kgen.generator`)
   is a ZST: its trivial register value holds nothing at run time.
 - `Pointer`/`Ref` are one target pointer (8/8); origins and ownership facts
-  erase after validation. A reference adds runtime metadata only when its
+  erase after validation. A pointer or reference in address space N is
+  LLVM's `ptr addrspace(N)`, laid out by the data layout's `pN` entry
+  (x86-64: spaces 270 and 271 are 4/4, every other space 8/8). Allocas,
+  runtime buffers, runtime entry points, and the C ABI table are space 0;
+  a `ref`/`mut` parameter and a `ref` result are generic `ptr` slots, so a
+  non-generic operand there is rejected until MIR records its space
+  (R2432). A reference adds runtime metadata only when its
   checked type requires it — no checked type does today. Dangling ZST-style
   pointers are aligned sentinels, never null.
 - `Tuple`/`RuntimePack`/nominal structs are ordinary aggregates of their

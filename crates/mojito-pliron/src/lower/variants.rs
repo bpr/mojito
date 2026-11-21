@@ -142,7 +142,7 @@ impl FnLowering<'_> {
                 let cmp = self.fcmp(ctx, FCmpPredicateAttr::UNE, value, zero);
                 self.define(ctx, dest, cmp.get_operation(), cmp.get_result(ctx))
             }
-            (ScalarTy::Ptr, _) | (_, ScalarTy::Ptr) => {
+            (ScalarTy::Ptr(_), _) | (_, ScalarTy::Ptr(_)) => {
                 Err(self
                     .unsupported_reg(format!("conversion `{name}` over a Pointer operand"), dest))
             }

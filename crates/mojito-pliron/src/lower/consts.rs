@@ -429,6 +429,7 @@ impl FnLowering<'_> {
                 let layout = self.layout.layout_of(element).map_err(|error| {
                     self.unsupported_reg(format!("frozen pointer element layout ({error})"), dest)
                 })?;
+                let pointer_ty = self.pointer_handle(ctx, ty, dest)?;
                 let base = if let Some(slots) = memory {
                     let bytes = layout.size.checked_mul(slots.len() as u64).ok_or_else(|| {
                         self.unsupported_reg(
@@ -445,10 +446,15 @@ impl FnLowering<'_> {
                             self.store_parameter_value(ctx, address, slot, element, dest)?;
                         }
                     }
-                    base
+                    if pointer_ty == ScalarTy::PTR.handle(ctx) {
+                        base
+                    } else {
+                        let cast = AddrSpaceCastOp::new(ctx, base, pointer_ty);
+                        self.append(ctx, cast.get_operation(), Some(dest));
+                        cast.get_result(ctx)
+                    }
                 } else {
-                    let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-                    let null = ZeroOp::new(ctx, ptr_ty);
+                    let null = ZeroOp::new(ctx, pointer_ty);
                     self.append(ctx, null.get_operation(), Some(dest));
                     null.get_result(ctx)
                 };

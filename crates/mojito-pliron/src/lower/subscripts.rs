@@ -99,7 +99,7 @@ impl FnLowering<'_> {
         let collector_value = match (collector, matched.positional_overflow.as_slice()) {
             (None, _) => None,
             (Some(_), [built]) => match &positional[*built] {
-                SubscriptActual::Reg(reg) => Some(self.reg_value(ctx, *reg, ScalarTy::Ptr)?),
+                SubscriptActual::Reg(reg) => Some(self.reg_value(ctx, *reg, ScalarTy::PTR)?),
             },
             (Some(_), _) => None,
         };

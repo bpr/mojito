@@ -278,14 +278,10 @@ impl FnLowering<'_> {
                 self.lower_copy_value(ctx, *dest, *value, None)
             }
             // A `Pointer`, its `!kgen.pointer`, and a `!lit.ref` are one
-            // `ptr`.
-            MirInstr::PointerConvert { dest, value } => {
-                self.lower_copy_value(ctx, *dest, *value, None)
-            }
-            // LLVM's pointers are opaque: `pop.pointer.bitcast` is the one
-            // `ptr` retyped.
-            MirInstr::PointerBitcast { dest, value } => {
-                self.lower_copy_value(ctx, *dest, *value, None)
+            // `ptr`; LLVM's pointers are opaque, so `pop.pointer.bitcast`
+            // retypes it, across address spaces with an `addrspacecast`.
+            MirInstr::PointerConvert { dest, value } | MirInstr::PointerBitcast { dest, value } => {
+                self.lower_pointer_retype(ctx, *dest, *value)
             }
             MirInstr::Pop {
                 dest,
@@ -350,7 +346,8 @@ impl FnLowering<'_> {
                         .get(&dest.0)
                         .is_some_and(|loaded| !matches!(loaded.kind(), TyKind::Ref(_)))
                 {
-                    let load = LoadOp::new(ctx, address, ScalarTy::Ptr.handle(ctx));
+                    let handle = self.pointer_handle(ctx, &ty, *dest)?;
+                    let load = LoadOp::new(ctx, address, handle);
                     self.append(ctx, load.get_operation(), Some(*dest));
                     address = load.get_result(ctx);
                     ty = reference.referent.clone();
@@ -561,7 +558,7 @@ impl FnLowering<'_> {
             MirInstr::StoreRef { place, reference } => {
                 let place = place.clone();
                 let (address, _) = self.place_address(ctx, &place, *reference)?;
-                let handle = self.reg_value(ctx, *reference, ScalarTy::Ptr)?;
+                let handle = self.reg_value(ctx, *reference, ScalarTy::PTR)?;
                 let store = StoreOp::new(ctx, handle, address);
                 self.append(ctx, store.get_operation(), Some(*reference));
                 Ok(())

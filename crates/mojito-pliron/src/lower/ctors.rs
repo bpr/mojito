@@ -87,7 +87,7 @@ impl FnLowering<'_> {
     /// reference-returning function, else the checked return type's lowering.
     pub(super) fn return_value_lower(&self) -> Result<Option<LowerTy>, PlironError> {
         if self.func.returns_reference {
-            return Ok(Some(LowerTy::Scalar(ScalarTy::Ptr)));
+            return Ok(Some(LowerTy::Scalar(ScalarTy::PTR)));
         }
         match self.func.ret_ty.as_ref() {
             Some(ty) if *ty != TyKind::None && *ty != TyKind::Never => Ok(Some(lower_ty(
@@ -148,7 +148,7 @@ impl FnLowering<'_> {
                     ..place.clone()
                 },
             );
-            let handle = ScalarTy::Ptr.handle(ctx);
+            let handle = self.pointer_handle(ctx, &ty, dest)?;
             let load = LoadOp::new(ctx, address, handle);
             self.append(ctx, load.get_operation(), Some(dest));
             self.reg_values.insert(dest.0, load.get_result(ctx));
@@ -178,7 +178,7 @@ impl FnLowering<'_> {
         dest: Reg,
         reference: Reg,
     ) -> Result<(), PlironError> {
-        let pointer = self.reg_value(ctx, reference, ScalarTy::Ptr)?;
+        let pointer = self.reg_value(ctx, reference, ScalarTy::PTR)?;
         let Some(ty) = self.func.reg_types.get(&dest.0).cloned() else {
             return Err(self.unsupported_reg("untyped reference read".into(), dest));
         };
@@ -192,7 +192,7 @@ impl FnLowering<'_> {
         reference: Reg,
         value: Reg,
     ) -> Result<(), PlironError> {
-        let pointer = self.reg_value(ctx, reference, ScalarTy::Ptr)?;
+        let pointer = self.reg_value(ctx, reference, ScalarTy::PTR)?;
         let Some(ty) = self.func.reg_types.get(&value.0).cloned() else {
             return Err(self.unsupported_reg("untyped reference write".into(), value));
         };

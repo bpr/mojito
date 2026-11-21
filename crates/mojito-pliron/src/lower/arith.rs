@@ -210,7 +210,7 @@ impl FnLowering<'_> {
             }
             // Pointer identity: `==`/`!=` compare addresses (the VM compares
             // allocation identity); ordered comparisons stay unsupported.
-            ScalarTy::Ptr => {
+            ScalarTy::Ptr(_) => {
                 if !matches!(op, InfixOp::Eq | InfixOp::Ne) {
                     return Err(self
                         .unsupported_reg(format!("operator `{op:?}` on Pointer operands"), dest));

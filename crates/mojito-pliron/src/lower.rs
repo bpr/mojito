@@ -43,12 +43,12 @@ use pliron_llvm::op_interfaces::{
     FloatBinArithOpWithFastMathFlags, IntBinArithOpWithOverflowFlag,
 };
 use pliron_llvm::ops::{
-    AShrOp, AddOp, AddressOfOp, AllocaOp, AndOp, BitcastOp, BrOp, CallIntrinsicOp, CallOp,
-    CondBrOp, ConstantOp, ExtractElementOp, FAddOp, FCmpOp, FDivOp, FMulOp, FNegOp, FPExtOp,
-    FPToSIOp, FPTruncOp, FRemOp, FSubOp, FuncOp, GepIndex, GetElementPtrOp, GlobalOp, ICmpOp,
-    InsertElementOp, LShrOp, LoadOp, MulOp, OrOp, PoisonOp, PtrToIntOp, ReturnOp, SDivOp, SExtOp,
-    SIToFPOp, SRemOp, SelectOp, ShlOp, ShuffleVectorOp, StoreOp, SubOp, TruncOp, UDivOp, UIToFPOp,
-    URemOp, UndefOp, UnreachableOp, XorOp, ZExtOp, ZeroOp,
+    AShrOp, AddOp, AddrSpaceCastOp, AddressOfOp, AllocaOp, AndOp, BitcastOp, BrOp, CallIntrinsicOp,
+    CallOp, CondBrOp, ConstantOp, ExtractElementOp, FAddOp, FCmpOp, FDivOp, FMulOp, FNegOp,
+    FPExtOp, FPToSIOp, FPTruncOp, FRemOp, FSubOp, FuncOp, GepIndex, GetElementPtrOp, GlobalOp,
+    ICmpOp, InsertElementOp, LShrOp, LoadOp, MulOp, OrOp, PoisonOp, PtrToIntOp, ReturnOp, SDivOp,
+    SExtOp, SIToFPOp, SRemOp, SelectOp, ShlOp, ShuffleVectorOp, StoreOp, SubOp, TruncOp, UDivOp,
+    UIToFPOp, URemOp, UndefOp, UnreachableOp, XorOp, ZExtOp, ZeroOp,
 };
 use pliron_llvm::types::{ArrayType, FuncType, PointerType, VectorType, VectorTypeKind, VoidType};
 
@@ -300,7 +300,8 @@ pub struct Locator {
 
 /// The scalar value types the backend lowers. `Int` and `UInt` share the
 /// signless i64 representation and differ only in operator selection; `Ptr`
-/// is one opaque target pointer (checked `Pointer` values, origins erased);
+/// is one opaque target pointer in its address space (`ptr addrspace(N)`;
+/// checked `Pointer` values, origins erased);
 /// `Dtype` is a `DType` value's one-byte upstream code; `Sized` is a width-1
 /// SIMD scalar alias at its lane width.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -309,7 +310,7 @@ pub enum ScalarTy {
     UInt,
     Float64,
     Bool,
-    Ptr,
+    Ptr(u32),
     Dtype,
     /// A sized scalar alias (`Int8`…`Int64`, `UInt8`…`UInt64`, `Float16`,
     /// `Float32`).

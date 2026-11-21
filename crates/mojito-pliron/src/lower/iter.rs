@@ -56,7 +56,8 @@ impl FnLowering<'_> {
             )
         })?;
         let (source_storage, current_ty) = if let TyKind::Ref(reference) = source_ty.kind() {
-            let handle = ScalarTy::Ptr.handle(ctx);
+            let handle =
+                pointer_scalar(self.name, &source_ty, &reference.address_space, None)?.handle(ctx);
             let load = LoadOp::new(ctx, self.var_slots[source as usize], handle);
             self.append(ctx, load.get_operation(), None);
             (load.get_result(ctx), reference.referent.clone())
@@ -341,7 +342,7 @@ impl FnLowering<'_> {
         let (data, size) = self.variadic_list_span(iter, dest)?;
         let list = self.var_slots[iter as usize];
         let data_slot = self.offset_address(ctx, list, data);
-        let ptr_handle = ScalarTy::Ptr.handle(ctx);
+        let ptr_handle = ScalarTy::PTR.handle(ctx);
         let elements = LoadOp::new(ctx, data_slot, ptr_handle);
         self.append(ctx, elements.get_operation(), Some(dest));
         let elements = elements.get_result(ctx);
