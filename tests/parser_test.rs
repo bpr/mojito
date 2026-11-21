@@ -744,6 +744,28 @@ fn parses_break_and_continue() {
 // --- Parameterization (generics) ---
 
 #[test]
+fn parses_a_keyword_only_marker_in_a_parameter_list() {
+    let keyword_only = |source: &str| -> Vec<(String, bool)> {
+        let stmts = parse(source);
+        let StmtKind::Struct { type_params, .. } = &stmts[0].kind else {
+            panic!("expected a struct, got {:?}", stmts[0]);
+        };
+        type_params
+            .iter()
+            .map(|param| (param.name.clone(), param.keyword_only))
+            .collect()
+    };
+    assert_eq!(
+        keyword_only("struct S[a: Int, *, b: Int]:\n    pass\n"),
+        [("a".to_string(), false), ("b".to_string(), true)]
+    );
+    assert_eq!(
+        keyword_only("struct S[*Ts: AnyType, c: Int]:\n    pass\n"),
+        [("*Ts".to_string(), false), ("c".to_string(), true)]
+    );
+}
+
+#[test]
 fn parses_generic_struct_header_and_self_param_field() {
     let stmts = parse(
         "@fieldwise_init\nstruct Pair[T: Copyable & Movable]:\n    var left: Self.T\n    var right: Self.T\n",
@@ -760,6 +782,7 @@ fn parses_generic_struct_header_and_self_param_field() {
                 callable_bound: None,
                 origin_mutability: None,
                 infer_only: false,
+                keyword_only: false,
                 default: None,
             }],
             conforms: vec![],
@@ -800,6 +823,7 @@ fn parses_generic_def_with_type_param_signature() {
                 callable_bound: None,
                 origin_mutability: None,
                 infer_only: false,
+                keyword_only: false,
                 default: None,
             }],
             params: vec![fnparam("x", Type::Named("T".into(), vec![]))],
@@ -1796,6 +1820,7 @@ fn parses_value_parameter_header() {
                     callable_bound: None,
                     origin_mutability: None,
                     infer_only: false,
+                    keyword_only: false,
                     default: None,
                 }]
             );
@@ -4886,6 +4911,7 @@ fn parses_fully_explicit_lambda() {
                 callable_bound: None,
                 origin_mutability: None,
                 infer_only: false,
+                keyword_only: false,
                 default: None,
             }],
             vec![fnparam("x", Type::Named("Int".into(), vec![]))],

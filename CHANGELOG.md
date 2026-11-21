@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `Pointer[...]` bracket binds over upstream's declared list
+  `[mut: Bool, //, T, origin, *, address_space]` (R2421), in an
+  annotation, a signature, and a construction: `Pointer[T=Int,
+  origin=o]`, `Pointer[mut=True, Int, o]`, and `Pointer[Int, origin=o]`
+  check where they failed with "named Tuple element arguments" or an
+  arity error, `mut=False` passes the origin as immutable, and a bare
+  `p: Pointer` parameter auto-parameterizes. A bracketed
+  `Pointer[...](to=x)` builds the bracket's instance on both backends
+  (`assets/ok/pointer_bracket_declared_binding.mojo`), where it failed
+  with "explicit type arguments are not supported". As at the pin, a
+  positional `address_space`, a `mut=` after a positional, `mut=True`
+  over an immutable origin, and a place outside the bracket's origin are
+  rejected. The parser records a bare `*` parameter marker
+  (`TypeParam::keyword_only`), the bundle declares `Pointer._with_origin`,
+  and the package format moves to `mojito-package 246`.
+
 - A `Pointer` member no checker rule answers resolves to its declared
   body (R2420), so `Pointer(to=x).as_imm()[]` and `p.write_to(s)` run on
   both backends where they failed with "has no method". A construction

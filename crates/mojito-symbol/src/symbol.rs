@@ -3722,6 +3722,7 @@ mod tests {
             callable_bound: None,
             origin_mutability: None,
             infer_only: false,
+            keyword_only: false,
             default: None,
         };
         let annotation = Type::Named(

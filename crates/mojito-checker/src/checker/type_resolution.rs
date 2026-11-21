@@ -477,6 +477,8 @@ pub(super) struct BuiltinParam {
     name: &'static str,
     /// Whether the parameter is declared before `//`.
     infer_only: bool,
+    /// Whether the parameter is declared after a bare `*`.
+    keyword_only: bool,
 }
 
 impl BuiltinParam {
@@ -485,6 +487,7 @@ impl BuiltinParam {
         Self {
             name,
             infer_only: false,
+            keyword_only: false,
         }
     }
 
@@ -493,6 +496,16 @@ impl BuiltinParam {
         Self {
             name,
             infer_only: true,
+            keyword_only: false,
+        }
+    }
+
+    /// A parameter declared after a bare `*`, bound by keyword alone.
+    const fn keyword_only(name: &'static str) -> Self {
+        Self {
+            name,
+            infer_only: false,
+            keyword_only: true,
         }
     }
 }
@@ -509,6 +522,24 @@ impl mojito_ast::call::CompileTimeParam for BuiltinParam {
     fn variadic(&self) -> bool {
         self.name.starts_with('*')
     }
+
+    fn keyword_only(&self) -> bool {
+        self.keyword_only
+    }
+}
+
+/// A `Pointer[...]` bracket bound over upstream's declared parameter list
+/// ([`Checker::pointer_bracket`]): each slot the bracket spells, the origin
+/// already passed at its `mut=` argument's type.
+#[derive(Default)]
+pub(super) struct PointerBracket {
+    /// A `mut=` literal; `None` when absent or spelled by a value.
+    pub(super) mutability: Option<bool>,
+    pub(super) element: Option<Ty>,
+    pub(super) origin: Option<mojito_types::origin::PointerOrigin>,
+    pub(super) address_space: Option<mojito_types::types::AddressSpaceSlot>,
+    /// The attribute each source argument carries.
+    pub(super) attributes: DeclaredAttributes,
 }
 
 /// A one-type list: `reflect[T: AnyType]`, `Variant.isa[T: AnyType]`, a
@@ -4169,94 +4200,153 @@ impl Checker {
         Ok(hasher)
     }
 
-    /// Resolve current Mojo's `Pointer[T, origin]` (also spelled through the
-    /// deprecated `UnsafePointer` alias) or the one-argument `Pointer[T]` compatibility
-    /// spelling, which resolves to the mutable untracked origin of heap
-    /// allocations. The inferred mutability parameter is intentionally absent
-    /// from the user-facing argument list.
+    /// Resolve a `Pointer[...]` bracket (also spelled through the deprecated
+    /// `UnsafePointer` alias) by [`Self::pointer_bracket`]. A bracket naming
+    /// no origin is the one-argument compatibility spelling, which resolves
+    /// to the untracked origin of heap allocations until R2417 withdraws it.
     pub(super) fn pointer_type(
         &self,
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<(Ty, DeclaredAttributes), TypeError> {
-        // `address_space` is keyword-only, after the declaration's `*`.
-        let (args, address_space_arg) = match args {
-            [
-                positional @ ..,
-                keyword @ mojito_ast::ast::ParamArg::Named {
-                    name: keyword_name, ..
-                },
-            ] if keyword_name == "address_space" => (positional, Some(keyword)),
-            _ => (args, None),
+        let bracket = self.pointer_bracket(name, args)?;
+        let Some(element) = bracket.element else {
+            return Err(TypeError::BadCall {
+                func: name.to_string(),
+                reason: "failed to infer parameter 'T'".to_string(),
+            });
         };
-        if !matches!(args.len(), 1 | 2) {
-            return Err(TypeError::WrongTypeArgCount {
-                name: name.to_string(),
-                expected: 2,
-                got: args.len(),
+        let origin =
+            bracket
+                .origin
+                .unwrap_or_else(|| mojito_types::origin::PointerOrigin::Untracked {
+                    mutable: bracket.mutability != Some(false),
+                });
+        let address_space = bracket
+            .address_space
+            .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
+        Ok((
+            Ty::pointer(element, origin, address_space),
+            bracket.attributes,
+        ))
+    }
+
+    /// Bind a `Pointer[...]` bracket as upstream's binder binds
+    /// `Pointer[mut: Bool, //, T: AnyType, origin: Origin[mut=mut], *,
+    /// address_space: AddressSpace = .GENERIC]`: positionals fill `T` and
+    /// `origin`, a keyword binds any slot by name (`mut` only ahead of every
+    /// positional, `address_space` only by keyword), and a `mut=` literal
+    /// passes the origin at its type: `True` rejects an immutable origin,
+    /// `False` converts a mutable one to immutable.
+    pub(super) fn pointer_bracket(
+        &self,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<PointerBracket, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        let keywords = mojito_ast::call::bracket_keywords(args);
+        let slots = mojito_ast::call::match_parameter_slots(POINTER_PARAMS, &keywords)
+            .map_err(|error| error.into_type_error(name))?;
+        let mut bracket = PointerBracket::default();
+        let mut origin_argument = None;
+        for (argument, &slot) in args.iter().zip(&slots) {
+            let value = match argument {
+                ParamArg::Named { value, .. } => value.as_ref(),
+                other => other,
+            };
+            match POINTER_PARAMS[slot].name {
+                "mut" => {
+                    bracket.mutability =
+                        super::generics::origin_mutability_literal(name, "mut", value)?;
+                }
+                "T" => bracket.element = Some(self.pointer_element_arg(name, value)?),
+                "origin" => {
+                    origin_argument = Some(value);
+                }
+                _ => bracket.address_space = Some(self.address_space_arg(value)?),
+            }
+        }
+        if let Some(argument) = origin_argument {
+            bracket.origin = Some(self.pointer_bracket_origin(name, argument, &bracket)?);
+        }
+        if let Some(origin) = bracket.origin.take() {
+            let mutable = origin.statically_mutable();
+            bracket.origin = Some(match (bracket.mutability, mutable) {
+                (Some(true), Some(false)) => {
+                    return Err(TypeError::TypeMismatch {
+                        expected: super::origin_value_type(Some(true), false),
+                        found: super::origin_value_type(Some(false), false),
+                        context: format!("value passed to 'origin' of '{name}'"),
+                    });
+                }
+                (Some(false), _) => origin.immutable(),
+                _ => origin,
             });
         }
-        let elem = match &args[0] {
-            mojito_ast::ast::ParamArg::Type(t) => self.ty_from_anno(t)?,
-            mojito_ast::ast::ParamArg::Value(Expr {
+        let attributes =
+            args.iter()
+                .zip(&slots)
+                .map(|(argument, &slot)| match POINTER_PARAMS[slot].name {
+                    "T" => bracket.element.as_ref().and_then(|element| {
+                        bracket_attribute(argument, &TyArg::Ty(element.clone()))
+                    }),
+                    "origin" => bracket.origin.as_ref().and_then(|origin| {
+                        bracket_attribute(argument, &TyArg::Origin(origin.parts().0))
+                    }),
+                    _ => None,
+                })
+                .collect();
+        bracket.attributes =
+            DeclaredAttributes::of_builtin(name, POINTER_PARAMS, args, attributes)?;
+        Ok(bracket)
+    }
+
+    /// A `Pointer` bracket's element argument: a type, a bare identifier,
+    /// or an expression denoting a type.
+    fn pointer_element_arg(
+        &self,
+        name: &str,
+        argument: &mojito_ast::ast::ParamArg,
+    ) -> Result<Ty, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        match argument {
+            ParamArg::Type(t) => self.ty_from_anno(t),
+            ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(id),
                 ..
-            }) => self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?,
-            mojito_ast::ast::ParamArg::Value(element) => {
-                self.denoted_type(element, &format!("{name} element type"))?
-            }
-            mojito_ast::ast::ParamArg::Named { .. } => {
-                return Err(TypeError::Unsupported(
-                    "named Tuple element arguments".to_string(),
-                ));
-            }
-        };
-        let origin = if args.len() == 1 {
-            mojito_types::origin::PointerOrigin::Untracked { mutable: true }
-        } else if origin_placeholder(&args[1]) {
-            // A placeholder origin (`Pointer[T, _]`) is a parameter whose
-            // origin — and so whose `mut` — is inferred per call: it accepts
-            // any provenance, the callee holds no loan, and the body cannot
-            // prove the capability, so upstream rejects writes and
-            // mutable-demanding forwards through it. Outside parameter
-            // position the bare placeholder is not concrete (upstream's
-            // verdict).
-            if !self.resolving_parameter_annotation.get() {
-                return Err(TypeError::Unsupported(format!(
-                    "'{name}[{elem}, _]' is not concrete outside parameter position: a \
-                     bare placeholder origin is inferred only for a parameter; spell \
-                     ImmPointer[T, _] or MutPointer[T, _] here"
-                )));
-            }
-            mojito_types::origin::PointerOrigin::UnsafeAny { mutable: false }
-        } else {
-            self.pointer_origin_arg(&args[1])?
-        };
-        let mut attributes = vec![bracket_attribute(&args[0], &TyArg::Ty(elem.clone()))];
-        if let Some(argument) = args.get(1) {
-            attributes.push(bracket_attribute(
-                argument,
-                &TyArg::Origin(origin.parts().0),
-            ));
+            }) => self.ty_from_anno(&SourceType::Named(id.clone(), vec![])),
+            ParamArg::Value(element) => self.denoted_type(element, &format!("{name} element type")),
+            ParamArg::Named { value, .. } => self.pointer_element_arg(name, value),
         }
-        let address_space = match address_space_arg {
-            Some(argument) => {
-                let address_space = self.address_space_arg(argument)?;
-                attributes.push(None);
-                address_space
-            }
-            None => mojito_types::types::AddressSpaceSlot::GENERIC,
-        };
-        let all_args;
-        let args = match address_space_arg {
-            Some(keyword) => {
-                all_args = args.iter().chain([keyword]).cloned().collect::<Vec<_>>();
-                all_args.as_slice()
-            }
-            None => args,
-        };
-        let attributes = DeclaredAttributes::of_builtin(name, POINTER_PARAMS, args, attributes)?;
-        Ok((Ty::pointer(elem, origin, address_space), attributes))
+    }
+
+    /// A `Pointer` bracket's origin argument. A placeholder (`_`) is a
+    /// parameter whose origin, and so whose `mut`, is inferred per call: it
+    /// accepts any provenance, the callee holds no loan, and the body cannot
+    /// prove the capability, so upstream rejects writes and
+    /// mutable-demanding forwards through it. Outside parameter position
+    /// the bare placeholder is not concrete (upstream's verdict).
+    fn pointer_bracket_origin(
+        &self,
+        name: &str,
+        argument: &mojito_ast::ast::ParamArg,
+        bracket: &PointerBracket,
+    ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
+        if !origin_placeholder(argument) {
+            return self.pointer_origin_arg(argument);
+        }
+        if !self.resolving_parameter_annotation.get() {
+            let element = bracket
+                .element
+                .as_ref()
+                .map_or_else(|| "T".to_string(), ToString::to_string);
+            return Err(TypeError::Unsupported(format!(
+                "'{name}[{element}, _]' is not concrete outside parameter position: a \
+                 bare placeholder origin is inferred only for a parameter; spell \
+                 ImmPointer[T, _] or MutPointer[T, _] here"
+            )));
+        }
+        Ok(mojito_types::origin::PointerOrigin::UnsafeAny { mutable: false })
     }
 
     /// The address space a `Pointer`'s `address_space=` argument, or an
@@ -5583,7 +5673,7 @@ const POINTER_PARAMS: &[BuiltinParam] = &[
     BuiltinParam::infer_only("mut"),
     BuiltinParam::new("T"),
     BuiltinParam::new("origin"),
-    BuiltinParam::new("address_space"),
+    BuiltinParam::keyword_only("address_space"),
 ];
 fn computed_string_literal(value: &CtValue) -> bool {
     matches!(value, CtValue::Expr(expression)

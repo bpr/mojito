@@ -994,9 +994,13 @@ impl Checker {
     /// Type `Pointer(to=place)` (also spelled through the deprecated
     /// `UnsafePointer` alias): an origin-bearing pointer to existing checked
     /// storage. The element type is the place's type, the address space the
-    /// place's, and the origin is the place itself, so loan analysis keeps the owner alive and rejects
-    /// conflicting access. Execution represents the value as a frame/slot
-    /// handle; only the VM erases the origin.
+    /// place's, and the origin is the place itself, so loan analysis keeps
+    /// the owner alive and rejects conflicting access. A bracket
+    /// (`Pointer[T, o](to=place)`, bound by [`Self::pointer_bracket`])
+    /// names the instance: its element must be the place's, and the place's
+    /// pointer must convert to it by origin, as upstream's initializer
+    /// takes `ref[origin, address_space] to: T`. Execution represents the
+    /// value as a frame/slot handle; only the VM erases the origin.
     pub(super) fn infer_pointer_to(
         &self,
         span: SourceSpan,
@@ -1007,25 +1011,49 @@ impl Checker {
         if kwargs.len() == 1 && kwargs[0].name == "_mlir_value" && args.is_empty() {
             return self.infer_pointer_from_mlir_value(span, param_args, &kwargs[0].value);
         }
-        if !param_args.is_empty() {
-            return Err(TypeError::Unsupported(
-                "Pointer(to=...) infers its element type; explicit type \
-                 arguments are not supported"
-                    .to_string(),
-            ));
-        }
         if !args.is_empty() || kwargs.len() != 1 || kwargs[0].name != "to" {
             return Err(TypeError::BadCall {
                 func: "Pointer".to_string(),
                 reason: "expected exactly one 'to=' keyword argument".to_string(),
             });
         }
-        let (element, origin) = self.infer_place_address(span, &kwargs[0].value)?;
-        Ok(Ty::pointer(
+        let bracket = (!param_args.is_empty())
+            .then(|| self.pointer_bracket("Pointer", param_args))
+            .transpose()?;
+        let (element, origin) = self.infer_place_address(span.clone(), &kwargs[0].value)?;
+        let address_space = self.place_address_space(&kwargs[0].value);
+        let Some(bracket) = bracket else {
+            return Ok(Ty::pointer(element, origin, address_space));
+        };
+        let place = Ty::pointer(element.clone(), origin.clone(), address_space.clone());
+        let no_match = |instance: &dyn std::fmt::Display| TypeError::BadCall {
+            func: "Pointer".to_string(),
+            reason: format!(
+                "no matching function in initialization: '{place}' does not convert to \
+                 '{instance}'"
+            ),
+        };
+        if let Some(declared) = bracket
+            .element
+            .as_ref()
+            .filter(|declared| **declared != element)
+        {
+            return Err(no_match(&format!("Pointer[{declared}, ...]")));
+        }
+        let origin = bracket.origin.unwrap_or_else(|| match bracket.mutability {
+            Some(false) => origin.immutable(),
+            _ => origin,
+        });
+        let instance = Ty::pointer(
             element,
             origin,
-            self.place_address_space(&kwargs[0].value),
-        ))
+            bracket.address_space.unwrap_or(address_space),
+        );
+        if !self.coerces_by_origins(&place, &instance) {
+            return Err(no_match(&instance));
+        }
+        self.record_declared_attributes(span, &bracket.attributes);
+        Ok(instance)
     }
 
     /// Type upstream's `__get_mvalue_as_litref(place)`: the `!lit.ref` of a

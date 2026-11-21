@@ -1059,6 +1059,7 @@ assets/ok/pointer_address_space_generic.mojo	main	exe-differential	sanitized
 assets/ok/pointer_aliases_declared.mojo	main	exe-differential	sanitized
 assets/ok/pointer_augmented_literal_offset.mojo	main	exe-differential	sanitized
 assets/ok/pointer_bound_copy.mojo	main	exe-differential	sanitized
+assets/ok/pointer_bracket_declared_binding.mojo	main	exe-differential	sanitized
 assets/ok/pointer_declared_import.mojo	main	exe-differential	sanitized
 assets/ok/pointer_declared_member.mojo	main	exe-differential	sanitized
 assets/ok/pointer_declared_parameter_reads.mojo	main	exe-differential	sanitized

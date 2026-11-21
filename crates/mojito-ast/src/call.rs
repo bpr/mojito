@@ -111,6 +111,11 @@ pub trait CompileTimeParam {
     fn infer_only(&self) -> bool;
     /// Whether the parameter is a pack (`*Ts`, `*values: Int`).
     fn variadic(&self) -> bool;
+    /// Whether the parameter is declared after a bare `*` or a pack, so
+    /// only a keyword argument binds it.
+    fn keyword_only(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -368,7 +373,10 @@ pub fn bind_parameter_slots<P: CompileTimeParam>(
     params: &[P],
     keywords: &[Option<&str>],
 ) -> Vec<Result<usize, ParamMatchError>> {
-    let expected = params.iter().filter(|param| !param.infer_only()).count();
+    let expected = params
+        .iter()
+        .filter(|param| !param.infer_only() && !param.keyword_only())
+        .count();
     let mut filled = vec![false; params.len()];
     let mut next = 0;
     let mut skipped_infer_only = false;
@@ -382,7 +390,7 @@ pub fn bind_parameter_slots<P: CompileTimeParam>(
                 skipped_infer_only = true;
                 next += 1;
             }
-            let Some(param) = params.get(next) else {
+            let Some(param) = params.get(next).filter(|param| !param.keyword_only()) else {
                 return Some(Err(ParamMatchError::UnexpectedParameter {
                     skipped_infer_only,
                     expected,
@@ -535,6 +543,26 @@ mod tests {
 
     struct Param(&'static str, bool, bool);
 
+    struct KeywordOnly(Param);
+
+    impl CompileTimeParam for KeywordOnly {
+        fn keyword(&self) -> &str {
+            self.0.keyword()
+        }
+
+        fn infer_only(&self) -> bool {
+            self.0.infer_only()
+        }
+
+        fn variadic(&self) -> bool {
+            self.0.variadic()
+        }
+
+        fn keyword_only(&self) -> bool {
+            self.0.0 == "k"
+        }
+    }
+
     impl CompileTimeParam for Param {
         fn keyword(&self) -> &str {
             self.0
@@ -593,6 +621,26 @@ mod tests {
         assert_eq!(
             match_parameter_slots(&params, &[None, Some("o")]),
             Err(ParamMatchError::UnexpectedKeyword("o".to_string()))
+        );
+    }
+
+    #[test]
+    fn match_parameter_slots_binds_a_keyword_only_parameter_by_keyword_alone() {
+        let params = [
+            KeywordOnly(Param("a", false, false)),
+            KeywordOnly(Param("k", false, false)),
+        ];
+        assert_eq!(
+            match_parameter_slots(&params, &[None, Some("k")]),
+            Ok(vec![0, 1])
+        );
+        assert_eq!(
+            match_parameter_slots(&params, &[None, None]),
+            Err(ParamMatchError::UnexpectedParameter {
+                skipped_infer_only: false,
+                expected: 1,
+                got: 2,
+            })
         );
     }
 

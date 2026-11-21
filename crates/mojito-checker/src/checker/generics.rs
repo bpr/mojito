@@ -2704,6 +2704,37 @@ struct CallableValueCandidates {
 /// struct its `out self` initializes, and an instance method takes its
 /// receiver as its first parameter, as upstream's method is a function
 /// whose `self` is an ordinary argument.
+/// The `Bool` literal a `mut=` argument of `name`'s mutability binder
+/// `binder` spells, `None` for a value spelling one (`Self.mut`, `_`), and
+/// a mismatch for any other literal or a type.
+pub(super) fn origin_mutability_literal(
+    name: &str,
+    binder: &str,
+    argument: &mojito_ast::ast::ParamArg,
+) -> Result<Option<bool>, TypeError> {
+    use mojito_ast::ast::ParamArg;
+    let mut value = argument;
+    while let ParamArg::Named { value: inner, .. } = value {
+        value = inner;
+    }
+    let mismatch = |found: &str| TypeError::TypeMismatch {
+        expected: "Bool".to_string(),
+        found: found.to_string(),
+        context: format!("parameter '{binder}' of '{name}'"),
+    };
+    match value {
+        ParamArg::Value(expression) => match &expression.kind {
+            ExprKind::Bool(literal) => Ok(Some(*literal)),
+            ExprKind::Int(_) => Err(mismatch("IntLiteral")),
+            ExprKind::Float(_) => Err(mismatch("FloatLiteral")),
+            ExprKind::Str(_) => Err(mismatch("StringLiteral")),
+            _ => Ok(None),
+        },
+        ParamArg::Type(_) => Err(mismatch("a type")),
+        ParamArg::Named { .. } => Ok(None),
+    }
+}
+
 fn method_value_ty(sig: &MethodSig, owner: &Ty) -> Ty {
     let mut func = method_func_ty(sig, mojito_types::origin::CallableEnvironment::Thin);
     if is_initializer_sig(sig) {
@@ -2945,27 +2976,7 @@ fn check_origin_mutability_argument(
     argument: &mojito_ast::ast::ParamArg,
     origins: &[BoundOrigin],
 ) -> Result<(), TypeError> {
-    use mojito_ast::ast::ParamArg;
-    let mut value = argument;
-    while let ParamArg::Named { value: inner, .. } = value {
-        value = inner;
-    }
-    let mismatch = |found: &str| TypeError::TypeMismatch {
-        expected: "Bool".to_string(),
-        found: found.to_string(),
-        context: format!("parameter '{}' of '{name}'", binder.name()),
-    };
-    let literal = match value {
-        ParamArg::Value(expression) => match &expression.kind {
-            ExprKind::Bool(literal) => Some(*literal),
-            ExprKind::Int(_) => return Err(mismatch("IntLiteral")),
-            ExprKind::Float(_) => return Err(mismatch("FloatLiteral")),
-            ExprKind::Str(_) => return Err(mismatch("StringLiteral")),
-            _ => None,
-        },
-        ParamArg::Type(_) => return Err(mismatch("a type")),
-        ParamArg::Named { .. } => None,
-    };
+    let literal = origin_mutability_literal(name, binder.name(), argument)?;
     let immutable_slot = origins.iter().find(|bound| {
         bound.mutability == Some(mojito_types::origin::Mutability::Immutable)
             && governs_origin(decls, binder, bound.slot)

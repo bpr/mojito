@@ -537,6 +537,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         self.next_token()?; // consume '['
         let mut params: Vec<mojito_ast::ast::TypeParam> = Vec::new();
+        let mut keyword_only = false;
         loop {
             if self.parse_type_param_marker(&mut params)? {
                 if matches!(self.peek_token()?, Some(Token::RBracket)) {
@@ -549,6 +550,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 self.next_token()?;
                 if matches!(self.peek_token()?, Some(Token::Comma)) {
                     self.next_token()?;
+                    keyword_only = true;
                     continue;
                 }
                 true
@@ -687,8 +689,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 callable_bound,
                 origin_mutability,
                 infer_only: false,
+                keyword_only,
                 default,
             });
+            keyword_only |= variadic;
             if matches!(self.peek_token()?, Some(Token::Comma)) {
                 self.next_token()?; // consume ','
                 if matches!(self.peek_token()?, Some(Token::RBracket)) {
@@ -705,8 +709,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// Consume a parameter-list marker and the `,` after it, reporting
     /// whether one was there. Mojo's `//` ends the infer-only prefix, so
     /// every parameter before it is inferred; the `/` positional-only
-    /// marker, as the bare `*` keyword-only one, the list does not record
-    /// yet (roadmap R1735). A marker is followed by `,` or the closing `]`.
+    /// marker the list does not record yet (roadmap R1735). The bare `*`
+    /// keyword-only marker is read beside a pack's `*` by the caller. A marker is followed by `,` or the closing `]`.
     fn parse_type_param_marker(
         &mut self,
         params: &mut [mojito_ast::ast::TypeParam],

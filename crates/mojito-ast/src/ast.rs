@@ -372,6 +372,9 @@ pub struct TypeParam {
     pub origin_mutability: Option<Expr>,
     /// Whether this parameter precedes the `//` infer-only marker.
     pub infer_only: bool,
+    /// Whether this parameter is declared after a bare `*` or a `*pack`,
+    /// so only a keyword argument binds it.
+    pub keyword_only: bool,
     /// A retained compile-time default. Semantic classification and dependency
     /// checking happen after all earlier parameters have entered scope.
     pub default: Option<Expr>,

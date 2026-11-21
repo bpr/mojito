@@ -291,7 +291,7 @@ impl<'a> Declared<'a> {
                 parameter.name.trim_start_matches('*').to_string(),
                 argument.clone(),
             );
-            if parameter.infer_only || !in_order {
+            if parameter.infer_only || parameter.keyword_only || !in_order {
                 keyword.push(ParamArg::Named {
                     name: parameter.name.clone(),
                     value: Box::new(argument),
@@ -387,7 +387,7 @@ impl Slots {
         let mut positions = declared
             .iter()
             .enumerate()
-            .filter(|(_, parameter)| !parameter.infer_only)
+            .filter(|(_, parameter)| !parameter.infer_only && !parameter.keyword_only)
             .map(|(index, _)| index);
         for argument in args {
             match argument {
@@ -485,6 +485,7 @@ fn binder_for(
         callable_bound,
         origin_mutability: None,
         infer_only: true,
+        keyword_only: false,
         default: None,
     }
 }

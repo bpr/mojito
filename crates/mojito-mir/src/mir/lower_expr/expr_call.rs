@@ -234,6 +234,39 @@ impl<'a> Flatten<'a> {
                 .place_address_operand()
                 .expect("checked pointer construction has a place argument");
             let place = self.place(value);
+            // A bracket naming an origin that addresses no place
+            // (`Pointer[T, MutAnyOrigin](to=x)`) holds no loan: the place's
+            // address is taken as an untracked `!lit.ref`, as upstream's
+            // initializer takes `__get_mvalue_as_litref(to)`, and wrapped.
+            if let Some(pointer) = call.ty()
+                && let Some(mojito_types::origin::PointerOrigin::UnsafeAny { mutable }) =
+                    pointer.pointer_origin()
+                && let Some(element) = pointer.pointer_element()
+            {
+                let address = self.fresh_typed(
+                    call.location(),
+                    None,
+                    Ty::lit_ref(
+                        element.clone(),
+                        mojito_types::origin::PointerOrigin::Untracked { mutable },
+                        pointer
+                            .kind()
+                            .pointer_address_space()
+                            .cloned()
+                            .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC),
+                    ),
+                );
+                self.emit(MirInstr::MakeRef {
+                    dest: address,
+                    place,
+                });
+                let dest = self.fresh(call.location(), None);
+                self.emit(MirInstr::PointerConvert {
+                    dest,
+                    value: address,
+                });
+                return Some(dest);
+            }
             let dest = self.fresh(call.location(), Some(place.root));
             self.emit(MirInstr::MakeRef { dest, place });
             return Some(dest);

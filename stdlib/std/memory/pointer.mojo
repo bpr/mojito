@@ -6,11 +6,10 @@
 # `DevicePassable`, `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable`
 # are absent from the bundle, and `Comparable` waits on the members below.
 # Members omitted, by blocker:
-# - `_with_origin` and `__merge_with__`: a `Pointer[...]` bracket does not
-#   bind `mut=`, `T=`, or `origin=` (R2421).
-# - the implicit mut-to-imm `__init__(other: Pointer, …)`: the bare
-#   `other: Pointer` auto-parameterizes as three positionals the bracket
-#   rejects (R2421).
+# - `__merge_with__` and the implicit mut-to-imm `__init__(other: Pointer,
+#   …)`: a `Pointer` origin argument resolves neither the union
+#   `origin_of(Self.origin, other_type.origin)` nor `ImmOrigin(other.origin)`
+#   (R2368).
 # - `as_unsafe_any_origin`: `UnsafeAnyOrigin[mut=Self.mut]` keeps no
 #   symbolic `mut` (R2384).
 # - `write_repr_to`: `Named("mut", Self.mut)` binds a compile-time value to
@@ -219,6 +218,12 @@ struct Pointer[
         `>`,
     ]
     """The underlying pointer type."""
+
+    comptime _with_origin[
+        with_mut: Bool, //, with_origin: Origin[mut=with_mut]
+    ] = Pointer[
+        mut=with_mut, Self.T, with_origin, address_space=Self.address_space
+    ]
 
     var _mlir_value: Self._mlir_type
     """The underlying pointer."""

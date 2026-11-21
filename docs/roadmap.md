@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2427**.
+Next free ID: **R2428**.
 
 ## Ordered Work
 
@@ -2644,6 +2644,27 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2427 A struct's origin-parameterized `comptime` member applied
+  to an origin keeps the member's own binder**
+
+  `comptime W[o: Origin] = Pointer[Int, o]` inside `struct S`, read as
+  `var q: type_of(s).W[origin_of(x)] = Pointer(to=x)`, is "expected
+  Pointer[Int, origin#1], found Pointer[Int, origin@N]", where the pin
+  prints `5`.
+  - The application's origin argument never replaces the member's
+    `Origin::Param` in its template (`resolve_parameterized_member`,
+    `checker/type_resolution.rs`).
+  - Probe: the bundled `Pointer._with_origin` (declared, upstream's) and
+    `_OriginCastType`, read as `var q: type_of(p)._with_origin[
+    origin_of(y)] = Pointer(to=y)`, fail the same way; the pin prints `6
+    True` for `q[], q.mut`.
+  - Probe: `comptime Q = type_of(p)._with_origin[origin_of(y)]` over a
+    pointer `p` is "type 'Pointer[Int, origin@N]' has no field
+    '_with_origin'": the value-position read reaches no pointer member.
+  - Found while landing R2421 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1299 `origin_of` over origin values is rejected**
 
   Problem: `-> ref[origin_of(Self.origin, self_origin).unsafe_mut_cast[
@@ -3355,7 +3376,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `Span(l1) if c else Span(l2)` over two lists fails the same
     way; the pin prints `2`.
   - Found while landing R1848 (2026-11-06).
-  - Depends on nothing.
+  - The bundled `Pointer.__merge_with__` is not declared until R2368
+    resolves its union origin.
+  - Depends on R2368.
   - Model: Fable, Not Planned.
 
 - [ ] **R2020 A module `comptime` constant annotated `Int` over a
@@ -7863,6 +7886,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     reject a positional argument past the `*` and a keyword before the `/`.
   - Probe: `v.slice[2, 1]()` over a `SIMD[DType.int32, 4]`, whose `offset`
     is keyword-only, runs here and is rejected at the pin.
+  - The `*` half is recorded already: the parser sets
+    `TypeParam::keyword_only` after a bare `*` or a pack, and
+    `CompileTimeParam::keyword_only` enforces it for `BuiltinParam`
+    lists (`Pointer`'s `address_space`). What remains is carrying it onto
+    `ParamDecl` for declared lists, plus the `/` boundary.
   - Found while landing R1673 (2026-10-30).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9651,6 +9679,13 @@ retained on purpose and re-probed rather than fixed; they are listed in
     (`MutPointer[Int, _]`, `OpaquePointer[_]`), so the fix covers both.
   - Probe: `same(o, o)` over `def same(p: OpaquePointer[_], q:
     MutOpaquePointer[_])`, likewise.
+  - Probe: `def g(p: Pointer) -> Bool: return p.mut` returns `False` for
+    `g(Pointer(to=x))`, where the pin returns `True`: the bare `Pointer`'s
+    auto-parameterized `_` origin reads as an immutable unsafe-any one.
+  - Probe: a local `var p: Pointer[Int, _] = Pointer(to=x); p[] = 7`
+    (or `Pointer[Int, origin=_]`) is "not concrete outside parameter
+    position", where the pin infers the origin from the initializer and
+    prints `7`.
   - Found while landing R2205 (2026-11-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -10599,36 +10634,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2421 A `Pointer[...]` bracket does not bind over upstream's
-  declared parameter list**
-
-  `var q: Pointer[T=Int, origin=origin_of(x)] = p` fails with "unsupported
-  feature: named Tuple element arguments", where the pin binds it.
-  - `pointer_type` (`checker/type_resolution.rs`) accepts one or two
-    positionals and a trailing `address_space=`.
-  - Lever: bind through `mojito_ast::call::match_parameter_slots(
-    POINTER_PARAMS, …)`, as `pointer_construction_attributes` does, and
-    check a `mut=` argument against the origin's mutability.
-  - Probe: `var r: Pointer[mut=True, Int, origin_of(x)] = p`, likewise.
-  - Probe: `Pointer[mut=True, Int, origin_of(x)](to=x)` fails with
-    "explicit type arguments are not supported", where the pin builds it.
-  - Probe: `def f(p: Pointer)` fails with "type 'Pointer' expects 2 type
-    argument(s), got 3", where the pin runs it: auto-parameterization
-    spells the bare struct `Pointer[$T_p, _, $address_space_p]`, the
-    keyword-only `address_space` positionally (R1735).
-  - Probe: the bundled `Pointer._with_origin` and `__merge_with__` spell
-    `Pointer[mut=…, …]` and `Pointer[T=…, origin=…]`, so neither is
-    declared.
-  - Probe: the bundled implicit mut-to-imm `__init__(other: Pointer, out
-    self: Pointer[other.T, ImmOrigin(other.origin),
-    address_space=other.address_space])` cannot be declared, since its
-    bare `other: Pointer` is the three-positional spelling above. Its
-    parameter reads (`other.T`, `other.origin`) already resolve; selecting
-    it as the implicit conversion is R2208's.
-  - Found while landing R2414 (2026-11-20).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2425 `Pointer` declares no `write_repr_to`, so `repr(p)` fails**
 
   `repr(Pointer(to=x))` fails with "reflect[Pointer[…]].field_count()
@@ -10684,8 +10689,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The plan is `R2206-pointer-s-casts-and-conversions-are-plan.md`; its
     probes re-ran unchanged on 2026-11-20.
   - Found while planning R1681 (2026-11-14).
-  - Depends on R2420 (declared members and initializers resolve), R2421
-    (the `Pointer[origin=…]` spelling), R1656, R2426, R2368.
+  - Depends on R2420 (declared members and initializers resolve), R1656,
+    R2426, R2368.
   - Model: Fable, Planned.
 
 - [ ] **R2207 `Pointer`'s address and memory members are checker rules,
@@ -10767,6 +10772,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `assets/extensions/*/subtree_*` fixtures and the bundled
     `unsafe_origin_cast[origin_of(self)…]` casts in `collections/`,
     `string.mojo`, and `span.mojo`.
+  - Probe: `Pointer[Int, origin_of(x, y)](to=x)` and `var q: Pointer[Int,
+    origin_of(x, y)] = Pointer(to=x)` fail with "found a runtime value",
+    since `pointer_origin_arg` resolves no union; the pin prints `5`.
+  - Probe: `def f(other: Pointer) -> Pointer[other.T,
+    ImmOrigin(other.origin), address_space=other.address_space]` fails the
+    same way, where the pin runs it, so the bundled implicit mut-to-imm
+    `__init__(other: Pointer, out self: Pointer[other.T,
+    ImmOrigin(other.origin), …])` cannot be declared; and the union in
+    `__merge_with__`'s `origin=origin_of(Self.origin, other_type.origin)`
+    keeps it undeclared too (both fail packaging the bundle).
   - Found while landing R2209 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.

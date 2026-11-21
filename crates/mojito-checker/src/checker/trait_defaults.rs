@@ -64,6 +64,7 @@ pub fn trait_member_declaration(trait_stmt: &Stmt, index: usize, name: String) -
             .type_params
             .first()
             .is_some_and(|param| param.infer_only),
+        keyword_only: false,
         default: None,
     };
     let receiver = FnParam {
