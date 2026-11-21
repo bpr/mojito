@@ -803,6 +803,42 @@ pub(in crate::checker) fn substitute_sig_origin_with_self(
     }
 }
 
+/// Whether `origin` ends in a `._subtree` projection, below which nothing
+/// projects.
+pub(in crate::checker) fn ends_in_subtree(origin: &mojito_types::origin::Origin) -> bool {
+    use mojito_types::origin::{Origin, OriginSeg};
+    match origin {
+        Origin::Place(place) => matches!(place.path.last(), Some(OriginSeg::Subtree)),
+        Origin::Projected(_, path) => matches!(path.last(), Some(OriginSeg::Subtree)),
+        Origin::MutCast(inner, _) => ends_in_subtree(inner),
+        _ => false,
+    }
+}
+
+/// `origin` with the receiver's symbolic origin (`origin_of(self)`) read as
+/// `receiver`, an interior or subtree projection re-applied below it.
+pub(in crate::checker) fn rebase_self_origin(
+    origin: &mojito_types::origin::Origin,
+    receiver: &mojito_types::origin::Origin,
+) -> mojito_types::origin::Origin {
+    use mojito_types::origin::Origin;
+    match origin {
+        Origin::SelfParam => receiver.clone(),
+        Origin::Projected(base, path) if **base == Origin::SelfParam => receiver
+            .project_path(path)
+            .unwrap_or_else(|| receiver.clone()),
+        Origin::MutCast(inner, mutability) => {
+            Origin::mut_cast(rebase_self_origin(inner, receiver), mutability.clone())
+        }
+        Origin::Union(members) => Origin::union(
+            members
+                .iter()
+                .map(|member| rebase_self_origin(member, receiver)),
+        ),
+        other => other.clone(),
+    }
+}
+
 pub(in crate::checker) fn origin_is_within(
     actual: &mojito_types::origin::Origin,
     allowed: &mojito_types::origin::Origin,
@@ -1063,8 +1099,9 @@ fn bind_tail(
                 Mutability::Immutable
             },
         ),
-        Origin::Param(_) | Origin::Projected(..)
-            if symbolic && matches!(tail.projection_base(), Origin::Param(_)) =>
+        Origin::Param(_) | Origin::SelfParam | Origin::Projected(..)
+            if symbolic
+                && matches!(tail.projection_base(), Origin::Param(_) | Origin::SelfParam) =>
         {
             PointerOrigin::from_parts(tail.project_path(path)?, mutability)
         }

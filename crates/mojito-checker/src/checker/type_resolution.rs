@@ -7,7 +7,7 @@
 use super::*;
 use mojito_checked::checked::BracketBound as BoundAttribute;
 use mojito_types::origin::CallableEnvironment;
-use mojito_types::types::{FuncTy, GenericFuncTy, LitOriginMut, TransferSet};
+use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind, is_simd_length};
 
 /// Current Mojo treats a bare `def(...)` in a general type position (struct
@@ -4389,160 +4389,33 @@ impl Checker {
         })
     }
 
+    /// A `Pointer`'s origin argument, resolved as any struct's origin
+    /// argument is ([`Self::resolve_origin_param_arg`]), with its `mut`:
+    /// upstream's `Pointer` is a struct whose `origin` parameter is an
+    /// ordinary `Origin[mut=mut]` value.
     pub(super) fn pointer_origin_arg(
         &self,
         argument: &mojito_ast::ast::ParamArg,
     ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-        use mojito_types::origin::{Mutability, PointerOrigin};
-
-        if let Some(read) = self.named_origin_value(argument) {
-            let (origin, mutable) = read?;
-            return PointerOrigin::from_parts(origin, Mutability::of(mutable)).ok_or_else(|| {
-                TypeError::Unsupported("this origin value as a pointer's origin".to_string())
-            });
-        }
-        let constant = match argument {
-            mojito_ast::ast::ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(name),
-                ..
-            }) => name.as_str(),
-            mojito_ast::ast::ParamArg::Type(SourceType::Named(name, arguments))
-                if arguments.is_empty() =>
-            {
-                name.as_str()
-            }
-            mojito_ast::ast::ParamArg::Value(expression) => {
-                return self.pointer_origin_expr(expression);
-            }
-            _ => {
-                return Err(TypeError::TypeMismatch {
-                    expected: "Self.origin or a concrete Origin value".to_string(),
-                    found: "a non-origin parameter argument".to_string(),
-                    context: "Pointer origin".to_string(),
-                });
-            }
-        };
-        match constant {
-            // The pre-rename alias spellings were removed upstream (2026-08);
-            // give them targeted migration diagnostics.
-            "ImmutUntrackedOrigin" | "ImmutExternalOrigin" => Err(TypeError::Unsupported(format!(
-                "'{constant}' was removed; use 'ImmUntrackedOrigin'"
-            ))),
-            "ImmutUnsafeAnyOrigin" => Err(TypeError::Unsupported(
-                "'ImmutUnsafeAnyOrigin' was removed; use 'ImmUnsafeAnyOrigin'".to_string(),
-            )),
-            "StaticConstantOrigin" => Err(TypeError::Unsupported(
-                "'StaticConstantOrigin' was removed; use 'ImmStaticOrigin'".to_string(),
-            )),
-            "ExternalOrigin" => Err(TypeError::Unsupported(
-                "'ExternalOrigin' was removed; use 'UntrackedOrigin'".to_string(),
-            )),
-            "MutExternalOrigin" => Err(TypeError::Unsupported(
-                "'MutExternalOrigin' was removed; use 'MutUntrackedOrigin'".to_string(),
-            )),
-            name => self
-                .enclosing_origin_param(name)
-                .map_err(|_| TypeError::UndefinedVariable(name.to_string())),
-        }
-    }
-
-    /// Resolve an expression-shaped `Pointer` origin argument: an
-    /// `._get_owned_interior["tag"]` projection over an origin parameter or
-    /// `origin_of(place)` observation. The projected tags become the
-    /// pointer's interior-generation domain — the marker that the pointer
-    /// legally designates multiple elements.
-    fn pointer_origin_expr(
-        &self,
-        expression: &Expr,
-    ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
         use mojito_types::origin::{Mutability, Origin, PointerOrigin};
-
-        let static_cast = || {
-            TypeError::Unsupported(
-                "a writable cast of the static origin as a pointer's origin".into(),
-            )
+        let (origin, mutability) = self.resolve_origin_param_arg(argument)?;
+        // The receiver's origin has the receiver's symbolic capability, in
+        // the body as in the signature, unless a cast pins it.
+        let mutability = match mutability {
+            _ if matches!(origin.projection_base(), Origin::SelfParam) => Mutability::RECEIVER,
+            Some(mutability) => mutability,
+            None if matches!(origin.uncast().projection_base(), Origin::SelfParam) => {
+                Mutability::RECEIVER
+            }
+            None => {
+                return Err(TypeError::Unsupported(format!(
+                    "the origin {origin} of unknown mutability as a pointer's origin"
+                )));
+            }
         };
-        if let Some(error) = super::origins::removed_origin_cast_from(expression) {
-            return Err(error);
-        }
-        // `o.unsafe_mut_cast[m]()` or `ImmOrigin(o)`: `o`'s provenance at
-        // `m`, which a cast to the receiver's own `mut` leaves as it is.
-        if let Some(read) = self
-            .origin_method_cast(expression)
-            .or_else(|| self.origin_conversion(expression))
-            && let Some(receiver) = super::origins::origin_call_operand(expression)
-        {
-            let (cast, mutability) = read?;
-            let receiver = self.pointer_origin_expr(receiver)?;
-            return match (cast, mutability) {
-                (_, LitOriginMut::Known(mutable)) => {
-                    cast_capability(receiver, mutable).ok_or_else(static_cast)
-                }
-                (Origin::MutCast(..), LitOriginMut::Expr(_)) => Err(TypeError::Unsupported(
-                    "a pointer origin cast to a Bool other than its origin's own 'mut'".into(),
-                )),
-                (_, LitOriginMut::Expr(_)) => Ok(receiver),
-            };
-        }
-        if let Some((base, tag)) = super::origins::interior_origin_syntax(expression) {
-            let origin = self.pointer_origin_expr(base)?;
-            return append_interior_tag(&origin, tag);
-        }
-        if let Some(base) = super::origins::subtree_origin_syntax(expression) {
-            let origin = self.pointer_origin_expr(base)?;
-            return append_subtree(&origin);
-        }
-        match &expression.kind {
-            // `Self.origin` spelled in expression position (a projection base).
-            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
-                self.enclosing_origin_param(field)
-            }
-            // A bare origin parameter name (function-head spelling).
-            ExprKind::Identifier(name) => self.enclosing_origin_param(name),
-            ExprKind::Call {
-                name,
-                args,
-                kwargs,
-                param_args,
-            } if name == "origin_of"
-                && kwargs.is_empty()
-                && param_args.is_empty()
-                && args.len() == 1 =>
-            {
-                // `origin_of(self)` stays symbolic whether or not a `self`
-                // place is bound, so a declared return annotation and the
-                // body's `unsafe_origin_cast` target resolve to one comparable
-                // form; call sites rebase it onto the concrete receiver.
-                if matches!(&args[0].kind, ExprKind::Identifier(name) if name == "self") {
-                    return Ok(PointerOrigin::SelfPlace {
-                        mutability: Mutability::Param(mojito_types::origin::OriginParamId(0)),
-                        interior: Vec::new(),
-                        subtree: false,
-                    });
-                }
-                let reference = self.reference_actual(&args[0])?;
-                match reference.origin {
-                    Origin::Place(place) => Ok(PointerOrigin::Place {
-                        place,
-                        mutable: matches!(reference.mutability, Mutability::Mutable),
-                    }),
-                    Origin::Param(id) => Ok(PointerOrigin::Param {
-                        id,
-                        mutability: reference.mutability,
-                        interior: Vec::new(),
-                        subtree: false,
-                    }),
-                    other => Err(TypeError::Unsupported(format!(
-                        "origin_of over {other:?} is not a supported Pointer origin argument"
-                    ))),
-                }
-            }
-            _ => Err(TypeError::TypeMismatch {
-                expected: "Self.origin, origin_of(place), or a builtin Origin value".to_string(),
-                found: "a runtime value".to_string(),
-                context: "Pointer origin".to_string(),
-            }),
-        }
+        PointerOrigin::from_parts(origin.clone(), mutability).ok_or_else(|| {
+            TypeError::Unsupported(format!("the origin {origin} as a pointer's origin"))
+        })
     }
 
     /// Look up an enclosing `Origin`-bounded type parameter by name and
@@ -5784,7 +5657,7 @@ fn project_pointer_origin(
     context: &str,
 ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
     if origin.subtree() {
-        return Err(subtree_is_terminal_error());
+        return Err(super::origins::subtree_is_terminal_error());
     }
     let (base, mutability) = origin.parts();
     project(&base)
@@ -5850,47 +5723,6 @@ fn positive_width(width: SimdWidth) -> Result<SimdWidth, TypeError> {
         SimdWidth::Known(w) if w < 1 => Err(TypeError::BadSimdWidth(w.to_string())),
         width => Ok(width),
     }
-}
-
-fn subtree_is_terminal_error() -> TypeError {
-    TypeError::Unsupported(
-        "'_subtree' is a terminal origin projection: nothing can be projected below it".to_string(),
-    )
-}
-
-/// The pointer provenance `origin` at the capability a mutability cast
-/// pins (`ImmOrigin(o)`, `o.unsafe_mut_cast[m]()`): the same storage, read
-/// only or writable. `None` for the static origin made writable, which no
-/// pointer provenance holds.
-fn cast_capability(
-    origin: mojito_types::origin::PointerOrigin,
-    mutable: bool,
-) -> Option<mojito_types::origin::PointerOrigin> {
-    use mojito_types::origin::{Mutability, PointerOrigin};
-    Some(match origin {
-        PointerOrigin::Place { place, .. } => PointerOrigin::Place { place, mutable },
-        PointerOrigin::Param {
-            id,
-            interior,
-            subtree,
-            ..
-        } => PointerOrigin::Param {
-            id,
-            mutability: Mutability::of(mutable),
-            interior,
-            subtree,
-        },
-        PointerOrigin::SelfPlace {
-            interior, subtree, ..
-        } => PointerOrigin::SelfPlace {
-            mutability: Mutability::of(mutable),
-            interior,
-            subtree,
-        },
-        PointerOrigin::Untracked { .. } => PointerOrigin::Untracked { mutable },
-        PointerOrigin::UnsafeAny { .. } => PointerOrigin::UnsafeAny { mutable },
-        PointerOrigin::Static => return (!mutable).then_some(PointerOrigin::Static),
-    })
 }
 
 /// The struct `name` spelled bare as shown when it declares parameters:

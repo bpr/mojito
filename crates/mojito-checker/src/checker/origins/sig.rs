@@ -238,6 +238,42 @@ pub(in crate::checker) fn reject_subtree_origin_here(context: &str) -> TypeError
     ))
 }
 
+/// The migration diagnostic of an origin alias upstream removed in its
+/// 2026-08 rename, spelled as a bare origin argument; `None` for any other
+/// argument.
+pub(in crate::checker) fn removed_origin_alias(
+    argument: &mojito_ast::ast::ParamArg,
+) -> Option<TypeError> {
+    use mojito_ast::ast::{ParamArg, SourceType};
+    let name = match argument {
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(name),
+            ..
+        }) => name.as_str(),
+        ParamArg::Type(SourceType::Named(name, arguments)) if arguments.is_empty() => name.as_str(),
+        _ => return None,
+    };
+    let surviving = match name {
+        "ImmutUntrackedOrigin" | "ImmutExternalOrigin" => "ImmUntrackedOrigin",
+        "ImmutUnsafeAnyOrigin" => "ImmUnsafeAnyOrigin",
+        "StaticConstantOrigin" => "ImmStaticOrigin",
+        "ExternalOrigin" => "UntrackedOrigin",
+        "MutExternalOrigin" => "MutUntrackedOrigin",
+        _ => return None,
+    };
+    Some(TypeError::Unsupported(format!(
+        "'{name}' was removed; use '{surviving}'"
+    )))
+}
+
+/// The rejection of a projection below `._subtree`: subtree is terminal, as
+/// it already designates its base and every descendant.
+pub(in crate::checker) fn subtree_is_terminal_error() -> TypeError {
+    TypeError::Unsupported(
+        "'_subtree' is a terminal origin projection: nothing can be projected below it".to_string(),
+    )
+}
+
 /// The removed `Origin[mut=...].cast_from[o]` spelling's migration
 /// diagnostic, as `StaticConstantOrigin`'s is; `None` for any other
 /// expression.

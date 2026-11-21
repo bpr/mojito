@@ -694,6 +694,18 @@ impl Checker {
         Ok(())
     }
 
+    /// The place the enclosing method's receiver occupies, which its
+    /// symbolic origin (`origin_of(self)`) names in the body; `None` outside
+    /// a body with a bound `self`.
+    pub(super) fn receiver_origin(&self) -> Option<mojito_types::origin::Origin> {
+        self.lookup_owner("self").map(|root| {
+            mojito_types::origin::Origin::Place(mojito_types::origin::OriginPlace {
+                root,
+                path: Vec::new(),
+            })
+        })
+    }
+
     /// The storage owner `name` designates. A name bound below the module
     /// scope shadows the module binding of that name, even where the local
     /// binding owns no storage — a signature's parameter, which the

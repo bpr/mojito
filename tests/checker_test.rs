@@ -5747,6 +5747,18 @@ fn removed_origin_alias_spellings_reject_with_migration_diagnostics() {
             ),
             "expected a migration diagnostic for {removed}"
         );
+        // A struct's origin argument resolves as a pointer's does.
+        let source = format!(
+            "struct S[mut: Bool, //, o: Origin[mut=mut]]:\n    def __init__(out self):\n        pass\n\ndef f(s: S[{removed}]) -> Int:\n    return 1\n\ndef main():\n    print(1)\n"
+        );
+        assert!(
+            matches!(
+                check_source(&source),
+                Err(TypeError::Unsupported(message))
+                    if message.contains("was removed") && message.contains(surviving)
+            ),
+            "expected a struct-argument migration diagnostic for {removed}"
+        );
     }
 }
 

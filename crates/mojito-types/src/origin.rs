@@ -690,6 +690,11 @@ pub enum Mutability {
 }
 
 impl Mutability {
+    /// The receiver's symbolic mutability, which its origin
+    /// (`origin_of(self)`) carries throughout a method, signature and body
+    /// alike; a call site rebases it onto the concrete receiver.
+    pub const RECEIVER: Self = Self::Param(OriginParamId(0));
+
     /// The closed mutability `mutable` says.
     #[must_use]
     pub const fn of(mutable: bool) -> Self {
@@ -1260,7 +1265,7 @@ impl Origin {
             (Self::Projected(left, _), right) => left.overlaps(right),
             (left, Self::Projected(right, _)) => left.overlaps(right),
             (Self::Param(left), Self::Param(right)) => left == right,
-            (Self::Static, Self::Static) => true,
+            (Self::SelfParam, Self::SelfParam) | (Self::Static, Self::Static) => true,
             // Untracked origins intentionally forfeit disjointness information.
             (left, right) if left.is_untracked() || right.is_untracked() => true,
             _ => false,

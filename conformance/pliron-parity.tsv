@@ -1099,6 +1099,7 @@ assets/ok/pointer_field_view_returned.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_wrapper_iterator_protocol.mojo	main	exe-differential	sanitized
 assets/ok/pointer_immutable_conversion.mojo	main	exe-differential	sanitized
 assets/ok/pointer_mlir_values.mojo	main	exe-differential	sanitized
+assets/ok/pointer_origin_argument_resolves_as_struct_argument.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_cast_reads_pointee.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_cast_upgrade_reads.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_constructors.mojo	main	exe-differential	sanitized

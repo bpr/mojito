@@ -1212,6 +1212,7 @@ impl Checker {
         match origin {
             Origin::MutCast(..) => origin.static_mutability().map(Mutability::of),
             Origin::Place(place) => Some(self.owner_reference_mutability(place.root)),
+            Origin::SelfParam => Some(Mutability::RECEIVER),
             // A collector's pack origin is `Origin[mut=elt_is_mutable]`, which
             // a `read` collector, the only `VariadicPack` one, binds `False`.
             Origin::Param(id) if id.is_pack_binder() => Some(Mutability::Immutable),

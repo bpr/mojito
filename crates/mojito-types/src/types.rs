@@ -9498,8 +9498,26 @@ fn fmt_pointer_origin(
                 write!(f, ")")?;
             }
         }
-        PointerOrigin::SelfPlace { .. } => {
-            write!(f, "origin_of(self)")?;
+        PointerOrigin::SelfPlace {
+            mutability,
+            interior,
+            subtree,
+        } => {
+            let immutable = *mutability == Mutability::Immutable;
+            write!(
+                f,
+                "{}origin_of(self)",
+                if immutable { "ImmOrigin(" } else { "" }
+            )?;
+            for tag in interior {
+                write!(f, "._get_owned_interior[{tag}]")?;
+            }
+            if *subtree {
+                write!(f, "._subtree")?;
+            }
+            if immutable {
+                write!(f, ")")?;
+            }
         }
         PointerOrigin::Static => write!(f, "ImmStaticOrigin")?,
         PointerOrigin::Untracked { mutable: true } => {

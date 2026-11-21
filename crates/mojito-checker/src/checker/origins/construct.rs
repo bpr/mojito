@@ -56,6 +56,35 @@ pub(in crate::checker) struct StructApplication<'a> {
     pub(in crate::checker) own: &'a [(OriginParamId, Origin)],
 }
 
+/// The origins a construction's application supplies, checked against its
+/// arguments' origins in the enclosing method's frame: the receiver's
+/// symbolic origin (`origin_of(self)`) and a place rooted at the receiver
+/// name the same storage, as upstream's one `self_is_origin` does.
+#[derive(Clone, Copy)]
+pub(in crate::checker) struct SuppliedOrigins<'a> {
+    origins: &'a [super::super::BoundOrigin],
+    receiver: Option<&'a Origin>,
+}
+
+impl SuppliedOrigins<'_> {
+    /// The origin the application supplies for the binder `id`.
+    fn find(&self, id: OriginParamId) -> Option<&super::super::BoundOrigin> {
+        self.origins.iter().find(|origin| origin.id == id)
+    }
+
+    /// Whether `actual` lies within the supplied `allowed`, each read with
+    /// `origin_of(self)` at the receiver's place.
+    fn admits(&self, actual: &Origin, allowed: &Origin) -> bool {
+        let here = |origin: &Origin| {
+            self.receiver.map_or_else(
+                || origin.clone(),
+                |receiver| super::rebase_self_origin(origin, receiver),
+            )
+        };
+        origin_is_within(&here(actual), &here(allowed))
+    }
+}
+
 /// The origin binders `decls`, a callee's whole declared list, declares
 /// for its call to bind from the arguments' places: every `Origin` binder,
 /// an `OriginSet` left alone.
@@ -535,7 +564,11 @@ impl Checker {
         arg_tys: &[Ty],
         application: StructApplication<'_>,
     ) -> Result<ConstructorOriginBindings, TypeError> {
-        let explicit = application.origins;
+        let receiver = self.receiver_origin();
+        let explicit = SuppliedOrigins {
+            origins: application.origins,
+            receiver: receiver.as_ref(),
+        };
         let mut bindings = ConstructorOriginBindings::default();
         for ((index, expression, pattern), actual) in bound.iter().zip(arg_tys) {
             let parameter = sig.names.get(*index).map_or("?", String::as_str);
@@ -557,8 +590,8 @@ impl Checker {
                 && let Some(slot) = super::super::struct_origin_decl(params, *id)
                 && let Some(actual) = self.reference_argument_origin(expression)
             {
-                if let Some(explicit) = explicit.iter().find(|origin| origin.id == *id)
-                    && !origin_is_within(&actual, &explicit.origin)
+                if let Some(supplied) = explicit.find(*id)
+                    && !explicit.admits(&actual, &supplied.origin)
                 {
                     return Err(TypeError::TypeMismatch {
                         expected: format!(
@@ -690,6 +723,11 @@ impl Checker {
         arg_tys: &[Ty],
         explicit: &[super::super::BoundOrigin],
     ) -> Result<ConstructorOriginBindings, TypeError> {
+        let receiver = self.receiver_origin();
+        let explicit = SuppliedOrigins {
+            origins: explicit,
+            receiver: receiver.as_ref(),
+        };
         let mut bindings = ConstructorOriginBindings::default();
         for (((field, pattern), expression), actual) in fields.iter().zip(args).zip(arg_tys) {
             let context = || format!("field '{field}' of '{struct_name}'");
@@ -872,6 +910,10 @@ impl Checker {
         match origin {
             Origin::Projected(base, _) => self.decided_origin_mutability(base),
             Origin::Param(_) => self.bound_origin_mutability(origin),
+            // The receiver's origin has the receiver's capability.
+            Origin::SelfParam => self
+                .lookup_owner("self")
+                .map(|owner| self.owner_reference_mutability(owner)),
             _ => origin_mutability(origin, &|owner| self.owner_reference_mutability(owner)),
         }
     }
@@ -927,7 +969,7 @@ impl Checker {
         params: &[ParamDecl],
         pattern: &Ty,
         actual: &Ty,
-        explicit: &[super::super::BoundOrigin],
+        explicit: SuppliedOrigins<'_>,
         bindings: &mut ConstructorOriginBindings,
     ) -> Result<(), TypeError> {
         let slot_of = |id: &OriginParamId| super::super::struct_origin_decl(params, *id);
@@ -966,13 +1008,13 @@ impl Checker {
                         context: context(),
                     });
                 }
-                if let Some(explicit) = explicit.iter().find(|origin| origin.id == id) {
+                if let Some(supplied) = explicit.find(id) {
                     let (actual, _) = actual_origin.parts();
                     let within = if actual_origin.as_origin().is_some() {
-                        origin_is_within(&actual, &explicit.origin)
+                        explicit.admits(&actual, &supplied.origin)
                     } else {
-                        explicit.origin.is_untracked()
-                            || (actual == Origin::Static && explicit.origin == Origin::Static)
+                        supplied.origin.is_untracked()
+                            || (actual == Origin::Static && supplied.origin == Origin::Static)
                     };
                     if !within {
                         return Err(TypeError::TypeMismatch {
@@ -1003,8 +1045,8 @@ impl Checker {
                 let Some(slot) = slot_of(id) else {
                     return Ok(());
                 };
-                if let Some(explicit) = explicit.iter().find(|origin| origin.id == *id)
-                    && !origin_is_within(&reference.origin, &explicit.origin)
+                if let Some(supplied) = explicit.find(*id)
+                    && !explicit.admits(&reference.origin, &supplied.origin)
                 {
                     return Err(TypeError::TypeMismatch {
                         expected: format!(
@@ -1048,9 +1090,9 @@ impl Checker {
                                 })?;
                                 continue;
                             };
-                            if let Some(explicit) = explicit.iter().find(|origin| origin.id == *id)
+                            if let Some(supplied) = explicit.find(*id)
                                 && !matches!(actual, Origin::Unbound)
-                                && !origin_is_within(actual, &explicit.origin)
+                                && !explicit.admits(actual, &supplied.origin)
                             {
                                 return Err(TypeError::TypeMismatch {
                                     expected: format!(

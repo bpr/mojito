@@ -451,6 +451,9 @@ impl Checker {
         if let Some(base) = super::raw_origin_argument(argument) {
             return self.explicit_origin_argument(&base);
         }
+        if let Some(error) = super::removed_origin_alias(argument) {
+            return Err(error);
+        }
         let expression = match argument {
             ParamArg::Value(expression) => expression,
             ParamArg::Named { value, .. } => return self.explicit_origin_argument(value),
@@ -481,15 +484,19 @@ impl Checker {
         // projection of `base`'s origin, a binder's or the receiver's
         // included, as upstream's comptime members do. An origin naming no
         // tracked storage has no region to project, so it stands whole.
+        // Nothing projects below a `._subtree`.
+        let below = |base: &Expr| {
+            let origin = self.explicit_origin_argument(&ParamArg::Value(base.clone()))?;
+            if super::ends_in_subtree(&origin) {
+                return Err(super::subtree_is_terminal_error());
+            }
+            Ok(origin)
+        };
         if let Some((base, tag)) = super::interior_origin_syntax(expression) {
-            return self
-                .explicit_origin_argument(&ParamArg::Value(base.clone()))
-                .map(|origin| origin.owned_interior(tag).unwrap_or(origin));
+            return below(base).map(|origin| origin.owned_interior(tag).unwrap_or(origin));
         }
         if let Some(base) = super::subtree_origin_syntax(expression) {
-            return self
-                .explicit_origin_argument(&ParamArg::Value(base.clone()))
-                .map(|origin| origin.subtree().unwrap_or(origin));
+            return below(base).map(|origin| origin.subtree().unwrap_or(origin));
         }
         match &expression.kind {
             ExprKind::Call {
@@ -505,20 +512,19 @@ impl Checker {
                 }
                 args.iter()
                     .map(|place| {
-                        // In an abstract signature — a trait method's return type
-                        // such as `Self.IteratorType[origin_of(self)]` — there is
-                        // no bound `self` place. Represent the receiver origin
-                        // symbolically so the application still carries an
-                        // argument; it is resolved to the concrete receiver origin
-                        // at the conformance/call site and erases at runtime.
-                        // A place *under* an unbound `self`
-                        // (`origin_of(self.items)`, upstream's spelling when
-                        // the field is what the view borrows) widens to the
-                        // whole receiver: `Origin::SelfParam` carries no
-                        // projection path, and a wider region only makes the
-                        // resulting loan more conservative.
-                        if let Some(("self", _)) = crate::checker::places::place_path(place)
-                            && self.lookup_owner("self").is_none()
+                        // `origin_of(self)` names the receiver's own origin,
+                        // symbolic in the body as in the signature (upstream's
+                        // one `self_is_origin`); a call site rebases it onto the
+                        // concrete receiver, and a body place rooted at the
+                        // receiver compares against it at that place. A place
+                        // *under* `self` (`origin_of(self.items)`) is that
+                        // place in a body; with no bound `self` (an abstract
+                        // signature such as `Self.IteratorType[origin_of(self)]`)
+                        // it widens to the whole receiver, since
+                        // `Origin::SelfParam` carries no projection path and a
+                        // wider region only makes the loan more conservative.
+                        if let Some(("self", path)) = crate::checker::places::place_path(place)
+                            && (path.is_empty() || self.lookup_owner("self").is_none())
                         {
                             return Ok(Origin::SelfParam);
                         }
@@ -557,6 +563,23 @@ impl Checker {
             ExprKind::Member { object, field }
                 if let Some(origin) = self.struct_origin_argument(object, field) =>
             {
+                // A pointer parameter's `_` origin (a bare `p: Pointer`'s
+                // included) reads as the unsafe-any origin, where upstream
+                // binds the argument's own origin per call.
+                if matches!(origin, Origin::UnsafeAny { .. })
+                    && self.member_subject(object).is_some_and(|subject| {
+                        matches!(
+                            subject.as_pointer(),
+                            Some((_, mojito_types::origin::PointerOrigin::UnsafeAny { .. }))
+                        )
+                    })
+                {
+                    return Err(TypeError::Unsupported(format!(
+                        "reading the origin of a pointer whose origin is inferred or \
+                         unsafe-any ('{field}' of a 'Pointer[T, _]' parameter) is not \
+                         supported (R2419)"
+                    )));
+                }
                 Ok(origin)
             }
             _ => Err(TypeError::TypeMismatch {
@@ -614,6 +637,9 @@ impl Checker {
 
         if let Some(base) = super::raw_origin_argument(argument) {
             return self.resolve_origin_param_arg(&base);
+        }
+        if let Some(error) = super::removed_origin_alias(argument) {
+            return Err(error);
         }
         // A bare origin name spelled as a type argument is an origin name in
         // an origin slot.
@@ -689,6 +715,14 @@ impl Checker {
             }),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(n) if n == "Self") => {
                 named_param_mutability(field)
+            }
+            // A projection has its base's capability.
+            _ if let Some(base) = super::interior_origin_syntax(expression)
+                .map(|(base, _)| base)
+                .or_else(|| super::subtree_origin_syntax(expression)) =>
+            {
+                self.resolve_origin_param_arg(&ParamArg::Value(base.clone()))?
+                    .1
             }
             ExprKind::Call { name, args, .. } if name == "origin_of" => {
                 // The union of places is immutable as soon as any constituent
@@ -909,13 +943,6 @@ pub(in crate::checker) fn origin_method_receiver(value: &Expr) -> Option<&Expr> 
         },
         _ => None,
     }
-}
-
-/// The origin a call building one reads: the receiver of an `Origin`
-/// method (`o.unsafe_mut_cast[False]()`) or the operand of a conversion
-/// (`ImmOrigin(o)`).
-pub(in crate::checker) fn origin_call_operand(value: &Expr) -> Option<&Expr> {
-    origin_method_receiver(value).or_else(|| super::conversion_operand(value))
 }
 
 impl super::OriginDecls for Checker {

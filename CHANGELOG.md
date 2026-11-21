@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `Pointer`'s origin argument resolves as any struct's origin argument
+  does (R2368): `origin_of(self)` is the receiver's one symbolic origin in
+  a method's body as in its signature, so a struct view built over
+  `Pointer(to=self.x).unsafe_origin_cast[origin_of(self)]()` checks where
+  it failed with "expected a pointer whose origin lies within the supplied
+  'o' argument", and `ImmOrigin(other.origin)` over a bound pointer
+  parameter runs on both backends
+  (`assets/ok/pointer_origin_argument_resolves_as_struct_argument.mojo`).
+  A union pointer origin and `other.origin` over a bare `Pointer`
+  parameter are rejected explicitly instead of as "a runtime value".
+
 - A method's origin binder typed `Origin[mut=Self.mut]` now takes the
   receiver's `mut` (R2426): `s.g[ImmOrigin(origin_of(y))]()` on a mutable
   `S[origin_of(y)]` is rejected with the pin's "value passed to 't' cannot

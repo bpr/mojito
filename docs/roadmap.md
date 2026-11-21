@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2429**.
+Next free ID: **R2431**.
 
 ## Ordered Work
 
@@ -2825,10 +2825,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   prints `p[]`.
   - `-> Pointer[Int, origin_of(self)]` runs.
   - Cause: `PointerOrigin::SelfPlace` carries interior tags but no field
-    path, so `pointer_origin_expr`
-    (`crates/mojito-checker/src/checker/type_resolution.rs`) resolves
-    `origin_of(self.x)` as a concrete place, which a call site cannot
-    rebase onto its receiver.
+    path, so the signature widens `origin_of(self.x)` to the whole
+    receiver (`explicit_origin_argument`, `origins/binders.rs`), and the
+    pointer return coercion does not take the body's `Pointer(to=self.x)`
+    as lying within it: the probe now fails with "type mismatch for
+    return: expected Pointer[Int, origin_of(self)], found Pointer[Int,
+    ImmOrigin(origin@…)]".
   - Found while landing R679 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3376,9 +3378,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `Span(l1) if c else Span(l2)` over two lists fails the same
     way; the pin prints `2`.
   - Found while landing R1848 (2026-11-06).
-  - The bundled `Pointer.__merge_with__` is not declared until R2368
-    resolves its union origin.
-  - Depends on R2368.
+  - The bundled `Pointer.__merge_with__` is not declared until R2429
+    lets a `Pointer` hold its union origin.
+  - Depends on R2429.
   - Model: Fable, Not Planned.
 
 - [ ] **R2020 A module `comptime` constant annotated `Int` over a
@@ -9659,6 +9661,13 @@ retained on purpose and re-probed rather than fixed; they are listed in
     (or `Pointer[Int, origin=_]`) is "not concrete outside parameter
     position", where the pin infers the origin from the initializer and
     prints `7`.
+  - Probe: `def f(other: Pointer) -> Pointer[other.T,
+    ImmOrigin(other.origin), address_space=other.address_space]` is
+    rejected ("reading the origin of a pointer whose origin is inferred or
+    unsafe-any … (R2419)"), where the pin prints `5`, so the bundled
+    implicit mut-to-imm `__init__(other: Pointer, out self:
+    Pointer[other.T, ImmOrigin(other.origin), …])` cannot be declared.
+    Without the `ImmOrigin` it is rejected the same way.
   - Found while landing R2205 (2026-11-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -9703,6 +9712,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while planning R2205 (2026-11-20).
   - Depends on R2416.
   - Model: Fable, Not Planned.
+
+- [ ] **R2430 A construction accepts an argument whose origin lies within
+  the supplied origin, where upstream requires the argument to convert**
+
+  `S[origin_of(self)](Pointer(to=self.x))` under `ref self`, over `struct
+  S[mut: Bool, //, o: Origin[mut=mut]]` taking `p: Pointer[Int, Self.o]`,
+  prints `1`, where the pin rejects it ("cannot be converted from
+  'Pointer[Int, origin_of(self_is_origin.x)]' to 'Pointer[Int,
+  origin_of(self_is_origin)]'").
+  - The "lies within the supplied" checks (`bind_origin_pattern` and
+    `bind_constructor_origins`, `checker/origins/construct.rs`, through
+    `SuppliedOrigins::admits`) accept any origin inside the bracket's,
+    where upstream converts the argument to the parameter's type, so a
+    field's origin is not its owner's.
+  - Found while landing R2368 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
@@ -10716,46 +10742,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2207.
   - Model: Fable, Not Planned.
 
-- [ ] **R2368 A `Pointer`'s origin argument has its own resolver, where
-  upstream's is an ordinary struct argument**
+- [ ] **R2429 A `Pointer` cannot hold a union origin, where upstream's
+  origin parameter is an ordinary `Origin` value**
 
-  `pointer_origin_arg` and `pointer_origin_expr`
-  (`checker/type_resolution.rs`) resolve a `Pointer`'s origin argument
-  apart from `resolve_origin_param_arg`, so the two read `origin_of(self)`
-  differently.
-  - The pointer resolver always gives `SelfPlace`; the struct resolver
-    gives `SelfParam` only when no `self` is bound.
-  - Lever: resolve through `resolve_origin_param_arg` and
-    `PointerOrigin::from_parts`, keeping the `_` placeholder and the
-    one-argument spelling at `pointer_type`.
-  - Probe: `struct S[mut: Bool, //, o: Origin[mut=mut]]` holding
-    `var p: Pointer[Int, Self.o]`, built by a `Box` method
-    `def view(ref self) -> S[origin_of(self)]: return
-    S[origin_of(self)](Pointer(to=self.x).unsafe_origin_cast[origin_of(self)]())`,
-    then `print(b.view().p[])`: Mojito rejects it ("expected a pointer
-    whose origin lies within the supplied 'o' argument, found a pointer of
-    origin origin_of(self)"); the pin prints `1`.
-  - Probe: `cast[origin_of(self)._subtree](Pointer(to=self.value))` under
-    `ref self`, over `def cast[m: Bool, //, t: Origin[mut=m]](p:
-    Pointer[Int, _]) -> Pointer[Int, t]`, is "type mismatch for return:
-    expected Pointer[Int, origin_of(self)], found Pointer[Int,
-    ImmOrigin(origin@N)]", and without `._subtree` under `mut self`
-    likewise; the `unsafe_origin_cast` rule accepts both. A declared
-    `unsafe_origin_cast` (R2206) meets this at the 14
-    `assets/extensions/*/subtree_*` fixtures and the bundled
-    `unsafe_origin_cast[origin_of(self)…]` casts in `collections/`,
-    `string.mojo`, and `span.mojo`.
-  - Probe: `Pointer[Int, origin_of(x, y)](to=x)` and `var q: Pointer[Int,
-    origin_of(x, y)] = Pointer(to=x)` fail with "found a runtime value",
-    since `pointer_origin_arg` resolves no union; the pin prints `5`.
-  - Probe: `def f(other: Pointer) -> Pointer[other.T,
-    ImmOrigin(other.origin), address_space=other.address_space]` fails the
-    same way, where the pin runs it, so the bundled implicit mut-to-imm
-    `__init__(other: Pointer, out self: Pointer[other.T,
-    ImmOrigin(other.origin), …])` cannot be declared; and the union in
-    `__merge_with__`'s `origin=origin_of(Self.origin, other_type.origin)`
-    keeps it undeclared too (both fail packaging the bundle).
-  - Found while landing R2209 (2026-11-19).
+  `Pointer[Int, origin_of(x, y)](to=x)` fails with "the origin
+  origin_of(#…) | origin_of(#…) as a pointer's origin", where the pin
+  prints `5`.
+  - A pointer's origin argument now resolves as a struct's does
+    (`resolve_origin_param_arg`), but `TyKind::Pointer` stores a
+    `PointerOrigin`, which has no union, so `PointerOrigin::from_parts`
+    returns `None` for `Origin::Union`.
+  - Mojo's shape is for `TyKind::Pointer` to carry the struct argument
+    (an `Origin` plus its `mut`, what `PointerOrigin::parts` returns), as
+    `TyKind::Ref` already carries an `Origin`; that reaches every
+    `PointerOrigin` match (`rg -c "PointerOrigin::" crates/`).
+  - If that move is too large for one session, the staged first step is a
+    `PointerOrigin::Union` variant whose `parts` is `Origin::Union`, filed
+    as the step toward the struct-argument form, never as the endpoint.
+  - Probe: `var q: Pointer[Int, origin_of(x, y)] = Pointer(to=x)` fails
+    the same way; the pin prints `5`.
+  - Probe: the bundled `Pointer.__merge_with__` (`origin=origin_of(Self.origin,
+    other_type.origin)`) cannot be declared, which R1962 needs.
+  - Found while landing R2368 (2026-11-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

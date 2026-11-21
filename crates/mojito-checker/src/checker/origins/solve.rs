@@ -75,7 +75,21 @@ impl Checker {
                 .iter()
                 .all(|segment| matches!(segment, OriginSeg::Interior(_) | OriginSeg::Subtree))
         };
+        // The receiver's symbolic origin names its place in the body.
+        let receiver = self_owner.map(|root| {
+            Origin::Place(mojito_types::origin::OriginPlace {
+                root,
+                path: Vec::new(),
+            })
+        });
+        let here = |origin: &Origin| {
+            receiver.as_ref().map_or_else(
+                || origin.clone(),
+                |receiver| super::rebase_self_origin(origin, receiver),
+            )
+        };
         let fits = |actual: &Origin, bound: &Origin| {
+            let (actual, bound) = (&here(actual), &here(bound));
             actual.coerces_to(bound)
                 || match (actual.uncast(), bound.uncast()) {
                     (Origin::Place(place), Origin::SelfParam) => {
