@@ -687,15 +687,17 @@ fn reads_slot(resolved: &MethodCallResolution, index: usize) -> bool {
 }
 
 /// Whether a returned reference's signature origin may borrow the receiver,
-/// so the receiver's mutability can make the result mutable. Only a member
-/// naming a read-convention argument slot is ruled out: that borrow is
-/// immutable whatever the receiver is, as the pin rejects `h.pick(w) = 5`.
+/// so the receiver's mutability can make the result mutable. A member naming
+/// a read-convention argument slot, or a read `self`, is ruled out: that
+/// borrow is immutable whatever the receiver is, as the pin rejects
+/// `h.pick(w) = 5` and a store through `__getitem__(self) -> ref[self.a]`.
 fn origin_may_name_receiver(
     origin: &mojito_types::origin::SigOrigin,
     resolved: &MethodCallResolution,
 ) -> bool {
     use mojito_types::origin::SigOrigin;
     match origin {
+        SigOrigin::Self_ => !matches!(resolved.self_convention, None | Some(ArgConvention::Imm)),
         SigOrigin::Param(index) => !reads_slot(resolved, *index),
         SigOrigin::Projected(base, _) => origin_may_name_receiver(base, resolved),
         SigOrigin::Union(members) => members

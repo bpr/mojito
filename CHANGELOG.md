@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A store or augmented store through a getter's mutable reference accepts
+  every bracket shape, as upstream's `emitGetterSetterAccess` writes through
+  the getter whenever there is no setter: a keyword (`s[k=0] = 5`, `s[k=0]
+  += 2`), positional-and-keyword, multi-index (`s[1, 2] = 10`), or slice
+  (`s[1:2] = 20`) bracket, each source evaluated once
+  (`assets/ok/keyword_subscript_ref_store.mojo`); an augmented keyword store
+  no longer panics in MIR lowering. A `ref[self.a]` result of a read-`self`
+  method is immutable, so a store through it is rejected as at the pin
+  (`assets/type_error/keyword_subscript_immutable_ref_store.mojo`). A keyword
+  store through `__setitem__` stays rejected (roadmap R2480).
 - `Pointer(to=)` is upstream's declared `__init__(out self, *, ref[Self.origin,
   Self.address_space] to: Self.T)`, retiring the checker's rule: the origin,
   its `mut`, and the address space are inferred through the ordinary `ref`

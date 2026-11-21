@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2480**.
+Next free ID: **R2481**.
 
 ## Ordered Work
 
@@ -3485,27 +3485,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A module function's value captures nothing, so returning it escapes
     nothing. R83 covers only a parametric function's message.
   - Found while planning R1707 (2026-11-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1504 A slice or multi-index store through a getter's mutable
-  reference is rejected**
-
-  Problem: `s[1, 2] = 5` on a struct whose only accessor is `__getitem__(ref
-  self, a: Int, b: Int) -> ref [self.n] Int` prints `5` at the pin, while
-  Mojito rejects it ("a slice or multi-index store through '__getitem__''s
-  reference result is not supported").
-  - Upstream's `emitGetterSetterAccess` emits the getter call whenever there
-    is no setter, whatever the subscript's shape, and the store writes
-    through its reference.
-  - `check_subscript_reference_assignment` (`checker/indexing.rs`) and
-    `lower_subscript_reference_set` (`mir/lower_stmt.rs`) take a single
-    index only; the augmented store's `lower_augmented_slice` and
-    `lower_augmented_multi_index` already lower the getter's handle for
-    every shape and are the model.
-  - Probe: the store above, and `s[1:2] = 5` over a slice getter returning a
-    reference.
-  - Found while landing R1373 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7842,28 +7821,24 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2476 A keyword subscript store through a `ref` getter is
+- [ ] **R2480 A keyword subscript store through `__setitem__` is
   rejected**
 
-  `s[k=0] = 5` and `s[k=0] += 2`, over `__getitem__(ref self, *, k: Int)
-  -> ref[self.a] Int`, print `7` at the pin, where Mojito rejects them:
-  "keyword subscript assignment ('[k=…] = value') is not supported".
-  - `reject_keyword_subscript_store` (`checker/indexing.rs`) fires for
-    every keyword store, the getter-reference lvalue included.
-  - `check_subscript_reference_assignment` destructures only `Index`, and
-    the augmented path in `checker/statements.rs` takes only positional
-    arguments.
-  - MIR's augmented subscript builder (`lower_stmt.rs`) has an
-    `unreachable!` for a keyword argument, and the plain store falls to
-    "checked subscript assignment lacks descriptor metadata".
-  - Probe the pin on a keyword `__setitem__` store before deciding whether
-    that form stays rejected.
-  - Probe: the store above prints `7` on both backends, and a store
-    through an immutable `ref` keyword getter is rejected with the
-    reference-mutability message.
-  - It blocks `p[unsafe_offset=i] = v` once the pointer subscript
-    dispatches (R2473).
-  - Found while planning R2473 (2026-11-21).
+  `s[k=1] = 5` and `s[k=1] += 2`, over `__getitem__(self, *, k: Int) ->
+  Int` and `__setitem__(mut self, *, k: Int, value: Int)`, print `9` at the
+  pin, where Mojito rejects them: "a keyword subscript store through
+  '__setitem__' ('[k=…] = value') is not supported yet".
+  - MIR's `MultiSet` carries positional indices only: it has no `kwargs`
+    beside `MultiIndex`'s, so the VM, Pliron, the verifier, and the text
+    format see no keyword index (a MIR text bump).
+  - `store_through_subscript` (`checker/indexing.rs`) drops keyword
+    arguments from the setter call, so `reject_keyword_setter_store` guards
+    it; the setter paths of `lower_subscript_setter` and
+    `lower_augmented_multi_index` (`mir/lower_stmt.rs`) keep an
+    `unreachable!` for a keyword argument.
+  - Probe: the stores above, the write-back `s[k=1].bump()` over a struct
+    element, and `s[0, k=1] = 5` mixing positional and keyword indices.
+  - Found while landing R2476 (2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

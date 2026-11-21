@@ -743,6 +743,26 @@ impl<'a> Flatten<'a> {
         rhs_expression: Node<'a>,
     ) -> Option<Reg> {
         let plan = target.augmented_subscript()?;
+        let bracket = match target.op() {
+            CheckedOp::MultiIndex { args, .. } => Some(args.clone()),
+            CheckedOp::Slice {
+                lower, upper, step, ..
+            } => Some(vec![mojito_checked::checked::CheckedSubscriptArg::Slice {
+                lower: *lower,
+                upper: *upper,
+                step: *step,
+            }]),
+            _ => None,
+        };
+        if let Some(source) = bracket {
+            let object = target.object()?;
+            let descriptors = subscript_slice_descriptors(target);
+            let handle =
+                self.multi_index_reference_handle(target, &plan, object, &source, &descriptors);
+            let handle =
+                self.peel_reference_handle_to(handle, &plan.operand_ty, &target.location());
+            return Some(self.write_subscript_reference(target, &plan, handle, rhs_expression));
+        }
         let (object, index) = target
             .index_operands()
             .map(|(object, _)| object)
@@ -789,15 +809,7 @@ impl<'a> Flatten<'a> {
             intrinsic: None,
         });
         let handle = self.peel_reference_handle_to(handle, &plan.operand_ty, &target.location());
-        let rhs = self.expr(rhs_expression);
-        self.yield_stored_value(rhs_expression, rhs);
-        self.emit_interior_invalidations(target, None);
-        self.destroy_pointee(target, handle, &plan.operand_ty);
-        self.emit(MirInstr::WriteRef {
-            reference: handle,
-            value: rhs,
-        });
-        Some(handle)
+        Some(self.write_subscript_reference(target, &plan, handle, rhs_expression))
     }
 
     /// Lower `receiver[arguments] OP= rhs` from the complete checked accessor
@@ -1136,6 +1148,14 @@ impl<'a> Flatten<'a> {
             op,
             rhs: rhs_expression,
         } = *store;
+        // A mutable-reference getter establishes the lvalue before the RHS
+        // and updates the referent through its handle.
+        let Some(setter) = plan.setter.as_ref() else {
+            let handle =
+                self.multi_index_reference_handle(target, plan, object, source, descriptors);
+            self.finish_reference_augmented_store(target, handle, plan, op, rhs_expression);
+            return;
+        };
         let (receiver, receiver_place) = self.lower_call_receiver(object);
         let (receiver, receiver_place) =
             self.address_receiver(&plan.getter, object, (receiver, receiver_place));
@@ -1154,9 +1174,7 @@ impl<'a> Flatten<'a> {
                         mojito_checked::checked::CheckedCallArgumentSource::Positional(position);
                     let retain_place =
                         Self::checked_call_source_requires_place(&plan.getter, argument_source)
-                            || plan.setter.as_ref().is_some_and(|setter| {
-                                Self::checked_call_source_requires_place(setter, argument_source)
-                            });
+                            || Self::checked_call_source_requires_place(setter, argument_source);
                     let (register, place) =
                         self.lower_augmented_argument_source(index, retain_place);
                     source_places.push(place);
@@ -1183,17 +1201,14 @@ impl<'a> Flatten<'a> {
                     argument
                 }
                 _ => {
-                    unreachable!("keyword subscript assignment is rejected at checking")
+                    unreachable!("a keyword store through '__setitem__' is rejected at checking")
                 }
             })
             .collect::<Vec<_>>();
         // Value getters defer every call-local argument adaptation
         // until after the RHS. Building the raw descriptor/index list
         // above has already performed each source evaluation once.
-        let value_rhs = plan
-            .setter
-            .as_ref()
-            .map(|_| self.lower_augmented_rhs(rhs_expression, plan.inplace.as_ref()));
+        let rhs = self.lower_augmented_rhs(rhs_expression, plan.inplace.as_ref());
         let getter_args = raw_args
             .iter()
             .enumerate()
@@ -1231,22 +1246,6 @@ impl<'a> Flatten<'a> {
             target.raise_conversion(),
             target.location(),
         );
-
-        let Some(rhs) = value_rhs else {
-            self.emit_checked_call_boundary(&plan.getter, &target.location());
-            let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-            self.record_call(handle, Some(getter_call.target.clone()), 0);
-            self.emit(MirInstr::MultiIndex {
-                dest: handle,
-                object: receiver,
-                args: getter_args,
-                kwargs: Vec::new(),
-                call: Some(Box::new(getter_call)),
-            });
-            self.finish_reference_augmented_store(target, handle, plan, op, rhs_expression);
-            return;
-        };
-
         self.emit_checked_call_boundary(&plan.getter, &target.location());
         let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
         self.record_call(current, Some(getter_call.target.clone()), 0);
@@ -1258,10 +1257,6 @@ impl<'a> Flatten<'a> {
             call: Some(Box::new(getter_call)),
         });
         let result = self.apply_augmented_operator(target, current, plan, op, rhs);
-        let setter = plan
-            .setter
-            .as_ref()
-            .expect("value-returning augmented getter has a setter");
         let setter_receiver = self.reload_augmented_receiver(
             setter,
             (receiver, receiver_place.as_ref()),
@@ -1324,6 +1319,140 @@ impl<'a> Flatten<'a> {
                 .expect("a store through a setter names its value"),
             call: Box::new(setter_call),
         });
+    }
+
+    /// The reference the mutable-reference getter in `plan` returns for the
+    /// bracket `object[source]`, its positional, keyword, and slice
+    /// arguments bound as the getter binds them: every source evaluated
+    /// once, then adapted for the getter, as current Mojo forms the lvalue a
+    /// store or an in-place update writes through.
+    fn multi_index_reference_handle(
+        &mut self,
+        target: Node<'a>,
+        plan: &mojito_checked::checked::CheckedAugmentedSubscript,
+        object: Node<'a>,
+        source: &[mojito_checked::checked::CheckedSubscriptArg],
+        descriptors: &[Option<mojito_checked::checked::CheckedSliceLiteral>],
+    ) -> Reg {
+        use mojito_checked::checked::{CheckedCallArgumentSource, CheckedSubscriptArg};
+        let getter = &plan.getter;
+        let (receiver, receiver_place) = self.lower_call_receiver(object);
+        let (receiver, _) = self.address_receiver(getter, object, (receiver, receiver_place));
+        // Each raw operand with its call source, the place it was read from,
+        // the source span of an index (`None` for a slice literal), and the
+        // keyword it is passed under.
+        let mut raw = Vec::with_capacity(source.len());
+        let (mut positional, mut keyword) = (0, 0);
+        for (argument, descriptor) in source.iter().zip(descriptors) {
+            let (call_source, name) = match argument {
+                CheckedSubscriptArg::Index(_) | CheckedSubscriptArg::Slice { .. } => {
+                    positional += 1;
+                    (CheckedCallArgumentSource::Positional(positional - 1), None)
+                }
+                CheckedSubscriptArg::Keyword { name, .. }
+                | CheckedSubscriptArg::KeywordSlice { name, .. } => {
+                    keyword += 1;
+                    (
+                        CheckedCallArgumentSource::Keyword(keyword - 1),
+                        Some(name.clone()),
+                    )
+                }
+            };
+            match argument {
+                CheckedSubscriptArg::Index(value) | CheckedSubscriptArg::Keyword { value, .. } => {
+                    debug_assert!(descriptor.is_none());
+                    let index = Self::subscript_operand(target, *value);
+                    let retain = Self::checked_call_source_requires_place(getter, call_source);
+                    let (register, place) = self.lower_augmented_argument_source(index, retain);
+                    raw.push((
+                        call_source,
+                        MirSubscriptArg::Index(register),
+                        place,
+                        Some(index.location()),
+                        name,
+                    ));
+                }
+                CheckedSubscriptArg::Slice { lower, upper, step }
+                | CheckedSubscriptArg::KeywordSlice {
+                    lower, upper, step, ..
+                } => {
+                    let sliced = self.slice_set_argument(
+                        target,
+                        descriptor.clone(),
+                        [*lower, *upper, *step],
+                    );
+                    let (argument, place) =
+                        self.share_augmented_slice(target.location(), plan, call_source, sliced);
+                    raw.push((call_source, argument, place, None, name));
+                }
+            }
+        }
+        let mut args = Vec::new();
+        let mut kwargs = Vec::new();
+        let mut operands = Vec::with_capacity(raw.len());
+        for (call_source, argument, place, span, name) in raw {
+            let adapted = match span {
+                None => self.augmented_slice_operand(
+                    getter,
+                    call_source,
+                    target.location(),
+                    (&argument, place.as_ref()),
+                ),
+                Some(ref span) => {
+                    let MirSubscriptArg::Index(register) = argument;
+                    MirSubscriptArg::Index(self.apply_checked_call_value_adjustments(
+                        getter,
+                        call_source,
+                        register,
+                        span.clone(),
+                    ))
+                }
+            };
+            operands.push((span, adapted.clone()));
+            match name {
+                Some(name) => kwargs.push((name, adapted)),
+                None => args.push(adapted),
+            }
+        }
+        let mut getter_call =
+            self.mir_subscript_call_contract(getter.clone(), &operands, target.location());
+        self.convert_raised(
+            getter_call.raises.as_mut(),
+            target.raise_conversion(),
+            target.location(),
+        );
+        self.emit_checked_call_boundary(getter, &target.location());
+        let handle = self.fresh_typed(target.location(), None, getter.result_ty.clone());
+        self.record_call(handle, Some(getter_call.target.clone()), 0);
+        self.emit(MirInstr::MultiIndex {
+            dest: handle,
+            object: receiver,
+            args,
+            kwargs,
+            call: Some(Box::new(getter_call)),
+        });
+        handle
+    }
+
+    /// Store `rhs_expression` through `handle`, the reference the subscript
+    /// `target`'s getter in `plan` returned: the RHS after the lvalue, the
+    /// old referent destroyed, then the write.
+    fn write_subscript_reference(
+        &mut self,
+        target: Node<'a>,
+        plan: &mojito_checked::checked::CheckedAugmentedSubscript,
+        handle: Reg,
+        rhs_expression: Node<'a>,
+    ) -> Reg {
+        let rhs = self.expr(rhs_expression);
+        self.yield_stored_value(rhs_expression, rhs);
+        self.emit_interior_invalidations(target, None);
+        self.destroy_pointee(target, handle, &plan.operand_ty);
+        self.emit(MirInstr::WriteRef {
+            reference: handle,
+            value: rhs,
+        });
+        handle
     }
 
     /// An augmented store's right-hand side: read by its in-place dunder
@@ -2113,7 +2242,9 @@ impl<'a> Flatten<'a> {
                             positional += 1;
                             argument
                         }
-                        _ => unreachable!("keyword subscript assignment is rejected at checking"),
+                        _ => unreachable!(
+                            "a keyword store through '__setitem__' is rejected at checking"
+                        ),
                     })
                     .collect()
             }
@@ -4465,6 +4596,23 @@ fn reference_binding_loans(loans: &[MirLoan]) -> Vec<MirLoan> {
             ..loan
         })
         .collect()
+}
+
+/// The slice literals the checker bound for subscript `target`'s
+/// arguments, one per argument (`None` for an index).
+fn subscript_slice_descriptors(
+    target: Node<'_>,
+) -> Vec<Option<mojito_checked::checked::CheckedSliceLiteral>> {
+    target
+        .adjustments()
+        .iter()
+        .find_map(|adjustment| match adjustment {
+            mojito_checked::checked::SemanticAdjustment::SliceDescriptors {
+                descriptors, ..
+            } => Some(descriptors.clone()),
+            _ => None,
+        })
+        .expect("a checked subscript store has descriptor metadata")
 }
 
 /// Subscript `operands` paired with the sources they were evaluated from,

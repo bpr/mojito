@@ -1,6 +1,5 @@
-# expect: keyword subscripts are read-only
-# Keyword slice assignment is rejected like every keyword subscript
-# assignment.
+# expect: expression must be mutable in assignment
+# A keyword slice of a value-returning getter with no setter is no place.
 from std.builtin.builtin_slice import ContiguousSlice
 
 struct Grid:

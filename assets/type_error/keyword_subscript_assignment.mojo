@@ -1,4 +1,4 @@
-# expect: keyword subscript assignment
+# expect: expression must be mutable in assignment
 @fieldwise_init
 struct Buf:
     var data: List[Int]

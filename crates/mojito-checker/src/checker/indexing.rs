@@ -387,7 +387,6 @@ impl Checker {
                     });
                 }
                 let object_type = self.check_place(object)?;
-                reject_keyword_subscript_store(place)?;
                 match self.subscript_lvalue(place)? {
                     Some(lvalue) => self.subscript_reference_place(place, &object_type, &lvalue),
                     None => Err(TypeError::NotIndexable(object_type.to_string())),
@@ -685,7 +684,6 @@ impl Checker {
         let Some(lvalue) = self.subscript_lvalue(target)? else {
             return Ok(None);
         };
-        reject_keyword_subscript_store(target)?;
         let SubscriptLValue::GetterSetter {
             element,
             value_name,
@@ -773,7 +771,7 @@ impl Checker {
                 let object_ty = self.infer(object)?;
                 let mut arguments = Vec::with_capacity(source.len());
                 let mut descriptors = Vec::with_capacity(source.len());
-                reject_keyword_subscript_store(target)?;
+                reject_keyword_setter_store(target)?;
                 for (position, argument) in source.iter().enumerate() {
                     match argument {
                         SubscriptArg::Keyword { .. } | SubscriptArg::KeywordSlice { .. } => {}
@@ -975,6 +973,7 @@ impl Checker {
         element: &Ty,
         value_name: &str,
     ) -> Result<Ty, TypeError> {
+        reject_keyword_setter_store(place)?;
         let indices_only = match &place.kind {
             ExprKind::Index { .. } => true,
             ExprKind::MultiIndex { args, .. } => args
@@ -1028,11 +1027,12 @@ impl Checker {
         target: &Expr,
         value: &Expr,
     ) -> Result<Ty, TypeError> {
-        let ExprKind::Index { object, .. } = &target.kind else {
-            return Err(TypeError::Unsupported(
-                "a slice or multi-index store through '__getitem__''s reference result is not \
-                 supported; declare '__setitem__'"
-                    .to_string(),
+        let (ExprKind::Index { object, .. }
+        | ExprKind::Slice { object, .. }
+        | ExprKind::MultiIndex { object, .. }) = &target.kind
+        else {
+            return Err(TypeError::InvariantViolation(
+                "a subscript reference store's target is not a subscript".to_string(),
             ));
         };
         // A pointer dereference on the way to the receiver needs its
@@ -2653,10 +2653,12 @@ fn setter_value_name(setter: &MethodSig) -> Option<String> {
     }
 }
 
-/// Reject a store to a declared struct's subscript with a keyword argument
-/// (`s[byte=0] = v`): a keyword subscript is read-only here. A pointer's
-/// keyword offset (`p[unsafe_offset=1] = v`) stores through the pointer.
-fn reject_keyword_subscript_store(target: &Expr) -> Result<(), TypeError> {
+/// Reject a store through `__setitem__` with a keyword index argument
+/// (`s[k=0] = v` over a keyword-only setter): MIR's setter call carries
+/// positional indices only. A keyword store through a `ref` getter writes
+/// its reference, and a pointer's keyword offset (`p[unsafe_offset=1] = v`)
+/// stores through the pointer.
+fn reject_keyword_setter_store(target: &Expr) -> Result<(), TypeError> {
     let ExprKind::MultiIndex { args, .. } = &target.kind else {
         return Ok(());
     };
@@ -2669,7 +2671,7 @@ fn reject_keyword_subscript_store(target: &Expr) -> Result<(), TypeError> {
         })
         .map_or(Ok(()), |name| {
             Err(TypeError::Unsupported(format!(
-                "keyword subscript assignment ('[{name}=…] = value') is not supported; keyword subscripts are read-only"
+                "a keyword subscript store through '__setitem__' ('[{name}=…] = value') is not supported yet"
             )))
         })
 }
