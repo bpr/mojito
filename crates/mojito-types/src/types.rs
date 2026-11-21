@@ -434,6 +434,17 @@ impl AddressSpaceSlot {
     /// Upstream's `AddressSpace.GENERIC`, every pointer's default.
     pub const GENERIC: Self = Self::Known(0);
 
+    /// The `address_space=_` inference wildcard of an initialized local's
+    /// annotation, which the initializer's space solves.
+    pub fn inferred(context: &ParamContext) -> Self {
+        Self::Expr(context.hole(HoleKind::Unbound, MetaTy::value(address_space_ty())))
+    }
+
+    /// Whether this is the [`Self::inferred`] wildcard.
+    pub fn is_inferred(&self) -> bool {
+        matches!(self, Self::Expr(expr) if expr.as_hole().is_some())
+    }
+
     /// The slot holding the `AddressSpace`-valued `space`: `Known` once it
     /// folds.
     pub fn of(space: ParamExpr) -> Result<Self, ParamError> {

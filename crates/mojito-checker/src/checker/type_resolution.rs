@@ -4210,6 +4210,15 @@ impl Checker {
         let address_space = bracket
             .address_space
             .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
+        // Only an initialized local's annotation leaves its space to the
+        // initializer; a storage position must name a concrete one.
+        if address_space.is_inferred()
+            && self.application_strictness() == super::StorageStrictness::Full
+        {
+            return Err(TypeError::NotConcrete(pointer_spelling(
+                &element, &origin, args,
+            )));
+        }
         Ok((
             Ty::pointer(element, origin, address_space),
             bracket.attributes,
@@ -4247,6 +4256,11 @@ impl Checker {
                 "T" => bracket.element = Some(self.pointer_element_arg(name, value)?),
                 "origin" => {
                     origin_argument = Some(value);
+                }
+                _ if origin_placeholder(value) => {
+                    bracket.address_space = Some(mojito_types::types::AddressSpaceSlot::inferred(
+                        &self.param_context,
+                    ));
                 }
                 _ => bracket.address_space = Some(self.address_space_arg(value)?),
             }
@@ -4346,12 +4360,6 @@ impl Checker {
         let mut value = argument;
         while let ParamArg::Named { value: inner, .. } = value {
             value = inner;
-        }
-        if origin_placeholder(value) {
-            return Err(TypeError::Unsupported(
-                "an inferred address space ('address_space=_') is not supported (R2410)"
-                    .to_string(),
-            ));
         }
         let rewritten;
         let value = match value {
@@ -4920,6 +4928,19 @@ impl Checker {
                         mojito_types::types::simd_ty_from_slots(dtype.clone(), found_width).ok()
                     })
                     .unwrap_or_else(|| declared.clone())
+            }
+            (
+                TyKind::Pointer {
+                    element,
+                    origin,
+                    address_space,
+                },
+                TyKind::Pointer {
+                    address_space: found_space,
+                    ..
+                },
+            ) if address_space.is_inferred() => {
+                Ty::pointer(element.clone(), origin.clone(), found_space.clone())
             }
             (TyKind::Struct(name, declared_args), TyKind::Struct(found_name, found_args))
                 if !declared.is_simd()
@@ -5874,6 +5895,29 @@ impl mojito_types::types::TyRewrite for BinderSearch<'_> {
         }
         Ok(expr.clone())
     }
+}
+
+/// A `Pointer` application as the pin shows one that is not concrete:
+/// its pointee, its origin (`_` where the bracket leaves it open), and an
+/// `address_space=_` hole.
+fn pointer_spelling(
+    element: &Ty,
+    origin: &mojito_types::origin::PointerOrigin,
+    args: &[mojito_ast::ast::ParamArg],
+) -> String {
+    let origin_open = args.iter().any(|argument| {
+        origin_placeholder(argument)
+            && !matches!(argument, mojito_ast::ast::ParamArg::Named { name, .. } if name == "address_space")
+    });
+    let origin = if origin_open {
+        "_".to_string()
+    } else {
+        origin.parts().0.to_string()
+    };
+    format!(
+        "{}[{element}, {origin}, address_space=_]",
+        mojito_types::types::POINTER_TYPE_NAME
+    )
 }
 
 /// Whether a bracket argument is the `_` hole, positional or keyword.

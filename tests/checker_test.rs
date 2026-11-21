@@ -9583,16 +9583,25 @@ fn a_pointer_mlir_value_field_store_needs_a_mutable_place() {
 #[test]
 fn pointer_address_space_must_be_an_address_space() {
     // The slot takes an `AddressSpace`, never an `Int` or an origin; an
-    // inferred `address_space=_` is R2410's; and a pointer in another space
-    // does not convert to a generic one.
+    // `address_space=_` hole is not concrete where nothing solves it (an
+    // uninitialized local, a field, a result); and a pointer in another
+    // space does not convert to a generic one.
     for (source, message) in [
         (
             "def f(p: Pointer[Int, _, address_space=3]) -> Int:\n    return p[]\n\ndef main():\n    print(1)\n",
             "expected AddressSpace",
         ),
         (
-            "def f(p: Pointer[Int, _, address_space=_]) -> Int:\n    return p[]\n\ndef main():\n    print(1)\n",
-            "R2410",
+            "def main():\n    var x = 1\n    var p: Pointer[Int, origin_of(x), address_space=_]\n    p = Pointer(to=x)\n    print(p[])\n",
+            "is not concrete, use '[]'",
+        ),
+        (
+            "struct S:\n    var p: Pointer[Int, MutAnyOrigin, address_space=_]\n\ndef main():\n    print(1)\n",
+            "is not concrete, use '[]'",
+        ),
+        (
+            "def f(p: Pointer[Int, MutAnyOrigin]) -> Pointer[Int, MutAnyOrigin, address_space=_]:\n    return p\n\ndef main():\n    print(1)\n",
+            "is not concrete, use '[]'",
         ),
         (
             "struct V[T: AnyType, o: ImmOrigin]:\n    comptime R = __mlir_type[`!lit.ref<`, Self.T, `, `, Self.o._mlir_origin, `, `, Self.o._mlir_origin, `>`]\n\ndef main():\n    var x = 1\n    comptime R = V[Int, origin_of(x)].R\n    print(x)\n",
@@ -9606,6 +9615,11 @@ fn pointer_address_space_must_be_an_address_space() {
         let error = err_std(source);
         assert!(error.to_string().contains(message), "{error}");
     }
+    // A parameter's hole is an infer-only binder each call solves, and an
+    // initialized local's takes its initializer's space.
+    ok_std(
+        "def f(p: Pointer[Int, _, address_space=_]) -> Int:\n    return p[]\n\ndef main():\n    var x = 1\n    var p: Pointer[Int, origin_of(x), address_space=_] = Pointer(to=x)\n    print(f(p))\n",
+    );
 }
 
 #[test]

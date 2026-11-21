@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2457**.
+Next free ID: **R2460**.
 
 ## Ordered Work
 
@@ -2490,6 +2490,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `xs[0:2] != xs[1:3]` through `Span.__ne__(self, rhs: Span[Self.T, _])`.
   - Probe: `b.any(Span(xs))` over a method `any(self, rhs: Span[Int, _])`
     of a struct holding `Span(xs)`.
+  - Probe: a module alias over a pointer with a hole, `comptime P =
+    Pointer[Int, _]` or `Pointer[Int, _, address_space=_]`, spelled bare
+    as `def f(p: P)`, fails with "'Pointer[Int, _]' is not concrete outside
+    parameter position", where the pin binds each hole per call and
+    prints the pointee: the gate also skips a pointer alias's origin.
   - Found while landing R190 (2026-10-19).
   - Depends on R2397.
   - Model: Opus, Not Planned.
@@ -3182,6 +3187,27 @@ Track: `calls`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R2457 A homogeneous variadic of `Pointer` values reads the wrong
+  pointee in the VM**
+
+  `ps[0][]` in `def k(*ps: Pointer[Int, MutAnyOrigin]) -> Int`, called as
+  `k(Pointer(to=x))` over `var x = 42`, prints `0` on the VM, where the
+  pin and the native backend print `42`.
+  - Every origin spelling does it (`_`, a bound `[o: ImmOrigin]`, an
+    `address_space=` keyword or hole), and so does `for p in ps`.
+  - A variadic of `Int` reads right, and a program that ran another
+    pointer read first can print `42` by accident, so the read looks
+    dangling rather than miscomputed.
+  - Suspect: the concrete MIR types the collector's `Span._data` as a
+    pointer to a pointer to a `Pointer[Int, …]`, one level more than
+    `Span[Pointer[Int, …]]` declares, so the VM's element load reads
+    through the wrong level.
+  - Probe: the shape above, and `def k2(*ps: Pointer[Int, MutAnyOrigin])`
+    returning `p[]` from `for p in ps`.
+  - Found while landing R2410 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2378 A thin function value bound to a callable parameter is not
   callable in the VM**
 
@@ -3199,6 +3225,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `3a322a838`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2458 An explicit `_` call parameter for a defaulted parameter
+  is not its default**
+
+  `f[_](1)` over `def f[n: Int = 3](x: Int) -> Int: return n + x` fails
+  with "cannot infer type parameter 'n' of 'f' from the arguments", where
+  the pin takes the default and prints `4`.
+  - Upstream's `_` unbinds the parameter explicitly, so an argument or
+    the declared default then binds it; Mojito's call binding reads `_`
+    as a value it must infer.
+  - Probe: the shape above.
+  - Probe: `Pointer(to=x).unsafe_address_space_cast[_]()` fails with "no
+    overload matches the supplied arguments", where the pin takes the
+    default `target` and prints the pointee.
+  - Found while landing R2410 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2194 A `ref.make` of a call argument claims a permission its source lacks**
 
@@ -5102,6 +5145,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     = Bool`), reads the module struct's member, since
     `Checker::member_base` likewise asks the type spelling first.
   - Found while landing R1540 (2026-11-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2459 A `_` hole in a function type's parameter is not concrete**
+
+  `def app(g: def(Span[Int, _]) -> Int)` fails with "'Span[_]' is not
+  concrete, use '[]' to bind missing parameters", where the pin accepts
+  the signature.
+  - A function type's parameter types resolve at annotation depth two
+    (`Checker::application_strictness`, `checker/type_resolution.rs`),
+    so every hole in them is judged as a nested storage type's.
+  - A `Pointer`'s bare `_` origin there is read as an unsafe-any
+    provenance, so `def(Pointer[Int, _]) -> Int` already passes.
+  - Probe: the `Span` shape above.
+  - Probe: `def app(g: def(Pointer[Int, MutAnyOrigin, address_space=_])
+    -> Int)` fails with "'Pointer[Int, MutUnsafeAnyOrigin,
+    address_space=_]' is not concrete", where the pin accepts it.
+  - Found while landing R2410 (2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9906,6 +9967,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     solved from its initializer, as `var s: Span[Int, _] = Span(x)` already
     is through an unbound struct slot.
   - Probe: `var p: Pointer[Int, origin=_] = Pointer(to=x)` likewise.
+  - Probe: `var p: Pointer[Int, _, address_space=_] = Pointer(to=x)`
+    likewise; with a bound origin the space hole already takes the
+    initializer's.
   - A return annotation's `_` stays "not concrete", as at the pin
     (`assets/type_error/pointer_placeholder_return.mojo`).
   - Found while landing R2419 (2026-11-20).
@@ -10827,22 +10891,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Lever: type the constant with `ParamContext::constant_typed` at the
     applied struct, its field types through `substitute_at`.
   - Found while landing R2407 (2026-11-21).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2410 An inferred `address_space=_` in a parameter type is
-  rejected**
-
-  `def f(p: Pointer[Int, _, address_space=_])` fails with "an inferred
-  address space ('address_space=_') is not supported", where the pin
-  infers the space per call and prints the pointee.
-  - Cause: a `_` slot is an implicit infer-only parameter of the function,
-    and Mojito has no `AddressSpaceSlot` hole that a call binds, as an
-    origin's `_` binds (`address_space_arg`,
-    `checker/type_resolution.rs`).
-  - Lever: declare the hole as an infer-only `AddressSpace` binder of the
-    enclosing function, so the elaborator instantiates it per space.
-  - Found while landing R2204 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

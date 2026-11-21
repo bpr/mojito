@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An inferred `address_space=_` in a `Pointer` type runs as at the pin
+  (R2410): a parameter's hole is an infer-only binder each call solves from
+  its argument, and an initialized local's takes its initializer's space.
+  Where nothing solves the hole (an uninitialized local, a field, a result)
+  it is the pin's "is not concrete, use '[]' to bind missing parameters",
+  where it was an unsupported-feature error.
+
 - A member name the receiver does not declare is upstream's spelled call
   `receiver.__getattr_param__["name"]()` when its struct declares the hook
   (R2408), over struct values and types, chained and leading-dot members,

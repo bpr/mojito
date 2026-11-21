@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1306
+# swept-count	1307
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -959,6 +959,7 @@ assets/type_error/param_expr_where_residual.mojo	compile-reject	agree	error: inv
 assets/type_error/param_expr_where_unfolded_atom.mojo	compile-reject	agree	error: invalid call to 'floored': lacking evidence to prove correctness
 assets/type_error/parametric_static_method_value_unbound.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
 assets/type_error/pointer_address_as_owned_value_not_kgen_pointer.mojo	compile-reject	agree	error: operand must have '!kgen.pointer<T>' type, not 'ref[x] Int'
+assets/type_error/pointer_address_space_hole_not_concrete.mojo	compile-reject	agree	error: 'Pointer[Int, origin_of(x), address_space=_]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/pointer_address_space_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Pointer[Int, origin_of(x), address_space=AddressSpace.LOCAL]' value to 'Pointer[Int, origin_of(x)]'
 assets/type_error/pointer_bracket_mut_keyword_after_positional.mojo	compile-reject	agree	error: unexpected keyword parameter 'mut'
 assets/type_error/pointer_bracket_mut_true_imm_origin.mojo	compile-reject	agree	error: value passed to 'origin' cannot be converted from 'ImmOrigin' to 'MutOrigin'

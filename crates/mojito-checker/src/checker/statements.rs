@@ -1684,13 +1684,17 @@ impl Checker {
                                 expected: expected.to_string(),
                             });
                         }
-                        // A `SIMD[dt, _]` width is solved from the initializer
+                        // A `SIMD[dt, _]` width and a `Pointer`'s
+                        // `address_space=_` are solved from the initializer
                         // before the conversion, so the value converts to the
-                        // vector the binding declares.
+                        // type the binding declares.
                         let expected = match expected.kind() {
                             kind if kind
                                 .as_simd()
-                                .is_some_and(|(_, width)| width.is_inferred()) =>
+                                .is_some_and(|(_, width)| width.is_inferred())
+                                || kind.pointer_address_space().is_some_and(
+                                    mojito_types::types::AddressSpaceSlot::is_inferred,
+                                ) =>
                             {
                                 Self::bind_unbound_tails(&expected, &found)
                             }
