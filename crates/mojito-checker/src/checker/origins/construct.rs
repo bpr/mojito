@@ -430,18 +430,56 @@ impl Checker {
     }
 
     /// The checked type of a construction: the solved argument view with
-    /// the origins the application and the arguments bound in place.
+    /// the origins the application (`bracket`) and the arguments bound in
+    /// place. An origin binder neither the application spells nor the
+    /// arguments bound fails to infer, as upstream infers a parent struct's
+    /// parameters from the initializer's arguments alone, naming the
+    /// binder's `mut=` binder where one governs it, as upstream infers that
+    /// first.
     pub(in crate::checker) fn constructed_type(
         &self,
         name: &str,
         view: Vec<TyArg>,
-        tail: &[Origin],
+        bracket: &super::super::type_resolution::StructBracket,
         bindings: &ConstructorOriginBindings,
-    ) -> Ty {
+    ) -> Result<Ty, TypeError> {
         let arguments = match self.structs.get(name) {
             Some(info) => {
-                let origins = bindings
-                    .bind_origins(info.origin_decls().map(|(id, _)| id), tail)
+                let bound =
+                    bindings.bind_origins(info.origin_decls().map(|(id, _)| id), &bracket.origins);
+                if let Some((_, decl)) = bound
+                    .iter()
+                    .zip(info.origin_decls())
+                    .find(|(origin, (id, decl))| {
+                        matches!(origin, Origin::Unbound)
+                            && !decl.is_origin_set()
+                            && !bracket
+                                .explicit
+                                .origins()
+                                .iter()
+                                .any(|spelled| spelled.id == *id)
+                    })
+                    .map(|(_, slot)| slot)
+                {
+                    let binder = match decl {
+                        ParamDecl::Origin {
+                            mutability: mojito_types::types::OriginMutability::Binder(binder),
+                            ..
+                        } => info
+                            .params
+                            .iter()
+                            .find(|candidate| *candidate.id() == binder.id)
+                            .map_or_else(|| decl.name(), ParamDecl::name),
+                        _ => decl.name(),
+                    };
+                    return Err(TypeError::BadCall {
+                        func: name.to_string(),
+                        reason: format!(
+                            "failed to infer parameter '{binder}' of parent struct '{name}'"
+                        ),
+                    });
+                }
+                let origins = bound
                     .into_iter()
                     .zip(info.origin_decls())
                     .map(|(origin, (_, decl))| self.slot_converted_origin(decl, origin))
@@ -473,7 +511,7 @@ impl Checker {
             }
             None => view,
         };
-        Self::struct_instance_type(name, arguments)
+        Ok(Self::struct_instance_type(name, arguments))
     }
 
     /// Bind the struct origin binders the selected constructor's parameters
@@ -947,14 +985,16 @@ impl Checker {
                         });
                     }
                 }
-                // A projected parameter origin (`Self.origin._get_owned_interior[..]`)
-                // names a domain below the binder; it is checked, not bound.
-                if !interior.is_empty() || subtree {
-                    return Ok(());
-                }
-                bindings.bind_pointer(id, &actual_origin, || {
-                    conflicting_binding(struct_name, slot.name())
-                })
+                // A projected parameter origin (`Self.origin._subtree`)
+                // binds the provenance below the projection; one the actual
+                // does not end in is checked by coercion, not bound.
+                actual_origin
+                    .without_projection(&interior, subtree)
+                    .map_or(Ok(()), |base| {
+                        bindings.bind_pointer(id, &base, || {
+                            conflicting_binding(struct_name, slot.name())
+                        })
+                    })
             }
             (TyKind::Ref(declared), TyKind::Ref(reference)) => {
                 let Origin::Param(id) = &declared.origin else {

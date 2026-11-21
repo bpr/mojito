@@ -11402,3 +11402,36 @@ def main():
 ",
     );
 }
+
+#[test]
+fn a_construction_infers_a_parent_structs_origin_only_from_its_arguments() {
+    let header = "
+struct V[mut: Bool, //, origin: Origin[mut=mut]]:
+    var k: Int
+    def __init__(out self, k: Int):
+        self.k = k
+";
+    ok_std(&format!(
+        "{header}
+def main():
+    var l = 3
+    print(V[origin_of(l)](5).k)
+"
+    ));
+    for construction in ["V(5)", "V[_](5)"] {
+        let error = err_std(&format!(
+            "{header}
+def main():
+    var l = 3
+    var v: V[origin_of(l)] = {construction}
+    print(v.k)
+"
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains("failed to infer parameter 'mut' of parent struct 'V'"),
+            "{error}"
+        );
+    }
+}

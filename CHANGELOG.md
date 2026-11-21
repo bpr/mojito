@@ -1146,6 +1146,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A construction that leaves a struct's origin parameter uninferred is
+  rejected (R1656): `V(5)` over `struct V[mut: Bool, //, origin:
+  Origin[mut=mut]]` with `def __init__(out self, k: Int)`, `V[_](5)`, and
+  `var v: V[origin_of(l)] = V(5)` fail with "failed to infer parameter
+  'mut' of parent struct 'V'" as at the pin, where they ran with an
+  unbound origin. `V[origin_of(l)](5)` still runs, and a field pointer
+  over `Self.origin._subtree` now binds its binder from the argument.
+
 - `rebind` changes a `Pointer`'s origin
   (`rebind[Pointer[String, origin_of(a)]](Pointer(to=b))`), as at the pin;
   R344 is closed on re-probe. R2206 (`Pointer`'s casts as declared bodies)

@@ -9285,22 +9285,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1656 A construction that leaves a struct's origin parameter
-  uninferred is accepted**
-
-  `V(5)` over `struct V[mut: Bool, //, origin: Origin[mut=mut]]` with
-  `def __init__(out self, k: Int)` prints its field here, where the pin
-  rejects it with "failed to infer parameter 'mut' of parent struct 'V'".
-  - `OriginBindings::bind_tail` (`checker/origins/construct.rs`) leaves an
-    origin slot no argument binds as `Origin::Unbound`, and the
-    construction proceeds.
-  - Reject the construction when a slot stays unbound and no explicit
-    application supplies it, as upstream's inference does.
-  - Probe: `V[origin_of(l)](5)` over a local `l` runs at both.
-  - Found while landing R1192 (2026-10-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2060 The bundled `std.io` lacks upstream's `_printf`**
 
   Upstream's `_printf[fmt](*args, file=)` formats through the C runtime's
@@ -11159,6 +11143,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     Origin[mut=mut]]`) gets an unbound origin and an undecided `mut=`, so
     `t.mut` fails with "'mut' is not a compile-time constant here", where
     the pin prints `False`.
+  - Probe: `def g(other: S) -> Bool: return other.mut` over the same `S`
+    fails with "'mut' is not a compile-time constant here", where the pin
+    prints `True` for `g(S[Int, origin_of(x)]())`. A construction spelling
+    `S[other.T, other.origin]()` checks only because `constructed_type`
+    counts a spelled origin argument as supplied whatever it resolved to.
   - Found while landing R2372 (2026-11-19).
   - Landing it unblocks R2396, which retires the pre-check origin
     spelling.

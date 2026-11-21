@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1274
+# swept-count	1275
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
@@ -460,6 +460,7 @@ assets/type_error/constrained_conforms_to_message.mojo	compile-reject	agree	erro
 assets/type_error/constrained_constant_read_unproven.mojo	compile-reject	agree	error: cannot implicitly convert '__generator_type Int where False' value to 'Int'
 assets/type_error/construction_bracket_on_nonparametric_struct.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/construction_unbound_int_slot_through_simd_length.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/construction_unbound_origin_slot_uninferred.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/constructor_collector_aliases_mut_argument.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'rest' argument in 'V' initializer call
 assets/type_error/constructor_keyword_arguments_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'P' initializer call
 assets/type_error/constructor_mut_argument_aliases_read.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'P' initializer call

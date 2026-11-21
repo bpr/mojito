@@ -3569,6 +3569,18 @@ impl Checker {
                             availability_failure.get_or_insert(unavailable);
                             continue;
                         }
+                        let return_type = match self.constructed_type(
+                            name,
+                            Vec::new(),
+                            &bracket,
+                            &origin_bindings,
+                        ) {
+                            Ok(constructed) => constructed,
+                            Err(failure) => {
+                                origin_failure = Some(failure);
+                                continue;
+                            }
+                        };
                         matches.push(MethodCallResolution {
                             conversion_score: scored.rank,
                             simd_erasures: scored.simd_erasures,
@@ -3581,12 +3593,7 @@ impl Checker {
                             keyword_element: kw_variadic,
                             conventions: sig.conventions.clone(),
                             self_convention: sig.self_convention,
-                            return_type: self.constructed_type(
-                                name,
-                                Vec::new(),
-                                &bracket.origins,
-                                &origin_bindings,
-                            ),
+                            return_type,
                             result_adapter: None,
                             raises: sig.raises,
                             error: sig.error.clone(),
@@ -3867,7 +3874,7 @@ impl Checker {
                 }
                 let slots = (0..args.len()).map(ArgSlot::Positional).collect::<Vec<_>>();
                 let constructed =
-                    self.constructed_type(name, tyargs, &bracket.origins, &pointer_origins);
+                    self.constructed_type(name, tyargs, &bracket, &pointer_origins)?;
                 let exclusivity = ConstructorExclusivity {
                     callee: constructed.to_string(),
                     parameter_names: &sig.names,
@@ -4376,7 +4383,7 @@ impl Checker {
                 let resolve =
                     |element: &Ty| Ok(expected_at(packed).unwrap_or_else(|| element.clone()));
                 let constructed =
-                    self.constructed_type(name, tyargs, &bracket.origins, &pointer_origins);
+                    self.constructed_type(name, tyargs, &bracket, &pointer_origins)?;
                 let exclusivity = ConstructorExclusivity {
                     callee: constructed.to_string(),
                     parameter_names: &sig.names,
@@ -4561,7 +4568,7 @@ impl Checker {
             // position.
             self.check_consuming(&args[i], aty, &format!("field {} of '{}'", i + 1, name))?;
         }
-        let constructed = self.constructed_type(name, tyargs, &bracket.origins, &origin_bindings);
+        let constructed = self.constructed_type(name, tyargs, &bracket, &origin_bindings)?;
         let conventions = self.fieldwise_conventions(&info.fields);
         let ref_params = Self::fieldwise_ref_params(info);
         let slots: Vec<ArgSlot> = (0..args.len()).map(ArgSlot::Positional).collect();
