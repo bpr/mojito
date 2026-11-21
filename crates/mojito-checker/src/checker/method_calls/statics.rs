@@ -15,11 +15,11 @@ pub(super) struct StaticReceiver {
 
 impl Checker {
     /// Type a static method on a parameterized built-in type. Currently only
-    /// the compiler-private heap primitive
-    /// `UnsafePointer[T].alloc(count: Int) -> UnsafePointer[T]` (plus
-    /// `alloc_aligned` and `dangling`), reachable only from bundled
-    /// standard-library sources — the audited Mojo head rejects the static
-    /// allocation spelling, so user code allocates through `std.memory`.
+    /// `Pointer[T].unsafe_dangling()` and the compiler-private heap primitive
+    /// `Pointer[T].alloc(count: Int) -> Pointer[T]` (plus `alloc_aligned`),
+    /// reachable only from bundled standard-library sources: the pin's
+    /// `Pointer` declares no static allocation, so user code allocates
+    /// through `std.memory`.
     pub(in crate::checker) fn infer_static_method(
         &self,
         receiver: &SourceSpan,
@@ -29,13 +29,13 @@ impl Checker {
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
         let source = receiver.source.as_deref();
-        if !matches!(tyname, "UnsafePointer" | "Pointer") {
+        if tyname != mojito_types::types::POINTER_TYPE_NAME {
             return Err(TypeError::NoSuchMethod {
                 object_type: format!("{tyname}[…]"),
                 method: method.to_string(),
             });
         }
-        let (ptr_ty, attributes) = self.pointer_type(tyname, targs)?;
+        let (ptr_ty, attributes) = self.pointer_type(targs)?;
         self.record_declared_attributes(receiver.clone(), &attributes);
         match method {
             "alloc" | "alloc_aligned" => {
@@ -43,12 +43,16 @@ impl Checker {
                 // seam, which retains the primitive; every linked user file
                 // carries its path and must allocate through std.memory.
                 if source.is_some() && !is_bundled_stdlib_source(source) {
-                    return Err(TypeError::Unsupported(format!(
-                        "static UnsafePointer allocation was removed from Mojo; \
-                         allocate with 'alloc(Layout[T](count=n))' from std.memory \
-                         (or 'unsafe_alloc[T](n)' for a raw pointer) instead of \
-                         'UnsafePointer[T].{method}'"
-                    )));
+                    let type_name = match ptr_ty.pointer_element() {
+                        Some(element) if self.pointer_bracket(targs)?.origin.is_none() => {
+                            format!("{}[{element}, _]", mojito_types::types::POINTER_TYPE_NAME)
+                        }
+                        _ => ptr_ty.to_string(),
+                    };
+                    return Err(TypeError::NoTypeAttribute {
+                        type_name,
+                        attribute: method.to_string(),
+                    });
                 }
                 let expected = if method == "alloc" { 1 } else { 2 };
                 if args.len() != expected {
@@ -64,7 +68,7 @@ impl Checker {
                         return Err(TypeError::TypeMismatch {
                             expected: "Int".to_string(),
                             found: aty.to_string(),
-                            context: format!("argument to 'UnsafePointer.{method}'"),
+                            context: format!("argument to 'Pointer.{method}'"),
                         });
                     }
                 }

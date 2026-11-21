@@ -1712,8 +1712,8 @@ impl Checker {
         }
         // The declared `Pointer` struct's applications are the compiler's
         // pointer type (`Ty::new` folds them), so its bracket binds here.
-        if matches!(name, "UnsafePointer" | "Pointer") {
-            return self.pointer_type(name, args);
+        if name == mojito_types::types::POINTER_TYPE_NAME {
+            return self.pointer_type(args);
         }
         if let Some(info) = self.structs.get(name) {
             // A bare parametric struct is not concrete where the position
@@ -4189,19 +4189,17 @@ impl Checker {
         Ok(hasher)
     }
 
-    /// Resolve a `Pointer[...]` bracket (also spelled through the deprecated
-    /// `UnsafePointer` alias) by [`Self::pointer_bracket`]. A bracket naming
+    /// Resolve a `Pointer[...]` bracket by [`Self::pointer_bracket`]. A bracket naming
     /// no origin is the one-argument compatibility spelling, which resolves
     /// to the untracked origin of heap allocations until R2417 withdraws it.
     pub(super) fn pointer_type(
         &self,
-        name: &str,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<(Ty, DeclaredAttributes), TypeError> {
-        let bracket = self.pointer_bracket(name, args)?;
+        let bracket = self.pointer_bracket(args)?;
         let Some(element) = bracket.element else {
             return Err(TypeError::BadCall {
-                func: name.to_string(),
+                func: mojito_types::types::POINTER_TYPE_NAME.to_string(),
                 reason: "failed to infer parameter 'T'".to_string(),
             });
         };
@@ -4229,10 +4227,10 @@ impl Checker {
     /// `False` converts a mutable one to immutable.
     pub(super) fn pointer_bracket(
         &self,
-        name: &str,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<PointerBracket, TypeError> {
         use mojito_ast::ast::ParamArg;
+        let name = mojito_types::types::POINTER_TYPE_NAME;
         let keywords = mojito_ast::call::bracket_keywords(args);
         let slots = mojito_ast::call::match_parameter_slots(POINTER_PARAMS, &keywords)
             .map_err(|error| error.into_type_error(name))?;
@@ -5530,7 +5528,7 @@ const PACK_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("*Ts")];
 /// `SIMD[dtype: DType, length: SIMDLength]`.
 const SIMD_PARAMS: &[BuiltinParam] = &[BuiltinParam::new("dtype"), BuiltinParam::new("length")];
 /// `Pointer[mut: Bool, //, T: AnyType, origin: Origin[mut=mut], *,
-/// address_space: AddressSpace = .GENERIC]`, which `UnsafePointer` aliases.
+/// address_space: AddressSpace = .GENERIC]`.
 const POINTER_PARAMS: &[BuiltinParam] = &[
     BuiltinParam::infer_only("mut"),
     BuiltinParam::new("T"),

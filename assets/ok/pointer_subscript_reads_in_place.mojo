@@ -1,5 +1,5 @@
 # A pointer subscript reads its pointee in place, as upstream's
-# `ref`-returning `UnsafePointer.__getitem__` does: a copy is made only
+# `ref`-returning `Pointer.__getitem__` does: a copy is made only
 # where the value is consumed, and exactly once.
 
 
@@ -38,23 +38,23 @@ struct H(Movable):
         self.c = c^
 
 
-def generic_copy[T: Copyable & Movable & Deinitable](p: UnsafePointer[T, _]) -> T:
+def generic_copy[T: Copyable & Movable & Deinitable](p: Pointer[T, _]) -> T:
     return p[0].copy()
 
 
-def concrete_copy(p: UnsafePointer[S, _]) -> S:
+def concrete_copy(p: Pointer[S, _]) -> S:
     return p[0].copy()
 
 
-def deref_copy(p: UnsafePointer[S, _]) -> S:
+def deref_copy(p: Pointer[S, _]) -> S:
     return p[].copy()
 
 
-def keyword_copy(p: UnsafePointer[S, _]) -> S:
+def keyword_copy(p: Pointer[S, _]) -> S:
     return p[unsafe_offset=0].copy()
 
 
-def returned(p: UnsafePointer[C, _]) -> C:
+def returned(p: Pointer[C, _]) -> C:
     return p[0]
 
 

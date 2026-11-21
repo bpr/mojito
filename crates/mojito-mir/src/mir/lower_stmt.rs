@@ -3927,7 +3927,7 @@ impl<'a> Flatten<'a> {
 
     /// Apply a builtin augmented operator to `cur`, `place`'s current
     /// value, and the lowered `value`. A pointer's offset converts at `Int`,
-    /// as upstream's `UnsafePointer.__iadd__` reads `index(offset)`.
+    /// as upstream's `Pointer.__add__` reads `index(offset)`.
     fn augmented_operation(
         &mut self,
         op: InfixOp,

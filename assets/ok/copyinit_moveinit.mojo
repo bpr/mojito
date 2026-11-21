@@ -5,7 +5,7 @@
 from std.memory.alloc import unsafe_alloc
 
 struct Buf:
-    var data: UnsafePointer[Int, MutUntrackedOrigin]
+    var data: Pointer[Int, MutUntrackedOrigin]
     var n: Int
 
     def __init__(out self, n: Int):

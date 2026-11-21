@@ -201,7 +201,7 @@ impl<'a> Flatten<'a> {
             // operations; make only the checked value-copy boundary
             // visible here so a nested lifecycle field runs its
             // `__copyinit__` instead of merely duplicating an owning
-            // UnsafePointer.
+            // Pointer.
             //
             // A direct `ref` field's load reads through to its referent,
             // whose handle a method receiver or a place operation keeps. A

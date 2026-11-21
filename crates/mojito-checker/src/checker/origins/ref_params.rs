@@ -519,7 +519,7 @@ impl Checker {
                 }
                 // A checked pointer construction retains exactly its source
                 // place; the checker recorded the decision when it typed the
-                // call, so shadowed `UnsafePointer` names cannot match here.
+                // call, so a shadowed `Pointer` name cannot match here.
                 if self
                     .node_facts
                     .borrow()

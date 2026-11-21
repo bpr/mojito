@@ -689,7 +689,7 @@ struct String(
     Writable,
     Writer,
 ):
-    var data: UnsafePointer[Byte]
+    var data: Pointer[Byte]
     var size: Int
     var cap: Int
 

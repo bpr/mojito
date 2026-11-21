@@ -52,14 +52,14 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match name {
-            "Pointer" | "UnsafePointer"
+            POINTER_TYPE_NAME
                 if !kwargs.is_empty()
                     && (super::method_calls::pointer_rule_construction(kwargs)
                         || !self.structs.contains_key(POINTER_TYPE_NAME)) =>
             {
                 self.infer_pointer_to(span, param_args, args, kwargs)
             }
-            "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
+            POINTER_TYPE_NAME if !kwargs.is_empty() => {
                 let constructed =
                     self.infer_construction(&span, POINTER_TYPE_NAME, param_args, args, kwargs)?;
                 self.type_runtime_param_args(param_args, &self.recorded_bracket_attributes(&span))?;
@@ -2810,7 +2810,7 @@ impl Checker {
             })
         }) {
             return Err(TypeError::TypeMismatch {
-                expected: "UnsafePointer[Byte]".to_string(),
+                expected: "Pointer[Byte]".to_string(),
                 found: tys[1].to_string(),
                 context: "argument to '_mojito_float_text'".to_string(),
             });

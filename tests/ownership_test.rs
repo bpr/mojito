@@ -53,8 +53,7 @@ fn ownership_reports_invalid_unchecked_input_instead_of_panicking() {
 
 #[test]
 fn pointer_loan_blocks_owner_access_while_live() {
-    let src =
-        "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    x = 5\n    print(p[0])\n";
+    let src = "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    x = 5\n    print(p[0])\n";
     assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
 }
 
@@ -62,9 +61,9 @@ fn pointer_loan_blocks_owner_access_while_live() {
 fn pointer_loans_are_shared_aliases() {
     // Two live `Pointer(to=owner)` loans coexist (a pointer is not an
     // exclusive borrow), while the owner stays guarded by either of them.
-    let ok = "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    var q = UnsafePointer(to=x)\n    print(p[0] + q[0])\n";
+    let ok = "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = Pointer(to=x)\n    print(p[0] + q[0])\n";
     assert!(own_linked(ok).is_ok(), "{:?}", own_linked(ok));
-    let conflict = "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    var q = UnsafePointer(to=x)\n    x = 5\n    print(p[0] + q[0])\n";
+    let conflict = "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = Pointer(to=x)\n    x = 5\n    print(p[0] + q[0])\n";
     assert!(matches!(
         own_linked(conflict),
         Err(OwnershipError::LoanConflict { .. })
@@ -73,7 +72,7 @@ fn pointer_loans_are_shared_aliases() {
 
 #[test]
 fn pointer_loan_transfers_through_copies() {
-    let src = "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    var q = p\n    x = 5\n    print(q[0])\n";
+    let src = "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = p\n    x = 5\n    print(q[0])\n";
     assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
 }
 
@@ -82,7 +81,7 @@ fn owner_move_while_pointer_live_is_rejected() {
     // The stable-pointer deref substitutes the owner place, so the post-move
     // access surfaces as a use-after-move on the owner; a handle-carried
     // pointer would surface the same invalidation as a loan conflict.
-    let src = "@fieldwise_init\nstruct Cell:\n    var n: Int\n\ndef main():\n    var cell = Cell(1)\n    var p = UnsafePointer(to=cell.n)\n    var moved = cell^\n    print(p[0])\n";
+    let src = "@fieldwise_init\nstruct Cell:\n    var n: Int\n\ndef main():\n    var cell = Cell(1)\n    var p = Pointer(to=cell.n)\n    var moved = cell^\n    print(p[0])\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::UseAfterMove { .. } | OwnershipError::LoanConflict { .. })
@@ -91,7 +90,7 @@ fn owner_move_while_pointer_live_is_rejected() {
 
 #[test]
 fn pointer_aggregate_extends_the_owner_loan() {
-    let src = "@fieldwise_init\nstruct Borrowed[origin: Origin]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef main():\n    var value = 40\n    var b = Borrowed(UnsafePointer(to=value))\n    value += 1\n    print(b.ptr[0])\n";
+    let src = "@fieldwise_init\nstruct Borrowed[origin: Origin]:\n    var ptr: Pointer[Int, Self.origin]\n\ndef main():\n    var value = 40\n    var b = Borrowed(Pointer(to=value))\n    value += 1\n    print(b.ptr[0])\n";
     assert!(matches!(
         own_linked(src),
         Err(OwnershipError::LoanConflict { .. })
@@ -100,7 +99,7 @@ fn pointer_aggregate_extends_the_owner_loan() {
 
 #[test]
 fn dead_pointer_releases_its_owner_loan() {
-    let src = "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    p[0] = 2\n    x = 5\n    print(x)\n";
+    let src = "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    p[0] = 2\n    x = 5\n    print(x)\n";
     assert!(own(src).is_ok());
 }
 
@@ -293,7 +292,7 @@ fn indexed_and_variant_payload_replacement_invalidate_nested_interiors() {
 
 #[test]
 fn pointer_whole_replacement_invalidates_referent_interiors() {
-    let src = "def main():\n    var values: List[Int] = [1, 2]\n    ref first = values[0]\n    var pointer = UnsafePointer(to=values)\n    pointer[0] = [3, 4]\n    print(first)\n";
+    let src = "def main():\n    var values: List[Int] = [1, 2]\n    ref first = values[0]\n    var pointer = Pointer(to=values)\n    pointer[0] = [3, 4]\n    print(first)\n";
     assert!(matches!(
         own(src),
         Err(OwnershipError::InvalidatedInteriorReference { .. })

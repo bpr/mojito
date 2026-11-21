@@ -59,11 +59,11 @@ struct _OptionalOwnedIter[T: AnyType](
 ):
     comptime Element = Self.T
 
-    var data: UnsafePointer[Self.T]
+    var data: Pointer[Self.T]
     var size: Int
     var index: Int
 
-    def __init__(out self, data: UnsafePointer[Self.T], size: Int):
+    def __init__(out self, data: Pointer[Self.T], size: Int):
         self.data = data
         self.size = size
         self.index = 0
@@ -113,7 +113,7 @@ struct Optional[T: AnyType](
     ] = _OptionalIter[Self.T, iterable_origin]
     comptime IteratorOwnedType = _OptionalOwnedIter[Self.T]
 
-    var data: UnsafePointer[Self.T]
+    var data: Pointer[Self.T]
     var _size: Int
     # The `None` case's empty-tuple payload, which
     # `_unsafe_get_union_payload[0]` refers to.

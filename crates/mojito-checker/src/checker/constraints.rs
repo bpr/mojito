@@ -3571,7 +3571,7 @@ impl Checker {
                             "unsupported associated comptime member access".to_string(),
                         )
                     }),
-                (None, ExprKind::Index { object, .. })
+                (None, ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. })
                     if let ExprKind::Identifier(name) = &object.kind =>
                 {
                     self.unresolved_head(name)

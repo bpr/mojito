@@ -2,7 +2,7 @@
 # through it are rejected.
 # expect: expression must be mutable in assignment
 def observe(x: Int):
-    var p = UnsafePointer(to=x)
+    var p = Pointer(to=x)
     p[0] = 1
 
 def main():

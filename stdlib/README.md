@@ -3,7 +3,7 @@
 The public types and algorithms are ordinary mojito `.mojo` declarations rather
 than compiler-owned collection variants. The core implementations still use a
 few narrow compiler-supported storage and construction seams, notably
-`UnsafePointer` storage operations, literal/prelude hooks, and the private
+`Pointer` storage operations, literal/prelude hooks, and the private
 `__RuntimeTuple` pack carrier. Together they are the north-star proof that the
 language is expressive enough to author its own collections and small generic
 algorithms.
@@ -22,7 +22,7 @@ A program always imports the library as `std`, wherever its search roots
 point, as upstream's toolchain does.
 
 - `std/collections/array.mojo` — a fixed-size `Array[T: AnyType, length: Int]`
-  backed by an `UnsafePointer[T]`, with conditional
+  backed by an `Pointer[T]`, with conditional
   `Copyable`/`Movable`/`Deinitable`/`Equatable`/`Iterable`/`IterableOwned`/
   `Writable` conformances. Construction is the checker-driven variadic literal
   constructor (`[a, b, c]` displays), keyword `fill`, `copy:`, and
@@ -35,7 +35,7 @@ point, as upstream's toolchain does.
   into `_ArrayOwnedIter`, whose methods are where-gated so the `T: AnyType`
   template stays checkable.
 - `std/collections/list.mojo` — a generic, growable `List[T]` backed by an
-  `UnsafePointer[T]`, with the full value-type lifecycle (ordinary `__init__`,
+  `Pointer[T]`, with the full value-type lifecycle (ordinary `__init__`,
   `__init__(..., copy:)`, and `__init__(..., deinit move:)`), subscript read/write
   (`__getitem__`/`__setitem__`), `__len__`, and the iterator protocol
   (`__iter__(ref self)` → a borrowing

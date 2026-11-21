@@ -49,7 +49,7 @@ struct Q(Copyable, Writable):
 
 @fieldwise_init
 struct P(TrivialRegisterPassable):
-    var p: UnsafePointer[Int, MutUntrackedOrigin]
+    var p: Pointer[Int, MutUntrackedOrigin]
 
     @no_inline
     def get(self) -> Int:

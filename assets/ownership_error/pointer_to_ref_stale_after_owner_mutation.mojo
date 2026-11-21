@@ -12,6 +12,6 @@ struct Pair:
 def main():
     var t = Pair(3, 4)
     ref r = t.a
-    var p = UnsafePointer(to=r)
+    var p = Pointer(to=r)
     t.bump()
     print(p[])

@@ -61,11 +61,11 @@ struct _ArrayOwnedIter[T: AnyType](
 ):
     comptime Element = Self.T
 
-    var data: UnsafePointer[Self.T]
+    var data: Pointer[Self.T]
     var size: Int
     var index: Int
 
-    def __init__(out self, data: UnsafePointer[Self.T], size: Int):
+    def __init__(out self, data: Pointer[Self.T], size: Int):
         self.data = data
         self.size = size
         self.index = 0
@@ -120,7 +120,7 @@ struct Array[T: AnyType, length: Int](
     ] = _ArrayIter[Self.T, Self.length, iterable_origin]
     comptime IteratorOwnedType = _ArrayOwnedIter[Self.T]
 
-    var data: UnsafePointer[Self.T]
+    var data: Pointer[Self.T]
     var _size: Int
 
     def __init__(

@@ -290,7 +290,7 @@ structs now have enough language hooks to behave like real value types:
 - `__copyinit__`
 - `__moveinit__`
 - `__deinit__(deinit self)`
-- `UnsafePointer[T]`
+- `Pointer[T]`
 - modules
 - comptime helpers
 

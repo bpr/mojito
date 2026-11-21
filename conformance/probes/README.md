@@ -85,9 +85,8 @@ unknown declaration 'SIMDSize'`; `'TypeList[...]' value has no attribute
 `type_error` fixtures by the current pass. The remaining rows still hold.
 Additional hand checks the same day: the `read` convention is a hard error
 (`'read' was removed; use 'imm'`), `@parameter` on parametric closures warns
-(`deprecated; use '@__parameter'`) but still runs, `UnsafeMaybeUninit` is
-removed outright (`MaybeUninit` carries the same `unsafe_*` vocabulary), and
-`UnsafePointer` still warns-and-runs as a deprecated alias of `Pointer`.
+(`deprecated; use '@__parameter'`) but still runs, and `UnsafeMaybeUninit` is
+removed outright (`MaybeUninit` carries the same `unsafe_*` vocabulary).
 
 | Probe | Question | Expected on both |
 |---|---|---|
@@ -171,9 +170,8 @@ against the `ae386d1b204` build (2026-08-15); re-confirmed against
 | `../fixtures/captured_nested_origin_specialization.mojo` | reject (capturing nested fn as specialized value) | checker error at value materialization |
 | `../../assets/type_error/capturing_closure_plain_def_param.mojo` | reject (capturing closure into unqualified `def(...)`) | value-coercion checker error |
 
-Bridges to re-check by hand each re-pin (no standalone probe): `UnsafePointer`
-remains a deprecated alias of `Pointer` upstream (Mojito keeps accepting it as
-a bridge), and the `subtree-origin-cast` mojito-only case documents Mojito's
+Bridges to re-check by hand each re-pin (no standalone probe): the
+`subtree-origin-cast` mojito-only case documents Mojito's
 `._subtree` cast acceptance against upstream's pass-manager failure.
 
 ## Compile-time region ownership (2026-10-02)

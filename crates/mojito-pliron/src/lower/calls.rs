@@ -33,10 +33,10 @@ impl FnLowering<'_> {
                     return self.lower_min_max_builtin(ctx, dest, name == "min", args, kwargs);
                 }
                 "input" => return self.lower_input_builtin(ctx, dest, args, kwargs),
-                "UnsafePointer.alloc" if kwargs.is_empty() && args.len() == 1 => {
+                "Pointer.alloc" if kwargs.is_empty() && args.len() == 1 => {
                     return self.lower_alloc_core(ctx, dest, args[0], None);
                 }
-                "UnsafePointer.alloc_aligned" => {
+                "Pointer.alloc_aligned" => {
                     let alignment = match (args, kwargs) {
                         ([_, alignment], []) => *alignment,
                         ([_], [(name, alignment)]) if name == "alignment" => *alignment,
@@ -48,9 +48,7 @@ impl FnLowering<'_> {
                     };
                     return self.lower_alloc_core(ctx, dest, args[0], Some(alignment));
                 }
-                "UnsafePointer.unsafe_dangling" | "Pointer.unsafe_dangling"
-                    if args.is_empty() && kwargs.is_empty() =>
-                {
+                "Pointer.unsafe_dangling" if args.is_empty() && kwargs.is_empty() => {
                     return self.lower_dangling_builtin(ctx, dest);
                 }
                 "_mojito_abort" if args.len() == 1 && kwargs.is_empty() => {

@@ -1,5 +1,5 @@
-# A pointer offsets backwards through upstream's `UnsafePointer.__sub__`
-# and `__isub__`, each reading `index(offset)`: `p - 1` over a local,
+# A pointer offsets backwards through upstream's `Pointer.__sub__`, which
+# reads `index(offset)`, and Mojito's `-=`: `p - 1` over a local,
 # `-=` over a local, a struct's pointer field, and a `mut` pointer
 # parameter, and `-` by a runtime `Int`. Upstream prints `4`, `3`, `4`,
 # `4`, and `3`.
@@ -7,13 +7,13 @@ from std.memory.alloc import unsafe_alloc
 
 
 struct H:
-    var p: UnsafePointer[Int, MutUntrackedOrigin]
+    var p: Pointer[Int, MutUntrackedOrigin]
 
-    def __init__(out self, p: UnsafePointer[Int, MutUntrackedOrigin]):
+    def __init__(out self, p: Pointer[Int, MutUntrackedOrigin]):
         self.p = p
 
 
-def retreat(mut p: UnsafePointer[Int, MutUntrackedOrigin]):
+def retreat(mut p: Pointer[Int, MutUntrackedOrigin]):
     p -= 1
 
 

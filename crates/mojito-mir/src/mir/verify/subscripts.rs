@@ -131,7 +131,7 @@ pub(super) fn verify_subscript_instruction(
 }
 
 /// Runtime frame/slot capabilities are represented by a source-level
-/// `ref T`, an origin-bearing `UnsafePointer[T, origin]`, or the `!lit.ref`
+/// `ref T`, an origin-bearing `Pointer[T, origin]`, or the `!lit.ref`
 /// a `Pointer` is built from. Raw/static/
 /// untracked pointer values use allocation arithmetic and are not valid
 /// operands for `ReadRef`/`WriteRef`.

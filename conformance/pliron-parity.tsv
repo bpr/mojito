@@ -1755,6 +1755,7 @@ assets/ok/unused_argument_nested_variadic_instances.mojo	main	exe-differential	s
 assets/ok/unused_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/user_int_function_beside_library_conversion.mojo	main	exe-differential	sanitized
 assets/ok/user_iterator.mojo	main	exe-differential	sanitized
+assets/ok/user_struct_named_unsafe_pointer.mojo	main	exe-differential	sanitized
 assets/ok/value_argument_from_caller_parameter.mojo	main	exe-differential	sanitized
 assets/ok/value_getter_subscript_argument.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_aggregate_served.mojo	main	exe-differential	sanitized

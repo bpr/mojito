@@ -1225,7 +1225,7 @@ fn instrs(src: &str) -> Vec<MirInstr> {
 /// storage of `P` values, and `main` running `body` over them.
 fn pointer_program(body: &str) -> String {
     format!(
-        "from std.memory.alloc import unsafe_alloc\n\n@fieldwise_init\nstruct P(Copyable):\n    var x: Int\n\n@fieldwise_init\nstruct Q(Copyable):\n    var items: UnsafePointer[P, MutUntrackedOrigin]\n\ndef main():\n    var xs: UnsafePointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](4)\n    var q = Q(unsafe_alloc[P](1))\n{body}"
+        "from std.memory.alloc import unsafe_alloc\n\n@fieldwise_init\nstruct P(Copyable):\n    var x: Int\n\n@fieldwise_init\nstruct Q(Copyable):\n    var items: Pointer[P, MutUntrackedOrigin]\n\ndef main():\n    var xs: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](4)\n    var q = Q(unsafe_alloc[P](1))\n{body}"
     )
 }
 
@@ -3538,7 +3538,7 @@ fn break_crossing_try_is_a_labelled_break_in_the_try_body() {
 #[test]
 fn pointer_construction_lowers_to_a_handle_and_owner_loan() {
     use mojito::check_program;
-    let src = "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    print(p[0])\n";
+    let src = "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    print(p[0])\n";
     let program = parse(src).expect("parse");
     let checked = check_program(&program).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
@@ -4341,8 +4341,8 @@ from std.memory.alloc import unsafe_alloc
 
 struct Holder[o: Origin[mut=False]]:
     var src: Pointer[List[String], Self.o]
-    var data: UnsafePointer[String, MutUntrackedOrigin]
-    var ints: UnsafePointer[Int, MutUntrackedOrigin]
+    var data: Pointer[String, MutUntrackedOrigin]
+    var ints: Pointer[Int, MutUntrackedOrigin]
 
     def __init__(out self, ref [Self.o] l: List[String]):
         self.src = Pointer(to=l)
@@ -4408,7 +4408,7 @@ struct C(ImplicitlyCopyable, Movable):
         self.v = copy.v
         print("copy C", copy.v)
 
-def returned(p: UnsafePointer[C, _]) -> C:
+def returned(p: Pointer[C, _]) -> C:
     return p[0]
 
 def deref[o: ImmOrigin](p: Pointer[C, o]) -> C:
@@ -4422,7 +4422,7 @@ def placed() -> Int:
 
 def main():
     var a = C(2)
-    print(returned(UnsafePointer(to=a)).v, deref(Pointer(to=a)).v, placed())
+    print(returned(Pointer(to=a)).v, deref(Pointer(to=a)).v, placed())
 "#;
     let copied_through_reference = |function: &MirFunction| {
         let instrs = &function.body.instrs;
@@ -6048,7 +6048,7 @@ fn by_value_operands_name_no_storage() {
     // no storage: a builtin `Pointer` method's receiver, a pointer
     // subscript's base, a register-passable copy source, a value getter's
     // `SIMD` receiver, and the setter's updated value.
-    let source = "from std.memory.alloc import unsafe_alloc\n\nstruct C(Copyable, RegisterPassable):\n    var v: Int\n\n    def __init__(out self, v: Int):\n        self.v = v\n\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 1\n\ndef main():\n    var p: UnsafePointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](2)\n    p[0] = 1\n    print(p[0], p.__int__() != 0)\n    p.free()\n    var c = C(1)\n    var d = C(copy=c)\n    print(c.v, d.v)\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    v[2] += 5\n    print(v[2])\n";
+    let source = "from std.memory.alloc import unsafe_alloc\n\nstruct C(Copyable, RegisterPassable):\n    var v: Int\n\n    def __init__(out self, v: Int):\n        self.v = v\n\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 1\n\ndef main():\n    var p: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](2)\n    p[0] = 1\n    print(p[0], p.__int__() != 0)\n    p.free()\n    var c = C(1)\n    var d = C(copy=c)\n    print(c.v, d.v)\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    v[2] += 5\n    print(v[2])\n";
     let compiled = Compiler::default()
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile by-value operands");
@@ -7308,7 +7308,7 @@ fn subtree_loan_shapes_verify_terminal_only() {
     // A subtree-origin pointer binding establishes a loan whose interior
     // path may end in — but never continue past — the subtree segment, and
     // transfer destination domains never carry one.
-    let src = "@fieldwise_init\nstruct Buf:\n    var value: Int\n\n    def view(ref self) -> Pointer[Int, origin_of(self)._subtree]:\n        return UnsafePointer(to=self.value).unsafe_origin_cast[\n            origin_of(self)._subtree\n        ]()\n\ndef main():\n    var b = Buf(3)\n    var p = b.view()\n    print(p[])\n";
+    let src = "@fieldwise_init\nstruct Buf:\n    var value: Int\n\n    def view(ref self) -> Pointer[Int, origin_of(self)._subtree]:\n        return Pointer(to=self.value).unsafe_origin_cast[\n            origin_of(self)._subtree\n        ]()\n\ndef main():\n    var b = Buf(3)\n    var p = b.view()\n    print(p[])\n";
     let mut mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     assert!(
         mir.invariant_errors.is_empty(),

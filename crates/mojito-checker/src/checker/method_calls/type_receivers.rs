@@ -122,7 +122,7 @@ impl Checker {
         if let Some((name, targs)) = object.bracket_application()
             && self.lookup(name).is_none()
         {
-            let pointer = matches!(name, "UnsafePointer" | "Pointer");
+            let pointer = name == mojito_types::types::POINTER_TYPE_NAME;
             let signatures = self
                 .structs
                 .get(name)

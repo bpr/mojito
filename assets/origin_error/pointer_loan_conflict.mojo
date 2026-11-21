@@ -2,6 +2,6 @@
 # expect: conflicts with live reference
 def main():
     var x = 1
-    var p = UnsafePointer(to=x)
+    var p = Pointer(to=x)
     x = 5
     print(p[0])

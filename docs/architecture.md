@@ -5995,7 +5995,7 @@ destinations carry interior paths.
 ### Nominal String and the literal bridges
 
 The self-hosted `String` (stdlib/std/string.mojo) is an ordinary struct — a
-UTF-8 byte buffer over `UnsafePointer[Byte]` with its byte length and capacity —
+UTF-8 byte buffer over `Pointer[Byte]` with its byte length and capacity —
 and its literal constructors are ordinary Mojo bodies. The one intrinsic is
 upstream's pair of `StringLiteral` byte primitives, `byte_length()` and
 `ptr() -> Pointer[Byte, ImmStaticOrigin]` (`pop.string.size` /
@@ -6124,7 +6124,7 @@ aggregate is rebound, and retains the replacement generation independently.
 A stored `MutUnsafeAnyOrigin` reference is rejected because it would hide an untracked mutable
 capability behind an otherwise safe value.
 
-`UnsafePointer(to=place)` rides the same machinery. The checker infers
+`Pointer(to=place)` rides the same machinery. The checker infers
 `PointerOrigin::Place` from the source place — mutability follows the owner
 binding — and the checked pointer type retains that provenance through HIR and
 MIR while the VM value stays an origin-free frame/slot handle. Construction

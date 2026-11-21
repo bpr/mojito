@@ -329,7 +329,7 @@ def main():
     write_bool(p.flags, i + 2, True)
     print(p.tag, p.ints, p.floats, p.flags, p.tail)
     print(v, f, flags)
-    var ptr = UnsafePointer(to=v)
+    var ptr = Pointer(to=v)
     ptr[][i] = 99
     print(v)
     var zero = i - 1

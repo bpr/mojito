@@ -50,7 +50,7 @@ impl<'a> Flatten<'a> {
         }
         // A **static** method — the receiver is a type, not a value
         // (`Point.origin()`, `Dict[Int, Int].fromkeys(...)`, the
-        // pointer family's `UnsafePointer[T].alloc(n)`). Lower to a
+        // pointer family's `Pointer[T].alloc(n)`). Lower to a
         // call on the checker-selected symbol (overloaded statics
         // carry their exact spelling). The receiver's compile-time
         // arguments are already resolved into that selection by the

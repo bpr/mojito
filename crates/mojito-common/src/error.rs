@@ -298,7 +298,7 @@ pub enum TypeError {
         callable: String,
     },
     /// An origin-bearing pointer would outlive the checked storage it
-    /// designates, e.g. returning `UnsafePointer(to=local)`.
+    /// designates, e.g. returning `Pointer(to=local)`.
     PointerEscapesOrigin,
     /// A function value tried to escape by being returned (downward funargs
     /// only). The static counterpart of `RuntimeError::ClosureEscape`.

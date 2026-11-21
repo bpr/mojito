@@ -216,7 +216,7 @@ impl VmBackend {
 
     /// Resolve `base + offset` to an arena index, bounds-checking against the arena
     /// (a truly out-of-arena access errors rather than panicking; an in-arena but
-    /// past-allocation access is permitted — `UnsafePointer` is unchecked).
+    /// past-allocation access is permitted — `Pointer` is unchecked).
     fn heap_index(
         &self,
         allocation: u64,

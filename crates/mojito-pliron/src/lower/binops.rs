@@ -51,7 +51,7 @@ impl FnLowering<'_> {
             return self.lower_str_literal_binop(ctx, op, dest, a, b);
         }
         // `pointer + i` and `pointer - i` — provenance-preserving element
-        // arithmetic, upstream's `UnsafePointer.__add__`/`__sub__`: the
+        // arithmetic, upstream's `Pointer.__add__`/`__sub__`: the
         // address `±i * sizeof(element)` bytes on (the VM moves its
         // element-counted offset by `±i`).
         if let Some(element) = (self.func.reg_types.get(&a.0).cloned())

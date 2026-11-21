@@ -612,7 +612,7 @@ impl Checker {
         // cast) loans exactly its checked origin; any other call's pointer
         // result reads through its own loan-carrying slot.
         let formed_pointer = |ty: &Ty| {
-            matches!(&root.kind, ExprKind::Call { name, .. } if name == "Pointer" || name == "UnsafePointer")
+            matches!(&root.kind, ExprKind::Call { name, .. } if name == mojito_types::types::POINTER_TYPE_NAME)
                 || ty
                     .pointer_origin()
                     .is_some_and(|origin| origin.as_origin().is_some())
@@ -753,7 +753,7 @@ impl Checker {
     /// Recognized: a directly-read reference value (`self.value`), a field/element
     /// projected through one (`self.src[i]`, `self.pair.first`), and dereferencing
     /// an origin-bearing *pointer* field whose origin is a parameter (`self.p[0]`,
-    /// with `p: UnsafePointer[T, o]`). In each case the VM re-roots the runtime
+    /// with `p: Pointer[T, o]`). In each case the VM re-roots the runtime
     /// handle at the borrowed storage; for the pointer deref it forwards the
     /// offset-0 index to the single pointee.
     pub(in crate::checker) fn returned_reference_parameter_origin(
@@ -972,7 +972,7 @@ impl Checker {
     /// method returning `ref[o] T` for a struct origin parameter `o` yields the
     /// abstract `Origin::Param(o)`; the loan machinery only tracks concrete places,
     /// so this maps `o` back to the origin the receiver's `ref[o]` (or origin-bearing
-    /// `UnsafePointer[..., o]`) field borrows — recorded when the aggregate was
+    /// `Pointer[..., o]`) field borrows — recorded when the aggregate was
     /// constructed — mirroring what `reference_actual` does for a directly-read
     /// reference field. Without it a returned reference records no loan on its
     /// ultimate source, so the source is dropped while the reference is still live.

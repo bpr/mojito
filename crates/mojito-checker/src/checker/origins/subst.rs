@@ -410,7 +410,7 @@ pub(in crate::checker) fn sig_origin_has_bound(
 }
 
 /// Whether a struct field's declared type borrows origin parameter `id` — a
-/// `ref[o]` field or an origin-bearing `UnsafePointer[..., o]` field.
+/// `ref[o]` field or an origin-bearing `Pointer[..., o]` field.
 /// Whether any place constituent of `origin` roots at `owner`. Used to detect
 /// an origin-parameter resolution that fell back to the receiver's own storage
 /// (no construction-time binding was recorded) rather than naming the borrowed

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1283
+# swept-count	1284
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/function_bracket_explicit_mut_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
@@ -1260,6 +1260,7 @@ assets/type_error/unbound_struct_member_dependent.mojo	compile-reject	agree	erro
 assets/type_error/unbound_struct_member_through_sibling.mojo	compile-reject	agree	error: cannot access comptime member 'b' with unbound parameter 'S.T'
 assets/type_error/uninit_storage_compiler_private.mojo	compile-reject	agree	error: use of unknown declaration '__UninitStorage'
 assets/type_error/unknown_applied_type_argument.mojo	compile-reject	agree	error: use of unknown declaration 'Foo'
+assets/type_error/unsafe_pointer_unknown.mojo	compile-reject	agree	error: use of unknown declaration 'UnsafePointer'
 assets/type_error/untaken_comptime_for_reflection_body.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["oops"]' value to 'Int'
 assets/type_error/untaken_comptime_if_fieldwise_pack_construction.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/untaken_comptime_if_generic_member.mojo	compile-reject	agree	error: 'T' value has no attribute 'nonexistent'

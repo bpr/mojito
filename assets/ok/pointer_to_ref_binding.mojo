@@ -8,12 +8,12 @@ struct Pair:
     var b: Int
 
 def peek(ref x: Int) -> Int:
-    var p = UnsafePointer(to=x)
+    var p = Pointer(to=x)
     return p[]
 
 def main():
     var t = Pair(3, 4)
     ref r = t.a
-    var p = UnsafePointer(to=r)
+    var p = Pointer(to=r)
     print(p[])
     print(peek(t.b))

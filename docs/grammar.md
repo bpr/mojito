@@ -1684,8 +1684,8 @@ protocol conformances are synthesized conditionally from its elements.
   protocol; compile-time pack/tuple iteration is a separate elaboration path.
 
 `Pointer[T, origin]` is the built-in low-level pointer — a handle to contiguous
-heap storage of element type `T`. `UnsafePointer` is its deprecated upstream
-alias; `MutPointer`/`ImmPointer` fix the origin argument's mutability; the
+heap storage of element type `T`. The pin declares no `UnsafePointer`, so that
+name is unknown unless a program declares it; `MutPointer`/`ImmPointer` fix the origin argument's mutability; the
 one-argument `Pointer[T]` spelling resolves to `MutUntrackedOrigin`, the origin
 of heap allocations. Unlike the value-type collections, a pointer **aliases**:
 copying it preserves allocation identity and the typed element offset, so two copies
@@ -1699,9 +1699,10 @@ a value-type struct own mutable heap storage, e.g. a self-hosted `List`).
   releases it. Both owners are linear (`not Deinitable`): implicit
   drop is a checker error. `unsafe_alloc[T](n, alignment=…)` is the
   raw-pointer migration spelling; `alloc` is a prelude name, the rest import
-  from `std.memory`. The legacy static `UnsafePointer[T].alloc[_aligned]`
-  surface is rejected in user code with a migration hint — it survives only
-  as the compiler-private heap primitive inside bundled stdlib sources.
+  from `std.memory`. The static `Pointer[T].alloc[_aligned]` surface is
+  rejected in user code with the pin's "'Pointer[Int, _]' value has no
+  attribute 'alloc'" — it survives only as the compiler-private heap
+  primitive inside bundled stdlib sources.
 - **Dereference**: the empty subscript `ptr[]` reads, and `ptr[] = e` (and
   `ptr[] += e`) writes, the pointee at offset 0 — current Mojo's direct
   dereference spelling. Empty brackets on a non-pointer value are a checker

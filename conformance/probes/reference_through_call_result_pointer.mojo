@@ -8,12 +8,12 @@
 # `VariadicList.__getitem__` binds the span's pointer before indexing it
 # (R1305).
 struct W:
-    var p: UnsafePointer[Int, MutUntrackedOrigin]
+    var p: Pointer[Int, MutUntrackedOrigin]
 
-    def __init__(out self, p: UnsafePointer[Int, MutUntrackedOrigin]):
+    def __init__(out self, p: Pointer[Int, MutUntrackedOrigin]):
         self.p = p
 
-    def ptr(self) -> UnsafePointer[Int, MutUntrackedOrigin]:
+    def ptr(self) -> Pointer[Int, MutUntrackedOrigin]:
         return self.p
 
     def get(self, i: Int) -> ref[MutUntrackedOrigin] Int:

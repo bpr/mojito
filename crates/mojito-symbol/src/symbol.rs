@@ -1579,12 +1579,9 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
             }
             result
         }
+        // A pointer's key is its declared struct's name over its element.
         // Pointer origins affect checking/lifetimes but erase from the runtime
-        // callable ABI, just like origin parameters on `ref` arguments. The
-        // mangled spelling deliberately stays `UnsafePointer$` while the
-        // user-facing name is `Pointer`: this string is internal callable
-        // identity, and renaming it would churn every symbol golden for no
-        // user-visible gain.
+        // callable ABI, just like origin parameters on `ref` arguments.
         // A non-generic address space is part of the pointer's identity; the
         // generic one spells nothing, so a generic pointer's key is unchanged.
         TyKind::Pointer {
@@ -1592,7 +1589,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
             address_space,
             ..
         } => format!(
-            "UnsafePointer${}{}",
+            "Pointer${}{}",
             ty_raw_in(element, self_ty, mode),
             address_space_raw(address_space)
         ),
@@ -1785,9 +1782,9 @@ fn ast_raw(
         {
             spelling
         }
-        // Mirror `ty_raw`: every pointer annotation (`UnsafePointer[T]`,
-        // `Pointer[T, origin]`, the `ImmPointer`/`MutPointer` permission
-        // aliases) mangles as `UnsafePointer$<element>`, and an opaque one
+        // Mirror `ty_raw`: every pointer annotation (`Pointer[T, origin]`,
+        // the `ImmPointer`/`MutPointer` permission aliases) mangles as
+        // `Pointer$<element>`, and an opaque one
         // (`OpaquePointer[origin]` and its permission aliases) over `None` —
         // the origin argument erases from the runtime ABI, so a call site's
         // `Pointer` type key and the declaration agree.
@@ -1797,19 +1794,17 @@ fn ast_raw(
                 "OpaquePointer" | "MutOpaquePointer" | "ImmOpaquePointer"
             ) =>
         {
-            "UnsafePointer$None".to_string()
+            "Pointer$None".to_string()
         }
         Type::Named(name, args)
-            if matches!(
-                name.as_str(),
-                "Pointer" | "UnsafePointer" | "ImmPointer" | "MutPointer"
-            ) && matches!(args.first(), Some(ParamArg::Type(_))) =>
+            if matches!(name.as_str(), "Pointer" | "ImmPointer" | "MutPointer")
+                && matches!(args.first(), Some(ParamArg::Type(_))) =>
         {
             let Some(ParamArg::Type(element)) = args.first() else {
                 unreachable!("guard established a type argument");
             };
             format!(
-                "UnsafePointer${}",
+                "Pointer${}",
                 ast_raw(element, comptimes, type_bounds, self_spelling)
             )
         }

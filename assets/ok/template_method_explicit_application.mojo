@@ -11,10 +11,10 @@ from std.memory.alloc import unsafe_alloc
 
 
 struct Handle[T: AnyType](Movable):
-    var data: UnsafePointer[Self.T, MutUntrackedOrigin]
+    var data: Pointer[Self.T, MutUntrackedOrigin]
     var cap: Int
 
-    def __init__(out self, data: UnsafePointer[Self.T, MutUntrackedOrigin], cap: Int):
+    def __init__(out self, data: Pointer[Self.T, MutUntrackedOrigin], cap: Int):
         self.data = data
         self.cap = cap
 
@@ -24,7 +24,7 @@ struct Handle[T: AnyType](Movable):
 
 
 struct Pool[T: Copyable & Deinitable](Movable):
-    var data: UnsafePointer[Self.T, MutUntrackedOrigin]
+    var data: Pointer[Self.T, MutUntrackedOrigin]
     var cap: Int
 
     def __init__(out self, cap: Int):

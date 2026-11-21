@@ -1,4 +1,4 @@
-# Compiler-private UnsafePointer storage intrinsics carry the VM's exact
+# Compiler-private Pointer storage intrinsics carry the VM's exact
 # lifecycle natively: unsafe_write moves elements into raw slots, a
 # take is a raw move out (no __copyinit__, no destructor), deinit runs the
 # element destructor in place at the element offset, and free releases the

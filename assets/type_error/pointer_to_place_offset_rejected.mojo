@@ -5,5 +5,5 @@
 # `List.unsafe_ptr()`.
 def main():
     var x = 42
-    var p = UnsafePointer(to=x)
+    var p = Pointer(to=x)
     print(p[1])

@@ -4,10 +4,10 @@
 from std.memory.alloc import unsafe_alloc
 
 struct Tracked(Copyable, Movable):
-    var ctr: UnsafePointer[Int]
+    var ctr: Pointer[Int]
     var id: Int
 
-    def __init__(out self, ctr: UnsafePointer[Int], id: Int):
+    def __init__(out self, ctr: Pointer[Int], id: Int):
         self.ctr = ctr
         self.id = id
 
@@ -22,7 +22,7 @@ def risky(i: Int) raises -> Int:
     return i % 5
 
 def main():
-    var drops: UnsafePointer[Int] = unsafe_alloc[Int](1)
+    var drops: Pointer[Int] = unsafe_alloc[Int](1)
     drops[0] = 0
 
     var caught: Int = 0

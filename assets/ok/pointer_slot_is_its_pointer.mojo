@@ -16,20 +16,20 @@ def cp[T: Copyable](a: T) -> T:
 
 @fieldwise_init
 struct S[o: MutOrigin](TrivialRegisterPassable):
-    var p: UnsafePointer[Int, Self.o]
+    var p: Pointer[Int, Self.o]
 
     def get(self) -> Int:
         return self.p[]
 
 
 def reseat(
-    mut p: UnsafePointer[Int, MutUntrackedOrigin],
-    q: UnsafePointer[Int, MutUntrackedOrigin],
+    mut p: Pointer[Int, MutUntrackedOrigin],
+    q: Pointer[Int, MutUntrackedOrigin],
 ):
     p = q
 
 
-def bump(mut p: UnsafePointer[Int, MutUntrackedOrigin]):
+def bump(mut p: Pointer[Int, MutUntrackedOrigin]):
     p[] += 10
     p = p + 1
 
@@ -41,7 +41,7 @@ def main():
     var r = cp(p)
     print(q[], r[])
     var y = 5
-    var s = S(UnsafePointer(to=y))
+    var s = S(Pointer(to=y))
     print(s.get())
     var buf = unsafe_alloc[Int](2)
     buf[0] = 1

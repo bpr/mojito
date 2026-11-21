@@ -37,7 +37,7 @@ struct Holder[T: Copyable & Deinitable](Copyable, Movable):
 
 struct PtrBox[T: Copyable & Deinitable](Copyable, Movable):
     var k: Int
-    var p: UnsafePointer[Self.T, MutUntrackedOrigin]
+    var p: Pointer[Self.T, MutUntrackedOrigin]
 
     def __init__(out self, k: Int):
         self.k = k

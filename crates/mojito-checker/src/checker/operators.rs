@@ -991,8 +991,7 @@ impl Checker {
         }
     }
 
-    /// Type `Pointer(to=place)` (also spelled through the deprecated
-    /// `UnsafePointer` alias): an origin-bearing pointer to existing checked
+    /// Type `Pointer(to=place)`: an origin-bearing pointer to existing checked
     /// storage. The element type is the place's type, the address space the
     /// place's, and the origin is the place itself, so loan analysis keeps
     /// the owner alive and rejects conflicting access. A bracket
@@ -1015,7 +1014,7 @@ impl Checker {
             });
         }
         let bracket = (!param_args.is_empty())
-            .then(|| self.pointer_bracket("Pointer", param_args))
+            .then(|| self.pointer_bracket(param_args))
             .transpose()?;
         let (element, origin) = self.infer_place_address(span.clone(), &kwargs[0].value)?;
         let address_space = self.place_address_space(&kwargs[0].value);

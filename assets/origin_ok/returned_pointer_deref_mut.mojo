@@ -4,7 +4,7 @@
 # caller's storage `v`.
 @fieldwise_init
 struct Borrow[o: Origin[mut=True]]:
-    var p: UnsafePointer[Int, Self.o]
+    var p: Pointer[Int, Self.o]
 
     def get(self) -> ref[Self.o] Int:
         return self.p[0]
@@ -12,7 +12,7 @@ struct Borrow[o: Origin[mut=True]]:
 
 def main():
     var v = 7
-    var b = Borrow(UnsafePointer(to=v))
+    var b = Borrow(Pointer(to=v))
     print(b.get())
     ref w = b.get()
     w = 42

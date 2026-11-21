@@ -2475,7 +2475,7 @@ pub enum MirInstr {
         /// differs from what the receiver's type spells.
         refined_bound: Option<Box<MirRefinedBound>>,
     },
-    /// Move an initialized element from compiler-private `UnsafePointer`
+    /// Move an initialized element from compiler-private `Pointer`
     /// collection storage. The source slot becomes uninitialized, so subsequent
     /// reads/takes/destroys are invalid until an explicit store initializes it.
     PointerStorageTake {
@@ -2484,7 +2484,7 @@ pub enum MirInstr {
         index: Reg,
         element: Ty,
     },
-    /// Destroy an initialized element in compiler-private `UnsafePointer`
+    /// Destroy an initialized element in compiler-private `Pointer`
     /// collection storage and mark its slot uninitialized. `destructor`
     /// names the element's `__deinit__`, as on [`MirInstr::DropVar`]:
     /// upstream's `destroy_pointee` is a library body in which destructor

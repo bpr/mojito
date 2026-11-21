@@ -157,7 +157,7 @@ impl FnLowering<'_> {
     }
 
     /// `PointerStorageTake`: move an initialized element out of
-    /// `UnsafePointer` collection storage — the VM's `heap_take`
+    /// `Pointer` collection storage — the VM's `heap_take`
     /// (`mem::replace`): a raw byte move with no `__copyinit__` and no
     /// tombstone. Ownership verification guarantees single-take on the
     /// runnable subset; the uninitialized-misuse traps live in off-gate

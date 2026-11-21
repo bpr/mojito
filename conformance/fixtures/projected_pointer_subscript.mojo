@@ -8,7 +8,7 @@ from std.collections.dict import Dict
 
 @fieldwise_init
 struct Buffer(Copyable, Movable):
-    var data: UnsafePointer[Int, MutUntrackedOrigin]
+    var data: Pointer[Int, MutUntrackedOrigin]
 
 @fieldwise_init
 struct Cursor:

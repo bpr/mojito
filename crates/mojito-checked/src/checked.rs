@@ -1383,7 +1383,7 @@ pub enum SemanticAdjustment {
         construction: SpelledConstruction,
     },
     /// Construct an origin-bearing pointer to existing checked storage
-    /// (`UnsafePointer(to=place)`). The checked pointer type retains the
+    /// (`Pointer(to=place)`). The checked pointer type retains the
     /// inferred place origin; execution represents the value as a frame/slot
     /// handle and erases the origin.
     PointerToPlace {

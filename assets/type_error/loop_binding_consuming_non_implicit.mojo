@@ -4,7 +4,7 @@
 from std.memory.alloc import unsafe_alloc
 
 struct Buf(Copyable, Movable):
-    var data: UnsafePointer[Byte]
+    var data: Pointer[Byte]
 
     def __init__(out self, seed: Int):
         self.data = unsafe_alloc[Byte](1)

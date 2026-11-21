@@ -2152,14 +2152,14 @@ fn an_instance_binds_origin_erased_types() {
 fn a_method_instance_s_self_keeps_its_owner_s_origin_binders() {
     use mojito_types::origin::Origin;
     let source = "struct View[T: Copyable, origin: Origin[mut=False]](Copyable):\n\
-         \x20   var p: UnsafePointer[Self.T, Self.origin]\n\
-         \x20   def __init__(out self, p: UnsafePointer[Self.T, Self.origin]):\n\
+         \x20   var p: Pointer[Self.T, Self.origin]\n\
+         \x20   def __init__(out self, p: Pointer[Self.T, Self.origin]):\n\
          \x20       self.p = p\n\
          \x20   def same(self) -> Self:\n\
          \x20       return Self(self.p)\n\
          def main():\n\
          \x20   var x = 5\n\
-         \x20   var v = View[Int, origin_of(x)](UnsafePointer(to=x))\n\
+         \x20   var v = View[Int, origin_of(x)](Pointer(to=x))\n\
          \x20   print(v.same().p[])\n";
     let specialized = specialized_main(source);
     let (_, same) = specialized
@@ -2320,7 +2320,7 @@ fn an_erased_pointer_field_points_to_none() {
     let source = "from std.memory.alloc import unsafe_alloc\n\
          struct PtrBox[T: Copyable & Deinitable](Copyable, Movable):\n\
          \x20   var k: Int\n\
-         \x20   var p: UnsafePointer[Self.T, MutUntrackedOrigin]\n\
+         \x20   var p: Pointer[Self.T, MutUntrackedOrigin]\n\
          \x20   def __init__(out self, k: Int):\n\
          \x20       self.k = k\n\
          \x20       self.p = unsafe_alloc[Self.T](1)\n\

@@ -396,7 +396,7 @@ impl VmBackend {
     }
 
     /// Read a projection that may cross from frame storage into an
-    /// `UnsafePointer` allocation. Reference handles deliberately retain a
+    /// `Pointer` allocation. Reference handles deliberately retain a
     /// flattened projection, so this is the single runtime point that gives a
     /// typed MIR pointer-index projection its heap semantics.
     pub(super) fn read_reference_projection(

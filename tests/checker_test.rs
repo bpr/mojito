@@ -5705,17 +5705,15 @@ fn immutable_returned_reference_cannot_escalate_to_mutable() {
 #[test]
 fn checks_current_pointer_origin_aggregate_fields() {
     assert!(
-        check_source(
-            "struct Holder[origin: Origin]:\n    var ptr: UnsafePointer[Int, Self.origin]\n"
-        )
-        .is_ok()
+        check_source("struct Holder[origin: Origin]:\n    var ptr: Pointer[Int, Self.origin]\n")
+            .is_ok()
     );
     assert!(check_source(
-        "struct MutableExternal:\n    var ptr: UnsafePointer[Int, MutUntrackedOrigin]\n\nstruct ImmutableExternal:\n    var ptr: UnsafePointer[Int, ImmUntrackedOrigin]\n\nstruct StaticView:\n    var ptr: UnsafePointer[Int, ImmStaticOrigin]\n"
+        "struct MutableExternal:\n    var ptr: Pointer[Int, MutUntrackedOrigin]\n\nstruct ImmutableExternal:\n    var ptr: Pointer[Int, ImmUntrackedOrigin]\n\nstruct StaticView:\n    var ptr: Pointer[Int, ImmStaticOrigin]\n"
     )
     .is_ok());
     for origin in ["MutUnsafeAnyOrigin", "ImmUnsafeAnyOrigin"] {
-        let source = format!("struct Hidden:\n    var ptr: UnsafePointer[Int, {origin}]\n");
+        let source = format!("struct Hidden:\n    var ptr: Pointer[Int, {origin}]\n");
         assert!(matches!(
             check_source(&source),
             Err(TypeError::Unsupported(message))
@@ -5764,33 +5762,33 @@ fn removed_origin_alias_spellings_reject_with_migration_diagnostics() {
 
 #[test]
 fn pointer_to_place_infers_an_origin_bearing_pointer() {
-    ok("def main():\n    var x = 42\n    var p = UnsafePointer(to=x)\n    print(p[0])\n");
+    ok("def main():\n    var x = 42\n    var p = Pointer(to=x)\n    print(p[0])\n");
     ok(
-        "def main():\n    var xs: List[Int] = [1, 2]\n    var p = UnsafePointer(to=xs[0])\n    print(p[0])\n",
+        "def main():\n    var xs: List[Int] = [1, 2]\n    var p = Pointer(to=xs[0])\n    print(p[0])\n",
     );
     ok(
-        "@fieldwise_init\nstruct Pair:\n    var a: Int\n    var b: Int\n\ndef main():\n    var pair = Pair(1, 2)\n    var p = UnsafePointer(to=pair.b)\n    p[0] = 3\n",
+        "@fieldwise_init\nstruct Pair:\n    var a: Int\n    var b: Int\n\ndef main():\n    var pair = Pair(1, 2)\n    var p = Pointer(to=pair.b)\n    p[0] = 3\n",
     );
 }
 
 #[test]
 fn pointer_to_place_requires_a_single_to_keyword_place() {
     assert!(matches!(
-        err("def main():\n    var p = UnsafePointer(to=1 + 2)\n"),
+        err("def main():\n    var p = Pointer(to=1 + 2)\n"),
         TypeError::Unsupported(message) if message.contains("requires a place expression")
     ));
     assert!(matches!(
-        err("def main():\n    var x = 1\n    var p = UnsafePointer(at=x)\n"),
+        err("def main():\n    var x = 1\n    var p = Pointer(at=x)\n"),
         TypeError::BadCall { .. }
     ));
     assert!(matches!(
-        err("def main():\n    var x = 1\n    var p = UnsafePointer[Int](to=x)\n"),
+        err("def main():\n    var x = 1\n    var p = Pointer[Int](to=x)\n"),
         TypeError::Unsupported(message) if message.contains("explicit type")
     ));
     // A `ref` binding is a legal source: the minted pointer carries the
     // conservative subtree of the reference's origin (nightly §7).
     ok(
-        "def main():\n    var x = 1\n    ref alias = x\n    var p = UnsafePointer(to=alias)\n    print(p[])\n",
+        "def main():\n    var x = 1\n    ref alias = x\n    var p = Pointer(to=alias)\n    print(p[])\n",
     );
 }
 
@@ -5818,11 +5816,9 @@ fn pointer_member_no_rule_answers_resolves_to_its_declared_body() {
 
 #[test]
 fn origin_bearing_pointer_writes_require_mutable_provenance() {
-    ok("def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    p[0] = 2\n");
+    ok("def main():\n    var x = 1\n    var p = Pointer(to=x)\n    p[0] = 2\n");
     assert!(matches!(
-        err(
-            "def f(x: Int):\n    var p = UnsafePointer(to=x)\n    p[0] = 1\n\ndef main():\n    f(3)\n"
-        ),
+        err("def f(x: Int):\n    var p = Pointer(to=x)\n    p[0] = 1\n\ndef main():\n    f(3)\n"),
         TypeError::ImmutableBinding(_)
     ));
 }
@@ -5830,21 +5826,21 @@ fn origin_bearing_pointer_writes_require_mutable_provenance() {
 #[test]
 fn origin_bearing_pointer_rejects_allocation_operations() {
     assert!(matches!(
-        err("def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    print(p[1])\n"),
+        err("def main():\n    var x = 1\n    var p = Pointer(to=x)\n    print(p[1])\n"),
         TypeError::Unsupported(message) if message.contains("only offset 0")
     ));
     assert!(matches!(
-        err("def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    var q = p + 1\n"),
+        err("def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = p + 1\n"),
         TypeError::Unsupported(message) if message.contains("arithmetic and comparison")
     ));
     assert!(matches!(
         err(
-            "def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    var q = UnsafePointer(to=x)\n    print(p == q)\n"
+            "def main():\n    var x = 1\n    var p = Pointer(to=x)\n    var q = Pointer(to=x)\n    print(p == q)\n"
         ),
         TypeError::Unsupported(message) if message.contains("arithmetic and comparison")
     ));
     assert!(matches!(
-        err("def main():\n    var x = 1\n    var p = UnsafePointer(to=x)\n    p.free()\n"),
+        err("def main():\n    var x = 1\n    var p = Pointer(to=x)\n    p.free()\n"),
         TypeError::Unsupported(message) if message.contains("does not own an allocation")
     ));
 }
@@ -5853,7 +5849,7 @@ fn origin_bearing_pointer_rejects_allocation_operations() {
 fn returned_place_pointer_is_a_precise_escape_error() {
     assert!(matches!(
         err(
-            "def escape() -> UnsafePointer[Int]:\n    var local = 7\n    return UnsafePointer(to=local)\n\ndef main():\n    print(1)\n"
+            "def escape() -> Pointer[Int]:\n    var local = 7\n    return Pointer(to=local)\n\ndef main():\n    print(1)\n"
         ),
         TypeError::PointerEscapesOrigin
     ));
@@ -5863,28 +5859,28 @@ fn returned_place_pointer_is_a_precise_escape_error() {
 fn pointer_aggregates_bind_declared_origin_parameters_per_binding() {
     // A mutable place binds a symbolic or mutable field origin.
     ok(
-        "@fieldwise_init\nstruct Borrowed[origin: Origin]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef main():\n    var value = 42\n    var b = Borrowed(UnsafePointer(to=value))\n    print(b.ptr[0])\n",
+        "@fieldwise_init\nstruct Borrowed[origin: Origin]:\n    var ptr: Pointer[Int, Self.origin]\n\ndef main():\n    var value = 42\n    var b = Borrowed(Pointer(to=value))\n    print(b.ptr[0])\n",
     );
     // An explicitly immutable field origin binds an immutable place, and
     // writes through the stored pointer stay rejected.
     ok(
-        "@fieldwise_init\nstruct View[origin: Origin[mut=False]]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef f(x: Int):\n    var v = View(UnsafePointer(to=x))\n    print(v.ptr[0])\n\ndef main():\n    f(3)\n",
+        "@fieldwise_init\nstruct View[origin: Origin[mut=False]]:\n    var ptr: Pointer[Int, Self.origin]\n\ndef f(x: Int):\n    var v = View(Pointer(to=x))\n    print(v.ptr[0])\n\ndef main():\n    f(3)\n",
     );
     // A binder whose mutability is symbolic (bare `Origin`, or `Origin[mut=m]`)
     // takes it from the place, so an immutable place binds it; only a binder
     // spelled `mut=True` demands a mutable place.
     ok(
-        "@fieldwise_init\nstruct Borrowed[origin: Origin]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef f(x: Int):\n    var b = Borrowed(UnsafePointer(to=x))\n    print(b.ptr[0])\n\ndef main():\n    f(3)\n",
+        "@fieldwise_init\nstruct Borrowed[origin: Origin]:\n    var ptr: Pointer[Int, Self.origin]\n\ndef f(x: Int):\n    var b = Borrowed(Pointer(to=x))\n    print(b.ptr[0])\n\ndef main():\n    f(3)\n",
     );
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Owned[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef f(x: Int):\n    var b = Owned(UnsafePointer(to=x))\n\ndef main():\n    f(3)\n"
+            "@fieldwise_init\nstruct Owned[origin: Origin[mut=True]]:\n    var ptr: Pointer[Int, Self.origin]\n\ndef f(x: Int):\n    var b = Owned(Pointer(to=x))\n\ndef main():\n    f(3)\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct View[origin: Origin[mut=False]]:\n    var ptr: UnsafePointer[Int, Self.origin]\n\ndef f(x: Int):\n    var v = View(UnsafePointer(to=x))\n    v.ptr[0] = 1\n\ndef main():\n    f(3)\n"
+            "@fieldwise_init\nstruct View[origin: Origin[mut=False]]:\n    var ptr: Pointer[Int, Self.origin]\n\ndef f(x: Int):\n    var v = View(Pointer(to=x))\n    v.ptr[0] = 1\n\ndef main():\n    f(3)\n"
         ),
         TypeError::ImmutableBinding(_)
     ));
@@ -6734,33 +6730,51 @@ fn truthiness_test_is_a_bool_call_in_the_enclosing_effect_context() {
 fn unsafe_pointer_typing() {
     // alloc + index read/write + free type-check.
     ok(
-        "def main():\n    var p: UnsafePointer[Int] = UnsafePointer[Int].alloc(4)\n    p[0] = 1\n    var x: Int = p[0]\n    p.free()\n",
+        "def main():\n    var p: Pointer[Int] = Pointer[Int].alloc(4)\n    p[0] = 1\n    var x: Int = p[0]\n    p.free()\n",
     );
     // `alloc` needs an Int count.
     assert!(matches!(
-        err("def main():\n    var p: UnsafePointer[Int] = UnsafePointer[Int].alloc(\"x\")\n"),
+        err("def main():\n    var p: Pointer[Int] = Pointer[Int].alloc(\"x\")\n"),
         TypeError::TypeMismatch { .. }
     ));
     // A bare parameterized type is a type value, which a `var` cannot hold.
     assert!(matches!(
-        err("def main():\n    var x = UnsafePointer[Int]\n    print(1)\n"),
+        err("def main():\n    var x = Pointer[Int]\n    print(1)\n"),
         TypeError::DynamicTypeValue(_)
     ));
     // A store must match the pointee type.
     assert!(matches!(
-        err(
-            "def main():\n    var p: UnsafePointer[Int] = UnsafePointer[Int].alloc(1)\n    p[0] = \"no\"\n"
-        ),
+        err("def main():\n    var p: Pointer[Int] = Pointer[Int].alloc(1)\n    p[0] = \"no\"\n"),
         TypeError::TypeMismatch { .. }
     ));
 }
 
 #[test]
-fn pointer_names_resolve_to_one_builtin_type() {
-    // `Pointer` and the deprecated `UnsafePointer` alias are interchangeable,
-    // and the one-argument spelling is the mutable untracked origin.
+fn unsafe_pointer_is_an_unknown_name() {
+    // The pin declares no `UnsafePointer`, so every spelling of it is an
+    // unknown name, and a user's own struct of that name is ordinary.
+    for source in [
+        "def f(p: UnsafePointer[Int, _]) -> Int:\n    return p[]\n",
+        "def main():\n    var p: UnsafePointer[Int, MutUntrackedOrigin]\n",
+        "def f() -> UnsafePointer[Int, MutUntrackedOrigin]:\n    return Pointer[Int, MutUntrackedOrigin]()\n",
+    ] {
+        assert!(
+            matches!(err_std(source), TypeError::UnknownType(ref name) if name == "UnsafePointer"),
+            "{source}"
+        );
+    }
+    err_std("def main():\n    var x = 5\n    var p = UnsafePointer(to=x)\n");
+    err_std("def main():\n    var p = UnsafePointer[Int].alloc(1)\n");
     ok_std(
-        "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](1)\n    p[unsafe_offset=0] = 1\n    var q: UnsafePointer[Int] = p\n    var r: Pointer[Int] = q\n    r.unsafe_free()\n",
+        "@fieldwise_init\nstruct UnsafePointer(Copyable):\n    var n: Int\n\ndef show(p: UnsafePointer) -> Int:\n    return p.n\n\ndef main():\n    print(show(UnsafePointer(3)))\n",
+    );
+}
+
+#[test]
+fn pointer_names_resolve_to_one_builtin_type() {
+    // The one-argument spelling is the mutable untracked origin.
+    ok_std(
+        "from std.memory.alloc import unsafe_alloc\n\ndef main():\n    var p: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](1)\n    p[unsafe_offset=0] = 1\n    var q: Pointer[Int] = p\n    q.unsafe_free()\n",
     );
     // `Pointer(to=x)` is the current spelling of the place-pointer constructor.
     ok("def main():\n    var x = 42\n    var p = Pointer(to=x)\n    print(p[0])\n");
@@ -6773,7 +6787,7 @@ fn pointer_names_resolve_to_one_builtin_type() {
     // …and reject an immutable one where the binder is `MutOrigin`.
     assert!(matches!(
         err_std("struct Bad:\n    var ptr: MutPointer[Int, ImmUntrackedOrigin]\n"),
-        TypeError::TypeMismatch { .. }
+        TypeError::ParamListConversion { .. }
     ));
 }
 
@@ -6853,7 +6867,7 @@ fn untracked_immutable_pointer_rejects_writes() {
     ));
     assert!(matches!(
         err(
-            "def f(p: UnsafePointer[Int, ImmStaticOrigin]):\n    var q = p\n    q[0] = 1\n\ndef main():\n    print(1)\n"
+            "def f(p: Pointer[Int, ImmStaticOrigin]):\n    var q = p\n    q[0] = 1\n\ndef main():\n    print(1)\n"
         ),
         TypeError::ImmutableBinding(_)
     ));
@@ -6897,13 +6911,13 @@ fn unsafe_pointer_method_vocabulary_typechecks() {
     // user-struct name in a bracket parameter list parses as runtime indexing.
     assert!(matches!(
         err(
-            "@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = UnsafePointer[Linear[Int]].alloc(1)\n    p.unsafe_deinit_pointee()\n",
+            "@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = Pointer[Linear[Int]].alloc(1)\n    p.unsafe_deinit_pointee()\n",
         ),
         TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Deinitable"
     ));
     assert!(matches!(
         err(
-            "@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = UnsafePointer[Linear[Int]].alloc(1)\n    var v = Linear[Int]()\n    p.unsafe_write(copy=v)\n    v^.finish()\n    p.unsafe_free()\n",
+            "@explicit_destroy(\"finish it\")\nstruct Linear[T: AnyType](Movable, Deinitable where False):\n    var token: Int\n    def __init__(out self):\n        self.token = 1\n    def finish(deinit self):\n        pass\n\ndef main():\n    var p = Pointer[Linear[Int]].alloc(1)\n    var v = Linear[Int]()\n    p.unsafe_write(copy=v)\n    v^.finish()\n    p.unsafe_free()\n",
         ),
         TypeError::TraitNotSatisfied { trait_name, .. } if trait_name == "Copyable"
     ));
@@ -6955,7 +6969,7 @@ fn retired_pointer_storage_method_spellings_stay_gone() {
     // unsafe_offset(i).unsafe_take_pointee()/unsafe_deinit_pointee().
     for method in ["take", "destroy"] {
         let source = format!(
-            "def main():\n    var p = UnsafePointer[Int].alloc(1)\n    p[0] = 7\n    var result = p.{method}(0)\n"
+            "def main():\n    var p = Pointer[Int].alloc(1)\n    p[0] = 7\n    var result = p.{method}(0)\n"
         );
         assert!(
             matches!(err(&source), TypeError::NoSuchMethod { method: ref found, .. } if found == method),
@@ -6964,7 +6978,7 @@ fn retired_pointer_storage_method_spellings_stay_gone() {
     }
     // The pre-rename dangling spelling rejects with the rename hint.
     assert!(matches!(
-        err("def main():\n    var p = UnsafePointer[Int].dangling()\n"),
+        err("def main():\n    var p = Pointer[Int].dangling()\n"),
         TypeError::Unsupported(message) if message.contains("unsafe_dangling")
     ));
     ok("def main():\n    var p = Pointer[Int].unsafe_dangling()\n    print(1)\n");
@@ -7017,9 +7031,9 @@ fn generic_hand_written_init() {
     ok(
         "struct Box[T: Copyable & Movable & Deinitable]:\n    var v: Self.T\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n    def get(self) -> Self.T:\n        return self.v.copy()\n\ndef main():\n    var a: Box[Int] = Box(5)\n    var b: Box[Int] = Box[Int](6)\n    print(a.get(), b.get())\n",
     );
-    // A UnsafePointer field of the type parameter, allocated with `Self.T`.
+    // A Pointer field of the type parameter, allocated with `Self.T`.
     ok(
-        "from std.memory.alloc import unsafe_alloc\n\nstruct Buf[T: Copyable & Movable]:\n    var data: UnsafePointer[Self.T]\n    def __init__(out self):\n        self.data = unsafe_alloc[Self.T](4)\n    def set0(mut self, v: Self.T):\n        self.data[0] = v.copy()\n    def get0(self) -> Self.T:\n        return self.data[0].copy()\n\ndef main():\n    var b: Buf[Int] = Buf[Int]()\n    b.set0(9)\n    print(b.get0())\n",
+        "from std.memory.alloc import unsafe_alloc\n\nstruct Buf[T: Copyable & Movable]:\n    var data: Pointer[Self.T]\n    def __init__(out self):\n        self.data = unsafe_alloc[Self.T](4)\n    def set0(mut self, v: Self.T):\n        self.data[0] = v.copy()\n    def get0(self) -> Self.T:\n        return self.data[0].copy()\n\ndef main():\n    var b: Buf[Int] = Buf[Int]()\n    b.set0(9)\n    print(b.get0())\n",
     );
     // A wrong-typed constructor argument is still rejected (solved T = Int here).
     assert!(matches!(

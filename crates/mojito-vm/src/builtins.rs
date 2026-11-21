@@ -18,9 +18,8 @@ pub const BUILTIN_CALLEES: &[&str] = &[
     "min",
     "max",
     "input",
-    "UnsafePointer.alloc",
-    "UnsafePointer.alloc_aligned",
-    "UnsafePointer.unsafe_dangling",
+    "Pointer.alloc",
+    "Pointer.alloc_aligned",
     "Pointer.unsafe_dangling",
 ];
 

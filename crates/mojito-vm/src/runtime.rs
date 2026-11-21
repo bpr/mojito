@@ -69,7 +69,7 @@ pub enum Value {
         index: usize,
         value: Box<Self>,
     },
-    /// An `UnsafePointer[T]`: stable allocation identity plus a typed element
+    /// An `Pointer[T]`: stable allocation identity plus a typed element
     /// offset. Allocation zero is reserved for non-null dangling placeholders.
     Pointer {
         allocation: u64,

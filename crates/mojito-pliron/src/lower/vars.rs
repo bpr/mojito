@@ -243,7 +243,7 @@ impl FnLowering<'_> {
     }
 
     /// The shared allocation core behind `unsafe_alloc` and the
-    /// `UnsafePointer.alloc`/`alloc_aligned` builtins: `mjrt_alloc` of
+    /// `Pointer.alloc`/`alloc_aligned` builtins: `mjrt_alloc` of
     /// `count * sizeof(element)` bytes at the element's natural alignment
     /// (or the requested one; `0` selects natural).
     pub(super) fn lower_alloc_core(

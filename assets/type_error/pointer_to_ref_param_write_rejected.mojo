@@ -3,7 +3,7 @@
 # write permission, so the subtree pointer minted from it is not statically
 # mutable and writes reject.
 def poke(ref x: Int):
-    var p = UnsafePointer(to=x)
+    var p = Pointer(to=x)
     p[] = 9
 
 def main():

@@ -1308,6 +1308,13 @@ through `Pointer.unsafe_mut_cast[True]()`); the immutable static origin stays
 the bare atom `pointer_static`, so every older record reads unchanged. The
 package format moves to `mojito-package 248` (R2431).
 
+Schema 1.219 spells a pointer type's overload key `Pointer$<element>` (an
+opaque pointer's `Pointer$None`), the declared struct's name, where it spelled
+`UnsafePointer$`. The heap-primitive builtin callees are `Pointer.alloc` and
+`Pointer.alloc_aligned`, and `UnsafePointer.unsafe_dangling` is gone beside
+`Pointer.unsafe_dangling`: the pin declares no `UnsafePointer`. The package
+format moves to `mojito-package 249` (R2416).
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and

@@ -1,5 +1,5 @@
 # Benchmark: allocation and pointer traffic. List growth/shrink churn plus
-# UnsafePointer alloc/store/load/free loops.
+# Pointer alloc/store/load/free loops.
 from std.memory.alloc import unsafe_alloc
 
 def main():
@@ -18,7 +18,7 @@ def main():
     var ptr_sum: Int = 0
     var rnd: Int = 0
     while rnd < 900:
-        var p: UnsafePointer[Int] = unsafe_alloc[Int](64)
+        var p: Pointer[Int] = unsafe_alloc[Int](64)
         var j: Int = 0
         while j < 64:
             p[j] = j + rnd

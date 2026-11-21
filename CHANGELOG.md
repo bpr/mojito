@@ -1992,6 +1992,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `UnsafePointer` is no longer a name (R2416): the pin declares none, so
+  `def f(p: UnsafePointer[Int, _])` reports "unknown type 'UnsafePointer'",
+  where it ran as a `Pointer`, and a user struct named `UnsafePointer` is
+  an ordinary struct, where it was shadowed by the pointer type. The
+  bundled library, fixtures, and tests spell `Pointer`. User-code
+  `Pointer[Int].alloc(1)` reports the pin's "'Pointer[Int, _]' value has
+  no attribute 'alloc'". A pointer's overload key is `Pointer$<element>`,
+  the heap builtins are `Pointer.alloc`/`alloc_aligned`, MIR text moves to
+  1.219, and the package format to 249.
+
 - A `ref [o]` contract over a callable's own origin binder now names the
   binder, as upstream's does, instead of the parameters whose clauses share
   it, so a callable type alone says which binder each contract is over. A

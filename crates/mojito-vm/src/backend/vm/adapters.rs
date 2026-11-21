@@ -453,7 +453,7 @@ impl VmBackend {
         }
     }
 
-    /// If `place` is `c[i]` with `c` a user struct or an `UnsafePointer`, read it via
+    /// If `place` is `c[i]` with `c` a user struct or an `Pointer`, read it via
     /// `c.__getitem__(i)` / the heap arena — the read half of `c[i] += e` on such a
     /// container (a projected `LoadPlace`). Returns `None` otherwise, so the caller
     /// uses `load_place` (a slot read or a SIMD-lane read).

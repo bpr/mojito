@@ -1,5 +1,5 @@
 struct HiddenLifetime:
-    var ptr: UnsafePointer[Int, MutUnsafeAnyOrigin]
+    var ptr: Pointer[Int, MutUnsafeAnyOrigin]
 
 def main():
     pass

@@ -477,13 +477,13 @@ impl VmBackend {
                     line => Ok(line),
                 }
             }
-            // `UnsafePointer[T].alloc(n)` — reserve `n` slots in the heap arena and
+            // `Pointer[T].alloc(n)` — reserve `n` slots in the heap arena and
             // return a pointer to the base (the element type is erased).
-            "UnsafePointer.alloc" => {
+            "Pointer.alloc" => {
                 let n = crate::runtime::value_as_index(&arg1(name, args)?)?;
                 self.heap_alloc(n, std::mem::align_of::<Value>() as i64)
             }
-            "UnsafePointer.alloc_aligned" => {
+            "Pointer.alloc_aligned" => {
                 if args.len() != 2 {
                     return Err(RuntimeError::ArityMismatch {
                         name: name.to_string(),
@@ -495,7 +495,7 @@ impl VmBackend {
                 let alignment = crate::runtime::value_as_index(&args[1])?;
                 self.heap_alloc(n, alignment)
             }
-            "UnsafePointer.unsafe_dangling" | "Pointer.unsafe_dangling" => {
+            "Pointer.unsafe_dangling" => {
                 if !args.is_empty() {
                     return Err(RuntimeError::ArityMismatch {
                         name: name.to_string(),

@@ -502,7 +502,7 @@ pub(super) fn constructor_symbol(
     }
 }
 
-/// The raw-slot operations on `UnsafePointer` are an implementation privilege,
+/// The raw-slot operations on `Pointer` are an implementation privilege,
 /// not source-language API. Linked expressions retain their exact source path;
 /// only files physically shipped in the compiler's collection library receive
 /// the checked adjustment that can lower these operations.
@@ -542,7 +542,7 @@ pub(super) fn bundled_struct_source<'a>(
     })
 }
 
-/// Static `UnsafePointer[T].alloc[_aligned]` is the compiler's heap primitive,
+/// Static `Pointer[T].alloc[_aligned]` is the compiler's heap primitive,
 /// retired from source-language API by the current layout-based model (the
 /// audited head rejects it). The `std/memory/` package modules (`alloc.mojo`,
 /// the allocation crossing; `maybe_uninit.mojo`, which names the

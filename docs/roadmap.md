@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2444**.
+Next free ID: **R2447**.
 
 ## Ordered Work
 
@@ -2955,13 +2955,13 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 
 - [ ] **R1323 A pointer cast to an unsafe any-origin keeps no owner alive**
 
-  `UnsafePointer(to=x).unsafe_origin_cast[MutUnsafeAnyOrigin]()` stored in a
+  `Pointer(to=x).unsafe_origin_cast[MutUnsafeAnyOrigin]()` stored in a
   struct and read after `x`'s last use reads a destroyed `x`: the VM traps
   with "field access on non-struct <moved>", where the pin keeps every owner
   alive to the end of the scope and prints its value.
   - Natively the same program reads freed storage.
   - Probe: the `rebinding_reference_aggregate_releases_each_owner_generation_once`
-    program of `tests/drops_test.rs` with each `Borrowed(UnsafePointer(to=x))`
+    program of `tests/drops_test.rs` with each `Borrowed(Pointer(to=x))`
     spelled through that cast.
   - Found in the 2026-10-24 overnight-gate triage.
   - Depends on nothing.
@@ -3952,7 +3952,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     body out of lowering. A method needs the same mark on its
     `MethodSig`, beside the overload selection of a method call.
   - Upstream marks `String`'s and `StringSlice`'s `__len__` and
-    `UnsafePointer.__bool__` this way.
+    `Pointer.__bool__` this way.
   - Probe: a nested `@unavailable` `def` is accepted but still lowers its
     `...` body inside its enclosing function (`mir::lower_stmt`).
   - Probe: a `pass` body is accepted, where the pin wants `...`
@@ -4936,6 +4936,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     importing `ContiguousSlice` reports it, in a `comptime` binding and
     at run time alike.
   - Found while landing R1742 (2026-10-31).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2446 A call of an unknown name with keyword arguments reports
+  that keyword arguments are unsupported**
+
+  `Foo(to=x)` with `Foo` undeclared reports "invalid call to 'Foo':
+  keyword arguments are not supported here", where the pin reports "use of
+  unknown declaration 'Foo'".
+  - Cause: the `_ if !kwargs.is_empty()` arm of `infer_unbound_call`
+    (`checker/call_inference.rs`) runs before any check that the callee
+    names a declaration, so an unknown callee reads as an unsupported call
+    shape.
+  - Probe: `UnsafePointer(to=x)`, which the pin no longer declares.
+  - Probe: a positional `Foo(5)` reports "Undefined variable 'Foo'", the
+    unknown-name rejection this arm should reach too.
+  - Related to R1750, which folds the same error into an overload
+    mismatch; the cause differs.
+  - Found while landing R2416 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9251,7 +9270,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
 - [ ] **R1324 A struct over a place origin converts implicitly to one over
   an unsafe any-origin**
 
-  `var box: Borrowed[MutUnsafeAnyOrigin] = Borrowed(UnsafePointer(to=x))`
+  `var box: Borrowed[MutUnsafeAnyOrigin] = Borrowed(Pointer(to=x))`
   compiles, where the pin rejects it: "cannot implicitly convert
   'Borrowed[origin_of(x)]' value to 'Borrowed[MutUnsafeAnyOrigin]'".
   - An `Untracked` slot accepts any bound origin too
@@ -9796,31 +9815,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2416 `UnsafePointer` resolves, where the pin has no such name**
-
-  A bare `UnsafePointer[Int, _]` parameter type with no import runs, where
-  the pin reports "use of unknown declaration 'UnsafePointer'" and rejects
-  `from std.memory import UnsafePointer`.
-  - Mojito resolves the name by rule in `named_type`,
-    `infer_unbound_call`, `type_receivers.rs`, and `statics.rs`, and
-    mangles it in `mojito-symbol/src/symbol.rs`.
-  - Withdraw it sites-first: respell every use as `Pointer`, then delete
-    the arms.
-  - Sites (`rg -c '\bUnsafePointer\b'`): `tests/checker_test.rs` 35,
-    `vm_test.rs` 11, `ownership_test.rs` 8, `mir_test.rs` 8, and a few
-    more test files.
-  - Sites: about 45 assets across `ok`, `origin_ok`, `origin_error`,
-    `ownership_error`, `type_error`, and `extensions`.
-  - Sites: the bundled `optional`, `array`, `string`, and `alloc` modules,
-    two benchmarks, conformance fixtures and probes, and the docs.
-  - Expected-message fixtures (`static_pointer_alloc_removed.mojo`) need
-    their text checked one by one.
-  - The `UnsafePointer$` mangling prefix may stay as a symbol spelling or
-    be renamed with a MIR text and package format bump; decide here.
-  - Found while planning R2205 (2026-11-20).
-  - Depends on R2414.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2417 The one-argument `Pointer[T]` is accepted, where the pin
   cannot infer its origin**
 
@@ -9829,13 +9823,60 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - `pointer_type` maps the one-argument spelling to
     `MutUntrackedOrigin`.
   - The bundled `Optional`, `Array`, and `String` storage fields and
-    `alloc.mojo`'s `UnsafePointer[Self.T].alloc(count)` depend on it.
+    `alloc.mojo`'s `Pointer[Self.T].alloc(count)` depend on it.
   - Respell them with an explicit `MutUntrackedOrigin` and upstream's
     `alloc(Layout…)`, then reject the spelling.
   - Probe: `Pointer[T].alloc` and `alloc_aligned` go with it.
   - Found while planning R2205 (2026-11-20).
   - Depends on R2416.
   - Model: Fable, Not Planned.
+
+- [ ] **R2444 `Pointer.free()` resolves, where the pin's `Pointer` has only
+  `unsafe_free`**
+
+  `p.free()` over a heap pointer runs, where the pin reports
+  "'Pointer[Int, MutUntrackedOrigin]' value has no attribute 'free'".
+  - The checker answers both names (`POINTER_RULE_MEMBERS` and the
+    `"free" | "unsafe_free"` arm of `infer_pointer_method`,
+    `method_calls/builtin_types.rs`), as "the deprecated `free()` bridge".
+  - Withdraw it sites-first: respell every `.free()` as `.unsafe_free()`,
+    then delete the name from the rule.
+  - Sites (`rg -c '\.free\(\)'`): eight `assets/ok` fixtures
+    (`unsafe_pointer`, `copyinit_moveinit`, `loop_binding_consuming_copy`,
+    `pointer_empty_deref`, `pointer_origin_cast_upgrade_reads`,
+    `span_pointer_construction`, `unspelled_loan_carrying_type_argument`,
+    `untracked_pointer_ref_params`), two `runtime_error`, two
+    `type_error`, two conformance fixtures, two benchmarks, and
+    `checker_test.rs`, `evaluator_test.rs`, `mir_test.rs`, `vm_test.rs`.
+  - Probe: the pin rejects `assets/ok/unsafe_pointer.mojo`,
+    `copyinit_moveinit.mojo`, `loop_binding_consuming_copy.mojo`, and
+    `conformance/fixtures/projected_pointer_subscript.mojo` for this name
+    alone; respelled, it accepts them.
+  - Found while landing R2416 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2445 `p += n` and `p -= n` over a `Pointer` run, where the pin's
+  `Pointer` has no `__iadd__` or `__isub__`**
+
+  An augmented offset of a pointer place runs, where the pin reports
+  "'Pointer[Int, MutUntrackedOrigin]' does not implement the '__iadd__'
+  method" (`__isub__` for `-=`).
+  - Cause: the augmented operator over a pointer falls back to the
+    builtin binary pointer offset (`Flatten::augmented_operation`,
+    `mir/lower_stmt.rs`, and the checker's typing of that offset), not a
+    lookup of the declared struct's `__iadd__`, which upstream's
+    `Pointer` does not declare.
+  - Withdraw the rule, so the augmented form falls to the declared
+    struct's members as the pin's does.
+  - Probe: `assets/ok/pointer_augmented_literal_offset.mojo` and the `-=`
+    lines of `assets/ok/pointer_subtract_offset.mojo`; respell them as
+    `p = p + n`, or move them to `assets/type_error`.
+  - Find any other site by deleting the rule and running
+    `scripts/smoke --suites`.
+  - Found while landing R2416 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2430 A construction accepts an argument whose origin lies within
   the supplied origin, where upstream requires the argument to convert**
@@ -11647,7 +11688,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `#pop.variadic_to_array` and an `unsafe_bitcast` of the array's address.
   - Porting upstream's body needs `std.builtin.globals` and an inline,
     trivially copyable `Array`; the bundled `Array` keeps its elements
-    behind an `UnsafePointer`.
+    behind a `Pointer`.
   - The stand-in is admitted only in `std/builtin/variadics.mojo`.
   - Found while landing R325 (2026-10-08).
   - Depends on nothing.
@@ -11947,7 +11988,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   pin copies the bytes or prefetches.
   - Cause: `LlvmIntrinsic::signature_error` (`mojito_types::llvm_intrinsic`)
     types only `SIMD` lanes and a `Bool`, so no operand may be an
-    `UnsafePointer` (LLVM's `ptr`).
+    `Pointer` (LLVM's `ptr`).
   - The VM's `runtime::llvm_intrinsic` reads only lanes. A pointer operand
     needs a rule over the VM's typed memory, as `pop.pointer.*` has.
   - `FnLowering::lower_llvm_intrinsic` (`mojito-pliron`, `lower/simd.rs`)
@@ -13185,7 +13226,7 @@ residue found inside a task moves to the task that owns its fix.
 - [ ] **R1421 `Optional` stores its value in a heap allocation, where
   upstream's holds it inline**
 
-  Mojito's `Optional[T]` is an `UnsafePointer[T]` to one heap slot plus a
+  Mojito's `Optional[T]` is an `Pointer[T]` to one heap slot plus a
   size, allocated even when empty, where upstream's is a
   `Variant[_NoneType, T]` held inline.
   - Every `Optional` costs an allocation and a free, and a struct holding
@@ -14139,12 +14180,12 @@ Track: `tooling`.
 
 - [ ] **R146 Naming the bundled stdlib with `-I` breaks every program**
 
-  Problem: `mojito run -I stdlib FILE` fails with `static UnsafePointer
-  allocation was removed from Mojo` even for a program that only prints, and
+  Problem: `mojito run -I stdlib FILE` fails with `'Pointer[T, _]' value
+  has no attribute 'alloc'` even for a program that only prints, and
   so do the legacy flat facades (`from list import List`) that `-I stdlib`
   exists to serve.
   - `stdlib/std/memory/alloc.mojo` keeps the one sanctioned
-    `UnsafePointer[T].alloc` crossing, allowed only when
+    `Pointer[T].alloc` crossing, allowed only when
     `is_bundled_stdlib_source` in
     `crates/mojito-checker/src/checker/overload_support.rs` says the file is
     bundled.

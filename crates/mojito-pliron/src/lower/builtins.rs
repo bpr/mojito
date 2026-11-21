@@ -6,11 +6,10 @@ use super::*;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
-    /// `UnsafePointer.unsafe_dangling` / `Pointer.unsafe_dangling`: the null
-    /// pointer (the VM's `allocation: 0` sentinel). Dereference and free
-    /// misuse are off-gate runtime errors; the VM rejects `free` of a
-    /// dangling pointer while `mjrt_free(null)` is a no-op — a recorded
-    /// divergence.
+    /// `Pointer.unsafe_dangling`: the null pointer (the VM's `allocation: 0`
+    /// sentinel). Dereference and free misuse are off-gate runtime errors;
+    /// the VM rejects `free` of a dangling pointer while `mjrt_free(null)` is
+    /// a no-op — a recorded divergence.
     pub(super) fn lower_dangling_builtin(
         &mut self,
         ctx: &mut Context,
