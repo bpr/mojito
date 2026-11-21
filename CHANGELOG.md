@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An argument filling a slot an explicit origin argument fixes must now
+  convert to that origin, as at the pin (R2430): `S[origin_of(self)](
+  Pointer(to=self.x))`, a struct whose origin tail names `h.x` passed to
+  `W[origin_of(h)]`, and `read[origin_of(h)](h.x)` are rejected, where any
+  origin inside the supplied one was accepted, so a field's or element's
+  origin passed for its owner's. A member of a supplied union and an
+  `ImmOrigin(...)` cast still convert. `String.unsafe_ptr()` and
+  `unsafe_ptr_mut()` now return `Pointer[Byte, origin_of(self)]`, as
+  upstream's do, where they carried the `bytes` interior, so
+  `Span[Byte, ImmOrigin(origin_of(s))](unsafe_ptr=s.unsafe_ptr(), …)` runs
+  as at the pin; `StringSpan.as_bytes` casts its interior pointer to the
+  span's origin.
+
 - The native backend lowers a `Pointer`, `!kgen.pointer`, or reference in
   any address space to upstream's `ptr addrspace(N)` (R2406): a cast
   between spaces is an `addrspacecast`, a copy out of a space a

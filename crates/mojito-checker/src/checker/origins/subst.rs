@@ -881,7 +881,8 @@ pub(in crate::checker) fn origin_is_within(
 /// interior from its container, as upstream's return check compares them.
 /// An index whose value is not part of the origin identity stands for the one
 /// element segment at its position, a declared `_subtree` covers the places
-/// beneath its base, and an untracked declared origin accepts any reference.
+/// beneath its base, an untracked declared origin accepts any reference, and
+/// a mutability cast (`ImmOrigin(o)`) names the storage of the origin it casts.
 pub(in crate::checker) fn origin_is_declared(
     actual: &mojito_types::origin::Origin,
     declared: &mojito_types::origin::Origin,
@@ -902,6 +903,8 @@ pub(in crate::checker) fn origin_is_declared(
                 .all(|(actual, declared)| same_segment(actual, declared))
     };
     match (actual, declared) {
+        (Origin::MutCast(actual, _), _) => origin_is_declared(actual, declared),
+        (_, Origin::MutCast(declared, _)) => origin_is_declared(actual, declared),
         (Origin::Union(members), _) => members
             .iter()
             .all(|member| origin_is_declared(member, declared)),

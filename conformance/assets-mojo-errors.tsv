@@ -33,11 +33,14 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1288
+# swept-count	1291
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/construction_field_pointer_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/construction_struct_tail_field_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/function_bracket_explicit_mut_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
+assets/type_error/function_bracket_ref_field_not_owner_origin.mojo	compile-reject	agree	error: invalid call to 'read': value passed to 'v' cannot be converted from 'Int' to ref 'Int'
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
 assets/type_error/method_bracket_origin_mismatch_struct_parameter.mojo	compile-reject	agree	error: invalid call to 'view': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(b)]' to 'Pointer[Int, origin_of(a)]'

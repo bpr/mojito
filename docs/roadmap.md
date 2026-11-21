@@ -103,6 +103,11 @@ which names the upstream pass each one follows. Each is measured by the
   - Every `pre_elaboration::*` corpus trial fails the same way, 161 of
     them in the `scripts/focused` list, since the standard library's
     printing builds a `Pointer` through its `_mlir_value=` initializer.
+  - Probe: on 2026-11-21 the same trials stop earlier, at elaboration:
+    "in `VariadicList.__deinit__`: unsupported monomorphizing
+    `Pointer.unsafe_mut_cast` return: expected `Pointer[target_mut, T,
+    address_space]`, found `Pointer[UInt8, origin#1]`"
+    (`pre_elaboration::pliron_closure_env`).
   - The bundled `Pointer` initializers run their declared bodies, and
     the call omits a defaulted argument that only the pipeline's passes
     fill or remove.
@@ -2767,7 +2772,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 
   Problem: `def it[o: ImmOrigin](ref[o] self) -> It[o]: return It[o](0,
   self)`, where `It.__init__` takes `ref[Self.o] src`, is rejected ("expected
-  a reference whose origin lies within the supplied 'o' argument, found a
+  a reference whose origin is the supplied 'o' argument, found a
   reference of origin Place(...)"), where the pin prints `0`.
   - The checker gives `self` its place's origin, not the bound parameter.
   - Probe: the bundled `VariadicList.__iter__` takes `ref self` and passes
@@ -2804,7 +2809,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   is not declared**
 
   `StaticString(P)` over a `StaticString` parameter or local is rejected
-  ("expected a reference whose origin lies within the supplied 'origin'
+  ("expected a reference whose origin is the supplied 'origin'
   argument"), where the pin prints it through that `@implicit` constructor.
   - Declaring it verbatim in `std/string.mojo` fails to package: a bare
     `StringSpan` parameter type inside the struct's own declaration is
@@ -9877,23 +9882,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Find any other site by deleting the rule and running
     `scripts/smoke --suites`.
   - Found while landing R2416 (2026-11-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2430 A construction accepts an argument whose origin lies within
-  the supplied origin, where upstream requires the argument to convert**
-
-  `S[origin_of(self)](Pointer(to=self.x))` under `ref self`, over `struct
-  S[mut: Bool, //, o: Origin[mut=mut]]` taking `p: Pointer[Int, Self.o]`,
-  prints `1`, where the pin rejects it ("cannot be converted from
-  'Pointer[Int, origin_of(self_is_origin.x)]' to 'Pointer[Int,
-  origin_of(self_is_origin)]'").
-  - The "lies within the supplied" checks (`bind_origin_pattern` and
-    `bind_constructor_origins`, `checker/origins/construct.rs`, through
-    `SuppliedOrigins::admits`) accept any origin inside the bracket's,
-    where upstream converts the argument to the parameter's type, so a
-    field's origin is not its owner's.
-  - Found while landing R2368 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

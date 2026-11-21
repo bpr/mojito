@@ -451,7 +451,7 @@ impl Checker {
                 && let Some(actual) = origins.get(index).and_then(Option::as_ref)
             {
                 let allowed = substitute_sig_origin(&signature.origin, &origins);
-                if !origin_is_within(actual, &allowed) {
+                if !origin_is_declared(actual, &allowed) {
                     return Err(TypeError::TypeMismatch {
                         expected: format!("the specialized origin {allowed:?}"),
                         found: format!("the argument origin {actual:?}"),

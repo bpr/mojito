@@ -72,8 +72,10 @@ impl SuppliedOrigins<'_> {
         self.origins.iter().find(|origin| origin.id == id)
     }
 
-    /// Whether `actual` lies within the supplied `allowed`, each read with
-    /// `origin_of(self)` at the receiver's place.
+    /// Whether `actual` converts to the supplied `allowed`, each read with
+    /// `origin_of(self)` at the receiver's place: every member of `actual`
+    /// must be a member of `allowed` itself, as upstream converts an argument
+    /// to its parameter's type, so a field's origin is not its owner's.
     fn admits(&self, actual: &Origin, allowed: &Origin) -> bool {
         let here = |origin: &Origin| {
             self.receiver.map_or_else(
@@ -81,7 +83,7 @@ impl SuppliedOrigins<'_> {
                 |receiver| super::rebase_self_origin(origin, receiver),
             )
         };
-        origin_is_within(&here(actual), &here(allowed))
+        origin_is_declared(&here(actual), &here(allowed))
     }
 }
 
@@ -638,7 +640,7 @@ impl Checker {
                 {
                     return Err(TypeError::TypeMismatch {
                         expected: format!(
-                            "a reference whose origin lies within the supplied '{}' argument",
+                            "a reference whose origin is the supplied '{}' argument",
                             slot.name()
                         ),
                         found: format!("a reference of origin {actual:?}"),
@@ -1088,7 +1090,7 @@ impl Checker {
                     if !within {
                         return Err(TypeError::TypeMismatch {
                             expected: format!(
-                                "a pointer whose origin lies within the supplied '{}' argument",
+                                "a pointer whose origin is the supplied '{}' argument",
                                 slot.name()
                             ),
                             found: format!("a pointer of origin {actual}"),
@@ -1119,7 +1121,7 @@ impl Checker {
                 {
                     return Err(TypeError::TypeMismatch {
                         expected: format!(
-                            "a reference whose origin lies within the supplied '{}' argument",
+                            "a reference whose origin is the supplied '{}' argument",
                             slot.name()
                         ),
                         found: format!("a reference of origin {:?}", reference.origin),
@@ -1165,7 +1167,7 @@ impl Checker {
                             {
                                 return Err(TypeError::TypeMismatch {
                                     expected: format!(
-                                        "a value whose origin lies within the supplied '{}' argument",
+                                        "a value whose origin is the supplied '{}' argument",
                                         slot.name()
                                     ),
                                     found: format!("a value of origin {actual:?}"),

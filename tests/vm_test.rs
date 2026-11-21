@@ -1509,20 +1509,20 @@ fn span_pointer_construction_binds_and_loans_the_pointer_origin() {
     // (upstream's shape): a tracked pointer binds — and loans — the span's
     // origin, so mutating the source while the span lives is rejected; an
     // explicit application is checked against the pointer's provenance.
-    let ok_src = "def main():\n    var s = String(\"hello\")\n    var v = Span(unsafe_ptr=s.unsafe_ptr(), length=5)\n    var w = Span[Byte, origin_of(s)](unsafe_ptr=s.unsafe_ptr(), length=5)\n    print(len(v), Int(v[1]), Int(w[4]))\n";
+    let ok_src = "def main():\n    var s = String(\"hello\")\n    var v = Span(unsafe_ptr=s.unsafe_ptr(), length=5)\n    var w = Span[Byte, ImmOrigin(origin_of(s))](unsafe_ptr=s.unsafe_ptr(), length=5)\n    print(len(v), Int(v[1]), Int(w[4]))\n";
     assert_eq!(parity(ok_src), "5 101 111\n");
     let mutation = "def main():\n    var s = String(\"hello\")\n    var v = Span(unsafe_ptr=s.unsafe_ptr(), length=5)\n    s += \"!\"\n    print(Int(v[1]))\n";
     let err =
         run_compiled(mutation).expect_err("source mutation under a pointer-built span rejects");
     assert!(
-        err.contains("invalidated interior reference"),
+        err.contains("conflicts with live reference 'v'"),
         "unexpected error: {err}"
     );
     let mismatch = "def main():\n    var s = String(\"hello\")\n    var t = String(\"world\")\n    var v = Span[Byte, origin_of(t)](unsafe_ptr=s.unsafe_ptr(), length=5)\n    print(len(v))\n";
     let err = run_compiled(mismatch)
         .expect_err("an explicit origin the pointer does not lie within rejects");
     assert!(
-        err.contains("origin lies within the supplied 'origin' argument"),
+        err.contains("origin is the supplied 'origin' argument"),
         "unexpected error: {err}"
     );
 }
