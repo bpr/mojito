@@ -99,6 +99,49 @@ pub(in crate::checker) fn declared_origin_binders(
     })
 }
 
+/// The origin binders among `decls` whose `mut=` binder a bracket fixed
+/// to `True` before the arguments bind them, as upstream binds explicit
+/// parameters first: by a `mut=` argument among `mutabilities` (`f[m=True]`,
+/// `V[m=True]`), or by a mutable origin `origins` binds to a sibling binder
+/// that `mut=` binder governs too (`f[t=MutUntrackedOrigin]` over `o, t:
+/// Origin[mut=m]`).
+pub(in crate::checker) fn bracket_mutable_binders<'a>(
+    decls: &[ParamDecl],
+    mutabilities: impl IntoIterator<Item = (&'a mojito_types::param_expr::ParamId, &'a CtValue)>,
+    origins: &[super::super::BoundOrigin],
+) -> Vec<OriginParamId> {
+    let governor = |decl: &ParamDecl| match decl {
+        ParamDecl::Origin {
+            mutability: mojito_types::types::OriginMutability::Binder(binder),
+            ..
+        } => Some(binder.id.clone()),
+        _ => None,
+    };
+    let fixed: Vec<_> = mutabilities
+        .into_iter()
+        .filter(|(_, value)| **value == CtValue::Bool(true))
+        .map(|(id, _)| id.clone())
+        .chain(
+            origins
+                .iter()
+                .filter(|bound| bound.mutability == Some(Mutability::Mutable))
+                .filter_map(|bound| decls.get(bound.slot).and_then(governor)),
+        )
+        .collect();
+    decls
+        .iter()
+        .filter_map(|decl| match decl {
+            ParamDecl::Origin { origin, .. }
+                if governor(decl).is_some_and(|binder| fixed.contains(&binder))
+                    && !origins.iter().any(|bound| bound.id == *origin) =>
+            {
+                Some(*origin)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 impl ConstructorOriginBindings {
     /// Substitute the bound binders into a parameter or field type: pointer
     /// binders through their provenance, struct tails through their origin.
@@ -606,6 +649,32 @@ impl Checker {
                     conflicting_binding(struct_name, slot.name())
                 })?;
             }
+        }
+        // A struct origin binder whose `mut=` binder the bracket fixed to
+        // `True` (`V[m=True](q)`) takes no immutable argument origin.
+        if let Some(slot) = bracket_mutable_binders(
+            params,
+            application
+                .mutabilities
+                .iter()
+                .map(|(id, value)| (id, value)),
+            application.origins,
+        )
+        .into_iter()
+        .find(|id| {
+            bindings.bound_mutability(*id, &|owner| self.owner_reference_mutability(owner))
+                == Some(Mutability::Immutable)
+        })
+        .and_then(|id| super::super::struct_origin_decl(params, id))
+        {
+            return Err(TypeError::TypeMismatch {
+                expected: format!(
+                    "a mutable origin for parameter '{}' of '{struct_name}'",
+                    slot.name()
+                ),
+                found: "an immutable origin".to_string(),
+                context: format!("argument to '{struct_name}.{callee}'"),
+            });
         }
         self.bind_refined_origins(struct_name, sig, application, &mut bindings)?;
         Ok(bindings)
@@ -1136,14 +1205,22 @@ impl Checker {
 /// Whether a parameter type names a callee origin binder: a `Pointer[T, o]`,
 /// a `ref[o]` referent, or a struct carrying `o` in its origin tail.
 pub(in crate::checker) fn names_origin_binder(parameter: &Ty) -> bool {
+    names_origin_binder_in(parameter, &|_| true)
+}
+
+/// [`names_origin_binder`] for the binders `among` admits.
+pub(in crate::checker) fn names_origin_binder_in(
+    parameter: &Ty,
+    among: &dyn Fn(OriginParamId) -> bool,
+) -> bool {
     mojito_types::types::mentions(parameter, &|candidate| match candidate.kind() {
         handle if let Some((_, origin)) = handle.pointer_or_lit_ref() => {
-            matches!(origin, PointerOrigin::Param { .. })
+            matches!(origin, PointerOrigin::Param { id, .. } if among(id))
         }
-        TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(_)),
+        TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(id) if among(id)),
         struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments
             .iter()
-            .any(|argument| matches!(argument, TyArg::Origin(Origin::Param(_)))),
+            .any(|argument| matches!(argument, TyArg::Origin(Origin::Param(id)) if among(*id))),
         _ => false,
     })
 }

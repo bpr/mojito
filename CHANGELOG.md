@@ -32,6 +32,15 @@ to evolve under the `0.x` compatibility rules.
   as the callee's receiver, a pointee a body projects through is laid out
   natively, and the VM reads a `!lit.ref` slot's handle as its value.
 
+- A `mut=` binder a call's or construction's bracket fixes now checks the
+  argument origins of the binders it governs (R2428):
+  `f[t=MutUntrackedOrigin](q)` over `def f[m: Bool, //, o:
+  Origin[mut=m], t: Origin[mut=m]](p: Pointer[Int, o])`, `f[m=True](q)`,
+  and `V[m=True](q)` with an immutable `q` are rejected as at the pin
+  ("value passed to 'p' cannot be converted from 'Pointer[Int,
+  ImmUntrackedOrigin]' to 'Pointer[Int, o]'"), where they ran. A bracket
+  fixing `False` still converts a mutable argument.
+
 - A `Pointer`'s origin argument resolves as any struct's origin argument
   does (R2368): `origin_of(self)` is the receiver's one symbolic origin in
   a method's body as in its signature, so a struct view built over

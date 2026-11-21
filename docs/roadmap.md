@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2438**.
+Next free ID: **R2441**.
 
 ## Ordered Work
 
@@ -90,6 +90,27 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0` and
     `--backend pliron`.
   - Found while landing R2160.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2440 With the pre-elaboration pipeline off, the VM rejects a
+  bundled `Pointer` initializer's omitted argument**
+
+  With `MOJITO_PRE_ELABORATION=0`, even `print(1)` fails with "vm backend
+  does not support default/keyword/variadic arguments yet (call passed 1
+  args to 2-parameter function 'Pointer.__init__$ov$LitRef…')", where the
+  default pipeline prints `1`.
+  - Every `pre_elaboration::*` corpus trial fails the same way, 161 of
+    them in the `scripts/focused` list, since the standard library's
+    printing builds a `Pointer` through its `_mlir_value=` initializer.
+  - The bundled `Pointer` initializers run their declared bodies, and
+    the call omits a defaulted argument that only the pipeline's passes
+    fill or remove.
+  - Lever: fill the omitted default at the call before lowering, as the
+    pipeline-on build ends up doing, so the switch changes no behavior.
+  - Probe: `scripts/focused --filter lambda_hof`, or any program run
+    with the variable set.
+  - Found while landing R2428 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9143,22 +9164,44 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2428 An argument's origin is not checked against a mutability
+- [ ] **R2438 A `ref[o]` argument is not checked against a mutability
   binder the bracket already bound**
 
-  `f[t=MutUntrackedOrigin](q)` over `def f[m: Bool, //, o: Origin[mut=m],
-  t: Origin[mut=m]](p: Pointer[Int, o])` with an immutable
-  `q: Pointer[Int, ImmUntrackedOrigin]` runs, where the pin rejects it:
-  "value passed to 'p' cannot be converted from 'Pointer[Int,
-  ImmUntrackedOrigin]' to 'Pointer[Int, o]'".
-  - The bracket's `t` binds `m = True` first, as upstream binds explicit
-    parameters before the arguments; the call's origin solve then binds
-    `o` from `q`'s place without checking it against `m`.
-  - The converse is right today and must stay so: `t=ImmOrigin(...)` binds
-    `m = False`, and a mutable `Pointer(to=y)` argument converts.
-  - Lever: when the call's solve binds an origin binder whose `mut=` binder
-    the bracket fixed, reject an immutable argument origin for `True`.
-  - Found while landing R2426 (2026-11-20).
+  `f[t=MutUntrackedOrigin](v)` over `def f[m: Bool, //, o:
+  Origin[mut=m], t: Origin[mut=m]](ref[o] v: Int)` with an `imm v: Int`
+  runs, where the pin rejects it: "mutable reference argument 'v'cannot
+  bind to temporary value".
+  - The bracket binds `m = True` before the arguments, so `ref[o]` is a
+    mutable reference there.
+  - `solve_call_origins_with_bool_bindings` (`origins/solve.rs`) still
+    reads the contract's `SigMutability::BoolParam(m)` as open and takes
+    the argument's mutability.
+  - Lever: close each `RefSig` whose `BoolParam` the bracket fixed before
+    the solve, as `bracket_mutable_binders` (`origins/construct.rs`) does
+    for by-value parameters.
+  - Probe: the call above inside `def g(imm v: Int)`.
+  - Found while landing R2428 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2439 A call runs with an origin binder neither its bracket nor
+  its arguments bind**
+
+  `f(1)` over `def f[o: Origin](x: Int)` prints `1`, where the pin
+  reports "invalid call to 'f': failed to infer parameter 'mut'".
+  - A construction rejects the same shape ("failed to infer parameter
+    'mut' of parent struct"), but `resolve_call_params`
+    (`call_inference.rs`) leaves an open origin binder no argument
+    names unbound.
+  - Lever: report the unbound binder as the construction path does, in
+    the pin's words.
+  - Probe: `f(Pointer(to=y))` over `def f[m: Bool, //, o: Origin[mut=m],
+    t: Origin[mut=m]](p: Pointer[Int, o])` prints `4`, where the pin
+    reports "failed to infer parameter 'origin_of(_mlir_origin)'".
+  - Probe: `V(q)` over a `V` whose initializer declares its own
+    `[t: Origin[mut=Self.m]]` runs, where the pin reports "no matching
+    function in initialization".
+  - Found while landing R2428 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9487,6 +9530,14 @@ retained on purpose and re-probed rather than fixed; they are listed in
     and `g.view[origin_of(a)](Pointer(to=b))` reports it where the pin
     reports the conversion of `p`
     (`method_bracket_origin_mismatch_struct_parameter.mojo`).
+  - Probe: `S().f[t=MutUntrackedOrigin](q)` over a single `def f[m:
+    Bool, //, o: Origin[mut=m], t: Origin[mut=m]](self, p: Pointer[Int,
+    o])` with an immutable `q` reports "no overload matches", where the
+    pin reports the conversion of `p` as the free call does.
+  - Probe: `V[m=True](q)` over a single initializer reports "no
+    constructor overload matches … expected a mutable origin"
+    (`assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo`),
+    where the pin reports "no matching function in initialization".
   - The `assets/type_error` fixtures that expect "no overload matches"
     move to the pin's words with the fix.
   - Found while landing R2115 (2026-11-12).
@@ -11613,6 +11664,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     ParameterList[Int, vs.values]"; the pin says
     'ParameterList[vs.values]', the infer-only `Int` elided.
   - Probe: R904's pack loop.
+  - Probe: a rejected `Span(xs)` argument to `s: Span[Int, o]` spells
+    'Span[false, Int]' and 'Span[mut, Int]', where the pin writes
+    'Span[Int, origin_of(xs)]' and 'Span[Int, o]': the infer-only `mut`
+    is printed and the origin dropped.
   - Probe: a `Tuple[*Ts]` local's type is `Tuple[*Ts.values]` at the pin
     and `Tuple[*Ts]` here, and `*args: *Ts` is `VariadicPack[False,
     *Ts.values]` there. A type pack's list binder (`Ts.values`, R1492) is

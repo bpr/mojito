@@ -2542,6 +2542,15 @@ impl Checker {
             )?)
             .filter(|origins| !origins.is_empty())
         };
+        if let Some(origins) = &origins {
+            self.check_bracket_fixed_mutability(
+                name,
+                decls,
+                bracket.1,
+                (names, patterns),
+                (&places, origins),
+            )?;
+        }
         let patterns = origins.as_ref().map_or_else(
             || patterns.to_vec(),
             |origins| origins.substitute_all(patterns),
@@ -2560,6 +2569,75 @@ impl Checker {
             origins.as_ref(),
         )?;
         Ok(SolvedCall { bound, origins })
+    }
+
+    /// Reject an argument binding an origin binder to an immutable origin
+    /// where the call's bracket fixed that binder's `mut=` binder to
+    /// `True`, as upstream binds the explicit parameters before the
+    /// arguments: `f[t=MutUntrackedOrigin](q)` over `[m: Bool, //, o:
+    /// Origin[mut=m], t: Origin[mut=m]](p: Pointer[Int, o])` (or
+    /// `f[m=True](q)`) binds `m = True`, so an immutable `q` no longer
+    /// converts to `Pointer[Int, o]`. `places` pairs each parameter index
+    /// naming a binder with its actual, and `bindings` the binders they
+    /// bound ([`super::origins::bracket_mutable_binders`]).
+    fn check_bracket_fixed_mutability(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        explicit: &ExplicitTypes,
+        (names, patterns): (&[String], &[Ty]),
+        (places, bindings): (&[(usize, &Ty)], &super::origins::ConstructorOriginBindings),
+    ) -> Result<(), TypeError> {
+        use mojito_types::origin::{Mutability, Origin};
+        let fixed = super::origins::bracket_mutable_binders(
+            decls,
+            explicit
+                .mutabilities()
+                .iter()
+                .map(|bound| (&bound.id, &bound.value)),
+            explicit.origins(),
+        );
+        let immutable: Vec<_> = fixed
+            .into_iter()
+            .filter(|id| {
+                bindings.bound_mutability(*id, &|owner| self.owner_reference_mutability(owner))
+                    == Some(Mutability::Immutable)
+            })
+            .collect();
+        if immutable.is_empty() {
+            return Ok(());
+        }
+        for &(index, actual) in places {
+            let Some(pattern) = patterns.get(index) else {
+                continue;
+            };
+            if super::origins::names_origin_binder_in(pattern, &|id| immutable.contains(&id)) {
+                let parameter = names.get(index).map_or("?", String::as_str);
+                // The parameter's type spells each origin binder by its
+                // declared name (`Pointer[Int, o]`), as upstream prints it.
+                let mut binders: Vec<_> = decls
+                    .iter()
+                    .filter_map(|decl| match decl {
+                        ParamDecl::Origin { origin, .. } => Some((*origin, decl.name())),
+                        _ => None,
+                    })
+                    .collect();
+                binders.sort_by_key(|(id, _)| std::cmp::Reverse(id.0));
+                let expected = binders
+                    .iter()
+                    .fold(pattern.to_string(), |text, (id, binder)| {
+                        text.replace(&Origin::Param(*id).to_string(), binder)
+                    });
+                return Err(TypeError::BadCall {
+                    func: name.to_string(),
+                    reason: format!(
+                        "value passed to '{parameter}' cannot be converted from '{actual}' to \
+                         '{expected}'"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Record each pack element's conversion to the element the call

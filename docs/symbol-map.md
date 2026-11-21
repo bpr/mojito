@@ -805,7 +805,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   over `declared_origin_binders`; methods through
   `instantiate_method_generics`, whose declared origin binders
   `classify_param_list_after` numbers past the struct's parameters, as the
-  signature names them), beside their type and value binders, a function
+  signature names them), beside their type and value binders, rejecting an
+  immutable argument origin for a binder whose `mut=` binder the bracket
+  fixed to `True` (`check_bracket_fixed_mutability`, over
+  `bracket_mutable_binders`, which `bind_constructor_origins` reads for a
+  construction's bracket too), a function
   value whose open parameters are only origins included, since its type is
   the generator over them, and
   `ConstructorOriginBindings::substitute_ref_sig` carries the bindings, and

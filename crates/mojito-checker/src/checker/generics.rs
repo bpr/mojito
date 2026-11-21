@@ -1240,6 +1240,23 @@ impl Checker {
         mojito_types::types::map_origins(ty, &|origin| self.fold_origin_mut_cast(origin))
     }
 
+    /// Whether `origin` is an `Origin[mut=False]` value: a place whose owner
+    /// in scope is read-only, a binder declared `mut=False`, a cast, an
+    /// immutable builtin origin, or a union with an immutable member.
+    pub(super) fn origin_is_immutable(&self, origin: &mojito_types::origin::Origin) -> bool {
+        use mojito_types::origin::{Mutability, Origin};
+        match origin {
+            Origin::Static
+            | Origin::Untracked { mutable: false }
+            | Origin::UnsafeAny { mutable: false } => true,
+            Origin::Place(place) if self.owner_scope(place.root).is_none() => false,
+            Origin::Union(members) => members
+                .iter()
+                .any(|member| self.origin_is_immutable(member)),
+            _ => self.bound_origin_mutability(origin) == Some(Mutability::Immutable),
+        }
+    }
+
     /// The origin and `mut=` arguments among `bound`, a bracket's arguments
     /// bound against `decls`, the whole declared list of `name`, as
     /// upstream's binder binds them: each in its binder's declared slot,
@@ -2490,23 +2507,6 @@ impl Checker {
                         .is_some_and(|binder| binder == read.name)
                 })
             }
-        }
-    }
-
-    /// Whether `origin` is an `Origin[mut=False]` value: a place whose owner
-    /// in scope is read-only, a binder declared `mut=False`, a cast, an
-    /// immutable builtin origin, or a union with an immutable member.
-    fn origin_is_immutable(&self, origin: &mojito_types::origin::Origin) -> bool {
-        use mojito_types::origin::{Mutability, Origin};
-        match origin {
-            Origin::Static
-            | Origin::Untracked { mutable: false }
-            | Origin::UnsafeAny { mutable: false } => true,
-            Origin::Place(place) if self.owner_scope(place.root).is_none() => false,
-            Origin::Union(members) => members
-                .iter()
-                .any(|member| self.origin_is_immutable(member)),
-            _ => self.bound_origin_mutability(origin) == Some(Mutability::Immutable),
         }
     }
 
