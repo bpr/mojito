@@ -1057,6 +1057,7 @@ assets/ok/pliron_wrap_int_arith.mojo	compute	differential	ret=Int
 assets/ok/pliron_wrap_pow.mojo	compute	differential	ret=Int
 assets/ok/pliron_wrap_uint_arith.mojo	compute	differential	ret=UInt
 assets/ok/pointer_address_builtins.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_address_counts_bytes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_address_space_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_address_space_shared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_aliases_declared.mojo	-	ineligible	no-scalar-entry-shape

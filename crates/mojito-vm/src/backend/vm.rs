@@ -22,6 +22,7 @@ use mojito_mir::mir::{
     ConcreteMir, Const, MirBlock, MirFunction, MirInstr, MirIntrinsicSubscript, MirPlace,
     MirProgram, MirResultAdapter, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
 };
+use mojito_native_core::target::NativeTarget;
 use mojito_types::ct::CtValue;
 use mojito_types::ct::ScalarConversion;
 use mojito_types::types::Ty;
@@ -114,6 +115,10 @@ pub struct VmBackend {
     /// takes when its integer address is read ([`VmBackend::place_address`]),
     /// by frame, slot, and the projection up to its element index.
     place_allocations: HashMap<(u64, usize, Vec<RefProjection>), u64>,
+    /// The target whose layout scales an element offset into the byte
+    /// address `pop.pointer_to_index` reads ([`VmBackend::element_stride`]):
+    /// the compilation's, which every layout query was folded for.
+    target: Option<NativeTarget>,
 }
 
 /// The reserved frame id of compile-time memory. Frame ids count up from zero,
@@ -130,8 +135,17 @@ pub(super) const POINTER_ROOT_FRAME: u64 = u64::MAX - 1;
 const PLACE_ALLOCATION_BASE: u64 = 1 << 30;
 
 impl VmBackend {
+    /// A VM laying out for the host, as a compilation without a target
+    /// does.
     pub fn new() -> Self {
-        Self::default()
+        Self::default().with_target(NativeTarget::host())
+    }
+
+    /// This VM laying out for `target` ([`VmBackend::element_stride`]).
+    #[must_use]
+    pub fn with_target(mut self, target: Option<NativeTarget>) -> Self {
+        self.target = target;
+        self
     }
 
     /// Enable the test-only ordered lifecycle-event log.
@@ -546,17 +560,19 @@ impl VmBackend {
             })
     }
 
-    /// The integer address of the place pointer `(frame, slot, projection)`:
-    /// upstream's `pop.pointer_to_index` of the one `!kgen.pointer` value it
-    /// is. A pointer into an interned heap element takes that heap pointer's
-    /// address; any other place takes a synthetic allocation, unique to its
-    /// storage and disjoint from the heap's, and a trailing element index is
-    /// its offset, so pointers into one array keep their element distance.
+    /// The integer address of the place pointer `(frame, slot, projection)`
+    /// to an element `stride` bytes wide: upstream's `pop.pointer_to_index`
+    /// of the one `!kgen.pointer` value it is. A pointer into an interned
+    /// heap element takes that heap pointer's address; any other place takes
+    /// a synthetic allocation, unique to its storage and disjoint from the
+    /// heap's, and a trailing element index is its offset, so pointers into
+    /// one array keep their byte distance.
     pub(super) fn place_address(
         &mut self,
         frame: u64,
         slot: usize,
         projection: &[RefProjection],
+        stride: i64,
     ) -> i64 {
         let (base, index) = match projection.split_last() {
             Some((RefProjection::Index(index), base)) => (base, *index as i64),
@@ -567,14 +583,56 @@ impl VmBackend {
             && base.is_empty()
             && let Some(Value::Pointer { allocation, offset }) = self.pointer_roots.get(slot)
         {
-            return crate::runtime::pointer_address(*allocation, offset.wrapping_add(index));
+            return crate::runtime::pointer_address(
+                *allocation,
+                offset.wrapping_add(index),
+                stride,
+            );
         }
         let next = self.place_allocations.len() as u64;
         let allocation = *self
             .place_allocations
             .entry((frame, slot, base.to_vec()))
             .or_insert(PLACE_ALLOCATION_BASE + next);
-        crate::runtime::pointer_address(allocation, index)
+        crate::runtime::pointer_address(allocation, index, stride)
+    }
+
+    /// The byte stride of a `pointee` element under the VM's target
+    /// layout: the distance upstream's `pop.offset` moves a
+    /// `!kgen.pointer<pointee>` per element, which scales the VM's element
+    /// offsets into the byte addresses `pop.pointer_to_index` reads.
+    fn element_stride(&self, prog: &Prog, pointee: &Ty) -> Result<i64, RuntimeError> {
+        let target = self.target.as_ref().ok_or_else(|| {
+            RuntimeError::Unsupported(
+                "vm: a pointer's integer address needs a native target's layout".to_string(),
+            )
+        })?;
+        mojito_native_core::layout::LayoutCx {
+            target,
+            structs: &prog.layout_structs,
+        }
+        .layout_of(pointee)
+        .map(|layout| layout.size as i64)
+        .map_err(|error| {
+            RuntimeError::Unsupported(format!(
+                "vm: the integer address of a `{pointee}` pointer: {error}"
+            ))
+        })
+    }
+
+    /// [`VmBackend::element_stride`] of the pointee a `Pointer.__int__`
+    /// receiver of type `receiver` addresses.
+    fn receiver_stride(&self, prog: &Prog, receiver: Option<&Ty>) -> Result<i64, RuntimeError> {
+        let pointee = receiver
+            .map(peel_references)
+            .and_then(crate::runtime::address_pointee)
+            .ok_or_else(|| {
+                RuntimeError::TypeError(format!(
+                    "Pointer.__int__ reads a receiver of no pointer type ({})",
+                    receiver.map_or_else(|| "untyped".to_string(), ToString::to_string)
+                ))
+            })?;
+        self.element_stride(prog, pointee)
     }
 
     /// Move `value` into compile-time memory, which is never destroyed, and
@@ -874,6 +932,9 @@ struct Prog {
     /// ([`VmBackend::stage_error`]), and a raise edge writing one is the
     /// `try` catching the error.
     error_slots: Vec<HashSet<VarId>>,
+    /// Every struct's field types, which [`VmBackend::element_stride`]
+    /// lays a pointee out over.
+    layout_structs: mojito_native_core::layout::StructFieldIndex,
 }
 
 /// What an initializer's `out self` receiver enters as ([`Prog::constructed`]).
@@ -1031,6 +1092,7 @@ impl Prog {
         Self {
             structs,
             sigs: build_sigs(&mir.declarations),
+            layout_structs: mojito_mir::mir::struct_field_index(&mir.declarations),
             mir,
             error_slots,
         }
@@ -2019,6 +2081,7 @@ mod pointer_storage_tests {
             structs: HashMap::new(),
             sigs: HashMap::new(),
             error_slots: Vec::new(),
+            layout_structs: mojito_native_core::layout::StructFieldIndex::default(),
         }
     }
 

@@ -1058,6 +1058,7 @@ assets/ok/pliron_wrap_int_arith.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_pow.mojo	main	exe-differential	sanitized
 assets/ok/pliron_wrap_uint_arith.mojo	main	exe-differential	sanitized
 assets/ok/pointer_address_builtins.mojo	main	exe-differential	sanitized
+assets/ok/pointer_address_counts_bytes.mojo	main	exe-differential	sanitized
 assets/ok/pointer_address_space_generic.mojo	main	exe-differential	sanitized
 assets/ok/pointer_address_space_shared.mojo	main	exe-differential	sanitized
 assets/ok/pointer_aliases_declared.mojo	main	exe-differential	sanitized

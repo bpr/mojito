@@ -29,11 +29,14 @@ pub fn run_artifact(
     backend: BackendKind,
 ) -> Result<Execution, ArtifactRunError> {
     let parsed = load_artifact(input, source_name).map_err(ArtifactRunError::Load)?;
-    let mut backend = backend.instantiate().map_err(ArtifactRunError::Backend)?;
+    let target = crate::native::target::NativeTarget::host();
+    let mut backend = backend
+        .instantiate(target.clone())
+        .map_err(ArtifactRunError::Backend)?;
     let concrete = specialize(
         &parsed.program,
         &entry_roots(&parsed.program),
-        crate::native::target::NativeTarget::host().as_ref(),
+        target.as_ref(),
     )
     .and_then(|concrete| concrete.pruned(&[], crate::analysis::eliminate_elaborated_symbols))
     .and_then(|concrete| {

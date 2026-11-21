@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2437**.
+Next free ID: **R2438**.
 
 ## Ordered Work
 
@@ -2646,6 +2646,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: the bundled `VariadicList.__deinit__` reaches each element
     pointer through its span (`elements[unsafe_offset=i]`) where upstream
     writes `Pointer(to=self[i])`.
+  - Probe: a constant index fails the same way over an `Array`:
+    `Int(Pointer(to=a[1])) - Int(Pointer(to=a[0]))` over `var a: Array[Int,
+    3] = [1, 2, 3]` reports "dynamic element projection requires checked
+    indexed storage, got Array[Int, 3]", where the pin prints `8`.
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7661,27 +7665,28 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on R2207.
   - Model: Opus, Not Planned.
 
-- [ ] **R2403 A pointer's VM address counts elements, where upstream's
-  counts bytes**
+- [ ] **R2437 A place pointer's VM address keys each projected place to
+  its own allocation, where upstream's adds the projection's byte offset**
 
-  `Int(buf + 1) - Int(buf)` over an `Int` buffer prints `8` at the pin
-  and natively, and `1` on the VM.
-  - Cause: `runtime::pointer_address` adds the pointer's element offset
-    to its allocation's synthetic base, and `VmBackend::place_address`
-    adds a place pointer's trailing element index the same way, where
-    upstream's `pop.pointer_to_index` is a byte address.
-  - Fix: scale the offset by the pointee's size from
-    `mojito-native-core`'s layout, which `method_call` can read from
-    the receiver's type.
-  - Probe: `var n = buf + 1` then `print(Int(n) - Int(buf))` over `var
-    buf = unsafe_alloc[Int](3)`.
-  - Probe: `Int(Pointer(to=a[1])) - Int(Pointer(to=a[0]))` over an
-    `InlineArray`/`Array` element place, once R1298 lets it lower.
-  - Probe: ``__mlir_op.`pop.pointer_to_index`(k)`` reads the same
-    element-counted address (`VmBackend::exec`'s `PointerToIndex` arm),
-    so its difference over ``__mlir_op.`pop.offset`(k, Int(1)._mlir_value)``
-    is `1` on the VM and `8` at the pin.
-  - Found while landing R1665 (2026-11-20).
+  `Int(Pointer(to=s.b)) - Int(Pointer(to=s.a))` over `struct S` with
+  fields `a: Int8, b: Int` prints `8` at the pin and natively, and
+  `-4294967296` on the VM.
+  - Cause: `VmBackend::place_address` takes a synthetic allocation per
+    frame, slot, and projection up to a trailing element index, so two
+    fields of one place, or a field and its whole place, never share a
+    base, where upstream's `pop.pointer_to_index` of a field place is its
+    root's address plus the field's layout offset.
+  - Fix: key the synthetic allocation on the frame and slot alone and
+    add the byte offset the projection walks through
+    `mojito-native-core`'s layout (struct field offsets, tuple element
+    offsets, an array index times its element stride, a variant's payload
+    offset) from the slot's type.
+  - Probe: the struct fields above, and `Int(Pointer(to=s.a)) -
+    Int(Pointer(to=s))`, which prints `0` at the pin and `-1` on the VM.
+  - Probe: `Int(Pointer(to=t[1])) - Int(Pointer(to=t[0]))` over `var t =
+    (Int(1), Int8(2), Int(3))` prints `8` at the pin and `1` on the VM,
+    since the trailing tuple index scales by its own element's size.
+  - Found while landing R2403 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

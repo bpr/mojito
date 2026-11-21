@@ -649,16 +649,32 @@ impl VmBackend {
             }
             // A heap pointer's address is its allocation's; a place pointer
             // or reference takes its place's synthetic one, as
-            // `Pointer.__int__` does.
+            // `Pointer.__int__` does. Either counts its element offset in
+            // bytes of the operand's pointee.
             MirInstr::Pop {
                 dest,
                 op: mojito_types::mlir::PopOp::PointerToIndex,
                 operands,
                 fastmath: _,
             } => {
-                let address = match operands.first().map(|operand| &regs[operand.0 as usize]) {
+                let operand = operands.first();
+                let stride = |vm: &Self| {
+                    operand
+                        .and_then(|operand| {
+                            prog.mir.functions[function].1.reg_types.get(&operand.0)
+                        })
+                        .and_then(crate::runtime::address_pointee)
+                        .ok_or_else(|| {
+                            RuntimeError::TypeError(
+                                "'pop.pointer_to_index' reads an operand of no pointer type"
+                                    .to_string(),
+                            )
+                        })
+                        .and_then(|pointee| vm.element_stride(prog, pointee))
+                };
+                let address = match operand.map(|operand| &regs[operand.0 as usize]) {
                     Some(Value::Pointer { allocation, offset }) => {
-                        crate::runtime::pointer_address(*allocation, *offset)
+                        crate::runtime::pointer_address(*allocation, *offset, stride(self)?)
                     }
                     Some(
                         Value::PlacePointer {
@@ -673,7 +689,8 @@ impl VmBackend {
                         },
                     ) => {
                         let (frame, slot, projection) = (*frame, *slot, projection.clone());
-                        self.place_address(frame, slot, &projection)
+                        let stride = stride(self)?;
+                        self.place_address(frame, slot, &projection, stride)
                     }
                     other => {
                         return Err(RuntimeError::TypeError(format!(

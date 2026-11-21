@@ -102,17 +102,21 @@ impl BackendKind {
         }
     }
 
-    /// Parse a backend name and construct the selected backend, like
-    /// [`Self::parse`] followed by [`Self::instantiate`].
+    /// Parse a backend name and construct the selected backend for the
+    /// host, like [`Self::parse`] followed by [`Self::instantiate`].
     pub fn make(s: &str) -> Result<Backend, String> {
-        Self::parse(s)?.instantiate()
+        Self::parse(s)?.instantiate(mojito_native_core::target::NativeTarget::host())
     }
 
-    /// Construct the selected backend. Recognized-but-unimplemented backends
-    /// refuse here rather than pretending to execute.
-    pub fn instantiate(self) -> Result<Backend, String> {
+    /// Construct the selected backend, executing a program elaborated for
+    /// `target`. Recognized-but-unimplemented backends refuse here rather
+    /// than pretending to execute.
+    pub fn instantiate(
+        self,
+        target: Option<mojito_native_core::target::NativeTarget>,
+    ) -> Result<Backend, String> {
         match self {
-            Self::Vm => Ok(Backend::Vm(VmBackend::new())),
+            Self::Vm => Ok(Backend::Vm(VmBackend::default().with_target(target))),
             Self::Llvm | Self::Mlir | Self::Pliron | Self::Cranelift | Self::Ebpf => {
                 Err(format!("backend '{}' is not implemented yet", self.name()))
             }

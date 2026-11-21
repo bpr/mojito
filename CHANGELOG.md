@@ -1189,6 +1189,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A pointer's integer address on the VM counts bytes, as upstream's
+  `pop.pointer_to_index` does (R2403): `Int(p)`, `p.__int__()`, and
+  `pop.pointer_to_index` scale an element offset by the pointee's size
+  under the compilation target's layout, so `Int(buf.unsafe_offset(1)) -
+  Int(buf)` over an `Int` buffer prints `8` as at the pin and natively,
+  where the VM printed `1`.
+
 - A struct's own value parameter (`Self.k`), its `comptime` member
   (`Self.N`), and a type's `comptime` member (`T.S`) bound to a `ref`
   argument materialize into a temporary the callee borrows, as upstream's

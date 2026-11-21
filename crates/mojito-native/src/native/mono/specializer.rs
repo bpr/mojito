@@ -56,7 +56,7 @@ impl<'a> Specializer<'a> {
                 ..Applications::default()
             }),
             fuel: mojito_vm::crossing::CTFE_FUEL,
-            vm: VmBackend::new(),
+            vm: VmBackend::default().with_target(target.cloned()),
             discovered_types: HashSet::new(),
             output_functions: Vec::new(),
             output_positions: HashMap::new(),

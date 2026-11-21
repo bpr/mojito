@@ -826,13 +826,16 @@ impl Compiler {
                 stderr,
             })
         };
-        let mut backend = self.backend.instantiate().map_err(|unimplemented| {
-            failed(
-                CompilerError::Runtime(RuntimeError::Unsupported(unimplemented)),
-                String::new(),
-                String::new(),
-            )
-        })?;
+        let mut backend =
+            self.backend
+                .instantiate(self.target.clone())
+                .map_err(|unimplemented| {
+                    failed(
+                        CompilerError::Runtime(RuntimeError::Unsupported(unimplemented)),
+                        String::new(),
+                        String::new(),
+                    )
+                })?;
         {
             let _prepare = timing::span("prepare");
             program.elaborated_mir();

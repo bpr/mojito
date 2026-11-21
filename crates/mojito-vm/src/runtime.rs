@@ -806,14 +806,31 @@ pub fn input_eof() -> RuntimeError {
 /// The message of the `Error` `input()` raises at end of input.
 pub const INPUT_EOF_MESSAGE: &str = "EOF";
 
-/// The synthetic integer address of a VM pointer: 0 for the null (allocation
-/// 0) pointer, otherwise the allocation id in the high word with the element
-/// offset added, so distinct provenances never collide.
-pub const fn pointer_address(allocation: u64, offset: i64) -> i64 {
+/// The synthetic byte address of a VM pointer to elements `stride` bytes
+/// wide.
+///
+/// The null (allocation 0) pointer is 0; any other is its allocation id in
+/// the high word, so distinct provenances never collide, plus its element
+/// offset's byte distance, as upstream's `pop.pointer_to_index` reads one.
+pub const fn pointer_address(allocation: u64, offset: i64, stride: i64) -> i64 {
     if allocation == 0 {
         return 0;
     }
-    ((allocation as i64) << 32).wrapping_add(offset)
+    ((allocation as i64) << 32).wrapping_add(offset.wrapping_mul(stride))
+}
+
+/// The element type a pointer-valued `ty` addresses: a `Pointer`'s,
+/// `!kgen.pointer`'s, or `!lit.ref`'s pointee, or a reference's referent,
+/// whose element size scales its integer address.
+pub fn address_pointee(ty: &mojito_types::types::Ty) -> Option<&mojito_types::types::Ty> {
+    use mojito_types::types::TyKind;
+    match ty.kind() {
+        TyKind::Pointer { element, .. }
+        | TyKind::KgenPointer { element, .. }
+        | TyKind::LitRef { element, .. } => Some(element),
+        TyKind::Ref(reference) => Some(&reference.referent),
+        _ => None,
+    }
 }
 
 /// Admit a `pop.pointer.bitcast` from a `from` pointer to a `to` pointer.
