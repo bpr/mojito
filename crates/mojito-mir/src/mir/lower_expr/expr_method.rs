@@ -105,6 +105,45 @@ impl<'a> Flatten<'a> {
         })
     }
 
+    /// Write `src` into the pointee at offset 0 of pointer `object`, an
+    /// `element`: through its statically known place, through the runtime
+    /// handle of an origin-bearing pointer, or through a synthetic binding
+    /// of a heap pointer, so chained receivers stay expressible.
+    pub(in crate::mir) fn write_pointee(
+        &mut self,
+        call: Node<'a>,
+        object: Node<'a>,
+        element: Ty,
+        src: Reg,
+    ) {
+        if let Some(target) = self.pointer_deref_place(object) {
+            self.emit(MirInstr::Store { place: target, src });
+        } else if object.is_origin_bearing_pointer() {
+            let reference = self.expr(object);
+            self.emit(MirInstr::WriteRef {
+                reference,
+                value: src,
+            });
+        } else {
+            let pointer = self.expr(object);
+            let pointer_ty = object.ty();
+            let var = self.fresh_var();
+            if let Some(ty) = pointer_ty.clone() {
+                self.var_types.insert(var, ty);
+            }
+            self.emit(MirInstr::DefVar {
+                var,
+                src: pointer,
+                binding_ty: pointer_ty.clone(),
+                in_place: false,
+            });
+            let index = self.constant(call, Const::Int(0));
+            let mut place = MirPlace::root(var, pointer_ty);
+            place.project(Proj::Index(index), element);
+            self.emit(MirInstr::Store { place, src });
+        }
+    }
+
     /// The type name node `node` reads: a name the check bound to nothing
     /// (`Self` in a static is typed as its instance, yet names no local). A
     /// value binder of the enclosing declaration
@@ -581,39 +620,6 @@ impl<'a> Flatten<'a> {
             return Some(dest);
         }
         None
-    }
-
-    /// Write `src` into the pointee at offset 0 of pointer `object`, an
-    /// `element`: through its statically known place, through the runtime
-    /// handle of an origin-bearing pointer, or through a synthetic binding
-    /// of a heap pointer, so chained receivers stay expressible.
-    fn write_pointee(&mut self, call: Node<'a>, object: Node<'a>, element: Ty, src: Reg) {
-        if let Some(target) = self.pointer_deref_place(object) {
-            self.emit(MirInstr::Store { place: target, src });
-        } else if object.is_origin_bearing_pointer() {
-            let reference = self.expr(object);
-            self.emit(MirInstr::WriteRef {
-                reference,
-                value: src,
-            });
-        } else {
-            let pointer = self.expr(object);
-            let pointer_ty = object.ty();
-            let var = self.fresh_var();
-            if let Some(ty) = pointer_ty.clone() {
-                self.var_types.insert(var, ty);
-            }
-            self.emit(MirInstr::DefVar {
-                var,
-                src: pointer,
-                binding_ty: pointer_ty.clone(),
-                in_place: false,
-            });
-            let index = self.constant(call, Const::Int(0));
-            let mut place = MirPlace::root(var, pointer_ty);
-            place.project(Proj::Index(index), element);
-            self.emit(MirInstr::Store { place, src });
-        }
     }
 
     /// The ordinary method call on a value receiver, including an explicit

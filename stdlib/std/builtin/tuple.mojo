@@ -41,15 +41,15 @@ struct Tuple[*Ts: Movable](
     def __init__(out self, var *args: *Self.Ts):
         self.storage = __RuntimeTuple(*args^)
 
-    # Upstream assigns `__get_address_as_uninit_lvalue(...) = init_with[i]()`,
-    # constructing each element in place; Mojito writes it (R2024).
     @inline(.nodebug)
     def __init__[F: def[idx: Int]() -> Self.Ts[idx]](out self, *, init_with: F):
         __mlir_op.`lit.ownership.mark_initialized`(
             __get_mvalue_as_litref(self.storage)
         )
         comptime for i in range(Self.__len__()):
-            Pointer(to=self[i]).unsafe_write(init_with[i]())
+            __get_address_as_uninit_lvalue(
+                Pointer(to=self[i])._mlir_value
+            ) = init_with[i]()
 
     # The storage, upstream's `!kgen.struct`, is trivially destructible: the
     # destructor destroys each element itself.

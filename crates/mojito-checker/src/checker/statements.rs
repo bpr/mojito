@@ -3007,6 +3007,9 @@ impl Checker {
     /// the type the store yields: the getter's element for a nominal
     /// subscript, else the place's.
     pub(super) fn check_set_place(&self, place: &Expr, value: &Expr) -> Result<Ty, TypeError> {
+        if let Some(element) = self.check_uninit_lvalue_assignment(place, value)? {
+            return Ok(element);
+        }
         if let Some(root) = place_root_name(place) {
             self.check_capture_access(root, true)?;
         }

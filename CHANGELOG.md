@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Upstream's address builtin `__get_address_as_uninit_lvalue(k) = value`
+  is accepted, as at the pin (R2024): the value initializes the place a
+  `!kgen.pointer` addresses without destroying what it held, and need not
+  be `Movable`; a non-pointer operand and a read of the place are
+  rejected with the pin's messages. The bundled `Tuple(init_with=)` now
+  constructs each element through it, as upstream's does
+  (`assets/ok/pointer_uninit_lvalue.mojo`).
+
 - A `Pointer` holds a union origin, as upstream's ordinary `Origin`
   argument does (R2429): `Pointer[Int, origin_of(x, y)](to=x)` and an
   annotated `var q: Pointer[Int, origin_of(x, y)]` run on both backends,

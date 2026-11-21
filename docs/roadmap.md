@@ -9483,6 +9483,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `conforms_to`, and the parser's `origin_of`.
   - The lever: lex the three as keywords and give the AST one magic-call
     node.
+  - Probe: upstream's address builtins are keywords too
+    (`test/mojo-parser/decls/keyword_fn_names.mojo` rejects
+    `def __get_address_as_uninit_lvalue()`), where
+    `Checker::infer_address_builtin` and `check_uninit_lvalue_assignment`
+    defer to any binding of the name.
   - Found while landing R1369 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -12562,20 +12567,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The pin's shape needs an origin-carrying struct over a borrowed pack.
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R2024 `Tuple(init_with=)` writes each element with `unsafe_write`
-  where upstream constructs it in place through
-  `__get_address_as_uninit_lvalue`**
-
-  Upstream assigns `__get_address_as_uninit_lvalue(Pointer(to=self[i])._mlir_value) = init_with[i]()`,
-  so an element need not be `Movable`; Mojito's
-  `Pointer(to=self[i]).unsafe_write(init_with[i]())` needs `Movable`.
-  - `__get_address_as_uninit_lvalue(p) = v` is not a builtin.
-  - Lever: type it beside R1924's two builtins (`checker/operators.rs`).
-  - Blocks R1121.
-  - Split from R341 (2026-11-08).
-  - Depends on R1924.
-  - Model: Opus, Not Planned.
 
 - [ ] **R36 `Layout` carries its alignment as a runtime field**
 

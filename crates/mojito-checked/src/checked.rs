@@ -1435,7 +1435,11 @@ pub enum SemanticAdjustment {
     },
     /// `pointer.unsafe_write(value)` / `unsafe_write(copy=v)`: initialize the
     /// pointee at offset 0 with a moved (or copied) value, lowered onto the
-    /// same store family as `pointer[] = value`.
+    /// same store family as `pointer[] = value`. On the place of an
+    /// assignment `__get_address_as_uninit_lvalue(k) = value`, whose node is
+    /// the pointer the check spelled for `k`, it marks the assignment as
+    /// that pointer's moved write: the pointee is initialized, never
+    /// destroyed first.
     PointerWrite {
         element: Ty,
         copy: bool,
@@ -6291,11 +6295,22 @@ impl<'a> ArenaBuilder<'a> {
                     .map(|iteration| SemanticAdjustment::ComptimeIteration(iteration.clone())),
             )
             .collect();
+        let initialization =
+            facts
+                .pointee_initialization
+                .clone()
+                .map(|element| SemanticAdjustment::PointerWrite {
+                    element,
+                    copy: false,
+                });
         self.nodes[node.0 as usize].adjustments.extend(conversions);
         self.nodes[node.0 as usize].adjustments.extend(place_uses);
         self.nodes[node.0 as usize].adjustments.extend(loops);
         self.nodes[node.0 as usize].adjustments.extend(truthiness);
         self.nodes[node.0 as usize].adjustments.extend(lifted);
+        self.nodes[node.0 as usize]
+            .adjustments
+            .extend(initialization);
         Some(node)
     }
 
@@ -7727,6 +7742,10 @@ node_facts! {
         /// The `__bool__` call a truthiness test of this operand makes
         /// ([`SemanticAdjustment::Truthiness`]).
         truthiness_call: Box<CheckedTruthinessCall>,
+        /// The element an assignment to `__get_address_as_uninit_lvalue(k)`
+        /// initializes through the pointer spelled for `k`
+        /// ([`SemanticAdjustment::PointerWrite`]).
+        pointee_initialization: Ty,
     }
     flags {
         explicit_destroy_call,

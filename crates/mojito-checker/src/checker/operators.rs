@@ -1076,17 +1076,21 @@ impl Checker {
         ))
     }
 
-    /// Type upstream's address builtins `__get_litref_as_mvalue(r)` and
-    /// `__get_address_as_owned_value(k)` at `call`, when `name` is one and
-    /// no binding shadows it. Each is spelled as the pointer operation that
-    /// is Mojito's primitive for it, which upstream's `Pointer` declares
-    /// over the builtin: the place a `!lit.ref` refers to is the
-    /// dereference `Pointer(_mlir_value=r)[]`, of `r`'s element under `r`'s
-    /// origin; the owned value a `!kgen.pointer` holds is the take
+    /// Type upstream's address builtins `__get_litref_as_mvalue(r)`,
+    /// `__get_address_as_owned_value(k)`, and
+    /// `__get_address_as_uninit_lvalue(k)` read as a value at `call`, when
+    /// `name` is one and no binding shadows it. Each is spelled as the
+    /// pointer operation that is Mojito's primitive for it, which
+    /// upstream's `Pointer` declares over the builtin: the place a
+    /// `!lit.ref` refers to is the dereference `Pointer(_mlir_value=r)[]`,
+    /// of `r`'s element under `r`'s origin; the owned value a
+    /// `!kgen.pointer` holds is the take
     /// `Pointer[origin=MutUntrackedOrigin](_mlir_value=k)
     /// .unsafe_take_pointee()`, which moves it out of the address, leaving
     /// it uninitialized, and, as the address carries no origin, lends and
-    /// ends no checked storage.
+    /// ends no checked storage. An uninitialized lvalue is only assigned
+    /// ([`Self::check_uninit_lvalue_assignment`]): a read of one is the
+    /// pin's use of an uninitialized value.
     pub(super) fn infer_address_builtin(
         &self,
         call: &Expr,
@@ -1098,12 +1102,74 @@ impl Checker {
         let litref = match name {
             "__get_litref_as_mvalue" => true,
             "__get_address_as_owned_value" => false,
+            UNINIT_LVALUE => {
+                if self.lookup(name).is_some() {
+                    return None;
+                }
+                return Some(
+                    self.kgen_pointer_operand(name, param_args, args, kwargs)
+                        .and_then(|_| {
+                            Err(TypeError::UninitializedUse {
+                                var: "(reference value)".to_string(),
+                            })
+                        }),
+                );
+            }
             _ => return None,
         };
         if self.lookup(name).is_some() {
             return None;
         }
         Some(self.infer_spelled_address_builtin(call, name, litref, param_args, args, kwargs))
+    }
+
+    /// Check `place = value` when `place` is upstream's
+    /// `__get_address_as_uninit_lvalue(k)` and no binding shadows the
+    /// builtin, returning the element it initializes; `None` for any other
+    /// place. The place is spelled as the pointer
+    /// `Pointer[origin=MutUntrackedOrigin](_mlir_value=k)`, and the
+    /// assignment is that pointer's moved `unsafe_write(value)`: the
+    /// value, converted to `k`'s element, initializes the pointee without
+    /// destroying what the address held, and it is built for the slot
+    /// rather than moved into it, so the element need not be `Movable`.
+    pub(super) fn check_uninit_lvalue_assignment(
+        &self,
+        place: &Expr,
+        value: &Expr,
+    ) -> Result<Option<Ty>, TypeError> {
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &place.kind
+        else {
+            return Ok(None);
+        };
+        if name != UNINIT_LVALUE || self.lookup(name).is_some() {
+            return Ok(None);
+        }
+        let (operand, found) = self.kgen_pointer_operand(name, param_args, args, kwargs)?;
+        let element =
+            found.kind().kgen_pointee().cloned().ok_or_else(|| {
+                TypeError::InvariantViolation(format!("'{found}' has no pointee"))
+            })?;
+        self.infer_spelled(place, untracked_pointer_spelling(place, operand))?;
+        let value_ty = self.infer_in_context(value, &element, true)?;
+        if !self.record_implicit_conversion(value, &value_ty, &element)? {
+            return Err(TypeError::TypeMismatch {
+                expected: element.to_string(),
+                found: value_ty.to_string(),
+                context: "assignment target".to_string(),
+            });
+        }
+        if self.is_copyable(&value_ty)
+            && !self.storage_conversion_borrows_source(&value_ty, Some(&element))
+        {
+            self.check_consuming(value, &value_ty, "assignment target")?;
+        }
+        self.record_at(place.source_span()).pointee_initialization = Some(element.clone());
+        Ok(Some(element))
     }
 
     /// Record the value of `expr`, an operator over `operands` one of which
@@ -1281,67 +1347,61 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         use super::initializer_list::spelled_node;
-        let ([operand], [], []) = (args, kwargs, param_args) else {
-            return Err(TypeError::BadCall {
-                func: name.to_string(),
-                reason: "expected exactly one positional argument".to_string(),
-            });
-        };
-        let found = self.infer(operand)?;
-        match (litref, found.kind()) {
-            (true, TyKind::LitRef { .. }) | (false, TyKind::KgenPointer { .. }) => {}
-            (true, _) => {
+        let spelled = if litref {
+            let operand = single_address_operand(name, param_args, args, kwargs)?;
+            let found = self.infer(operand)?;
+            if !matches!(found.kind(), TyKind::LitRef { .. }) {
                 return Err(TypeError::InvalidAddressOperand(format!(
                     "operand isn't a '!lit.ref' type '{found}'"
                 )));
             }
-            (false, _) => {
-                return Err(TypeError::InvalidAddressOperand(format!(
-                    "operand must have '!kgen.pointer<T>' type, not '{found}'"
-                )));
-            }
-        }
-        let param_args = if litref {
-            Vec::new()
-        } else {
-            vec![mojito_ast::ast::ParamArg::Named {
-                name: "origin".to_string(),
-                value: Box::new(mojito_ast::ast::ParamArg::Value(spelled_node(
-                    call,
-                    2,
-                    ExprKind::Identifier("MutUntrackedOrigin".to_string()),
-                    call.span,
-                ))),
-            }]
-        };
-        let pointer = spelled_node(
-            call,
-            1,
-            ExprKind::Call {
-                name: "Pointer".to_string(),
-                param_args,
-                args: Vec::new(),
-                kwargs: vec![mojito_ast::ast::KwArg {
-                    name: "_mlir_value".to_string(),
-                    value: operand.clone(),
-                }],
-            },
-            call.span,
-        );
-        let spelled = if litref {
+            let pointer = spelled_node(
+                call,
+                1,
+                ExprKind::Call {
+                    name: "Pointer".to_string(),
+                    param_args: Vec::new(),
+                    args: Vec::new(),
+                    kwargs: vec![mojito_ast::ast::KwArg {
+                        name: "_mlir_value".to_string(),
+                        value: operand.clone(),
+                    }],
+                },
+                call.span,
+            );
             ExprKind::Index {
                 object: Box::new(pointer),
                 index: Box::new(spelled_node(call, 3, ExprKind::EmptySubscript, call.span)),
             }
         } else {
+            let (operand, _) = self.kgen_pointer_operand(name, param_args, args, kwargs)?;
             ExprKind::MethodCall {
-                object: Box::new(pointer),
+                object: Box::new(untracked_pointer_spelling(call, operand)),
                 method: "unsafe_take_pointee".to_string(),
                 args: Vec::new(),
                 kwargs: Vec::new(),
             }
         };
         self.infer_spelled(call, spelled_node(call, 0, spelled, call.span))
+    }
+
+    /// The one operand of the `!kgen.pointer` address builtin `name` and
+    /// its type, rejecting any other operand with the pin's message.
+    fn kgen_pointer_operand<'e>(
+        &self,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &'e [Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<(&'e Expr, Ty), TypeError> {
+        let operand = single_address_operand(name, param_args, args, kwargs)?;
+        let found = self.infer(operand)?;
+        if !matches!(found.kind(), TyKind::KgenPointer { .. }) {
+            return Err(TypeError::InvalidAddressOperand(format!(
+                "operand must have '!kgen.pointer<T>' type, not '{found}'"
+            )));
+        }
+        Ok((operand, found))
     }
 
     /// A read dunder binds its operand as a method call binds a read
@@ -1473,4 +1533,54 @@ fn union_subtree_place(
         root: first.root,
         path,
     })
+}
+
+/// Upstream's builtin naming the uninitialized place a `!kgen.pointer`
+/// addresses, which only an assignment initializes.
+const UNINIT_LVALUE: &str = "__get_address_as_uninit_lvalue";
+
+/// The one positional operand of the address builtin `name`.
+fn single_address_operand<'e>(
+    name: &str,
+    param_args: &[mojito_ast::ast::ParamArg],
+    args: &'e [Expr],
+    kwargs: &[mojito_ast::ast::KwArg],
+) -> Result<&'e Expr, TypeError> {
+    match (args, kwargs, param_args) {
+        ([operand], [], []) => Ok(operand),
+        _ => Err(TypeError::BadCall {
+            func: name.to_string(),
+            reason: "expected exactly one positional argument".to_string(),
+        }),
+    }
+}
+
+/// `Pointer[origin=MutUntrackedOrigin](_mlir_value=operand)`, the pointer a
+/// `!kgen.pointer` address builtin at `call` is spelled over: the address
+/// carries no origin, so it lends and ends no checked storage.
+fn untracked_pointer_spelling(call: &Expr, operand: &Expr) -> Expr {
+    use super::initializer_list::spelled_node;
+    let origin = spelled_node(
+        call,
+        2,
+        ExprKind::Identifier("MutUntrackedOrigin".to_string()),
+        call.span,
+    );
+    spelled_node(
+        call,
+        1,
+        ExprKind::Call {
+            name: "Pointer".to_string(),
+            param_args: vec![mojito_ast::ast::ParamArg::Named {
+                name: "origin".to_string(),
+                value: Box::new(mojito_ast::ast::ParamArg::Value(origin)),
+            }],
+            args: Vec::new(),
+            kwargs: vec![mojito_ast::ast::KwArg {
+                name: "_mlir_value".to_string(),
+                value: operand.clone(),
+            }],
+        },
+        call.span,
+    )
 }

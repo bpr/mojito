@@ -1645,6 +1645,27 @@ impl<'a> Flatten<'a> {
         place: Node<'a>,
         value: Node<'a>,
     ) -> Option<StoredDestination> {
+        // `__get_address_as_uninit_lvalue(k) = value`: the place is the
+        // pointer the check spelled for `k`, and the value initializes its
+        // pointee as that pointer's `unsafe_write(value)` does, destroying
+        // nothing first.
+        if let Some(element) = place
+            .adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::PointerWrite {
+                    element,
+                    copy: false,
+                } => Some(element.clone()),
+                _ => None,
+            })
+        {
+            let (src, _) = self.lower_call_argument(value);
+            let src = self.materialize_register(src, &element, value.location());
+            self.flush_argument_anchors();
+            self.write_pointee(place, place, element, src);
+            return None;
+        }
         if let Some(handle) = self.lower_subscript_reference_set(place, value) {
             return Some(StoredDestination::Reference(handle));
         }
