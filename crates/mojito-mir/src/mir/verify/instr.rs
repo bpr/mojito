@@ -741,7 +741,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             if !cx.reg_ty(*dest).is_none_or(|ty| {
                 matches!(
                     ty.kind().pointer_origin(),
-                    Some(mojito_types::origin::PointerOrigin::Static)
+                    Some(mojito_types::origin::PointerOrigin::Static { mutable: false })
                 )
             }) {
                 errors.push(format!(

@@ -3215,7 +3215,10 @@ fn pointer_origin(value: &PointerOrigin) -> String {
                 ("subtree", subtree.to_string()),
             ],
         ),
-        PointerOrigin::Static => "pointer_static".into(),
+        PointerOrigin::Static { mutable: false } => "pointer_static".into(),
+        PointerOrigin::Static { mutable: true } => {
+            record("pointer_static", &[("mutable", "true".to_string())])
+        }
         PointerOrigin::Untracked { mutable } => {
             record("pointer_untracked", &[("mutable", mutable.to_string())])
         }

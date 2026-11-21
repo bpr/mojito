@@ -1620,7 +1620,7 @@ impl Checker {
                 self.origin_writably_rooted(&resolved)
             }
             PointerOrigin::Place { .. }
-            | PointerOrigin::Static
+            | PointerOrigin::Static { .. }
             | PointerOrigin::Untracked { .. }
             | PointerOrigin::UnsafeAny { .. } => None,
         }

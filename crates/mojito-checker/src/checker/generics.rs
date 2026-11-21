@@ -1232,6 +1232,40 @@ impl Checker {
         }
     }
 
+    /// A method call's `Pointer[mut=m, T, o.unsafe_mut_cast[m]()]` result
+    /// whose `m` stays symbolic (a generic body's `p.unsafe_mut_cast[m]()`),
+    /// as the pointer to `o` at the mutability `o` alone has: a pointer's
+    /// `mut` names no value parameter. Any other type is `ty`.
+    pub(super) fn settle_symbolic_cast_pointer(&self, ty: Ty) -> Ty {
+        let TyKind::Struct(name, args) = ty.kind() else {
+            return ty;
+        };
+        let [
+            TyArg::Val(_),
+            TyArg::Ty(element),
+            TyArg::Origin(origin),
+            TyArg::Val(space),
+        ] = args.as_slice()
+        else {
+            return ty;
+        };
+        if name != mojito_types::types::POINTER_TYPE_NAME
+            || origin.symbolic_cast_mutability().is_none()
+        {
+            return ty;
+        }
+        let base = origin.uncast();
+        self.bound_origin_mutability(base)
+            .and_then(|mutability| {
+                mojito_types::origin::PointerOrigin::from_parts(base.clone(), mutability)
+            })
+            .zip(mojito_types::types::AddressSpaceSlot::of_value(space))
+            .map_or_else(
+                || ty.clone(),
+                |(origin, space)| Ty::pointer(element.clone(), origin, space),
+            )
+    }
+
     /// `ty` with each origin argument cast to the mutability its base
     /// already has folded to the base ([`Self::fold_origin_mut_cast`]), as
     /// upstream's cast of an `Origin[mut=m]` value to `m` is that value: a

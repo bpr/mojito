@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1280
+# swept-count	1281
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/function_bracket_explicit_mut_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
@@ -982,6 +982,7 @@ assets/type_error/pointer_take_tracked_nontrivial.mojo	runs	subset	the pin runs 
 assets/type_error/pointer_to_place_offset_rejected.mojo	runs	subset	the pin runs it;Mojito rejects: designates a single value
 assets/type_error/pointer_to_ref_param_write_rejected.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_unsafe_bitcast_runtime_argument.mojo	compile-reject	agree	error: invalid call to 'unsafe_bitcast': unexpected argument
+assets/type_error/pointer_unsafe_mut_cast_false_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pop_bitcast_cast_incompatible.mojo	compile-reject	agree	error: 'pop.bitcast' op input type '!kgen.scalar<ui32>' and result type '!kgen.scalar<ui16>' are cast incompatible
 assets/type_error/positional_only_by_keyword.mojo	compile-reject	agree	error: invalid call to 'first': missing required argument: 'a'
 assets/type_error/predicate_alias_arity.mojo	compile-reject	agree	error: unexpected parameter

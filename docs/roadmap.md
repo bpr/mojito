@@ -2728,6 +2728,15 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Lever: a value-binder case of `Mutability`, substituted with the
     binder's value as `Mutability::Param` is with an origin's.
   - Probe: the shape above.
+  - Probe: `q[] = 3` through `var q = p.unsafe_mut_cast[m]()` inside
+    `def k[m: Bool, o: MutOrigin](p: Pointer[Int, o])` runs, where the pin
+    rejects it ("expression must be mutable in assignment").
+  - Sites: a call's `Pointer[mut=m, T, o.unsafe_mut_cast[m]()]` result
+    stays nominal while `m` is the callee's own binder, and settles to
+    `o`'s mutability once `m` is still symbolic after the call binds it
+    (`Checker::settle_symbolic_cast_pointer`, `checker/generics.rs`; and
+    `types::settle_symbolic_cast_pointers` for an inlined body's
+    registers, `analysis/inline_parametric.rs`); the lever replaces both.
   - Found while landing R2427 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9225,27 +9234,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     initializers), `memory/{alloc,owned_pointer}.mojo`, and `span.mojo`.
   - The same body under `mut self` is accepted by both.
   - Found while landing R679 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2431 A static pointer cast to mutable stays immutable**
-
-  `"a".ptr().unsafe_mut_cast[True]()` passed to a `MutPointer[Byte, _]`
-  parameter fails with "expected Pointer[UInt8, MutUnsafeAnyOrigin], found
-  Pointer[UInt8, ImmStaticOrigin]", where the pin prints `97`.
-  - Cause: `PointerOrigin::Static` has no mutable form, so
-    `Origin::mut_cast(Static, True)` reads back as `ImmStaticOrigin`
-    (`PointerOrigin::from_parts`, `mojito-types/src/origin.rs`), where
-    upstream's `ImmStaticOrigin.unsafe_mut_cast[True]()` is a mutable
-    static origin.
-  - Probe: `StringSpan.__init__(out self)` (`std/string.mojo`) casts
-    `"".ptr().unsafe_mut_cast[True]()` to a symbolic
-    `origin._get_owned_interior["bytes"]`; the receiver's `Self.mut` reads
-    `False`, so the declared `unsafe_origin_cast` binder is
-    `Origin[mut=False]`, and an immutable binder converts only a
-    statically mutable argument to `ImmOrigin` (`bound_bracket_origin`,
-    `checker/generics.rs`), where upstream converts any.
-  - Found while landing R2206 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

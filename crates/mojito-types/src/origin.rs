@@ -771,7 +771,12 @@ pub enum PointerOrigin {
         /// A trailing `._subtree` projection (see [`PointerOrigin::Param`]).
         subtree: bool,
     },
-    Static,
+    /// `ImmStaticOrigin`, and at `mutable` its
+    /// `ImmStaticOrigin.unsafe_mut_cast[True]()` cast: a string literal's
+    /// static storage, which holds no loan.
+    Static {
+        mutable: bool,
+    },
     Untracked {
         mutable: bool,
     },
@@ -892,7 +897,10 @@ impl PointerOrigin {
                 projected(Origin::SelfParam, interior, *subtree),
                 *mutability,
             ),
-            Self::Static => (Origin::Static, Mutability::Immutable),
+            Self::Static { mutable } => (
+                Origin::mut_cast(Origin::Static, LitOriginMut::Known(*mutable)),
+                flag(*mutable),
+            ),
             Self::Untracked { mutable } => {
                 (Origin::Untracked { mutable: *mutable }, flag(*mutable))
             }
@@ -914,6 +922,9 @@ impl PointerOrigin {
             Mutability::Param(_) => false,
         };
         match origin {
+            Origin::MutCast(inner, LitOriginMut::Known(mutable)) if *inner == Origin::Static => {
+                Some(Self::Static { mutable })
+            }
             Origin::MutCast(inner, LitOriginMut::Known(mutable)) => {
                 Self::from_parts(*inner, Mutability::of(mutable))
             }
@@ -967,7 +978,9 @@ impl PointerOrigin {
                     _ => None,
                 }
             }
-            Origin::Static => (mutability == Mutability::Immutable).then_some(Self::Static),
+            Origin::Static => {
+                (mutability == Mutability::Immutable).then_some(Self::Static { mutable: false })
+            }
             Origin::Untracked { mutable } => flag(mutable).then_some(Self::Untracked { mutable }),
             Origin::UnsafeAny { mutable } => flag(mutable).then_some(Self::UnsafeAny { mutable }),
             Origin::Union(_) | Origin::Unbound => None,
@@ -984,7 +997,7 @@ impl PointerOrigin {
             Self::Place { place, .. } => Some(Origin::Place(place.clone())),
             Self::Param { id, .. } => Some(Origin::Param(*id)),
             Self::SelfPlace { .. } => Some(Origin::SelfParam),
-            Self::Static | Self::Untracked { .. } | Self::UnsafeAny { .. } => None,
+            Self::Static { .. } | Self::Untracked { .. } | Self::UnsafeAny { .. } => None,
         }
     }
 
@@ -1008,7 +1021,7 @@ impl PointerOrigin {
             | Self::SelfPlace {
                 interior, subtree, ..
             } => !interior.is_empty() && !subtree,
-            Self::Static | Self::Untracked { .. } | Self::UnsafeAny { .. } => false,
+            Self::Static { .. } | Self::Untracked { .. } | Self::UnsafeAny { .. } => false,
         }
     }
 
@@ -1023,7 +1036,7 @@ impl PointerOrigin {
                 matches!(place.path.last(), Some(OriginSeg::Subtree))
             }
             Self::Param { subtree, .. } | Self::SelfPlace { subtree, .. } => *subtree,
-            Self::Static | Self::Untracked { .. } | Self::UnsafeAny { .. } => false,
+            Self::Static { .. } | Self::Untracked { .. } | Self::UnsafeAny { .. } => false,
         }
     }
 
@@ -1035,8 +1048,8 @@ impl PointerOrigin {
         match self {
             Self::Place { mutable, .. }
             | Self::Untracked { mutable }
-            | Self::UnsafeAny { mutable } => Some(*mutable),
-            Self::Static => Some(false),
+            | Self::UnsafeAny { mutable }
+            | Self::Static { mutable } => Some(*mutable),
             Self::Param { mutability, .. } | Self::SelfPlace { mutability, .. } => match mutability
             {
                 Mutability::Mutable => Some(true),
@@ -1056,7 +1069,7 @@ impl PointerOrigin {
             },
             Self::Untracked { .. } => Self::Untracked { mutable: false },
             Self::UnsafeAny { .. } => Self::UnsafeAny { mutable: false },
-            Self::Static => Self::Static,
+            Self::Static { .. } => Self::Static { mutable: false },
             Self::Param {
                 id,
                 interior,
@@ -1079,9 +1092,7 @@ impl PointerOrigin {
     }
 
     /// The same provenance with writes through the pointer permitted
-    /// (upstream's `unsafe_mut_cast[True]`). A static constant has no mutable
-    /// counterpart, so it widens to the mutable untracked origin: neither
-    /// holds a loan.
+    /// (upstream's `unsafe_mut_cast[True]`).
     #[must_use]
     pub fn mutable(self) -> Self {
         match self {
@@ -1089,7 +1100,8 @@ impl PointerOrigin {
                 place,
                 mutable: true,
             },
-            Self::Untracked { .. } | Self::Static => Self::Untracked { mutable: true },
+            Self::Untracked { .. } => Self::Untracked { mutable: true },
+            Self::Static { .. } => Self::Static { mutable: true },
             Self::UnsafeAny { .. } => Self::UnsafeAny { mutable: true },
             Self::Param {
                 id,
@@ -1635,7 +1647,7 @@ mod tests {
             (Vec::new(), true),
             (vec!["element".to_string()], true),
         ];
-        let mut pointers = vec![PointerOrigin::Static];
+        let mut pointers = Vec::new();
         for mutable in [false, true] {
             pointers.push(PointerOrigin::Place {
                 place: OriginPlace {
@@ -1644,6 +1656,7 @@ mod tests {
                 },
                 mutable,
             });
+            pointers.push(PointerOrigin::Static { mutable });
             pointers.push(PointerOrigin::Untracked { mutable });
             pointers.push(PointerOrigin::UnsafeAny { mutable });
         }

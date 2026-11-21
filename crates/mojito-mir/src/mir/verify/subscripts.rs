@@ -169,7 +169,7 @@ pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
                 ReferencePermission::Immutable
             }
         }
-        PointerOrigin::Static | PointerOrigin::UnsafeAny { .. } => return None,
+        PointerOrigin::Static { .. } | PointerOrigin::UnsafeAny { .. } => return None,
     };
     Some(ReferenceCapability {
         target: element,

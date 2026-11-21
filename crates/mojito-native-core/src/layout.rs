@@ -475,14 +475,18 @@ mod tests {
             layout_of(&Ty::new(TyKind::KgenString)),
             Ok(Layout::new(16, 8))
         );
-        let pointer = Ty::pointer(Ty::int(), PointerOrigin::Static, AddressSpaceSlot::GENERIC);
+        let pointer = Ty::pointer(
+            Ty::int(),
+            PointerOrigin::Static { mutable: false },
+            AddressSpaceSlot::GENERIC,
+        );
         assert_eq!(layout_of(&pointer), Ok(Layout::new(8, 8)));
         // A pointer takes its address space's data-layout entry: x86-64's
         // `p270` is 32-bit, `AddressSpace.SHARED` the default 64.
         let in_space = |space| {
             Ty::pointer(
                 Ty::int(),
-                PointerOrigin::Static,
+                PointerOrigin::Static { mutable: false },
                 AddressSpaceSlot::Known(space),
             )
         };
@@ -491,7 +495,7 @@ mod tests {
         // A reference pack is one address per element, whatever each holds.
         let pack = Ty::new(TyKind::LitRefPack {
             elements: vec![Ty::bool(), Ty::string_literal_of("s"), Ty::int()],
-            origin: PointerOrigin::Static,
+            origin: PointerOrigin::Static { mutable: false },
         });
         assert_eq!(layout_of(&pack), Ok(Layout::new(24, 8)));
     }

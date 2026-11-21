@@ -5227,7 +5227,7 @@ pub fn erase_origins(ty: &Ty) -> Ty {
             ..
         } => TyKind::Pointer {
             element: recur(element),
-            origin: crate::origin::PointerOrigin::Static,
+            origin: crate::origin::PointerOrigin::Static { mutable: false },
             address_space: address_space.clone(),
         }
         .into(),
@@ -5241,13 +5241,13 @@ pub fn erase_origins(ty: &Ty) -> Ty {
             ..
         } => TyKind::LitRef {
             element: recur(element),
-            origin: crate::origin::PointerOrigin::Static,
+            origin: crate::origin::PointerOrigin::Static { mutable: false },
             address_space: address_space.clone(),
         }
         .into(),
         TyKind::LitRefPack { elements, .. } => TyKind::LitRefPack {
             elements: elements.iter().map(recur).collect(),
-            origin: crate::origin::PointerOrigin::Static,
+            origin: crate::origin::PointerOrigin::Static { mutable: false },
         }
         .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
@@ -5316,6 +5316,79 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
     map_origins(ty, &|origin| origin.substitute_params(origins))
 }
 
+/// The pointer a parametric origin binder's pointer is once the binder is
+/// bound to a symbolic cast `origin`.
+///
+/// For `o.unsafe_mut_cast[m]()` that is upstream's `Pointer[mut=m, T,
+/// o.unsafe_mut_cast[m]()]`, a nominal application until `m` folds
+/// ([`canonical_pointer_application`]). Any other origin hands `element`
+/// back.
+pub fn symbolic_cast_pointer(
+    element: Ty,
+    origin: crate::origin::Origin,
+    address_space: &AddressSpaceSlot,
+) -> Result<Ty, Ty> {
+    let Some(mutable) = origin.symbolic_cast_mutability().cloned() else {
+        return Err(element);
+    };
+    Ok(TyKind::Struct(
+        POINTER_TYPE_NAME.to_string(),
+        vec![
+            TyArg::Val(CtValue::Expr(mutable)),
+            TyArg::Ty(element),
+            TyArg::Origin(origin),
+            TyArg::Val(address_space.value()),
+        ],
+    )
+    .into())
+}
+
+/// `ty` with each [`symbolic_cast_pointer`] whose `m` stays symbolic
+/// settled to its origin's own mutability.
+///
+/// An `m` the substitution left symbolic (an argument over the caller's
+/// own binders) drops the cast, the pointer to `o` taking the mutability
+/// its binder or the receiver gives it: a pointer's `mut` names no value
+/// parameter. A cast over a place, which carries no binder, stays nominal.
+pub fn settle_symbolic_cast_pointers(ty: &Ty) -> Ty {
+    struct Settle;
+    impl TyRewrite for Settle {
+        fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+            let TyKind::Struct(name, args) = ty.kind() else {
+                return None;
+            };
+            let [
+                TyArg::Val(_),
+                TyArg::Ty(element),
+                TyArg::Origin(origin),
+                TyArg::Val(space),
+            ] = args.as_slice()
+            else {
+                return None;
+            };
+            if name != POINTER_TYPE_NAME {
+                return None;
+            }
+            origin.symbolic_cast_mutability()?;
+            let base = origin.uncast();
+            let mutability = base.binder_mutability().or_else(|| {
+                matches!(base.projection_base(), crate::origin::Origin::SelfParam)
+                    .then_some(crate::origin::Mutability::RECEIVER)
+            })?;
+            Some(Ty::pointer(
+                settle_symbolic_cast_pointers(element),
+                crate::origin::PointerOrigin::from_parts(base.clone(), mutability)?,
+                AddressSpaceSlot::of_value(space)?,
+            ))
+        }
+
+        fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+            Ok(expr.clone())
+        }
+    }
+    rewrite_ty(ty, &mut Settle).unwrap_or_else(|_| ty.clone())
+}
+
 /// [`substitute_origin_params`] reaching pointer provenances too, as a
 /// `#kgen.bind_params` substitutes the origins it binds into its result.
 ///
@@ -5355,12 +5428,26 @@ pub fn bind_origin_params<S: std::hash::BuildHasher>(
             element,
             origin,
             address_space,
-        } => TyKind::Pointer {
-            element: recur(element),
-            origin: bind(origin),
-            address_space: address_space.clone(),
+        } => match origin {
+            PointerOrigin::Param {
+                id,
+                mutability: Mutability::Param(_),
+                ..
+            } if origins.contains_key(&id.0) => symbolic_cast_pointer(
+                recur(element),
+                origin.parts().0.substitute_params(origins),
+                address_space,
+            ),
+            _ => Err(recur(element)),
         }
-        .into(),
+        .unwrap_or_else(|element| {
+            TyKind::Pointer {
+                element,
+                origin: bind(origin),
+                address_space: address_space.clone(),
+            }
+            .into()
+        }),
         TyKind::LitRef {
             element,
             origin,
@@ -5862,6 +5949,15 @@ fn canonical_pointer_application(kind: &TyKind) -> Option<Ty> {
             .then_some(crate::origin::Mutability::RECEIVER)
         })
     };
+    // A symbolic cast (`o.unsafe_mut_cast[m]()`) decides the pointer's
+    // `mut` itself, so the application stays nominal until `m` folds.
+    let symbolic = || {
+        origin
+            .symbolic_cast_mutability()
+            .is_none()
+            .then(symbolic)
+            .flatten()
+    };
     let mutability = match mutable {
         CtValue::Bool(mutable) => crate::origin::Mutability::of(*mutable),
         CtValue::Deferred(_) => symbolic()?,
@@ -5987,7 +6083,7 @@ pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
 pub fn static_string_address_ty() -> Ty {
     TyKind::Pointer {
         element: canonical_simd_ty(Dtype::UInt8, 1),
-        origin: crate::origin::PointerOrigin::Static,
+        origin: crate::origin::PointerOrigin::Static { mutable: false },
         address_space: AddressSpaceSlot::GENERIC,
     }
     .into()
@@ -9531,7 +9627,10 @@ fn fmt_pointer_origin(
                 write!(f, ")")?;
             }
         }
-        PointerOrigin::Static => write!(f, "ImmStaticOrigin")?,
+        PointerOrigin::Static { mutable: false } => write!(f, "ImmStaticOrigin")?,
+        PointerOrigin::Static { mutable: true } => {
+            write!(f, "ImmStaticOrigin.unsafe_mut_cast[True]()")?;
+        }
         PointerOrigin::Untracked { mutable: true } => {
             write!(f, "MutUntrackedOrigin")?;
         }
@@ -10749,7 +10848,11 @@ mod pointer_application_tests {
                 Origin::Static,
                 address_space_value(3),
             )),
-            Ty::pointer(Ty::int(), PointerOrigin::Static, AddressSpaceSlot::Known(3))
+            Ty::pointer(
+                Ty::int(),
+                PointerOrigin::Static { mutable: false },
+                AddressSpaceSlot::Known(3)
+            )
         );
         assert_eq!(
             application(pointer_args(
@@ -10828,8 +10931,9 @@ mod pointer_application_tests {
             (vec!["element".to_string()], false),
             (vec!["element".to_string()], true),
         ];
-        let mut origins = vec![PointerOrigin::Static];
+        let mut origins = Vec::new();
         for mutable in [false, true] {
+            origins.push(PointerOrigin::Static { mutable });
             origins.push(PointerOrigin::Place {
                 place: place(),
                 mutable,

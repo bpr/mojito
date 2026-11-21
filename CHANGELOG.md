@@ -1198,6 +1198,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Pointer.unsafe_mut_cast[m]()` now returns the pointer at the cast's
+  mutability, as upstream's `Pointer[mut=m, T, origin.unsafe_mut_cast[m]()]`
+  does (R2431): `"a".ptr().unsafe_mut_cast[True]()` passed to a
+  `MutPointer[Byte, _]` prints `97`, a cast to `True` over an immutable
+  borrow is writable, and a write through a cast to `False` is rejected,
+  where the cast kept the receiver's mutability. The static origin has a
+  mutable form (`ImmStaticOrigin.unsafe_mut_cast[True]()`, MIR schema 1.218,
+  `mojito-package 248`).
+
 - A pointer's integer address on the VM counts bytes, as upstream's
   `pop.pointer_to_index` does (R2403): `Int(p)`, `p.__int__()`, and
   `pop.pointer_to_index` scale an element offset by the pointee's size

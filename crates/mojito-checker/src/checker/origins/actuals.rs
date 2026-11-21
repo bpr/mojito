@@ -204,7 +204,10 @@ impl Checker {
                 PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
                     Origin::Untracked { mutable }
                 }
-                PointerOrigin::Static => Origin::Static,
+                PointerOrigin::Static { mutable } => Origin::mut_cast(
+                    Origin::Static,
+                    mojito_types::types::LitOriginMut::Known(mutable),
+                ),
                 PointerOrigin::Place { .. }
                 | PointerOrigin::Param { .. }
                 | PointerOrigin::SelfPlace { .. } => Origin::Place(self.origin_place(expr)?),
@@ -958,7 +961,7 @@ impl Checker {
                 Some(Origin::Place(place))
             }
             PointerOrigin::Param { .. }
-            | PointerOrigin::Static
+            | PointerOrigin::Static { .. }
             | PointerOrigin::Untracked { .. }
             | PointerOrigin::UnsafeAny { .. } => None,
         }

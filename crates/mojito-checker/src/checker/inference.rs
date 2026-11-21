@@ -530,6 +530,12 @@ impl Checker {
             .infer_impl(expr)
             .and_then(|ty| self.apply_rebind_target(expr, ty))
             .map(|ty| self.read_through_call_reference(expr, ty))
+            .map(|ty| match expr.kind {
+                ExprKind::MethodCall { .. } | ExprKind::Invoke { .. } => {
+                    self.settle_symbolic_cast_pointer(ty)
+                }
+                _ => ty,
+            })
             .and_then(|ty| self.reject_runtime_deferred_call(expr, ty));
         // A struct read as a value is its metatype, which no run-time
         // position holds: a probe that types a type operand as an

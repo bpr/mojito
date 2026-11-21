@@ -1017,7 +1017,7 @@ impl<'a> Flatten<'a> {
             None,
             Ty::pointer(
                 element,
-                mojito_types::origin::PointerOrigin::Static,
+                mojito_types::origin::PointerOrigin::Static { mutable: false },
                 mojito_types::types::AddressSpaceSlot::GENERIC,
             ),
         );

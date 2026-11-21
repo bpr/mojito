@@ -313,7 +313,12 @@ fn type_families_reprint_byte_identically() {
                 ),
                 Ty::pointer(
                     Ty::int(),
-                    PointerOrigin::Static,
+                    PointerOrigin::Static { mutable: false },
+                    mojito_types::types::AddressSpaceSlot::GENERIC,
+                ),
+                Ty::pointer(
+                    Ty::int(),
+                    PointerOrigin::Static { mutable: true },
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
                 Ty::pointer(
@@ -328,7 +333,7 @@ fn type_families_reprint_byte_identically() {
                 ),
                 Ty::pointer(
                     Ty::int(),
-                    PointerOrigin::Static,
+                    PointerOrigin::Static { mutable: false },
                     mojito_types::types::AddressSpaceSlot::Known(5),
                 ),
                 Ty::kgen_pointer(Ty::int(), mojito_types::types::AddressSpaceSlot::GENERIC),
@@ -345,7 +350,7 @@ fn type_families_reprint_byte_identically() {
                 ),
                 Ty::lit_ref(
                     Ty::int(),
-                    PointerOrigin::Static,
+                    PointerOrigin::Static { mutable: false },
                     mojito_types::types::AddressSpaceSlot::Known(1),
                 ),
                 TyKind::LitRefPack {
@@ -3216,7 +3221,7 @@ fn param_list_addresses_round_trip() {
     );
     let pointer = Ty::pointer(
         Ty::int(),
-        mojito_types::origin::PointerOrigin::Static,
+        mojito_types::origin::PointerOrigin::Static { mutable: false },
         mojito_types::types::AddressSpaceSlot::GENERIC,
     );
     for values in [

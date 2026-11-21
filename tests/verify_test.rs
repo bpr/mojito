@@ -309,7 +309,7 @@ fn verifier_checks_make_ref_capability_types() {
             0,
             Ty::pointer(
                 Ty::int(),
-                mojito::PointerOrigin::Static,
+                mojito::PointerOrigin::Static { mutable: false },
                 mojito::types::AddressSpaceSlot::GENERIC,
             ),
         )],

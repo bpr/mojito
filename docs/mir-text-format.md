@@ -1301,6 +1301,13 @@ constructions are calls of the declared struct's members, and a `_mlir_value`
 field read lowers to `pointer.convert` by its object's type. The package
 format moves to `mojito-package 247` (R2206).
 
+Schema 1.218 gives the pointer origin `pointer_static` a mutable form,
+`pointer_static { mutable: true }`, upstream's
+`ImmStaticOrigin.unsafe_mut_cast[True]()` (a static string's bytes reached
+through `Pointer.unsafe_mut_cast[True]()`); the immutable static origin stays
+the bare atom `pointer_static`, so every older record reads unchanged. The
+package format moves to `mojito-package 248` (R2431).
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and
@@ -2519,9 +2526,10 @@ projection over an `origin_param` or `origin_self` base, upstream's
 `_get_owned_interior`/`_subtree` over a binder), and
 `origin_unsafe_any { mutable }` (schema 1.207: upstream's
 `Imm/MutUnsafeAnyOrigin`, distinct from the untracked origin). Pointer origins are `pointer_place`,
-`pointer_param`, `pointer_self`, `pointer_static`, `pointer_untracked`, and
-`pointer_unsafe_any`; all fields of the corresponding `PointerOrigin` variant
-are required.
+`pointer_param`, `pointer_self`, `pointer_static` (the atom for
+`ImmStaticOrigin`, `pointer_static { mutable: true }` for its mutable cast,
+schema 1.218), `pointer_untracked`, and `pointer_unsafe_any`; all fields of
+the corresponding `PointerOrigin` variant are required.
 
 Mutability is `immutable`, `mutable`, or `mutability_param(id)`. Signature
 origins are `sig_self`, `sig_param(index)`, `sig_bound(origin)`, `sig_static`,

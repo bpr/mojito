@@ -4258,6 +4258,13 @@ fn instantiated<'c>(
     }
     let mut instantiation = Instantiation::new(declaration, owner, arguments, declarations)?;
     let mut function = callee.clone();
+    // A body's `Pointer[mut=m, T, o.unsafe_mut_cast[m]()]` registers take
+    // the binder's mutability, as the call's own result type does: an
+    // argument over the caller's binders leaves `m` symbolic, and a
+    // pointer's `mut` names no value parameter.
+    for ty in function.reg_types.values_mut() {
+        *ty = mojito_types::types::settle_symbolic_cast_pointers(ty);
+    }
     walk_function_mut(&mut instantiation, &mut function).ok()?;
     bind_reference_result_origins(&mut function.body, &instantiation.origins);
     construct_type_parameters(

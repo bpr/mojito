@@ -584,7 +584,7 @@ mod tests {
                     vec![
                         Ty::pointer(
                             applied("Link", TyArg::Ty(param("Link", "T"))),
-                            PointerOrigin::Static,
+                            PointerOrigin::Static { mutable: false },
                             mojito_types::types::AddressSpaceSlot::GENERIC,
                         ),
                         Ty::int(),

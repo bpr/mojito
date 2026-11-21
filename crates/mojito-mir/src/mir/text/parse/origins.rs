@@ -99,8 +99,15 @@ impl Decoder {
 
     pub(super) fn pointer_origin(&mut self, value: &Value) -> Option<PointerOrigin> {
         match &value.kind {
-            ValueKind::Atom(tag) if tag == "pointer_static" => Some(PointerOrigin::Static),
+            ValueKind::Atom(tag) if tag == "pointer_static" => {
+                Some(PointerOrigin::Static { mutable: false })
+            }
             ValueKind::Record(tag, fields) => match tag.as_str() {
+                "pointer_static" => {
+                    let mutable = self.req(value, fields, "mutable", Self::boolean)?;
+                    self.unknown(fields, &["mutable"]);
+                    Some(PointerOrigin::Static { mutable })
+                }
                 "pointer_place" => {
                     let place = self.req(value, fields, "place", Self::origin_place)?;
                     let mutable = self.req(value, fields, "mutable", Self::boolean)?;

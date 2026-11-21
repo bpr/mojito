@@ -82,11 +82,11 @@ impl Checker {
         if reference_result.is_none() && !captures.is_empty() {
             self.record_capture_accesses(span.clone(), &captures);
         }
-        let return_type = self.rebase_self_place_pointer(
+        let return_type = self.settle_symbolic_cast_pointer(self.rebase_self_place_pointer(
             resolved.return_type.clone(),
             object,
             resolved.declared_return.as_ref(),
-        );
+        ));
         if reference_result.is_none() && captures.is_empty() {
             self.record_view_result(site, resolved, &return_type);
         }
@@ -106,9 +106,10 @@ impl Checker {
                 .collect(),
         );
         if reference_result.is_none() {
-            self.record_at(span.clone())
-                .declared_result
-                .clone_from(&resolved.declared_return);
+            self.record_at(span.clone()).declared_result = resolved
+                .declared_return
+                .as_ref()
+                .map(mojito_types::types::settle_symbolic_cast_pointers);
         }
         self.record_at(span.clone()).selected_call =
             Some(Box::new(mojito_checked::checked::CheckedCallContract {

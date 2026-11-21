@@ -587,7 +587,25 @@ pub(in crate::checker) fn bind_pointer_origins(
             element,
             origin,
             address_space,
-        } => Ty::pointer(recur(element), bind(origin), address_space.clone()),
+        } => match origin {
+            PointerOrigin::Param {
+                id,
+                mutability: Mutability::Param(_),
+                interior,
+                subtree,
+            } if interior.is_empty() && !subtree => tails.get(id).map_or_else(
+                || Err(recur(element)),
+                |tail| {
+                    mojito_types::types::symbolic_cast_pointer(
+                        recur(element),
+                        tail.clone(),
+                        address_space,
+                    )
+                },
+            ),
+            _ => Err(recur(element)),
+        }
+        .unwrap_or_else(|element| Ty::pointer(element, bind(origin), address_space.clone())),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
             elements: elements.iter().map(recur).collect(),
             origin: bind(origin),
