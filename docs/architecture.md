@@ -1290,7 +1290,9 @@ does (`bind_ref_binders`, `bind_ref_binders_with_receiver`, read by
 a body's return check)); the receiver's clause is its own `ref` contract
 (`MethodSig::self_ref`), whose binders the call deduces from the receiver's
 place beside the arguments' and against which
-`Checker::check_receiver_ref` checks the receiver; a
+`Checker::check_receiver_ref` checks the receiver
+(`receiver_reference_actual`: a temporary receiver's hidden slot is lent
+mutably only under a mutable clause); a
 compiler builtin's binder
 (`applied_type`'s collection, pointer, `SIMD`, and storage types,
 `external_call`, `reflect`, the `Variant` storage methods, the

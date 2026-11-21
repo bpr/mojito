@@ -682,7 +682,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   marker — and the terminal conservative `._subtree` projection), and
   `PointerOrigin::from_parts` builds the provenance; a body place rooted at
   the receiver compares against `origin_of(self)` at the receiver's place
-  (`origins/construct.rs::SuppliedOrigins`, `origins/subst.rs::rebase_self_origin`). Upstream's `Pointer` aliases (`MutPointer`,
+  (`origins/construct.rs::SuppliedOrigins`, `origins/subst.rs::{rebase_self_origin, origin_converts_to}`, the latter reading an interior generation as its owner's origin through `Origin::interior_owner` and a `ref` binding's subtree as its base). Upstream's `Pointer` aliases (`MutPointer`,
   `ImmPointer`, `OpaquePointer`, …) and `StringSlice` (`comptime
   StringSlice = StringSpan`) are declared `comptime` aliases of the bundled
   library (`std/memory/pointer.mojo`, `std.string`).
@@ -1243,7 +1243,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   which see through the step, and `native::mono`'s `discharge_rebinds`
   (`mono/rebind.rs`) judges and erases both forms per instance, each
   place step against the type it applies to (`verify::place_base_ty` for
-  the first). The parser admits the call as an
+  the first), as LLVM translation sees both types. The parser admits the call as an
   assignment and augmented-assignment target (`parser/stmts.rs`).
   Every body is checked once with the operand symbolic, so no body is
   keyed on a `rebind`.
@@ -2219,8 +2219,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `StructDeclaration::view_arguments`. The checker's comparisons leave a
   `mut=` value both origins bind to them (`Checker::coerces_by_origins`,
   `types::defer_origin_decided_mutability`); a layout ignores every one
-  (`types::defer_mutability_arguments`, read by
-  `MirDeclarations::translated_type` and the checker's rebind check); the
+  (`types::defer_mutability_arguments`, over the declared list or an
+  elaborated instance's binders, read by `MirDeclarations::translated_type`,
+  so by `discharge_rebinds` and the verifier's rebound-place terminal type,
+  and by the checker's rebind check); the
   elaborator keys an instance on each closed one
   (`StructCatalog::closed_mutability`, in `substitute_ty`), erasing one no
   binding decides to `_REMOVED_ARG`, spells a member's owner arguments with

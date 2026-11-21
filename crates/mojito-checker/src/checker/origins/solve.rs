@@ -257,7 +257,7 @@ impl Checker {
         object: &Expr,
         signature: &mojito_types::origin::RefSig,
     ) -> Result<(), TypeError> {
-        let actual = self.materialized_reference_actual(object)?;
+        let actual = self.receiver_reference_actual(object, signature)?;
         check_ref_actual(signature, &actual, 0)?;
         let origin_mismatch = |expected: String| TypeError::RefOriginMismatch {
             slot: 0,
@@ -470,7 +470,7 @@ impl Checker {
                 && let Some(actual) = origins.get(index).and_then(Option::as_ref)
             {
                 let allowed = substitute_sig_origin(&signature.origin, &origins);
-                if !origin_is_declared(actual, &allowed) {
+                if !origin_converts_to(actual, &allowed) {
                     return Err(TypeError::TypeMismatch {
                         expected: format!("the specialized origin {allowed:?}"),
                         found: format!("the argument origin {actual:?}"),

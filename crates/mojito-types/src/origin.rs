@@ -491,6 +491,36 @@ impl Origin {
         }
     }
 
+    /// The origin with its trailing `_get_owned_interior` projections
+    /// removed: the owner whose origin, upstream, already names the storage
+    /// an interior generation stages (`List.unsafe_ptr()`'s elements are
+    /// `origin_of(list)` at the pin).
+    #[must_use]
+    pub fn interior_owner(&self) -> Self {
+        let owner_path = |path: &[OriginSeg]| {
+            let kept = path
+                .iter()
+                .rposition(|segment| !matches!(segment, OriginSeg::Interior(_)))
+                .map_or(0, |last| last + 1);
+            path[..kept].to_vec()
+        };
+        match self {
+            Self::Place(place) => Self::Place(OriginPlace {
+                root: place.root,
+                path: owner_path(&place.path),
+            }),
+            Self::Projected(base, path) => match owner_path(path) {
+                kept if kept.is_empty() => (**base).clone(),
+                kept => Self::Projected(base.clone(), kept),
+            },
+            Self::MutCast(inner, mutability) => {
+                Self::mut_cast(inner.interior_owner(), mutability.clone())
+            }
+            Self::Union(members) => Self::union(members.iter().map(Self::interior_owner)),
+            other => other.clone(),
+        }
+    }
+
     /// The origin with each of `path`'s interior and subtree segments
     /// projected in turn ([`Origin::owned_interior`], [`Origin::subtree`]).
     #[must_use]

@@ -273,42 +273,24 @@ impl Checker {
         &self,
         expr: &Expr,
     ) -> Result<mojito_types::origin::RefTy, TypeError> {
-        use mojito_types::origin::{Mutability, Origin, OriginPlace, RefTy};
-        // A compile-time value (a value parameter, a `comptime for`
-        // variable, a struct's own value parameter `Self.k`, a type's
-        // compile-time member `T.S`) or a field chain off one is a
-        // parameter constant, not storage: a borrow of it materializes the
-        // constant into a temporary, as upstream's `kgen.param.constant`
-        // does.
-        if (self.is_parameter_read(expr) || self.is_parameter_value_read(expr))
-            && let referent = self.infer(expr)?
-            && self.is_materialized_parameter_read(expr)
-        {
-            let owner = self.materialize_borrow_owner(expr, false)?;
-            return Ok(RefTy {
-                referent,
-                origin: Origin::Place(OriginPlace {
-                    root: owner,
-                    path: Vec::new(),
-                }),
-                mutability: Mutability::Immutable,
-                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
-            });
-        }
-        match self.reference_actual(expr) {
-            Err(TypeError::Unsupported(message))
-                if message.contains("reference binding to a non-place expression") =>
-            {
-                let referent = self.infer(expr)?;
-                Ok(RefTy {
-                    referent,
-                    origin: Origin::Place(self.materialize_borrow_place(expr, true)?),
-                    mutability: Mutability::Mutable,
-                    address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
-                })
-            }
-            other => other,
-        }
+        self.reference_actual_lending(expr, true)
+    }
+
+    /// The reference a method's `ref[...] self` clause checks its receiver
+    /// as: [`Self::materialized_reference_actual`], except that an owned
+    /// temporary receiver raises its hidden slot's lend to mutable only under
+    /// a clause that demands a mutable receiver, so a read receiver keeps
+    /// lending its slot immutably.
+    pub(in crate::checker) fn receiver_reference_actual(
+        &self,
+        object: &Expr,
+        signature: &mojito_types::origin::RefSig,
+    ) -> Result<mojito_types::origin::RefTy, TypeError> {
+        let mutable = matches!(
+            signature.mutability,
+            mojito_types::origin::SigMutability::Mutable
+        );
+        self.reference_actual_lending(object, mutable)
     }
 
     /// The place a borrow of a non-place expression lends, as upstream's
@@ -1113,6 +1095,52 @@ impl Checker {
             });
         }
         lower_ref_sig(spec, decls, params, struct_params, self)
+    }
+
+    /// [`Self::materialized_reference_actual`] with a non-place expression's
+    /// hidden slot lent mutably only when `lend_mutably`; the temporary
+    /// itself is an owned, mutable rvalue either way.
+    fn reference_actual_lending(
+        &self,
+        expr: &Expr,
+        lend_mutably: bool,
+    ) -> Result<mojito_types::origin::RefTy, TypeError> {
+        use mojito_types::origin::{Mutability, Origin, OriginPlace, RefTy};
+        // A compile-time value (a value parameter, a `comptime for`
+        // variable, a struct's own value parameter `Self.k`, a type's
+        // compile-time member `T.S`) or a field chain off one is a
+        // parameter constant, not storage: a borrow of it materializes the
+        // constant into a temporary, as upstream's `kgen.param.constant`
+        // does.
+        if (self.is_parameter_read(expr) || self.is_parameter_value_read(expr))
+            && let referent = self.infer(expr)?
+            && self.is_materialized_parameter_read(expr)
+        {
+            let owner = self.materialize_borrow_owner(expr, false)?;
+            return Ok(RefTy {
+                referent,
+                origin: Origin::Place(OriginPlace {
+                    root: owner,
+                    path: Vec::new(),
+                }),
+                mutability: Mutability::Immutable,
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+            });
+        }
+        match self.reference_actual(expr) {
+            Err(TypeError::Unsupported(message))
+                if message.contains("reference binding to a non-place expression") =>
+            {
+                let referent = self.infer(expr)?;
+                Ok(RefTy {
+                    referent,
+                    origin: Origin::Place(self.materialize_borrow_place(expr, lend_mutably)?),
+                    mutability: Mutability::Mutable,
+                    address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+                })
+            }
+            other => other,
+        }
     }
 
     /// Whether `expr` names a local `comptime` binding of a requested

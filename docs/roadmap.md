@@ -853,23 +853,6 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R2464 8 fixtures stopped elaborating after batch 3**
-
-  The instantiation ratchet finds `assets/ok` fixtures that elaborated at the last baseline and now fail to compile.
-  - Probe: `assets/ok/immutable_origin_struct_argument_exclusivity.mojo` (failed: run error: invalid checked program: after pre-elaboration pass `inline-parametric`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; after pre-elaboration pass `sroa`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; after pre-elaboration pass `mem-2-reg`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; after pre-elaboration pass `sccp`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; after pre-elaboration pass `canonicalize`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; after pre-elaboration pass `canonicalize`: MIR function 'main': MakeRef destination recovers permission unavailable through its source capability; MIR function 'main': MakeRef destination recovers permission unavailable through its source capability).
-  - Probe: `assets/ok/initializer_list_keyword_entries.mojo` (failed: run error: invalid call to 'Span': no constructor overload matches the supplied arguments (type mismatch for argument 'unsafe_ptr' to 'Span.__init__': expected a pointer whose origin is the supplied 'origin' argument, found a pointer of origin origin_of(#335.xs.<element>))).
-  - Probe: `assets/ok/list_unsafe_uninit_length.mojo` (failed: run error: unsupported feature: an origin-bearing Pointer designates a single value; only offset 0 can be dereferenced).
-  - Probe: `assets/ok/nominal_string_bytes_peek_split.mojo` (failed: run error: unsupported feature: an origin-bearing Pointer designates a single value; only offset 0 can be dereferenced).
-  - Probe: `assets/ok/rebind_across_origin_arguments.mojo` (failed: run error: Elaboration error: function instantiation of `main` failed: rebind input type 'View$mono$Vfalse[false]' does not match result type 'View$mono$Vtrue[true]').
-  - Probe: `assets/ok/span_pointer_construction.mojo` (failed: run error: invalid call to 'Span': no constructor overload matches the supplied arguments (type mismatch for argument 'unsafe_ptr' to 'Span.__init__': expected a pointer whose origin is the supplied 'origin' argument, found a pointer of origin origin_of(#324.items.<element>))).
-  - Probe: `assets/ok/template_method_for_loop.mojo` (failed: run error: type mismatch for field 'src' of 'ShelfIter': expected a pointer whose origin is the supplied 'o' argument, found a pointer of origin origin_of(#325~)).
-  - Probe: `assets/ok/temporary_receiver_view.mojo` (failed: run error: access to '(expression temporary)' conflicts with live reference 'view').
-  - Ratchet log: `target/run-batches/20261120-073546/batch3-ratchet.log`.
-  - Fix the regression, or delete this entry and file one entry per cause in the track that owns it.
-  - Filed by `scripts/run-batches` (2026-11-21).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2193 Concrete instructions grew 4.49% over batches 5 to 7**
 
   The elaborated corpus grew from 4,572,727 to 4,778,195 concrete
@@ -2290,6 +2273,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Both the erased body and the derived clones behave the same, so the
     lever is the caller-side loan a type-carried origin installs, not the
     callee.
+  - Probe: `ref u = l[0]; print(len(u))` over `l: List[Span[Int,
+    origin_of(xs)]]`, with `xs` unused after the append, stops the VM with
+    "use after Pointer deallocation" (also over an `ImmOrigin(...)` span).
   - Not yet checked against the pin, which is expected to print `2`.
   - Depends on nothing.
   - Model: Opus, Planned.
@@ -8848,13 +8834,18 @@ retained on purpose and re-probed rather than fixed; they are listed in
     destructor destroys `xs` before the read, where the pin reads first.
     `OwnedPointer.unsafe_ptr` returning upstream's `Pointer[T, origin]`
     keeps its owner alive, so returning `origin_of(self)` is the fix.
+  - The bundled `String.unsafe_ptr()` and `unsafe_ptr_mut()` return the
+    `_get_owned_interior["bytes"]` pointer too, where upstream's return
+    `Pointer[Byte, origin_of(self)]`: a pointer whose origin is one place
+    is a single-value handle to the checker and the VM (R2212's rule), so
+    `p[1]` over `origin_of(s)` is rejected.
   - Probe: `var s = String("hello"); var bytes = s.as_bytes(); f(bytes.
     unsafe_ptr(), 5)`, with `f` reading the pointer, traps with "use after
     Pointer deallocation", where the pin reads `h`. The bundled
     `_debug_assert_fail_format` passes the `String`'s own pointer instead
     (`stdlib/std/builtin/debug_assert.mojo`'s header note).
   - Found while landing R190 (2026-10-19).
-  - Depends on R177.
+  - Depends on R177, R2212.
   - Model: Fable, Not Planned.
 
 - [ ] **R178 Mojito's `for` yields the iterable's `Element` where the pin

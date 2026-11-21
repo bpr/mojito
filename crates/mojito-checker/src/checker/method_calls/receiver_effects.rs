@@ -620,6 +620,10 @@ impl Checker {
             mojito_types::origin::SigMutability::Mutable => {
                 mojito_types::origin::Mutability::Mutable
             }
+            // An origin whose `mut=` is decided read-only (`ImmOrigin(o)`, the
+            // static origin) makes the reference read-only, as upstream's
+            // `ref[o]` takes `o`'s mutability, whatever the receiver is.
+            _ if decided_read_only(&origin) => mojito_types::origin::Mutability::Immutable,
             _ if (self_reference.mutability == mojito_types::origin::Mutability::Mutable
                 && origin_may_name_receiver(&signature.origin, resolved))
                 || solved_return.is_some_and(|reference| {
@@ -662,6 +666,15 @@ impl Checker {
                 .insert(span.clone());
         }
         Ok(Some(reference))
+    }
+}
+
+/// Whether `origin`, through its projections, is decided read-only
+/// ([`mojito_types::origin::Origin::static_mutability`]).
+fn decided_read_only(origin: &mojito_types::origin::Origin) -> bool {
+    match origin {
+        mojito_types::origin::Origin::Projected(base, _) => decided_read_only(base),
+        origin => origin.static_mutability() == Some(false),
     }
 }
 

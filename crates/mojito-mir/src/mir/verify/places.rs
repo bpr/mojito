@@ -371,9 +371,14 @@ pub(super) fn verify_place(
         current = Some(projected.clone());
     }
     // A discharged rebind step leaves the place typed as the rebind named
-    // it, which agrees with its storage's type.
+    // it, which agrees with its storage's type as LLVM translation sees
+    // both (`View[True, o]` and `View[False, o]` are one layout).
     if let (Some(current), Some(terminal)) = (&current, &place.ty)
         && !super::types_agree(terminal, current)
+        && !super::types_agree(
+            &declarations.translated_type(terminal),
+            &declarations.translated_type(current),
+        )
     {
         errors.push(format!(
             "{prefix} place terminal type {terminal} does not match projected type {current}"

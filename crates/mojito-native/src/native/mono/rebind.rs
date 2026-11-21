@@ -110,7 +110,7 @@ fn judge_blocks(
             judge_blocks(region, reg_types, shared, agree, aliases)?;
         }
         for place in instruction_places_mut(&mut instruction) {
-            discharge_place(place)?;
+            discharge_place(place, agree)?;
         }
         if let MirInstr::Rebind { dest, value } = instruction {
             if let (Some(input), Some(result)) = (reg_types.get(&value.0), reg_types.get(&dest.0))
@@ -171,15 +171,16 @@ fn collect_constants(
 }
 
 /// Erase a place's rebind steps, judging each against the type it applies
-/// to: the storage's own type must agree with the one the rebind names.
-fn discharge_place(place: &mut MirPlace) -> Result<(), Mismatch> {
+/// to: the storage's own type must agree with the one the rebind names, as
+/// LLVM translation sees both.
+fn discharge_place(place: &mut MirPlace, agree: &dyn Fn(&Ty, &Ty) -> bool) -> Result<(), Mismatch> {
     if !place.proj.iter().any(|step| matches!(step, Proj::Rebind)) {
         return Ok(());
     }
     let mut applied = place_base_ty(place);
     for (step, ty) in place.proj.iter().zip(&place.projection_tys) {
         if let (Proj::Rebind, Some(input)) = (step, applied)
-            && !types_agree(input, ty)
+            && !agree(input, ty)
         {
             return Err(Box::new((input.clone(), ty.clone())));
         }

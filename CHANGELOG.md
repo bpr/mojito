@@ -1288,6 +1288,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Eight `assets/ok` fixtures lost in batch 3 run again on both backends
+  (R2464). An explicit origin slot reads an owner's interior storage
+  (`self.items.unsafe_ptr()`) and a `Pointer(to=r)` over a `ref r`
+  binding as the origins upstream gives them, so pointer-built `Span`s
+  and `ShelfIter[T, origin_of(self)](Pointer(to=source))` check.
+  `String.unsafe_ptr()` returns its interior byte pointer again, so
+  `b[1]` over it is no longer refused as a single-value pointer (R1155,
+  R2212). A `ref[...] self` clause no longer lends a temporary receiver's
+  slot mutably, so a view derived from `String("abc").as_bytes()`
+  coexists with it. `rebind` judges an origin's closed `mut=` argument
+  as the layout does, for a rebound place too. A method's `ref` result
+  over an `ImmOrigin(...)` origin is read-only, so writing through it is
+  rejected and reading it verifies.
+
 - `Pointer.unsafe_mut_cast[m]()` and `Pointer`'s initializers run with
   the pre-elaboration pipeline off (`MOJITO_PRE_ELABORATION=0`), where
   every program that formatted a value failed with "unsupported

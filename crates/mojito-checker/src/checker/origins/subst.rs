@@ -914,6 +914,21 @@ pub(in crate::checker) fn origin_is_within(
     }
 }
 
+/// Whether an argument's `actual` origin converts to the `allowed` origin an
+/// explicit origin argument fixes ([`origin_is_declared`]). Two staged
+/// projections read as the origin upstream gives them: an owner's interior
+/// generation is its owner's origin, as upstream names a container's owned
+/// storage by the container's origin, and the conservative subtree a pointer
+/// minted from a `ref` binding takes is the binding's own origin, as
+/// upstream's `Pointer(to=r)` is `origin_of(r)`.
+pub(in crate::checker) fn origin_converts_to(
+    actual: &mojito_types::origin::Origin,
+    allowed: &mojito_types::origin::Origin,
+) -> bool {
+    origin_is_declared(actual, allowed)
+        || origin_is_declared(&actual.without_subtree().interior_owner(), allowed)
+}
+
 /// Whether a returned reference's origin is one its declaration names: every
 /// member of `actual` must be a member of `declared` itself, not storage
 /// within one. A field is a different origin from its owner, and an element

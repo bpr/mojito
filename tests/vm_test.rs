@@ -1515,7 +1515,7 @@ fn span_pointer_construction_binds_and_loans_the_pointer_origin() {
     let err =
         run_compiled(mutation).expect_err("source mutation under a pointer-built span rejects");
     assert!(
-        err.contains("conflicts with live reference 'v'"),
+        err.contains("invalidated interior reference"),
         "unexpected error: {err}"
     );
     let mismatch = "def main():\n    var s = String(\"hello\")\n    var t = String(\"world\")\n    var v = Span[Byte, origin_of(t)](unsafe_ptr=s.unsafe_ptr(), length=5)\n    print(len(v))\n";

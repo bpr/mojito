@@ -75,7 +75,8 @@ impl SuppliedOrigins<'_> {
     /// Whether `actual` converts to the supplied `allowed`, each read with
     /// `origin_of(self)` at the receiver's place: every member of `actual`
     /// must be a member of `allowed` itself, as upstream converts an argument
-    /// to its parameter's type, so a field's origin is not its owner's.
+    /// to its parameter's type, so a field's origin is not its owner's,
+    /// while an owner's interior storage is ([`origin_converts_to`]).
     fn admits(&self, actual: &Origin, allowed: &Origin) -> bool {
         let here = |origin: &Origin| {
             self.receiver.map_or_else(
@@ -83,7 +84,7 @@ impl SuppliedOrigins<'_> {
                 |receiver| super::rebase_self_origin(origin, receiver),
             )
         };
-        origin_is_declared(&here(actual), &here(allowed))
+        origin_converts_to(&here(actual), &here(allowed))
     }
 }
 

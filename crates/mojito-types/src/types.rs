@@ -5636,12 +5636,20 @@ pub fn map_struct_arguments(ty: &Ty, map: &impl Fn(&str, Vec<TyArg>) -> Vec<TyAr
 /// `arguments`, an instance of a struct declaring `decls`, with every
 /// origin's `mut=` argument deferred: the instance as its layout sees it,
 /// which no `mut=` value changes.
+///
+/// The instance is spelled over every binder or, elaborated, over its
+/// [`ParamDecl::instance_binders`].
 pub fn defer_mutability_arguments(decls: &[ParamDecl], arguments: Vec<TyArg>) -> Vec<TyArg> {
-    if arguments.len() != decls.len() {
+    let binders: Vec<&ParamDecl> = if arguments.len() == decls.len() {
+        decls.iter().collect()
+    } else {
+        ParamDecl::instance_binders(decls).collect()
+    };
+    if arguments.len() != binders.len() {
         return arguments;
     }
-    decls
-        .iter()
+    binders
+        .into_iter()
         .zip(arguments)
         .map(|(decl, argument)| {
             if decl.is_origin_mutability_binder(decls) {

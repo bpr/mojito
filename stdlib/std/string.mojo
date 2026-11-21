@@ -1024,22 +1024,23 @@ struct String(
         return StringSpan(self).ascii_center(width, fillchar)
 
     # Byte access: a borrowed `Span[Byte]` over the buffer and the raw
-    # pointer at the string's origin (current Mojo's `as_bytes`/`unsafe_ptr`).
+    # pointer into the string's owned bytes (current Mojo's `as_bytes`/
+    # `unsafe_ptr`, whose `Pointer[Byte, origin_of(self)]` R1155 stages).
     @__unsafe_nested_origins_read_only
     def as_bytes(ref self) -> Span[Byte, origin_of(self)]:
         return Span[Byte, origin_of(self)](unsafe_ptr=self.unsafe_ptr(), length=self.size)
 
     @inline(.nodebug)
-    def unsafe_ptr(ref self) -> Pointer[Byte, origin_of(self)]:
-        return self.data.unsafe_origin_cast[origin_of(self)]()
+    def unsafe_ptr(ref self) -> Pointer[Byte, origin_of(self)._get_owned_interior["bytes"]]:
+        return self.data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
 
     # Upstream's mutable byte pointer: reserves `capacity` bytes first (0 is
     # no growth) so the caller may write through the returned pointer.
     def unsafe_ptr_mut(
         mut self, capacity: Int = 0
-    ) -> Pointer[Byte, origin_of(self)]:
+    ) -> Pointer[Byte, origin_of(self)._get_owned_interior["bytes"]]:
         self.reserve_bytes(capacity)
-        return self.data.unsafe_origin_cast[origin_of(self)]()
+        return self.data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
 
     @inline(.nodebug)
     def capacity_bytes(self) -> Int:
