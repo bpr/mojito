@@ -3794,7 +3794,11 @@ place path (or the `subtree` flag on a symbolic `Param`/`SelfPlace` pointer
 origin, appended to the solved place after the interior tags). It
 deliberately forgets which descendant of its base the pointer designates,
 which drives every rule downstream. It is single-element (`multi_element()`
-is false, offsets reject), the deref-place substitution refuses it
+is false), so on a place it is one place (`PointerOrigin::single_place`,
+the one predicate the offset and arithmetic rules, MIR's deref lowering,
+and the VM's index projection share) and offsets reject; a symbolic
+`Param` origin is never one place, since a call may bind it to heap
+storage. The deref-place substitution refuses it
 (`Node::forms_place_address` never records a subtree construction's
 address — the runtime handle carries the true projection, so the checked
 origin must never re-derive one), and for overlap the terminal

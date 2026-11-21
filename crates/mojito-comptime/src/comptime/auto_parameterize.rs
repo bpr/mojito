@@ -257,6 +257,12 @@ impl<'a> Declared<'a> {
             return None;
         }
         let slots = Slots::of(declared, args)?;
+        // `Pointer` is the one struct whose `_` origin the checker would
+        // otherwise read as a distinct unsafe-any provenance rather than an
+        // unbound slot, so its origin binds per call as upstream's does.
+        // Every other struct's origin, and a pointer alias's, still reaches
+        // the checker as `_` (R1156).
+        let binds_origin = alias.is_none() && name == mojito_types::types::POINTER_TYPE_NAME;
         let declared_binders = binders.len();
         let mut arguments: HashMap<String, ParamArg> = HashMap::new();
         let mut positional = Vec::new();
@@ -273,7 +279,25 @@ impl<'a> Declared<'a> {
                     if parameter.infer_only {
                         continue;
                     }
-                    identifier("_", span)
+                    if binds_origin {
+                        // An origin whose mutability names an infer-only
+                        // sibling the application leaves unbound
+                        // (`Origin[mut=mut]`) takes its own `Bool` binder
+                        // first, as upstream's `[mut_p: Bool, origin_p:
+                        // Origin[mut=mut_p], //]`.
+                        if let Some(sibling) = mutability_sibling(parameter, declared)
+                            && !arguments.contains_key(&sibling.name)
+                        {
+                            let binder = auto_binder_name(&sibling.name, owner);
+                            binders.push(binder_for(sibling, &binder, &arguments, span));
+                            arguments.insert(sibling.name.clone(), identifier(&binder, span));
+                        }
+                        let binder = auto_binder_name(&parameter.name, owner);
+                        binders.push(binder_for(parameter, &binder, &arguments, span));
+                        identifier(&binder, span)
+                    } else {
+                        identifier("_", span)
+                    }
                 }
                 // A type pack's binder is a pack its argument spreads.
                 Slot::Unbound if let Some(pack) = parameter.name.strip_prefix('*') => {
@@ -300,8 +324,7 @@ impl<'a> Declared<'a> {
                 positional.push(argument);
             }
         }
-        // An origin is erased from a type's identity, so a type that leaves
-        // only origins unbound already takes any.
+        // A type that leaves only `_` origins unbound already takes any.
         if binders.len() == declared_binders {
             return None;
         }
@@ -443,6 +466,24 @@ fn fill_holes(alias_args: &[ParamArg], args: &[ParamArg]) -> Option<Vec<ParamArg
     applied.next().is_none().then_some(filled)
 }
 
+/// The infer-only sibling of `declared` that origin parameter `parameter`'s
+/// mutability names (`mut` of `origin: Origin[mut=mut]`).
+fn mutability_sibling<'p>(
+    parameter: &TypeParam,
+    declared: &'p [TypeParam],
+) -> Option<&'p TypeParam> {
+    let Some(Expr {
+        kind: ExprKind::Identifier(name),
+        ..
+    }) = &parameter.origin_mutability
+    else {
+        return None;
+    };
+    declared
+        .iter()
+        .find(|sibling| sibling.infer_only && &sibling.name == name)
+}
+
 fn hole(argument: &ParamArg) -> Option<Unbound> {
     mojito_ast::call::unbound_marker(argument)
 }
@@ -467,6 +508,11 @@ fn binder_for(
     };
     let value_type = parameter.value_type.as_ref().map(&mut read);
     let callable_bound = parameter.callable_bound.as_ref().map(&mut read);
+    let origin_mutability = parameter.origin_mutability.as_ref().map(|mutability| {
+        let mut mutability = mutability.clone();
+        mojito_ast::visit::walk_expr_mut(&mut substitute, &mut mutability);
+        mutability
+    });
     let bounds = parameter
         .bounds
         .iter()
@@ -483,7 +529,7 @@ fn binder_for(
         bounds,
         value_type,
         callable_bound,
-        origin_mutability: None,
+        origin_mutability,
         infer_only: true,
         keyword_only: false,
         default: None,

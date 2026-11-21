@@ -135,6 +135,7 @@ impl VmBackend {
     ) -> Result<(), RuntimeError> {
         enum Target {
             Pointer(u64, i64, Reg),
+            Place(u64, usize, Vec<RefProjection>, Reg),
             Ordinary,
         }
         let place = &*place.storage();
@@ -167,6 +168,14 @@ impl VmBackend {
                 Value::Pointer { allocation, offset } => {
                     Target::Pointer(*allocation, *offset, *index)
                 }
+                // A pointer whose origin binder a call bound to one place
+                // (`Pointer(to=v)` held in a `Pointer[T, Self.o]` field)
+                // selects that place at offset 0.
+                Value::PlacePointer {
+                    frame,
+                    slot,
+                    projection,
+                } => Target::Place(*frame, *slot, projection.clone(), *index),
                 _ => Target::Ordinary,
             }
         } else {
@@ -178,6 +187,24 @@ impl VmBackend {
                 let (region, slot) = self.heap_index(allocation, base, offset)?;
                 self.heap_store(region, slot, value);
                 Ok(())
+            }
+            Target::Place(frame, slot, projection, index) => {
+                let index = value_as_index(&regs[index.0 as usize])? as usize;
+                let (frame, slot, projection) = references::place_pointer_target(
+                    frame,
+                    slot,
+                    &projection,
+                    &RefProjection::Index(index),
+                )
+                .ok_or_else(|| {
+                    RuntimeError::TypeError("vm: an index does not select a place".to_string())
+                })??;
+                let reference = Value::Ref {
+                    frame,
+                    slot,
+                    projection,
+                };
+                self.write_reference(&reference, frame_id, vars, value)
             }
             Target::Ordinary => store_place(vars, regs, place, value),
         }

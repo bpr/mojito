@@ -242,7 +242,7 @@ impl Checker {
         let origin_bearing = |ty: &Ty| {
             ty.kind()
                 .pointer_origin()
-                .is_some_and(|origin| origin.as_origin().is_some())
+                .is_some_and(|origin| origin.single_place())
         };
         if matches!(op, Add | Sub | Eq | Ne)
             && (origin_bearing(&lt) || origin_bearing(&rt))

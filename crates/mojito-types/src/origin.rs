@@ -1001,15 +1001,22 @@ impl PointerOrigin {
         }
     }
 
+    /// Whether this provenance statically designates one checked place: a
+    /// place, or the receiver's `origin_of(self)`, not projected into a
+    /// multi-element domain. Such a pointer is a frame/slot handle, so
+    /// indexing it is the offset-0 dereference and address arithmetic over
+    /// it is rejected (R2212). A callable's own origin binder is not one: a
+    /// call may bind it to heap storage, as a static, untracked, or
+    /// unsafe-any provenance may be.
+    pub fn single_place(&self) -> bool {
+        matches!(self, Self::Place { .. } | Self::SelfPlace { .. }) && !self.multi_element()
+    }
+
     /// Whether this tracked provenance designates a multi-element domain,
-    /// making non-zero offset dereferences legal: a place or origin
-    /// parameter projected into an interior-generation segment
-    /// (collection-owned element storage). The projection also fixes the
-    /// runtime representation — a multi-element pointer is allocation
-    /// arithmetic over heap storage, never a single-place frame/slot handle
-    /// — so it must be statically visible on the type, and the VM's arena
-    /// bounds check remains the dynamic backstop. Untracked/static
-    /// provenances never reach the offset rule.
+    /// making non-zero offset dereferences legal: a place, origin binder, or
+    /// receiver origin projected into an interior-generation segment
+    /// (collection-owned element storage). Untracked/static provenances
+    /// never reach the offset rule.
     pub fn multi_element(&self) -> bool {
         match self {
             Self::Place { place, .. } => {

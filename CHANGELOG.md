@@ -1198,6 +1198,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A bare `Pointer` or `Pointer[T, _]` parameter's origin is an infer-only
+  binder, with its `mut`, that each call binds to its argument's own
+  origin, as upstream's automatic parameterization declares it (R2419):
+  `same(p, p)` over two `Pointer[Int, _]` parameters is rejected as
+  aliasing, `p.mut` over `Pointer(to=x)` reads `True`, and `-> Pointer[
+  other.T, ImmOrigin(other.origin), …]` over a bare `other: Pointer` runs,
+  where the origin read as an immutable unsafe-any one. A pointer over an
+  origin binder now offsets, indexes, and compares, since a call may bind
+  it to heap storage; a `MutOrigin` binder rejects a caller's binder whose
+  mutability is a parameter, as at the pin; and a conformer's method
+  declaring its own origin binder satisfies a requirement declaring one,
+  unless its struct has origin parameters (R2397). An alias's `_`
+  (`MutPointer[T, _]`) is still unsafe-any (R2441).
+
 - `Pointer.unsafe_mut_cast[m]()` now returns the pointer at the cast's
   mutability, as upstream's `Pointer[mut=m, T, origin.unsafe_mut_cast[m]()]`
   does (R2431): `"a".ptr().unsafe_mut_cast[True]()` passed to a

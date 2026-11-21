@@ -563,9 +563,9 @@ impl Checker {
             ExprKind::Member { object, field }
                 if let Some(origin) = self.struct_origin_argument(object, field) =>
             {
-                // A pointer parameter's `_` origin (a bare `p: Pointer`'s
-                // included) reads as the unsafe-any origin, where upstream
-                // binds the argument's own origin per call.
+                // A pointer alias's `_` origin (`MutPointer[T, _]`) reads as
+                // the unsafe-any origin, where upstream binds the argument's
+                // own origin per call.
                 if matches!(origin, Origin::UnsafeAny { .. })
                     && self.member_subject(object).is_some_and(|subject| {
                         matches!(
@@ -576,8 +576,8 @@ impl Checker {
                 {
                     return Err(TypeError::Unsupported(format!(
                         "reading the origin of a pointer whose origin is inferred or \
-                         unsafe-any ('{field}' of a 'Pointer[T, _]' parameter) is not \
-                         supported (R2419)"
+                         unsafe-any ('{field}' of a pointer alias's '_' parameter) is not \
+                         supported (R2441)"
                     )));
                 }
                 Ok(origin)

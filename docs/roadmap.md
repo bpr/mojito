@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2441**.
+Next free ID: **R2444**.
 
 ## Ordered Work
 
@@ -2474,13 +2474,19 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - `check_argument_origin_exclusivity` records carried places from the
     declared and bound parameter types, and an unbound `_` slot carries
     none; the argument's own type carries the origin.
+  - Cause: `auto_parameterize` (`Declared::bind`) declares upstream's
+    per-call origin binder for `Pointer`'s unbound origin only (R2419's
+    gate on `POINTER_TYPE_NAME`); every other struct's origin slot reaches
+    the checker as `_`. The fix removes the gate.
+  - Removing it makes `AHasher._update_with_bytes` over `Span[Byte, _]`
+    fail to satisfy `Hasher` until R2397 lands.
   - Probe: `conformance/probes/unbound_origin_arguments_alias.mojo`.
   - Probe: `conformance/probes/list_slices_compared_alias.mojo`,
     `xs[0:2] != xs[1:3]` through `Span.__ne__(self, rhs: Span[Self.T, _])`.
   - Probe: `b.any(Span(xs))` over a method `any(self, rhs: Span[Int, _])`
     of a struct holding `Span(xs)`.
   - Found while landing R190 (2026-10-19).
-  - Depends on nothing.
+  - Depends on R2397.
   - Model: Opus, Not Planned.
 
 - [ ] **R2332 A read receiver aliasing a `mut` argument of the same call
@@ -4730,20 +4736,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2397 A conformer's method never satisfies a trait requirement
-  that declares its own origin binder**
+- [ ] **R2397 A method of a struct with origin parameters never satisfies
+  a trait requirement that declares its own origin binder**
 
-  `struct A(T)` spelling `def read[o: ImmOrigin](self, p: Pointer[Int,
-  o]) -> Int` for the same requirement of `trait T` is rejected ("method
-  'read' does not match the signature required by trait 'T'"), where the
-  pin prints `7` for `A(4).read(Pointer(to=y))` and `6` through a generic
-  `def g[X: T](x: X)`.
-  - `method_satisfies_requirement_under` (`checker/traits.rs`) compares
-    the witness's signature with the requirement's, whose origin binders
-    are distinct declarations, so an origin naming one never compares
-    equal; upstream compares the two signatures up to their own binders.
-  - Probe: the `ref[o] p: Int` form of the same requirement fails the
-    same way.
+  `struct B[so: ImmOrigin](T)` spelling `def read[o: ImmOrigin](self, p:
+  Pointer[Int, o]) -> Int` for the same requirement of `trait T` is
+  rejected ("method 'read' does not match the signature required by trait
+  'T'"), where the pin prints the sum for `b.read(Pointer(to=y))` and
+  through a generic `def g[X: T](x: X)`.
+  - `canonical_method_shape` (`checker/traits_support.rs`) compares origin
+    binders through the types naming them, by `OriginParamId`, and a
+    conformer's method numbers its own origin binders past its struct's
+    origin parameters while the requirement numbers from zero; upstream
+    compares the two signatures up to their own binders.
+  - The same requirement over a struct without origin parameters, in the
+    `Pointer[Int, o]`, `ref[o] p: Int`, and `Pointer[Int, _]` spellings,
+    already matches.
   - Probe: a `ref [o]` contract names its binder by declared id
     (`SigOrigin::Bound(Origin::Param(o))`), which a conformer's method
     numbers past its struct's origin parameters while the requirement
@@ -7689,6 +7697,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `checker/operators.rs`); the pin prints `True`.
   - `check_pointer_offset` (`checker/indexing.rs`) applies the same rule
     to a non-zero `p[i]`.
+  - The rule reaches only a pointer whose origin is one known place
+    (`PointerOrigin::single_place`); an origin binder's pointer, which a
+    call may bind to heap storage, already offsets and compares.
   - R2207 retires the rule with the checker's address members.
   - Found while planning R1681 (2026-11-14).
   - Ledger name: `pointer-origin-bearing-arithmetic`.
@@ -9727,38 +9738,63 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on R2371.
   - Model: Opus, Not Planned.
 
-- [ ] **R2419 A pointer parameter's `_` origin is an unsafe-any origin,
-  where upstream infers it per call**
+- [ ] **R2441 A pointer alias's `_` origin is an unsafe-any origin, where
+  upstream binds the alias's origin parameter per call**
 
-  `def same(p: Pointer[Int, _], q: Pointer[Int, _])` called as
-  `same(p, p)` over `p = Pointer(to=x)` runs, where the pin rejects it
-  ("aliasing values passed mutably to 'p' argument and passed mutably to
-  'q' argument").
-  - `pointer_type` reads a parameter's `_` as `PointerOrigin::UnsafeAny`,
-    which names no storage, so argument exclusivity sees no shared place.
-  - Upstream auto-parameterizes the `_` into an infer-only origin binder
-    (and its `mut`), so each call binds the argument's own origin.
-  - `bind_alias_origin_placeholders` reads an alias's `_` the same way
-    (`MutPointer[Int, _]`, `OpaquePointer[_]`), so the fix covers both.
+  `def same(p: MutPointer[Int, _], q: MutPointer[Int, _])` called as
+  `same(p, p)` over `p = Pointer(to=x)` runs and prints `2`, where the pin
+  rejects it ("aliasing values passed mutably to 'p' argument and passed
+  mutably to 'q' argument").
+  - Cause: `auto_parameterize` (`Declared::bind`) declares an origin binder
+    for a direct `Pointer` spelling only; an alias's hole reaches the
+    checker as `_`, which `bind_alias_origin_placeholders`
+    (`checker/type_resolution.rs`) reads as `PointerOrigin::UnsafeAny` at
+    the alias parameter's mutability.
+  - `InstalledInterfaces::alias_application` respells the alias's binders
+    as bare `_` holes, losing each hole's declared type (`origin:
+    MutOrigin`), and an alias whose body applies another alias
+    (`MutOpaquePointer` → `OpaquePointer` → `Pointer`) is not followed.
+  - A program's own parametric alias (`comptime MP[T: AnyType, o:
+    MutOrigin] = Pointer[T, o]`) spelled `MP[Int, _]` is not parameterized
+    at all.
+  - Fix: carry each hole's alias parameter through `alias_application`,
+    follow alias chains, and bind the hole at that parameter's spelling
+    (`MutOrigin` as `Origin[mut=True]`), then retire the parameter-position
+    arm of `bind_alias_origin_placeholders`.
   - Probe: `same(o, o)` over `def same(p: OpaquePointer[_], q:
-    MutOpaquePointer[_])`, likewise.
-  - Probe: `def g(p: Pointer) -> Bool: return p.mut` returns `False` for
-    `g(Pointer(to=x))`, where the pin returns `True`: the bare `Pointer`'s
-    auto-parameterized `_` origin reads as an immutable unsafe-any one.
-  - Probe: a local `var p: Pointer[Int, _] = Pointer(to=x); p[] = 7`
-    (or `Pointer[Int, origin=_]`) is "not concrete outside parameter
-    position", where the pin infers the origin from the initializer and
-    prints `7`.
-  - Probe: `def f(other: Pointer) -> Pointer[other.T,
-    ImmOrigin(other.origin), address_space=other.address_space]` is
-    rejected ("reading the origin of a pointer whose origin is inferred or
-    unsafe-any … (R2419)"), where the pin prints `5`, so the bundled
-    implicit mut-to-imm `__init__(other: Pointer, out self:
-    Pointer[other.T, ImmOrigin(other.origin), …])` cannot be declared.
-    Without the `ImmOrigin` it is rejected the same way.
-  - Found while landing R2205 (2026-11-20).
+    MutOpaquePointer[_])` and `o = Pointer(to=x).unsafe_bitcast[NoneType]()`
+    runs; the pin rejects it likewise.
+  - Probe: `def g(p: MutPointer[Int, _]) -> Pointer[Int,
+    ImmOrigin(p.origin)]` is rejected ("reading the origin of a pointer
+    whose origin is inferred or unsafe-any", `resolve_origin_param_arg`,
+    `checker/origins/binders.rs`); the pin runs it.
+  - Probe: the same rejection meets an explicit `p: Pointer[Int,
+    MutAnyOrigin]`, whose origin the pin reads as `MutAnyOrigin`: the
+    any-origin and the alias hole share `PointerOrigin::UnsafeAny`, so the
+    rejection goes once the holes are binders.
+  - Probe: `assets/type_error/pointer_placeholder_mutable_forward.mojo`
+    reports "expected Pointer[Int, MutUnsafeAnyOrigin]", where the pin names
+    `MutPointer[Int, q.origin]`.
+  - Found while landing R2419 (2026-11-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2442 A local `Pointer[T, _]` annotation is rejected, where
+  upstream takes the initializer's origin**
+
+  `var p: Pointer[Int, _] = Pointer(to=x); p[] = 7` is rejected ("not
+  concrete outside parameter position"), where the pin prints `7`.
+  - Cause: `Checker::pointer_bracket_origin`
+    (`checker/type_resolution.rs`) reads a `Pointer`'s `_` origin outside
+    parameter position as an error, where a local annotation's hole is
+    solved from its initializer, as `var s: Span[Int, _] = Span(x)` already
+    is through an unbound struct slot.
+  - Probe: `var p: Pointer[Int, origin=_] = Pointer(to=x)` likewise.
+  - A return annotation's `_` stays "not concrete", as at the pin
+    (`assets/type_error/pointer_placeholder_return.mojo`).
+  - Found while landing R2419 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2416 `UnsafePointer` resolves, where the pin has no such name**
 
@@ -9837,7 +9873,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   binder by `TypeParam::is_erased_origin_param` (`bounds == ["Origin"]`),
   where upstream's `addImplicitTypeParams` runs on the resolved type.
   - It skips a bare `Origin` binder and passes `_` for a struct's
-    `Origin`-spelled slot, while an alias-typed one (`[o: O]` over
+    `Origin`-spelled slot (every struct's but `Pointer`'s, R1156), while an alias-typed one (`[o: O]` over
     `comptime O = Origin`) gains upstream's implicit `mut` and
     `_mlir_origin` binders, so the two spellings differ before the check.
   - `mojito-symbol`'s `func_annotation_raw` and
@@ -10718,6 +10754,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Lever: declare the hole as an infer-only `AddressSpace` binder of the
     enclosing function, so the elaborator instantiates it per space.
   - Found while landing R2204 (2026-11-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2443 `Pointer` declares no implicit mut-to-imm `__init__`**
+
+  `std/memory/pointer.mojo` does not declare upstream's `@implicit
+  __init__(other: Pointer, out self: Pointer[other.T,
+  ImmOrigin(other.origin), address_space=other.address_space])`; the
+  compiler's builtin mut-to-imm pointer coercion stands in for it.
+  - Its signature now checks: a bare `Pointer` parameter's origin is a
+    per-call binder, so `def f(other: Pointer) -> Pointer[other.T,
+    ImmOrigin(other.origin), address_space=other.address_space]` prints
+    `5` over `Pointer(to=x)`, as at the pin.
+  - Declaring it adds an implicit conversion to every `Pointer` overload
+    set beside the builtin coercion, so the builtin must retire with it.
+  - Probe: `def r(p: ImmPointer[Int, _]) -> Int` called with a mutable
+    `Pointer(to=x)` resolves through the declared `__init__` at the pin.
+  - Found while landing R2419 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

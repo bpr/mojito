@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1281
+# swept-count	1283
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/function_bracket_explicit_mut_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
@@ -71,6 +71,8 @@ assets/type_error/parametric_function_returned.mojo	compile-reject	agree	error: 
 assets/type_error/parametric_function_value_assignment.mojo	compile-reject	agree	error: cannot implicitly convert 'def h[b: Int = Int(3)](y: Int) thin -> Int' value to 'def(y: Int) thin -> Int' in assignment
 assets/type_error/parametric_function_value_binding.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
 assets/type_error/parametric_nested_function_value_binding.mojo	compile-reject	agree	error: cannot use parametric function as a runtime closure
+assets/type_error/pointer_placeholder_arguments_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'p' argument and passed mutably to 'q' argument in 'same' call
+assets/type_error/pointer_symbolic_origin_to_mut_binder.mojo	compile-reject	agree	error: invalid call to 'w': value passed to 'p' cannot be converted from 'Pointer[Int, o]' to 'Pointer[Int, o]'
 assets/type_error/result_initializer_origin_mut_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/result_initializer_parameter_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/struct_comptime_mlir_origin_not_int.mojo	compile-reject	agree	error: cannot implicitly convert 'LITImmOrigin' value to 'Int'

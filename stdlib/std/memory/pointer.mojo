@@ -9,9 +9,8 @@
 # Members omitted, by blocker:
 # - `__merge_with__`: a `Pointer` cannot hold the union
 #   `origin_of(Self.origin, other_type.origin)` (R2429).
-# - the implicit mut-to-imm `__init__(other: Pointer, …)`: a bare `Pointer`
-#   parameter's origin is unsafe-any, so `ImmOrigin(other.origin)` is
-#   rejected (R2419).
+# - the implicit mut-to-imm `__init__(other: Pointer, …)`: the compiler's
+#   builtin mut-to-imm coercion must retire with it (R2443).
 # - `as_unsafe_any_origin`: `UnsafeAnyOrigin[mut=Self.mut]` keeps no
 #   symbolic `mut` (R2384).
 # - `write_repr_to`: `Named("mut", Self.mut)` binds a compile-time value to

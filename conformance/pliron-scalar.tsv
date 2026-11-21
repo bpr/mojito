@@ -1110,6 +1110,7 @@ assets/ok/pointer_origin_cast_upgrade_reads.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/pointer_origin_constructors.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_origin_field_inference.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_place_address.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_placeholder_origin_inferred_per_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_ref_place_address_space.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_slot_is_its_pointer.mojo	-	ineligible	no-scalar-entry-shape
@@ -1639,6 +1640,7 @@ assets/ok/trait_requirement_default_from_caller_parameter.mojo	-	ineligible	no-s
 assets/ok/trait_requirement_docstring.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_indexes_own_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_origin_binder_in_type.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_requirement_own_origin_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_parameter_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_requirement_variadic_collector.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_signature_reads_struct_value_member.mojo	-	ineligible	no-scalar-entry-shape

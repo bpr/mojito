@@ -307,6 +307,10 @@ pointer-placeholder-parameter	run	assets/ok/pointer_placeholder_parameter.mojo
 pointer-placeholder-immutable-write	reject	assets/type_error/pointer_placeholder_immutable_write.mojo
 pointer-placeholder-mutable-forward	reject	assets/type_error/pointer_placeholder_mutable_forward.mojo
 pointer-placeholder-return	reject	assets/type_error/pointer_placeholder_return.mojo
+pointer-placeholder-origin-inferred-per-call	run	assets/ok/pointer_placeholder_origin_inferred_per_call.mojo
+pointer-placeholder-arguments-alias	reject	assets/type_error/pointer_placeholder_arguments_alias.mojo
+pointer-symbolic-origin-to-mut-binder	reject	assets/type_error/pointer_symbolic_origin_to_mut_binder.mojo
+trait-requirement-own-origin-binder	run	assets/ok/trait_requirement_own_origin_binder.mojo
 comptime-hash	run	assets/ok/comptime_hash.mojo
 comptime-collections	run	assets/ok/comptime_collections.mojo
 comptime-dict-raising-subscript	reject	assets/type_error/comptime_dict_raising_subscript.mojo

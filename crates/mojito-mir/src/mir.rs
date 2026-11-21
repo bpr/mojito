@@ -3234,7 +3234,7 @@ fn constant_param_value(adjustments: &[mojito_checked::checked::SemanticAdjustme
 /// single checked place.
 fn origin_bearing_pointer(ty: Option<&Ty>) -> bool {
     ty.and_then(|ty| ty.kind().pointer_origin())
-        .is_some_and(|origin| origin.as_origin().is_some() && !origin.multi_element())
+        .is_some_and(|origin| origin.single_place())
 }
 
 /// The application the check lifted an expression as, among the

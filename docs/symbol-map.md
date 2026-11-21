@@ -662,8 +662,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `check_struct_application`, a type expression's completeness rule for
   an omitted or `_` origin binder; `resolve_explicit_use_params` then reads
   them back — never its parameter syntax; `resolve_storage_annotation_with_origins` reports the
-  explicit origins a local's annotation demands), and resolves the bare
-  `Pointer[T, _]` parameter placeholder as the immutable alias. A pointer's
+  explicit origins a local's annotation demands), and resolves a
+  `Pointer[T, _]` placeholder that auto-parameterization leaves in place
+  (one nested in another struct's bound argument, R1817) as the immutable
+  unsafe-any origin (`pointer_bracket_origin`). A pointer's
   origin argument (`pointer_origin_arg`) resolves as any struct's does,
   through `resolve_origin_param_arg` (`origins/binders.rs`: origin
   parameters, `origin_of(place)` with `origin_of(self)` the receiver's one
@@ -678,7 +680,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   library (`std/memory/pointer.mojo`, `std.string`).
   `resolve_comptime_alias` binds an alias's origin arguments into its
   template through `bind_struct_origins` (pointer provenances included)
-  and a `_` one through `bind_alias_origin_placeholders`, and pairs the
+  and a `_` one through `bind_alias_origin_placeholders` (an unsafe-any
+  origin at the alias parameter's mutability, R2441), and pairs the
   bracket's arguments with the declared list by `ParamDecl::aligned_pairs`,
   since the solved arguments omit origin binders. `declared_associated_type`
   substitutes a struct's associated type at the instance
@@ -846,7 +849,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `_subtree`), read by `explicit_origin_argument` and, through the
   `PointerOrigin::{parts, from_parts}` view of a pointer's origin as its
   `Origin` plus `mut` argument, by `append_interior_tag`/`append_subtree`
-  and `bind_pointer_origins`,
+  and `bind_pointer_origins`; `PointerOrigin::single_place` is the one
+  representation predicate for a pointer to one known place, which the
+  checker's offset and arithmetic rules (`check_pointer_offset`,
+  `infer_pointer_method`, `infer_infix`), MIR's `origin_bearing_pointer`,
+  and the VM's `single_pointee_pointer` share,
   `lower_ref_sig_resolved`; `origins/sig.rs`'s `check_result_origins` is the
   one rule for which parameter or receiver a result may name the origin
   of, called once per struct method, trait requirement, and `def`
@@ -2259,9 +2266,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   method, a trait requirement, and a struct-typed compile-time parameter
   of a `def`, a struct, a `comptime` alias, or a struct's or a trait's
   parameterized `comptime` member. A binder spelled `Origin`
-  (`TypeParam::is_erased_origin_param`) is skipped, and a struct's
-  `Origin`-spelled slot passed as `_`: the binder is origin metadata the
-  check infers from places. An alias-typed origin binder is not
+  (`TypeParam::is_erased_origin_param`) is skipped. A direct `Pointer`
+  spelling's unbound origin gains upstream's infer-only `$origin_<arg>:
+  Origin[mut=$mut_<arg>]` binder, its `mut` binder first when the
+  application leaves `mut` unbound (`mutability_sibling`, `binder_for`
+  reading the declared `origin_mutability`); every other struct's
+  `Origin`-spelled slot, and a pointer alias's, is passed as `_` (R1156,
+  R2441). An alias-typed origin binder is not
   recognized before the check, so it gains upstream's implicit binders
   (R2396).
   The check solves an infer-only value binder from a later bracket

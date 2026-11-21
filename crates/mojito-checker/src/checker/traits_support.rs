@@ -291,16 +291,21 @@ pub(super) fn method_func_ty(
 /// identity is its declaration's and its spelling is not part of the shape.
 fn canonical_method_shape(method: &MethodSig) -> MethodSig {
     let method = &with_existential_binders(method);
-    if method.decls().is_empty() {
-        return method.clone();
+    let decls = method.decls();
+    if decls.is_empty() {
+        // Origin binders compare through the types naming them, by slot, as
+        // they do beside argument binders below: each declaration's own
+        // binder ids name its owner.
+        let mut shape = method.clone();
+        shape.declared = decls.into_owned();
+        return shape;
     }
     let mut types = method.params.clone();
     types.push(method.ret.clone());
     types.extend(method.variadic.clone());
     types.extend(method.kw_variadic.clone());
     types.extend(method.error.clone());
-    let (decls, mut types) =
-        mojito_types::types::canonical_generic_signature(&method.decls(), &types);
+    let (decls, mut types) = mojito_types::types::canonical_generic_signature(&decls, &types);
     let mut shape = method.clone();
     shape.declared = decls;
     shape.error = method

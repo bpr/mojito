@@ -907,13 +907,13 @@ impl Checker {
             }
             let parameter = names.get(*index).map_or("?", String::as_str);
             if mutability == Mutability::Mutable
-                && actual_origin.statically_mutable() == Some(false)
+                && let Some(found) = not_statically_mutable(&actual_origin)
             {
                 return Err(TypeError::TypeMismatch {
                     expected: format!(
                         "a mutable-origin pointer for parameter '{parameter}' of '{callee}'"
                     ),
-                    found: "an immutable-origin pointer".to_string(),
+                    found,
                     context: format!("argument '{parameter}' to '{callee}'"),
                 });
             }
@@ -1067,13 +1067,13 @@ impl Checker {
                         ..
                     }
                 );
-                if requires_mut && actual_origin.statically_mutable() == Some(false) {
+                if requires_mut && let Some(found) = not_statically_mutable(&actual_origin) {
                     return Err(TypeError::TypeMismatch {
                         expected: format!(
                             "a mutable-origin pointer for parameter '{}' of '{struct_name}'",
                             slot.name()
                         ),
-                        found: "an immutable-origin pointer".to_string(),
+                        found,
                         context: context(),
                     });
                 }
@@ -1336,5 +1336,20 @@ fn conflicting_binding(struct_name: &str, slot: &str) -> TypeError {
     TypeError::BadCall {
         func: struct_name.to_string(),
         reason: format!("arguments bind conflicting origins for parameter '{slot}'"),
+    }
+}
+
+/// Why a pointer of provenance `origin` does not pass a `MutOrigin` binder,
+/// `None` when it does: an immutable origin, or a callable's own origin
+/// binder whose mutability is itself a parameter, which upstream converts to
+/// `MutOrigin` no more than an immutable one. The receiver's symbolic
+/// `origin_of(self)` still passes (R1215).
+fn not_statically_mutable(origin: &PointerOrigin) -> Option<String> {
+    match origin.statically_mutable() {
+        Some(false) => Some("an immutable-origin pointer".to_string()),
+        None if matches!(origin, PointerOrigin::Param { .. }) => {
+            Some("a pointer whose origin's mutability is a parameter".to_string())
+        }
+        _ => None,
     }
 }

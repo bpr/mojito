@@ -1,8 +1,7 @@
 # A bare placeholder-origin pointer parameter (`Pointer[T, _]`) binds any
-# provenance and holds no loan: upstream infers the origin (and so the
-# pointer's `mut`) per call, so the body reads through it but cannot prove
-# the capability a write needs — Mojito reads the bare spelling as the
-# immutable alias. A bare parameter forwards to another bare one.
+# provenance: its origin (and so the pointer's `mut`) is an infer-only binder
+# each call binds, so the body reads through it but cannot prove the
+# capability a write needs. A bare parameter forwards to another bare one.
 def first(bytes: Pointer[UInt8, _], n: Int) -> Int:
     return n
 

@@ -1542,15 +1542,16 @@ impl Checker {
     /// An origin-bearing pointer to a precise place designates exactly one
     /// checked value, so only offset 0 can be dereferenced; any other offset
     /// would be out-of-provenance access that Mojo leaves undefined. A
-    /// multi-element provenance — an interior-generation domain or an origin
-    /// parameter — dereferences at any offset, with the VM's arena bounds
-    /// check as the dynamic backstop.
+    /// provenance that is no single place ([`mojito_types::origin::PointerOrigin::single_place`]) —
+    /// an interior-generation domain or a callable's own origin binder —
+    /// dereferences at any offset, with the VM's arena bounds check as the
+    /// dynamic backstop.
     pub(super) fn check_pointer_offset(
         &self,
         origin: &mojito_types::origin::PointerOrigin,
         index: &Expr,
     ) -> Result<(), TypeError> {
-        if origin.as_origin().is_none() || origin.multi_element() {
+        if !origin.single_place() {
             return Ok(());
         }
         match self.eval_ct(index) {

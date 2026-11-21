@@ -1111,6 +1111,7 @@ assets/ok/pointer_origin_cast_upgrade_reads.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_constructors.mojo	main	exe-differential	sanitized
 assets/ok/pointer_origin_field_inference.mojo	main	exe-differential	sanitized
 assets/ok/pointer_place_address.mojo	main	exe-differential	sanitized
+assets/ok/pointer_placeholder_origin_inferred_per_call.mojo	main	exe-differential	sanitized
 assets/ok/pointer_placeholder_parameter.mojo	main	exe-differential	sanitized
 assets/ok/pointer_ref_place_address_space.mojo	main	exe-differential	sanitized
 assets/ok/pointer_slot_is_its_pointer.mojo	main	exe-differential	sanitized
@@ -1640,6 +1641,7 @@ assets/ok/trait_requirement_default_from_caller_parameter.mojo	main	exe-differen
 assets/ok/trait_requirement_docstring.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_indexes_own_pack.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_origin_binder_in_type.mojo	main	exe-differential	sanitized
+assets/ok/trait_requirement_own_origin_binder.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_parameter_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_variadic_collector.mojo	main	exe-differential	sanitized
 assets/ok/trait_signature_reads_struct_value_member.mojo	main	exe-differential	sanitized

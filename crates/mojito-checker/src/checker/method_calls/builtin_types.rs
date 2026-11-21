@@ -99,7 +99,7 @@ impl Checker {
                 Ok(Ty::int())
             }
             "unsafe_offset" => {
-                if origin.as_origin().is_some() && !origin.multi_element() {
+                if origin.single_place() {
                     return Err(TypeError::Unsupported(
                         "pointer arithmetic and comparison are not supported on an \
                          origin-bearing Pointer to a single place"

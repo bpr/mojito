@@ -6807,13 +6807,17 @@ fn empty_subscript_dereferences_a_pointer() {
 }
 
 #[test]
-fn bare_placeholder_pointer_parameter_reads_as_the_immutable_alias() {
-    // Upstream infers a bare `Pointer[T, _]` parameter's origin (and so its
-    // `mut`) per call, so its body reads through it but cannot prove the
-    // capability a write or a mutable-demanding forward needs; outside
-    // parameter position the placeholder is not concrete.
+fn bare_placeholder_pointer_parameter_infers_its_origin_per_call() {
+    // A bare `Pointer[T, _]` parameter's origin (and so its `mut`) is an
+    // infer-only binder each call binds, so its body reads through it and
+    // reads its parameters but cannot prove the capability a write or a
+    // mutable-demanding forward needs; outside parameter position the
+    // placeholder is not concrete.
     ok(
         "def peek(p: Pointer[Int, _]) -> Int:\n    return p[unsafe_offset=0]\n\ndef via(p: Pointer[Int, _]) -> Int:\n    return peek(p)\n\ndef main():\n    var x = 4\n    print(via(Pointer(to=x)))\n",
+    );
+    ok(
+        "def g(p: Pointer) -> Bool:\n    return p.mut\n\ndef main():\n    var x = 4\n    print(g(Pointer(to=x)))\n",
     );
     assert!(matches!(
         err(
