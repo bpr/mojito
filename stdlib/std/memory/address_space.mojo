@@ -2,8 +2,8 @@
 # departures. Its `EnumLike` conformance is spelled through the bundled
 # `SumType` members (`_sum_case_names`, `_get_sum_discriminant`), as
 # `FastMathFlag`'s is; `_enum_case_types` and `_unsafe_get_enum_payload` are
-# omitted. `__getattr_param__` and its `std._plugin` import are omitted
-# (R2408), so an unknown `AddressSpace.NAME` reports a missing attribute.
+# omitted. `StaticString` imports from `std.string`, as the bundled modules
+# on the `std.sys.info` import cycle spell it.
 """Implements `AddressSpace`, the memory address space of a pointer.
 
 You can import this API from the `memory` package. For example:
@@ -15,6 +15,8 @@ from std.memory import AddressSpace
 
 from std.builtin.enum_like import EnumLike
 from std.builtin.variadics import ParameterList
+from std._plugin import CurrentPlugin
+from std.string import StaticString
 
 
 struct AddressSpace(
@@ -90,6 +92,33 @@ struct AddressSpace(
                 return 6
             case _:
                 return -1
+
+    @inline(.nodebug)
+    @staticmethod
+    def __getattr_param__[name: StaticString]() -> AddressSpace:
+        """Resolves a target-specific named address space.
+
+        The address spaces above (`GENERIC`, `GLOBAL`, `SHARED`, ...) are the
+        built-in GPU set. Accessing any *other* name as `AddressSpace.<NAME>`
+        routes here, which consults the active `PluginHooks` backend. This
+        keeps the set of valid names open and target-extensible — for example
+        an accelerator backend can provide scratchpad-style spaces that do not
+        exist on GPUs — instead of a fixed portable enum.
+
+        Parameters:
+            name: The address-space name being accessed.
+
+        Returns:
+            The `AddressSpace` the active backend defines for `name`.
+
+        Constraints:
+            `name` must be defined by the active `PluginHooks` backend;
+            otherwise this is a compile-time error.
+        """
+        comptime if case .Some(space) = CurrentPlugin.address_space_fn[name]:
+            return space
+        else:
+            comptime assert False, "unknown address space: '" + name + "'"
 
     @always_inline("builtin")
     def __init__(out self, value: SIMDLength):

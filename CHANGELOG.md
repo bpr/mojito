@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A member name the receiver does not declare is upstream's spelled call
+  `receiver.__getattr_param__["name"]()` when its struct declares the hook
+  (R2408), over struct values and types, chained and leading-dot members,
+  and bounded type parameters, in run-time, `comptime`, parameter-argument,
+  and signature-default positions. The bundled `AddressSpace` declares
+  upstream's `__getattr_param__` and `PluginHooks` its `address_space_fn`
+  hook, so `AddressSpace.FOO` and `.FOO` fail with the pin's "unknown
+  address space: 'FOO'", and assigning to such a name reports "expression
+  must be mutable in assignment".
+
 - `comptime if case pattern = value:` runs as at the pin (R1248), where it
   was a parse error reported at the next statement. Each pattern branch is
   built as upstream checks it, a `comptime match` over the value with the

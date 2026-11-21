@@ -2425,6 +2425,13 @@ impl Checker {
                     .instance_field_without_instance(field)
                     .unwrap_or_else(|| TypeError::UnknownSelfParam(field.clone())))
             }
+            // A name no member declares is upstream's attribute fallback,
+            // the receiver's `__getattr_param__` call.
+            ExprKind::Member { object, field }
+                if let Some(spelled) = self.getattr_param_spelling(expr, object, field) =>
+            {
+                build(&spelled)
+            }
             // A field of a struct-typed parameter value (`Self.e.rows`), or
             // a struct parameter of one (`target._mlir_value`).
             ExprKind::Member { object, field }
@@ -3602,11 +3609,7 @@ impl Checker {
     fn undeclared_struct_member(&self, object: &Expr, field: &str) -> Option<TypeError> {
         let subject = self.member_subject(object)?;
         let (name, _) = self.nominal_struct(&subject)?;
-        let info = self.structs.get(name)?;
-        let declared = info.associated.contains_key(field)
-            || info.parameterized_associated.contains_key(field)
-            || info.methods.contains_key(field);
-        (!declared).then(|| TypeError::NoTypeAttribute {
+        (!self.structs.get(name)?.declares_member(field)).then(|| TypeError::NoTypeAttribute {
             type_name: subject.to_string(),
             attribute: field.to_string(),
         })

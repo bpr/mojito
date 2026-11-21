@@ -3368,6 +3368,19 @@ struct StructInfo {
 }
 
 impl StructInfo {
+    /// Whether the struct declares a member `name`: a field, a parameter,
+    /// a compile-time member, or a method. Only an undeclared name reaches
+    /// upstream's attribute fallback (`__getattr_param__`).
+    fn declares_member(&self, name: &str) -> bool {
+        self.declared_field_names.iter().any(|field| field == name)
+            || self.fields.iter().any(|(field, _)| field == name)
+            || self.params.iter().any(|decl| decl.name() == name)
+            || self.associated.contains_key(name)
+            || self.associated_value_types.contains_key(name)
+            || self.parameterized_associated.contains_key(name)
+            || self.methods.contains_key(name)
+    }
+
     /// The parameters an instance binds by position, in declared order
     /// ([`ParamDecl::argument_binders`]): an instance carries its origins
     /// as a tail after them instead.

@@ -650,6 +650,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   struct's callable-value parameter (`is_struct_callable_parameter`) is
   spelled as the call of the value `Self.f`
   (`infer_struct_callable_parameter_call`).
+- `checker/indexing.rs` `getattr_param_spelling` owns upstream's attribute
+  fallback: a member name the receiver's struct does not declare
+  (`StructInfo::declares_member`, which `undeclared_struct_member` shares),
+  or a type parameter's bounds do not require, is spelled
+  `object.__getattr_param__["name"]()` when the struct or a bound declares
+  the hook. `infer`'s `Member` arm records it as a `SpelledConstruction`
+  once `infer_member` fails, `build_ct` builds it in parameter expressions,
+  and `check_place_impl` rejects it as an assignment target.
 - `checker/type_resolution.rs` resolves source annotations into checked `Ty`
   (builtin type-argument forms, dependent/associated projection, and generic
   comptime alias expansion via `resolve_comptime_alias`), binds a struct

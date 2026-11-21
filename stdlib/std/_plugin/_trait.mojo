@@ -2,7 +2,8 @@
 # `DefaultPlugin`, `DefaultPluginHooks`, and `PluginHooks` with the hooks
 # whose types are bundled (`unary_math_fn`, `binary_math_fn`,
 # `supports_float64`, `flushes_subnormals`, `lowers_subvector_intrinsics`,
-# `has_generic_address_space`, and `_handles_debug_assert`), verbatim.
+# `has_generic_address_space`, `address_space_fn`, and
+# `_handles_debug_assert`), verbatim.
 # `StaticString` imports from `std.string`, as the bundled modules on the
 # `std.sys.info` import cycle spell it.
 # Omitted, with the imports only they use:
@@ -10,8 +11,6 @@
 #   `std.utils.coord.Coord` is not bundled (roadmap
 #   R1702);
 # - `default_atomic_ordering`: `std.atomic` is not bundled;
-# - `address_space_fn`: only `AddressSpace.__getattr_param__` reads it,
-#   which the bundled `AddressSpace` omits (roadmap R2408);
 # - `stack_allocation_fn` and `unsafe_dangling_fn`: their hook types are
 #   not bundled;
 # - `print_emit_fn`: `std.io`'s `_PrintEmitPluginHookFnType` is not
@@ -148,6 +147,27 @@ trait PluginHooks:
     rebuilt from an integer address does not reach threadgroup memory. Where
     this is `False`, the stdlib keeps the typed pointer instead of
     round-tripping it through an integer.
+    """
+
+    comptime address_space_fn[name: StaticString]: OptionalReg[
+        AddressSpace
+    ] = None
+    """Target-specific named address-space lookup.
+
+    Resolves an address-space *name* that has no built-in constant on
+    `AddressSpace` (the GPU spaces `GENERIC`/`GLOBAL`/`SHARED`/...) to its
+    target-specific value — for example an accelerator-specific scratchpad
+    space. `AddressSpace.<NAME>` consults this hook for any such name; leaving it
+    `None` (the default) makes the name a compile-time error. This keeps the
+    set of valid address-space names open and target-extensible rather than a
+    fixed portable enum.
+
+    Parameters:
+        name: The address-space name being looked up.
+
+    Returns:
+        The backend's `AddressSpace` for `name`, or `None` if the backend does
+        not define it.
     """
 
     # ===------------------------------------------------------------------=== #

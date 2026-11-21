@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2454**.
+Next free ID: **R2457**.
 
 ## Ordered Work
 
@@ -3897,6 +3897,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `StaticTuple` omit upstream's `DevicePassable` conformance, a trait
     with `@staticmethod` requirements; `StaticTuple` also omits
     `_to_device_type` and the static `get_type_name`.
+  - Probe: a trait requiring `@staticmethod def __getattr_param__[name:
+    StaticString]() -> Int`, read as `T.ab` over `T: HasStatic`, runs
+    through the hook at the pin.
   - Found while landing R914 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5056,6 +5059,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     implicitly convert 'None' value to 'Int'" at the pin).
   - Found while landing R2097 (2026-11-10).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2455 A conditional expression mixing a value and `None` does not
+  convert to its expected `OptionalReg`**
+
+  A trait's `comptime f[name: StaticString]: OptionalReg[AddressSpace] =
+  AddressSpace(9) if name == "SCRATCH" else None` is rejected with "value
+  of type 'AddressSpace' is not compatible with value of type 'None'",
+  where the pin accepts it and `D.f["SCRATCH"]` holds `AddressSpace(9)`.
+  - The conditional's arms are unified with each other before the
+    expected type is consulted; the pin converts each arm to the expected
+    `OptionalReg[AddressSpace]`.
+  - This is the shape an upstream plugin's `address_space_fn` override
+    takes.
+  - Probe: the member above over a struct `D` conforming to the trait,
+    read with `comptime if case .Some(v) = D.f["SCRATCH"]: print(v)`.
+  - Found while landing R2408 (2026-11-21).
+  - Depends on R2454.
   - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
@@ -7598,6 +7619,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2454 A compile-time `OptionalReg` over a struct payload does not
+  fold**
+
+  `comptime o2 = OptionalReg[AddressSpace](AddressSpace(9))` then
+  `comptime if case .Some(v) = o2: print(v)` fails with "unsupported
+  parameter expression 'load_from_mem' expects a compile-time reference,
+  found AddressSpace", where the pin prints `AddressSpace(9)`.
+  - The case binding reads the payload through `OptionalReg`'s storage,
+    which the parameter domain holds as the struct value, not as a
+    reference to it.
+  - This is the path of a plugin that sets `PluginHooks.address_space_fn`,
+    which `AddressSpace.__getattr_param__` reads; `CurrentPlugin` is
+    always `DefaultPlugin` today (R1694), so no target takes it yet.
+  - Probe: the program above.
+  - Probe: `comptime o: OptionalReg[P] = P(9)` then `print(o.value())`
+    over a register-passable struct `P` fails with "unsupported
+    monomorphizing `OptionalReg.value`: expected `OptionalReg[T]`, found
+    `P`", where the pin prints `9`: the implicit conversion is not
+    applied to the folded member.
+  - Found while landing R2408 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -9933,6 +9977,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2456 An instance method named through its type reports a
+  missing attribute**
+
+  `S.m[1]()` over an instance method `def m[n: Int](self) -> Int` reports
+  "'S' value has no attribute 'm'", where the pin reports "invalid call to
+  'm': missing required argument: 'self'".
+  - The type-receiver member path only looks up static methods, so an
+    instance method's name is reported missing before the call binds.
+  - Probe: the program above.
+  - Probe: `S.k` over an instance `__getattr_param__[name: StaticString]
+    (self)` hook is spelled `S.__getattr_param__["k"]()` and reports
+    "'S' value has no attribute '__getattr_param__'", where the pin
+    reports the missing `self` argument.
+  - Found while landing R2408 (2026-11-21).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -10768,21 +10829,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R2407 (2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R2408 `__getattr_param__` is not supported**
-
-  `AddressSpace.FOO` fails with "'AddressSpace' value has no attribute
-  'FOO'", where the pin resolves the name through
-  `AddressSpace.__getattr_param__` and reports "unknown address space:
-  'FOO'".
-  - The bundled `AddressSpace` omits `__getattr_param__` and its
-    `std._plugin` import.
-  - Upstream's body asks the plugin's `address_space_fn[name]` hook with
-    `comptime if case .Some(space) = ...`, so it also needs R1248 and the
-    hook, which `stdlib/std/_plugin/_trait.mojo` omits.
-  - Found while landing R2204 (2026-11-20).
-  - Depends on R1248.
-  - Model: Fable, Not Planned.
 
 - [ ] **R2410 An inferred `address_space=_` in a parameter type is
   rejected**

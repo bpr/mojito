@@ -1358,7 +1358,16 @@ impl Checker {
                 let projected = self.projected_object.replace(Some(object.source_span()));
                 let member = self.infer_member(expr.source_span(), object, field);
                 *self.projected_object.borrow_mut() = projected;
-                let ty = member?;
+                // A name no member declares is upstream's attribute
+                // fallback, the receiver's `__getattr_param__` call.
+                let ty = match member {
+                    Err(_)
+                        if let Some(spelled) = self.getattr_param_spelling(expr, object, field) =>
+                    {
+                        return self.infer_spelled(expr, spelled);
+                    }
+                    member => member?,
+                };
                 self.reject_field_crossing(expr, &ty)?;
                 Ok(ty)
             }

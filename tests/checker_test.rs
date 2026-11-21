@@ -601,6 +601,41 @@ fn synthesized_copy_converts_its_argument_to_self() {
     );
 }
 
+/// The member names `source`'s checked program reads, its spelled
+/// `__getattr_param__` callees among them.
+fn checked_member_fields(source: &str) -> Vec<String> {
+    let checked = checked_with_std(source).expect("check");
+    own_expressions(&checked)
+        .filter_map(|expression| match &expression.op {
+            mojito::checked::CheckedOp::Member { field, .. } => Some(field.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn undeclared_member_spells_getattr_param_call() {
+    let source = "struct S:\n    var x: Int\n    comptime k = 4\n    def __init__(out self):\n        self.x = 1\n    def __getattr_param__[name: StaticString](self) -> Int:\n        return 5\n\ndef main():\n    var s = S()\n    print(s.x, s.y, S.k)\n";
+    let fields = checked_member_fields(source);
+    assert_eq!(
+        fields
+            .iter()
+            .filter(|field| *field == "__getattr_param__")
+            .count(),
+        1,
+        "{fields:?}"
+    );
+    assert!(!fields.iter().any(|field| field == "y"), "{fields:?}");
+}
+
+#[test]
+fn member_without_getattr_param_hook_is_missing() {
+    let e = err_std(
+        "struct S:\n    var x: Int\n    def __init__(out self):\n        self.x = 1\n\ndef main():\n    var s = S()\n    print(s.y)\n",
+    );
+    assert!(matches!(e, TypeError::NoSuchField { .. }), "got {e:?}");
+}
+
 #[test]
 fn rejects_struct_without_constructor() {
     let e = err("struct P:\n    var x: Int\n\nvar p: P = P(1)\n");

@@ -529,6 +529,7 @@ assets/ok/generic_struct_slot_instances.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_string_field_copy.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_template_reach.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_tuple_field.mojo	main	exe-differential	sanitized
+assets/ok/getattr_param_member.mojo	main	exe-differential	sanitized
 assets/ok/hash_traits_library.mojo	main	exe-differential	sanitized
 assets/ok/hashable_bucketing.mojo	main	exe-differential	sanitized
 assets/ok/hashable_extra_hash_overload.mojo	main	exe-differential	sanitized

@@ -175,7 +175,17 @@ impl Checker {
                 // pointer, keeping the place's origin.
                 self.check_place(object)?;
                 // Reuse the field-typing logic (validates the field exists).
+                // A name only `__getattr_param__` answers is a call's
+                // value, never a place.
                 self.infer_member(place.source_span(), object, field)
+                    .map_err(
+                        |error| match self.getattr_param_spelling(place, object, field) {
+                            Some(_) => TypeError::InvalidAssignTarget(
+                                "expression must be mutable in assignment".to_string(),
+                            ),
+                            None => error,
+                        },
+                    )
             }
             // A type-keyed projection target (`v[Int] = x`, `v[Int] += x`,
             // `v[List[Int]][0] = x`): the accessor call's mutable reference
@@ -2013,6 +2023,72 @@ impl Checker {
         Err(TypeError::NoSuchField {
             object_type: obj_ty.to_string(),
             field: field.to_string(),
+        })
+    }
+
+    /// The call `object.__getattr_param__["field"]()` that `object.field`
+    /// stands for, as upstream's attribute lookup falls back to it: `None`
+    /// unless the receiver — a struct value or type, or a type parameter or
+    /// a value of one — declares no member `field` and has the hook. The
+    /// spelled call keeps its own errors (a hook taking no `name`
+    /// parameter, an instance hook named through its type).
+    pub(super) fn getattr_param_spelling(
+        &self,
+        expression: &Expr,
+        object: &Expr,
+        field: &str,
+    ) -> Option<Expr> {
+        const HOOK: &str = "__getattr_param__";
+        if field == HOOK {
+            return None;
+        }
+        let subject = self
+            .member_subject(object)
+            .or_else(|| self.probe(|| self.infer(object)).ok())?;
+        let subject = match subject.kind() {
+            TyKind::AnyStruct(inner) => inner.clone(),
+            TyKind::Ref(reference) => reference.referent.clone(),
+            _ => subject,
+        };
+        let hooked = if let TyKind::Param { bounds, .. } = subject.kind() {
+            let declared = bounds.iter().any(|bound| {
+                self.traits.get(bound).is_some_and(|info| {
+                    info.methods.contains_key(field) || info.comptime_members.contains_key(field)
+                })
+            });
+            !declared && !self.lookup_trait_methods(&bounds[..], HOOK, 0).is_empty()
+        } else {
+            let (name, _) = self.nominal_struct(&subject)?;
+            let info = self.structs.get(name)?;
+            !info.declares_member(field) && info.methods.contains_key(HOOK)
+        };
+        hooked.then(|| {
+            let callee = super::initializer_list::spelled_node(
+                expression,
+                1,
+                ExprKind::Member {
+                    object: Box::new(object.clone()),
+                    field: HOOK.to_string(),
+                },
+                expression.span,
+            );
+            let name = super::initializer_list::spelled_node(
+                expression,
+                2,
+                ExprKind::Str(field.to_string()),
+                expression.span,
+            );
+            super::initializer_list::spelled_node(
+                expression,
+                0,
+                ExprKind::Invoke {
+                    callee: Box::new(callee),
+                    param_args: vec![mojito_ast::ast::ParamArg::Value(name)],
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                },
+                expression.span,
+            )
         })
     }
 
