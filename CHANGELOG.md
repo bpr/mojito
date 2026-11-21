@@ -1288,6 +1288,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Pointer.unsafe_mut_cast[m]()` and `Pointer`'s initializers run with
+  the pre-elaboration pipeline off (`MOJITO_PRE_ELABORATION=0`), where
+  every program that formatted a value failed with "unsupported
+  monomorphizing `Pointer.unsafe_mut_cast` return" or a VM arity error
+  (R2463). The elaborator binds the cast's nominal
+  `Pointer[target_mut, T, o.unsafe_mut_cast[target_mut]()]` result against
+  the folded pointer and keeps a closed `Pointer` application's name so
+  it folds to a pointer rather than an instance struct, and the VM enters
+  a `Pointer` initializer's `out self` as its unwritten address.
+
 - The concrete MIR verifier now rejects a `UseVar` move of a reference
   slot into a register typed as anything but a reference to the slot's
   referent (R2404). A move transfers the handle, so a register typed as

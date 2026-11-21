@@ -1181,7 +1181,8 @@ impl Prog {
     /// What the `__init__` `name`, whose parameters are `param_types`,
     /// constructs: its `out self` receiver's struct, or the unwritten
     /// storage a receiver the VM holds as a value rather than a declared
-    /// struct (a `SIMD`) enters as. `None` for any other function.
+    /// struct (a `SIMD`, a `Pointer`) enters as. `None` for any other
+    /// function.
     fn constructed<'s>(&'s self, name: &'s str, param_types: &'s [Ty]) -> Option<Constructed<'s>> {
         let receiver = param_types.first();
         let declared = receiver
@@ -1197,8 +1198,13 @@ impl Prog {
                 .sigs
                 .get(name)
                 .is_some_and(|signature| signature.has_receiver);
+        // A pointer receiver enters as the unwritten `_mlir_value` address
+        // the VM holds it as.
         initializes
-            .then(|| VmBackend::uninitialized_value(self, receiver))
+            .then(|| match receiver.kind() {
+                mojito_types::types::TyKind::Pointer { .. } => Some(Value::None),
+                _ => VmBackend::uninitialized_value(self, receiver),
+            })
             .flatten()
             .map(Constructed::Value)
     }

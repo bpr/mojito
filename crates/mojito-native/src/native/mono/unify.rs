@@ -1176,10 +1176,13 @@ fn unify_struct(
                     None => Err(format!("expected `{pattern}`, found `{actual}`")),
                 }
             }
-            struct_ty
-                if let Some((an, aa)) = struct_ty.as_non_simd_struct()
-                    && nominal_template(pn) == nominal_template(an)
-                    && pa.len() == aa.len() =>
+            // A folded pointer is upstream's `Pointer[mut, T, origin,
+            // address_space]` application, so a pattern that stays nominal
+            // (its `mut` a symbolic cast's) binds through those parts.
+            kind if !kind.is_simd()
+                && let Some((an, aa)) = mojito_types::types::nominal_parts(actual)
+                && nominal_template(pn) == nominal_template(an)
+                && pa.len() == aa.len() =>
             {
                 pa.iter()
                     .zip(aa.iter())

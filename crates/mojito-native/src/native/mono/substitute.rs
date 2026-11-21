@@ -358,9 +358,11 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             // declarations. Checker-specialized structs (empty `param_decls`)
             // and already-renamed instances keep their names; symbolic
             // applications stay for a later substitution or a contextual
-            // rejection.
+            // rejection. A `Pointer` application keeps its name, so it
+            // folds to the compiler's pointer type.
             let concrete_name = if args.iter().any(arg_has_symbolic)
                 || name == mojito_types::types::SIMD_TYPE_NAME
+                || name == mojito_types::types::POINTER_TYPE_NAME
                 || nominal_template(name) != name
                 || !bindings.structs.is_generic(name)
             {

@@ -4745,6 +4745,27 @@ fn post_elaboration_folds_parameter_arithmetic() {
 }
 
 #[test]
+fn pointer_initializers_and_casts_run_without_the_pipeline() {
+    // Without the pre-elaboration pipeline nothing inlines `Pointer`'s
+    // declared casts and initializers: the elaborator binds the cast's
+    // nominal `Pointer[target_mut, T, o.unsafe_mut_cast[target_mut]()]`
+    // result against the folded pointer, and the VM enters a `Pointer`
+    // initializer's `out self` as its address.
+    let output = |run: bool| {
+        let compiler = Compiler::default().with_pre_elaboration(run);
+        let program = compiler
+            .compile_source(
+                "def main():\n    var x = 3\n    var p = Pointer(to=x).unsafe_mut_cast[False]()\n    print(p[])\n",
+                std::path::Path::new("/tmp/mojito_pointer_without_pipeline.mojo"),
+            )
+            .expect("compile the cast");
+        compiler.execute(&program).expect("execute").output
+    };
+    assert_eq!(output(false), "3\n");
+    assert_eq!(output(true), "3\n");
+}
+
+#[test]
 fn compile_time_only_instances_leave_the_concrete_program() {
     let names = |compiler: Compiler| {
         let program = compiler
