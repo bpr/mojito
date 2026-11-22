@@ -3545,9 +3545,12 @@ impl<'a> Flatten<'a> {
                 arguments: Vec::new(),
                 capture_accesses: Vec::new(),
                 reference_result: extraction.reference.clone(),
+                // The index binds the accessor's one argument binder; its
+                // receiver's implicit `ref` binders infer from the place.
                 param_arg_regs: extraction
                     .param_decls
                     .iter()
+                    .filter(|decl| decl.is_argument_binder(&extraction.param_decls))
                     .map(|decl| MirParamArg {
                         name: Some(mojito_ast::call::CompileTimeParam::keyword(decl).to_string()),
                         value: Some(idx),

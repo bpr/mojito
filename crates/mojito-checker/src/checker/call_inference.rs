@@ -2023,9 +2023,9 @@ impl Checker {
             let actual = self.callable_bound_argument(name, &names[i], arg, actual, parameter)?;
             let (solve_param, solve_actual) = self.reference_solve_pair(
                 ref_params.get(i).and_then(Option::as_ref),
-                parameter,
-                &actual,
+                (parameter, &actual),
                 arg,
+                binders,
             );
             solve_params.push(solve_param);
             solve_actuals.push(solve_actual);
@@ -2232,7 +2232,7 @@ impl Checker {
         attributes.merge(folded_parameter_attributes(binders, param_args, &tyargs));
         // An overload candidate's write here is undone with its probe; the
         // selected candidate's re-run is the only one kept.
-        let solved = (&binders[..], declared, &bool_bindings);
+        let solved = (&binders[..], declared);
         self.record_generic_application(span, name, generic, (param_args, decls), &tyargs, solved)?;
         Ok((
             result,
@@ -2283,43 +2283,20 @@ impl Checker {
     /// binders of their generator, at a call whose solved arguments over
     /// the whole declared list are `declared`
     /// ([`Self::declared_call_arguments`]), as upstream evaluates a
-    /// generator's clause with every parameter bound. A `mut=` binder only
-    /// a `ref` argument decides takes the mutability the call's origin
-    /// solve bound it to (`ref_mutability`, by its
-    /// [`SigMutability::BoolParam`](mojito_types::origin::SigMutability)
-    /// slot). The argument view's own clauses were checked as the call
-    /// solved it.
+    /// generator's clause with every parameter bound. The argument view's
+    /// own clauses were checked as the call solved it.
     fn validate_mutability_clauses(
         &self,
         name: &str,
         binders: &[ParamDecl],
         declared: &[TyArg],
-        ref_mutability: &HashMap<usize, bool>,
     ) -> Result<(), TypeError> {
         if declared.len() != binders.len()
             || ParamDecl::mutability_binders(binders).all(|binder| binder.constraints().is_empty())
         {
             return Ok(());
         }
-        let arguments: Vec<TyArg> = binders
-            .iter()
-            .zip(declared)
-            .enumerate()
-            .map(|(index, (binder, argument))| match argument {
-                TyArg::Val(CtValue::Deferred(_)) if binder.is_origin_mutability_binder(binders) => {
-                    let slot = binders[..index]
-                        .iter()
-                        .filter(|earlier| !earlier.is_pack_list())
-                        .count();
-                    ref_mutability.get(&slot).map_or_else(
-                        || argument.clone(),
-                        |&mutable| TyArg::Val(CtValue::Bool(mutable)),
-                    )
-                }
-                _ => argument.clone(),
-            })
-            .collect();
-        let environment = ConstraintEnvironment::declared(binders, &arguments);
+        let environment = ConstraintEnvironment::declared(binders, declared);
         ParamDecl::mutability_binders(binders)
             .flat_map(ParamDecl::constraints)
             .try_for_each(|constraint| {
@@ -2344,12 +2321,12 @@ impl Checker {
         generic: &Ty,
         (param_args, decls): (&[mojito_ast::ast::ParamArg], &[ParamDecl]),
         tyargs: &[TyArg],
-        (binders, declared, ref_mutability): (&[ParamDecl], Vec<TyArg>, &HashMap<usize, bool>),
+        (binders, declared): (&[ParamDecl], Vec<TyArg>),
     ) -> Result<(), TypeError> {
         let Some(func) = generic.as_generic_func() else {
             return Ok(());
         };
-        self.validate_mutability_clauses(name, binders, &declared, ref_mutability)?;
+        self.validate_mutability_clauses(name, binders, &declared)?;
         if param_args.is_empty()
             && let Some(clone) = self.existing_def_clone(name, decls, tyargs)
         {
@@ -2907,31 +2884,67 @@ impl Checker {
 
     /// The `(pattern, actual)` the call's one solve reads for `argument`:
     /// a `ref` argument whose clause names an `AddressSpace` binder
-    /// (`ref[_, a] x`) solves as upstream's `!lit.ref<T, origin, a>`
-    /// against the reference it lends, binding `a` to the space its place
-    /// lives in; any other as its parameter type against its own.
+    /// (`ref[_, a] x`) or a declared origin binder (`ref[o] x`) solves as
+    /// upstream's `!lit.ref<T, o, a>` against the reference it lends,
+    /// binding `a` to the space its place lives in, `o` to its origin, and
+    /// `o`'s `mut=` binder to the capability it lends; any other as its
+    /// parameter type against its own. Only a binder of the callee's own
+    /// declared list (`decls`) binds so: an enclosing struct's is its
+    /// instance's.
     pub(super) fn reference_solve_pair(
         &self,
         signature: Option<&mojito_types::origin::RefSig>,
-        parameter: &Ty,
-        actual: &Ty,
+        (parameter, actual): (&Ty, &Ty),
         argument: &Expr,
+        decls: &[ParamDecl],
     ) -> (Ty, Ty) {
-        let Some(signature) = signature.filter(|signature| signature.address_space.is_symbolic())
+        use mojito_types::origin::{Mutability, Origin, RefTy, SigMutability, SigOrigin};
+        let binder = signature.and_then(|signature| match signature.origin {
+            SigOrigin::Bound(Origin::Param(id))
+                if super::origins::declared_origin_binders(decls).any(|own| own == id) =>
+            {
+                Some(id)
+            }
+            _ => None,
+        });
+        let lent = binder.and_then(|_| self.reference_actual(argument).ok());
+        let Some(signature) =
+            signature.filter(|signature| signature.address_space.is_symbolic() || lent.is_some())
         else {
             return (parameter.clone(), actual.clone());
         };
-        let reference = |referent: &Ty, address_space| {
-            Ty::from(TyKind::Ref(mojito_types::origin::RefTy {
+        let reference = |referent: &Ty, origin, mutability, address_space| {
+            Ty::from(TyKind::Ref(RefTy {
                 referent: referent.clone(),
-                origin: mojito_types::origin::Origin::Static,
-                mutability: mojito_types::origin::Mutability::Immutable,
+                origin,
+                mutability,
                 address_space,
             }))
         };
+        let (declared, lent) = match (binder, lent) {
+            (Some(id), Some(lent)) => (
+                (
+                    Origin::Param(id),
+                    match signature.mutability {
+                        SigMutability::BoolParam(_) => Mutability::Param(id),
+                        _ => Mutability::Immutable,
+                    },
+                ),
+                (lent.origin, lent.mutability),
+            ),
+            _ => (
+                (Origin::Static, Mutability::Immutable),
+                (Origin::Static, Mutability::Immutable),
+            ),
+        };
         (
-            reference(parameter, signature.address_space.clone()),
-            reference(actual, self.place_address_space(argument)),
+            reference(
+                parameter,
+                declared.0,
+                declared.1,
+                signature.address_space.clone(),
+            ),
+            reference(actual, lent.0, lent.1, self.place_address_space(argument)),
         )
     }
 

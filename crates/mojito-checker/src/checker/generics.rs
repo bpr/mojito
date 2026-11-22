@@ -2116,8 +2116,12 @@ impl Checker {
         if let (Some(self_ref), Some((receiver_ty, receiver))) = (&signature.self_ref, receiver)
             && self_ref.address_space.is_symbolic()
         {
-            let (pattern, actual) =
-                self.reference_solve_pair(Some(self_ref), receiver_ty, receiver_ty, receiver);
+            let (pattern, actual) = self.reference_solve_pair(
+                Some(self_ref),
+                (receiver_ty, receiver_ty),
+                receiver,
+                &signature.declared,
+            );
             pattern_names.push("self".to_string());
             patterns.push(pattern);
             actuals.push(actual);
@@ -2149,9 +2153,9 @@ impl Checker {
             )?;
             let (pattern, actual) = self.reference_solve_pair(
                 signature.ref_params.get(index).and_then(Option::as_ref),
-                &params[index],
-                &actual,
+                (&params[index], &actual),
                 expression,
+                &signature.declared,
             );
             patterns.push(pattern);
             actuals.push(actual);

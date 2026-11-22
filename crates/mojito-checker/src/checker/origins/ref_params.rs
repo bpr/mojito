@@ -44,10 +44,12 @@ impl Checker {
     }
 
     /// Record the address space the `ref` parameter `name`'s clause names
-    /// on its handle, and its inferred mutability binder (bound at `slot`,
-    /// the receiver counted) when the clause names no origin, which
-    /// upstream gives an inferred `Origin[mut=m]` binder: a reference
-    /// reached through it carries `m` ([`Checker::reference_actual`]).
+    /// on its handle, and its mutability binder: an inferred one (bound at
+    /// `slot`, the receiver counted) when the clause names no origin, which
+    /// upstream gives an inferred `Origin[mut=m]` binder, or the one origin
+    /// binder it names when that binder's `mut=` binder is in scope
+    /// (`ref[o]` over `o: Origin[mut=m]`). A reference reached through it
+    /// carries the binder ([`Checker::reference_actual`]), which reads `m`.
     pub(in crate::checker) fn register_reference_binder(
         &mut self,
         name: &str,
@@ -71,15 +73,20 @@ impl Checker {
         {
             handle.address_space = address_space;
         }
-        if clause_origins(origin, &self.enclosing_param_decls).is_some() {
-            return;
-        }
-        let (Some(owner), Ok(slot)) = (self.lookup_owner(name), u32::try_from(slot)) else {
+        let binder = match clause_origins(origin, &self.enclosing_param_decls) {
+            Some(origins) => match self.governed_clause_binder(&origins) {
+                Some(id) => id,
+                None => return,
+            },
+            None => match u32::try_from(slot) {
+                Ok(slot) => mojito_types::origin::OriginParamId::reference_binder(slot),
+                Err(_) => return,
+            },
+        };
+        let Some(owner) = self.lookup_owner(name) else {
             return;
         };
-        let binder = mojito_types::origin::Mutability::Param(
-            mojito_types::origin::OriginParamId::reference_binder(slot),
-        );
+        let binder = mojito_types::origin::Mutability::Param(binder);
         self.reference_parameter_mutabilities.insert(owner, binder);
         if let Some(handle) = self
             .binding_scope(name)
@@ -837,5 +844,19 @@ impl Checker {
                 .pointer_origin()
                 .map(|origin| origin.as_origin().into_iter().collect()),
         }
+    }
+
+    /// The one origin binder a `ref[o]` clause names, when its `mut=` binder
+    /// (`o: Origin[mut=m]`) is a value parameter in scope: the handle the
+    /// clause declares carries `m`, as upstream's `!lit.ref<T, o>` does.
+    fn governed_clause_binder(
+        &self,
+        origins: &[Expr],
+    ) -> Option<mojito_types::origin::OriginParamId> {
+        let [expression] = origins else {
+            return None;
+        };
+        let (_, id) = origin_decl(&self.enclosing_param_decls, origin_binder_name(expression)?)?;
+        self.origin_mutability_binder_read(id).map(|_| id)
     }
 }

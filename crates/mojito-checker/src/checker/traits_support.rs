@@ -347,7 +347,7 @@ fn canonical_binder_refs(method: &MethodSig) -> mojito_types::param_expr::ParamB
 /// its owner's, so a requirement and a parametric struct's witness spell
 /// one binder differently.
 fn canonicalize_ref_sigs(method: &MethodSig, shape: &mut MethodSig) {
-    use mojito_types::origin::{Origin, OriginParamId, RefSig, SigOrigin};
+    use mojito_types::origin::{Origin, OriginParamId, RefSig, SigMutability, SigOrigin};
     fn rename(origin: &SigOrigin, origins: &HashMap<OriginParamId, OriginParamId>) -> SigOrigin {
         match origin {
             SigOrigin::Bound(Origin::Param(id)) => {
@@ -379,9 +379,39 @@ fn canonicalize_ref_sigs(method: &MethodSig, shape: &mut MethodSig) {
         .collect();
     let context = ParamContext::detached();
     let values = canonical_binder_refs(method);
+    // A `mut=` binder an own origin binder declares is named by its place
+    // in the own list too: its slot counts the owner's parameters.
+    let mutability = |sig: &RefSig| {
+        let (SigOrigin::Bound(Origin::Param(id)), SigMutability::BoolParam(_)) =
+            (&sig.origin, &sig.mutability)
+        else {
+            return sig.mutability.clone();
+        };
+        method
+            .declared
+            .iter()
+            .find_map(|decl| match decl {
+                ParamDecl::Origin {
+                    origin,
+                    mutability: mojito_types::types::OriginMutability::Binder(binder),
+                    ..
+                } if origin == id => Some(binder),
+                _ => None,
+            })
+            .and_then(|binder| {
+                method
+                    .declared
+                    .iter()
+                    .position(|decl| *decl.id() == binder.id)
+            })
+            .map_or_else(
+                || sig.mutability.clone(),
+                |slot| SigMutability::BoolParam(CANONICAL_ORIGIN_BASE as usize + slot),
+            )
+    };
     let canonical = |sig: &RefSig| RefSig {
         origin: rename(&sig.origin, &origins),
-        mutability: sig.mutability.clone(),
+        mutability: mutability(sig),
         address_space: match &sig.address_space {
             mojito_types::types::AddressSpaceSlot::Expr(expr) => {
                 mojito_types::types::AddressSpaceSlot::Expr(

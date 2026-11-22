@@ -3390,9 +3390,9 @@ impl Checker {
             .map(|(position, (pattern, actual))| match slots.get(position) {
                 Some((index, expression, _)) => self.reference_solve_pair(
                     sig.ref_params.get(*index).and_then(Option::as_ref),
-                    pattern,
-                    actual,
+                    (pattern, actual),
                     expression,
+                    &sig.declared,
                 ),
                 None => (pattern.clone(), actual.clone()),
             })
@@ -3941,14 +3941,13 @@ impl Checker {
                         )
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                let (own_patterns, own_actuals) =
+                    self.reference_solve_pairs(sig, &bound_slots, &struct_bound, &arg_tys);
                 let own = self.solve_constructor_own_params(
                     name,
                     sig,
                     (&own_args, &struct_subst),
-                    (
-                        &sig.names,
-                        struct_bound.iter().cloned().zip(arg_tys.iter().cloned()),
-                    ),
+                    (&sig.names, own_patterns.into_iter().zip(own_actuals)),
                 )?;
                 self.record_construction_instantiation(
                     span,
@@ -4245,25 +4244,30 @@ impl Checker {
                     };
                     let own = match refined_own.take().map_or_else(
                         || {
+                            let own_patterns: Vec<Ty> = patterns
+                                .iter()
+                                .map(|pattern| {
+                                    self.resolve_assoc_ty(&substitute_assoc(pattern, &bindings))
+                                })
+                                .collect();
+                            let (own_patterns, own_actuals) = self.reference_solve_pairs(
+                                sig,
+                                &bound_slots,
+                                &own_patterns,
+                                &arg_tys,
+                            );
                             self.solve_constructor_own_params(
                                 name,
                                 sig,
                                 (&own_args, &bindings.types),
                                 (
                                     &bound_names,
-                                    patterns
-                                        .iter()
-                                        .zip(&arg_tys)
+                                    own_patterns
+                                        .into_iter()
+                                        .zip(own_actuals)
                                         .enumerate()
                                         .filter(|(index, _)| Some(*index) != forwarded_index)
-                                        .map(|(_, (pattern, actual))| {
-                                            (
-                                                self.resolve_assoc_ty(&substitute_assoc(
-                                                    pattern, &bindings,
-                                                )),
-                                                actual.clone(),
-                                            )
-                                        }),
+                                        .map(|(_, pair)| pair),
                                 ),
                             )
                         },

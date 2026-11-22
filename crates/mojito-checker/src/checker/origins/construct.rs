@@ -1123,7 +1123,10 @@ impl Checker {
     /// The read of the `mut=` binder the enclosing origin binder `id`
     /// declares as its mutability (`o: Origin[mut=mut]`), when that binder
     /// is a value parameter in scope.
-    fn origin_mutability_binder_read(&self, id: OriginParamId) -> Option<ParamExpr> {
+    pub(in crate::checker) fn origin_mutability_binder_read(
+        &self,
+        id: OriginParamId,
+    ) -> Option<ParamExpr> {
         self.enclosing_param_decls
             .iter()
             .find_map(|decl| match decl {
@@ -1433,6 +1436,14 @@ fn bind_callable_tail_pattern(
         (TyKind::Ref(declared), TyKind::Ref(reference)) => {
             if let Origin::Param(id) = &declared.origin {
                 bindings.bind_origin(*id, &reference.origin, conflict)?;
+                // A `ref[o]` argument over `o: Origin[mut=m]` lends `m` its
+                // capability, as upstream's `!lit.ref` binds both.
+                if declared.mutability == Mutability::Param(*id) && bindings.binders.binds(*id) {
+                    bindings
+                        .references
+                        .entry(*id)
+                        .or_insert(reference.mutability);
+                }
             }
             bind_callable_tail_pattern(&declared.referent, &reference.referent, bindings, conflict)
         }

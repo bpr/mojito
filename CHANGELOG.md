@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `ref[o]` argument binds its callee's own origin binder to the place it
+  lends, and that binder's `mut=` binder to the place's mutability, in the
+  call's one solve, as upstream's call binds every declared parameter:
+  `def g[m: Bool, //, o: Origin[mut=m]](ref[o] x: Int)` reads `m`,
+  `o.mut`, and `Pointer(to=x).mut` as `True` on a `var` and `False` from a
+  read-only caller, through a free function, a forwarding caller, a method,
+  a static method, an initializer, and an operator
+  (`assets/ok/origin_mutability_binder_ref_argument.mojo`), where it failed
+  elaboration or read `False`. A parametric struct's witness of a
+  requirement over such a binder now conforms. A loop's `__iter__`, a call
+  through a bound, a subscript, and an implicit conversion do not bind it
+  yet (R2514, R394, R2449, R2515).
+
 - `@__allow_legacy_custom_self_type` is modelled: a struct method's `self`
   may take any application of its struct (`self: Box[Int]`,
   `self: Pointer[U, _]`), argument 0 at that type, its own binders deduced
@@ -138,7 +151,7 @@ to evolve under the `0.x` compatibility rules.
   Self.mut` reads the receiver's `mut=` argument, so `Q[origin_of(y)](4).g()`
   runs and an immutable receiver violates it
   (`assets/type_error/origin_binder_where_self_mut_immutable.mojo`).
-  A `ref` parameter's slot stays deferred (R2471).
+  A bare `ref` parameter's slot stays deferred (R2516).
 
 - A leading-dot right operand of a `where` comparison is rooted at the left
   operand's struct, as the run-time operator check roots it, so `where

@@ -6021,7 +6021,13 @@ collected arguments' places before substituting actuals with
 `bind_sig_pack_origin`), so a reference reached through it (`self.n`,
 `self.entries[i]`, `pick(x)`, `self._unsafe_unchecked_value()`) carries the
 binder, not `immutable` (`reference_actual`, and an `Infer`/`BoolParam` call
-result whose contributing arguments all carry one binder). A write through it
+result whose contributing arguments all carry one binder). A declared
+`ref[o]` over the callee's own `o: Origin[mut=m]` binds in the call's one
+solve instead: `reference_solve_pair` reads the argument as the `!lit.ref`
+it lends, so `o` binds to its place and `m` to its capability, which the
+recorded arguments carry, and the body's handle carries `Mutability::Param(o)`
+(`register_reference_binder`), which `origin_mutability_binder_read` reads
+as `m`. A bare `ref` declares no such pair yet (R2516). A write through it
 is refused as through any function-own binder (`require_writable_reference`),
 and `automatic-inline`'s splice binds it to the call's mutability (R1339).
 MIR spells it the same way: the `ref.make` that lowering
