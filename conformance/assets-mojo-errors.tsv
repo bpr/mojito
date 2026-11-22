@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1318
+# swept-count	1319
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -989,6 +989,7 @@ assets/type_error/pointer_field_symbolic_in_place_immutable_source.mojo	compile-
 assets/type_error/pointer_field_symbolic_ref_result_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_from_address_literal_negative.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/pointer_from_address_literal_null.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/pointer_imm_binder_result_not_writable.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_immutable_conversion_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_kgen_pointer_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/pointer_kgen_pointer_no_origin.mojo	compile-reject	agree	error: no matching function in initialization

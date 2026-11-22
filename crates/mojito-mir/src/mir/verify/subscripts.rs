@@ -143,9 +143,7 @@ pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
                 permission: ReferencePermission::from_mutability(reference.mutability),
             });
         }
-        TyKind::LitRef {
-            element, origin, ..
-        } => (element, origin.clone()),
+        TyKind::LitRef(reference) => (&reference.referent, reference.pointer_origin()?),
         pointer => (pointer.pointer_element()?, pointer.pointer_origin()?),
     };
     let permission = match origin {

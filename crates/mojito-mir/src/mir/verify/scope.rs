@@ -471,12 +471,10 @@ impl ScopeCx<'_> {
             TyKind::KgenPointer {
                 element,
                 address_space,
-            }
-            | TyKind::LitRef {
-                element,
-                address_space,
-                ..
             } => self.address_in(role, element, address_space, nested),
+            TyKind::LitRef(reference) => {
+                self.address_in(role, &reference.referent, &reference.address_space, nested);
+            }
             TyKind::LitRefPack { elements, .. } => {
                 for element in elements {
                     self.walk_in(role, element, nested);

@@ -1116,12 +1116,10 @@ pub enum TyKind {
     /// (`Pointer[T, o]._mlir_lit_ref`), what `__get_mvalue_as_litref(place)`
     /// gives and `Pointer(_mlir_value=)` takes, displayed `ref[origin] T`.
     /// Its origin is part of its type, and it is not its referent: no read
-    /// goes through it. Both backends hold it as they hold a `Pointer`.
-    LitRef {
-        element: Ty,
-        origin: crate::origin::PointerOrigin,
-        address_space: AddressSpaceSlot,
-    },
+    /// goes through it. Both backends hold it as they hold a `Pointer`. It
+    /// stores the reference record a `ref` does: its referent, origin, and
+    /// mutability, and the address space of its storage.
+    LitRef(crate::origin::RefTy),
     /// Upstream's reference pack `!lit.ref.pack<:param_list<Trait> Ts,
     /// origin>` (`VariadicPack._mlir_type`): one `!lit.ref` to each of a
     /// type list's elements, all under one origin. Its `elements` are a
@@ -1130,7 +1128,8 @@ pub enum TyKind {
     /// addresses, the `!kgen.struct` of pointers it lowers to.
     LitRefPack {
         elements: Vec<Ty>,
-        origin: crate::origin::PointerOrigin,
+        origin: crate::origin::Origin,
+        mutability: crate::origin::Mutability,
     },
     /// A reference value. Origins and permissions are checked statically; its
     /// runtime representation is introduced only after loan checking exists.
@@ -1538,18 +1537,23 @@ impl Ty {
         .into()
     }
 
-    /// The reference `!lit.ref<element, origin, address_space>`.
-    pub fn lit_ref(
-        element: Self,
-        origin: crate::origin::PointerOrigin,
-        address_space: AddressSpaceSlot,
-    ) -> Self {
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        }
-        .into()
+    /// The reference `!lit.ref<referent, origin, address_space>`.
+    pub fn lit_ref(reference: crate::origin::RefTy) -> Self {
+        TyKind::LitRef(reference).into()
+    }
+
+    /// The `Pointer` built from the `!lit.ref` `reference`, its origin and
+    /// `mut` arguments the reference's.
+    pub fn pointer_from_lit_ref(reference: &crate::origin::RefTy) -> Self {
+        Self(Arc::new(TyNode::new(TyKind::Struct(
+            POINTER_TYPE_NAME.to_string(),
+            vec![
+                TyArg::Val(reference.mutability.mut_argument()),
+                TyArg::Ty(reference.referent.clone()),
+                TyArg::Origin(reference.origin.clone()),
+                TyArg::Val(reference.address_space.clone().into_value()),
+            ],
+        ))))
     }
 
     /// The pointee and origin of a `Pointer` ([`TyKind::as_pointer`]).
@@ -1652,10 +1656,31 @@ impl TyKind {
     /// `!lit.ref<T, origin>` a `Pointer` is built from, owned.
     pub fn pointer_or_lit_ref(&self) -> Option<(Ty, crate::origin::PointerOrigin)> {
         match self {
-            Self::LitRef {
-                element, origin, ..
-            } => Some((element.clone(), origin.clone())),
+            Self::LitRef(reference) => {
+                Some((reference.referent.clone(), reference.pointer_origin()?))
+            }
             pointer => pointer.as_pointer(),
+        }
+    }
+
+    /// The `!lit.ref` a `Pointer[mut, T, origin, address_space]` is built
+    /// from (`_mlir_lit_ref`): its `T`, `origin`, `mut`, and
+    /// `address_space`, read straight off its arguments.
+    pub fn pointer_lit_ref(&self) -> Option<crate::origin::RefTy> {
+        let arguments = pointer_arguments(self)?;
+        Some(crate::origin::RefTy {
+            referent: arguments.element.clone(),
+            origin: arguments.origin.clone(),
+            mutability: arguments.mutability,
+            address_space: AddressSpaceSlot::of_value(arguments.address_space)?,
+        })
+    }
+
+    /// The reference record of a `!lit.ref`.
+    pub const fn as_lit_ref(&self) -> Option<&crate::origin::RefTy> {
+        match self {
+            Self::LitRef(reference) => Some(reference),
+            _ => None,
         }
     }
 
@@ -1698,12 +1723,8 @@ impl TyKind {
             Self::KgenPointer {
                 element,
                 address_space,
-            }
-            | Self::LitRef {
-                element,
-                address_space,
-                ..
             } => Some((element, address_space.clone())),
+            Self::LitRef(reference) => Some((&reference.referent, reference.address_space.clone())),
             pointer => pointer
                 .pointer_parts()
                 .map(|(element, _, space)| (element, space)),
@@ -3051,19 +3072,19 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
             expand_pack_spread(element, pack, elements),
             address_space.clone(),
         ),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: expand_pack_spread(element, pack, elements),
-            origin: origin.clone(),
-            address_space: address_space.clone(),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = expand_pack_spread(&reference.referent, pack, elements);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => TyKind::LitRefPack {
             elements: expand(elements),
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::Ref(reference) => {
@@ -4964,19 +4985,19 @@ impl fmt::Display for TyKind {
                 Some(space) => write!(f, "__mlir_type.`!kgen.pointer<{element}, {space}>`"),
                 None => write!(f, "__mlir_type.`!kgen.pointer<{element}, {address_space}>`"),
             },
-            Self::LitRef {
-                element,
-                origin,
-                address_space,
-            } => {
+            Self::LitRef(reference) => {
                 write!(f, "ref[")?;
-                fmt_pointer_origin(f, origin)?;
-                if !address_space.is_generic() {
-                    write!(f, ", {address_space}")?;
+                fmt_origin_parts(f, &reference.origin, reference.mutability)?;
+                if !reference.address_space.is_generic() {
+                    write!(f, ", {}", reference.address_space)?;
                 }
-                write!(f, "] {element}")
+                write!(f, "] {}", reference.referent)
             }
-            Self::LitRefPack { elements, origin } => {
+            Self::LitRefPack {
+                elements,
+                origin,
+                mutability,
+            } => {
                 write!(f, "__mlir_type.`!lit.ref.pack<[")?;
                 for (index, element) in elements.iter().enumerate() {
                     if index > 0 {
@@ -4985,7 +5006,7 @@ impl fmt::Display for TyKind {
                     write!(f, "{element}")?;
                 }
                 write!(f, "], ")?;
-                fmt_pointer_origin(f, origin)?;
+                fmt_origin_parts(f, origin, *mutability)?;
                 write!(f, ">`")
             }
             Self::Ref(reference) => write!(f, "ref {}", reference.referent),
@@ -5185,19 +5206,19 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
             element,
             address_space,
         } => Ty::kgen_pointer(recur(element), address_space.clone()),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: recur(element),
-            origin: origin.clone(),
-            address_space: address_space.clone(),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => TyKind::LitRefPack {
             elements: elements.iter().map(recur).collect(),
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::Ref(reference) => {
@@ -5246,21 +5267,21 @@ pub fn erase_origins(ty: &Ty) -> Ty {
             element,
             address_space,
         } => Ty::kgen_pointer(recur(element), address_space.clone()),
-        TyKind::LitRef {
-            element,
-            address_space,
-            ..
-        } => TyKind::LitRef {
-            element: recur(element),
-            origin: crate::origin::PointerOrigin::Static { mutable: false },
-            address_space: address_space.clone(),
+        TyKind::LitRef(reference) => Ty::lit_ref(crate::origin::RefTy::from_pointer_origin(
+            recur(&reference.referent),
+            crate::origin::PointerOrigin::Static { mutable: false },
+            reference.address_space.clone(),
+        )),
+        TyKind::LitRefPack { elements, .. } => {
+            let (origin, mutability) =
+                crate::origin::PointerOrigin::Static { mutable: false }.into_parts();
+            TyKind::LitRefPack {
+                elements: elements.iter().map(recur).collect(),
+                origin,
+                mutability,
+            }
+            .into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, .. } => TyKind::LitRefPack {
-            elements: elements.iter().map(recur).collect(),
-            origin: crate::origin::PointerOrigin::Static { mutable: false },
-        }
-        .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
             size: size.clone(),
@@ -5450,21 +5471,24 @@ pub fn bind_origin_params<S: std::hash::BuildHasher>(
             }
             .unwrap_or_else(|element| Ty::pointer(element, bind(&origin), address_space))
         }
-        TyKind::LitRef {
-            element,
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.map_pointer_origin(bind);
+            reference.referent = recur(&reference.referent);
+            TyKind::LitRef(reference).into()
+        }
+        TyKind::LitRefPack {
+            elements,
             origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: recur(element),
-            origin: bind(origin),
-            address_space: address_space.clone(),
+            mutability,
+        } => {
+            let (origin, mutability) = PointerOrigin::map_parts(origin, *mutability, bind);
+            TyKind::LitRefPack {
+                elements: elements.iter().map(recur).collect(),
+                origin,
+                mutability,
+            }
+            .into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
-            elements: elements.iter().map(recur).collect(),
-            origin: bind(origin),
-        }
-        .into(),
         TyKind::Struct(name, args) => TyKind::Struct(
             name.clone(),
             args.iter()
@@ -5515,19 +5539,19 @@ pub fn map_origins(ty: &Ty, map: &impl Fn(&crate::origin::Origin) -> crate::orig
             element,
             address_space,
         } => Ty::kgen_pointer(recur(element), address_space.clone()),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: recur(element),
-            origin: origin.clone(),
-            address_space: address_space.clone(),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => TyKind::LitRefPack {
             elements: elements.iter().map(recur).collect(),
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::Ref(reference) => {
@@ -5577,16 +5601,11 @@ pub fn map_struct_arguments(ty: &Ty, map: &impl Fn(&str, Vec<TyArg>) -> Vec<TyAr
         TyKind::Struct(name, args) => {
             ty.reusing(TyKind::Struct(name.clone(), map(name, map_args(args))))
         }
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: recur(element),
-            origin: origin.clone(),
-            address_space: address_space.clone(),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = recur(&reference.referent);
@@ -6297,18 +6316,11 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         | (TyKind::I1, TyKind::I1)
         | (TyKind::Ui8, TyKind::Ui8)
         | (TyKind::KgenDtype, TyKind::KgenDtype) => true,
-        (
-            TyKind::LitRef {
-                element: a,
-                origin: ao,
-                address_space: aa,
-            },
-            TyKind::LitRef {
-                element: b,
-                origin: bo,
-                address_space: ba,
-            },
-        ) => aa == ba && coerces(a, b) && ao.coerces_to(bo),
+        (TyKind::LitRef(a), TyKind::LitRef(b)) => {
+            a.address_space == b.address_space
+                && coerces(&a.referent, &b.referent)
+                && pointer_origin_coerces(&a.origin, a.mutability, &b.origin, b.mutability)
+        }
         (
             TyKind::KgenPointer {
                 element: a,
@@ -6323,12 +6335,18 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
             TyKind::LitRefPack {
                 elements: a,
                 origin: ao,
+                mutability: am,
             },
             TyKind::LitRefPack {
                 elements: b,
                 origin: bo,
+                mutability: bm,
             },
-        ) => a.len() == b.len() && a.iter().zip(b).all(|(a, b)| coerces(a, b)) && ao.coerces_to(bo),
+        ) => {
+            a.len() == b.len()
+                && a.iter().zip(b).all(|(a, b)| coerces(a, b))
+                && pointer_origin_coerces(ao, *am, bo, *bm)
+        }
         (TyKind::Func(from), TyKind::Func(to)) => {
             let FuncTy {
                 environment: from_environment,
@@ -7283,19 +7301,20 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             substitute(element, subst),
             substitute_address_space(address_space, subst),
         ),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: substitute(element, subst),
-            origin: origin.clone(),
-            address_space: substitute_address_space(address_space, subst),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = substitute(&reference.referent, subst);
+            reference.address_space = substitute_address_space(&reference.address_space, subst);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => TyKind::LitRefPack {
             elements: elements.iter().map(|t| substitute(t, subst)).collect(),
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::Ref(reference) => {
@@ -7565,19 +7584,22 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             rewrite_ty(element, rewrite)?,
             address_space.try_map(|space| rewrite.expr(space))?,
         ),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: rewrite_ty(element, rewrite)?,
-            origin: origin.clone(),
-            address_space: address_space.try_map(|space| rewrite.expr(space))?,
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = rewrite_ty(&reference.referent, rewrite)?;
+            reference.address_space = reference
+                .address_space
+                .try_map(|space| rewrite.expr(space))?;
+            TyKind::LitRef(reference).into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => TyKind::LitRefPack {
             elements: list(elements, rewrite)?,
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::Ref(reference) => {
@@ -8420,12 +8442,10 @@ fn symbolic_in(ty: &Ty, keyed: bool) -> bool {
         TyKind::KgenPointer {
             element,
             address_space,
-        }
-        | TyKind::LitRef {
-            element,
-            address_space,
-            ..
         } => address_space.is_symbolic() || symbolic_in(element, keyed),
+        TyKind::LitRef(reference) => {
+            reference.address_space.is_symbolic() || symbolic_in(&reference.referent, keyed)
+        }
         TyKind::LitRefPack { elements, .. } => elements.iter().any(|ty| symbolic_in(ty, keyed)),
         TyKind::PopArray { size, element } => size.is_symbolic() || symbolic_in(element, keyed),
         TyKind::LitOrigin(mutability) => mutability.is_symbolic(),
@@ -9153,19 +9173,21 @@ fn expand_packs<S: std::hash::BuildHasher>(
             recurse(element),
             expand_address_space(address_space, subst, packs, values),
         ),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: recurse(element),
-            origin: origin.clone(),
-            address_space: expand_address_space(address_space, subst, packs, values),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recurse(&reference.referent);
+            reference.address_space =
+                expand_address_space(&reference.address_space, subst, packs, values);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => TyKind::LitRefPack {
             elements: expand(elements),
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::Ref(reference) => {
@@ -9539,6 +9561,40 @@ fn fmt_simd(f: &mut fmt::Formatter<'_>, dtype: &SimdDtype, width: &SimdWidth) ->
 }
 
 /// A pointer origin as a `Pointer` or a `!lit.ref` displays it.
+/// A `!lit.ref`'s origin and mutability, spelled as a pointer's
+/// provenance when they read as one and as the bare origin otherwise.
+fn fmt_origin_parts(
+    f: &mut fmt::Formatter<'_>,
+    origin: &crate::origin::Origin,
+    mutability: crate::origin::Mutability,
+) -> fmt::Result {
+    match crate::origin::PointerOrigin::from_parts(origin.clone(), mutability) {
+        Some(origin) => fmt_pointer_origin(f, &origin),
+        None if mutability == crate::origin::Mutability::Immutable => {
+            write!(f, "ImmOrigin({origin})")
+        }
+        None => write!(f, "{origin}"),
+    }
+}
+
+/// Whether a `!lit.ref` under `from`'s origin and mutability coerces to
+/// one under `to`'s, as the pointers built from them do.
+fn pointer_origin_coerces(
+    from: &crate::origin::Origin,
+    from_mutability: crate::origin::Mutability,
+    to: &crate::origin::Origin,
+    to_mutability: crate::origin::Mutability,
+) -> bool {
+    use crate::origin::PointerOrigin;
+    match (
+        PointerOrigin::from_parts(from.clone(), from_mutability),
+        PointerOrigin::from_parts(to.clone(), to_mutability),
+    ) {
+        (Some(from), Some(to)) => from.coerces_to(&to),
+        _ => from == to && from_mutability == to_mutability,
+    }
+}
+
 fn fmt_pointer_origin(
     f: &mut fmt::Formatter<'_>,
     origin: &crate::origin::PointerOrigin,
@@ -9986,8 +10042,15 @@ fn collect_named_origins(ty: &Ty, out: &mut Vec<crate::origin::Origin>) {
             out.extend(origin.as_origin());
             collect_named_origins(&element, out);
         }
-        TyKind::LitRefPack { elements, origin } => {
-            out.extend(origin.as_origin());
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => {
+            out.extend(
+                crate::origin::PointerOrigin::from_parts(origin.clone(), *mutability)
+                    .and_then(|origin| origin.as_origin()),
+            );
             for element in elements {
                 collect_named_origins(element, out);
             }

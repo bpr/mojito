@@ -193,19 +193,49 @@ impl Decoder {
                     self.unknown(fields, &["element", "address_space"]);
                     Ty::kgen_pointer(element, address_space)
                 }
-                "lit_ref" => {
+                // Before 1.222 a `!lit.ref` named its referent `element` and
+                // spelled its origin and mutability as one pointer provenance.
+                "lit_ref" if self.field(fields, "element").is_ok() => {
                     let element = self.req(value, fields, "element", Self::ty)?;
                     let origin = self.req(value, fields, "origin", Self::pointer_origin)?;
                     let address_space = self.address_space_slot(fields)?;
                     self.unknown(fields, &["element", "origin", "address_space"]);
-                    Ty::lit_ref(element, origin, address_space)
+                    Ty::lit_ref(RefTy::from_pointer_origin(element, origin, address_space))
+                }
+                "lit_ref" => {
+                    let referent = self.req(value, fields, "referent", Self::ty)?;
+                    let origin = self.req(value, fields, "origin", Self::origin)?;
+                    let mutability = self.req(value, fields, "mutability", Self::mutability)?;
+                    let address_space = self.address_space_slot(fields)?;
+                    self.unknown(
+                        fields,
+                        &["referent", "origin", "mutability", "address_space"],
+                    );
+                    Ty::lit_ref(RefTy {
+                        referent,
+                        origin,
+                        mutability,
+                        address_space,
+                    })
                 }
                 "lit_ref_pack" => {
                     let elements =
                         self.req(value, fields, "elements", |reader, v| Some(reader.types(v)))?;
-                    let origin = self.req(value, fields, "origin", Self::pointer_origin)?;
-                    self.unknown(fields, &["elements", "origin"]);
-                    TyKind::LitRefPack { elements, origin }.into()
+                    let (origin, mutability) = if self.field(fields, "mutability").is_ok() {
+                        let origin = self.req(value, fields, "origin", Self::origin)?;
+                        let mutability = self.req(value, fields, "mutability", Self::mutability)?;
+                        (origin, mutability)
+                    } else {
+                        self.req(value, fields, "origin", Self::pointer_origin)?
+                            .into_parts()
+                    };
+                    self.unknown(fields, &["elements", "origin", "mutability"]);
+                    TyKind::LitRefPack {
+                        elements,
+                        origin,
+                        mutability,
+                    }
+                    .into()
                 }
                 "pop_array" => {
                     let size = self.req(value, fields, "size", Self::array_size_slot)?;

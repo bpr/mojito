@@ -501,12 +501,15 @@ impl FnLowering<'_> {
         dest: Reg,
         elems: &[Reg],
     ) -> Result<(), PlironError> {
-        let Some(TyKind::LitRefPack { elements, origin }) =
-            self.func.reg_types.get(&dest.0).map(Ty::kind)
+        let Some(TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        }) = self.func.reg_types.get(&dest.0).map(Ty::kind)
         else {
             return Err(self.unsupported_reg("untyped reference pack".into(), dest));
         };
-        let pointers = ref_pack_pointers(elements, origin);
+        let pointers = ref_pack_pointers(elements, origin, *mutability);
         let storage = self.collect_pack_elements(ctx, &pointers, elems, dest)?;
         self.reg_values.insert(dest.0, storage);
         Ok(())
@@ -680,19 +683,21 @@ impl FnLowering<'_> {
 }
 
 /// The element addresses a reference pack over `elements` holds, each a
-/// `!lit.ref` under the pack's `origin`.
+/// `!lit.ref` under the pack's `origin` and `mutability`.
 pub(super) fn ref_pack_pointers(
     elements: &[Ty],
-    origin: &mojito_types::origin::PointerOrigin,
+    origin: &mojito_types::origin::Origin,
+    mutability: mojito_types::origin::Mutability,
 ) -> Vec<Ty> {
     elements
         .iter()
         .map(|element| {
-            Ty::lit_ref(
-                element.clone(),
-                origin.clone(),
-                mojito_types::types::AddressSpaceSlot::GENERIC,
-            )
+            Ty::lit_ref(mojito_types::origin::RefTy {
+                referent: element.clone(),
+                origin: origin.clone(),
+                mutability,
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+            })
         })
         .collect()
 }

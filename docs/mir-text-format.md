@@ -1339,6 +1339,15 @@ unchanged: a pointer type is the declared `Pointer` struct's application
 rather than a variant of its own, so a packaged type's encoding changes
 while the `pointer` record keeps its fields (R2210).
 
+Schema 1.222 gives `lit_ref` and `lit_ref_pack` the reference record a
+`ref` writes: `lit_ref { referent, origin, mutability }` and
+`lit_ref_pack { elements, origin, mutability }`, an `origin` beside a
+`mutability` where each spelled one pointer provenance, since a `!lit.ref`
+stores the `RefTy` a `ref` does. A reader still accepts the older
+`lit_ref { element, origin }` and `lit_ref_pack { elements, origin }`,
+reading the provenance as its parts. The package format moves to
+`mojito-package 254` (R2211).
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and
@@ -2346,8 +2355,8 @@ pop_array { size, element } variadic_pack(type) variant([type...])
 lit_origin { mutable } lit_origin_set
 pointer { element, origin }
 kgen_pointer { element }
-lit_ref { element, origin }
-lit_ref_pack { elements, origin }
+lit_ref { referent, origin, mutability }
+lit_ref_pack { elements, origin, mutability }
 ref { referent, origin, mutability }
 ```
 
@@ -2453,8 +2462,12 @@ Both backends hold either as a `pointer`. The verifier compares two of a
 kind by element, erasing origins as it does for a `pointer`, and takes a
 `lit_ref` as a reference capability, as `ref.make` builds one.
 
+Since schema 1.222 `lit_ref { referent, origin, mutability }` holds the
+fields a `ref` holds, an `origin` beside its `mutability`.
+
 `lit_ref_pack { elements, origin }` (schema 1.161) is upstream's
-`!lit.ref.pack`, one `lit_ref` to each of `elements` under the one origin.
+`!lit.ref.pack`, one `lit_ref` to each of `elements` under the one origin
+(with its `mutability` since schema 1.222).
 Both backends hold it as an aggregate of the elements' addresses, the
 `!kgen.struct` of `!kgen.pointer`s upstream lowers it to.
 

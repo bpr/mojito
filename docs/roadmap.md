@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2488**.
+Next free ID: **R2494**.
 
 ## Ordered Work
 
@@ -11213,27 +11213,113 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R2211 A `ref` binding's `TyKind::Ref` and a `!lit.ref` value's
-  `TyKind::LitRef` are two types, where upstream's are one**
+- [ ] **R2488 A MIR variable slot is a `ref` binding because its type is
+  `TyKind::Ref`, where upstream's `ref` binding is the `!lit.ref` value
+  itself**
 
-  Upstream holds a `ref` binding as the `!lit.ref` a `Pointer` is built
-  from, where Mojito keeps two types with two sets of rules.
-  - It is cheaper after R2210, when `LitRef` is reached only through the
-    `lit.ref` ops.
-  - It retires `PointerOrigin::Union`, the union view the pointer
-    accessors and `TyKind::LitRef` still give: once a `!lit.ref` stores
-    its origin as an `Origin` beside a `mut` argument, as a pointer does,
-    the view has no reader that needs it.
-  - Sites the split leaves: the MIR verifier's `same_address`
-    (`mir/verify/instr.rs`) admits a pointer or reference register bound
-    to a `!lit.ref` slot (a pack element's address at the declared
-    `Pointer(_mlir_value=)` initializer), and the VM's `var.use` reads a
-    `!lit.ref` or `!kgen.pointer` slot's handle as its value where a `ref`
-    binding's reads through.
-  - Its first session plans it and files the slices.
-  - Found while planning R1681 (2026-11-14).
-  - Depends on R2210.
+  MIR has no fact saying a slot binds a reference: every reader asks
+  whether the slot's type is `TyKind::Ref`, so a `!lit.ref`-typed slot
+  needs its own exemption.
+  - Give `MirFunction` a per-slot reference-binding fact beside
+    `ref_params` and `returns_reference` (`mir/ir.rs`), with a schema bump.
+  - Readers to move onto it: the VM's `var.use` and `pointer_valued`
+    (`backend/vm/exec.rs`, `backend/vm.rs`), which exempt a `!lit.ref` or
+    `!kgen.pointer` slot from the read-through.
+  - `same_address` (`mir/verify/instr.rs`), which admits a pointer or
+    reference register bound to a `!lit.ref` slot.
+  - The slot tests in `mir.rs` and `lower_stmt.rs`, `stack_reuse.rs`,
+    `store_drops.rs`, `register_loans.rs`, and Pliron's `lower/places.rs`.
+  - Go sites-first: make the readers consult the fact, then run
+    `scripts/smoke --suites`.
+  - Found while landing R2211 (2026-11-21).
+  - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R2489 A checker local is a `ref` binding because its stored type
+  is `TyKind::Ref`, where upstream puts the read-through on the
+  declaration**
+
+  The checker's scope stores a `ref` local as a `TyKind::Ref`-typed
+  binding, so a `!lit.ref` value typed `TyKind::Ref` would read through.
+  - Add a binding kind to the scope record (`checker/scopes.rs`,
+    `declare_with_mutability` and `lookup`).
+  - Readers: `infer_reference_value` (`inference.rs`),
+    `infer_place_provenance` (`operators.rs`), the `RefDecl` arm and the
+    rebinding-store checks in `statements.rs`, and `patterns.rs`,
+    `iteration.rs`, `destructure.rs`.
+  - Parameters already carry their convention
+    (`lookup_reference_parameter`).
+  - Found while landing R2211 (2026-11-21).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2490 A direct `ref` struct field is a reference because its type
+  is `TyKind::Ref`, where upstream reads the field declaration's `ref`
+  marker**
+
+  A field read peels a `TyKind::Ref` field type to its referent, so the
+  type, not the declaration, decides the read-through.
+  - Read the declaration's `ref` marker instead (the `reference` field
+    `closure_uses.rs` already consults).
+  - Sites: the field arms of `inference.rs` and `indexing.rs`,
+    `declarations.rs`, and mono `substitute.rs`/`unify.rs`.
+  - Found while landing R2211 (2026-11-21).
+  - Depends on R2489.
+  - Model: Fable, Planned.
+
+- [ ] **R2491 A callable's `ref` result is a reference because its result
+  type is `TyKind::Ref`, where upstream reads the result convention**
+
+  A `-> ref[...]` result is typed `TyKind::Ref`, and its callers peel the
+  type rather than read the callee's result convention.
+  - Read `DeclarationEffect::returns_reference`
+    (`mojito-checked/checked.rs`) and the `ReferenceResult` adjustment.
+  - Sites: `indexing.rs`'s getter result arms, `call_inference.rs`,
+    `symbol.rs`'s reference-result spelling, and mono
+    `substitute.rs`/`unify.rs`.
+  - Found while landing R2211 (2026-11-21).
+  - Depends on R2489.
+  - Model: Fable, Planned.
+
+- [ ] **R2492 `TyKind::LitRef` is a second reference type beside
+  `TyKind::Ref`, where upstream's `!lit.ref` is the one reference type**
+
+  Both variants hold the same `RefTy` record, an origin beside a
+  mutability, and differ only in their tag, which still means "reads
+  through" for `TyKind::Ref`.
+  - Once no reader takes the read-through from the type, delete
+    `TyKind::LitRef` and its arms, and the MIR reader maps `lit_ref` to
+    `ref`.
+  - Audit every read-through peel (`TyKind::Ref(r) => r.referent`,
+    mostly in `indexing.rs`, `statements.rs`, and `inference.rs`) for
+    whether a `!lit.ref` value reaches it.
+  - The one display left is upstream's `ref[origin] T`, so diagnostics
+    that print a `ref` binding's type change and their expect lines move.
+  - `same_address` and the VM's `!lit.ref` exemptions go away.
+  - Go sites-first: `scripts/smoke --suites`, then `scripts/focused`.
+  - Found while landing R2211 (2026-11-21).
+  - Depends on R2488, R2489, R2490, R2491.
+  - Model: Fable, Planned.
+
+- [ ] **R2493 Pointer provenance readers read the `PointerOrigin` view
+  rather than the pointer struct's `origin` and `mut` arguments, which
+  keeps `PointerOrigin::Union` alive**
+
+  A `!lit.ref` no longer stores a `PointerOrigin`, but the pointer
+  accessors still decode every pointer to one, and a union origin argument
+  (`origin_of(x, y)`) to `PointerOrigin::Union`.
+  - Readers that need the union: `Flatten::pointer_origin_loans` and the
+    subtree read in `mir/facts.rs`, `checker/origins/actuals.rs`,
+    `checker/origins/interior.rs`, `checker/indexing.rs`,
+    `mir/verify/subscripts.rs`, `mir.rs`, MIR text's `pointer_origin`
+    record, and the pointer display in `types.rs`.
+  - Retiring the variant means `pointer_parts` stops decoding to
+    `PointerOrigin` (288 uses), overlapping R2487's merge of the pointer
+    origin passes.
+  - Its first session plans it and files the slices.
+  - Found while landing R2211 (2026-11-21).
+  - Depends on R2487.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1292 A MIR `try` may lack its `except` or `else` region, where
   upstream's `lit.try` always holds both**

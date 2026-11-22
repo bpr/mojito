@@ -974,12 +974,7 @@ impl Checker {
                 reason: "expected exactly one place argument".to_string(),
             });
         };
-        let (element, origin) = self.infer_place_address(span, value)?;
-        Ok(Ty::lit_ref(
-            element,
-            origin,
-            self.place_address_space(value),
-        ))
+        self.infer_place_address(span, value).map(Ty::lit_ref)
     }
 
     /// Type upstream's address builtins `__get_litref_as_mvalue(r)`,
@@ -1155,14 +1150,31 @@ impl Checker {
         }
     }
 
-    /// The element and origin of the address of `value`, a place, as
-    /// `__get_mvalue_as_litref` takes it, recording the `PointerToPlace`
-    /// adjustment at `span`.
+    /// The reference `__get_mvalue_as_litref` takes of `value`, a place,
+    /// recording the `PointerToPlace` adjustment at `span`.
     fn infer_place_address(
         &self,
         span: SourceSpan,
         value: &Expr,
-    ) -> Result<(Ty, mojito_types::origin::PointerOrigin), TypeError> {
+    ) -> Result<mojito_types::origin::RefTy, TypeError> {
+        let (element, origin) = match self.infer_place_provenance(span, value)? {
+            PlaceAddress::Reference(reference) => return Ok(reference),
+            PlaceAddress::Provenance(element, origin) => (element, origin),
+        };
+        Ok(mojito_types::origin::RefTy::from_pointer_origin(
+            element,
+            origin,
+            self.place_address_space(value),
+        ))
+    }
+
+    /// The element and provenance of the address of `value`, or, for a call
+    /// returning a reference, that reference ([`Self::infer_place_address`]).
+    fn infer_place_provenance(
+        &self,
+        span: SourceSpan,
+        value: &Expr,
+    ) -> Result<PlaceAddress, TypeError> {
         // A `ref[Self.o]` parameter names the enclosing struct's origin binder:
         // its pointer carries that binder exactly as a `Pointer[T, Self.o]`
         // field declares it (upstream's iterator storage `self.src =
@@ -1180,7 +1192,7 @@ impl Checker {
                     materialized: None,
                 },
             );
-            return Ok((reference.referent, origin));
+            return Ok(PlaceAddress::Provenance(reference.referent, origin));
         }
         if let ExprKind::Identifier(name) = &value.kind
             && (matches!(self.lookup(name).map(Ty::kind), Some(TyKind::Ref(_)))
@@ -1234,7 +1246,7 @@ impl Checker {
                     materialized: None,
                 },
             );
-            return Ok((reference.referent, origin));
+            return Ok(PlaceAddress::Provenance(reference.referent, origin));
         }
         // A call, or a subscript's accessor call, is a place only through
         // the reference its inference records (`w.get()` returning
@@ -1256,7 +1268,8 @@ impl Checker {
         let element = inferred.map_or_else(|| self.infer(value), Ok)?;
         // A place an accessor returns by reference (`t[0]` on a `Tuple`) is
         // the pointer's referent: the handle is retained, never read out.
-        if let Some(reference) = self.infer_reference_value(value) {
+        let reference = self.infer_reference_value(value);
+        if let Some(reference) = &reference {
             self.record_at(value.source_span()).reference_value_use =
                 Some(reference.mutability == mojito_types::origin::Mutability::Mutable);
         }
@@ -1268,7 +1281,17 @@ impl Checker {
                 materialized: None,
             },
         );
-        Ok((
+        // A call's reference result is the `!lit.ref` itself, under the
+        // origin its callee declares (`p[]` over `Pointer[T, o]` is
+        // `ref[o] T`), as upstream's builtin gives an mvalue that already
+        // is a reference.
+        if call && let Some(reference) = reference {
+            return Ok(PlaceAddress::Reference(mojito_types::origin::RefTy {
+                referent: element,
+                ..reference
+            }));
+        }
+        Ok(PlaceAddress::Provenance(
             element,
             mojito_types::origin::PointerOrigin::Place { place, mutable },
         ))
@@ -1533,4 +1556,11 @@ fn untracked_pointer_spelling(call: &Expr, operand: &Expr) -> Expr {
         },
         call.span,
     )
+}
+
+/// The address `__get_mvalue_as_litref` takes of its operand: the element
+/// and provenance of a place, or the reference a call already returns.
+enum PlaceAddress {
+    Provenance(Ty, mojito_types::origin::PointerOrigin),
+    Reference(mojito_types::origin::RefTy),
 }

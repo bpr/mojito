@@ -160,11 +160,8 @@ pub(super) fn unify(
             TyKind::KgenPointer { element, .. } => unify(pattern_element, element, subst, deduce),
             _ => Ok(()),
         },
-        TyKind::LitRef {
-            element: pattern_element,
-            ..
-        } => match actual.kind() {
-            TyKind::LitRef { element, .. } => unify(pattern_element, element, subst, deduce),
+        TyKind::LitRef(pattern) => match actual.kind() {
+            TyKind::LitRef(actual) => unify(&pattern.referent, &actual.referent, subst, deduce),
             _ => Ok(()),
         },
         TyKind::LitRefPack {
@@ -621,22 +618,22 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             element,
             address_space,
         } => Ty::kgen_pointer(substitute_self(element, replacement), address_space.clone()),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: substitute_self(element, replacement),
-            origin: origin.clone(),
-            address_space: address_space.clone(),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = substitute_self(&reference.referent, replacement);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => TyKind::LitRefPack {
             elements: elements
                 .iter()
                 .map(|element| substitute_self(element, replacement))
                 .collect(),
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
@@ -794,19 +791,20 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
             element,
             address_space,
         } => Ty::kgen_pointer(recur(element), space(address_space)),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: recur(element),
-            origin: origin.clone(),
-            address_space: space(address_space),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            reference.address_space = space(&reference.address_space);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => TyKind::LitRefPack {
             elements: elements.iter().map(recur).collect(),
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::Ref(reference) => {

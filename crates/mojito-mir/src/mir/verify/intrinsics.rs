@@ -32,15 +32,23 @@ pub(super) fn verify_intrinsic_index(
 
     let references: Vec<Ty>;
     let result_candidates = match (intrinsic, base.map(Ty::kind)) {
-        (MirIntrinsicSubscript::TupleStorage, Some(TyKind::LitRefPack { elements, origin })) => {
+        (
+            MirIntrinsicSubscript::TupleStorage,
+            Some(TyKind::LitRefPack {
+                elements,
+                origin,
+                mutability,
+            }),
+        ) => {
             references = elements
                 .iter()
                 .map(|element| {
-                    Ty::lit_ref(
-                        element.clone(),
-                        origin.clone(),
-                        mojito_types::types::AddressSpaceSlot::GENERIC,
-                    )
+                    Ty::lit_ref(mojito_types::origin::RefTy {
+                        referent: element.clone(),
+                        origin: origin.clone(),
+                        mutability: *mutability,
+                        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+                    })
                 })
                 .collect();
             Some(references.iter().collect::<Vec<_>>())

@@ -173,16 +173,16 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
             },
         )
         | (
-            TyKind::LitRef {
-                element: a,
+            TyKind::LitRef(mojito_types::origin::RefTy {
+                referent: a,
                 address_space: a_space,
                 ..
-            },
-            TyKind::LitRef {
-                element: b,
+            }),
+            TyKind::LitRef(mojito_types::origin::RefTy {
+                referent: b,
                 address_space: b_space,
                 ..
-            },
+            }),
         ) => a_space == b_space && ty_equal_modulo_origins(a, b),
         (TyKind::LitRefPack { elements: a, .. }, TyKind::LitRefPack { elements: b, .. }) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equal_modulo_origins(a, b))
@@ -384,7 +384,10 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         | TyKind::PopArray { element, .. } => {
             erase_callable_environments(element);
         }
-        TyKind::KgenPointer { element, .. } | TyKind::LitRef { element, .. } => {
+        TyKind::KgenPointer { element, .. }
+        | TyKind::LitRef(mojito_types::origin::RefTy {
+            referent: element, ..
+        }) => {
             erase_callable_environments(element);
         }
         TyKind::LitRefPack { elements, .. } => {

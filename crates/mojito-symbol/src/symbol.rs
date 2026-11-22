@@ -1612,14 +1612,10 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
             ty_raw_in(element, self_ty, mode),
             address_space_raw(address_space)
         ),
-        TyKind::LitRef {
-            element,
-            address_space,
-            ..
-        } => format!(
+        TyKind::LitRef(reference) => format!(
             "LitRef${}{}",
-            ty_raw_in(element, self_ty, mode),
-            address_space_raw(address_space)
+            ty_raw_in(&reference.referent, self_ty, mode),
+            address_space_raw(&reference.address_space)
         ),
         TyKind::LitRefPack { elements, .. } => format!(
             "LitRefPack${}",
@@ -2691,42 +2687,35 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         // of the shape, as an erased struct origin tail does.
         kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
             respell(element),
-            origin.clone_bindable_place().map_or_else(
-                || origin.clone(),
-                |projection| {
-                    projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
-                },
-            ),
+            respell_bindable_place(&origin),
             address_space,
         ),
         TyKind::KgenPointer {
             element,
             address_space,
         } => Ty::kgen_pointer(respell(element), address_space.clone()),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => Ty::lit_ref(
-            respell(element),
-            origin.clone_bindable_place().map_or_else(
-                || origin.clone(),
-                |projection| {
-                    projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
-                },
-            ),
-            address_space.clone(),
-        ),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
-            elements: elements.iter().map(respell).collect(),
-            origin: origin.clone_bindable_place().map_or_else(
-                || origin.clone(),
-                |projection| {
-                    projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
-                },
-            ),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.map_pointer_origin(respell_bindable_place);
+            reference.referent = respell(&reference.referent);
+            Ty::lit_ref(reference)
         }
-        .into(),
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => {
+            let (origin, mutability) = mojito_types::origin::PointerOrigin::map_parts(
+                origin,
+                *mutability,
+                respell_bindable_place,
+            );
+            TyKind::LitRefPack {
+                elements: elements.iter().map(respell).collect(),
+                origin,
+                mutability,
+            }
+            .into()
+        }
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = respell(&reference.referent);
@@ -3585,6 +3574,18 @@ fn declared_struct_name(linked: &str) -> &str {
 /// The prefix of an inflated function type's name
 /// ([`inflated_function_name`]).
 const INFLATED_PREFIX: &str = "$inflated$";
+
+/// The provenance a specialization key spells for `origin`: a caller
+/// place a clone binder stands for spells as the first clone binder
+/// (`Elab::clone_binding`).
+fn respell_bindable_place(
+    origin: &mojito_types::origin::PointerOrigin,
+) -> mojito_types::origin::PointerOrigin {
+    origin.clone_bindable_place().map_or_else(
+        || origin.clone(),
+        |projection| projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX)),
+    )
+}
 
 #[cfg(test)]
 mod tests {

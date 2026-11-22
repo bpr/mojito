@@ -297,9 +297,14 @@ impl Checker {
         };
         let operand_ty = self.infer(operand)?;
         let (elements, origin) = match (name, operand_ty.kind()) {
-            ("lit.ref.pack.extract", TyKind::LitRefPack { elements, origin }) => {
-                (elements, Some(origin))
-            }
+            (
+                "lit.ref.pack.extract",
+                TyKind::LitRefPack {
+                    elements,
+                    origin,
+                    mutability,
+                },
+            ) => (elements, Some((origin, *mutability))),
             ("lit.ref.pack.extract", _) => {
                 return Err(invalid(&format!(
                     "operand #0 must be a '!lit.ref.pack', but got '{operand_ty}'"
@@ -318,11 +323,12 @@ impl Checker {
         }
         let element = self.tuple_storage_element(&elements.iter().collect::<Vec<_>>(), index)?;
         let result = match origin {
-            Some(origin) => Ty::lit_ref(
-                element,
-                origin.clone(),
-                mojito_types::types::AddressSpaceSlot::GENERIC,
-            ),
+            Some((origin, mutability)) => Ty::lit_ref(mojito_types::origin::RefTy {
+                referent: element,
+                origin: origin.clone(),
+                mutability,
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+            }),
             None => element,
         };
         self.record_at(span.clone()).adjustment = Some(Box::new(

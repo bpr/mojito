@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `__get_mvalue_as_litref(p[])` over `Pointer[T, o]` is `ref[o] T`, the
+  getter's reference itself, as at the pin, so it stores into a `!lit.ref`
+  field over a struct's own origin and returns as a `_mlir_lit_ref` result;
+  and a `!lit.ref` initializer parameter over the struct's origin binder
+  binds it, where both were rejected. A `!lit.ref` now stores the reference
+  record a `ref` does, an origin beside a mutability, rather than a pointer
+  provenance (R2211). A `Pointer[T, o]` over an `o: ImmOrigin` binder stays
+  immutable over a mutable argument's origin, so a store through the call's
+  result is rejected, as at the pin. MIR text moves to schema 1.222 (`lit_ref`
+  and `lit_ref_pack` write `origin` and `mutability`; older records still
+  read) and the package format to `mojito-package 254`.
+
 - A pointer's type is the application of the declared `struct Pointer`,
   `Pointer[mut, T, origin, address_space]`, in one canonical form, where
   it was a compiler type of its own: `reflect[type_of(p)].field_count()`

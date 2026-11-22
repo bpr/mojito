@@ -2349,12 +2349,8 @@ fn held_address(ty: &mojito_types::types::Ty) -> mojito_types::types::Ty {
 
 fn held_pointee(pointee: &mojito_types::types::Ty) -> mojito_types::types::Ty {
     match pointee.kind() {
-        mojito_types::types::TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => {
-            mojito_types::types::Ty::pointer(element.clone(), origin.clone(), address_space.clone())
+        mojito_types::types::TyKind::LitRef(reference) => {
+            mojito_types::types::Ty::pointer_from_lit_ref(reference)
         }
         _ => pointee.clone(),
     }

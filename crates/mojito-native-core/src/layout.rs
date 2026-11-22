@@ -493,9 +493,11 @@ mod tests {
         assert_eq!(layout_of(&in_space(270)), Ok(Layout::new(4, 4)));
         assert_eq!(layout_of(&in_space(3)), Ok(Layout::new(8, 8)));
         // A reference pack is one address per element, whatever each holds.
+        let (origin, mutability) = PointerOrigin::Static { mutable: false }.into_parts();
         let pack = Ty::new(TyKind::LitRefPack {
             elements: vec![Ty::bool(), Ty::string_literal_of("s"), Ty::int()],
-            origin: PointerOrigin::Static { mutable: false },
+            origin,
+            mutability,
         });
         assert_eq!(layout_of(&pack), Ok(Layout::new(24, 8)));
     }

@@ -335,9 +335,11 @@ fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
                 intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
             });
             let reference = fresh(Ty::lit_ref(
-                element.clone(),
-                origin.clone(),
-                mojito_types::types::AddressSpaceSlot::GENERIC,
+                mojito_types::origin::RefTy::from_pointer_origin(
+                    element.clone(),
+                    origin.clone(),
+                    mojito_types::types::AddressSpaceSlot::GENERIC,
+                ),
             ));
             reads.push(MirInstr::PointerConvert {
                 dest: reference,

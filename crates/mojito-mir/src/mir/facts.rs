@@ -1491,7 +1491,7 @@ impl<'a> Flatten<'a> {
                         .expect("checked pointer construction has a place argument");
                     if let Some(mojito_types::origin::PointerOrigin::Place { place, .. }) =
                         node.checked.ty.as_ref().and_then(|ty| match ty.kind() {
-                            TyKind::LitRef { origin, .. } => Some(origin.clone()),
+                            TyKind::LitRef(reference) => reference.pointer_origin(),
                             pointer => pointer.pointer_origin(),
                         })
                         && matches!(

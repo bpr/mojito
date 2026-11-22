@@ -342,11 +342,11 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
             element: v,
             address_space,
         }
-        | TyKind::LitRef {
-            element: v,
+        | TyKind::LitRef(mojito_types::origin::RefTy {
+            referent: v,
             address_space,
             ..
-        } => address_space.is_symbolic() || is_symbolic(v),
+        }) => address_space.is_symbolic() || is_symbolic(v),
         TyKind::PopArray { size, element } => size.is_symbolic() || is_symbolic(element),
         // A literal type whose value is a parameter (`StringLiteral[v]`
         // under its binder) unifies against the argument's text.
@@ -544,7 +544,7 @@ pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
         | TyKind::VariadicPack(v)
         | TyKind::PopArray { element: v, .. }
         | TyKind::KgenPointer { element: v, .. }
-        | TyKind::LitRef { element: v, .. } => {
+        | TyKind::LitRef(mojito_types::origin::RefTy { referent: v, .. }) => {
             output.push((*v).clone());
         }
         TyKind::Ref(v) => output.push(v.referent.clone()),

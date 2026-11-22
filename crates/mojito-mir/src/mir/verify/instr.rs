@@ -1534,7 +1534,7 @@ fn verify_ref_pack_create(cx: &InstrCx<'_>, dest: Reg, elems: &[Reg], errors: &m
     }
     for (index, (operand, element)) in elems.iter().zip(elements).enumerate() {
         match cx.reg_ty(*operand).map(Ty::kind) {
-            Some(TyKind::LitRef { element: found, .. }) if types_compatible(found, element) => {}
+            Some(TyKind::LitRef(mojito_types::origin::RefTy { referent: found, .. })) if types_compatible(found, element) => {}
             Some(pointer_ty)
                 if pointer_ty
                     .pointer_element()
@@ -1682,9 +1682,10 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
         return;
     };
     let element = |ty: &Ty| match ty.kind() {
-        TyKind::KgenPointer { element, .. } | TyKind::LitRef { element, .. } => {
-            Some(element.clone())
-        }
+        TyKind::KgenPointer { element, .. }
+        | TyKind::LitRef(mojito_types::origin::RefTy {
+            referent: element, ..
+        }) => Some(element.clone()),
         // A `ref` value is the `!lit.ref` upstream holds it as.
         TyKind::Ref(reference) => Some(reference.referent.clone()),
         pointer => pointer.pointer_element().cloned(),
@@ -1808,11 +1809,11 @@ fn verify_tuple_elements(
 /// [`erase_origins`]: mojito_types::types::erase_origins
 fn same_address(found: &Ty, expected: &Ty) -> bool {
     let address = |ty: &Ty| match ty.kind() {
-        TyKind::LitRef {
-            element,
-            address_space,
-            ..
-        } => Some((element.clone(), address_space.clone(), true)),
+        TyKind::LitRef(reference) => Some((
+            reference.referent.clone(),
+            reference.address_space.clone(),
+            true,
+        )),
         TyKind::Ref(reference) => Some((
             reference.referent.clone(),
             reference.address_space.clone(),

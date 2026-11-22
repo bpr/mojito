@@ -3352,9 +3352,9 @@ impl MirInstr {
             // upstream's lowering makes them one pointer.
             Self::PointerConvert { dest, value } => {
                 let address_element = |reg: &Reg| match reg_types.get(&reg.0)?.kind() {
-                    TyKind::LitRef { element, .. } => {
-                        Some(mojito_types::types::erase_origins(element))
-                    }
+                    TyKind::LitRef(mojito_types::origin::RefTy {
+                        referent: element, ..
+                    }) => Some(mojito_types::types::erase_origins(element)),
                     pointer => pointer
                         .pointer_element()
                         .map(mojito_types::types::erase_origins),

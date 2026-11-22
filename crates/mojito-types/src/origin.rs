@@ -963,6 +963,20 @@ impl PointerOrigin {
         }
     }
 
+    /// `origin` and `mutability` with `bind` applied to the provenance they
+    /// read as ([`PointerOrigin::from_parts`]), unchanged when they read as
+    /// none.
+    pub fn map_parts(
+        origin: &Origin,
+        mutability: Mutability,
+        bind: impl FnOnce(&Self) -> Self,
+    ) -> (Origin, Mutability) {
+        Self::from_parts(origin.clone(), mutability).map_or_else(
+            || (origin.clone(), mutability),
+            |view| bind(&view).into_parts(),
+        )
+    }
+
     /// The provenance a `Pointer` whose `origin` argument is `origin` and
     /// whose `mut` argument is `mutability` carries: an `ImmOrigin(...)`
     /// cast reads as the immutable pointer to its storage. `None` for an
@@ -1282,6 +1296,43 @@ pub struct RefTy {
     pub origin: Origin,
     pub mutability: Mutability,
     pub address_space: crate::types::AddressSpaceSlot,
+}
+
+impl RefTy {
+    /// The reference to `referent` under a pointer's provenance `origin`
+    /// in `address_space`: the `!lit.ref` that pointer is built from, its
+    /// origin and mutability `origin`'s [parts](PointerOrigin::parts).
+    pub fn from_pointer_origin(
+        referent: crate::types::Ty,
+        origin: PointerOrigin,
+        address_space: crate::types::AddressSpaceSlot,
+    ) -> Self {
+        let (origin, mutability) = origin.into_parts();
+        Self {
+            referent,
+            origin,
+            mutability,
+            address_space,
+        }
+    }
+
+    /// This reference's origin and mutability read as a pointer's
+    /// provenance ([`PointerOrigin::from_parts`]).
+    pub fn pointer_origin(&self) -> Option<PointerOrigin> {
+        PointerOrigin::from_parts(self.origin.clone(), self.mutability)
+    }
+
+    /// This reference with `bind` applied to its pointer provenance
+    /// ([`PointerOrigin::map_parts`]).
+    #[must_use]
+    pub fn map_pointer_origin(&self, bind: impl FnOnce(&PointerOrigin) -> PointerOrigin) -> Self {
+        let (origin, mutability) = PointerOrigin::map_parts(&self.origin, self.mutability, bind);
+        Self {
+            origin,
+            mutability,
+            ..self.clone()
+        }
+    }
 }
 
 /// An origin in a callable contract. Unlike [`Origin`], roots name parameter

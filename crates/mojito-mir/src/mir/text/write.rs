@@ -2402,25 +2402,27 @@ fn ty_value(ty: &Ty) -> String {
             "kgen_pointer",
             &with_address_space(vec![("element", ty_value(element))], address_space),
         ),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => record(
+        TyKind::LitRef(value) => record(
             "lit_ref",
             &with_address_space(
                 vec![
-                    ("element", ty_value(element)),
-                    ("origin", pointer_origin(origin)),
+                    ("referent", ty_value(&value.referent)),
+                    ("origin", origin(&value.origin)),
+                    ("mutability", mutability_value(value.mutability)),
                 ],
-                address_space,
+                &value.address_space,
             ),
         ),
-        TyKind::LitRefPack { elements, origin } => record(
+        TyKind::LitRefPack {
+            elements,
+            origin: pack_origin,
+            mutability,
+        } => record(
             "lit_ref_pack",
             &[
                 ("elements", list(elements.iter().map(ty_value))),
-                ("origin", pointer_origin(origin)),
+                ("origin", origin(pack_origin)),
+                ("mutability", mutability_value(*mutability)),
             ],
         ),
         TyKind::Ref(value) => ref_ty(value),

@@ -423,18 +423,20 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             substitute_ty(element, bindings)?,
             substitute_address_space(address_space, bindings),
         ),
-        TyKind::LitRef {
-            element,
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = substitute_ty(&reference.referent, bindings)?;
+            reference.address_space = substitute_address_space(&reference.address_space, bindings);
+            Ty::lit_ref(reference)
+        }
+        TyKind::LitRefPack {
+            elements,
             origin,
-            address_space,
-        } => Ty::lit_ref(
-            substitute_ty(element, bindings)?,
-            origin.clone(),
-            substitute_address_space(address_space, bindings),
-        ),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+            mutability,
+        } => TyKind::LitRefPack {
             elements: sub_spread_types(elements, bindings)?,
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::Ref(value) => {
@@ -871,7 +873,9 @@ fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
             }
             struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => false,
             TyKind::KgenPointer { element, .. }
-            | TyKind::LitRef { element, .. }
+            | TyKind::LitRef(mojito_types::origin::RefTy {
+                referent: element, ..
+            })
             | TyKind::PopArray { element, .. } => names_outside_structs(element, removed),
             TyKind::Ref(reference) => names_outside_structs(&reference.referent, removed),
             TyKind::Tuple(elements)

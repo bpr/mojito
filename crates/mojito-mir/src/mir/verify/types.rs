@@ -136,18 +136,10 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     {
         return types_compatible(found_element, expected_element);
     }
-    if let (
-        TyKind::LitRef {
-            element: found_element,
-            ..
-        },
-        TyKind::LitRef {
-            element: expected_element,
-            ..
-        },
-    ) = (found.kind(), expected.kind())
+    if let (TyKind::LitRef(found_reference), TyKind::LitRef(expected_reference)) =
+        (found.kind(), expected.kind())
     {
-        return types_compatible(found_element, expected_element);
+        return types_compatible(&found_reference.referent, &expected_reference.referent);
     }
     // So do a callable's signature origins: a function value specialized at
     // a caller's origin (`borrow[origin_of(x)]`) and one relative to its
@@ -373,7 +365,9 @@ pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
         TyKind::ComptimeList(inner)
         | TyKind::PopArray { element: inner, .. }
         | TyKind::KgenPointer { element: inner, .. }
-        | TyKind::LitRef { element: inner, .. } => contains_runtime_pack(inner),
+        | TyKind::LitRef(mojito_types::origin::RefTy {
+            referent: inner, ..
+        }) => contains_runtime_pack(inner),
         pointer if let Some(inner) = pointer.pointer_element() => contains_runtime_pack(inner),
         TyKind::Tuple(elements)
         | TyKind::Variant(elements)
@@ -520,7 +514,11 @@ pub(super) fn instantiate_checked_type(
                 .collect::<Result<Vec<_>, _>>()?,
         )
         .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => TyKind::LitRefPack {
             elements: elements
                 .iter()
                 .map(|ty| {
@@ -528,6 +526,7 @@ pub(super) fn instantiate_checked_type(
                 })
                 .collect::<Result<Vec<_>, _>>()?,
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::PopArray { size, element } => TyKind::PopArray {
@@ -576,15 +575,18 @@ pub(super) fn instantiate_checked_type(
             instantiate_checked_type(element, type_arguments, value_arguments, bound_values)?,
             instantiate_address_space(address_space, value_arguments)?,
         ),
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => Ty::lit_ref(
-            instantiate_checked_type(element, type_arguments, value_arguments, bound_values)?,
-            origin.clone(),
-            instantiate_address_space(address_space, value_arguments)?,
-        ),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = instantiate_checked_type(
+                &reference.referent,
+                type_arguments,
+                value_arguments,
+                bound_values,
+            )?;
+            reference.address_space =
+                instantiate_address_space(&reference.address_space, value_arguments)?;
+            Ty::lit_ref(reference)
+        }
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = instantiate_checked_type(
@@ -734,7 +736,9 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         | TyKind::VariadicPack(inner)
         | TyKind::PopArray { element: inner, .. }
         | TyKind::KgenPointer { element: inner, .. }
-        | TyKind::LitRef { element: inner, .. } => contains_type_param(inner),
+        | TyKind::LitRef(mojito_types::origin::RefTy {
+            referent: inner, ..
+        }) => contains_type_param(inner),
         pointer if let Some(inner) = pointer.pointer_element() => contains_type_param(inner),
         TyKind::Tuple(elements)
         | TyKind::RuntimePack(elements)

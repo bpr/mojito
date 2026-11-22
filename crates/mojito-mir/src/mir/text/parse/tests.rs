@@ -355,29 +355,21 @@ fn type_families_reprint_byte_identically() {
                 ),
                 Ty::kgen_pointer(Ty::int(), mojito_types::types::AddressSpaceSlot::GENERIC),
                 Ty::kgen_pointer(Ty::int(), mojito_types::types::AddressSpaceSlot::Known(3)),
-                Ty::lit_ref(
-                    Ty::int(),
-                    PointerOrigin::Param {
-                        id: OriginParamId(0),
-                        mutability: Mutability::Immutable,
-                        interior: Vec::new(),
-                        subtree: false,
-                    },
-                    mojito_types::types::AddressSpaceSlot::GENERIC,
-                ),
-                Ty::lit_ref(
+                Ty::lit_ref(RefTy {
+                    referent: Ty::int(),
+                    origin: Origin::Param(OriginParamId(0)),
+                    mutability: Mutability::Immutable,
+                    address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+                }),
+                Ty::lit_ref(RefTy::from_pointer_origin(
                     Ty::int(),
                     PointerOrigin::Static { mutable: false },
                     mojito_types::types::AddressSpaceSlot::Known(1),
-                ),
+                )),
                 TyKind::LitRefPack {
                     elements: vec![Ty::int(), Ty::float64()],
-                    origin: PointerOrigin::Param {
-                        id: OriginParamId(1),
-                        mutability: Mutability::Param(OriginParamId(0)),
-                        interior: Vec::new(),
-                        subtree: false,
-                    },
+                    origin: Origin::Param(OriginParamId(1)),
+                    mutability: Mutability::Param(OriginParamId(0)),
                 }
                 .into(),
                 TyKind::Ref(RefTy {
@@ -2287,6 +2279,35 @@ fn sized_callable_text(version: &str, size: &str) -> String {
 fn only_register_type(text: &str) -> Ty {
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     parsed.program.functions[0].1.reg_types[&0].clone()
+}
+
+/// A `!lit.ref` or `!lit.ref.pack` older than schema 1.222 spells its
+/// origin and mutability as one pointer provenance; it reads as the
+/// reference record the provenance's parts give.
+#[test]
+fn older_lit_ref_records_read_as_reference_records() {
+    let untracked = PointerOrigin::Untracked { mutable: true };
+    assert_eq!(
+        only_register_type(&artifact_with_register_type(
+            "lit_ref { element: simd { dtype: int, width: 1 }, origin: pointer_untracked { mutable: true } }"
+        )),
+        Ty::lit_ref(RefTy::from_pointer_origin(
+            Ty::int(),
+            untracked.clone(),
+            mojito_types::types::AddressSpaceSlot::GENERIC,
+        ))
+    );
+    let (origin, mutability) = untracked.into_parts();
+    assert_eq!(
+        only_register_type(&artifact_with_register_type(
+            "lit_ref_pack { elements: [simd { dtype: int, width: 1 }], origin: pointer_untracked { mutable: true } }"
+        )),
+        Ty::new(TyKind::LitRefPack {
+            elements: vec![Ty::int()],
+            origin,
+            mutability,
+        })
+    );
 }
 
 /// A symbolic SIMD slot spells its parameter expression and reads back to
@@ -4831,7 +4852,8 @@ fn older_load_indirect_rebinds_its_reference_pack() {
     let elements = vec![Ty::int(), Ty::bool()];
     let pack: Ty = TyKind::LitRefPack {
         elements: elements.clone(),
-        origin: mojito_types::origin::PointerOrigin::Untracked { mutable: false },
+        origin: mojito_types::origin::Origin::Untracked { mutable: false },
+        mutability: mojito_types::origin::Mutability::Immutable,
     }
     .into();
     let loading = function_with(

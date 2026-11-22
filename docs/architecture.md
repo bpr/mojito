@@ -3766,10 +3766,13 @@ binder or the receiver (`Origin::Projected`) and the unsafe-any origin
 loan-tracked root, with the projection dropped, for the readers that ask
 which storage a loan keeps. A union origin argument over concrete members
 (`origin_of(x, y)`) is `PointerOrigin::Union`, the view of the
-`Origin::Union` it parts to that the accessors and a `!lit.ref` give, until
-`!lit.ref` stops storing a `PointerOrigin` (R2211): its loans are each place
-member's (`Flatten::pointer_origin_loans`), and an argument carrying it
-carries every member place.
+`Origin::Union` it parts to that the pointer accessors give: its loans are
+each place member's (`Flatten::pointer_origin_loans`), and an argument
+carrying it carries every member place. A `!lit.ref` stores no
+`PointerOrigin`: `TyKind::LitRef` holds the `RefTy` a `ref` holds, an
+`Origin` beside a `Mutability`, and `TyKind::LitRefPack` the same pair, so
+`RefTy::pointer_origin` decodes the view only for a reader that still asks
+for it.
 
 The bundled library declares upstream's `struct Pointer`, and the
 compiler's pointer type is that struct's application

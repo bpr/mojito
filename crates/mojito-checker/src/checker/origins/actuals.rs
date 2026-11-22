@@ -865,14 +865,10 @@ impl Checker {
         litref: &Ty,
     ) -> Option<mojito_types::origin::RefTy> {
         use mojito_types::origin::{Mutability, Origin, OriginPlace, PointerOrigin, RefTy};
-        let TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } = litref.kind()
-        else {
+        let TyKind::LitRef(reference) = litref.kind() else {
             return None;
         };
+        let origin = &reference.pointer_origin()?;
         let mutability = match (self.pointer_write_capability(operand, origin), origin) {
             (Some(true), _) => Mutability::Mutable,
             (Some(false), _) => Mutability::Immutable,
@@ -896,10 +892,10 @@ impl Checker {
                 .unwrap_or(Origin::SelfParam),
         };
         Some(RefTy {
-            referent: element.clone(),
+            referent: reference.referent.clone(),
             origin,
             mutability,
-            address_space: address_space.clone(),
+            address_space: reference.address_space.clone(),
         })
     }
 

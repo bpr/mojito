@@ -474,9 +474,15 @@ pub(in crate::checker) fn field_carries_origin_param(
     use mojito_types::origin::{Origin, PointerOrigin};
     match ty.kind() {
         TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(k) if k == id),
-        TyKind::LitRef { origin, .. } | TyKind::LitRefPack { origin, .. } => {
-            matches!(origin, PointerOrigin::Param { id: k, .. } if *k == id)
+        TyKind::LitRef(reference) => {
+            matches!(reference.pointer_origin(), Some(PointerOrigin::Param { id: k, .. }) if k == id)
         }
+        TyKind::LitRefPack {
+            origin, mutability, ..
+        } => matches!(
+            PointerOrigin::from_parts(origin.clone(), *mutability),
+            Some(PointerOrigin::Param { id: k, .. }) if k == id
+        ),
         pointer => pointer
             .pointer_origin()
             .is_some_and(|origin| matches!(origin, PointerOrigin::Param { id: k, .. } if k == id)),
@@ -493,15 +499,22 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
     ty: &Ty,
     bindings: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::PointerOrigin>,
 ) -> Ty {
-    use mojito_types::origin::PointerOrigin;
+    use mojito_types::origin::{Mutability, PointerOrigin};
     let bind = |origin: &PointerOrigin| match origin {
         PointerOrigin::Param {
             id,
+            mutability,
             interior,
             subtree,
-            ..
         } if bindings.contains_key(id) => {
-            let mut bound = Ok(bindings[id].clone());
+            // A pointer fixed immutable over the binder (`Pointer[T, o]` at
+            // `o: ImmOrigin`) stays immutable over what the binder binds.
+            let bound = bindings[id].clone();
+            let mut bound = Ok(if *mutability == Mutability::Immutable {
+                bound.immutable()
+            } else {
+                bound
+            });
             for tag in interior {
                 bound = bound.and_then(|origin| {
                     crate::checker::type_resolution::append_interior_tag(&origin, tag)
@@ -516,29 +529,32 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
         other => other.clone(),
     };
     match ty.kind() {
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: substitute_pointer_origin_params(element, bindings),
-            origin: bind(origin),
-            address_space: address_space.clone(),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.map_pointer_origin(bind);
+            reference.referent = substitute_pointer_origin_params(&reference.referent, bindings);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
         kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
             substitute_pointer_origin_params(element, bindings),
             bind(&origin),
             address_space,
         ),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
-            elements: elements
-                .iter()
-                .map(|element| substitute_pointer_origin_params(element, bindings))
-                .collect(),
-            origin: bind(origin),
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => {
+            let (origin, mutability) = PointerOrigin::map_parts(origin, *mutability, bind);
+            TyKind::LitRefPack {
+                elements: elements
+                    .iter()
+                    .map(|element| substitute_pointer_origin_params(element, bindings))
+                    .collect(),
+                origin,
+                mutability,
+            }
+            .into()
         }
-        .into(),
         struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
             ty.reusing(TyKind::Struct(
                 name.clone(),
@@ -608,16 +624,11 @@ pub(in crate::checker) fn bind_pointer_origins(
     };
     let bind = |origin: &PointerOrigin| bind(origin).unwrap_or_else(|| origin.clone());
     match ty.kind() {
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: recur(element),
-            origin: bind(origin),
-            address_space: address_space.clone(),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.map_pointer_origin(bind);
+            reference.referent = recur(&reference.referent);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
         kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
             match &origin {
                 PointerOrigin::Param {
@@ -639,11 +650,19 @@ pub(in crate::checker) fn bind_pointer_origins(
             }
             .unwrap_or_else(|element| Ty::pointer(element, bind(&origin), address_space))
         }
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
-            elements: elements.iter().map(recur).collect(),
-            origin: bind(origin),
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => {
+            let (origin, mutability) = PointerOrigin::map_parts(origin, *mutability, bind);
+            TyKind::LitRefPack {
+                elements: elements.iter().map(recur).collect(),
+                origin,
+                mutability,
+            }
+            .into()
         }
-        .into(),
         struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
             ty.reusing(TyKind::Struct(
                 name.clone(),
@@ -702,19 +721,19 @@ pub(in crate::checker) fn substitute_struct_origins(
         kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
             Ty::pointer(recur(element), origin, address_space)
         }
-        TyKind::LitRef {
-            element,
-            origin,
-            address_space,
-        } => TyKind::LitRef {
-            element: recur(element),
-            origin: origin.clone(),
-            address_space: address_space.clone(),
+        TyKind::LitRef(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            TyKind::LitRef(reference).into()
         }
-        .into(),
-        TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
+        TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        } => TyKind::LitRefPack {
             elements: elements.iter().map(recur).collect(),
             origin: origin.clone(),
+            mutability: *mutability,
         }
         .into(),
         TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {

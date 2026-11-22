@@ -1918,8 +1918,13 @@ impl Checker {
             return Err(unsupported_mlir_type());
         };
         let elements = self.mlir_type_list_elements(values)?;
-        let origin = self.mlir_origin_operand(origin)?;
-        Ok(TyKind::LitRefPack { elements, origin }.into())
+        let (origin, mutability) = self.mlir_origin_operand(origin)?.into_parts();
+        Ok(TyKind::LitRefPack {
+            elements,
+            origin,
+            mutability,
+        }
+        .into())
     }
 
     /// The reference `!lit.ref<element, origin._mlir_origin[, as]>`, a
@@ -1932,9 +1937,11 @@ impl Checker {
         address_space: mojito_types::types::AddressSpaceSlot,
     ) -> Result<Ty, TypeError> {
         Ok(Ty::lit_ref(
-            self.mlir_type_operand(element)?,
-            self.mlir_origin_operand(origin)?,
-            address_space,
+            mojito_types::origin::RefTy::from_pointer_origin(
+                self.mlir_type_operand(element)?,
+                self.mlir_origin_operand(origin)?,
+                address_space,
+            ),
         ))
     }
 
@@ -5582,12 +5589,10 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         TyKind::KgenPointer {
             element,
             address_space,
-        }
-        | TyKind::LitRef {
-            element,
-            address_space,
-            ..
         } => address_space.is_symbolic() || type_is_symbolic(element),
+        TyKind::LitRef(reference) => {
+            reference.address_space.is_symbolic() || type_is_symbolic(&reference.referent)
+        }
         TyKind::LitRefPack { elements, .. } => elements.iter().any(type_is_symbolic),
         TyKind::Ref(reference) => type_is_symbolic(&reference.referent),
     }

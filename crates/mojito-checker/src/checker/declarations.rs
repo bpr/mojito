@@ -5812,7 +5812,7 @@ impl Checker {
                 pointer if let Some(origin) = pointer.pointer_origin() => {
                     matches!(origin, mojito_types::origin::PointerOrigin::Param { .. })
                 }
-                TyKind::Ref(reference) => {
+                TyKind::Ref(reference) | TyKind::LitRef(reference) => {
                     matches!(reference.origin, mojito_types::origin::Origin::Param(_))
                 }
                 struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
