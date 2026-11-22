@@ -2327,6 +2327,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A returned pointer subscript (`return p[]`, `return self.p[0]`) takes
+  its origin from the selected `Pointer.__getitem__`'s `ref[Self.origin]`
+  reference result, as upstream reads it off the called getter, instead of
+  re-deriving `Self.origin` by hand from the pointer's type (R2483). No
+  accepted or rejected program changes.
 - `__get_litref_as_mvalue(r)`, the place a `!lit.ref` refers to, is its
   own checked call whose reference result is `r`'s origin, mutability, and
   address space, lowered to the `pointer.convert` of `r` to that `ref`, as

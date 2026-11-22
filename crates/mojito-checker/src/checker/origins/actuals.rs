@@ -624,10 +624,8 @@ impl Checker {
     ///
     /// Recognized: a directly-read reference value (`self.value`), a field/element
     /// projected through one (`self.src[i]`, `self.pair.first`), and dereferencing
-    /// an origin-bearing *pointer* field whose origin is a parameter (`self.p[0]`,
-    /// with `p: Pointer[T, o]`). In each case the VM re-roots the runtime
-    /// handle at the borrowed storage; for the pointer deref it forwards the
-    /// offset-0 index to the single pointee.
+    /// a pointer whose origin is a parameter (`self.p[0]`, with
+    /// `p: Pointer[T, o]`), whose selected getter's reference result names it.
     pub(in crate::checker) fn returned_reference_parameter_origin(
         &self,
         expr: &Expr,
@@ -645,6 +643,16 @@ impl Checker {
                 | Origin::UnsafeAny { .. }
                 | Origin::Projected(..)
                 | Origin::Unbound => true,
+            }
+        }
+        // The binder an origin projects or casts
+        // (`Self.origin._get_owned_interior[…]`), which is what a return
+        // contract's substitution names for its projection today (R2500).
+        fn origin_binder(origin: &Origin) -> Option<Origin> {
+            match origin {
+                Origin::Param(_) => Some(origin.clone()),
+                Origin::Projected(base, _) | Origin::MutCast(base, _) => origin_binder(base),
+                _ => None,
             }
         }
         if let Some(spelled) = self.spelled_construction(expr) {
@@ -669,21 +677,14 @@ impl Checker {
                 .map(|reference| reference.origin)
                 .filter(is_abstract)
                 .or_else(|| self.returned_reference_parameter_origin(object)),
-            // Dereferencing an origin-bearing pointer field (`self.p[0]`) reaches
-            // storage inside the pointer's origin parameter, just like indexing a
-            // `ref[o]` aggregate. The pointer is not a reference *value*, so recover
-            // the parameter directly from its declared origin; the VM re-roots the
-            // returned handle at the pointee and forwards the offset-0 index.
-            ExprKind::Index { object, .. } => {
-                if let Some(mojito_types::origin::PointerOrigin::Param { id, .. }) = self
-                    .infer(object)
-                    .ok()
-                    .and_then(|ty| ty.kind().pointer_origin())
-                {
-                    return Some(Origin::Param(id));
-                }
-                self.returned_reference_parameter_origin(object)
-            }
+            // Dereferencing a pointer whose origin is a binder (`self.p[0]`,
+            // `p: Pointer[T, o]`) reaches storage inside that binder: the
+            // selected `Pointer.__getitem__`'s `ref[Self.origin]` result names
+            // it. Indexing anything else stays within its object's region.
+            ExprKind::Index { object, .. } => self
+                .pointer_subscript_reference(expr)
+                .and_then(|reference| origin_binder(&reference.origin))
+                .or_else(|| self.returned_reference_parameter_origin(object)),
             ExprKind::Identifier(_) => self
                 .infer_reference_value(expr)
                 .map(|reference| reference.origin)
@@ -796,23 +797,40 @@ impl Checker {
         }
     }
 
-    /// The origin a returned pointer dereference (`p[]`, `p[i]`) supplies:
-    /// the pointer's own tracked origin, as upstream's
-    /// `Pointer.__getitem__(self) -> ref[Self.origin] Self.type` returns,
-    /// with `origin_of(self)` read at the enclosing receiver's place. The
-    /// holder's place, which [`Self::reference_actual`] keeps for loans, is
-    /// not the origin a return contract names.
-    pub(in crate::checker) fn returned_pointer_dereference_origin(
+    /// The origin a returned pointer subscript (`p[]`, `p[i]`) supplies:
+    /// the selected `Pointer.__getitem__`'s `ref[Self.origin]` result, as
+    /// upstream reads it off the called getter's result type, with
+    /// `origin_of(self)` read at the enclosing receiver's place. `None` when
+    /// that origin designates no tracked storage (a binder, a static,
+    /// untracked or unsafe-any provenance, or a receiver origin with no
+    /// receiver place); the holder's place, which
+    /// [`Self::reference_actual`] keeps for loans, is not the origin a
+    /// return contract names.
+    pub(in crate::checker) fn returned_pointer_subscript_origin(
         &self,
         expr: &Expr,
         self_place: Option<&mojito_types::origin::OriginPlace>,
     ) -> Option<mojito_types::origin::Origin> {
-        if let Some(spelled) = self.spelled_construction(expr) {
-            return self.returned_pointer_dereference_origin(&spelled, self_place);
+        use mojito_types::origin::Origin;
+        fn designates_storage(origin: &Origin) -> bool {
+            match origin {
+                Origin::Place(_) => true,
+                Origin::Union(members) => {
+                    !members.is_empty() && members.iter().all(designates_storage)
+                }
+                Origin::MutCast(inner, _) => designates_storage(inner),
+                _ => false,
+            }
         }
-        let pointer = dereferenced_pointer(expr)?;
-        let origin = self.infer(pointer).ok()?.kind().pointer_origin()?;
-        pointer_origin_at_receiver(origin, self_place)
+        if let Some(spelled) = self.spelled_construction(expr) {
+            return self.returned_pointer_subscript_origin(&spelled, self_place);
+        }
+        let origin = self.pointer_subscript_reference(expr)?.origin;
+        let origin = match self_place {
+            Some(place) => super::subst::rebase_self_origin(&origin, &Origin::Place(place.clone())),
+            None => origin,
+        };
+        designates_storage(&origin).then_some(origin)
     }
 
     /// The reference `__get_litref_as_mvalue(operand)` is, for the
@@ -1056,6 +1074,20 @@ impl Checker {
         }
     }
 
+    /// The reference result of the `Pointer.__getitem__` a pointer
+    /// subscript (`p[]`, `p[i]`) selected, `Self.origin` bound from the
+    /// receiver pointer's type.
+    fn pointer_subscript_reference(&self, expr: &Expr) -> Option<mojito_types::origin::RefTy> {
+        let ExprKind::Index { object, .. } = &expr.kind else {
+            return None;
+        };
+        if !self.infer(object).ok()?.is_pointer() {
+            return None;
+        }
+        self.fact(&expr.source_span(), |facts| facts.selected_call.as_deref())
+            .and_then(|getter| getter.reference_result)
+    }
+
     /// Whether `expr` names a local `comptime` binding of a requested
     /// compile-time value.
     fn is_requested_binding_read(&self, expr: &Expr) -> bool {
@@ -1098,15 +1130,6 @@ fn pointer_origin_at_receiver(
         | PointerOrigin::Static { .. }
         | PointerOrigin::Untracked { .. }
         | PointerOrigin::UnsafeAny { .. } => None,
-    }
-}
-
-/// The pointer object of a dereference expression (`p[]`, `p[i]`), if
-/// `expression` is one.
-fn dereferenced_pointer(expression: &Expr) -> Option<&Expr> {
-    match &expression.kind {
-        ExprKind::Index { object, .. } => Some(object),
-        _ => None,
     }
 }
 

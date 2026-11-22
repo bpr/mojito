@@ -2876,7 +2876,7 @@ impl Checker {
                         origin
                     } else {
                         let supplied = self.reference_actual(e)?.origin;
-                        self.returned_pointer_dereference_origin(e, self_owner.as_ref())
+                        self.returned_pointer_subscript_origin(e, self_owner.as_ref())
                             .unwrap_or(supplied)
                     };
                     let parameter_origins: Vec<_> = parameter_owners

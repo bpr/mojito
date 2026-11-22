@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2500**.
+Next free ID: **R2501**.
 
 ## Ordered Work
 
@@ -11012,28 +11012,32 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2483 A returned pointer subscript's origin is re-derived from the
-  pointer, not read off the selected getter's reference result**
+- [ ] **R2500 A return contract over a projected origin binder is
+  substituted as the bare binder**
 
-  Upstream reads a returned `p[]`'s origin off the called
-  `Pointer.__getitem__`'s `ref[Self.origin]` result type; Mojito's return
-  check substitutes `Self.origin` by hand from the receiver pointer's type.
-  - `returned_pointer_dereference_origin` (`checker/origins/actuals.rs`)
-    pattern-matches any `Index` whose object is a pointer, through
-    `dereferenced_pointer`, which serves only it.
-  - `returned_reference_parameter_origin`'s `Index` arm does the same for
-    a pointer whose origin is a binder.
-  - Fix: answer both from the getter's selected-call `reference_result`,
-    with `Self.origin` resolved from the receiver pointer's type, then
-    delete the hand substitution.
-  - Probe: `return Pointer(to=self.x).unsafe_origin_cast[origin_of(self)]()[]`
-    and `return p[]` (`assets/ok/ref_return_pointer_dereference.mojo`).
-  - Probe: `assets/ok/pointer_to_reference_call.mojo`.
-  - Probe: `return Pointer[origin=…](_mlir_value=ptr)[]`
-    (`assets/ok/mlir_pop_array_gep.mojo`).
-  - Probe: `self.data[index]`, `self.data[i]`, and `self.data[idx]` in
-    `stdlib/std/collections/array.mojo`.
-  - Found while landing R2474 (2026-11-21).
+  `ref[Self.origin._get_owned_interior["element"]]` is checked as
+  `ref[Self.origin]`, where upstream compares the returned reference's
+  origin with the projected one.
+  - `project_origin` (`checker/origins/subst.rs`) drops an interior or
+    subtree projection over anything but a place, so
+    `substitute_sig_origin_with_self` and `instantiate_sig_origin` return
+    `Param(o)` for `Projected(Bound(Param(o)), [Interior(..)])`.
+  - The actual side matches it by dropping the projection too:
+    `returned_reference_parameter_origin`'s `Index` arm reads the binder
+    under the selected `Pointer.__getitem__`'s `ref[Self.origin]` result,
+    and its `Member`/`Index` recursion answers a `ref`-field element read
+    with the field's binder.
+  - Keeping the projection (`Origin::reprojected`) needs those actuals to
+    read the selected getter's result instead; a `List.__getitem__`
+    through a `ref` field records it concretized to a place, so it must
+    be re-instantiated against the receiver's binder, as the
+    `MethodCall` arm does.
+  - Probe: `return self._data[index]` in `Span.__getitem__`
+    (`stdlib/std/span.mojo`), a pointer over the projected binder.
+  - Probe: `return self.src[r]` in `_ListIter.__next__`
+    (`stdlib/std/collections/list.mojo`) and `_ArrayIter.__next__`
+    (`stdlib/std/collections/array.mojo`).
+  - Found while landing R2483 (2026-11-22).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
