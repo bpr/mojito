@@ -842,11 +842,13 @@ fn move_context(f: &MirFunction) -> MoveContext {
         MirInstr::MultiSet {
             receiver,
             args,
+            kwargs,
             value,
             ..
         } => context.call_operands.extend(
             [receiver.0, value.0].into_iter().chain(
                 args.iter()
+                    .chain(kwargs.iter().map(|(_, argument)| argument))
                     .map(|MirSubscriptArg::Index(register)| register.0),
             ),
         ),

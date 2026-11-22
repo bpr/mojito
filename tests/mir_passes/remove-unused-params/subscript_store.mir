@@ -66,7 +66,7 @@ artifact {
               literal.materialize { dest: %r6, value: %r1, target: kgen_simd { dtype: int, width: 1 } },
               struct.create { dest: %r2, fields: [%r6] },
               var.use { dest: %r3, var: $v1, mode: copy },
-              index.multi_set { receiver: %r0, args: [index(%r2)], value: %r3, value_keyword: "v", call: subscript_call { target: "S.__setitem__", raises: absent, result_type: None, receiver_requires_place: true, receiver_convention: present(mut), arguments: [call_argument { source: positional(0), parameter_type: Int, requires_place: false, convention: absent }, call_argument { source: keyword(0), parameter_type: Int, requires_place: false, convention: absent }], capture_accesses: [], reference_result: absent, param_arg_regs: [], param_decls: [] } }
+              index.multi_set { receiver: %r0, args: [index(%r2)], kwargs: [], value: %r3, value_keyword: "v", call: subscript_call { target: "S.__setitem__", raises: absent, result_type: None, receiver_requires_place: true, receiver_convention: present(mut), arguments: [call_argument { source: positional(0), parameter_type: Int, requires_place: false, convention: absent }, call_argument { source: keyword(0), parameter_type: Int, requires_place: false, convention: absent }], capture_accesses: [], reference_result: absent, param_arg_regs: [], param_decls: [] } }
             ],
             terminator: return { value: absent }
           }

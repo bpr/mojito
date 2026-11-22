@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A store through `__setitem__` with keyword indices (`s[k=1] = 5`,
+  `s[k=1] += 2`, `s[0, k=1] = 5`, `s[span=1:3] = 6`, a destructuring store,
+  and the write-back `s[k=1].bump()`) passes each keyword index to the
+  setter by name with the value after them, as at the pin, where it was
+  rejected (R2480). A variadic `__getitem__` or `__setitem__` now collects
+  its positional indices beside a keyword index (`g[1, 2, k=3]`), where the
+  verifier rejected the uncollected overflow. MIR text moves to schema 1.223 (`index.multi_set`
+  carries `kwargs`; older records still read) and the package format to
+  `mojito-package 255`.
 - A `where` clause comparing struct values through an operator method
   inherited from a trait default (`where Self.a != .GENERIC` over
   `struct S[a: AddressSpace = .GENERIC]`, `AddressSpace.__ne__` being

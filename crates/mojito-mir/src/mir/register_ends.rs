@@ -288,6 +288,7 @@ impl<'f> RegisterEnds<'f> {
             MirInstr::MultiSet {
                 receiver,
                 args,
+                kwargs,
                 value,
                 call,
                 ..
@@ -299,7 +300,8 @@ impl<'f> RegisterEnds<'f> {
                 SubscriptArguments {
                     args,
                     arg_places: operands.positional,
-                    ..SubscriptArguments::default()
+                    kwargs,
+                    kwarg_places: operands.keyword,
                 }
                 .consumed(&contract, collectors, out);
                 if operands.value.is_none()
@@ -1276,6 +1278,7 @@ mod tests {
         let set = MirInstr::MultiSet {
             receiver: Reg(0),
             args: vec![MirSubscriptArg::Index(Reg(1))],
+            kwargs: Vec::new(),
             value: Reg(2),
             value_keyword: "value".to_string(),
             call: Box::new(call),

@@ -609,6 +609,7 @@ assets/ok/keyword_call.mojo	main	exe-differential	sanitized
 assets/ok/keyword_only.mojo	main	exe-differential	sanitized
 assets/ok/keyword_slice_subscripts.mojo	main	exe-differential	sanitized
 assets/ok/keyword_subscript_ref_store.mojo	main	exe-differential	sanitized
+assets/ok/keyword_subscript_setter_store.mojo	main	exe-differential	sanitized
 assets/ok/keyword_subscript_user_struct.mojo	main	exe-differential	sanitized
 assets/ok/kgen_string_call_parameter.mojo	main	exe-differential	sanitized
 assets/ok/kgen_string_intrinsic_name.mojo	main	exe-differential	sanitized

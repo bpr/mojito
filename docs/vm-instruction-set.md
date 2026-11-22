@@ -116,7 +116,7 @@ accessed; the compact notation omits this analysis-only field.
 | `field.get` | `GetField` | Read a named field from a register value |
 | `index.get` | `Index` | Execute the complete selected `__getitem__` contract, or read an intrinsic indexed element |
 | `index.multi` | `MultiIndex` | Execute the complete selected `__getitem__` contract with mixed index/slice arguments |
-| `index.multi_set` | `MultiSet` | Execute the complete selected `__setitem__` contract (including one-index assignment), passing the value under its `value_keyword`, and write back its mutable receiver, even through a caller reference handle |
+| `index.multi_set` | `MultiSet` | Execute the complete selected `__setitem__` contract (including one-index assignment), passing its keyword indices by name and then the value under its `value_keyword`, and write back its mutable receiver, even through a caller reference handle |
 | `place.load` | `LoadPlace` | Read a place without reevaluating it |
 | `place.store` | `Store` | Write a value through a place |
 | `place.store_ref` | `StoreRef` | Initialize reference-valued storage with an existing handle |
@@ -683,9 +683,10 @@ compile-time-list indexing. Verification requires exactly one call or intrinsic;
 runtime values never select the family. `MultiIndex.call` and `MultiSet.call`
 are mandatory because the VM has no intrinsic multidimensional operation. The
 source evaluation order for assignment is receiver, index and slice-bound
-expressions, then right-hand side. Fixed setters receive the assignment value last,
-while variadic
-`*indices, *, value` methods receive it in the keyword-only `value` slot.
+expressions, then right-hand side. The assignment value is the setter's last
+keyword argument, after any keyword index (`s[k=1] = v` passes `k=1, value=v`),
+so a variadic `*indices, *, value` method receives it in its keyword-only
+`value` slot.
 
 Verification treats retained `raises` as an ordinary protected or propagating
 call site and checks exact argument-source binding, types, collectors, places,

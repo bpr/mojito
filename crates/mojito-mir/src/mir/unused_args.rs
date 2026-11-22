@@ -896,8 +896,8 @@ fn shed_conventions(
 /// `dropped`, and give it a receiver no instruction defines
 /// where the setter removed its own; returns whether it lost an operand.
 ///
-/// The value is the setter's last positional argument, or its `value`
-/// keyword one, as the call the store is passes it
+/// The value is the setter's last keyword argument, after any keyword
+/// index, as the call the store is passes it
 /// ([`crate::mir::subscript_store_call`]).
 fn keep_store_operands(
     instruction: &mut MirInstr,
@@ -909,6 +909,7 @@ fn keep_store_operands(
     let MirInstr::MultiSet {
         receiver,
         args,
+        kwargs,
         value,
         value_keyword,
         ..
@@ -916,8 +917,13 @@ fn keep_store_operands(
     else {
         return false;
     };
+    let keywords: Vec<&str> = kwargs
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .chain(std::iter::once(value_keyword.as_str()))
+        .collect();
     let Ok((positional, keyword)) =
-        removed_argument_operands(declaration, slots, args.len(), &[value_keyword.as_str()])
+        removed_argument_operands(declaration, slots, args.len(), &keywords)
     else {
         return false;
     };
@@ -932,8 +938,15 @@ fn keep_store_operands(
             }
         }
     }
-    if !keyword.is_empty() {
-        dropped.insert(value.0);
+    for &index in &keyword {
+        match kwargs.get(index) {
+            Some((_, MirSubscriptArg::Index(reg))) => {
+                dropped.insert(reg.0);
+            }
+            None => {
+                dropped.insert(value.0);
+            }
+        }
     }
     if declaration.has_receiver && slots.contains(&0) {
         changed = true;

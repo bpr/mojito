@@ -1355,6 +1355,7 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::MultiSet {
             receiver: Reg(0),
             args: vec![MirSubscriptArg::Index(Reg(1))],
+            kwargs: vec![("k".into(), MirSubscriptArg::Index(Reg(4)))],
             value: Reg(2),
             value_keyword: "value".to_string(),
             call: Box::new(sample_subscript_call()),

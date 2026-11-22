@@ -978,10 +978,10 @@ impl<'i> SubscriptOperands<'i> {
             MirInstr::MultiSet {
                 receiver,
                 args,
+                kwargs,
                 value,
                 value_keyword,
                 call,
-                ..
             } => Some(Self {
                 callee: &call.target,
                 receiver: *receiver,
@@ -989,7 +989,11 @@ impl<'i> SubscriptOperands<'i> {
                     .iter()
                     .map(|MirSubscriptArg::Index(reg)| *reg)
                     .collect(),
-                keywords: vec![(value_keyword.as_str(), *value)],
+                keywords: kwargs
+                    .iter()
+                    .map(|(name, MirSubscriptArg::Index(reg))| (name.as_str(), *reg))
+                    .chain(std::iter::once((value_keyword.as_str(), *value)))
+                    .collect(),
             }),
             _ => None,
         }
@@ -1060,11 +1064,13 @@ fn operand_registers_mut(instruction: &mut MirInstr) -> (Option<&mut Reg>, Vec<&
         MirInstr::MultiSet {
             receiver,
             args,
+            kwargs,
             value,
             ..
         } => (
             Some(receiver),
             args.iter_mut()
+                .chain(kwargs.iter_mut().map(|(_, argument)| argument))
                 .map(|MirSubscriptArg::Index(register)| register)
                 .chain([value])
                 .collect(),

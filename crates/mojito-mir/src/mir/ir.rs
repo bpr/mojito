@@ -482,10 +482,10 @@ pub fn dunder_method_call(
 /// Rewrite a subscript store `instruction` into the call it is; returns
 /// whether it was one.
 ///
-/// The call is `object.__setitem__(indexes..., value)`, its `None` result
-/// `dest`, as upstream's `a[i] = v` is that call. The value is the last
-/// positional argument, or the `value` keyword one where the setter, so
-/// `declared`, collects its indexes, each with its place; the collector
+/// The call is `object.__setitem__(indexes..., keywords..., value)`, its
+/// `None` result `dest`, as upstream's `a[i] = v` is that call. The value is
+/// the last keyword argument. Where the setter, so `declared`, collects its
+/// indexes, each with its place, the collector
 /// the store builds is the operand the call spreads, as a call building
 /// one passes it. The call takes the contract's target, error edge,
 /// receiver convention, and capture accesses.
@@ -500,6 +500,7 @@ pub fn subscript_store_call(
     let MirInstr::MultiSet {
         receiver,
         args,
+        kwargs,
         value,
         value_keyword,
         call,
@@ -513,7 +514,11 @@ pub fn subscript_store_call(
             MirSubscriptArg::Index(reg) => *reg,
         })
         .collect();
-    let kwargs = vec![(value_keyword, value)];
+    let kwargs = kwargs
+        .into_iter()
+        .map(|(name, MirSubscriptArg::Index(reg))| (name, reg))
+        .chain(std::iter::once((value_keyword, value)))
+        .collect::<Vec<_>>();
     let call = *call;
     let spread = collector_operand(declared, positional.len(), &kwargs);
     *instruction = MirInstr::MethodCall {
@@ -883,12 +888,13 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         MirInstr::MultiSet {
             receiver,
             args,
+            kwargs,
             value,
             call,
             ..
         } => {
             out.extend([receiver, value]);
-            for arg in args {
+            for arg in args.iter_mut().chain(kwargs.iter_mut().map(|(_, arg)| arg)) {
                 subscript_arg_regs_mut(arg, &mut out);
             }
             subscript_call_regs_mut(call, &mut out);
@@ -2553,12 +2559,14 @@ pub enum MirInstr {
     },
     /// `object[a, b:c] = value`: checked `__setitem__` dispatch. A `mut self`
     /// implementation's receiver is a `ref.make` of the storage it writes,
-    /// as a method call's is. The value is passed by keyword, under `value_keyword`, the
-    /// name of the first declared setter's last argument (upstream's
-    /// `SubscriptDLValue::emitStore`).
+    /// as a method call's is. Keyword index actuals (`s[k=i] = v`) ride
+    /// `kwargs`, as `MultiIndex`'s do. The value is passed by keyword after
+    /// them, under `value_keyword`, the name of the first declared setter's
+    /// last argument (upstream's `SubscriptDLValue::emitStore`).
     MultiSet {
         receiver: Reg,
         args: Vec<MirSubscriptArg>,
+        kwargs: Vec<(String, MirSubscriptArg)>,
         value: Reg,
         value_keyword: String,
         call: Box<MirSubscriptCall>,

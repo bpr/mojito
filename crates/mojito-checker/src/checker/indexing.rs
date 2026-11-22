@@ -682,7 +682,7 @@ impl Checker {
         value_name: &str,
         value: &Expr,
     ) -> Result<mojito_checked::checked::CheckedCallContract, TypeError> {
-        let (object, arguments, descriptors) = match &target.kind {
+        let (object, arguments, mut kwargs, descriptors) = match &target.kind {
             ExprKind::Index { object, index } => {
                 let object_ty = self.infer(object)?;
                 // A base that is itself a reference result (`v[List[Int]][0]
@@ -695,7 +695,12 @@ impl Checker {
                 }
                 self.prepare_index_argument(&object_ty, index, "__setitem__", 0)?;
                 self.infer(index)?;
-                (object.as_ref(), vec![index.as_ref().clone()], vec![None])
+                (
+                    object.as_ref(),
+                    vec![index.as_ref().clone()],
+                    Vec::new(),
+                    vec![None],
+                )
             }
             ExprKind::Slice {
                 object,
@@ -711,6 +716,7 @@ impl Checker {
                 (
                     object.as_ref(),
                     vec![descriptor.clone()],
+                    Vec::new(),
                     vec![Some(descriptor)],
                 )
             }
@@ -720,11 +726,10 @@ impl Checker {
             } => {
                 let object_ty = self.infer(object)?;
                 let mut arguments = Vec::with_capacity(source.len());
+                let mut keyword_arguments = Vec::new();
                 let mut descriptors = Vec::with_capacity(source.len());
-                reject_keyword_setter_store(target)?;
                 for (position, argument) in source.iter().enumerate() {
                     match argument {
-                        SubscriptArg::Keyword { .. } | SubscriptArg::KeywordSlice { .. } => {}
                         SubscriptArg::Index(index) => {
                             self.prepare_index_argument(
                                 &object_ty,
@@ -736,6 +741,17 @@ impl Checker {
                             arguments.push(index.clone());
                             descriptors.push(None);
                         }
+                        // A keyword index binds a keyword-only `__setitem__`
+                        // parameter by structural call binding, as the
+                        // getter's does.
+                        SubscriptArg::Keyword { name, value } => {
+                            self.infer(value)?;
+                            keyword_arguments.push(mojito_ast::ast::KwArg {
+                                name: name.clone(),
+                                value: value.clone(),
+                            });
+                            descriptors.push(None);
+                        }
                         SubscriptArg::Slice { lower, upper, step } => {
                             let descriptor = self.synthetic_slice_descriptor(
                                 &target.source_span(),
@@ -745,9 +761,26 @@ impl Checker {
                             arguments.push(descriptor.clone());
                             descriptors.push(Some(descriptor));
                         }
+                        SubscriptArg::KeywordSlice {
+                            name,
+                            lower,
+                            upper,
+                            step,
+                        } => {
+                            let descriptor = self.synthetic_slice_descriptor(
+                                &target.source_span(),
+                                position,
+                                [lower.as_deref(), upper.as_deref(), step.as_deref()],
+                            )?;
+                            keyword_arguments.push(mojito_ast::ast::KwArg {
+                                name: name.clone(),
+                                value: descriptor.clone(),
+                            });
+                            descriptors.push(Some(descriptor));
+                        }
                     }
                 }
-                (object.as_ref(), arguments, descriptors)
+                (object.as_ref(), arguments, keyword_arguments, descriptors)
             }
             _ => {
                 return Err(TypeError::InvariantViolation(
@@ -756,10 +789,12 @@ impl Checker {
             }
         };
         let object_ty = self.infer(object)?;
-        let kwargs = vec![mojito_ast::ast::KwArg {
+        // The value is the last keyword, after any keyword index, as
+        // upstream's `emitStore` appends it.
+        kwargs.push(mojito_ast::ast::KwArg {
             name: value_name.to_string(),
             value: value.clone(),
-        }];
+        });
         // List element replacement is allocation-stable.  Its projected write
         // is recorded after this check as `list[AnyIndex]`, preserving the
         // List's `element` generation while still expiring interiors nested in
@@ -789,8 +824,9 @@ impl Checker {
             Some(ty) => ty,
             None => self.infer(value)?,
         };
+        let keyword = subscript_keyword_marks(target);
         let descriptors =
-            self.bind_selected_slice_literals(&target.source_span(), &[], &descriptors)?;
+            self.bind_selected_slice_literals(&target.source_span(), &keyword, &descriptors)?;
         self.record_at(target.source_span()).subscript_descriptor =
             Some((descriptors, Some(value_name.to_string())));
         self.record_at(target.source_span()).ty = Some(element.clone());
@@ -905,12 +941,14 @@ impl Checker {
         element: &Ty,
         value_name: &str,
     ) -> Result<Ty, TypeError> {
-        reject_keyword_setter_store(place)?;
         let indices_only = match &place.kind {
             ExprKind::Index { .. } => true,
-            ExprKind::MultiIndex { args, .. } => args
-                .iter()
-                .all(|argument| matches!(argument, SubscriptArg::Index(_))),
+            ExprKind::MultiIndex { args, .. } => args.iter().all(|argument| {
+                matches!(
+                    argument,
+                    SubscriptArg::Index(_) | SubscriptArg::Keyword { .. }
+                )
+            }),
             _ => false,
         };
         if !indices_only {
@@ -1148,15 +1186,7 @@ impl Checker {
             MethodCallArguments::ordinary(&actual_arguments, &keyword_arguments),
         )?;
         self.record_borrowed_view_result(&span, &result);
-        let keyword = arguments
-            .iter()
-            .map(|argument| {
-                matches!(
-                    argument,
-                    SubscriptArg::Keyword { .. } | SubscriptArg::KeywordSlice { .. }
-                )
-            })
-            .collect::<Vec<_>>();
+        let keyword = keyword_marks(arguments);
         let descriptors = self.bind_selected_slice_literals(&span, &keyword, &descriptors)?;
         self.record_at(span).subscript_descriptor = Some((descriptors, None));
         Ok(result)
@@ -2514,24 +2544,24 @@ fn setter_value_name(setter: &MethodSig) -> Option<String> {
     }
 }
 
-/// Reject a store through `__setitem__` with a keyword index argument
-/// (`s[k=0] = v` over a keyword-only setter): MIR's setter call carries
-/// positional indices only. A keyword store through a `ref` getter
-/// (`p[unsafe_offset=1] = v` among them) writes its reference.
-fn reject_keyword_setter_store(target: &Expr) -> Result<(), TypeError> {
-    let ExprKind::MultiIndex { args, .. } = &target.kind else {
-        return Ok(());
-    };
-    args.iter()
-        .find_map(|argument| match argument {
-            SubscriptArg::Keyword { name, .. } | SubscriptArg::KeywordSlice { name, .. } => {
-                Some(name)
-            }
-            SubscriptArg::Index(_) | SubscriptArg::Slice { .. } => None,
+/// Whether each argument of the subscript `target` is spelled by keyword,
+/// in source order; empty for a single index or slice.
+fn subscript_keyword_marks(target: &Expr) -> Vec<bool> {
+    match &target.kind {
+        ExprKind::MultiIndex { args, .. } => keyword_marks(args),
+        _ => Vec::new(),
+    }
+}
+
+/// Whether each of `arguments` is spelled by keyword, in source order.
+fn keyword_marks(arguments: &[SubscriptArg]) -> Vec<bool> {
+    arguments
+        .iter()
+        .map(|argument| {
+            matches!(
+                argument,
+                SubscriptArg::Keyword { .. } | SubscriptArg::KeywordSlice { .. }
+            )
         })
-        .map_or(Ok(()), |name| {
-            Err(TypeError::Unsupported(format!(
-                "a keyword subscript store through '__setitem__' ('[{name}=…] = value') is not supported yet"
-            )))
-        })
+        .collect()
 }

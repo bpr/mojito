@@ -1386,6 +1386,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
         MirInstr::MultiSet {
             receiver,
             args,
+            kwargs,
             value,
             value_keyword,
             call,
@@ -1394,6 +1395,15 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("receiver", reg_value(*receiver)),
                 ("args", list(args.iter().map(subscript_arg))),
+                (
+                    "kwargs",
+                    list(kwargs.iter().map(|(name, value)| {
+                        record(
+                            "keyword",
+                            &[("name", symbol(name)), ("value", subscript_arg(value))],
+                        )
+                    })),
+                ),
                 ("value", reg_value(*value)),
                 ("value_keyword", quote(value_keyword)),
                 ("call", subscript_call(call)),

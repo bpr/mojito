@@ -411,18 +411,15 @@ fn fill_call(
             caller.name, site.callee
         ));
     }
-    // A subscript's contract names each operand by its source, which a
-    // keyword's move to its position would rename.
-    if !matches!(instruction, MirInstr::MultiIndex { .. }) || site.kwargs.is_empty() {
-        build_collector(
-            &mut site,
-            &CallShape::from(callee),
-            function,
-            location.as_ref(),
-            prelude,
-            postlude,
-        );
-    }
+    build_collector(
+        &mut site,
+        &CallShape::from(callee),
+        matches!(instruction, MirInstr::MultiIndex { .. }),
+        function,
+        location.as_ref(),
+        prelude,
+        postlude,
+    );
     if let (
         Some(position),
         MirInstr::MultiIndex {
@@ -450,6 +447,7 @@ fn collect_subscript_store(
     let MirInstr::MultiSet {
         receiver,
         args,
+        kwargs,
         value,
         value_keyword,
         call,
@@ -479,7 +477,11 @@ fn collect_subscript_store(
         callee: call.target.clone(),
         leading: 0,
         args: registers,
-        kwargs: vec![(value_keyword.clone(), *value)],
+        kwargs: kwargs
+            .iter()
+            .map(|(name, MirSubscriptArg::Index(register))| (name.clone(), *register))
+            .chain(std::iter::once((value_keyword.clone(), *value)))
+            .collect(),
         bound: bindings_of(&call.target, callee, &[], receiver_ty.as_ref(), caller),
         spread: None,
         receiver: None,
@@ -488,6 +490,7 @@ fn collect_subscript_store(
     build_collector(
         &mut site,
         &CallShape::from(callee),
+        true,
         function,
         location.as_ref(),
         prelude,
@@ -637,6 +640,7 @@ fn collect_through_requirement(
     build_collector(
         &mut site,
         &shape,
+        false,
         function,
         location.as_ref(),
         prelude,
@@ -907,10 +911,13 @@ fn keyword_collector_type(
 /// its position, so the shared matcher binds the collector operand alone
 /// ([`mojito_ast::call::bind_spread`]). A call that leaves such a slot out,
 /// or whose collector type the call's operands do not determine, keeps its
-/// operands; a subscript carries no collector operand.
+/// operands, and so does a subscript (`keywords_stay`) a keyword of which
+/// fills such a slot: its contract names each operand by its source, which
+/// the move would rename.
 fn build_collector(
     site: &mut Site,
     shape: &CallShape<'_>,
+    keywords_stay: bool,
     function: &mut MirFunction,
     location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
@@ -944,6 +951,13 @@ fn build_collector(
         .and_then(|limit| limit.checked_sub(skip))
         .unwrap_or(names.len())
         .min(names.len());
+    if keywords_stay
+        && matched.slots[..limit]
+            .iter()
+            .any(|slot| matches!(slot, ArgSlot::Keyword(_)))
+    {
+        return;
+    }
     let mut args = Vec::with_capacity(limit + 1);
     let mut moved = HashSet::new();
     for slot in &matched.slots[..limit] {

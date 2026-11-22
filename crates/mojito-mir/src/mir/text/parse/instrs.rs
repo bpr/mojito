@@ -806,6 +806,13 @@ impl Decoder {
             "index.multi_set" => Some(MirInstr::MultiSet {
                 receiver: self.req(value, fields, "receiver", Self::reg)?,
                 args: self.req(value, fields, "args", |d, v| Some(d.subscript_args(v)))?,
+                // Before 1.223 a setter passed no keyword index, and its
+                // record may omit the list.
+                kwargs: if self.minor >= 223 || self.field(fields, "kwargs").is_ok() {
+                    self.req(value, fields, "kwargs", |d, v| Some(d.subscript_kwargs(v)))?
+                } else {
+                    Vec::new()
+                },
                 value: self.req(value, fields, "value", Self::reg)?,
                 value_keyword: self.req(
                     value,

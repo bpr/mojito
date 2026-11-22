@@ -638,16 +638,23 @@ impl FnLowering<'_> {
             MirInstr::MultiSet {
                 receiver,
                 args,
+                kwargs,
                 value,
                 value_keyword,
                 call,
-                ..
             } => {
                 // The discarded `__setitem__` result binds to a scratch
                 // register outside the function's register space.
                 let scratch = Reg(u32::MAX);
                 let positional = Self::subscript_actuals(args);
-                let keywords = vec![(value_keyword.as_str(), SubscriptActual::Reg(*value))];
+                let keywords: Vec<_> = kwargs
+                    .iter()
+                    .map(|(name, arg)| (name.as_str(), Self::subscript_actual(arg)))
+                    .chain(std::iter::once((
+                        value_keyword.as_str(),
+                        SubscriptActual::Reg(*value),
+                    )))
+                    .collect();
                 self.lower_subscript_call(ctx, scratch, call, *receiver, &positional, &keywords)
             }
             MirInstr::MakeClosure {

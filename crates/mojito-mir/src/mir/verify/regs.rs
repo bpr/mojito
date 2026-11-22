@@ -171,12 +171,16 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::MultiSet {
             receiver,
             args,
+            kwargs,
             value,
             call,
             ..
         } => {
             out.push(*receiver);
             for argument in args {
+                subscript_arg_regs(argument, out);
+            }
+            for (_, argument) in kwargs {
                 subscript_arg_regs(argument, out);
             }
             out.push(*value);

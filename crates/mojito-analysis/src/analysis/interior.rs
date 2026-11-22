@@ -385,7 +385,12 @@ pub(super) fn interior_reference_uses(
                 call,
                 operands.receiver,
                 &operands.positional,
-                &[operands.value],
+                &operands
+                    .keyword
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(operands.value))
+                    .collect::<Vec<_>>(),
                 *value,
             );
         }

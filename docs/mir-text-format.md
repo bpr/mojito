@@ -1348,6 +1348,15 @@ stores the `RefTy` a `ref` does. A reader still accepts the older
 reading the provenance as its parts. The package format moves to
 `mojito-package 254` (R2211).
 
+Schema 1.223 gives `index.multi_set` the `kwargs` list `index.multi`
+carries, `keyword { name, value }` records of the store's keyword index
+actuals (`s[k=1] = 5` over `__setitem__(mut self, *, k: Int, value: Int)`).
+The stored value is passed after them, under `value_keyword`, so its
+contract source is the keyword one past the last index's, as upstream's
+`SubscriptDLValue::emitStore` appends it. An older record, whose setter
+passed no keyword index, reads with an empty list. The package format moves
+to `mojito-package 255` (R2480).
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and

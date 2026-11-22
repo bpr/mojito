@@ -55,9 +55,9 @@ enum LeafStore<'a> {
 
 /// A nominal subscript store's operands, lowered before its value: the
 /// `target`, its receiver `object`, and its index argument nodes, the
-/// receiver with the place a `mut self` setter writes back, the index
-/// arguments, the keyword the value is passed under, and the selected
-/// `__setitem__`.
+/// receiver with the place a `mut self` setter writes back, the positional
+/// and keyword index arguments, the keyword the value is passed under, and
+/// the selected `__setitem__`.
 struct SubscriptSetter<'a> {
     target: Node<'a>,
     object: Node<'a>,
@@ -65,6 +65,7 @@ struct SubscriptSetter<'a> {
     receiver: Reg,
     receiver_place: Option<MirPlace>,
     args: Vec<MirSubscriptArg>,
+    kwargs: Vec<(String, MirSubscriptArg)>,
     value_keyword: String,
     call: MirSubscriptCall,
 }
@@ -79,6 +80,19 @@ struct AugmentedStore<'a> {
     value_keyword: Option<String>,
     op: InfixOp,
     rhs: Node<'a>,
+}
+
+/// One raw operand of a multi-argument augmented store, evaluated once for
+/// both accessors: its call `source`, its unadapted `argument`, the `place`
+/// it was read from when an accessor binds it by reference, the `span` of
+/// an index (`None` for a slice literal), and the keyword `name` it is
+/// passed under (`None` for a positional one).
+struct AugmentedSubscriptOperand {
+    source: mojito_checked::checked::CheckedCallArgumentSource,
+    argument: MirSubscriptArg,
+    place: Option<MirPlace>,
+    span: Option<SourceSpan>,
+    name: Option<String>,
 }
 
 /// An augmented store's right-hand side as its operator step consumes it:
@@ -1026,6 +1040,7 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
             args: vec![MirSubscriptArg::Index(setter_index)],
+            kwargs: Vec::new(),
             value,
             value_keyword: value_keyword
                 .clone()
@@ -1111,6 +1126,7 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
             args: vec![setter_argument],
+            kwargs: Vec::new(),
             value,
             value_keyword: value_keyword
                 .clone()
@@ -1128,6 +1144,7 @@ impl<'a> Flatten<'a> {
         source: &[mojito_checked::checked::CheckedSubscriptArg],
         descriptors: &[Option<mojito_checked::checked::CheckedSliceLiteral>],
     ) {
+        use mojito_checked::checked::{CheckedCallArgumentSource, CheckedSubscriptArg};
         let AugmentedStore {
             target,
             ref plan,
@@ -1146,29 +1163,45 @@ impl<'a> Flatten<'a> {
         let (receiver, receiver_place) = self.lower_call_receiver(object);
         let (receiver, receiver_place) =
             self.address_receiver(&plan.getter, object, (receiver, receiver_place));
-        let mut source_places = Vec::with_capacity(source.len());
-        let mut slices = Vec::new();
-        let mut source_spans = Vec::with_capacity(source.len());
-        let raw_args = source
-            .iter()
-            .zip(descriptors)
-            .enumerate()
-            .map(|(position, (argument, descriptor))| match argument {
-                mojito_checked::checked::CheckedSubscriptArg::Index(index) => {
+        // Each raw operand with its call source, the place it was read from,
+        // the source span of an index (`None` for a slice literal), and the
+        // keyword it is passed under; every source is evaluated once here.
+        let mut raw = Vec::with_capacity(source.len());
+        let (mut positional, mut keyword) = (0, 0);
+        for (argument, descriptor) in source.iter().zip(descriptors) {
+            let (call_source, name) = match argument {
+                CheckedSubscriptArg::Index(_) | CheckedSubscriptArg::Slice { .. } => {
+                    positional += 1;
+                    (CheckedCallArgumentSource::Positional(positional - 1), None)
+                }
+                CheckedSubscriptArg::Keyword { name, .. }
+                | CheckedSubscriptArg::KeywordSlice { name, .. } => {
+                    keyword += 1;
+                    (
+                        CheckedCallArgumentSource::Keyword(keyword - 1),
+                        Some(name.clone()),
+                    )
+                }
+            };
+            match argument {
+                CheckedSubscriptArg::Index(value) | CheckedSubscriptArg::Keyword { value, .. } => {
                     debug_assert!(descriptor.is_none());
-                    let index = Self::subscript_operand(target, *index);
-                    let argument_source =
-                        mojito_checked::checked::CheckedCallArgumentSource::Positional(position);
+                    let index = Self::subscript_operand(target, *value);
                     let retain_place =
-                        Self::checked_call_source_requires_place(&plan.getter, argument_source)
-                            || Self::checked_call_source_requires_place(setter, argument_source);
+                        Self::checked_call_source_requires_place(&plan.getter, call_source)
+                            || Self::checked_call_source_requires_place(setter, call_source);
                     let (register, place) =
                         self.lower_augmented_argument_source(index, retain_place);
-                    source_places.push(place);
-                    source_spans.push(Some(index.location()));
-                    MirSubscriptArg::Index(register)
+                    raw.push(AugmentedSubscriptOperand {
+                        source: call_source,
+                        argument: MirSubscriptArg::Index(register),
+                        place,
+                        span: Some(index.location()),
+                        name,
+                    });
                 }
-                mojito_checked::checked::CheckedSubscriptArg::Slice {
+                CheckedSubscriptArg::Slice { lower, upper, step }
+                | CheckedSubscriptArg::KeywordSlice {
                     lower, upper, step, ..
                 } => {
                     let sliced = self.slice_set_argument(
@@ -1176,56 +1209,47 @@ impl<'a> Flatten<'a> {
                         descriptor.clone(),
                         [*lower, *upper, *step],
                     );
-                    let (argument, place) = self.share_augmented_slice(
-                        target.location(),
-                        plan,
-                        mojito_checked::checked::CheckedCallArgumentSource::Positional(position),
-                        sliced,
-                    );
-                    slices.push(position);
-                    source_places.push(place);
-                    source_spans.push(None);
-                    argument
+                    let (argument, place) =
+                        self.share_augmented_slice(target.location(), plan, call_source, sliced);
+                    raw.push(AugmentedSubscriptOperand {
+                        source: call_source,
+                        argument,
+                        place,
+                        span: None,
+                        name,
+                    });
                 }
-                _ => {
-                    unreachable!("a keyword store through '__setitem__' is rejected at checking")
-                }
-            })
-            .collect::<Vec<_>>();
+            }
+        }
         // Value getters defer every call-local argument adaptation
         // until after the RHS. Building the raw descriptor/index list
         // above has already performed each source evaluation once.
         let rhs = self.lower_augmented_rhs(rhs_expression, plan.inplace.as_ref());
-        let getter_args = raw_args
+        let getter_operands = raw
             .iter()
-            .enumerate()
-            .map(|(position, argument)| {
-                let source =
-                    mojito_checked::checked::CheckedCallArgumentSource::Positional(position);
-                if slices.contains(&position) {
-                    return self.augmented_slice_operand(
+            .map(|operand| {
+                let adapted = match (&operand.span, &operand.argument) {
+                    (None, argument) => self.augmented_slice_operand(
                         &plan.getter,
-                        source,
+                        operand.source,
                         target.location(),
-                        (argument, source_places[position].as_ref()),
-                    );
-                }
-                let MirSubscriptArg::Index(register) = argument;
-                MirSubscriptArg::Index(
-                    self.apply_checked_call_value_adjustments(
-                        &plan.getter,
-                        source,
-                        *register,
-                        source_spans[position]
-                            .clone()
-                            .unwrap_or_else(|| target.location()),
+                        (argument, operand.place.as_ref()),
                     ),
-                )
+                    (Some(span), MirSubscriptArg::Index(register)) => {
+                        MirSubscriptArg::Index(self.apply_checked_call_value_adjustments(
+                            &plan.getter,
+                            operand.source,
+                            *register,
+                            span.clone(),
+                        ))
+                    }
+                };
+                (operand.span.clone(), adapted)
             })
             .collect::<Vec<_>>();
         let mut getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
-            &spanned_operands(&source_spans, &getter_args),
+            &getter_operands,
             target.location(),
         );
         self.convert_raised(
@@ -1236,11 +1260,12 @@ impl<'a> Flatten<'a> {
         self.emit_checked_call_boundary(&plan.getter, &target.location());
         let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
         self.record_call(current, Some(getter_call.target.clone()), 0);
+        let (args, kwargs) = split_keyword_operands(&raw, &getter_operands);
         self.emit(MirInstr::MultiIndex {
             dest: current,
             object: receiver,
-            args: getter_args,
-            kwargs: Vec::new(),
+            args,
+            kwargs,
             call: Some(Box::new(getter_call)),
         });
         let result = self.apply_augmented_operator(target, current, plan, op, rhs);
@@ -1250,56 +1275,49 @@ impl<'a> Flatten<'a> {
             &plan.getter,
             object,
         );
-        let setter_args = raw_args
+        let setter_operands = raw
             .iter()
-            .enumerate()
-            .map(|(position, argument)| match argument {
-                _ if slices.contains(&position) => self.augmented_slice_operand(
-                    setter,
-                    mojito_checked::checked::CheckedCallArgumentSource::Positional(position),
-                    target.location(),
-                    (argument, source_places[position].as_ref()),
-                ),
-                MirSubscriptArg::Index(register) => {
-                    let source_kind =
-                        mojito_checked::checked::CheckedCallArgumentSource::Positional(position);
-                    let raw = self.reload_augmented_source(
-                        *register,
-                        &source_places[position],
-                        Self::checked_call_source_mutates(&plan.getter, source_kind),
-                        source_spans[position]
-                            .clone()
-                            .unwrap_or_else(|| target.location()),
-                    );
-                    MirSubscriptArg::Index(
-                        self.apply_checked_call_value_adjustments(
+            .map(|operand| {
+                let adapted = match (&operand.span, &operand.argument) {
+                    (None, argument) => self.augmented_slice_operand(
+                        setter,
+                        operand.source,
+                        target.location(),
+                        (argument, operand.place.as_ref()),
+                    ),
+                    (Some(span), MirSubscriptArg::Index(register)) => {
+                        let reloaded = self.reload_augmented_source(
+                            *register,
+                            &operand.place,
+                            Self::checked_call_source_mutates(&plan.getter, operand.source),
+                            span.clone(),
+                        );
+                        MirSubscriptArg::Index(self.apply_checked_call_value_adjustments(
                             setter,
-                            source_kind,
-                            raw,
-                            source_spans[position]
-                                .clone()
-                                .unwrap_or_else(|| target.location()),
-                        ),
-                    )
-                }
+                            operand.source,
+                            reloaded,
+                            span.clone(),
+                        ))
+                    }
+                };
+                (operand.span.clone(), adapted)
             })
             .collect::<Vec<_>>();
-        let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
+        let value_argument = CheckedCallArgumentSource::Keyword(keyword);
         let (value, _) = self.augmented_setter_value(target, setter, value_argument, result);
-        let mut setter_call = self.mir_subscript_call_contract(
-            setter.clone(),
-            &spanned_operands(&source_spans, &setter_args),
-            target.location(),
-        );
+        let mut setter_call =
+            self.mir_subscript_call_contract(setter.clone(), &setter_operands, target.location());
         self.convert_raised(
             setter_call.raises.as_mut(),
             target.raise_conversion(),
             target.location(),
         );
         self.emit_checked_call_boundary(setter, &target.location());
+        let (args, kwargs) = split_keyword_operands(&raw, &setter_operands);
         self.emit(MirInstr::MultiSet {
             receiver: setter_receiver,
-            args: setter_args,
+            args,
+            kwargs,
             value,
             value_keyword: value_keyword
                 .clone()
@@ -1869,7 +1887,7 @@ impl<'a> Flatten<'a> {
         // `!lit.ref` of the converted temporary. A converted value the
         // setter adapts further is its argument keyed at the store's own
         // site ([`Self::converted_store_value`]).
-        let source = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
+        let source = setter_value_source(target);
         let binding = target.argument_binding(source);
         let adapted = target.call_contract().is_some_and(|setter| {
             setter
@@ -1914,7 +1932,7 @@ impl<'a> Flatten<'a> {
         target: Node<'a>,
         (value, value_place): (Reg, Option<MirPlace>),
     ) -> (Reg, Option<MirPlace>) {
-        let source = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
+        let source = setter_value_source(target);
         let Some(setter) = target.call_contract().filter(|setter| {
             setter.boundary.arguments.iter().any(|argument| {
                 argument.source == source && argument.value_source == target.location()
@@ -2166,8 +2184,9 @@ impl<'a> Flatten<'a> {
             this.lower_receiver_value(target, object, false)
         });
         let mut indices = Vec::new();
-        let mut positional = 0;
+        let (mut positional, mut keyword) = (0, 0);
         let mut evaluated = Vec::new();
+        let mut kwargs = Vec::new();
         let args = match source_arguments {
             SetArguments::Index(index) => {
                 self.bind_call_operands(target, 0, &[index], &[]);
@@ -2177,49 +2196,56 @@ impl<'a> Flatten<'a> {
                 vec![MirSubscriptArg::Index(register)]
             }
             SetArguments::Multi(arguments) => {
+                use mojito_checked::checked::{CheckedCallArgumentSource, CheckedSubscriptArg};
                 self.bind_subscript_operands(target, arguments, |value| {
                     Self::subscript_operand(target, value)
                 });
-                arguments
-                    .iter()
-                    .zip(descriptors)
-                    .map(|(argument, descriptor)| match argument {
-                        mojito_checked::checked::CheckedSubscriptArg::Index(value) => {
+                let mut args = Vec::new();
+                for (argument, descriptor) in arguments.iter().zip(descriptors) {
+                    let lowered = match argument {
+                        CheckedSubscriptArg::Index(value)
+                        | CheckedSubscriptArg::Keyword { value, .. } => {
                             debug_assert!(descriptor.is_none());
                             let index = Self::subscript_operand(target, *value);
                             let (register, _) = self.lower_call_argument(index);
-                            positional += 1;
                             indices.push(index);
                             evaluated
                                 .push((Some(index.location()), MirSubscriptArg::Index(register)));
                             MirSubscriptArg::Index(register)
                         }
-                        mojito_checked::checked::CheckedSubscriptArg::Slice {
-                            lower,
-                            upper,
-                            step,
-                            ..
+                        CheckedSubscriptArg::Slice {
+                            lower, upper, step, ..
+                        }
+                        | CheckedSubscriptArg::KeywordSlice {
+                            lower, upper, step, ..
                         } => {
+                            let source = match argument {
+                                CheckedSubscriptArg::KeywordSlice { .. } => {
+                                    CheckedCallArgumentSource::Keyword(keyword)
+                                }
+                                _ => CheckedCallArgumentSource::Positional(positional),
+                            };
                             let sliced = self.slice_set_argument(
                                 target,
                                 descriptor,
                                 [*lower, *upper, *step],
                             );
-                            let (argument, _) = self.address_subscript_argument(
-                                target,
-                                mojito_checked::checked::CheckedCallArgumentSource::Positional(
-                                    positional,
-                                ),
-                                sliced,
-                            );
-                            positional += 1;
-                            argument
+                            self.address_subscript_argument(target, source, sliced).0
                         }
-                        _ => unreachable!(
-                            "a keyword store through '__setitem__' is rejected at checking"
-                        ),
-                    })
-                    .collect()
+                    };
+                    match argument {
+                        CheckedSubscriptArg::Keyword { name, .. }
+                        | CheckedSubscriptArg::KeywordSlice { name, .. } => {
+                            keyword += 1;
+                            kwargs.push((name.clone(), lowered));
+                        }
+                        CheckedSubscriptArg::Index(_) | CheckedSubscriptArg::Slice { .. } => {
+                            positional += 1;
+                            args.push(lowered);
+                        }
+                    }
+                }
+                args
             }
             SetArguments::Slice([lower, upper, step]) => {
                 let sliced = self.slice_set_argument(
@@ -2248,6 +2274,7 @@ impl<'a> Flatten<'a> {
                 receiver,
                 receiver_place,
                 args,
+                kwargs,
                 value_keyword,
                 call,
             },
@@ -2274,6 +2301,7 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::MultiSet {
             receiver: setter.receiver,
             args: setter.args,
+            kwargs: setter.kwargs,
             value,
             value_keyword: setter.value_keyword,
             call: Box::new(setter.call),
@@ -4559,15 +4587,38 @@ fn subscript_slice_descriptors(
         .expect("a checked subscript store has descriptor metadata")
 }
 
-/// Subscript `operands` paired with the sources they were evaluated from,
-/// `sources` aligned with them.
-fn spanned_operands(
-    sources: &[Option<SourceSpan>],
-    operands: &[MirSubscriptArg],
-) -> Vec<super::facts::SubscriptOperand> {
-    sources
-        .iter()
-        .cloned()
-        .zip(operands.iter().cloned())
-        .collect()
+/// The source of the value a store through subscript `target`'s setter
+/// passes: its last keyword, after any keyword index.
+fn setter_value_source(target: Node<'_>) -> mojito_checked::checked::CheckedCallArgumentSource {
+    use mojito_checked::checked::CheckedSubscriptArg;
+    let keywords = match target.op() {
+        CheckedOp::MultiIndex { args, .. } => args
+            .iter()
+            .filter(|argument| {
+                matches!(
+                    argument,
+                    CheckedSubscriptArg::Keyword { .. } | CheckedSubscriptArg::KeywordSlice { .. }
+                )
+            })
+            .count(),
+        _ => 0,
+    };
+    mojito_checked::checked::CheckedCallArgumentSource::Keyword(keywords)
+}
+
+/// One accessor's adapted `operands`, aligned with `raw`, split into the
+/// positional list and the keyword list a subscript instruction carries.
+fn split_keyword_operands(
+    raw: &[AugmentedSubscriptOperand],
+    operands: &[super::facts::SubscriptOperand],
+) -> (Vec<MirSubscriptArg>, Vec<(String, MirSubscriptArg)>) {
+    let mut args = Vec::new();
+    let mut kwargs = Vec::new();
+    for (operand, (_, adapted)) in raw.iter().zip(operands) {
+        match &operand.name {
+            Some(name) => kwargs.push((name.clone(), adapted.clone())),
+            None => args.push(adapted.clone()),
+        }
+    }
+    (args, kwargs)
 }

@@ -101,6 +101,7 @@ pub(super) fn verify_subscript_instruction(
         MirInstr::MultiSet {
             receiver,
             args,
+            kwargs,
             value,
             call,
             ..
@@ -109,7 +110,13 @@ pub(super) fn verify_subscript_instruction(
                 .iter()
                 .map(|argument| subscript_argument_ty(cx.function, argument))
                 .collect::<Vec<_>>();
-            let keyword_types = vec![cx.reg_ty(*value).cloned()];
+            // The value is the setter's last keyword, after any keyword
+            // index.
+            let keyword_types = kwargs
+                .iter()
+                .map(|(_, argument)| subscript_argument_ty(cx.function, argument))
+                .chain(std::iter::once(cx.reg_ty(*value).cloned()))
+                .collect::<Vec<_>>();
             verify_subscript_call(
                 prefix,
                 cx.function,

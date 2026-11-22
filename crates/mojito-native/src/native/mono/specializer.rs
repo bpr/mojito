@@ -3906,12 +3906,17 @@ impl<'a> Specializer<'a> {
                 MirInstr::MultiSet {
                     receiver,
                     args,
+                    kwargs,
                     value_keyword,
                     call,
                     ..
                 } => {
                     let receiver = *receiver;
-                    let keywords: &[&str] = &[value_keyword.as_str()];
+                    let keywords: Vec<&str> = kwargs
+                        .iter()
+                        .map(|(name, _)| name.as_str())
+                        .chain(std::iter::once(value_keyword.as_str()))
+                        .collect();
                     let dropped = self.rewrite_subscript_call(
                         owner,
                         function,
@@ -3919,7 +3924,7 @@ impl<'a> Specializer<'a> {
                         SubscriptOperands {
                             registers: &[],
                             positional: args.len(),
-                            keywords,
+                            keywords: &keywords,
                         },
                         None,
                         call,

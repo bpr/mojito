@@ -476,11 +476,18 @@ pub(super) fn loan_accesses(
         MirInstr::StoreRef { place, reference } => {
             vec![(place.clone(), LoanAccess::Write, span_for(*reference))]
         }
+        // The stored value is the setter's last keyword, after any
+        // keyword index.
         MirInstr::MultiSet { call, value, .. } => subscript_accesses(
             call,
             operands.receiver,
             &operands.positional,
-            &[operands.value],
+            &operands
+                .keyword
+                .iter()
+                .copied()
+                .chain(std::iter::once(operands.value))
+                .collect::<Vec<_>>(),
             *value,
         ),
         MirInstr::Index { dest, call, .. } => {
@@ -498,7 +505,13 @@ pub(super) fn loan_accesses(
         }
         MirInstr::MultiIndex { dest, call, .. } => {
             if let Some(call) = call {
-                subscript_accesses(call, operands.receiver, &operands.positional, &[], *dest)
+                subscript_accesses(
+                    call,
+                    operands.receiver,
+                    &operands.positional,
+                    &operands.keyword,
+                    *dest,
+                )
             } else {
                 operands
                     .receiver

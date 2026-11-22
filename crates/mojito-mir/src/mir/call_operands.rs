@@ -203,11 +203,16 @@ pub fn call_operands(instruction: &MirInstr) -> Vec<CallOperand> {
         MirInstr::MultiSet {
             receiver,
             args,
+            kwargs,
             value,
             ..
         } => {
             operands.push(CallOperand::new(*receiver, OperandSlot::Receiver));
             push_positional(&mut operands, args.iter().map(subscript_reg));
+            push_keywords(
+                &mut operands,
+                kwargs.iter().map(|(_, argument)| subscript_reg(argument)),
+            );
             operands.push(CallOperand::new(*value, OperandSlot::Value));
         }
         MirInstr::ConstructTypeParam { kwargs, .. } => {

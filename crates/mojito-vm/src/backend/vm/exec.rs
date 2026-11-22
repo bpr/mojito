@@ -1453,10 +1453,10 @@ impl VmBackend {
             MirInstr::MultiSet {
                 receiver,
                 args,
+                kwargs,
                 value,
                 value_keyword,
                 call,
-                ..
             } => {
                 let mut operand = |register: Reg| {
                     self.call_operand(prog, function, (frame_id, regs, vars), register)
@@ -1465,7 +1465,13 @@ impl VmBackend {
                     .iter()
                     .map(|MirSubscriptArg::Index(register)| operand(*register))
                     .collect::<Vec<_>>();
-                let keyword_arguments = vec![(value_keyword.clone(), operand(*value))];
+                let mut keyword_arguments = kwargs
+                    .iter()
+                    .map(|(name, MirSubscriptArg::Index(register))| {
+                        (name.clone(), operand(*register))
+                    })
+                    .collect::<Vec<_>>();
+                keyword_arguments.push((value_keyword.clone(), operand(*value)));
                 let (receiver, receiver_ty, receiver_operand) =
                     self.receiver_operand(prog, function, (frame_id, regs, vars), *receiver)?;
                 let _ = self.method_call(

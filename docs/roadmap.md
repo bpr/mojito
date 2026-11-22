@@ -7804,27 +7804,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2480 A keyword subscript store through `__setitem__` is
-  rejected**
-
-  `s[k=1] = 5` and `s[k=1] += 2`, over `__getitem__(self, *, k: Int) ->
-  Int` and `__setitem__(mut self, *, k: Int, value: Int)`, print `9` at the
-  pin, where Mojito rejects them: "a keyword subscript store through
-  '__setitem__' ('[k=…] = value') is not supported yet".
-  - MIR's `MultiSet` carries positional indices only: it has no `kwargs`
-    beside `MultiIndex`'s, so the VM, Pliron, the verifier, and the text
-    format see no keyword index (a MIR text bump).
-  - `store_through_subscript` (`checker/indexing.rs`) drops keyword
-    arguments from the setter call, so `reject_keyword_setter_store` guards
-    it; the setter paths of `lower_subscript_setter` and
-    `lower_augmented_multi_index` (`mir/lower_stmt.rs`) keep an
-    `unreachable!` for a keyword argument.
-  - Probe: the stores above, the write-back `s[k=1].bump()` over a struct
-    element, and `s[0, k=1] = 5` mixing positional and keyword indices.
-  - Found while landing R2476 (2026-11-21).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2482 A store through a getter's `ref[Self.o]` result over a
   struct's `Origin[mut=m]` binder is accepted in the method body, where the
   pin rejects it**
