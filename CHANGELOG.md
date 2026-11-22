@@ -138,7 +138,7 @@ to evolve under the `0.x` compatibility rules.
   Self.mut` reads the receiver's `mut=` argument, so `Q[origin_of(y)](4).g()`
   runs and an immutable receiver violates it
   (`assets/type_error/origin_binder_where_self_mut_immutable.mojo`).
-  `Self`'s own slot and a `ref` parameter's stay deferred (R2470, R2471).
+  A `ref` parameter's slot stays deferred (R2471).
 
 - A leading-dot right operand of a `where` comparison is rooted at the left
   operand's struct, as the run-time operator check roots it, so `where
@@ -2327,6 +2327,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Self` inside a struct's member now holds the struct's own origin `mut=`
+  binder, as upstream's does, where it held a deferred slot: a member's
+  `Span[Int, Self.o]` is `Span[mut, Int, o]`, and `reflect[Self]` or
+  `Span[Int, Self.o].mut` reads `True` on `Q[origin_of(xs)]` and `False` on
+  `Q[ImmOrigin(origin_of(xs))]`, on both backends
+  (`assets/ok/struct_self_origin_mutability_slot.mojo`). Every substitution
+  of an instance into a member or field type binds its `mut=` binders with
+  its other parameters — the checker's receiver substitution, inline
+  parametric's owner instance, MIR's field types, and the elaborator's
+  owner bindings — and defers one the instance leaves open, replacing the
+  checker's and the elaborator's closing of deferred slots after
+  substitution (R2470).
 - A pointer's provenance readers that handled a union origin argument
   (`origin_of(x, y)`) now read the pointer's `!lit.ref` record — its
   `origin` value and `mut` argument — rather than decoding it to

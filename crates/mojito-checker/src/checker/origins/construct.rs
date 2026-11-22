@@ -490,41 +490,11 @@ impl Checker {
     /// governed origin is: the callee's binder is out of the caller's scope.
     pub(in crate::checker) fn defer_mutability_reads(
         &self,
-        ty: Ty,
+        ty: &Ty,
         open: &[mojito_types::param_expr::ParamId],
     ) -> Ty {
-        if open.is_empty() {
-            return ty;
-        }
-        mojito_types::types::map_struct_arguments(&ty, &|name, arguments| {
-            let Some(info) = self.structs.get(name) else {
-                return arguments;
-            };
-            let params = &info.params;
-            let deferred: Vec<Option<ParamRef>> = ParamDecl::aligned_pairs(params, &arguments)
-                .map(|(decl, argument)| match argument {
-                    TyArg::Val(CtValue::Expr(read))
-                        if decl.is_origin_mutability_binder(params)
-                            && read
-                                .free_parameters()
-                                .iter()
-                                .any(|reference| open.contains(&reference.id)) =>
-                    {
-                        Some(decl.binder())
-                    }
-                    _ => None,
-                })
-                .collect();
-            if deferred.iter().all(Option::is_none) || deferred.len() != arguments.len() {
-                return arguments;
-            }
-            arguments
-                .into_iter()
-                .zip(deferred)
-                .map(|(argument, deferred)| {
-                    deferred.map_or(argument, |binder| TyArg::Val(CtValue::Deferred(binder)))
-                })
-                .collect()
+        mojito_types::types::defer_mutability_reads(ty, open, &|name| {
+            self.structs.get(name).map(|info| info.params.as_slice())
         })
     }
 
@@ -537,21 +507,19 @@ impl Checker {
         values: &CallValues,
     ) -> Result<Ty, TypeError> {
         self.resolve_dependent_ty(ty, &values.values)
-            .map(|resolved| self.defer_mutability_reads(resolved, &values.open))
+            .map(|resolved| self.defer_mutability_reads(&resolved, &values.open))
     }
 
     /// The value a struct application's `mut=` slot `decl` holds when it
     /// holds [`CtValue::Deferred`], read as its governed origin's
-    /// mutability, as `Origin[mut=mut]` ties the two: the binder itself
-    /// where the origin is `Self`'s own origin binder (`self_arguments`),
-    /// else the `Bool` or enclosing binder read the origin decides. `None`
+    /// mutability, as `Origin[mut=mut]` ties the two: the `Bool` or
+    /// binder read the origin decides. `None`
     /// where nothing decides it yet (an unbound origin's).
     pub(in crate::checker) fn deferred_mutability_value(
         &self,
         decls: &[ParamDecl],
         arguments: &[TyArg],
         decl: &ParamDecl,
-        self_arguments: Option<&[TyArg]>,
     ) -> Option<CtValue> {
         let (_, TyArg::Origin(origin)) =
             ParamDecl::aligned_pairs(decls, arguments).find(|(candidate, _)| {
@@ -563,12 +531,6 @@ impl Checker {
         else {
             return None;
         };
-        if matches!(origin, Origin::Param(_)) && self_arguments == Some(arguments) {
-            return match decl.own_argument() {
-                TyArg::Val(value) => Some(value),
-                _ => None,
-            };
-        }
         Some(self.origin_mutability_slot(decl, origin, None))
             .filter(|value| !matches!(value, CtValue::Deferred(_)))
     }
@@ -597,6 +559,36 @@ impl Checker {
                     decl.id().clone(),
                     self.origin_mutability_slot(decl, origin, bound),
                 ))
+            })
+            .collect()
+    }
+
+    /// The whole parameter list of the struct whose members are being
+    /// checked, the binders `Self` holds.
+    pub(in crate::checker) fn self_struct_params(&self) -> Option<&[ParamDecl]> {
+        let (owner, _) = self
+            .self_ty
+            .as_ref()
+            .and_then(mojito_types::types::nominal_parts)?;
+        self.structs.get(owner).map(|info| info.params.as_slice())
+    }
+
+    /// [`Self::own_origin_mutabilities`] keyed by binder name, for a
+    /// by-name value substitution, each binder the origins leave undecided
+    /// left out.
+    pub(in crate::checker) fn own_mutability_values(
+        &self,
+        decls: &[ParamDecl],
+        bindings: &ConstructorOriginBindings,
+    ) -> Vec<(String, CtValue)> {
+        self.own_origin_mutabilities(decls, bindings)
+            .into_iter()
+            .filter(|(_, value)| !matches!(value, CtValue::Deferred(_)))
+            .filter_map(|(id, value)| {
+                decls
+                    .iter()
+                    .find(|decl| *decl.id() == id)
+                    .map(|decl| (decl.binder().name.to_string(), value))
             })
             .collect()
     }
@@ -1139,9 +1131,23 @@ impl Checker {
                     origin,
                     mutability: mojito_types::types::OriginMutability::Binder(binder),
                     ..
-                } if *origin == id && &*binder.name != "_" => {
-                    self.value_parameter_in_scope(&binder.name)
-                }
+                } if *origin == id && &*binder.name != "_" => self
+                    .value_parameter_in_scope(&binder.name)
+                    .or_else(|| self.own_struct_binder_read(binder)),
+                _ => None,
+            })
+    }
+
+    /// The read of `binder` as the enclosing struct's own parameter, the
+    /// argument `Self` holds for it ([`ParamDecl::own_argument`]), when the
+    /// struct whose members are being checked declares it: a member reads
+    /// its struct's binders through `Self`, never as a bare name.
+    fn own_struct_binder_read(&self, binder: &ParamRef) -> Option<ParamExpr> {
+        self.self_struct_params()?
+            .iter()
+            .find(|decl| decl.binder().id == binder.id)
+            .and_then(|decl| match decl.own_argument() {
+                TyArg::Val(CtValue::Expr(read)) => Some(read),
                 _ => None,
             })
     }

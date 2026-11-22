@@ -183,7 +183,7 @@ impl Checker {
         let params: Vec<Ty> = sig
             .params
             .iter()
-            .map(|t| substitute_at(t, info, &targs))
+            .map(|t| self.substitute_at(t, info, &targs))
             .collect();
         if params.len() != args.len() {
             return Some(Err(TypeError::ArityMismatch {
@@ -201,7 +201,7 @@ impl Checker {
                 }));
             }
         }
-        Some(Ok(substitute_at(&sig.ret, info, &targs)))
+        Some(Ok(self.substitute_at(&sig.ret, info, &targs)))
     }
 
     /// The dunder overload implicit dispatch selects for `args`: among the
@@ -225,10 +225,9 @@ impl Checker {
                 .filter(|sig| sig.params.len() == args.len())
         };
         let accepts = |sig: &MethodSig| {
-            sig.params
-                .iter()
-                .zip(args)
-                .all(|(param, arg)| self.value_coerces(arg, &substitute_at(param, info, &targs)))
+            sig.params.iter().zip(args).all(|(param, arg)| {
+                self.value_coerces(arg, &self.substitute_at(param, info, &targs))
+            })
         };
         let sig = same_arity()
             .find(|sig| accepts(sig))

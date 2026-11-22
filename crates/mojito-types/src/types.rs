@@ -4825,18 +4825,9 @@ impl ParamDecl {
 
     /// The arguments of the declaration declaring `decls` at its own
     /// parameters, upstream's `Self`: each binder by [`Self::own_argument`],
-    /// except an origin's `mut=` binder, which stays the deferred binder.
+    /// an origin's `mut=` binder among them.
     pub fn self_arguments(decls: &[Self]) -> Vec<TyArg> {
-        decls
-            .iter()
-            .map(|decl| {
-                if decl.is_origin_mutability_binder(decls) {
-                    TyArg::Val(CtValue::Deferred(decl.binder()))
-                } else {
-                    decl.own_argument()
-                }
-            })
-            .collect()
+        decls.iter().map(Self::own_argument).collect()
     }
 
     /// The argument this binder contributes to its declaration's own `Self`
@@ -5627,6 +5618,86 @@ pub fn map_origins(ty: &Ty, map: &impl Fn(&crate::origin::Origin) -> crate::orig
         TyKind::Dependent(dependent) => dependent.map_types(recur),
         _ => ty.clone(),
     }
+}
+
+/// `ty` with each origin `mut=` slot reading an `open` binder deferred.
+///
+/// A substitution left those binders unbound, so each such slot of a
+/// struct instance is deferred to the slot's own binder and follows the
+/// origin it governs. `decls_of` gives a struct's whole declared list.
+pub fn defer_mutability_reads<'a>(
+    ty: &Ty,
+    open: &[crate::param_expr::ParamId],
+    decls_of: &impl Fn(&str) -> Option<&'a [ParamDecl]>,
+) -> Ty {
+    if open.is_empty() {
+        return ty.clone();
+    }
+    map_struct_arguments(ty, &|name, arguments| {
+        let Some(params) = decls_of(name) else {
+            return arguments;
+        };
+        let deferred: Vec<Option<ParamRef>> = ParamDecl::aligned_pairs(params, &arguments)
+            .map(|(decl, argument)| match argument {
+                TyArg::Val(CtValue::Expr(read))
+                    if decl.is_origin_mutability_binder(params)
+                        && read
+                            .free_parameters()
+                            .iter()
+                            .any(|reference| open.contains(&reference.id)) =>
+                {
+                    Some(decl.binder())
+                }
+                _ => None,
+            })
+            .collect();
+        if deferred.iter().all(Option::is_none) || deferred.len() != arguments.len() {
+            return arguments;
+        }
+        arguments
+            .into_iter()
+            .zip(deferred)
+            .map(|(argument, deferred)| {
+                deferred.map_or(argument, |binder| TyArg::Val(CtValue::Deferred(binder)))
+            })
+            .collect()
+    })
+}
+
+/// `ty`, a member or field type, with the instance's `mut=` binders bound.
+///
+/// `decls` is the struct's whole list and `arguments` its instance: each
+/// origin `mut=` binder binds to its argument, and one the instance leaves
+/// deferred is deferred wherever a slot reads it
+/// ([`defer_mutability_reads`]), as upstream substitutes every parameter
+/// of the instance at once. `None` when a replacement fails.
+pub fn bind_instance_mutabilities<'a>(
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+    ty: &Ty,
+    decls_of: &impl Fn(&str) -> Option<&'a [ParamDecl]>,
+) -> Option<Ty> {
+    let context = ParamContext::detached();
+    let mut bindings = ParamBindings::new();
+    let mut open = Vec::new();
+    let whole = arguments.len() == decls.len();
+    for decl in ParamDecl::mutability_binders(decls) {
+        let argument = decls
+            .iter()
+            .position(|candidate| candidate.id() == decl.id())
+            .filter(|_| whole)
+            .map(|index| &arguments[index]);
+        match argument {
+            Some(TyArg::Val(value))
+                if matches!(value, CtValue::Expr(_)) || !ct_value_is_symbolic(value) =>
+            {
+                bindings.bind(decl.id().clone(), context.constant(value.clone()).ok()?);
+            }
+            _ => open.push(decl.id().clone()),
+        }
+    }
+    let bound = replace_parameters(&context, ty, &bindings, 0).ok()?;
+    Some(defer_mutability_reads(&bound, &open, decls_of))
 }
 
 /// `ty` with each struct instance's arguments, innermost first, replaced
@@ -10012,8 +10083,7 @@ fn is_identity_application(decls: &[ParamDecl], arguments: &[TyArg]) -> bool {
                     matches!(expr.kind(), ParamKind::DeclRef(reference) if reference.id == *id)
                 }
                 // An origin's `mut=` binder deferred to itself, and a pack's
-                // visible list binder at its own list, as
-                // [`ParamDecl::self_arguments`] spells them.
+                // visible list binder at its own list.
                 (ParamDecl::Value { id, .. }, TyArg::Val(CtValue::Deferred(binder))) => {
                     binder.id == *id
                 }

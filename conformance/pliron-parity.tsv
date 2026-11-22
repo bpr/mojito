@@ -1471,6 +1471,7 @@ assets/ok/struct_pack_parameterized_type_member.mojo	main	exe-differential	sanit
 assets/ok/struct_parameter_comptime_read.mojo	main	exe-differential	sanitized
 assets/ok/struct_parameter_instance_read.mojo	main	exe-differential	sanitized
 assets/ok/struct_parameter_reads_through_value.mojo	main	exe-differential	sanitized
+assets/ok/struct_self_origin_mutability_slot.mojo	main	exe-differential	sanitized
 assets/ok/struct_slot_fields_split.mojo	main	exe-differential	sanitized
 assets/ok/struct_type_param_construction_clone.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_call_is_call_method.mojo	main	exe-differential	sanitized

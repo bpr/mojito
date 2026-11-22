@@ -4662,10 +4662,14 @@ impl Checker {
         let origin_bindings =
             self.bind_fieldwise_origins(name, info, args, &arg_tys, &bracket.bound)?;
         // A field type names the struct's own value parameters; the resolved
-        // application binds them beside its type parameters.
+        // application binds them beside its type parameters, each origin's
+        // `mut=` binder to the mutability its bound origin decides, as
+        // upstream binds every declared parameter of the instance.
+        let mut values = solved_value_bindings(&decls, &tyargs);
+        values.extend(self.own_mutability_values(&info.params, &origin_bindings));
         let bindings = AssocBindings {
             types: subst,
-            values: solved_value_bindings(&decls, &tyargs),
+            values,
             ids: mojito_types::param_expr::ParamBindings::new(),
             origins: HashMap::new(),
         };
@@ -7157,7 +7161,7 @@ impl OwnParameters {
         let substituted = checker.resolve_assoc_ty(&substitute(ty, &self.subst));
         checker
             .resolve_dependent_ty(&substituted, &self.values)
-            .map(|resolved| checker.defer_mutability_reads(resolved, &self.open))
+            .map(|resolved| checker.defer_mutability_reads(&resolved, &self.open))
     }
 }
 

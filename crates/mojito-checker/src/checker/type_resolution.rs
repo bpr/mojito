@@ -3343,6 +3343,33 @@ impl Checker {
             })
             .unzip();
         let template = super::generics::expand_solved_packs(template, &packs, &elements);
+        // Each of the member's origin `mut=` binders takes the mutability
+        // its bound origin decides, as upstream infers it with the origin;
+        // one nothing decides yet is deferred as the origin is.
+        let mut open = Vec::new();
+        for decl in ParamDecl::mutability_binders(decls) {
+            let governed = decls.iter().find_map(|candidate| match candidate {
+                ParamDecl::Origin {
+                    origin,
+                    mutability: mojito_types::types::OriginMutability::Binder(binder),
+                    ..
+                } if binder.id == *decl.id() => origins.get(origin),
+                _ => None,
+            });
+            let read = governed
+                .map(|origin| self.origin_mutability_slot(decl, origin, None))
+                .and_then(|value| match value {
+                    CtValue::Deferred(_) => None,
+                    CtValue::Expr(read) => Some(read),
+                    value => self.param_context.constant(value).ok(),
+                });
+            match read {
+                Some(read) => ids.bind(decl.id().clone(), read),
+                None if governed.is_some() => open.push(decl.id().clone()),
+                None => {}
+            }
+        }
+        let template = self.defer_mutability_reads(&template, &open);
         let bindings = AssocBindings {
             types,
             values,

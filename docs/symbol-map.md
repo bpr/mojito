@@ -3589,7 +3589,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Checker::origin_mutability_slot`, `origins/construct.rs`), which every
   call path binds over the callee's whole list (`Checker::call_values`,
   `Checker::resolve_call_dependent_ty`) and defers where the call leaves it
-  open (`Checker::defer_mutability_reads`)
+  open (`Checker::defer_mutability_reads`, over
+  `types::defer_mutability_reads`). A struct's `Self` holds its `mut=`
+  binder (`ParamDecl::self_arguments`; a member reads it through
+  `Checker::own_struct_binder_read` and `Checker::self_struct_params`), and
+  every substitution of an instance into a member or field type binds it:
+  the checker's receiver substitution (`Checker::substitute_at`,
+  `substitute_at_instance`, both over `Checker::bind_instance_mutabilities`,
+  `generics.rs`), a parameterized member's application
+  (`type_resolution.rs`), a fieldwise construction
+  (`Checker::own_mutability_values`), inline-parametric's owner instance
+  (`Instantiation::new`), MIR's `MirDeclarations::field_types` (over
+  `types::bind_instance_mutabilities`), and the elaborator's owner bindings
+  (`unify::bind_mutability_args`, which erases an undecided one)
   (`Checker::declare_value_parameters`, `scopes.rs`; `check_def_inner`,
   `statements.rs`; `check_method`, `bind_and_check_method`,
   `declarations.rs`). The elaborator keys an instance on the read ones

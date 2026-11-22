@@ -243,7 +243,7 @@ impl Checker {
             return Ok(false);
         };
         for (field, field_ty) in &info.fields {
-            let field_ty = substitute_at(field_ty, info, arguments);
+            let field_ty = self.substitute_at(field_ty, info, arguments);
             if !self.finite_dims(child(Step::Field(field.clone())), &field_ty, dims)? {
                 return Ok(false);
             }

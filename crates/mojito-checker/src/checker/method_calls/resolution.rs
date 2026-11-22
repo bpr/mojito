@@ -109,7 +109,7 @@ impl Checker {
             && let Some(info) = self.structs.get(sname)
             && let Some((_, field_ty)) = info.fields.iter().find(|(fname, _)| fname == method)
         {
-            let field_ty = substitute_at(field_ty, info, targs);
+            let field_ty = self.substitute_at(field_ty, info, targs);
             if callable_contract_ty(&field_ty).is_some() {
                 return self.infer_field_invocation(span.clone(), object, &field_ty, args, kwargs);
             }
@@ -232,16 +232,16 @@ impl Checker {
             let receiver_params: Vec<Ty> = sig
                 .params
                 .iter()
-                .map(|t| self.resolve_assoc_ty(&substitute_at(t, info, targs)))
+                .map(|t| self.resolve_assoc_ty(&self.substitute_at(t, info, targs)))
                 .collect();
             let receiver_variadic = sig
                 .variadic
                 .as_ref()
-                .map(|ty| self.resolve_assoc_ty(&substitute_variadic_at(ty, info, targs)));
+                .map(|ty| self.resolve_assoc_ty(&self.substitute_variadic_at(ty, info, targs)));
             let receiver_kw_variadic = sig
                 .kw_variadic
                 .as_ref()
-                .map(|ty| self.resolve_assoc_ty(&substitute_at(ty, info, targs)));
+                .map(|ty| self.resolve_assoc_ty(&self.substitute_at(ty, info, targs)));
             // A value parameter typed over the struct's pack (a handler
             // `def[index: Int](var element: Self.Ts[index])`) is judged at
             // the receiver's elements.
@@ -386,10 +386,9 @@ impl Checker {
                     ),
                     result_adapter: None,
                     raises: sig.raises,
-                    error: sig
-                        .error
-                        .as_ref()
-                        .map(|error| substitute(&substitute_at(error, info, targs), &method_subst)),
+                    error: sig.error.as_ref().map(|error| {
+                        substitute(&self.substitute_at(error, info, targs), &method_subst)
+                    }),
                     mutates_receiver: matches!(
                         sig.self_convention,
                         Some(mojito_ast::ast::ArgConvention::Mut)

@@ -925,7 +925,7 @@ impl Checker {
         let (struct_name, arguments) = object_ty.kind().as_non_pointer_struct()?;
         let info = self.structs.get(struct_name)?;
         let (_, field_ty) = info.fields.iter().find(|(name, _)| name == field)?;
-        let field_ty = substitute_at(field_ty, info, arguments);
+        let field_ty = self.substitute_at(field_ty, info, arguments);
         let receiver = super::initializer_list::spelled_node(
             call,
             1,
@@ -2100,7 +2100,7 @@ impl Checker {
             let expanded = super::generics::expand_solved_packs(ty, decls, &tyargs);
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
             self.resolve_dependent_ty(&substituted, &values)
-                .map(|resolved| self.defer_mutability_reads(resolved, &open))
+                .map(|resolved| self.defer_mutability_reads(&resolved, &open))
         };
         self.record_pack_element_conversions(decls, &tyargs, &use_params, &arg_tys, &arg_exprs)?;
         let (mut conversions, mut simd_erasures) = (0, 0);

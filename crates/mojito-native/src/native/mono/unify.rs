@@ -373,10 +373,12 @@ pub(super) fn bind_mutability_args(
             continue;
         }
         match value {
-            CtValue::Deferred(_) | CtValue::Expr(_) => {}
+            CtValue::Expr(_) => {}
             // An erased slot leaves the binder unbound, as an erased
-            // instance's `_REMOVED_ARG` leaves any parameter.
-            CtValue::RemovedArg => {
+            // instance's `_REMOVED_ARG` leaves any parameter; so does a
+            // deferred one, which [`owner_argument`] erases from the
+            // instance.
+            CtValue::RemovedArg | CtValue::Deferred(_) => {
                 let binder = decl.binder();
                 if !bindings.values.contains_key(&binder) && !bindings.removed.contains(&binder) {
                     bindings.removed.push(binder);

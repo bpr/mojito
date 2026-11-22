@@ -4507,7 +4507,7 @@ impl Checker {
                 info.fields
                     .iter()
                     .find(|(name, _)| name == field)
-                    .map(|(_, ty)| super::generics::substitute_at(ty, info, arguments))
+                    .map(|(_, ty)| self.substitute_at(ty, info, arguments))
             })
             .or_else(|| {
                 self.builtin_struct_fields
@@ -4727,7 +4727,7 @@ impl Checker {
                         _ => None,
                     })
                 })?;
-                Some(super::generics::substitute_at(declared, info, &arguments))
+                Some(self.substitute_at(declared, info, &arguments))
             }
             _ => None,
         }
@@ -6955,28 +6955,9 @@ impl Checker {
         let TyArg::Val(value) = argument else {
             return None;
         };
-        // `Self`'s arguments, read through its nominal parts so a folded
-        // `Pointer`'s `Self` names its own binders as a struct's does.
-        let self_parts = self
-            .self_ty
-            .as_ref()
-            .filter(|ty| !ty.is_simd())
-            .and_then(mojito_types::types::nominal_parts)
-            .filter(|(owner, _)| {
-                self.structs
-                    .get(owner)
-                    .is_some_and(|own| std::ptr::eq(own, info))
-            });
         let value = match value {
             CtValue::Deferred(_) if decl.is_origin_mutability_binder(&info.params) => self
-                .deferred_mutability_value(
-                    &info.params,
-                    arguments,
-                    decl,
-                    self_parts
-                        .as_ref()
-                        .map(|(_, self_arguments)| self_arguments.as_ref()),
-                )
+                .deferred_mutability_value(&info.params, arguments, decl)
                 .unwrap_or_else(|| value.clone()),
             _ => value.clone(),
         };

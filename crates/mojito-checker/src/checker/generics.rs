@@ -235,57 +235,6 @@ fn check_custom_receiver(func: &str, declared: &Ty, actual: &Ty) -> Result<(), T
     })
 }
 
-/// Substitute a member template type at a receiver's type arguments: type
-/// parameters via [`substitute`], value parameters via the receiver's
-/// `TyArg::Val` bindings — `other: Self` on an `Array[Int, 3]` receiver
-/// becomes `Array[Int, 3]`, not `Array[Int, length]`.
-pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
-    substitute_at_with(ty, info, targs, None)
-}
-
-/// A member's `*args` collector element at a receiver's type arguments:
-/// a bare struct pack (`*b: *Self.Ts`) closed by the receiver is the runtime
-/// pack of its elements, as a method-level pack solved from the call is. A
-/// caller's pack bound whole (`V[*Ts]`) is the struct's pack there, so it
-/// carries the struct pack's declared bounds, which a spread of the caller's
-/// collector must match exactly.
-pub(super) fn substitute_variadic_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
-    let TyKind::Param { binder, .. } = ty.kind() else {
-        return substitute_at(ty, info, targs);
-    };
-    let Some(declared) = info.params.iter().find_map(|decl| match decl {
-        ParamDecl::Type {
-            id,
-            bounds,
-            variadic: true,
-            ..
-        } if *id == binder.id => Some(bounds),
-        _ => None,
-    }) else {
-        return substitute_at(ty, info, targs);
-    };
-    let retyped = |element: &mut Ty| {
-        if matches!(element.kind(), TyKind::Param { binder, .. } if binder.name.starts_with('*')) {
-            element.update(|kind| {
-                if let TyKind::Param { bounds, .. } = kind {
-                    bounds.clone_from(declared);
-                }
-            });
-        }
-    };
-    if let Some((_, mut elements)) = bound_pack_elements(&info.decls(), &info.view_arguments(targs))
-    {
-        if let [element] = elements.as_mut_slice() {
-            retyped(element);
-        }
-        TyKind::RuntimePack(elements).into()
-    } else {
-        let mut element = substitute_at(ty, info, targs);
-        retyped(&mut element);
-        element
-    }
-}
-
 /// Expand every spread of a variadic struct's pack in a member template type
 /// (`Tuple[*Self.Ts]`, `other: Self`) to the elements a closed application
 /// binds it to, whether the application spells the pack element by element
@@ -1184,7 +1133,60 @@ impl Checker {
         (0..params.len()).any(|index| self.is_origin_metadata(params, index))
     }
 
-    /// [`substitute_at`] for a member of the instance `targs` names (a
+    /// Substitute a member template type at a receiver's type arguments: type
+    /// parameters via [`substitute`], value parameters via the receiver's
+    /// `TyArg::Val` bindings — `other: Self` on an `Array[Int, 3]` receiver
+    /// becomes `Array[Int, 3]`, not `Array[Int, length]`.
+    pub(super) fn substitute_at(&self, ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
+        self.substitute_at_with(ty, info, targs, None)
+    }
+
+    /// A member's `*args` collector element at a receiver's type arguments:
+    /// a bare struct pack (`*b: *Self.Ts`) closed by the receiver is the runtime
+    /// pack of its elements, as a method-level pack solved from the call is. A
+    /// caller's pack bound whole (`V[*Ts]`) is the struct's pack there, so it
+    /// carries the struct pack's declared bounds, which a spread of the caller's
+    /// collector must match exactly.
+    pub(super) fn substitute_variadic_at(&self, ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
+        let TyKind::Param { binder, .. } = ty.kind() else {
+            return self.substitute_at(ty, info, targs);
+        };
+        let Some(declared) = info.params.iter().find_map(|decl| match decl {
+            ParamDecl::Type {
+                id,
+                bounds,
+                variadic: true,
+                ..
+            } if *id == binder.id => Some(bounds),
+            _ => None,
+        }) else {
+            return self.substitute_at(ty, info, targs);
+        };
+        let retyped = |element: &mut Ty| {
+            if matches!(element.kind(), TyKind::Param { binder, .. } if binder.name.starts_with('*'))
+            {
+                element.update(|kind| {
+                    if let TyKind::Param { bounds, .. } = kind {
+                        bounds.clone_from(declared);
+                    }
+                });
+            }
+        };
+        if let Some((_, mut elements)) =
+            bound_pack_elements(&info.decls(), &info.view_arguments(targs))
+        {
+            if let [element] = elements.as_mut_slice() {
+                retyped(element);
+            }
+            TyKind::RuntimePack(elements).into()
+        } else {
+            let mut element = self.substitute_at(ty, info, targs);
+            retyped(&mut element);
+            element
+        }
+    }
+
+    /// [`Self::substitute_at`] for a member of the instance `targs` names (a
     /// receiver's type, or a static call's explicit `View[o]`): the
     /// instance's origin tail binds the struct's origin binders in pointer
     /// provenances too, so `get` declared `-> Pointer[T, Self.o]` on a
@@ -1193,47 +1195,121 @@ impl Checker {
     /// slot holding an `ImmOrigin(...)` cast binds immutably, as the cast's
     /// `mut=False` does upstream.
     pub(super) fn substitute_at_instance(&self, ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
-        let substituted = substitute_at_with(
+        self.substitute_at_with(
             ty,
             info,
             targs,
             Some(&|_, origin| self.bound_origin_mutability(origin)),
-        );
-        self.close_decided_mutability_slots(&substituted)
+        )
     }
 
-    /// `ty` with each struct instance's origin `mut=` slot that still
-    /// holds its deferred binder closed to the value its governed origin
-    /// decides ([`Self::deferred_mutability_value`]): a member's
-    /// `_SpanIter[Self.T, Self.origin]` at a `Span[True, Int,
-    /// origin_of(xs)]` receiver names `_SpanIter[True, Int,
-    /// origin_of(xs)]`, as upstream infers the `mut` from the substituted
-    /// origin's type.
-    pub(super) fn close_decided_mutability_slots(&self, ty: &Ty) -> Ty {
-        mojito_types::types::map_struct_arguments(ty, &|name, arguments| {
-            let Some(info) = self.structs.get(name) else {
-                return arguments;
-            };
-            let params = &info.params;
-            let closed: Vec<Option<CtValue>> = ParamDecl::aligned_pairs(params, &arguments)
-                .map(|(decl, argument)| match argument {
-                    TyArg::Val(CtValue::Deferred(_))
-                        if decl.is_origin_mutability_binder(params) =>
-                    {
-                        self.deferred_mutability_value(params, &arguments, decl, None)
-                    }
+    /// [`Self::substitute_at`], deciding each bound binder's `mut` the
+    /// instance leaves open by `binder_mutability` when given (see
+    /// [`Self::substitute_at_instance`]), else by the bound origin alone; a
+    /// pointer whose `mut` reads a binder still undecided keeps that binder.
+    /// Every parameter of the instance binds at once, each origin's `mut=`
+    /// binder among them ([`Self::bind_instance_mutabilities`]), as
+    /// upstream substitutes the whole instance into a member's type.
+    fn substitute_at_with(
+        &self,
+        ty: &Ty,
+        info: &StructInfo,
+        targs: &[TyArg],
+        binder_mutability: Option<super::origins::BinderMutability<'_>>,
+    ) -> Ty {
+        let view = info.view_arguments(targs);
+        let expanded = expand_bound_pack(ty, &info.decls(), &view);
+        // The receiver's origin tail binds the struct's own origin binders in
+        // struct-typed positions (`other: Self`, `-> Self`, a `RefBox[Self.o]`
+        // parameter), so a member instantiated on `P[origin_of(xs)]` names that
+        // origin where its declaration names `Self.o`. It binds the declaration
+        // before the type arguments go in: a caller's origin binder inside a type
+        // argument (`Span[Span[Int, o], _]`) shares the id space of the struct's
+        // own slots, and must not be captured by them.
+        let mut tails = info.instance_substitution(targs);
+        if let Some(binder_mutability) = binder_mutability {
+            tails.infer_mutabilities(binder_mutability);
+        }
+        tails.infer_mutabilities(&|_, _| None);
+        let bound = substitute_struct_origins(&expanded, &tails);
+        let bound = self.bind_instance_mutabilities(&bound, info, targs);
+        substitute_assoc(
+            &bound,
+            &AssocBindings {
+                types: struct_subst(&info.params, &view),
+                values: solved_value_bindings(&info.params, targs),
+                ids: forwarded_pack_lists(&info.decls(), &view),
+                origins: HashMap::new(),
+            },
+        )
+    }
+
+    /// `ty`, a member or field type of the struct `info`, with each origin
+    /// `mut=` binder the struct declares bound as its instance `targs`
+    /// binds it ([`Self::instance_mutability_bindings`]) and each one it
+    /// leaves open deferred: the value-binding companion of a receiver's
+    /// type substitution (`struct_subst`), as upstream substitutes every
+    /// parameter of the instance at once.
+    pub(super) fn bind_instance_mutabilities(
+        &self,
+        ty: &Ty,
+        info: &StructInfo,
+        targs: &[TyArg],
+    ) -> Ty {
+        let mut bindings = mojito_types::param_expr::ParamBindings::new();
+        let open = self.instance_mutability_bindings(info, targs, &mut bindings);
+        self.defer_mutability_reads(&substitute_values(ty, &bindings), &open)
+    }
+
+    /// Bind into `bindings` each origin `mut=` binder the struct `info`
+    /// declares as its instance `targs` binds it: to the instance's own argument
+    /// when it holds one, else to the mutability the instance's governed
+    /// origin decides ([`Self::origin_mutability_slot`]), as
+    /// `Origin[mut=mut]` ties the two. A binder neither decides is listed
+    /// open, for [`Self::defer_mutability_reads`] to defer as its origin
+    /// is.
+    pub(super) fn instance_mutability_bindings(
+        &self,
+        info: &StructInfo,
+        targs: &[TyArg],
+        bindings: &mut mojito_types::param_expr::ParamBindings,
+    ) -> Vec<mojito_types::param_expr::ParamId> {
+        let params = &info.params;
+        let whole = targs.len() == params.len();
+        let origins: Vec<_> = ParamDecl::instance_origins(params, targs).collect();
+        let mut open = Vec::new();
+        for decl in ParamDecl::mutability_binders(params) {
+            let own = params
+                .iter()
+                .position(|candidate| candidate.id() == decl.id())
+                .filter(|_| whole)
+                .and_then(|index| match &targs[index] {
+                    TyArg::Val(CtValue::Deferred(_)) | TyArg::Ty(_) | TyArg::Origin(_) => None,
+                    TyArg::Val(value) => Some(value.clone()),
+                });
+            let value = own.or_else(|| {
+                let governed = params.iter().find_map(|candidate| match candidate {
+                    ParamDecl::Origin {
+                        origin,
+                        mutability: mojito_types::types::OriginMutability::Binder(binder),
+                        ..
+                    } if binder.id == *decl.id() => Some(*origin),
                     _ => None,
-                })
-                .collect();
-            if closed.len() != arguments.len() || closed.iter().all(Option::is_none) {
-                return arguments;
+                })?;
+                let (_, origin) = origins.iter().find(|(id, _)| *id == governed)?;
+                Some(self.origin_mutability_slot(decl, origin, None))
+                    .filter(|value| !matches!(value, CtValue::Deferred(_)))
+            });
+            let read = value.and_then(|value| match value {
+                CtValue::Expr(read) => Some(read),
+                value => self.param_context.constant(value).ok(),
+            });
+            match read {
+                Some(read) => bindings.bind(decl.id().clone(), read),
+                None => open.push(decl.id().clone()),
             }
-            arguments
-                .into_iter()
-                .zip(closed)
-                .map(|(argument, closed)| closed.map_or(argument, TyArg::Val))
-                .collect()
-        })
+        }
+        open
     }
 
     /// The mutability a parametric origin binder (`Origin[mut=mut]`) takes
@@ -1965,7 +2041,7 @@ impl Checker {
             let declared = signature.custom_self.as_ref()?;
             let at_receiver = mojito_types::types::nominal_parts(receiver_ty)
                 .and_then(|(owner, targs)| {
-                    Some(substitute_at(declared, self.structs.get(owner)?, &targs))
+                    Some(self.substitute_at(declared, self.structs.get(owner)?, &targs))
                 })
                 .unwrap_or_else(|| declared.clone());
             Some((bind(&self.resolve_assoc_ty(&at_receiver)), receiver_ty))
@@ -2291,7 +2367,7 @@ impl Checker {
                         .unwrap_or_else(|_| (*ty).clone());
                     // A value parameter typed by the struct's own type binder
                     // (`[v: Self.T]`) takes the receiver's argument for it.
-                    let at_receiver = substitute_at(&rewritten, info, targs);
+                    let at_receiver = self.substitute_at(&rewritten, info, targs);
                     retyped |= at_receiver != rewritten;
                     *ty = at_receiver;
                     // A default reading the struct's own binder
@@ -2313,7 +2389,7 @@ impl Checker {
                     for ty in callable_bound.iter_mut().chain(default.iter_mut()) {
                         let rewritten = mojito_types::types::rewrite_ty(ty, &mut rewrite)
                             .unwrap_or_else(|_| (*ty).clone());
-                        let at_receiver = substitute_at(&rewritten, info, targs);
+                        let at_receiver = self.substitute_at(&rewritten, info, targs);
                         let at_receiver = mojito_types::types::replace_parameters(
                             &mojito_types::param_expr::ParamContext::detached(),
                             &at_receiver,
@@ -2536,7 +2612,7 @@ impl Checker {
                 let ty = method_value_ty(sig, &instance);
                 match info {
                     Some(info) if !receiver.is_empty() => {
-                        self.resolve_assoc_ty(&substitute_at(&ty, info, receiver))
+                        self.resolve_assoc_ty(&self.substitute_at(&ty, info, receiver))
                     }
                     _ => ty,
                 }
@@ -3008,44 +3084,6 @@ pub(super) fn method_declared_arguments(
     method_instantiation_arguments(signature, arguments)
         .map(|_| declared.to_vec())
         .filter(|declared| declared.len() == signature.declared.len())
-}
-
-/// [`substitute_at`], deciding each bound binder's `mut` the instance
-/// leaves open by `binder_mutability` when given (see
-/// [`Checker::substitute_at_instance`]), else by the bound origin alone; a
-/// pointer whose `mut` reads a binder still undecided keeps that binder.
-fn substitute_at_with(
-    ty: &Ty,
-    info: &StructInfo,
-    targs: &[TyArg],
-    binder_mutability: Option<super::origins::BinderMutability<'_>>,
-) -> Ty {
-    let view = info.view_arguments(targs);
-    let expanded = expand_bound_pack(ty, &info.decls(), &view);
-    // The receiver's origin tail binds the struct's own origin binders in
-    // struct-typed positions (`other: Self`, `-> Self`, a `RefBox[Self.o]`
-    // parameter), so a member instantiated on `P[origin_of(xs)]` names that
-    // origin where its declaration names `Self.o`. It binds the declaration
-    // before the type arguments go in: a caller's origin binder inside a type
-    // argument (`Span[Span[Int, o], _]`) shares the id space of the struct's
-    // own slots, and must not be captured by them.
-    let mut tails = info.instance_substitution(targs);
-    if let Some(binder_mutability) = binder_mutability {
-        tails.infer_mutabilities(binder_mutability);
-    }
-    tails.infer_mutabilities(&|_, _| None);
-    let bound = substitute_struct_origins(&expanded, &tails);
-    substitute_assoc(
-        &bound,
-        &AssocBindings {
-            types: struct_subst(&info.params, &view),
-            // The whole list, so a read of an origin's `mut=` binder
-            // (`Self.mut`) takes the instance's value beside its origin.
-            values: solved_value_bindings(&info.params, targs),
-            ids: forwarded_pack_lists(&info.decls(), &view),
-            origins: HashMap::new(),
-        },
-    )
 }
 
 /// `callable` with each `ref` contract over a bound origin binder rebound to

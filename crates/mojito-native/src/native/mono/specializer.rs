@@ -1185,16 +1185,28 @@ impl<'a> Specializer<'a> {
                 _ => continue,
             };
             let removed = self.removed_params(target, true);
-            if removed.is_empty() {
+            if removed.is_empty() && bindings.removed.is_empty() {
                 continue;
             }
             let probe = Bindings {
                 applications: None,
                 ..bindings.clone()
             };
+            // An origin's `mut=` argument reading a parameter this instance
+            // erased erases too, as the slot of a struct type it holds does
+            // ([`super::substitute::substitute_ty`]): no origin decided it.
+            let reads_erased = |argument: &TyArg| match argument {
+                TyArg::Val(CtValue::Expr(read)) => read
+                    .free_parameters()
+                    .iter()
+                    .any(|parameter| bindings.removed.contains(parameter)),
+                _ => false,
+            };
             let erase = |decls: &[ParamDecl], arguments: &mut [TyArg]| {
                 for (decl, argument) in decls.iter().zip(arguments) {
-                    if removed.contains(decl.id()) && substitute_arg(argument, &probe).is_err() {
+                    let erasable = removed.contains(decl.id())
+                        || (decl.is_origin_mutability_binder(decls) && reads_erased(argument));
+                    if erasable && substitute_arg(argument, &probe).is_err() {
                         *argument = TyArg::Val(CtValue::RemovedArg);
                     }
                 }

@@ -1730,7 +1730,13 @@ impl<'c> Inliner<'_, 'c> {
         let (template, _) = nominal_parts(callee.param_types.first()?)?;
         let structure = self.declarations.structure(template)?;
         let decls = structure.argument_view();
-        if decls.is_empty() {
+        // An origin's `mut=` binder is no argument binder, but `Self` holds
+        // it, so a body's types may read it.
+        if decls.is_empty()
+            && ParamDecl::mutability_binders(&structure.param_decls)
+                .next()
+                .is_none()
+        {
             return Some(Owner::Unbound);
         }
         match ty.kind() {
@@ -4914,6 +4920,10 @@ struct Instantiation<'d> {
     closures: Vec<(ParamRef, Ty, Reg)>,
     /// The callee's type binders, which a site may name only to rename.
     types: Vec<ParamRef>,
+    /// The owner's origin `mut=` binders the call leaves undecided, which a
+    /// substituted type defers as their origins
+    /// ([`mojito_types::types::defer_mutability_reads`]).
+    open_mutabilities: Vec<mojito_types::param_expr::ParamId>,
 }
 
 impl<'d> Instantiation<'d> {
@@ -4955,6 +4965,7 @@ impl<'d> Instantiation<'d> {
             members: Vec::new(),
             closures: Vec::new(),
             types: Vec::new(),
+            open_mutabilities: Vec::new(),
             context: ParamContext::detached(),
             declarations,
         };
@@ -4965,11 +4976,27 @@ impl<'d> Instantiation<'d> {
             instantiation.origins = ParamDecl::instance_origins(owner.declared, &instance)
                 .map(|(id, origin)| (id.0, origin.clone()))
                 .collect();
+            // Each origin `mut=` binder takes the instance's argument, else
+            // the mutability the instance's governed origin decides alone;
+            // one neither decides is deferred wherever a type reads it, as
+            // its origin is.
             for (decl, argument) in ParamDecl::aligned_pairs(owner.declared, &instance) {
-                if decl.is_origin_mutability_binder(owner.declared)
-                    && !matches!(argument, TyArg::Val(CtValue::Deferred(_)))
-                {
-                    instantiation.bind(decl, argument, None);
+                if !decl.is_origin_mutability_binder(owner.declared) {
+                    continue;
+                }
+                let decided = match argument {
+                    TyArg::Val(CtValue::Deferred(_)) => {
+                        governed_origin(owner.declared, decl, &instance)
+                            .and_then(Origin::static_mutability)
+                            .map(|mutable| TyArg::Val(CtValue::Bool(mutable)))
+                    }
+                    argument => Some(argument.clone()),
+                };
+                match decided {
+                    Some(argument) => {
+                        instantiation.bind(decl, &argument, None);
+                    }
+                    None => instantiation.open_mutabilities.push(decl.id().clone()),
                 }
             }
             for (decl, argument) in owner.decls.iter().zip(owner_arguments.iter()) {
@@ -5149,6 +5176,12 @@ impl<'d> Instantiation<'d> {
     /// binder, which only the elaborator's unrolling closes).
     fn instantiate(&self, ty: &Ty) -> Result<Ty, ParamError> {
         let ty = replace_parameters(&self.context, ty, &self.bindings, 0)?;
+        let ty =
+            mojito_types::types::defer_mutability_reads(&ty, &self.open_mutabilities, &|name| {
+                self.declarations
+                    .structure(name)
+                    .map(|structure| structure.param_decls.as_slice())
+            });
         let ty = mojito_types::types::bind_origin_params(&ty, &self.origins);
         let ty = rewrite_ty(&ty, &mut SelectedShapes)?;
         let ty = rewrite_ty(&ty, &mut ClosedProjections(self.declarations))?;
@@ -5764,6 +5797,26 @@ fn constructs_binder(block: &MirBlock, binders: &[ParamRef]) -> bool {
                 .into_iter()
                 .any(|region| constructs_binder(region, binders))
     })
+}
+
+/// The origin argument `instance` gives the origin binder whose `mut=`
+/// binder `decl` is, among `declared`, the struct's whole list.
+fn governed_origin<'a>(
+    declared: &'a [ParamDecl],
+    decl: &ParamDecl,
+    instance: &'a [TyArg],
+) -> Option<&'a Origin> {
+    let governed = declared.iter().find_map(|candidate| match candidate {
+        ParamDecl::Origin {
+            origin,
+            mutability: mojito_types::types::OriginMutability::Binder(binder),
+            ..
+        } if binder.id == *decl.id() => Some(*origin),
+        _ => None,
+    })?;
+    ParamDecl::instance_origins(declared, instance)
+        .find(|(id, _)| *id == governed)
+        .map(|(_, origin)| origin)
 }
 
 #[cfg(test)]

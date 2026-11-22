@@ -61,7 +61,6 @@ impl Checker {
         let mode = protocol.mode;
         self.attach_borrowed_iteration_origin(source, iter_ty, mode, &mut protocol);
         Self::resolve_iterator_origin(source, &mut protocol);
-        protocol.iterator_ty = self.close_decided_mutability_slots(&protocol.iterator_ty);
         if let Some(resolved) =
             Self::resolve_borrowed_iteration_reference(source_mutable, &mut protocol)
         {
@@ -793,7 +792,13 @@ impl Checker {
             &info.view_arguments(receiver_arguments),
         );
         let instantiate = |ty: &Ty| {
-            let substituted = substitute(&substitute(ty, &receiver_subst), &method_subst);
+            let substituted = substitute(
+                &substitute(
+                    &self.bind_instance_mutabilities(ty, info, receiver_arguments),
+                    &receiver_subst,
+                ),
+                &method_subst,
+            );
             self.resolve_dependent_ty(&substituted, &values)
                 .and_then(|closed| self.resolve_call_dependent_ty(&closed, &call_values))
                 .unwrap_or(substituted)

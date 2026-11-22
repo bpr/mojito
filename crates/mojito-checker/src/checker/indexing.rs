@@ -176,7 +176,7 @@ impl Checker {
                     .fields
                     .iter()
                     .find(|(candidate, _)| candidate == field)?;
-                Some(substitute_at(field_ty, info, arguments))
+                Some(self.substitute_at(field_ty, info, arguments))
             }),
             ExprKind::Index { object, index } => self.index_storage_ty(object, index),
             _ => None,

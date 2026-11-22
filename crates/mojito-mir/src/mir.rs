@@ -492,11 +492,28 @@ impl MirDeclarations {
     /// type, or one whose fields its arguments do not close.
     pub fn field_types(&self, ty: &Ty) -> Option<Cow<'_, [(String, Ty)]>> {
         let (declaration, arguments) = self.struct_instance(ty)?;
-        mojito_types::types::struct_field_types(
+        let fields = mojito_types::types::struct_field_types(
             &declaration.argument_view(),
             &declaration.view_arguments(arguments),
             &declaration.fields,
-        )
+        )?;
+        let decls = &declaration.param_decls;
+        if ParamDecl::mutability_binders(decls).next().is_none() {
+            return Some(fields);
+        }
+        // An origin's `mut=` binder is no argument binder, but a field type
+        // may read it (`Span[Self.T, Self.origin]`).
+        fields
+            .iter()
+            .map(|(name, field)| {
+                mojito_types::types::bind_instance_mutabilities(decls, arguments, field, &|name| {
+                    self.structure(name)
+                        .map(|structure| structure.param_decls.as_slice())
+                })
+                .map(|field| (name.clone(), field))
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(Cow::Owned)
     }
 
     /// Whether a copy of a value of `ty` is the value itself, as upstream's
@@ -2435,9 +2452,15 @@ fn lower_struct_member<P: DeclaredParam>(
             declaration: name.to_string(),
         })
         .unwrap_or_default();
-    let struct_parameters = ParamDecl::argument_decls(struct_declared);
-    let enclosing_binders =
-        EnclosingBinders::of(struct_parameters.iter().chain(signature.argument_binders()));
+    // `Self`'s binders: every struct parameter but an origin, each origin's
+    // `mut=` binder among them, which a member's types and lifted
+    // expressions read.
+    let enclosing_binders = EnclosingBinders::of(
+        struct_declared
+            .iter()
+            .filter(|decl| !decl.is_origin())
+            .chain(signature.argument_binders()),
+    );
     let defaults = regular
         .iter()
         .map(|param| {

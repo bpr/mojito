@@ -3696,7 +3696,7 @@ impl Checker {
                     // payload field answers for the concrete element.
                     !user_lifecycle_defeats(info, kind)
                         && info.fields.iter().all(|(_, field_ty)| {
-                            let field_ty = substitute_at(field_ty, info, args);
+                            let field_ty = self.substitute_at(field_ty, info, args);
                             self.trivial_lifecycle(kind, &field_ty, visiting)
                         })
                 });

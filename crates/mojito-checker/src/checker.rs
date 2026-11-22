@@ -3461,8 +3461,7 @@ impl StructInfo {
 
     /// The arguments of the struct's own `Self` type: every declared
     /// parameter as itself, in place, as upstream spells `Self` over the
-    /// struct's own parameters, an origin's `mut=` deferred to the origin
-    /// binder it follows ([`Checker::origin_mutability_slot`]).
+    /// struct's own parameters, an origin's `mut=` binder among them.
     fn self_arguments(&self) -> Vec<TyArg> {
         ParamDecl::self_arguments(&self.params)
     }

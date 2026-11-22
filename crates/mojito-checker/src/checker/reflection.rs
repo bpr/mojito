@@ -308,7 +308,7 @@ impl Checker {
             TyKind::Struct(name, arguments) if let Some(info) = self.structs.get(name) => Some(
                 info.fields
                     .iter()
-                    .map(|(field, ty)| (field.clone(), substitute_at(ty, info, arguments)))
+                    .map(|(field, ty)| (field.clone(), self.substitute_at(ty, info, arguments)))
                     .collect::<Vec<_>>(),
             ),
             TyKind::Param { .. } | TyKind::Dependent(_) | TyKind::SelfType => {
@@ -476,7 +476,7 @@ impl Checker {
                 Ok(info.fields_resolved().then(|| {
                     info.fields
                         .iter()
-                        .map(|(field, ty)| (field.clone(), substitute_at(ty, info, arguments)))
+                        .map(|(field, ty)| (field.clone(), self.substitute_at(ty, info, arguments)))
                         .collect()
                 }))
             }

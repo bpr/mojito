@@ -2672,7 +2672,7 @@ impl Checker {
             mojito_types::types::nominal_parts(ty)
                 .and_then(|(owner, args)| {
                     let info = self.structs.get(template_name(owner))?;
-                    Some(substitute_at(declared, info, &args))
+                    Some(self.substitute_at(declared, info, &args))
                 })
                 .unwrap_or_else(|| declared.clone())
         };
@@ -3849,7 +3849,7 @@ impl Checker {
         // of the struct's type pack (`*args: *Self.Ts`).
         let declared = match &collector.element {
             SlotType::Declared(_, Some(declared)) => {
-                substitute_variadic_at(declared, info, instance_args)
+                self.substitute_variadic_at(declared, info, instance_args)
             }
             slot => match slot.resolved(Some(ty)) {
                 Some(slot) => slot.clone(),
@@ -4378,7 +4378,7 @@ impl Checker {
         let at_owner = |ty: &Ty| match owner.and_then(mojito_types::types::nominal_parts) {
             Some((name, instance_args)) => self.structs.get(template_name(name)).map_or_else(
                 || ty.clone(),
-                |info| substitute_at(ty, info, &instance_args),
+                |info| self.substitute_at(ty, info, &instance_args),
             ),
             None => ty.clone(),
         };
@@ -4497,7 +4497,7 @@ impl Checker {
                         let (name, instance_args) =
                             owner.and_then(mojito_types::types::nominal_parts)?;
                         let info = self.structs.get(template_name(name))?;
-                        let elements = substitute_variadic_at(declared, info, &instance_args);
+                        let elements = self.substitute_variadic_at(declared, info, &instance_args);
                         let TyKind::RuntimePack(elements) = elements.kind() else {
                             return None;
                         };
@@ -4808,7 +4808,15 @@ impl Checker {
         let mut read = HashSet::new();
         for name in names.iter().chain(&aliases) {
             if name == "Self" {
+                // `Self` holds every binder of its struct, an origin's
+                // `mut=` binder among them.
                 read.extend(self.self_decls.iter().map(|decl| decl.id().clone()));
+                read.extend(
+                    self.self_struct_params()
+                        .into_iter()
+                        .flat_map(ParamDecl::mutability_binders)
+                        .map(|decl| decl.id().clone()),
+                );
                 continue;
             }
             // A bare type argument (`width[T]()`) names its binder; a local
@@ -5829,9 +5837,16 @@ impl Checker {
     /// for` index among them.
     fn binders_in_scope(&self) -> Vec<ParamExpr> {
         use mojito_types::param_expr::MetaTy;
+        // `Self`'s binders: its argument binders and each origin's `mut=`
+        // binder, which `Self` holds too.
+        let mutability_binders = self
+            .self_struct_params()
+            .into_iter()
+            .flat_map(ParamDecl::mutability_binders);
         let mut binders: Vec<ParamExpr> = self
             .self_decls
             .iter()
+            .chain(mutability_binders)
             .filter_map(|decl| match decl {
                 ParamDecl::Type { variadic, .. } => Some(self.param_context.decl_ref(
                     decl.id().clone(),

@@ -396,7 +396,7 @@ impl Checker {
             let receiver_variadic = sig
                 .variadic
                 .as_ref()
-                .map(|ty| self.resolve_assoc_ty(&substitute_variadic_at(ty, info, tyargs)));
+                .map(|ty| self.resolve_assoc_ty(&self.substitute_variadic_at(ty, info, tyargs)));
             let receiver_kw_variadic = sig
                 .kw_variadic
                 .as_ref()
@@ -503,7 +503,7 @@ impl Checker {
                     result_adapter: None,
                     raises: sig.raises,
                     error: sig.error.as_ref().map(|error| {
-                        substitute(&substitute_at(error, info, tyargs), &method_subst)
+                        substitute(&self.substitute_at(error, info, tyargs), &method_subst)
                     }),
                     mutates_receiver: false,
                     consumes_receiver: false,

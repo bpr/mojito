@@ -132,7 +132,7 @@ impl Checker {
                     field: field.clone(),
                 });
             };
-            receiver_ty = substitute_at(field_ty, info, arguments);
+            receiver_ty = self.substitute_at(field_ty, info, arguments);
         }
         let Some((callee_struct, receiver_args)) = receiver_ty.kind().as_non_pointer_struct()
         else {
