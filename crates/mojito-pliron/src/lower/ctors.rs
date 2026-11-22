@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::make_ref_forwards_stored_handle;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
@@ -131,13 +132,14 @@ impl FnLowering<'_> {
         // address, so the handle is the loaded slot value, not the slot
         // address. A storage-borrow destination (`ref (ref T)`) keeps the
         // slot address; its consumers dereference explicitly.
+        // The decision reads the place's checked type, not the type this
+        // walk recomputes, which may spell an origin argument differently.
         let forwards_stored_handle = !place.proj.is_empty()
-            && match (ty.kind(), self.func.reg_types.get(&dest.0).map(Ty::kind)) {
-                (TyKind::Ref(stored), Some(TyKind::Ref(dest_ref))) => {
-                    dest_ref.referent == stored.referent
-                }
-                _ => false,
-            };
+            && self
+                .func
+                .reg_types
+                .get(&dest.0)
+                .is_some_and(|made| make_ref_forwards_stored_handle(&place, made));
         if (place.proj.is_empty() || forwards_stored_handle)
             && let TyKind::Ref(reference) = ty.kind()
         {

@@ -472,7 +472,10 @@ fn verify_reference_instruction(
                     let forwarded = match place.ty.as_ref().map(Ty::kind) {
                         Some(TyKind::Ref(stored))
                             if !types_compatible(capability.target, target)
-                                && types_compatible(capability.target, &stored.referent) =>
+                                && crate::mir::make_ref_forwards_stored_handle(
+                                    place,
+                                    destination,
+                                ) =>
                         {
                             Some(ReferencePermission::from_mutability(stored.mutability))
                         }

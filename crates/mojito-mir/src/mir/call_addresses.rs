@@ -40,7 +40,7 @@ use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_symbol::symbol::is_initializer_symbol;
 use mojito_types::origin::{Mutability, OriginParamId};
-use mojito_types::types::{FuncTy, Ty, TyKind};
+use mojito_types::types::{FuncTy, Ty, TyKind, erase_origins};
 use std::collections::HashMap;
 
 /// The regular parameter each operand of a direct call of `declaration`
@@ -449,6 +449,23 @@ pub fn stored_handle(place: &MirPlace, mutability: Mutability) -> Option<(MirPla
     })
     .into();
     Some((place.clone(), handle))
+}
+
+/// Whether a `ref.make` of `place` whose destination is typed `made`
+/// forwards the reference `place` stores rather than borrowing its slot.
+///
+/// It does when `place` holds a `ref` and `made` is that stored handle's
+/// type, the form [`stored_handle`] makes; a destination typed as a borrow
+/// of the slot (`ref (ref T)`) never forwards. Origins erase from the
+/// runtime ABI, so the two referents are compared without them: a spliced
+/// place's root may spell an origin argument its projections do not.
+pub fn make_ref_forwards_stored_handle(place: &MirPlace, made: &Ty) -> bool {
+    match (place.ty.as_ref().map(Ty::kind), made.kind()) {
+        (Some(TyKind::Ref(stored)), TyKind::Ref(made)) => {
+            erase_origins(&made.referent) == erase_origins(&stored.referent)
+        }
+        _ => false,
+    }
 }
 
 /// Upgrade the calls of `functions`, read from an artifact written before
@@ -1839,5 +1856,59 @@ fn retire_made_references(block: &mut MirBlock, retired: &[u32]) {
         for region in instruction_regions_mut(instruction) {
             retire_made_references(region, retired);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mojito_types::origin::{Origin, RefTy};
+    use mojito_types::types::{AddressSpaceSlot, TyArg};
+
+    fn list_of_span(origin: Origin) -> Ty {
+        let span: Ty = TyKind::Struct("StringSpan".into(), vec![TyArg::Origin(origin)]).into();
+        TyKind::Struct("List".into(), vec![TyArg::Ty(span)]).into()
+    }
+
+    fn reference(referent: Ty) -> Ty {
+        TyKind::Ref(RefTy {
+            referent,
+            origin: Origin::Static,
+            mutability: Mutability::Immutable,
+            address_space: AddressSpaceSlot::GENERIC,
+        })
+        .into()
+    }
+
+    fn field_place(ty: Ty) -> MirPlace {
+        MirPlace {
+            root: 0,
+            root_ty: None,
+            proj: vec![Proj::Field("src".into())],
+            projection_tys: vec![ty.clone()],
+            ty: Some(ty),
+            through: None,
+        }
+    }
+
+    #[test]
+    fn make_ref_forwards_stored_handle_across_origin_spellings() {
+        let place = field_place(reference(list_of_span(Origin::Static)));
+        assert!(make_ref_forwards_stored_handle(
+            &place,
+            &reference(list_of_span(Origin::Unbound))
+        ));
+    }
+
+    #[test]
+    fn make_ref_forwards_stored_handle_never_for_a_slot_borrow() {
+        let stored = reference(list_of_span(Origin::Static));
+        let place = field_place(stored.clone());
+        assert!(!make_ref_forwards_stored_handle(&place, &reference(stored)));
+        let held = field_place(list_of_span(Origin::Static));
+        assert!(!make_ref_forwards_stored_handle(
+            &held,
+            &reference(list_of_span(Origin::Static))
+        ));
     }
 }

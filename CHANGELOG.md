@@ -1425,6 +1425,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Natively, a call through a `ref` field passes the reference the field
+  holds when the element type carries an origin argument, where it passed
+  the field slot's address: iterating a `List[StaticString]` whose
+  `__next__` was spliced into its caller, with `__getitem__` kept as a call,
+  read garbage or aborted (R2484). The verifier, the VM, and Pliron now
+  decide whether a `ref.make` forwards a stored handle by one MIR rule that
+  compares types without their origins.
+
 - With the pre-elaboration pipeline off, indexing or iterating a sliced
   `Span` (`Span(xs)[1:3][0]`, `for x in sub`) and indexing a struct's
   `Span[Int, Self.o]` field no longer fail in the VM with "field access on

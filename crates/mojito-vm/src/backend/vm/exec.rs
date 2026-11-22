@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::make_ref_forwards_stored_handle;
 use mojito_mir::mir::verify::instruction_places;
 use mojito_types::types::TyKind;
 use mojito_types::types::storage_simd;
@@ -213,18 +214,16 @@ impl VmBackend {
                     // handle it stores when the destination is typed as
                     // that handle, as below.
                     let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                    regs[dest.0 as usize] =
-                        match (place.ty.as_ref().map(Ty::kind), target.map(Ty::kind)) {
-                            (Some(TyKind::Ref(stored)), Some(TyKind::Ref(made)))
-                                if made.referent == stored.referent =>
-                            {
-                                match self.read_reference(&handle, frame_id, vars)? {
-                                    stored @ (Value::Ref { .. } | Value::Pointer { .. }) => stored,
-                                    _ => handle,
-                                }
-                            }
+                    regs[dest.0 as usize] = if target
+                        .is_some_and(|made| make_ref_forwards_stored_handle(place, made))
+                    {
+                        match self.read_reference(&handle, frame_id, vars)? {
+                            stored @ (Value::Ref { .. } | Value::Pointer { .. }) => stored,
                             _ => handle,
-                        };
+                        }
+                    } else {
+                        handle
+                    };
                     return Ok(());
                 }
                 let root = vars[place.root as usize].clone();
@@ -349,9 +348,7 @@ impl VmBackend {
                 // handle (`ref s = self.src` reborrows), as the native
                 // lowering loads it.
                 if !place.proj.is_empty()
-                    && let (Some(TyKind::Ref(stored)), Some(TyKind::Ref(made))) =
-                        (place.ty.as_ref().map(Ty::kind), target.map(Ty::kind))
-                    && made.referent == stored.referent
+                    && target.is_some_and(|made| make_ref_forwards_stored_handle(place, made))
                     && let stored @ (Value::Ref { .. } | Value::Pointer { .. }) =
                         self.read_reference(&handle, frame_id, vars)?
                 {

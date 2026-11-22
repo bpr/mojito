@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2494**.
+Next free ID: **R2495**.
 
 ## Ordered Work
 
@@ -1012,29 +1012,6 @@ Track: `native`.
 
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
-
-- [ ] **R2484 Natively, a kept subscript call spliced into a caller
-  receives its holder's address, not the `ref` field it subscripts**
-
-  When `automatic-inline` splices `_ListIter.__next__` into its caller but
-  keeps the `List.__getitem__` call `self.src[r]` makes, the native call
-  passes the iterator's address as the receiver instead of the list its
-  `src: ref[o] List[T]` field refers to, so the element read is garbage.
-  - The VM runs the same concrete MIR and prints the right element, so
-    either the splice rebinds the receiver place without its field and
-    deref steps and the VM tolerates it, or Pliron drops them.
-  - Probe: mark the `Int` overload of `List.__getitem__`
-    (`stdlib/std/collections/list.mojo`) `@no_inline` instead of
-    `@inline(.always)`; then `var it = l.__iter__()` and
-    `print(it.__next__().byte_length())` over a `List[StaticString]`
-    holding `"x"` print `1` on the VM and `4` with `--backend pliron`, and
-    `for e in l: print(e)` aborts natively.
-  - A user-level `Box[T]` with a `@no_inline` getter and an iterator over
-    a `ref` field did not reproduce it; find the difference (an
-    interior origin, a removed argument, the `where` clause) first.
-  - Found while landing R2474 (2026-11-21).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R2325 The native backend's contextual-rejection test has no
   construct left that the backend rejects**
@@ -10123,6 +10100,35 @@ below is a candidate port toward Mojo's shape, and a port is preferred over any
 new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R2494 A `ref.make` of a `ref` field's place means either a
+  borrow of the slot or the stored handle, chosen by its destination type,
+  where upstream loads the field's `!lit.ref`**
+
+  Upstream passes a `ref` field by loading the `!lit.ref` value it stores:
+  one op with one meaning. Mojito's `ref.make` of the field's place instead
+  forwards the stored handle when its destination is typed as that handle,
+  and borrows the slot when it is typed `ref (ref T)`; the verifier, the VM,
+  and Pliron each ask `mir::make_ref_forwards_stored_handle` which.
+  - Lower the forward as the slot borrow plus a `ref.read`, the form
+    `len(self.src)` already takes, at every emitter:
+    `Flatten::forward_stored_handle`, `forward_definition`, and
+    `setter_receiver` (`calls.rs`); `stored_handle`, `operand_handle`, and
+    `upgrade_stored_handles` (`call_addresses.rs`); `bound_calls.rs`; and
+    `capture_storage_prologue` (`mir.rs`).
+  - Then delete the predicate and the forwarding branches of the
+    verifier's `verify_reference_instruction`, the VM's `MakeRef` arm, and
+    Pliron's `lower_make_ref`.
+  - It reaches the loans of a `ref.read` result in ownership/liveness, the
+    inliner's `ref.make`/`ref.read` matchers (`inline_parametric.rs`
+    `references_and_returns`, `access_bound_parameters_in_place`), and the
+    MIR text schema version.
+  - Probe: `assets/extensions/ok/ref_field_operand_origin_argument.mojo`
+    and `assets/extensions/ok/ref_field_operand_passes_stored_handle.mojo`
+    print the same after the change.
+  - Found while landing R2484 (2026-11-21).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2396 Pre-check auto-parameterization reads an origin binder by
   its `Origin` spelling, so the parser keeps its `Origin[mut=…]` special
