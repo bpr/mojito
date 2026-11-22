@@ -3505,60 +3505,6 @@ impl<'a> Flatten<'a> {
         handle
     }
 
-    /// The read behind a call-produced origin-bearing pointer (`idp(p)[]`):
-    /// the temporary is bound to a hidden `$ptr_tmp_r` slot carrying the loans
-    /// its checked origin names — exactly as `var q = idp(p)` would — so the
-    /// owner outlives the read through the slot's runtime handle.
-    fn temporary_pointer_deref(&mut self, e: Node<'a>, object: Node<'a>) -> Option<Reg> {
-        if !matches!(
-            object.op(),
-            CheckedOp::Call { .. } | CheckedOp::MethodCall { .. }
-        ) || !object.is_origin_bearing_pointer()
-        {
-            return None;
-        }
-        let pointer_ty = object.ty().filter(Ty::is_pointer)?;
-        let subtree = pointer_ty
-            .kind()
-            .pointer_origin()
-            .is_some_and(|origin| origin.subtree());
-        let loans = self.aggregate_borrows(object);
-        if loans.is_empty() || (loans.len() > 1 && !subtree) {
-            return None;
-        }
-        let value = self.expr(object);
-        let variable = self.var(&format!("$ptr_tmp_r{}", value.0));
-        self.var_types.insert(variable, pointer_ty.clone());
-        self.emit(MirInstr::DefVar {
-            var: variable,
-            src: value,
-            binding_ty: Some(pointer_ty.clone()),
-            in_place: false,
-        });
-        let marker = self.fresh_typed(
-            object.location(),
-            loans.first().map(|loan| loan.place.root),
-            Ty::none(),
-        );
-        self.emit(MirInstr::EstablishLoans {
-            reference: variable,
-            loans: loans.clone(),
-            marker,
-            dest_interior: None,
-        });
-        self.aggregate_loans.insert(variable, loans);
-        let reference = self.fresh_typed(object.location(), Some(variable), pointer_ty);
-        self.emit(MirInstr::UseVar {
-            dest: reference,
-            var: variable,
-            mode: UseMode::Copy,
-            constructor: None,
-        });
-        let dest = self.fresh(e.location(), None);
-        self.emit(MirInstr::ReadRef { dest, reference });
-        Some(dest)
-    }
-
     /// A `var self` or `deinit self` call whose receiver the checker
     /// satisfied by implicit copy: an `ImplicitlyCopyable` nominal receiver
     /// runs its copy lifecycle (`__init__(copy:)`) into a fresh temporary the

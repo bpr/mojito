@@ -77,13 +77,19 @@ impl<'a> Node<'a> {
         self.object().zip(self.index())
     }
 
-    /// The pointer this node dereferences when it is the primitive
-    /// dereference (`__get_litref_as_mvalue(r)`'s `Pointer(_mlir_value=r)[]`),
-    /// the one pointer subscript the check selected no `__getitem__` for.
-    pub(super) fn primitive_pointer_dereference(self) -> Option<Self> {
-        let (object, _) = self.index_operands()?;
-        (self.call_contract().is_none() && object.ty().as_ref().is_some_and(Ty::is_pointer))
-            .then_some(object)
+    /// The `!lit.ref` operand of `__get_litref_as_mvalue(r)`, when this node
+    /// is that call ([`mojito_checked::checked::SemanticAdjustment::LitRefPlace`]).
+    pub(super) fn litref_place_operand(self) -> Option<Self> {
+        self.adjustments()
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::LitRefPlace
+                )
+            })
+            .then(|| self.args().first().copied())
+            .flatten()
     }
 
     /// Whether this field/dereference chain roots at a fresh temporary the
@@ -944,7 +950,6 @@ impl<'a> Node<'a> {
         match ty.kind() {
             TyKind::Tuple(_) | TyKind::RuntimePack(_) => Some(MirIntrinsicSubscript::TupleStorage),
             TyKind::VariadicPack(_) => Some(MirIntrinsicSubscript::VariadicStorage),
-            pointer if pointer.is_pointer() => Some(MirIntrinsicSubscript::Pointer),
             TyKind::ComptimeList(_) => Some(MirIntrinsicSubscript::ComptimeList),
             // `Slice.indices` has a public nominal Tuple type but crosses the
             // VM intrinsic boundary as compiler-private `Value::Tuple`

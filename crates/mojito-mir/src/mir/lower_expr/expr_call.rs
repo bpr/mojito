@@ -233,6 +233,18 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::MakeRef { dest, place });
             return Some(dest);
         }
+        // `__get_litref_as_mvalue(r)` is the reference `r` already is,
+        // retyped from the `!lit.ref` to the `ref` handle every reference
+        // result's consumer reads, stores, binds, and returns.
+        if let Some(operand) = call.litref_place_operand() {
+            let reference = call
+                .reference_result()
+                .expect("a checked `!lit.ref` place records its reference");
+            let value = self.expr(operand);
+            let dest = self.fresh_typed(call.location(), None, TyKind::Ref(reference).into());
+            self.emit(MirInstr::PointerConvert { dest, value });
+            return Some(dest);
+        }
         // Compiler-private inline uninit-storage construction:
         // uninitialized, or holding a moved initial payload.
         if let Some(init) = node

@@ -9532,6 +9532,36 @@ fn lit_ref_type_reads_an_origin_operand() {
 }
 
 #[test]
+fn litref_place_is_writable_as_its_origin_is() {
+    // `__get_litref_as_mvalue(r)` is the place the `!lit.ref` `r` refers
+    // to, stored through as `r`'s origin allows: a `mut` parameter's place
+    // takes a store and an augmented store, a read one's rejects them.
+    ok_std(concat!(
+        "def f(mut x: Int):\n",
+        "    __get_litref_as_mvalue(__get_mvalue_as_litref(x)) = 2\n",
+        "    __get_litref_as_mvalue(__get_mvalue_as_litref(x)) += 3\n",
+        "def main():\n",
+        "    var y = 1\n",
+        "    f(y)\n",
+        "    print(y)\n",
+    ));
+    let error = check_with_std(concat!(
+        "def f(x: Int):\n",
+        "    __get_litref_as_mvalue(__get_mvalue_as_litref(x)) = 2\n",
+        "def main():\n",
+        "    f(1)\n",
+        "    print(1)\n",
+    ))
+    .expect_err("a store through an immutable `!lit.ref` is rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("immutable reference returned by call '__get_litref_as_mvalue()'"),
+        "{error}"
+    );
+}
+
+#[test]
 fn raw_pointer_types_take_an_address_space() {
     // Upstream's `!lit.ref<T, origin, as>` and `!kgen.pointer<T, as>` name
     // their address space as a literal index or as an `AddressSpace`'s

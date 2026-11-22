@@ -1378,22 +1378,6 @@ impl VmBackend {
                         prog.mir.functions[function].1.reg_types.get(&index.0),
                     );
                     regs[dest.0 as usize] = match (intrinsic, base_value) {
-                        // A pointer subscript is a shallow read of the
-                        // pointee, as `LoadPlace` and `ReadRef` are; the
-                        // checked `value.copy` makes any copy.
-                        //
-                        // `ptr[i]` through a place pointer (`Pointer(to=x)`)
-                        // reads the pointee it designates.
-                        (MirIntrinsicSubscript::Pointer, handle @ Value::PlacePointer { .. }) => {
-                            let off = self.normalize_index(prog, &index_operand)?;
-                            let handle = super::references::offset_place_handle(handle, off)?;
-                            self.read_reference(&handle, frame_id, vars)?
-                        }
-                        // `ptr[i]` loads the pointee at `base + i` from the heap arena.
-                        (MirIntrinsicSubscript::Pointer, Value::Pointer { allocation, offset }) => {
-                            let off = self.normalize_index(prog, &index_operand)?;
-                            self.heap_read(allocation, offset, off)?
-                        }
                         (MirIntrinsicSubscript::ComptimeList, Value::ComptimeList(items))
                             if self.ctfe_fuel.is_some() =>
                         {

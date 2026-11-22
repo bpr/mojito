@@ -1794,26 +1794,6 @@ impl<'a> Flatten<'a> {
         }
         let (src, _) = self.lower_assignment_value(place, value);
         self.flush_argument_anchors();
-        // A store through an origin-bearing pointer writes its
-        // address; the checker fixed the offset to 0 and required
-        // mutable provenance. The store goes through the handle —
-        // loaded before the invalidation boundary, so a first write
-        // through a subtree pointer uses its still-live generation and
-        // only later uses observe the self-invalidation.
-        if let Some(object) = place.primitive_pointer_dereference()
-            && object.is_origin_bearing_pointer()
-        {
-            let reference = self.expr(object);
-            self.emit_interior_invalidations(place, None);
-            if let Some(element) = object.ty().as_ref().and_then(Ty::pointer_element) {
-                self.destroy_pointee(place, reference, element);
-            }
-            self.emit(MirInstr::WriteRef {
-                reference,
-                value: src,
-            });
-            return Some(StoredDestination::Reference(reference));
-        }
         if let Some(object) = pointer_field_store_object(place) {
             return Some(self.lower_pointer_field_store(object, src));
         }
@@ -3220,23 +3200,6 @@ impl<'a> Flatten<'a> {
                             in_place: false,
                         });
                     }
-                } else if let Some(object) = place.primitive_pointer_dereference()
-                    && object.is_origin_bearing_pointer()
-                {
-                    // `p[0] OP= e` through an origin-bearing pointer: read and
-                    // write through the handle, evaluated once.
-                    let reference = self.expr(object);
-                    let cur = self.fresh(place.location(), None);
-                    self.emit(MirInstr::ReadRef {
-                        dest: cur,
-                        reference,
-                    });
-                    let res = self.augmented_operation(*op, place, cur, value);
-                    self.emit_interior_invalidations(place, None);
-                    self.emit(MirInstr::WriteRef {
-                        reference,
-                        value: res,
-                    });
                 } else if matches!(
                     place.place_ty().as_ref().map(Ty::kind),
                     Some(TyKind::Ref(_))

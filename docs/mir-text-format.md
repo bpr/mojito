@@ -1327,6 +1327,13 @@ unchanged: the packaged checked facts lose the `PointerOffset` adjustment,
 since `Pointer.unsafe_offset` and the pointer operators now run the declared
 bodies (R2207).
 
+Schema 1.221 withdraws the intrinsic subscript `pointer`: every pointer
+subscript is a call of a declared `Pointer.__getitem__`, and
+`__get_litref_as_mvalue(r)`, the place a `!lit.ref` refers to, lowers to the
+`pointer.convert` of `r` to the `ref` its checked reference result names. A
+reader rejects the tag. The package format moves to `mojito-package 252`,
+whose checked facts gain the `LitRefPlace` adjustment (R2474).
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and
@@ -2678,8 +2685,8 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `GetIter` / `HasNext` / `Next` | `iter.init { source: $vN, dest: $vN }` / `iter.has_next` / `iter.next` over compiler-private iterator storage (schema 1.94 withdraws `iter.try_next`, and schema 1.109 `iter.init`'s `mode` and `prepare`; see *Compatibility*) |
 
 `UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic
-subscripts are `tuple_storage`, `variadic_storage`, `pointer`, and
-`comptime_list`. The reader no longer spells `simd`, which no writer has
+subscripts are `tuple_storage`, `variadic_storage`, and `comptime_list`
+(schema 1.221 withdraws `pointer`). The reader no longer spells `simd`, which no writer has
 emitted since schema 1.120 and the verifier rejected from then on; a lane
 subscript is the declared `SIMD.__getitem__`/`__setitem__` call, and a
 place indexing a vector fails verification. Result adapters currently contain only

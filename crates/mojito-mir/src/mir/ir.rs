@@ -1444,7 +1444,6 @@ pub enum MirIntrinsicSubscript {
     TupleStorage,
     /// Compiler-private homogeneous `*args` storage.
     VariadicStorage,
-    Pointer,
     ComptimeList,
 }
 

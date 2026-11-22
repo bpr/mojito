@@ -538,16 +538,6 @@ impl FnLowering<'_> {
                 value,
                 constructor,
             } => self.lower_copy_value(ctx, *dest, *value, constructor.as_deref()),
-            // Pointer subscripts are runtime intrinsics; every other
-            // subscript form routes through nominal `__getitem__` calls the
-            // subset does not lower yet.
-            MirInstr::Index {
-                dest,
-                base,
-                index,
-                intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::Pointer),
-                ..
-            } => self.lower_pointer_index(ctx, *dest, *base, *index),
             // References are place addresses: ownership verified the
             // discipline; the backend materializes plain pointers.
             MirInstr::MakeRef { dest, place } => self.lower_make_ref(ctx, *dest, place),

@@ -2836,7 +2836,9 @@ fn is_owned_parameter(callee: &MirFunction, param: usize) -> bool {
 /// the checker rejects. A reference to a fresh slot an argument
 /// initializes keeps the call, as the caller's loan names the argument's
 /// place, not that slot. A reference to a pointee, an element a pointer
-/// addresses (`elements[unsafe_offset=i][]`, `self._data[idx]`), and one
+/// addresses (`elements[unsafe_offset=i][]`, `self._data[idx]`), the
+/// reference a `!lit.ref` or pointer converts to
+/// (`__get_litref_as_mvalue(r)`, upstream's `lit.ref.from_pointer`), and one
 /// of static origin name no slot of the body at all. A reference made
 /// through a local `ref` slot (`self.entries[i].value`) names what the
 /// slot's one whole store holds, so that stored reference is checked in
@@ -2874,6 +2876,8 @@ fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
     let mut made = HashMap::new();
     let mut returned = Vec::new();
     references_and_returns(&callee.body, &mut made, &mut returned);
+    let mut converted = HashSet::new();
+    converted_references(&callee.body, &callee.reg_types, &mut converted);
     let mut stores = HashMap::new();
     whole_stores(&callee.body, &mut stores);
     let held = |value: &Reg| {
@@ -2902,6 +2906,7 @@ fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
     }
     returned.iter().all(|value| {
         merged.contains(&value.0)
+            || converted.contains(&value.0)
             || is_static(value)
             || held(value).is_some()
             || made.get(&value.0).is_some_and(|place: &&MirPlace| {
@@ -2946,6 +2951,26 @@ fn references_and_returns<'b>(
     }
     if let MirTerm::Return(Some(value)) = block.term {
         returned.push(value);
+    }
+}
+
+/// Add to `converted` each `ref` register `block` and its regions define
+/// by a `pointer.convert`: a reference to what a `!lit.ref` or pointer
+/// addresses.
+fn converted_references(
+    block: &MirBlock,
+    reg_types: &HashMap<u32, Ty>,
+    converted: &mut HashSet<u32>,
+) {
+    for instruction in &block.instrs {
+        if let MirInstr::PointerConvert { dest, .. } = instruction
+            && matches!(reg_types.get(&dest.0).map(Ty::kind), Some(TyKind::Ref(_)))
+        {
+            converted.insert(dest.0);
+        }
+        for region in instruction_regions(instruction) {
+            converted_references(region, reg_types, converted);
+        }
     }
 }
 

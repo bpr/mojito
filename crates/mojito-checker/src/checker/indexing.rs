@@ -227,14 +227,6 @@ impl Checker {
                 // getter lvalue below.
                 if matches!(index.kind, ExprKind::EmptySubscript) {
                     let receiver = self.infer(object)?;
-                    // The primitive dereference is the pointee's place,
-                    // written with the provenance's capability.
-                    if self.has_fact(&place.source_span(), |facts| facts.primitive_pointer_deref)
-                        && let Some((element, origin)) = receiver.as_pointer()
-                    {
-                        self.check_pointer_write(object, &origin)?;
-                        return Ok(element);
-                    }
                     if self.member_struct(&receiver, "__getitem__").is_none() {
                         return Err(TypeError::NotIndexable(receiver.to_string()));
                     }
@@ -564,9 +556,6 @@ impl Checker {
         &self,
         target: &Expr,
     ) -> Result<Option<SubscriptLValue>, TypeError> {
-        if self.has_fact(&target.source_span(), |facts| facts.primitive_pointer_deref) {
-            return Ok(None);
-        }
         let object = match &target.kind {
             ExprKind::Index { object, index } if self.type_keyed_projection(object, index) => {
                 return Ok(None);
@@ -1197,16 +1186,8 @@ impl Checker {
         // The empty subscript `value[]` calls the receiver's zero-argument
         // `__getitem__` (`Pointer`'s dereference, current Optional's raising
         // extraction); the EmptySubscript node is syntax-only and is not
-        // passed as an ordinary argument. Only the dereference
-        // `__get_litref_as_mvalue` is spelled as, which the declared
-        // `Pointer.__getitem__` bottoms out in, is the primitive.
+        // passed as an ordinary argument.
         if matches!(index.kind, ExprKind::EmptySubscript) {
-            if self.has_fact(&span, |facts| facts.primitive_pointer_deref)
-                && let Some(element) = obj_ty.pointer_element()
-            {
-                self.materialize_temporary_holder(object, false);
-                return Ok((*element).clone());
-            }
             if self.member_struct(&obj_ty, "__getitem__").is_some() {
                 let result = self.infer_method_call(
                     &span,

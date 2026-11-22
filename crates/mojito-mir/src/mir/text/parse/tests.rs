@@ -1351,7 +1351,7 @@ fn instruction_families_reprint_byte_identically() {
             base: Reg(0),
             index: Reg(1),
             call: None,
-            intrinsic: Some(MirIntrinsicSubscript::Pointer),
+            intrinsic: Some(MirIntrinsicSubscript::TupleStorage),
         },
         MirInstr::MultiIndex {
             dest: Reg(23),

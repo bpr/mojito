@@ -32,29 +32,6 @@ impl FnLowering<'_> {
         }
     }
 
-    /// `p[i]` over the pointer subscript intrinsic: load the element at
-    /// `p + i * sizeof(element)` — the VM's unchecked heap read.
-    pub(super) fn lower_pointer_index(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        base: Reg,
-        index: Reg,
-    ) -> Result<(), PlironError> {
-        let register_ty = self.func.reg_types.get(&base.0).cloned();
-        let Some(element) = register_ty.as_ref().and_then(Ty::pointer_element) else {
-            return Err(
-                self.unsupported_reg("pointer subscript on a non-pointer base".into(), dest)
-            );
-        };
-        let ptr = self.reg_value(ctx, base, ScalarTy::PTR)?;
-        let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
-        // A pointer subscript borrows its pointee, as upstream's
-        // `ref`-returning `__getitem__` does; the checked `value.copy`
-        // makes any copy.
-        self.load_moved_from(ctx, address, element, dest)
-    }
-
     /// `pointer + index * sizeof(element)` as an opaque address.
     pub(super) fn pointer_element_address(
         &mut self,

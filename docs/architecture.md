@@ -2674,8 +2674,7 @@ rejects a value at the receiver of a resolved
 `call.method` or of a checked subscript accessor whose declaration takes
 it by address (`verify_by_address_receiver`, over
 `mir::by_address_receiver`): lowering gives such a receiver its storage
-wherever it has none, the place its load read, a pointee re-homed through
-a hidden pointer slot (`Flatten::pointee_place`), a conditional's result
+wherever it has none, the place its load read, a conditional's result
 slot or a capturing lambda's storage slot, a temporary's hidden `$mat_r`
 slot (`Flatten::materialize_operand`), and a chained comparison's left
 operand its place (`Flatten::chain_link_address`), and a truthiness
@@ -3788,12 +3787,13 @@ The subscript syntax (`p[]`, `p[i]`, `p[unsafe_offset=i]`), in value,
 place, and augmented position, is a call of one of the three declared
 `__getitem__`s, as an explicit `p.__getitem__(…)` is: its loans, its
 liveness, and its write capability come from the selected getter's
-`ref[Self.origin, Self.address_space]` result. The one pointer subscript
-no getter answers is the primitive dereference
-`__get_litref_as_mvalue(r)` is spelled as (`Pointer(_mlir_value=r)[]`),
-which `infer_spelled_address_builtin` marks with the
-`primitive_pointer_deref` node fact and the declared zero-argument getter
-bottoms out in; ordinary source spelling the same shape dispatches.
+`ref[Self.origin, Self.address_space]` result. No pointer subscript is
+primitive: the getters' bodies end in `__get_litref_as_mvalue(r)`, the
+place the `!lit.ref` `r` refers to, which `infer_spelled_address_builtin`
+records as a call carrying the `LitRefPlace` adjustment and a
+`ReferenceResult` built from `r`'s type (`litref_reference`), and which
+MIR lowers to the `pointer.convert` of `r` to that `ref`, read, stored,
+bound, and returned as any reference result is.
 Every initializer, `to=` included, is the declaration's. Any other
 member (the memory members `unsafe_write`, `unsafe_write_move_from`,
 `unsafe_take_pointee`, and `unsafe_deinit_pointee[_with]` over the two
@@ -6206,9 +6206,8 @@ receiver's place), and a field of a reference-returning call's result is a
 place within the call's recorded result origin (`origin_place` reads its
 `ReferenceResult`). A `Pointer(...)` construction or a call whose pointer result has a
 tracked origin (a declared cast) is the holder of a dereference place
-through a `MaterializeBorrowSource` slot, which carries the call's loans;
-an ordinary call's pointer result is read through its loan-carrying
-`$ptr_tmp_r` slot's handle (`temporary_pointer_deref`) instead. A read of the bound pointer
+through a `MaterializeBorrowSource` slot, which carries the call's loans.
+A read of the bound pointer
 variable itself — a copy into another local, an annotated binding, or a call
 argument — is a plain `UseVar` value read of the stored handle, which both
 backends interpret as the pointee's address.
@@ -6551,13 +6550,7 @@ the call alone over its register, or, where its block read the register
 through a reference with nothing written since, over that reference, or,
 where its block loaded the register from a place with nothing written
 since, over a `ref.make` of that place, as upstream's `copy: Self` takes
-the source's `!lit.ref`. The primitive pointer dereference in copy
-position (the declared `__getitem__`'s `__get_litref_as_mvalue`) is read
-as upstream's `__getitem__` reads it, through the pointee's reference: the offset pointer's
-`pointer.convert` to an immutable `ref` (`lit.ref.from_pointer`) and a
-`ref.read` through it, so its copy passes that reference; a pointer with a
-stably known address loads the pointee's place instead, whose copy passes
-its `ref.make`. Ending a reference binding writes nothing: drop
+the source's `!lit.ref`. Ending a reference binding writes nothing: drop
 elaboration may end the binding a loaded place goes through at the load,
 its last use, and the call then ends it after itself instead, since the
 call's reference now reaches the referent through it. A copy of a register
@@ -7640,7 +7633,9 @@ point where a slot declared in a loop is uninitialized again.
   call's reference type. A reference-returning callee inlines when each
   returned reference, or each one so merged, is made to a place-bound
   parameter's place, to a pointee (an index of a pointer at any depth of
-  the place), or is of static origin (`returns_bound_place`). The
+  the place), is the `pointer.convert` of a `!lit.ref` or pointer to a
+  `ref` (`__get_litref_as_mvalue`), or is of static origin
+  (`returns_bound_place`). The
   body's registers and slots move past the caller's
   (`mir::renumber_block_slots`), regions included, and its slot names gain
   `$inline{n}`, so no binder name or `self` matches them. The call's block binds each owned

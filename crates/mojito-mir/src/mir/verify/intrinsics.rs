@@ -61,11 +61,6 @@ pub(super) fn verify_intrinsic_index(
             MirIntrinsicSubscript::VariadicStorage,
             Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)),
         ) => (!elements.is_empty()).then(|| elements.iter().collect::<Vec<_>>()),
-        (MirIntrinsicSubscript::Pointer, Some(pointer))
-            if let Some(element) = pointer.pointer_element() =>
-        {
-            Some(vec![element])
-        }
         (MirIntrinsicSubscript::ComptimeList, Some(TyKind::ComptimeList(element))) => {
             Some(vec![element])
         }

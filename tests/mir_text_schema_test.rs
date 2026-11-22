@@ -13,8 +13,8 @@ use std::collections::HashSet;
 #[test]
 fn schema_version_and_envelope_are_stable() {
     assert_eq!(MAGIC, "mojito-mir");
-    assert_eq!((VERSION_MAJOR, VERSION_MINOR), (1, 220));
-    assert_eq!(version_header(), "mojito-mir 1.220");
+    assert_eq!((VERSION_MAJOR, VERSION_MINOR), (1, 221));
+    assert_eq!(version_header(), "mojito-mir 1.221");
 }
 
 #[test]
@@ -53,7 +53,6 @@ fn closed_supporting_enums_have_canonical_spellings() {
     let intrinsics = [
         (MirIntrinsicSubscript::TupleStorage, "tuple_storage"),
         (MirIntrinsicSubscript::VariadicStorage, "variadic_storage"),
-        (MirIntrinsicSubscript::Pointer, "pointer"),
         (MirIntrinsicSubscript::ComptimeList, "comptime_list"),
     ];
     for (intrinsic, spelling) in intrinsics {

@@ -2233,6 +2233,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `__get_litref_as_mvalue(r)`, the place a `!lit.ref` refers to, is its
+  own checked call whose reference result is `r`'s origin, mutability, and
+  address space, lowered to the `pointer.convert` of `r` to that `ref`, as
+  upstream's builtin is the `!lit.ref` itself. It was spelled as the
+  pointer subscript `Pointer(_mlir_value=r)[]`; with it go MIR's `pointer`
+  intrinsic subscript (MIR text schema 1.221, `mojito-package 252`), the
+  pointee read and store paths, and both backends' pointer-index arms.
+
 - `p += n`, `p -= n`, and `p - n` over a `Pointer` are rejected, as at the
   pin, whose `Pointer` declares no `__iadd__`/`__isub__` and whose `__sub__`
   takes only a pointer (R2207, R2445;

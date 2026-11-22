@@ -647,18 +647,6 @@ impl<'a> Flatten<'a> {
                     return (value, Some(MirPlace::root(var, ty)));
                 }
             }
-            Some(MirInstr::Index {
-                dest,
-                base,
-                index,
-                call: None,
-                intrinsic: Some(MirIntrinsicSubscript::Pointer),
-            }) if *dest == value => {
-                let (base, index) = (*base, *index);
-                if let Some(place) = self.pointee_place(expression, value, base, index) {
-                    return (value, Some(place));
-                }
-            }
             _ => {}
         }
         let Some(ty) = self
@@ -680,53 +668,6 @@ impl<'a> Flatten<'a> {
             self.establish_storage_loans(expression, place.root, loans);
         }
         materialized
-    }
-
-    /// The pointee place of `value`, the element the body's last
-    /// instruction just read through pointer `base` at `index` (`p[i]` over
-    /// a pointer no slot holds, `ls.unsafe_ptr()[0]`): the pointer is
-    /// re-homed in a hidden slot holding the pointer's loans, and the
-    /// element read through it, as upstream's pointer `__getitem__` yields
-    /// a `!lit.ref` of the pointee whatever holds the pointer, its origin
-    /// keeping the pointer's owners alive through the use. The read replaces the subscript, so
-    /// `value` stays its register.
-    fn pointee_place(
-        &mut self,
-        expression: Node<'a>,
-        value: Reg,
-        base: Reg,
-        index: Reg,
-    ) -> Option<MirPlace> {
-        let pointer = self.f.reg_types.get(&base.0).cloned()?;
-        let element = self
-            .f
-            .reg_types
-            .get(&value.0)
-            .cloned()
-            .or_else(|| expression.ty())?;
-        if !matches!(pointer.kind(), TyKind::Pointer { .. }) {
-            return None;
-        }
-        self.f.body.instrs.pop();
-        let variable = self.var(&format!("$ptr_r{}", base.0));
-        self.var_types.insert(variable, pointer.clone());
-        self.emit(MirInstr::DefVar {
-            var: variable,
-            src: base,
-            binding_ty: Some(pointer.clone()),
-            in_place: false,
-        });
-        if let Some(object) = expression.object() {
-            let loans = self.aggregate_borrows(object);
-            self.establish_storage_loans(object, variable, loans);
-        }
-        let mut place = MirPlace::root(variable, Some(pointer));
-        place.project(Proj::Index(index), element);
-        self.emit(MirInstr::LoadPlace {
-            dest: value,
-            place: place.clone(),
-        });
-        Some(place)
     }
 
     /// Whether the body defines `value` as a fresh value of its own: a call
@@ -1949,7 +1890,6 @@ impl<'a> Flatten<'a> {
                         Some(
                             MirIntrinsicSubscript::TupleStorage
                                 | MirIntrinsicSubscript::VariadicStorage
-                                | MirIntrinsicSubscript::Pointer
                         )
                     ) =>
             {
@@ -3164,10 +3104,7 @@ impl<'a> Flatten<'a> {
     /// for the pass. A reference-returning accessor, a container's or a
     /// view's, lends its referent through the receiver path. Tuple and pack
     /// storage loads the element place, whatever the element: the ordinary
-    /// read would copy the whole storage to index it. A pointer's pointee
-    /// (`p[]`, `p[i]`) at a by-address `read` is its place, projected
-    /// through the pointer, as upstream's `lit.call` takes the `!lit.ref`
-    /// the pointer's `__getitem__` yields.
+    /// read would copy the whole storage to index it.
     fn lower_borrowed_element_read(
         &mut self,
         expression: Node<'a>,
@@ -3187,15 +3124,12 @@ impl<'a> Flatten<'a> {
         if expression.call_contract().is_some() {
             return None;
         }
-        let pointee = match object.intrinsic_index_dispatch() {
-            Some(MirIntrinsicSubscript::TupleStorage | MirIntrinsicSubscript::VariadicStorage) => {
-                false
-            }
-            Some(MirIntrinsicSubscript::Pointer) if self.read_by_address_binding(expression) => {
-                true
-            }
-            _ => return None,
-        };
+        if !matches!(
+            object.intrinsic_index_dispatch(),
+            Some(MirIntrinsicSubscript::TupleStorage | MirIntrinsicSubscript::VariadicStorage)
+        ) {
+            return None;
+        }
         let place = self.try_place(expression)?;
         let dest = self.fresh_typed(
             expression.location(),
@@ -3206,11 +3140,8 @@ impl<'a> Flatten<'a> {
                 .or_else(|| expression.ty())
                 .unwrap_or_else(Ty::error),
         );
-        self.emit(MirInstr::LoadPlace {
-            dest,
-            place: place.clone(),
-        });
-        Some((dest, pointee.then_some(place)))
+        self.emit(MirInstr::LoadPlace { dest, place });
+        Some((dest, None))
     }
 
     /// A borrowed reference result (`show(o.value())`, `show(pick(a))`,

@@ -985,11 +985,11 @@ impl Checker {
     /// Type upstream's address builtins `__get_litref_as_mvalue(r)`,
     /// `__get_address_as_owned_value(k)`, and
     /// `__get_address_as_uninit_lvalue(k)` read as a value at `call`, when
-    /// `name` is one and no binding shadows it. Each is spelled as the
-    /// pointer operation that is Mojito's primitive for it, which
-    /// upstream's `Pointer` declares over the builtin: the place a
-    /// `!lit.ref` refers to is the dereference `Pointer(_mlir_value=r)[]`,
-    /// of `r`'s element under `r`'s origin; the owned value a
+    /// `name` is one and no binding shadows it. The place a `!lit.ref`
+    /// refers to is `r`'s element under `r`'s origin, the reference
+    /// `r` already is, recorded as the call's
+    /// [`mojito_checked::checked::SemanticAdjustment::ReferenceResult`]
+    /// ([`Self::litref_reference`]); the owned value a
     /// `!kgen.pointer` holds is the pointee taken out of the address,
     /// leaving it uninitialized, and transferred as a `var` holding it
     /// would be. The take is the primitive upstream's declared
@@ -1274,9 +1274,8 @@ impl Checker {
         ))
     }
 
-    /// Check the address builtin `name` at `call` as the pointer operation
-    /// [`Self::infer_address_builtin`] spells it: a `!lit.ref` operand's
-    /// dereference when `litref`, else a `!kgen.pointer` operand's take,
+    /// Check the address builtin `name` at `call`: the place a `!lit.ref`
+    /// operand refers to when `litref`, else a `!kgen.pointer` operand's take,
     /// the [`mojito_checked::checked::SemanticAdjustment::PointerStorageTake`]
     /// primitive recorded without member dispatch.
     fn infer_spelled_address_builtin(
@@ -1323,32 +1322,17 @@ impl Checker {
                 "operand isn't a '!lit.ref' type '{found}'"
             )));
         }
-        let pointer = spelled_node(
-            call,
-            1,
-            ExprKind::Call {
-                name: "Pointer".to_string(),
-                param_args: Vec::new(),
-                args: Vec::new(),
-                kwargs: vec![mojito_ast::ast::KwArg {
-                    name: "_mlir_value".to_string(),
-                    value: operand.clone(),
-                }],
-            },
-            call.span,
-        );
-        let dereference = spelled_node(
-            call,
-            0,
-            ExprKind::Index {
-                object: Box::new(pointer),
-                index: Box::new(spelled_node(call, 3, ExprKind::EmptySubscript, call.span)),
-            },
-            call.span,
-        );
-        self.record_at(dereference.source_span())
-            .primitive_pointer_deref = true;
-        self.infer_spelled(call, dereference)
+        let reference = self.litref_reference(operand, &found).ok_or_else(|| {
+            TypeError::InvariantViolation(format!("'{found}' refers to no place"))
+        })?;
+        let element = reference.referent.clone();
+        let mut facts = self.record_at(call.source_span());
+        facts.adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference },
+        ));
+        facts.litref_place = true;
+        drop(facts);
+        Ok(element)
     }
 
     /// The one operand of the `!kgen.pointer` address builtin `name` and

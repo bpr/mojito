@@ -4337,9 +4337,9 @@ fn first_operand_place<'f>(
 #[test]
 fn pointer_pointee_read_passes_its_place_address() {
     // A pointer's pointee at a by-address `read` (`total(h.src[])`,
-    // `show(h.data[0])`) passes a `ref.make` of the place projected through
-    // the pointer, as upstream's `lit.call` takes the `!lit.ref` the
-    // pointer's `__getitem__` yields; a register-passable one stays a value.
+    // `show(h.data[0])`) passes the reference the pointer's `__getitem__`
+    // returns, as upstream's `lit.call` takes the `!lit.ref` the getter
+    // yields; a register-passable one stays a value.
     let source = r#"
 from std.memory.alloc import unsafe_alloc
 
@@ -4380,11 +4380,11 @@ def main():
         let place = first_operand_place(&function, &addresses, callee)
             .unwrap_or_else(|| panic!("`{callee}` passes its pointee's address"));
         assert!(
-            matches!(place.proj.as_slice(), [Proj::Field(_), Proj::Index(_)]),
-            "{callee}: {place:?}"
-        );
-        assert!(
-            place.projection_tys.first().is_some_and(Ty::is_pointer),
+            place.through.is_some()
+                && place
+                    .root_ty
+                    .as_ref()
+                    .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_))),
             "{callee}: {place:?}"
         );
     }
@@ -4398,8 +4398,8 @@ def main():
 fn pointer_subscript_copy_passes_its_pointee_reference() {
     // A copied pointer subscript (`p[0]` over an unsafe pointer, `p[]` over
     // an origin-bearing one, a local `Pointer(to=a)` included) reads
-    // through the pointee's reference `pointer.convert` makes, upstream's
-    // `lit.ref.from_pointer`, so the copy takes that reference.
+    // through the reference the declared `Pointer.__getitem__` returns,
+    // so the copy takes that reference.
     let source = r#"
 struct C(ImplicitlyCopyable, Movable):
     var v: Int
@@ -4431,9 +4431,7 @@ def main():
         let instrs = &function.body.instrs;
         let defining = |reg: Reg| {
             instrs.iter().find(|instr| match instr {
-                MirInstr::ReadRef { dest, .. } | MirInstr::PointerConvert { dest, .. } => {
-                    *dest == reg
-                }
+                MirInstr::ReadRef { dest, .. } | MirInstr::Index { dest, .. } => *dest == reg,
                 _ => false,
             })
         };
@@ -4444,11 +4442,14 @@ def main():
             let Some(MirInstr::ReadRef { reference, .. }) = defining(*value) else {
                 return false;
             };
-            matches!(defining(*reference), Some(MirInstr::PointerConvert { .. }))
-                && matches!(
-                    function.reg_types.get(&reference.0).map(Ty::kind),
-                    Some(TyKind::Ref(_))
-                )
+            matches!(
+                defining(*reference),
+                Some(MirInstr::Index { call: Some(call), .. })
+                    if call.target.starts_with("Pointer.__getitem__")
+            ) && matches!(
+                function.reg_types.get(&reference.0).map(Ty::kind),
+                Some(TyKind::Ref(_))
+            )
         })
     };
     for name in ["returned", "deref", "placed"] {
@@ -6039,7 +6040,7 @@ fn recursively_lifted_reference_return_keeps_its_checked_contract() {
 fn by_value_operands_name_no_storage() {
     // Upstream passes a register-passable `read` operand as a value naming
     // no storage: a builtin `Pointer` method's receiver, a pointer
-    // subscript's base, a register-passable copy source, a value getter's
+    // getter's receiver, a register-passable copy source, a value getter's
     // `SIMD` receiver, and the setter's updated value.
     let source = "from std.memory.alloc import unsafe_alloc\n\nstruct C(Copyable, RegisterPassable):\n    var v: Int\n\n    def __init__(out self, v: Int):\n        self.v = v\n\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 1\n\ndef main():\n    var p: Pointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](2)\n    p[0] = 1\n    print(p[0], p.__int__() != 0)\n    p.free()\n    var c = C(1)\n    var d = C(copy=c)\n    print(c.v, d.v)\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    v[2] += 5\n    print(v[2])\n";
     let compiled = Compiler::default()
@@ -6072,9 +6073,9 @@ fn by_value_operands_name_no_storage() {
         .filter_map(|instruction| match instruction {
             MirInstr::Index {
                 base,
-                intrinsic: Some(mojito::mir::MirIntrinsicSubscript::Pointer),
+                call: Some(call),
                 ..
-            } => Some(addresses.made(*base)),
+            } if call.target.starts_with("Pointer.__getitem__") => Some(addresses.made(*base)),
             _ => None,
         })
         .collect();
@@ -6101,7 +6102,9 @@ fn by_value_operands_name_no_storage() {
                 base,
                 call: Some(call),
                 ..
-            } if call.target.contains("__getitem__") => Some(addresses.made(*base)),
+            } if call.target.contains("__getitem__") && !call.target.starts_with("Pointer.") => {
+                Some(addresses.made(*base))
+            }
             _ => None,
         })
         .collect();

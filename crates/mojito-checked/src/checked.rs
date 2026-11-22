@@ -1394,6 +1394,11 @@ pub enum SemanticAdjustment {
         /// `MaterializeBorrowSource`), and one span carries one adjustment.
         materialized: Option<mojito_types::origin::OwnerId>,
     },
+    /// `__get_litref_as_mvalue(r)`: the place the `!lit.ref` `r` refers
+    /// to, which is the reference `r` already is. The call's
+    /// [`Self::ReferenceResult`] is built from `r`'s type; lowering retypes
+    /// `r`'s register to that `ref` handle.
+    LitRefPlace,
     /// `__get_address_as_owned_value(k)`: move the pointee out of the
     /// address, leaving it uninitialized, and transfer it as a `var`
     /// holding it would be. The node is the take the check spelled over
@@ -7341,6 +7346,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.explicit_destroy_call {
         adjustments.push(SemanticAdjustment::ExplicitDestroy);
     }
+    if facts.litref_place {
+        adjustments.push(SemanticAdjustment::LitRefPlace);
+    }
     if let Some(protocol) = &facts.iteration_protocol {
         adjustments.push(SemanticAdjustment::Iterate((**protocol).clone()));
     }
@@ -7732,11 +7740,8 @@ node_facts! {
     }
     flags {
         explicit_destroy_call,
-        /// The empty subscript `__get_litref_as_mvalue(r)` is spelled as
-        /// (`Pointer(_mlir_value=r)[]`): the primitive dereference the
-        /// declared `Pointer.__getitem__`s bottom out in, never a call of
-        /// one.
-        primitive_pointer_deref,
+        /// See [`SemanticAdjustment::LitRefPlace`].
+        litref_place,
         copy_place_value_use,
         /// See [`SemanticAdjustment::CompileTimeLoad`].
         compile_time_load,

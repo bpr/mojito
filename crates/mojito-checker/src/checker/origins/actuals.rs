@@ -175,48 +175,6 @@ impl Checker {
             return Ok(reference);
         }
 
-        // Dereferencing a pointer supplies the pointee with the pointer's
-        // own capability, never the holder binding's. An abstract provenance
-        // (untracked, unsafe-any, static) is the origin itself — what an
-        // exact `ref[ImmUntrackedOrigin]` clause binds — while a tracked one
-        // keeps the holder's place identity for loans.
-        if let Some(pointer) = dereferenced_pointer(expr)
-            && let Some(pointer_ty) = self.infer(pointer).ok()
-            && let Some(origin) = pointer_ty.kind().pointer_origin()
-        {
-            use mojito_types::origin::PointerOrigin;
-            let mutability = match (self.pointer_write_capability(pointer, &origin), &origin) {
-                (Some(true), _) => Mutability::Mutable,
-                (Some(false), _) => Mutability::Immutable,
-                (None, PointerOrigin::Param { id, .. }) => Mutability::Param(*id),
-                (None, _) => Mutability::Immutable,
-            };
-            self.materialize_temporary_holder(pointer, mutability == Mutability::Mutable);
-            let origin = match origin {
-                PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
-                    Origin::Untracked { mutable }
-                }
-                PointerOrigin::Static { mutable } => Origin::mut_cast(
-                    Origin::Static,
-                    mojito_types::types::LitOriginMut::Known(mutable),
-                ),
-                PointerOrigin::Place { .. }
-                | PointerOrigin::Union { .. }
-                | PointerOrigin::Param { .. }
-                | PointerOrigin::SelfPlace { .. } => Origin::Place(self.origin_place(expr)?),
-            };
-            return Ok(RefTy {
-                referent: self.infer(expr)?,
-                origin,
-                mutability,
-                address_space: pointer_ty
-                    .kind()
-                    .pointer_address_space()
-                    .cloned()
-                    .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC),
-            });
-        }
-
         let place = self.origin_place(expr)?;
         let mutability = self.owner_reference_mutability(place.root);
         Ok(RefTy {
@@ -229,8 +187,7 @@ impl Checker {
 
     /// The address space the place `expr` lives in: its storage's, read
     /// through the fields down to a reference (a `ref` binding, parameter,
-    /// or result) or a pointer dereference, `AddressSpace.GENERIC` for a
-    /// local's.
+    /// or result), `AddressSpace.GENERIC` for a local's.
     pub(in crate::checker) fn place_address_space(
         &self,
         expr: &Expr,
@@ -239,13 +196,6 @@ impl Checker {
         loop {
             if let Some(reference) = self.infer_reference_value(base) {
                 return reference.address_space;
-            }
-            if let Some(pointer) = dereferenced_pointer(base) {
-                return self
-                    .infer(pointer)
-                    .ok()
-                    .and_then(|ty| ty.kind().pointer_address_space().cloned())
-                    .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
             }
             match &base.kind {
                 ExprKind::Member { object, .. } => base = object,
@@ -738,6 +688,14 @@ impl Checker {
         if let Some(spelled) = self.spelled_construction(expr) {
             return self.returned_reference_parameter_origin(&spelled);
         }
+        // The place a `!lit.ref` refers to stays within the `!lit.ref`'s
+        // own origin.
+        if self.has_fact(&expr.source_span(), |facts| facts.litref_place) {
+            return self
+                .infer_reference_value(expr)
+                .map(|reference| reference.origin)
+                .filter(is_abstract);
+        }
         match &expr.kind {
             ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
                 self.returned_reference_parameter_origin(inner)
@@ -887,32 +845,62 @@ impl Checker {
         expr: &Expr,
         self_place: Option<&mojito_types::origin::OriginPlace>,
     ) -> Option<mojito_types::origin::Origin> {
-        use mojito_types::origin::{Origin, OriginSeg, PointerOrigin};
         if let Some(spelled) = self.spelled_construction(expr) {
             return self.returned_pointer_dereference_origin(&spelled, self_place);
         }
         let pointer = dereferenced_pointer(expr)?;
         let origin = self.infer(pointer).ok()?.kind().pointer_origin()?;
-        match origin {
-            PointerOrigin::Place { place, .. } => Some(Origin::Place(place)),
-            PointerOrigin::Union { members, .. } => Some(Origin::Union(members)),
-            PointerOrigin::SelfPlace {
-                interior, subtree, ..
-            } => {
-                let mut place = self_place?.clone();
-                place
-                    .path
-                    .extend(interior.into_iter().map(OriginSeg::Interior));
-                if subtree {
-                    place.path.push(OriginSeg::Subtree);
-                }
-                Some(Origin::Place(place))
+        pointer_origin_at_receiver(origin, self_place)
+    }
+
+    /// The reference `__get_litref_as_mvalue(operand)` is, for the
+    /// `!lit.ref` type `litref` of `operand`: the place it refers to, of its
+    /// element, under its origin and address space, writable as its origin
+    /// is. An abstract provenance (untracked, unsafe-any, static) is the
+    /// origin itself, and `origin_of(self)` is read at the enclosing
+    /// receiver's place.
+    pub(in crate::checker) fn litref_reference(
+        &self,
+        operand: &Expr,
+        litref: &Ty,
+    ) -> Option<mojito_types::origin::RefTy> {
+        use mojito_types::origin::{Mutability, Origin, OriginPlace, PointerOrigin, RefTy};
+        let TyKind::LitRef {
+            element,
+            origin,
+            address_space,
+        } = litref.kind()
+        else {
+            return None;
+        };
+        let mutability = match (self.pointer_write_capability(operand, origin), origin) {
+            (Some(true), _) => Mutability::Mutable,
+            (Some(false), _) => Mutability::Immutable,
+            (None, PointerOrigin::Param { id, .. }) => Mutability::Param(*id),
+            (None, _) => Mutability::Immutable,
+        };
+        let receiver = self.lookup_owner("self").map(|root| OriginPlace {
+            root,
+            path: Vec::new(),
+        });
+        let origin = match origin {
+            PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
+                Origin::Untracked { mutable: *mutable }
             }
-            PointerOrigin::Param { .. }
-            | PointerOrigin::Static { .. }
-            | PointerOrigin::Untracked { .. }
-            | PointerOrigin::UnsafeAny { .. } => None,
-        }
+            PointerOrigin::Static { mutable } => Origin::mut_cast(
+                Origin::Static,
+                mojito_types::types::LitOriginMut::Known(*mutable),
+            ),
+            PointerOrigin::Param { id, .. } => Origin::Param(*id),
+            tracked => pointer_origin_at_receiver(tracked.clone(), receiver.as_ref())
+                .unwrap_or(Origin::SelfParam),
+        };
+        Some(RefTy {
+            referent: element.clone(),
+            origin,
+            mutability,
+            address_space: address_space.clone(),
+        })
     }
 
     /// Resolve any abstract struct origin parameters in a method-returned
@@ -1122,6 +1110,36 @@ impl Checker {
                 .is_some_and(|scope| scope.contains_key(name))
                 || (scope == 0 && self.installs(interface::Table::ComptimeParameters, name))
         })
+    }
+}
+
+/// The origin a pointer or `!lit.ref` of provenance `origin` designates,
+/// with `origin_of(self)` read at the receiver's place `self_place`: `None`
+/// for an abstract provenance, or a receiver one with no receiver place.
+fn pointer_origin_at_receiver(
+    origin: mojito_types::origin::PointerOrigin,
+    self_place: Option<&mojito_types::origin::OriginPlace>,
+) -> Option<mojito_types::origin::Origin> {
+    use mojito_types::origin::{Origin, OriginSeg, PointerOrigin};
+    match origin {
+        PointerOrigin::Place { place, .. } => Some(Origin::Place(place)),
+        PointerOrigin::Union { members, .. } => Some(Origin::Union(members)),
+        PointerOrigin::SelfPlace {
+            interior, subtree, ..
+        } => {
+            let mut place = self_place?.clone();
+            place
+                .path
+                .extend(interior.into_iter().map(OriginSeg::Interior));
+            if subtree {
+                place.path.push(OriginSeg::Subtree);
+            }
+            Some(Origin::Place(place))
+        }
+        PointerOrigin::Param { .. }
+        | PointerOrigin::Static { .. }
+        | PointerOrigin::Untracked { .. }
+        | PointerOrigin::UnsafeAny { .. } => None,
     }
 }
 

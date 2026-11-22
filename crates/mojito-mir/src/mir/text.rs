@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 220;
+pub const VERSION_MINOR: u16 = 221;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -477,7 +477,6 @@ pub const fn intrinsic_subscript_spelling(intrinsic: MirIntrinsicSubscript) -> &
     match intrinsic {
         MirIntrinsicSubscript::TupleStorage => "tuple_storage",
         MirIntrinsicSubscript::VariadicStorage => "variadic_storage",
-        MirIntrinsicSubscript::Pointer => "pointer",
         MirIntrinsicSubscript::ComptimeList => "comptime_list",
     }
 }

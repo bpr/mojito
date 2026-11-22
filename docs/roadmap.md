@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2483**.
+Next free ID: **R2486**.
 
 ## Ordered Work
 
@@ -853,6 +853,24 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
+- [ ] **R2485 With the pre-elaboration pipeline off, indexing a sliced
+  `Span` fails in the VM with "field access on non-struct Int"**
+
+  `pre_elaboration::span_iteration` fails: the pipeline-off run prints
+  nothing, where the pipeline-on run prints the fixture's output.
+  - `sub[0]` and `for x in sub` over `var sub = Span(xs)[1:2]` fail, while
+    `Span(xs)[0]`, iterating `Span(xs)`, and `len(sub)` work, so the
+    pointer `Span.__getitem__(slice)` stores back through
+    `result._data.unsafe_offset(start)` is read as an `Int` where the
+    out-of-line `Pointer.__getitem__` reads its `_mlir_value` field.
+  - The pipeline-on run inlines the getters and does not reach it.
+  - It fails the same way before R2474 landed.
+  - Probe: `MOJITO_PRE_ELABORATION=0 cargo run -- run
+    assets/ok/span_iteration.mojo` prints `6`, `5`, and `36`.
+  - Found while landing R2474 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2465 Concrete instructions grew by 671027 instructions (+13.81%) over batch 3**
 
   The elaborated corpus grew past `scripts/run-batches`' `--max-growth`, and the growth was accepted into the baseline.
@@ -1012,6 +1030,29 @@ Track: `native`.
 
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
+
+- [ ] **R2484 Natively, a kept subscript call spliced into a caller
+  receives its holder's address, not the `ref` field it subscripts**
+
+  When `automatic-inline` splices `_ListIter.__next__` into its caller but
+  keeps the `List.__getitem__` call `self.src[r]` makes, the native call
+  passes the iterator's address as the receiver instead of the list its
+  `src: ref[o] List[T]` field refers to, so the element read is garbage.
+  - The VM runs the same concrete MIR and prints the right element, so
+    either the splice rebinds the receiver place without its field and
+    deref steps and the VM tolerates it, or Pliron drops them.
+  - Probe: mark the `Int` overload of `List.__getitem__`
+    (`stdlib/std/collections/list.mojo`) `@no_inline` instead of
+    `@inline(.always)`; then `var it = l.__iter__()` and
+    `print(it.__next__().byte_length())` over a `List[StaticString]`
+    holding `"x"` print `1` on the VM and `4` with `--backend pliron`, and
+    `for e in l: print(e)` aborts natively.
+  - A user-level `Box[T]` with a `@no_inline` getter and an iterator over
+    a `ref` field did not reproduce it; find the difference (an
+    interior origin, a removed argument, the `where` clause) first.
+  - Found while landing R2474 (2026-11-21).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2325 The native backend's contextual-rejection test has no
   construct left that the backend rejects**
@@ -11007,35 +11048,30 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2474 `__get_litref_as_mvalue` is spelled as a pointer subscript,
-  so `MirIntrinsicSubscript::Pointer` stands in for upstream's builtin**
+- [ ] **R2483 A returned pointer subscript's origin is re-derived from the
+  pointer, not read off the selected getter's reference result**
 
-  Upstream's `__get_litref_as_mvalue(r)` is the place a `!lit.ref` refers
-  to; Mojito spells it `Pointer(_mlir_value=r)[]` and lowers it through
-  MIR's pointer-deref machinery.
-  - Give it its own checked primitive, lowered to the reference `r`
-    already is, then retire the spelled subscript.
-  - Retire `MirIntrinsicSubscript::Pointer` (`mir/ir.rs`, MIR text, the
-    verifier, `calls.rs`, `lower_expr/expr_access.rs`), and
-    `is_origin_bearing_pointer` with its callers.
-  - The `destroy_pointee` store path for `p[] = v` (`lower_stmt.rs`)
-    becomes the ordinary store through a mutable `ref` result.
-  - Retire the VM arms (`mojito-vm/src/backend/vm/exec.rs`) and Pliron's
-    (`mojito-pliron/src/lower/instr.rs`).
-  - The MIR text schema drops the `pointer` intrinsic tag, so bump it and
-    regenerate the `tests/mir_passes/inline-parametric` goldens that spell
-    it.
-  - The checker's primitive arms go with it: the `primitive_pointer_deref`
-    node fact's arms in `infer_index` and `check_place_impl`
-    (`checker/indexing.rs`), and `dereferenced_pointer` and its users in
-    `origins/actuals.rs` (`reference_actual`'s pointer arm,
-    `place_address_space`, `returned_pointer_dereference_origin`), which
-    a pointer subscript reaches only when no getter's reference answers
-    it. MIR's `Node::primitive_pointer_dereference` store paths
-    (`lower_stmt.rs`) go too.
-  - Found while planning R2208 (2026-11-21).
-  - Depends on R2473.
-  - Model: Fable, Not Planned.
+  Upstream reads a returned `p[]`'s origin off the called
+  `Pointer.__getitem__`'s `ref[Self.origin]` result type; Mojito's return
+  check substitutes `Self.origin` by hand from the receiver pointer's type.
+  - `returned_pointer_dereference_origin` (`checker/origins/actuals.rs`)
+    pattern-matches any `Index` whose object is a pointer, through
+    `dereferenced_pointer`, which serves only it.
+  - `returned_reference_parameter_origin`'s `Index` arm does the same for
+    a pointer whose origin is a binder.
+  - Fix: answer both from the getter's selected-call `reference_result`,
+    with `Self.origin` resolved from the receiver pointer's type, then
+    delete the hand substitution.
+  - Probe: `return Pointer(to=self.x).unsafe_origin_cast[origin_of(self)]()[]`
+    and `return p[]` (`assets/ok/ref_return_pointer_dereference.mojo`).
+  - Probe: `assets/ok/pointer_to_reference_call.mojo`.
+  - Probe: `return Pointer[origin=…](_mlir_value=ptr)[]`
+    (`assets/ok/mlir_pop_array_gep.mojo`).
+  - Probe: `self.data[index]`, `self.data[i]`, and `self.data[idx]` in
+    `stdlib/std/collections/array.mojo`.
+  - Found while landing R2474 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2460 A `Pointer`'s union origin cannot name an origin binder or
   the receiver**

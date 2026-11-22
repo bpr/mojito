@@ -1452,8 +1452,8 @@ fn verifier_rejects_missing_nominal_subscript_contracts() {
 
 #[test]
 fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
-    // A lane read is `simd.extract`; a pointer subscript of the vector is
-    // rejected.
+    // A lane read is `simd.extract`; a compile-time list subscript of the
+    // vector is rejected.
     let lane_read_as = |intrinsic: MirIntrinsicSubscript| {
         let mut mir = lower_linked_source(
             "def main():\n    var lanes = SIMD[DType.int, 2](1, 2)\n    print(Int(mlir_value=__mlir_op.`pop.simd.extractelement`(lanes._mlir_value, Int(0).__mlir_index__())))\n",
@@ -1477,8 +1477,8 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
         mir
     };
     expect_finding(
-        &lane_read_as(MirIntrinsicSubscript::Pointer),
-        "Pointer is incompatible with checked base type",
+        &lane_read_as(MirIntrinsicSubscript::ComptimeList),
+        "ComptimeList is incompatible with checked base type",
     );
 
     let source = "@fieldwise_init\nstruct Access:\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n\ndef main():\n    print(Access(1)[0])\n";

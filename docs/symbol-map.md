@@ -490,8 +490,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `selected_application_at` applies at a compile-time position, one
   policy for both (an `Array` receiver is declined until R511 gives it
   `__getitem_param__`, R2043; a pointer receiver's subscript is a call of
-  its declared `__getitem__`s too, except the primitive dereference the
-  `primitive_pointer_deref` node fact marks), the subscript receiver
+  its declared `__getitem__`s too, whose bodies end in
+  `__get_litref_as_mvalue(r)`, the call `infer_spelled_address_builtin`
+  records with the `litref_place` node fact and the `ReferenceResult`
+  `litref_reference` builds from `r`'s `!lit.ref`), the subscript receiver
   chain's write check over the getters' reference results
   (`check_pointer_derefs`), the pointer-write
   capability (`pointer_write_capability`, the per-binding resolution of a
@@ -1609,7 +1611,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   owner, raises, adjustments, call_contract, instantiated_args,
   reference_places, interior_references, element_receiver, reference_result,
   implicit_conversion, index_normalization, recorded_value,
-  intrinsic_index_dispatch, primitive_pointer_dereference, rebound_place,
+  intrinsic_index_dispatch, litref_place_operand, rebound_place,
   is_fresh_temporary, …}`; a fresh temporary is a call's, a dispatched
   operator's, a by-value subscript's, or a display's or comprehension's
   result) and
@@ -1794,11 +1796,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   member, subscript, slice, and variant-projection reads (a slice literal's
   argument is `slice_literal_argument`, its `__slice_literal__`
   constructor's call, passed like any index by `emit_slice_read`; both projection
-  spellings share `variant_payload_read`, and the primitive pointer
-  dereference reads through `pointer_subscript_read`, a borrowed pointee read
-  followed by the checked `copy_boundary`; a copied one first reads through
-  the pointee's `pointer.convert` reference, `pointee_reference_read`, which
-  `unsafe_write(copy=)`'s operand shares). The place builders
+  spellings share `variant_payload_read`). `checked_construction`
+  (`expr_call.rs`) lowers `__get_litref_as_mvalue(r)` to the
+  `pointer.convert` of `r` to its checked `ref`. The place builders
   (`lower_stmt.rs`) and `lower_projected_reference_place` decide by the
   op, and
   `Node::{member_object, index_operands, transfer_operand,
@@ -1814,10 +1814,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `loop_body`), plus the
   borrowed-iteration source binding and loan re-establishment helpers shared
   with comprehension lowering.
-- Pointer dereferences (`mir.rs`): a pointer reads through its runtime
-  handle; `temporary_pointer_deref` binds a call-produced pointer to a
-  hidden slot carrying its loans first. Its loans (`aggregate_loans`) are
-  its origin and only keep owners alive.
+- Pointer loans (`mir.rs`): a pointer's loans (`aggregate_loans`) are its
+  origin and only keep owners alive; its dereferences are calls of the
+  declared `Pointer.__getitem__`s.
 - `mir/nested.rs` owns capture analysis and nested-function lifting; each
   lifted declaration without storage names the declaration it is nested in
   (`MirFunctionDeclaration::enclosing`, set by `lower_nested_node`), and the

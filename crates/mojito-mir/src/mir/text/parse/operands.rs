@@ -99,7 +99,6 @@ impl Decoder {
         match self.atom(value)? {
             "tuple_storage" => Some(MirIntrinsicSubscript::TupleStorage),
             "variadic_storage" => Some(MirIntrinsicSubscript::VariadicStorage),
-            "pointer" => Some(MirIntrinsicSubscript::Pointer),
             "comptime_list" => Some(MirIntrinsicSubscript::ComptimeList),
             other => {
                 self.error(value.span, format!("unknown intrinsic subscript `{other}`"));
