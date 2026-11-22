@@ -3401,7 +3401,10 @@ impl Checker {
 
     /// The parameter type of `sig`, a single-parameter converting
     /// constructor of `name`, at the struct's arguments `struct_subst`
-    /// solves and its own parameters solved from `source`, the converted
+    /// solves and its value binders `struct_values` bind (`Scalar[Self.dtype]`
+    /// is the target's), both before its own parameters are solved from
+    /// `source`, whose types may spell the struct's binders as the caller's
+    /// own (a `StringSpan` method converting `self`), the converted
     /// value's type (`__init__[T: Movable](out self, var value: T)` takes a
     /// `String` at `T = String`), with those own arguments in declaration
     /// order. A constructor whose one positional argument is its `*args`
@@ -3414,7 +3417,7 @@ impl Checker {
         &self,
         name: &str,
         sig: &MethodSig,
-        struct_subst: &TySubst,
+        (struct_subst, struct_values): (&TySubst, &mojito_types::param_expr::ParamBindings),
         source: &Ty,
     ) -> Option<(Ty, Vec<TyArg>, Option<ConstructorOriginBindings>)> {
         let collected = sig.params.is_empty() && sig.variadic.is_some();
@@ -3422,7 +3425,13 @@ impl Checker {
             (None, Some(element)) => element,
             (parameter, _) => parameter?,
         };
-        let pattern = self.resolve_assoc_ty(&substitute(parameter, struct_subst));
+        let pattern = mojito_types::types::replace_parameters(
+            &self.param_context,
+            &self.resolve_assoc_ty(&substitute(parameter, struct_subst)),
+            struct_values,
+            0,
+        )
+        .ok()?;
         // A literal element is materialized at its default type, as a
         // written `Error(42)` passes an `Int`.
         let defaulted;

@@ -26,7 +26,9 @@ impl Specializer<'_> {
     /// storage's own. A chain's root takes the type of its outermost rebind,
     /// the one the program reads the value at, when only the chain reads it:
     /// a `SIMD` built from its storage (`Self(mlir_value=...)`), built from
-    /// a `SIMD`, is the `SIMD`. A rebind of a constant others read too
+    /// a `SIMD`, is the `SIMD`; a root a `copy` defines passes that type on
+    /// to the copied register when only the copy reads it
+    /// ([`collect_copies`]). A rebind of a constant others read too
     /// ([`shared_constants`]) becomes the constant at its own type instead.
     pub(super) fn discharge_rebinds(
         &self,
@@ -66,13 +68,27 @@ impl Specializer<'_> {
                 }
                 reg
             };
+            let mut copies = HashMap::new();
+            collect_copies(&function.body, &mut copies);
+            let sole_copy = |reg: u32| {
+                copies
+                    .get(&reg)
+                    .copied()
+                    .filter(|value| reads.get(*value as usize) == Some(&1))
+            };
             let retyped: Vec<(u32, Ty)> = aliases
                 .iter()
                 .filter(|(_, root)| !aliases.contains_key(&root.0))
+                .filter(|(_, root)| reads.get(root.0 as usize) == Some(&1))
                 .filter_map(|(dest, root)| {
                     let read_at = function.reg_types.get(&outermost(*dest))?;
-                    (reads.get(root.0 as usize) == Some(&1)).then(|| (root.0, read_at.clone()))
+                    Some(
+                        std::iter::successors(Some(root.0), |reg| sole_copy(*reg))
+                            .map(|reg| (reg, read_at.clone()))
+                            .collect::<Vec<_>>(),
+                    )
                 })
+                .flatten()
                 .collect();
             function.reg_types.extend(retyped);
             rename_blocks(&mut function.body, &aliases);
@@ -166,6 +182,20 @@ fn collect_constants(
         }
         for region in mojito_mir::mir::instruction_regions(instruction) {
             collect_constants(region, definitions, constants);
+        }
+    }
+}
+
+/// Record each `copy` of `block` and its regions as `dest → value`: a
+/// retyped chain root a copy defines passes its type on to the copied
+/// register when only the copy reads it, since a copy has its value's type.
+fn collect_copies(block: &MirBlock, copies: &mut HashMap<u32, u32>) {
+    for instruction in &block.instrs {
+        if let MirInstr::CopyValue { dest, value, .. } = instruction {
+            copies.insert(dest.0, value.0);
+        }
+        for region in mojito_mir::mir::instruction_regions(instruction) {
+            collect_copies(region, copies);
         }
     }
 }

@@ -2796,7 +2796,7 @@ impl<'a> Flatten<'a> {
             && expression
                 .ty()
                 .as_ref()
-                .is_some_and(|ty| ty.kind().is_non_simd_struct())
+                .is_some_and(|ty| ty.kind().is_non_pointer_struct())
         {
             let loans = self.aggregate_borrows(expression);
             if !loans.is_empty() {

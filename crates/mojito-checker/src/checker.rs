@@ -1756,7 +1756,9 @@ impl Checker {
 
     /// `from` and `to` with each origin's `mut=` argument deferred where
     /// both instances, of one struct at one position, bind its origin. Two
-    /// known values that differ stay: a mutable instance reaches an
+    /// known values that differ stay, and so does an immutable target over
+    /// a source whose `mut=` value reads a binder (a member's `Self.mut`):
+    /// a mutable instance, or one an instance may make mutable, reaches an
     /// immutable one only through a converting constructor, as upstream's
     /// `Span` view does.
     fn defer_bound_mutability(&self, from: &Ty, to: &Ty) -> (Ty, Ty) {
@@ -1783,6 +1785,15 @@ impl Checker {
             )
         };
         let (from_deferred, to_deferred) = (deferred(from_args), deferred(to_args));
+        // A raw `!lit.origin<m>` binder (`_mlir_origin:
+        // _lit_origin_type_of_mut[mut]`, `Origin`'s own) casts to its
+        // immutable form as an attribute, so its `mut=` still follows it;
+        // a struct holding an `Origin` value converts by its constructor.
+        let converts_to_immutable = decls.is_none_or(|decls| {
+            !decls
+                .iter()
+                .any(|decl| matches!(decl, ParamDecl::Origin { lit: true, .. }))
+        });
         let mut from_out = Vec::with_capacity(from_args.len());
         let mut to_out = Vec::with_capacity(to_args.len());
         for (index, (a, b)) in from_args.iter().zip(to_args).enumerate() {
@@ -1799,7 +1810,10 @@ impl Checker {
                         && !matches!(
                             (a_value, b_value),
                             (CtValue::Bool(a), CtValue::Bool(b)) if a != b
-                        ) =>
+                        )
+                        && !(converts_to_immutable
+                            && matches!(b_value, CtValue::Bool(false))
+                            && matches!(a_value, CtValue::Expr(_))) =>
                 {
                     from_out.push(from_deferred[index].clone());
                     to_out.push(to_deferred[index].clone());
@@ -2334,14 +2348,7 @@ impl Checker {
             })
             .filter_map(|sig| {
                 let (parameter, own_arguments, own_origins) =
-                    self.conversion_constructor_parameter(name, sig, &subst, from)?;
-                let parameter = mojito_types::types::replace_parameters(
-                    &self.param_context,
-                    &parameter,
-                    &bindings,
-                    0,
-                )
-                .ok()?;
+                    self.conversion_constructor_parameter(name, sig, (&subst, &bindings), from)?;
                 // The constructor's own origin binders are solved from the
                 // source (`other: V[T, src]`), and a refined `out self`
                 // naming them (`V[T, ImmOrigin(src)]`) must then be `to`.

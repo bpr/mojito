@@ -1462,6 +1462,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Four fixtures that stopped elaborating after batch 4 run again (R2519).
+  A member whose `mut=` reads its struct's binder (`StringSpan.codepoints`
+  passing `self` where `StringSpan[ImmOrigin(Self.origin)]` is declared)
+  now converts through the implicit immutable view, as at the pin, and that
+  constructor's parameter binds the target's binders before the source's
+  types are solved into it, so a `StringSpan` method no longer reads its own
+  `mut` as the target's `False`. A discharged `rebind` whose root is a copy
+  retypes the copied value too, so `W[ImmOrigin(origin_of(t))](StringSpan(t))`
+  verifies. A `Pointer` temporary argument is no longer anchored as an
+  aggregate (`at(Pointer(to=x)) = 5` ran into a false conflict), and a
+  `Pointer` lays out as its `!kgen.pointer` field in layout queries
+  (`size_of[Pointer[...]]()` kept its query). `list_contiguous_slice_view`
+  waits on R2516.
 - A method's `ref[o]` result over an origin binder only its bracket binds
   (`h.get[origin_of(y)]()`) now borrows that origin, as the receiver's
   `ref` contract already did, where it kept the symbolic binder and held no

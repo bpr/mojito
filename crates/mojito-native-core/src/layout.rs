@@ -134,6 +134,12 @@ impl LayoutCx<'_> {
                 let pointer = self.pointer();
                 Ok(Layout::new(pointer.size * lanes, pointer.align))
             }
+            // A `Pointer` application lays out as its one declared field,
+            // the `!kgen.pointer<T, address_space>` its arguments name,
+            // whatever instance the elaboration has discovered.
+            pointer if let Some((_, space)) = pointer.pointer_layout() => {
+                self.pointer_in(ty, &space)
+            }
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 let Some(fields) = self.structs.get(name) else {
                     return Err(LayoutError::Unsupported(format!(
