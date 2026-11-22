@@ -513,44 +513,6 @@ impl Checker {
             })
     }
 
-    /// Give the holder of a dereferenced pointer a place when it is a call
-    /// result (`make(xs).src[]`, `h.view().src[]`, `Pointer(to=x)[]`, through
-    /// any field chain):
-    /// the view temporary materializes as an anonymous owned binding, so the
-    /// dereference projects off real frame storage and the temporary lives as
-    /// long as the access. A holder that is already a place, or a call whose
-    /// lowering another adjustment owns, is left alone.
-    pub(in crate::checker) fn materialize_temporary_holder(&self, pointer: &Expr, mutable: bool) {
-        let mut root = pointer;
-        loop {
-            root = match &root.kind {
-                ExprKind::Member { object, .. } => object,
-                ExprKind::Index { object, .. } => object,
-                _ => break,
-            };
-        }
-        // A pointer the expression forms in place (a `Pointer(...)`
-        // construction, an offset) or a call returns over a tracked origin (a
-        // cast) loans exactly its checked origin; any other call's pointer
-        // result reads through its own loan-carrying slot.
-        let formed_pointer = |ty: &Ty| {
-            matches!(&root.kind, ExprKind::Call { name, .. } if name == mojito_types::types::POINTER_TYPE_NAME)
-                || ty
-                    .pointer_origin()
-                    .is_some_and(|origin| origin.as_origin().is_some())
-        };
-        if matches!(
-            root.kind,
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-        ) && match self.infer(root) {
-            Ok(ty) if ty.is_pointer() => formed_pointer(&ty),
-            Ok(ty) if ty.kind().is_non_simd_struct() => true,
-            _ => false,
-        } {
-            let _ = self.materialize_borrow_owner(root, mutable);
-        }
-    }
-
     /// The anonymous owner a temporary expression materializes as when a
     /// borrow needs a place: minted once per source span and recorded as a
     /// `MaterializeBorrowSource` adjustment (or on a view construction's own

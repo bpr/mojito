@@ -1486,28 +1486,6 @@ impl Checker {
         Ok(result)
     }
 
-    /// Reject a write through `pointer` unless its provenance carries
-    /// mutable capability at this site: an immutable provenance, and a
-    /// `Origin[mut=m]` binder that no binding resolves (the generic body
-    /// itself, a `Pointer[T, o]` parameter), both reject, as upstream judges
-    /// the binder in the generic body, where `m` is not provably `True`.
-    pub(super) fn check_pointer_write(
-        &self,
-        pointer: &Expr,
-        origin: &mojito_types::origin::PointerOrigin,
-    ) -> Result<(), TypeError> {
-        self.materialize_temporary_holder(pointer, true);
-        match self.pointer_write_capability(pointer, origin) {
-            Some(true) => Ok(()),
-            Some(false) => Err(TypeError::ImmutableBinding(
-                "write through a Pointer whose origin is immutable".to_string(),
-            )),
-            None => Err(TypeError::ImmutableBinding(
-                "write through a Pointer whose origin mutability is not known here".to_string(),
-            )),
-        }
-    }
-
     /// Whether writes through `pointer` are permitted here: `Some` when the
     /// provenance's capability is known, `None` when it stays symbolic. A
     /// symbolic `origin_of(self)` takes the receiver's own mutability, and a

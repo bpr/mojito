@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `@__allow_legacy_custom_self_type` is modelled: a struct method's `self`
+  may take any application of its struct (`self: Box[Int]`,
+  `self: Pointer[U, _]`), argument 0 at that type, its own binders deduced
+  from the receiver and the receiver required to match exactly, as at the
+  pin. `Pointer.write` is now upstream's declared method instead of a
+  checker rule, so it pins the address space to `.GENERIC` and reports the
+  pin's "violated constraint" for a non-trivial pointee or an immutable
+  pointer (R2468). The package format moves to `mojito-package 256`.
 - A store through `__setitem__` with keyword indices (`s[k=1] = 5`,
   `s[k=1] += 2`, `s[0, k=1] = 5`, `s[span=1:3] = 6`, a destructuring store,
   and the write-back `s[k=1].bump()`) passes each keyword index to the

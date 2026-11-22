@@ -357,6 +357,7 @@ assets/ok/ctfe_reference_result_load.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_serves_keyed_instances.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_temporary_field_load.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_type_generic_def_in_body.mojo	main	exe-differential	sanitized
+assets/ok/custom_self_type_receiver.mojo	main	exe-differential	sanitized
 assets/ok/dead_code_after_terminators.mojo	main	exe-differential	sanitized
 assets/ok/debug_assert_default_mode.mojo	main	exe-differential	sanitized
 assets/ok/decorator_unavailable_function.mojo	main	exe-differential	sanitized
@@ -1157,6 +1158,7 @@ assets/ok/pointer_union_origin.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_bitcast.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_mut_cast.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized
+assets/ok/pointer_write_declared.mojo	main	exe-differential	sanitized
 assets/ok/pointer_write_init_with.mojo	main	exe-differential	sanitized
 assets/ok/pointer_write_move_from.mojo	main	exe-differential	sanitized
 assets/ok/pointer_write_repr.mojo	main	exe-differential	sanitized

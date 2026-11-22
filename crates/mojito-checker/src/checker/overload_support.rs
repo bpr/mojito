@@ -361,6 +361,7 @@ pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
             decls: ty
                 .as_generic_func()
                 .map_or(&[][..], |generic| &generic.decls),
+            custom_receiver: None,
         },
         conventions,
     ))
@@ -375,6 +376,8 @@ pub(super) struct SignatureParts<'a> {
     pub(super) kw_variadic: Option<&'a Ty>,
     pub(super) keyword_names: Vec<String>,
     pub(super) decls: &'a [ParamDecl],
+    /// A method's custom receiver type ([`MethodSig`]'s `custom_self`).
+    pub(super) custom_receiver: Option<&'a Ty>,
 }
 
 /// The overload symbol of free function `name` over `parts`, its regular
@@ -406,7 +409,8 @@ pub(super) fn method_parts_symbol(
     let signature = mojito_symbol::symbol::SignatureKey::from_tys_with_self(parts.types, self_ty)
         .with_kw_variadic(parts.kw_variadic)
         .with_keyword_names(parts.keyword_names)
-        .with_parameter_names(explicit_parameter_names(parts.decls));
+        .with_parameter_names(explicit_parameter_names(parts.decls))
+        .with_custom_receiver(parts.custom_receiver, self_ty);
     if mojito_symbol::symbol::receiver_overloaded_method(method) {
         if has_self {
             mojito_symbol::symbol::receiver_method_symbol(
@@ -458,6 +462,7 @@ pub(super) fn method_lowered_name(
             kw_variadic: sig.kw_variadic.as_ref(),
             keyword_names,
             decls: &sig.decls(),
+            custom_receiver: sig.custom_self.as_ref(),
         },
         self_ty,
         sig.has_self,

@@ -1434,13 +1434,11 @@ pub enum SemanticAdjustment {
     UninitStorageDestroy {
         element: Ty,
     },
-    /// `pointer.write(value)`: initialize the pointee at offset 0 with a
-    /// moved value, lowered onto the same store family as `pointer[] =
-    /// value`. On the place of an assignment
+    /// On the place of an assignment
     /// `__get_address_as_uninit_lvalue(k) = value`, whose node is the
     /// pointer the check spelled for `k`, it marks the assignment as that
-    /// pointer's moved write: the pointee is initialized, never destroyed
-    /// first.
+    /// pointer's moved write: the pointee is initialized at offset 0, never
+    /// destroyed first.
     PointerWrite {
         element: Ty,
     },
@@ -3035,6 +3033,10 @@ pub struct CheckedSignature {
     pub params: Vec<Option<Ty>>,
     pub result: Option<Ty>,
     pub effect: Option<DeclarationEffect>,
+    /// A method's custom receiver type (argument 0's declared type under
+    /// `@__allow_legacy_custom_self_type`); `None` for `Self` and for a
+    /// free function.
+    pub receiver: Option<Ty>,
 }
 
 impl CheckedSignature {
@@ -5159,6 +5161,15 @@ pub enum AnnotationSite {
         declaration: String,
         method: usize,
     },
+    /// The declared receiver type of a struct method under
+    /// `@__allow_legacy_custom_self_type` (`self: Pointer[U, _]`); absent
+    /// for a `Self` receiver.
+    MethodReceiver {
+        #[serde(with = "mojito_ast::ast::statement_module")]
+        module: Option<String>,
+        declaration: String,
+        method: usize,
+    },
 }
 
 /// Declaration-owned identity for a checked compile-time parameter list.
@@ -5818,6 +5829,7 @@ impl Signatures<'_> {
                 .collect(),
             result: self.checked_types.get(&result).cloned(),
             effect: self.declaration_effects.get(&result).cloned(),
+            receiver: None,
         }
     }
 
@@ -5859,6 +5871,14 @@ impl Signatures<'_> {
                 .collect(),
             result: self.checked_types.get(&result).cloned(),
             effect: self.declaration_effects.get(&result).cloned(),
+            receiver: self
+                .checked_types
+                .get(&AnnotationSite::MethodReceiver {
+                    module: module.cloned(),
+                    declaration: declaration.to_string(),
+                    method,
+                })
+                .cloned(),
         }
     }
 }

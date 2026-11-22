@@ -356,6 +356,7 @@ assets/ok/ctfe_reference_result_load.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_serves_keyed_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_temporary_field_load.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_type_generic_def_in_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/custom_self_type_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dead_code_after_terminators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/debug_assert_default_mode.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorator_unavailable_function.mojo	-	ineligible	no-scalar-entry-shape
@@ -1156,6 +1157,7 @@ assets/ok/pointer_union_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_bitcast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_mut_cast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_write_declared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_write_init_with.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_write_move_from.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_write_repr.mojo	-	ineligible	no-scalar-entry-shape

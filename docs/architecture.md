@@ -3791,9 +3791,25 @@ rule treats it as a one-field aggregate (R2486). Its parameters (`p.origin`, `ty
 members (`_mlir_type`, `_mlir_lit_ref`), and conformances (`Intable`,
 `Writable`) are the declaration's, in the checker and the elaborator
 alike. The checker's rules still win for every member
-`POINTER_RULE_MEMBERS` names (`__setitem__`, `write`, `free`,
-`unsafe_free`, and the static rules), so those declared bodies are
-checked but no call selects them until the rules retire (R2468, R2444).
+`POINTER_RULE_MEMBERS` names (`free`, `unsafe_free`, and the static
+rules), so those declared bodies are checked but no call selects them
+until the rules retire (R2444). `write` is upstream's declared
+custom-self method (below).
+
+A method under `@__allow_legacy_custom_self_type` may annotate `self`
+with any application of its struct (`self: Pointer[U, _]`). The receiver
+is then argument 0 at that type, as upstream types it:
+`Checker::custom_receiver` resolves the annotation as a parameter's
+(`MethodSig::custom_self`), the comptime pass parameterizes its holes as
+it does an argument's (`$mut_self`, `$origin_self`, upstream's
+`self.origin`), `instantiate_method_generics` deduces the method's own
+binders from the receiver with a `"self"` pattern, and the receiver must
+match the bound annotation up to origins (`check_custom_receiver`), the
+pin's implicit `identical` clauses tying `Self`'s binders to it. The body
+binds `self` at that type, and MIR types the receiver parameter by
+`CheckedSignature::receiver`. Overloads may differ by receiver type
+alone (`SignatureKey`'s `receiver`). On a plain or `Self` receiver, a
+free function, or a trait method the decorator changes nothing.
 The subscript syntax (`p[]`, `p[i]`, `p[unsafe_offset=i]`), in value,
 place, and augmented position, is a call of one of the three declared
 `__getitem__`s, as an explicit `p.__getitem__(…)` is: its loans, its
@@ -6197,13 +6213,12 @@ through immutable or unresolved symbolic provenance (a store below a
 subscript by the getter's `ref[Self.origin]` result alone,
 `require_writable_reference`, which rejects an `Origin[mut=m]` binder in the
 generic body, the enclosing struct's or the function's own, as upstream
-does; `Pointer.write` by `pointer_write_capability`: a pointer field's `Origin[mut=m]` binder resolves
+does; a dereference's `!lit.ref` by `pointer_write_capability`: a pointer field's `Origin[mut=m]` binder resolves
 through the holder's construction-time origins — for a call result, the
 origins its callee's view-return contract (`ViewReturnOrigin`, resolved into
 `call_result_origins` at the call) bound with the callee's own capability —
 and the dereference place carries that capability rather than the holder
-binding's; a call result holding the dereferenced pointer materializes as an
-anonymous owned slot, `materialize_temporary_holder`), and returns that
+binding's), and returns that
 would escape the origin
 (`returned pointer escapes storage outside its declared origin`). A method may,
 however, return the *dereference* of an origin-bearing pointer field whose origin

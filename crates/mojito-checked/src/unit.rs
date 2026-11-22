@@ -634,6 +634,11 @@ impl UnitKey for AnnotationSite {
                 module,
                 declaration,
                 method,
+            }
+            | Self::MethodReceiver {
+                module,
+                declaration,
+                method,
             } => owners
                 .members
                 .get(&(module.clone(), declaration.clone(), *method)),
@@ -710,7 +715,10 @@ impl SiteKey for AnnotationSite {
             Self::FunctionParam { syntax, .. }
             | Self::FunctionReturn { syntax, .. }
             | Self::FunctionType { syntax, .. } => Some(*syntax),
-            Self::StructField { .. } | Self::MethodParam { .. } | Self::MethodReturn { .. } => None,
+            Self::StructField { .. }
+            | Self::MethodParam { .. }
+            | Self::MethodReturn { .. }
+            | Self::MethodReceiver { .. } => None,
         }
     }
 }

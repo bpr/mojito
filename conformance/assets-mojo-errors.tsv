@@ -33,12 +33,14 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1321
+# swept-count	1326
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_field_pointer_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_struct_tail_field_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/custom_self_type_mismatch.mojo	compile-reject	agree	error: invalid call to 'only_int': value passed to 'self' cannot be converted from 'Box[String]' to 'Box[Int]'
+assets/type_error/custom_self_type_not_the_struct.mojo	compile-reject	agree	error: 'self' argument must have type 'Box[T]', but actually has type 'Int'
 assets/type_error/function_bracket_explicit_mut_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
@@ -84,7 +86,10 @@ assets/type_error/pointer_symbolic_origin_to_mut_binder.mojo	compile-reject	agre
 assets/type_error/pointer_take_pointee_immutable_rejected.mojo	compile-reject	agree	error: invalid call to 'unsafe_take_pointee': violated constraint
 assets/type_error/pointer_uninit_lvalue_not_kgen_pointer.mojo	compile-reject	agree	error: operand must have '!kgen.pointer<T>' type, not 'Int'
 assets/type_error/pointer_uninit_lvalue_read.mojo	compile-reject	agree	error: use of uninitialized value '(reference value)'
+assets/type_error/pointer_write_generic_unproven.mojo	compile-reject	agree	error: invalid call to 'write': lacking evidence to prove correctness
+assets/type_error/pointer_write_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'write': violated constraint
 assets/type_error/pointer_write_immutable_rejected.mojo	compile-reject	agree	error: no matching method in call to 'unsafe_write'
+assets/type_error/pointer_write_nontrivial_pointee.mojo	compile-reject	agree	error: invalid call to 'write': violated constraint
 assets/type_error/result_initializer_origin_mut_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/result_initializer_parameter_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/struct_comptime_mlir_origin_not_int.mojo	compile-reject	agree	error: cannot implicitly convert 'LITImmOrigin' value to 'Int'

@@ -815,6 +815,8 @@ fn math_operation_requirement(method: &str, argc: usize) -> Option<&'static str>
 fn sole_candidate_failure(sig: &MethodSig, failure: &TypeError) -> Option<String> {
     match failure {
         TypeError::ParamListConversion { .. } => Some(failure.to_string()),
+        // A custom receiver the receiver does not match.
+        TypeError::BadCall { reason, .. } if sig.custom_self.is_some() => Some(reason.clone()),
         _ => collector_element_failure(sig, failure),
     }
 }

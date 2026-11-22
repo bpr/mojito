@@ -174,6 +174,14 @@ impl Checker {
                     "__unsafe_nested_origins_read_only",
                     DecoratorSite::Function | DecoratorSite::Method { .. },
                 ) => {}
+                // A no-op wherever the receiver is `Self` (on a free
+                // function, a trait method, or a plain `self`), as at the pin.
+                (
+                    "__allow_legacy_custom_self_type",
+                    DecoratorSite::Function
+                    | DecoratorSite::Method { .. }
+                    | DecoratorSite::TraitMethod { .. },
+                ) => {}
                 ("__unsafe_nested_origins_read_only", DecoratorSite::TraitMethod { .. }) => {
                     return Err(unmodeled(name, site));
                 }

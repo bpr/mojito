@@ -770,6 +770,7 @@ impl Checker {
             error,
             self_convention: method.self_convention,
             refined_self: self.refined_receiver(method)?,
+            custom_self: self.custom_receiver(method)?,
             ref_params: lower_ref_param_sigs(
                 &self.enclosing_param_decls,
                 &regular_params,
@@ -826,6 +827,11 @@ impl Checker {
         let (Some(annotation), Some(self_ty)) = (&method.self_type, &self.self_ty) else {
             return Ok(None);
         };
+        if method.self_convention != Some(ArgConvention::Out)
+            && mojito_ast::ast::allows_custom_self_type(&method.decorators)
+        {
+            return Ok(None);
+        }
         // An annotation may name an earlier argument's place only the body
         // can resolve (`origin_of(iterable)`), as a return annotation may.
         let saved = self.signature_origin_leniency.replace(true);
@@ -877,6 +883,52 @@ impl Checker {
             }
         }
         Ok(Some(refined))
+    }
+
+    /// The declared type of method `method`'s receiver under
+    /// `@__allow_legacy_custom_self_type` (`self: Pointer[U, _]`): argument
+    /// 0, resolved as a parameter's annotation is, which must apply the
+    /// enclosing struct (after alias resolution). `None` without the
+    /// decorator, on an `out self`, and for an annotation spelling `Self`.
+    pub(super) fn custom_receiver(&self, method: &Method) -> Result<Option<Ty>, TypeError> {
+        let (Some(annotation), Some(self_ty)) = (&method.self_type, &self.self_ty) else {
+            return Ok(None);
+        };
+        if !method.has_self
+            || method.self_convention == Some(ArgConvention::Out)
+            || !mojito_ast::ast::allows_custom_self_type(&method.decorators)
+        {
+            return Ok(None);
+        }
+        self.resolving_parameter_annotation.set(true);
+        let resolved =
+            self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare);
+        self.resolving_parameter_annotation.set(false);
+        let resolved = resolved?;
+        if resolved == *self_ty {
+            return Ok(None);
+        }
+        let applies_self = nominal_parts(self_ty)
+            .zip(nominal_parts(&resolved))
+            .is_some_and(|((name, _), (custom, _))| name == custom);
+        if !applies_self {
+            return Err(TypeError::InvalidReceiver(format!(
+                "'self' argument must have type '{self_ty}', but actually has type '{resolved}'"
+            )));
+        }
+        Ok(Some(resolved))
+    }
+
+    /// The type a method signature's scope declares `self` at: its custom
+    /// receiver type ([`Self::custom_receiver`]) or `Self`; `None` for a
+    /// static method.
+    pub(super) fn signature_receiver(&self, method: &Method) -> Result<Option<Ty>, TypeError> {
+        if !method.has_self {
+            return Ok(None);
+        }
+        Ok(self
+            .custom_receiver(method)?
+            .or_else(|| self.self_ty.clone()))
     }
 
     /// Classify a `[...]` parameter list into type and value parameters, and
@@ -2749,7 +2801,7 @@ impl Checker {
             Some(annotation) if m.self_convention == Some(ArgConvention::Out) => {
                 self.ty_from_anno(annotation)?
             }
-            _ => self_ty.clone(),
+            _ => self.custom_receiver(m)?.unwrap_or_else(|| self_ty.clone()),
         };
         self.bind_receiver(&receiver, writable)?;
         self.register_reference_binder(

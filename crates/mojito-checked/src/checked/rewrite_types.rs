@@ -1126,11 +1126,13 @@ impl RewriteTypes for CheckedSignature {
             params,
             result,
             effect,
+            receiver,
         } = self;
         parameters.rewrite_types(rewrite);
         params.rewrite_types(rewrite);
         result.rewrite_types(rewrite);
         effect.rewrite_types(rewrite);
+        receiver.rewrite_types(rewrite);
     }
 }
 

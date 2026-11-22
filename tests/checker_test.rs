@@ -10909,7 +10909,8 @@ fn pointer_write_overwrites_only_a_trivially_deinitable_pointee() {
         "def main():\n    var xs: List[String] = [\"a\"]\n    xs.unsafe_ptr().write(\"b\")\n",
     );
     assert!(
-        error.to_string().contains("not trivially deinitable"),
+        error.to_string().contains("violated constraint")
+            && error.to_string().contains("IsTriviallyDeinitable[U]"),
         "{error}"
     );
 }

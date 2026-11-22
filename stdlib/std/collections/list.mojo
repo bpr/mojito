@@ -490,7 +490,7 @@ struct List[T: AnyType](
     # caller-supplied consuming handler (no `Deinitable` requirement), then
     # the buffer is freed. The loop is the body of upstream's
     # `Span(self).unsafe_deinit_elements_with(deinit_func)`, inlined because
-    # the bundled `Span` lacks that member (R2468).
+    # the bundled `Span` lacks that member (R2497).
     def deinit_with[F: def(var Self.T)](deinit self, deinit_func: F, /):
         var i = 0
         while i < self._len:

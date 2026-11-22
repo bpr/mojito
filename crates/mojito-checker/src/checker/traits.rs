@@ -643,6 +643,7 @@ impl Checker {
             error,
             self_convention: m.self_convention,
             refined_self: None,
+            custom_self: None,
             self_ref,
             ref_params,
             ref_return,
@@ -1491,6 +1492,16 @@ impl Checker {
             },
             sig.ret.clone(),
         );
+        if let Some(receiver) = &sig.custom_self {
+            self.declaration_types.borrow_mut().insert(
+                mojito_checked::checked::AnnotationSite::MethodReceiver {
+                    module: declaration.module.clone(),
+                    declaration: name.to_string(),
+                    method: method_index,
+                },
+                receiver.clone(),
+            );
+        }
         self.declaration_effects.borrow_mut().insert(
             mojito_checked::checked::AnnotationSite::MethodReturn {
                 module: declaration.module.clone(),
@@ -1515,6 +1526,7 @@ impl Checker {
         if let Some(existing) = overloads.iter().find(|existing| {
             same_method_shape(existing, &sig)
                 && existing.has_self == sig.has_self
+                && existing.custom_self == sig.custom_self
                 && (!mojito_symbol::symbol::receiver_overloaded_method(method_name)
                     || existing.self_convention == sig.self_convention)
         }) {
@@ -1609,7 +1621,7 @@ impl Checker {
         ) {
             Some(availability) => {
                 self.push_assumptions(self.method_where_assumptions(m, &availability));
-                let receiver = self.self_ty.clone().filter(|_| m.has_self);
+                let receiver = self.signature_receiver(m)?;
                 let signature = self.in_signature_scope(receiver.as_ref(), |this| {
                     let all_types = this.param_tys(&m.params)?;
                     let sig = this.method_sig(m, method_decls, &all_types, availability)?;
@@ -1646,7 +1658,7 @@ impl Checker {
                     self.guaranteed_facts(clause, &mut facts);
                 }
                 self.push_assumptions(facts);
-                let receiver = self.self_ty.clone().filter(|_| m.has_self);
+                let receiver = self.signature_receiver(m)?;
                 let signature = self.in_signature_scope(receiver.as_ref(), |this| {
                     let all_types = this.param_tys(&m.params)?;
                     let mut clauses = free;
@@ -2236,6 +2248,7 @@ impl Checker {
                 .map(|error| self.requirement_ty_at(error, self_ty)),
             self_convention: req_sig.self_convention,
             refined_self: None,
+            custom_self: None,
             self_ref: req_sig.self_ref.clone(),
             ref_params: req_sig.ref_params.clone(),
             ref_return: req_sig.ref_return.clone(),

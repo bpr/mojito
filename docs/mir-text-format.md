@@ -1357,6 +1357,13 @@ contract source is the keyword one past the last index's, as upstream's
 passed no keyword index, reads with an empty list. The package format moves
 to `mojito-package 255` (R2480).
 
+The package format moves to `mojito-package 256` (R2468): a packaged
+method's checked signature carries its custom receiver type under
+`@__allow_legacy_custom_self_type` (`CheckedSignature::receiver`, the
+`MethodReceiver` annotation site), and its interface residue keeps it for
+call resolution. The MIR schema is unchanged: a receiver parameter's type
+was already spelled per function.
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and

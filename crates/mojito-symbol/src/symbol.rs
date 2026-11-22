@@ -414,6 +414,11 @@ pub struct SignatureKey {
     /// identity whatever the run-time parameters; the suffix stays empty for
     /// a signature without one.
     packs: Vec<usize>,
+    /// The custom receiver type of a method under
+    /// `@__allow_legacy_custom_self_type` (`self: Box[Int]`). Its
+    /// overloads may differ by the receiver's type alone, so that type is
+    /// part of identity; the suffix stays empty for a `Self` receiver.
+    receiver: Option<TypeKey>,
 }
 
 impl SignatureKey {
@@ -433,6 +438,7 @@ impl SignatureKey {
             owned: Vec::new(),
             parameters: Vec::new(),
             packs: Vec::new(),
+            receiver: None,
         }
     }
 
@@ -445,6 +451,7 @@ impl SignatureKey {
             owned: Vec::new(),
             parameters: Vec::new(),
             packs: Vec::new(),
+            receiver: None,
         }
     }
 
@@ -470,6 +477,7 @@ impl SignatureKey {
             owned: Vec::new(),
             parameters: Vec::new(),
             packs: Vec::new(),
+            receiver: None,
         }
     }
 
@@ -491,6 +499,17 @@ impl SignatureKey {
     #[must_use]
     pub fn with_kw_variadic(mut self, ty: Option<&Ty>) -> Self {
         self.kw_variadic = ty.map(TypeKey::from_ty);
+        self
+    }
+
+    /// Attach a method's custom receiver type (see [`SignatureKey`]'s
+    /// `receiver`), canonicalized as its parameters are.
+    #[must_use]
+    pub fn with_custom_receiver(mut self, ty: Option<&Ty>, self_ty: Option<&Ty>) -> Self {
+        self.receiver = ty.map(|ty| match self_ty {
+            Some(self_ty) => TypeKey::from_ty_with_self(ty, self_ty),
+            None => TypeKey::from_ty(ty),
+        });
         self
     }
 
@@ -551,6 +570,10 @@ impl SignatureKey {
             suffix.push_str("$ctv");
             suffix.push_str(&index.to_string());
         }
+        if let Some(receiver) = &self.receiver {
+            suffix.push_str("$self$");
+            suffix.push_str(&receiver.0);
+        }
         suffix
     }
 
@@ -572,6 +595,7 @@ impl SignatureKey {
             owned: self.owned.clone(),
             parameters: self.parameters.clone(),
             packs: self.packs.clone(),
+            receiver: self.receiver.clone(),
         }
     }
 }

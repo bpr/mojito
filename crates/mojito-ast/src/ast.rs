@@ -43,6 +43,16 @@ pub fn is_nested_origins_read_only(decorators: &[Decorator]) -> bool {
     })
 }
 
+/// Whether a method carries `@__allow_legacy_custom_self_type`.
+///
+/// Its `self` may be annotated with any application of the enclosing struct
+/// (`self: Pointer[U, _]`), argument 0 at that type rather than at `Self`.
+pub fn allows_custom_self_type(decorators: &[Decorator]) -> bool {
+    decorators.iter().any(|decorator| {
+        decorator.path.len() == 1 && decorator.path[0] == "__allow_legacy_custom_self_type"
+    })
+}
+
 /// Whether a declaration carries `@unavailable`: it declares a signature
 /// whose every use is an error, and has no body to lower.
 pub fn is_unavailable(decorators: &[Decorator]) -> bool {

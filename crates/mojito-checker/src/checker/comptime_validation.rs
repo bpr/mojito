@@ -3222,6 +3222,7 @@ impl Checker {
                         .map(|index| names[index.min(names.len())..].to_vec())
                         .unwrap_or_default(),
                     decls: &signature.decls,
+                    custom_receiver: None,
                 },
                 self.self_instance_ty(structure).as_ref(),
                 method.has_self,
@@ -3238,6 +3239,7 @@ impl Checker {
                         .map(|collector| names[collector.index.min(names.len())..].to_vec())
                         .unwrap_or_default(),
                     decls: &signature.decls,
+                    custom_receiver: None,
                 },
                 &function
                     .params

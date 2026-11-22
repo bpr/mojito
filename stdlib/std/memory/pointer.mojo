@@ -1,7 +1,7 @@
 # std.memory.pointer — upstream's `Pointer` and its aliases, ported with
 # these departures. The compiler folds every application of the struct into
-# its own pointer type, and its rules still answer `write` and
-# `unsafe_free`; every initializer, `Pointer(to=)` included, every
+# its own pointer type, and its rules still answer `unsafe_free`; every
+# initializer, `Pointer(to=)` included, every
 # `__getitem__`, the subscript syntax `p[]`, `p[i]`, and
 # `p[unsafe_offset=i]` included, and every member no rule answers, the
 # casts, address members, and comparisons included, reaches its body here.
@@ -18,10 +18,10 @@
 # - `as_unsafe_any_origin`: `UnsafeAnyOrigin[mut=Self.mut]` keeps no
 #   symbolic `mut` (R2384).
 # - `__bool__`: `@unavailable` on a method is rejected (R1162).
-# - the memory members `write`, `unsafe_free`, `swap_pointees`,
-#   `unsafe_load`, `unsafe_store`, and the strided, gather, and scatter
-#   forms: the compiler's rules answer `write` and `unsafe_free`, and
-#   `@__allow_legacy_custom_self_type` is not modelled (R2468).
+# - the memory members `unsafe_free`, `swap_pointees`, `unsafe_load`,
+#   `unsafe_store`, and the strided, gather, and scatter forms: a rule
+#   still answers `unsafe_free`, and the rest are not yet declared
+#   (R2495, R2496).
 # - `_get_ref_with_unsafe_interior_origin` (R2478).
 # - `unsafe_as_noalias` and `_as_origin_superset`: `where O.contains[…]`
 #   (R2381); `unsafe_dangling`: the plugin hook.
@@ -53,6 +53,7 @@ from std.builtin.debug_assert import debug_assert
 from std.memory.address_space import AddressSpace
 from std.builtin.format_int import _write_int
 from std.format._utils import FormatStruct, Named, TypeNames
+from std.traits import IsTriviallyDeinitable
 
 
 comptime MutPointer[
@@ -928,6 +929,42 @@ struct Pointer[
         __get_address_as_uninit_lvalue(
             self.unsafe_address_space_cast[.GENERIC]()._mlir_value
         ) = init_with()
+
+    @__allow_legacy_custom_self_type
+    @inline(.always)
+    def write[
+        U: Movable, //
+    ](self: Pointer[U, _], var value: U, /) where (
+        type_of(self).mut and IsTriviallyDeinitable[U]
+    ):
+        """Write `value` into the pointer location, moving from `value`.
+
+        Unlike `unsafe_write()`, this is safe to call even when the pointee
+        already holds a live value: `U` is constrained to be trivially
+        deinitializable, so there's no destructor to skip and overwriting
+        a previous value can't leak a resource.
+
+        Example:
+
+        ```mojo
+        from std.memory.alloc import alloc, dealloc, Layout
+
+        var allocation = alloc(Layout[Int].single())
+        var ptr = allocation.unsafe_ptr()
+        ptr.write(41)
+        ptr.write(42)  # OK: overwriting is safe, `Int` has no destructor.
+        print(ptr[])  # => 42
+        dealloc(allocation^)
+        ```
+
+        Parameters:
+            U: The type the pointer points to, which must be `Movable` and
+                trivially deinitializable.
+
+        Args:
+            value: The value to emplace.
+        """
+        __get_address_as_uninit_lvalue(self._mlir_value) = value^
 
     @inline(.always)
     def unsafe_write(

@@ -516,32 +516,6 @@ impl<'a> Flatten<'a> {
                 }
             }
         }
-        // `pointer.write(value)` initializes the pointee at offset 0 — the
-        // same store family as `pointer[] = value`. An origin-bearing
-        // pointer writes its pointee (its address substituted when
-        // statically known, else through the runtime handle); a heap
-        // pointer stores through a synthetic binding so chained receivers
-        // stay expressible.
-        let pointer_write = node
-            .adjustments
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::PointerWrite { element } => {
-                    Some(element.clone())
-                }
-                _ => None,
-            });
-        if let Some(element) = pointer_write {
-            let value = *args.first().expect("checked write has one value");
-            let src = self.expr(value);
-            self.write_pointee(call, object, element, src);
-            let dest = self.fresh_typed(call.location(), None, Ty::none());
-            self.emit(MirInstr::Const {
-                dest,
-                k: Const::None,
-            });
-            return Some(dest);
-        }
         None
     }
 

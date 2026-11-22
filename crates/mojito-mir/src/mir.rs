@@ -2546,7 +2546,12 @@ fn lower_struct_member<P: DeclaredParam>(
     if m.has_self {
         inferred.push(m.self_convention == Some(ArgConvention::Ref));
         names.push("self".to_string());
-        ptys.push(self_receiver_ty(name, struct_declared));
+        ptys.push(
+            signature
+                .receiver
+                .clone()
+                .unwrap_or_else(|| self_receiver_ty(name, struct_declared)),
+        );
         owned.push(is_owned(&m.self_convention));
         deinit.push(is_deinit(&m.self_convention));
         refp.push(is_ref(&m.self_convention));

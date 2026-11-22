@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2495**.
+Next free ID: **R2498**.
 
 ## Ordered Work
 
@@ -10886,29 +10886,64 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2468 `@__allow_legacy_custom_self_type` is not modelled, so
-  `Pointer.write` stays a checker rule**
+- [ ] **R2495 `Pointer.unsafe_free` is a checker rule, where upstream
+  declares a custom-self method**
 
-  Upstream's `write[U: Movable, //](self: Pointer[U, _], var value: U, /)`
-  declares a `self` typed by an application of its own struct, which
-  Mojito rejects ("'self' argument must have type 'Self'").
-  - Model the decorator: a `self` whose type applies the enclosing struct
-    with its own binders, read as a conditional receiver.
-  - Then declare `write` verbatim and retire its `infer_pointer_method` arm
-    and `check_pointer_overwrite`.
-  - The same decorator gates `unsafe_free`, `unsafe_load`/`unsafe_store`,
-    and `swap_pointees`, which can follow once it lands.
-  - Probe: the bundled `Span` lacks upstream's
-    `unsafe_deinit_elements_with` and `unsafe_deinit_elements` (declared
-    with `self: MutSpan[U, _]` under the decorator), so `List.deinit_with`
-    inlines the former's loop and `_ListIterOwned.__deinit__` loops
-    `unsafe_deinit_pointee` where upstream calls
-    `Span(self._list)._unchecked_subspan(...).unsafe_deinit_elements()`
-    (`stdlib/std/collections/list.mojo`; found while landing R2467,
-    2026-11-21).
-  - Found while landing R2207 (2026-11-21).
+  Upstream declares `unsafe_free(self: MutPointer[Self.T, ...])` under
+  `@__allow_legacy_custom_self_type`, calling `_free(self)`; the checker's
+  `"free" | "unsafe_free"` arm of `infer_pointer_method` answers it instead.
+  - The rule rejects an origin-bearing pointer ("does not own an
+    allocation"), where the pin accepts any mutable pointer.
+  - Declare it verbatim, drop it from `POINTER_RULE_MEMBERS`, and delete
+    the arm once R2444 has withdrawn `free`.
+  - Probe: `var x = 1; Pointer(to=x).unsafe_free()` is rejected by the
+    rule and compiles at the pin.
+  - Found while landing R2468 (2026-11-22).
+  - Depends on R2444.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2496 `Pointer.swap_pointees` and the `unsafe_load`/`unsafe_store`
+  family are not declared**
+
+  The bundled `Pointer` omits upstream's custom-self memory members, which
+  `@__allow_legacy_custom_self_type` no longer blocks.
+  - `swap_pointees[U: Movable](self: MutPointer[U, _], other:
+    MutPointer[U, _])`: its body needs `MaybeUninit`, `unsafe_memcpy`, and
+    `IsTriviallyMovable`.
+  - The seven `unsafe_load`/`unsafe_store`/`_store` overloads over
+    `Pointer[Scalar[dtype], ...]` receivers, which differ by receiver type
+    and index type.
+  - The strided, gather, and scatter forms follow the same receivers; split
+    them into their own entry if the session runs long.
+  - Check first that a receiver spelled through the `MutPointer` alias
+    gets its origin binder: `auto_parameterize` binds a hole only on a
+    bare `Pointer` (R1156's gate).
+  - Probe: `p.swap_pointees(q)` over two `Pointer(to=…)` values reports "no
+    method 'swap_pointees'" and runs at the pin.
+  - Found while landing R2468 (2026-11-22).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2497 The bundled `Span` lacks upstream's custom-self members**
+
+  Upstream's `Span` declares eighteen members under
+  `@__allow_legacy_custom_self_type` (`self: MutSpan[U, _]`,
+  `self: Span[Scalar[dtype], _]`), none of them bundled.
+  - Among them: `__contains__`, `copy_from`, `__eq__`/`__ne__`,
+    `unsafe_swap_elements`, `swap_elements`, `reverse`, `apply`, `count`,
+    `_binary_search_index`, `unsafe_deinit_elements`,
+    `unsafe_deinit_elements_with`, and `unsafe_assume_init`.
+  - `unsafe_deinit_elements_with` takes `f: Some[def(var U)]`, which the
+    bundle spells with an explicit binder (R813).
+  - Probe: `List.deinit_with` inlines `unsafe_deinit_elements_with`'s loop,
+    and `_ListIterOwned.__deinit__` loops `unsafe_deinit_pointee` where
+    upstream calls
+    `Span(self._list)._unchecked_subspan(...).unsafe_deinit_elements()`,
+    which also needs `Span._unchecked_subspan`
+    (`stdlib/std/collections/list.mojo`).
+  - Found while landing R2467 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2475 A construction's `ref[origin]` loan comes from two rules,
   where upstream derives it from the result type's origin**

@@ -12,7 +12,6 @@ use mojito_types::types::TyKind;
 /// `p[unsafe_offset=i]`) and an explicit `p.__getitem__(…)` call both run
 /// a declared getter.
 pub(in crate::checker) const POINTER_RULE_MEMBERS: &[&str] = &[
-    "write",
     "free",
     "unsafe_free",
     "__init__",
@@ -29,15 +28,13 @@ pub(in crate::checker) fn pointer_rule_member(member: &str) -> bool {
 }
 
 impl Checker {
-    /// Type the `Pointer[T]` instance members a checker rule answers:
-    /// `write`, upstream's overwrite of a trivially destructible pointee,
-    /// and the `free()`/`unsafe_free()` deallocation. Indexed load/store
-    /// remain ordinary public pointer subscript syntax; every other memory
-    /// member is a body of the declared struct.
+    /// Type the `Pointer[T]` instance members a checker rule answers: the
+    /// `free()`/`unsafe_free()` deallocation. Indexed load/store remain
+    /// ordinary public pointer subscript syntax; every other memory member
+    /// is a body of the declared struct.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::checker) fn infer_pointer_method(
         &self,
-        span: &SourceSpan,
         object: &Expr,
         method: &str,
         elem: &Ty,
@@ -58,55 +55,6 @@ impl Checker {
             });
         }
         match method {
-            // `write` overwrites a pointee whose type has no destructor:
-            // upstream's `where IsTriviallyDeinitable[U]` moved store.
-            "write" => {
-                self.check_pointer_write(object, origin)?;
-                self.check_pointer_overwrite(elem)?;
-                let [value] = args else {
-                    return Err(TypeError::BadCall {
-                        func: "Pointer.write".to_string(),
-                        reason: "expected one positional value".to_string(),
-                    });
-                };
-                let vty = self.infer_with_expected(value, elem, true)?;
-                if !self.record_implicit_conversion(value, &vty, elem)? {
-                    return Err(TypeError::TypeMismatch {
-                        expected: elem.to_string(),
-                        found: vty.to_string(),
-                        context: "value written through 'Pointer.write'".to_string(),
-                    });
-                }
-                let receiver = pointer(elem.clone(), origin.clone());
-                let bound = [elem.clone()];
-                self.check_argument_origin_exclusivity(
-                    &ExclusivityCallee {
-                        name: method,
-                        parameter_names: &["value".to_string()],
-                        declared: &bound,
-                        bound: &bound,
-                        nested_origins: NestedOrigins::AsDeclared,
-                        collected: None,
-                        initializer: false,
-                    },
-                    Some(&ExclusivityReceiver {
-                        object,
-                        convention: None,
-                        declared: &receiver,
-                        bound: &receiver,
-                    }),
-                    &[Some(ArgConvention::Var)],
-                    &[ArgSlot::Positional(0)],
-                    args,
-                    kwargs,
-                )?;
-                self.record_at(span.clone()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::PointerWrite {
-                        element: elem.clone(),
-                    },
-                ));
-                Ok(Ty::none())
-            }
             "free" | "unsafe_free" => {
                 if origin.as_origin().is_some() {
                     return Err(TypeError::Unsupported(format!(
@@ -439,18 +387,6 @@ impl Checker {
             self.require_call_error(span, "call through a stored callable field", error)?;
         }
         Ok(ret)
-    }
-
-    /// Require the pointee `elem` a `Pointer.write` overwrites to have no
-    /// destructor, as upstream's `where IsTriviallyDeinitable[U]` does.
-    fn check_pointer_overwrite(&self, elem: &Ty) -> Result<(), TypeError> {
-        if self.is_trivially(mojito_types::types::TrivialLifecycle::Deinitable, elem) {
-            return Ok(());
-        }
-        Err(TypeError::BadCall {
-            func: "Pointer.write".to_string(),
-            reason: format!("'{elem}' is not trivially deinitable; use 'unsafe_write'"),
-        })
     }
 }
 

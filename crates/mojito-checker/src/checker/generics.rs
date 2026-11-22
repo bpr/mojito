@@ -202,6 +202,39 @@ pub(super) fn unify(
     }
 }
 
+/// Reject receiver `actual` of `func` unless it is its custom receiver type
+/// `declared` (`self: Box[Int]`) up to origins, the pin's implicit
+/// `identical` clauses: a placeholder pointer origin (`Pointer[U, _]`)
+/// accepts any origin and mutability.
+fn check_custom_receiver(func: &str, declared: &Ty, actual: &Ty) -> Result<(), TypeError> {
+    let matches = match (
+        declared.kind().pointer_parts(),
+        actual.kind().pointer_parts(),
+    ) {
+        (
+            Some((element, mojito_types::origin::PointerOrigin::UnsafeAny { .. }, space)),
+            Some((actual_element, _, actual_space)),
+        ) => {
+            space == actual_space
+                && mojito_types::types::erase_origins(element)
+                    == mojito_types::types::erase_origins(actual_element)
+        }
+        _ => {
+            mojito_types::types::erase_origins(declared)
+                == mojito_types::types::erase_origins(actual)
+        }
+    };
+    if matches {
+        return Ok(());
+    }
+    Err(TypeError::BadCall {
+        func: func.to_string(),
+        reason: format!(
+            "value passed to 'self' cannot be converted from '{actual}' to '{declared}'"
+        ),
+    })
+}
+
 /// Substitute a member template type at a receiver's type arguments: type
 /// parameters via [`substitute`], value parameters via the receiver's
 /// `TyArg::Val` bindings — `other: Self` on an `Array[Int, 3]` receiver
@@ -1915,7 +1948,21 @@ impl Checker {
         let variadic = bracket_variadic.as_ref();
         let kw_variadic = kw_variadic.map(bind);
         let kw_variadic = kw_variadic.as_ref();
+        // A custom receiver type is argument 0's declared type, at the
+        // receiver instance's own arguments (`Self.T` is the receiver's).
+        let custom_receiver = receiver.and_then(|(receiver_ty, _)| {
+            let declared = signature.custom_self.as_ref()?;
+            let at_receiver = mojito_types::types::nominal_parts(receiver_ty)
+                .and_then(|(owner, targs)| {
+                    Some(substitute_at(declared, self.structs.get(owner)?, &targs))
+                })
+                .unwrap_or_else(|| declared.clone());
+            Some((bind(&self.resolve_assoc_ty(&at_receiver)), receiver_ty))
+        });
         if signature.declared.is_empty() {
+            if let Some((declared, actual)) = &custom_receiver {
+                check_custom_receiver(name, declared, actual)?;
+            }
             let BoundParameters { attributes, .. } = self.resolve_explicit_use_params(
                 name,
                 &signature.declared,
@@ -1987,6 +2034,11 @@ impl Checker {
             pattern_names.push("self".to_string());
             patterns.push(pattern);
             actuals.push(actual);
+        }
+        if let Some((declared, actual)) = &custom_receiver {
+            pattern_names.push("self".to_string());
+            patterns.push(declared.clone());
+            actuals.push((*actual).clone());
         }
         for (index, slot) in matched.slots.iter().enumerate() {
             let expression = match slot {
@@ -2095,6 +2147,12 @@ impl Checker {
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
             self.resolve_call_dependent_ty(&substituted, &values)
         };
+        // The receiver binds argument 0 exactly: upstream ties each of
+        // `Self`'s binders to the annotation's argument by an implicit
+        // `identical` clause, so no receiver conversion exists.
+        if let Some((declared, actual)) = &custom_receiver {
+            check_custom_receiver(name, &resolve(&bound(declared))?, actual)?;
+        }
         // A method-level type pack (`*args: *Ts`) inferred from the overflow
         // arguments resolves to the heterogeneous element list, so each
         // overflow argument scores and converts against its own element

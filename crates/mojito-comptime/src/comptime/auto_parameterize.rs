@@ -167,6 +167,20 @@ impl<'a> Declared<'a> {
         enclosing: &[String],
         span: Span,
     ) {
+        self.parameterize_with_receiver(type_params, params, None, enclosing, span);
+    }
+
+    /// [`Self::parameterize`] with a method's custom receiver annotation
+    /// (`self: Pointer[U, _]` under `@__allow_legacy_custom_self_type`),
+    /// argument 0, parameterized first as upstream's `self.origin`.
+    fn parameterize_with_receiver(
+        &self,
+        type_params: &mut Vec<TypeParam>,
+        params: &mut [FnParam],
+        receiver: Option<&mut Type>,
+        enclosing: &[String],
+        span: Span,
+    ) {
         let in_scope: HashSet<String> = type_params
             .iter()
             .map(|parameter| &parameter.name)
@@ -194,6 +208,11 @@ impl<'a> Declared<'a> {
             {
                 parameter.value_type = Some(bound);
             }
+        }
+        if let Some(receiver) = receiver
+            && let Some(bound) = self.bind(receiver, "self", &in_scope, &mut binders, span)
+        {
+            *receiver = bound;
         }
         // A named `out` result is the declaration's result, not an
         // argument: its type is never parameterized.
@@ -359,9 +378,13 @@ impl MutVisitor for Declared<'_> {
                     self.parameterize(&mut member.params, &mut [], &enclosing, span);
                 }
                 for method in methods.iter_mut() {
-                    self.parameterize(
+                    let custom = method.has_self
+                        && method.self_convention != Some(mojito_ast::ast::ArgConvention::Out)
+                        && mojito_ast::ast::allows_custom_self_type(&method.decorators);
+                    self.parameterize_with_receiver(
                         &mut method.type_params,
                         &mut method.params,
+                        method.self_type.as_mut().filter(|_| custom),
                         &enclosing,
                         span,
                     );

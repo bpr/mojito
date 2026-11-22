@@ -97,7 +97,6 @@ impl Checker {
         if let Some((element, origin, address_space)) = obj_ty.kind().pointer_parts() {
             return self
                 .infer_pointer_method(
-                    span,
                     object,
                     method,
                     element,

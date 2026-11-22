@@ -3151,6 +3151,12 @@ struct MethodSig {
     /// free) or a type over the initializer's own binders, which defines
     /// it. `None` for an unannotated receiver and for `Self`.
     refined_self: Option<Ty>,
+    /// Argument 0's declared type under `@__allow_legacy_custom_self_type`
+    /// (`self: Pointer[U, _]`), an application of the enclosing struct over
+    /// the method's own binders. A call deduces those binders from the
+    /// receiver as from any argument, and the receiver must match it
+    /// exactly. `None` when the receiver is `Self`.
+    custom_self: Option<Ty>,
     /// The receiver's `ref` contract, as upstream types argument 0: a
     /// `ref[...] self` clause lowered as a `ref` parameter's, a bare `ref
     /// self` inferring its origin and mutability in `AddressSpace.GENERIC`.
@@ -3236,6 +3242,7 @@ impl MethodSig {
             error: None,
             self_convention: None,
             refined_self: None,
+            custom_self: None,
             self_ref: None,
             ref_params: vec![None; len],
             ref_return: None,
