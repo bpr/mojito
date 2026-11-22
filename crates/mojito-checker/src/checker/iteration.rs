@@ -61,6 +61,7 @@ impl Checker {
         let mode = protocol.mode;
         self.attach_borrowed_iteration_origin(source, iter_ty, mode, &mut protocol);
         Self::resolve_iterator_origin(source, &mut protocol);
+        protocol.iterator_ty = self.close_decided_mutability_slots(&protocol.iterator_ty);
         if let Some(resolved) =
             Self::resolve_borrowed_iteration_reference(source_mutable, &mut protocol)
         {

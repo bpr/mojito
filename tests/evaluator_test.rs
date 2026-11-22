@@ -1875,3 +1875,20 @@ fn maybe_uninit_receiver_overloads_in_one_program() {
     );
     assert_eq!(ev, "7\n7\n");
 }
+
+/// A member's result or field spelled over the receiver's origin
+/// (`-> Self`, `Span.IteratorType[origin_of(self)]`, a field `Span[Int,
+/// Self.o]`) takes the receiver's decided `mut`, as upstream infers it from
+/// the substituted origin: with the pre-elaboration pipeline off, indexing
+/// and iterating a sliced `Span` and a struct's `Span` field run the
+/// `Span[True, Int]` instance their values are, not an erased one.
+#[test]
+fn origin_derived_mutability_follows_the_receiver_without_pre_elaboration() {
+    let source = "struct W[m: Bool, //, o: Origin[mut=m]](Copyable):\n    var s: Span[Int, Self.o]\n\n    def __init__(out self, s: Span[Int, Self.o]):\n        self.s = s\n\ndef main():\n    var xs = List[Int]()\n    xs.append(1)\n    xs.append(2)\n    xs.append(3)\n    var sp = Span(xs)\n    var sub = sp[1:3]\n    print(sub[0])\n    var subtotal = 0\n    for x in sub:\n        subtotal += x\n    print(subtotal)\n    for ref x in sp:\n        x += 10\n    var w = W(Span(xs))\n    print(w.s[0])\n";
+    let compiler = Compiler::default().with_pre_elaboration(false);
+    let program = compiler
+        .compile_source(source, Path::new("evaluator_test.mojo"))
+        .expect("compile error");
+    let execution = compiler.execute(&program).expect("runtime error");
+    assert_eq!(execution.output, "2\n5\n11\n");
+}

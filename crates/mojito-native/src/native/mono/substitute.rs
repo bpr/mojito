@@ -855,11 +855,49 @@ fn closed_mutability_arguments(name: &str, original: &[TyArg], bindings: &Bindin
             {
                 None
             }
-            CtValue::Deferred(binder) => bindings.values.get(binder).cloned(),
+            CtValue::Deferred(binder) => bindings
+                .values
+                .get(binder)
+                .cloned()
+                .or_else(|| origin.and_then(|origin| owner_origin_mutability(origin, bindings))),
             CtValue::Expr(expr) => closed_argument(expr, bindings).ok(),
             _ => None,
         })
         .into_owned()
+}
+
+/// The value the instance binds the `mut=` binder of a struct's own origin
+/// binder `origin` names, through any projection: a field or member
+/// spelling `Span[Self.T, Self.o]` in a struct declaring `o:
+/// Origin[mut=m]` infers `Span`'s `mut` as `m`, as upstream infers it from
+/// the origin's type. `None` for any other origin, or where the instance
+/// binds no such binder.
+fn owner_origin_mutability(
+    origin: &mojito_types::origin::Origin,
+    bindings: &Bindings,
+) -> Option<CtValue> {
+    let mut origin = origin;
+    while let mojito_types::origin::Origin::Projected(base, _) = origin {
+        origin = base;
+    }
+    let mojito_types::origin::Origin::Param(id) = origin else {
+        return None;
+    };
+    bindings.values.iter().find_map(|(bound, value)| {
+        bindings
+            .structs
+            .declaration(&bound.id.owner)?
+            .param_decls
+            .iter()
+            .any(|decl| {
+                matches!(decl, ParamDecl::Origin {
+                    origin,
+                    mutability: mojito_types::types::OriginMutability::Binder(binder),
+                    ..
+                } if origin == id && binder.id == bound.id)
+            })
+            .then(|| value.clone())
+    })
 }
 
 /// Whether the struct argument `arg` names a parameter the instance

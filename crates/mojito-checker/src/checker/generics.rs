@@ -1161,12 +1161,47 @@ impl Checker {
     /// slot holding an `ImmOrigin(...)` cast binds immutably, as the cast's
     /// `mut=False` does upstream.
     pub(super) fn substitute_at_instance(&self, ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
-        substitute_at_with(
+        let substituted = substitute_at_with(
             ty,
             info,
             targs,
             Some(&|_, origin| self.bound_origin_mutability(origin)),
-        )
+        );
+        self.close_decided_mutability_slots(&substituted)
+    }
+
+    /// `ty` with each struct instance's origin `mut=` slot that still
+    /// holds its deferred binder closed to the value its governed origin
+    /// decides ([`Self::deferred_mutability_value`]): a member's
+    /// `_SpanIter[Self.T, Self.origin]` at a `Span[True, Int,
+    /// origin_of(xs)]` receiver names `_SpanIter[True, Int,
+    /// origin_of(xs)]`, as upstream infers the `mut` from the substituted
+    /// origin's type.
+    pub(super) fn close_decided_mutability_slots(&self, ty: &Ty) -> Ty {
+        mojito_types::types::map_struct_arguments(ty, &|name, arguments| {
+            let Some(info) = self.structs.get(name) else {
+                return arguments;
+            };
+            let params = &info.params;
+            let closed: Vec<Option<CtValue>> = ParamDecl::aligned_pairs(params, &arguments)
+                .map(|(decl, argument)| match argument {
+                    TyArg::Val(CtValue::Deferred(_))
+                        if decl.is_origin_mutability_binder(params) =>
+                    {
+                        self.deferred_mutability_value(params, &arguments, decl, None)
+                    }
+                    _ => None,
+                })
+                .collect();
+            if closed.len() != arguments.len() || closed.iter().all(Option::is_none) {
+                return arguments;
+            }
+            arguments
+                .into_iter()
+                .zip(closed)
+                .map(|(argument, closed)| closed.map_or(argument, TyArg::Val))
+                .collect()
+        })
     }
 
     /// The mutability a parametric origin binder (`Origin[mut=mut]`) takes

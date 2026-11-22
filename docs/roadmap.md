@@ -853,24 +853,6 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R2485 With the pre-elaboration pipeline off, indexing a sliced
-  `Span` fails in the VM with "field access on non-struct Int"**
-
-  `pre_elaboration::span_iteration` fails: the pipeline-off run prints
-  nothing, where the pipeline-on run prints the fixture's output.
-  - `sub[0]` and `for x in sub` over `var sub = Span(xs)[1:2]` fail, while
-    `Span(xs)[0]`, iterating `Span(xs)`, and `len(sub)` work, so the
-    pointer `Span.__getitem__(slice)` stores back through
-    `result._data.unsafe_offset(start)` is read as an `Int` where the
-    out-of-line `Pointer.__getitem__` reads its `_mlir_value` field.
-  - The pipeline-on run inlines the getters and does not reach it.
-  - It fails the same way before R2474 landed.
-  - Probe: `MOJITO_PRE_ELABORATION=0 cargo run -- run
-    assets/ok/span_iteration.mojo` prints `6`, `5`, and `36`.
-  - Found while landing R2474 (2026-11-21).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2465 Concrete instructions grew by 671027 instructions (+13.81%) over batch 3**
 
   The elaborated corpus grew past `scripts/run-batches`' `--max-growth`, and the growth was accepted into the baseline.
@@ -11573,6 +11555,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: a member reading `Self.mut` over that binder is rejected as
     "'mut' is not a compile-time constant here", where the pin reads the
     origin's mutability (the bundled `Span`'s `write_repr_to`, R2374).
+  - Field and member types share the gap: `_SpanIter`'s `src:
+    Span[Self.T, Self.iterable_origin]` and `Span.IteratorType`'s
+    `_SpanIter[Self.T, Self.origin]` keep `Span`'s and `_SpanIter`'s
+    `mut=` slot deferred where the pin reads `Self.iterable_mut` and
+    `Self.mut`.
+  - Two stopgaps close it after substitution and go with this entry:
+    `Checker::close_decided_mutability_slots` (`generics.rs`, run by
+    `substitute_at_instance` and the borrowed loop's iterator type) and
+    the elaborator's `owner_origin_mutability` (`mono/substitute.rs`).
+  - Probe: having `Checker::origin_mutability_slot` read `Self.m` in field
+    types alone makes `pre_elaboration::span_iteration` fail verification
+    after `inline-parametric` ("names parameter `iterable_mut` of
+    `_SpanIter` that no enclosing declaration binds").
+    `Instantiation::new` (`inline_parametric.rs`) binds an owner's `mut=`
+    binder only from a decided argument, and `Span.__iter__`'s
+    `_SpanIter(self, 0)` constructs a deferred one.
   - Found while landing R2375 (2026-11-21).
   - Depends on nothing.
   - Model: Fable, Not Planned.

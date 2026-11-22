@@ -1425,6 +1425,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- With the pre-elaboration pipeline off, indexing or iterating a sliced
+  `Span` (`Span(xs)[1:3][0]`, `for x in sub`) and indexing a struct's
+  `Span[Int, Self.o]` field no longer fail in the VM with "field access on
+  non-struct Int" (R2485). A member result or loop iterator spelled over
+  the receiver's origin now takes the receiver's decided `mut`, and the
+  elaborator closes a field's origin-inferred `mut=` slot from its owner
+  instance's binder, so the value and its static type name one `Span`
+  instance instead of an erased `Span[_REMOVED_ARG, Int]`.
+
 - A keyword `ref[Self.origin]` constructor argument now lends its place to
   the constructed value as a positional one does (R2472), so `x` stays live
   behind `var p = P(to=x)`: `idp(p)[]`, `var y = p[]`, and `rd(p)` print the
