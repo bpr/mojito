@@ -156,7 +156,7 @@ impl LayoutCx<'_> {
             TyKind::Variant(alternatives) => Ok(self.variant_layout(alternatives)?.layout),
             TyKind::Ref(reference) => self.pointer_in(ty, &reference.address_space),
             pointer if let Some(space) = pointer.pointer_address_space() => {
-                self.pointer_in(ty, space)
+                self.pointer_in(ty, &space)
             }
             // One address per element, the `!kgen.struct` of pointers
             // upstream lowers a `!lit.ref.pack` to.

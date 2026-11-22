@@ -1196,7 +1196,7 @@ impl Checker {
                 mojito_types::types::FLOAT_LITERAL_TYPE_NAME.to_string()
             }
             TyKind::Dependent(_) => instance.to_string(),
-            TyKind::Pointer { .. } => mojito_types::types::POINTER_TYPE_NAME.to_string(),
+            kind if kind.is_pointer() => mojito_types::types::POINTER_TYPE_NAME.to_string(),
             _ => return None,
         };
         let construction = derived_construction(

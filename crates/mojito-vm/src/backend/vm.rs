@@ -1225,9 +1225,12 @@ impl Prog {
         // A pointer receiver enters as the unwritten `_mlir_value` address
         // the VM holds it as.
         initializes
-            .then(|| match receiver.kind() {
-                mojito_types::types::TyKind::Pointer { .. } => Some(Value::None),
-                _ => VmBackend::uninitialized_value(self, receiver),
+            .then(|| {
+                if receiver.is_pointer() {
+                    Some(Value::None)
+                } else {
+                    VmBackend::uninitialized_value(self, receiver)
+                }
             })
             .flatten()
             .map(Constructed::Value)

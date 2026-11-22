@@ -55,8 +55,9 @@ pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
         (TyKind::Ref(a), TyKind::Ref(b)) => {
             a.mutability == b.mutability && ty_equivalent(&a.referent, &b.referent)
         }
-        (TyKind::Struct(a_name, a_args), TyKind::Struct(b_name, b_args))
-            if !a.is_simd() && !b.is_simd() =>
+        (a, b)
+            if let (Some((a_name, a_args)), Some((b_name, b_args))) =
+                (a.as_non_simd_struct(), b.as_non_simd_struct()) =>
         {
             a_name == b_name
                 && a_args.len() == b_args.len()
@@ -155,19 +156,13 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
                 && a.address_space == b.address_space
                 && ty_equal_modulo_origins(&a.referent, &b.referent)
         }
+        (a, b)
+            if let (Some((a, _, a_space)), Some((b, _, b_space))) =
+                (a.pointer_parts(), b.pointer_parts()) =>
+        {
+            a_space == b_space && ty_equal_modulo_origins(a, b)
+        }
         (
-            TyKind::Pointer {
-                element: a,
-                address_space: a_space,
-                ..
-            },
-            TyKind::Pointer {
-                element: b,
-                address_space: b_space,
-                ..
-            },
-        )
-        | (
             TyKind::KgenPointer {
                 element: a,
                 address_space: a_space,
@@ -192,8 +187,9 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
         (TyKind::LitRefPack { elements: a, .. }, TyKind::LitRefPack { elements: b, .. }) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equal_modulo_origins(a, b))
         }
-        (TyKind::Struct(a_name, a_args), TyKind::Struct(b_name, b_args))
-            if !a.is_simd() && !b.is_simd() =>
+        (a, b)
+            if let (Some((a_name, a_args)), Some((b_name, b_args))) =
+                (a.as_non_simd_struct(), b.as_non_simd_struct()) =>
         {
             a_name == b_name
                 && a_args.len() == b_args.len()
@@ -334,15 +330,10 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
     if !erases {
         return;
     }
-    if let TyKind::Pointer {
-        element,
-        origin,
-        address_space,
-    } = ty.kind()
-    {
+    if let Some((element, origin, address_space)) = ty.kind().pointer_parts() {
         let mut element = element.clone();
         erase_callable_environments(&mut element);
-        *ty = Ty::pointer(element, origin.clone(), address_space.clone());
+        *ty = Ty::pointer(element, origin, address_space);
         return;
     }
     ty.update(|kind| match kind {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2486**.
+Next free ID: **R2488**.
 
 ## Ordered Work
 
@@ -3556,16 +3556,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1502 `Pointer` and `StringLiteral` are not `TrivialRegisterPassable`**
+- [ ] **R1502 `StringLiteral` is not `TrivialRegisterPassable`**
 
-  Upstream declares both `TrivialRegisterPassable`, but the modelled
-  conformance (`modelled_trivial_register_passable`, `mojito-types`) and
-  the checker's `is_trivial_register_passable` answer no for
-  `TyKind::Pointer` and a `StringLiteral[v]` application.
+  Upstream declares `StringLiteral` `TrivialRegisterPassable`, but the
+  checker's `is_trivial_register_passable` answers no for a
+  `StringLiteral[v]` application. A `Pointer` already conforms.
   - Probe: `conformance/probes/builtin_trivial_register_passable.mojo`.
-    The pin prints `7 a`. Mojito says "type 'Pointer[Int, ...]' for
-    parameter 'T' does not conform to trait 'TrivialRegisterPassable'", and
-    infers `keep("a")` at `String`.
+    The pin prints `7 a`. Mojito infers `keep("a")` at `String`; with
+    `keep("a")` replaced by `0` it prints `7 0`, as the pin does.
   - So `transfer_verdict` (`checker/places.rs`) judges `p^` of a pointer a
     place move, and MIR `transfer` (`mir/lower_expr/expr.rs`) still copies
     one out of a `mut` parameter by `owns_droppable_storage`. Once the
@@ -7369,9 +7367,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: the same `f(xs.unsafe_ptr())` prints `Pointer[Int,
     ImmStaticOrigin]`, where the pin prints
     `std.memory.pointer.Pointer[True, {}, SIMD[DType.int, 1], {}, 0]`:
-    `Pointer` is the intrinsic `TyKind::Pointer`, which the speller leaves
-    to its `Display`. Its `address_space` is now the type's
-    `AddressSpaceSlot`, which the speller can read.
+    the speller leaves a pointer to its `Display`, though its type is now
+    the declared struct's application, whose `mut`, `origin`, and
+    `address_space` arguments it can read.
+  - Probe: `reflect[Pointer[Int, origin_of(x)]].name()` prints
+    `Pointer[Int, origin@…]`, where the pin prints
+    `std.memory.pointer.Pointer[True, {}, SIMD[DType.int, 1], {}, 0]`.
   - Probe: `_unqualified_type_name[type_of(buffer)]()` of `print`'s
     `_FlushingWriteBuffer` over a `RawFileDescriptor` prints
     `_FlushingWriteBuffer[RawFileDescriptor, 4096 : SIMD[DType.int, 1]]`,
@@ -11161,51 +11162,56 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2370.
   - Model: Fable, Not Planned.
 
-- [ ] **R2210 A `Pointer` application is `TyKind::Pointer`, not the
-  declared struct**
+- [ ] **R2486 A pointer's copies, loans, and layout are still the
+  compiler's rules, not the declared `Pointer` struct's**
 
-  The flip changes `Ty::pointer`, `as_pointer`, `pointer_element`,
-  `pointer_origin`, `pointer_or_lit_ref`, and `is_pointer` to read
-  `TyKind::Struct("Pointer", …)` and deletes the variant.
-  - Not every reader goes through those accessors: about 60 sites outside
-    `mojito-types` bind `TyKind::Pointer`/`LitRef`/`LitRefPack`'s
-    `origin` directly (`subst.rs` 14, `generics.rs` 8, `symbol.rs`,
-    `mono/substitute.rs`, and `operators.rs` 4 each, and smaller counts
-    across the MIR verifier, text, VM, and pliron).
-  - The flip retires `PointerOrigin::Union`, the staged view of a union
-    origin argument (R2429): the stored `TyArg::Origin` is that
-    `Origin::Union` itself.
-  - Store the origin as a `TyArg::Origin` plus a `mut` argument through
-    `PointerOrigin::parts`/`from_parts`, and let
-    `substitute_struct_origins` subsume `substitute_pointer_origin_params`
-    and `bind_pointer_origins`.
-  - Exhaustive matches still name the variant, and the compiler flags
-    them: `type_is_symbolic` (`checker/type_resolution.rs`),
-    `ScopeWalker::walk_in` (`mir/verify/scope.rs`), and the MIR text
-    writer and `type_spelling`.
-  - Check each `as_non_simd_struct` arm that a pointer guard follows,
-    which a struct-typed `Pointer` reaches first.
-  - Both backends hold the struct as its one `!kgen.pointer` field, as
-    for `Bool`.
-  - MIR text drops the `pointer` tag (schema bump), the package format
-    bumps, and `mojito-symbol` mangles through the struct path.
-  - Probe: `reflect[Pointer[Int, origin_of(x)]].name()` prints
-    `Pointer[Int, origin@…]`; the pin prints
-    `std.memory.pointer.Pointer[True, {}, SIMD[DType.int, 1], {}, 0]`
-    (R1679's display probe, with R1680 and R2372 for the spelling).
-  - Probe: `reflect[type_of(p)].field_count()` fails with "requires a
-    struct type"; the pin prints `1`.
-  - Re-probe R1502.
-  - The fold's symbolic `mut` argument is an anonymous deferred value
-    (`nominal_parts`), so a declared initializer's `Self` reads a pointer
-    back at its origin's own binder where the instance names another;
-    `reads_back_at_own_binder` (`checker/call_inference.rs`) accepts the
-    instance then, and goes with the variant.
-  - If it does not fit one session, split it into a types-and-checker half
-    and a MIR, VM, and pliron half.
-  - Found while planning R1681 (2026-11-14).
-  - Depends on R2474, R2209.
-  - Model: Fable, Not Planned.
+  A pointer type is the declared struct's application, but every struct
+  rule still excludes it, as `SIMD`'s do (R1575).
+  - The exclusion is `TyKind::as_non_simd_struct` (`mojito-types`), which
+    answers `None` for a pointer, so its 380-odd callers keep the
+    compiler's pointer rules.
+  - Raw `TyKind::Struct` matches carry an explicit `is_pointer()` guard
+    for the same reason: `MirDeclarations::{default_initializer,
+    copy_initializer, struct_instance}` (`mir/mir.rs`), `default_construction`
+    (`mir/type_construction.rs`), the copy and fieldwise construction in
+    `lower_expr/expr_call.rs`, `declared_operator_receiver`
+    (`mono/specializer.rs`), and `witness_operator_receiver`
+    (`mono/instances.rs`).
+  - Checker guards of the same kind: `reconcile_origins`
+    (`origins/solve.rs`), `defer_bound_mutability`,
+    `conversion_instantiation`, and `direct_conversion_constructor`
+    (`checker.rs`), `constructed_unification` and the copy construction
+    (`declarations.rs`), the slice subscript (`indexing.rs`),
+    `bind_unbound_tails` (`type_resolution.rs`), and the comptime lifting
+    and `parameter_value_type` (`comptime_validation.rs`).
+  - Types guards: `coerces`'s struct arm, `builtin_copy_is_value_read`,
+    `closed_kind`, and `unqualified_type_name` (`types.rs`),
+    `MetaTy::is_unresolved_struct` (`param_expr.rs`), and `source_type`
+    (`ct.rs`).
+  - Go sites-first, as R1575 does for `SIMD`: drop the exclusion, run
+    `scripts/smoke --suites` and `scripts/focused`, and fix or file every
+    site as one list.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2487 A pointer's origin and `mut` arguments bind by passes of
+  their own, not as a struct's origin arguments**
+
+  `substitute_struct_origins` (`checker/origins/subst.rs`) binds every
+  struct origin argument but a pointer's, which
+  `substitute_pointer_origin_params` and `bind_pointer_origins` bind.
+  - A pointer binder does three things a struct tail does not: it rebinds
+    the `mut` argument (`BinderMutability`), re-applies interior and
+    `_subtree` projections (`append_interior_tag`, `append_subtree`), and
+    builds symbolic-cast pointers (`symbolic_cast_pointer`).
+  - The callers run the passes in different orders:
+    `generics.rs` runs the struct pass first, while
+    `origins/construct.rs` and `type_resolution.rs` run the pointer pass
+    first. Make them agree before merging.
+  - When it lands, a pointer's arguments bind as any struct's, and the
+    two pointer passes go.
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R2211 A `ref` binding's `TyKind::Ref` and a `!lit.ref` value's
   `TyKind::LitRef` are two types, where upstream's are one**
@@ -11214,6 +11220,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   from, where Mojito keeps two types with two sets of rules.
   - It is cheaper after R2210, when `LitRef` is reached only through the
     `lit.ref` ops.
+  - It retires `PointerOrigin::Union`, the union view the pointer
+    accessors and `TyKind::LitRef` still give: once a `!lit.ref` stores
+    its origin as an `Origin` beside a `mut` argument, as a pointer does,
+    the view has no reader that needs it.
   - Sites the split leaves: the MIR verifier's `same_address`
     (`mir/verify/instr.rs`) admits a pointer or reference register bound
     to a `!lit.ref` slot (a pack element's address at the declared
@@ -11511,6 +11521,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     prints `True True False False`.
   - Probe: `var f = r` for that `r` is rejected at the pin with
     "parameter 'x_is_mut' … is not bound", naming the binder.
+  - A pointer whose `mut` an origin binder decides holds that binder's
+    implicit `mut` as a `Deferred` reference under a reserved owner
+    (`Mutability::mut_argument`, `origin.rs`). Once every origin binder
+    declares its `mut`, the pointer's `mut` argument is that declared
+    binder's read, as `o: Origin[mut=m]` makes it `m`.
   - Found while landing R2375 (2026-11-21).
   - Depends on nothing.
   - Model: Fable, Planned.

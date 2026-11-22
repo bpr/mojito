@@ -1692,9 +1692,9 @@ impl Checker {
                             kind if kind
                                 .as_simd()
                                 .is_some_and(|(_, width)| width.is_inferred())
-                                || kind.pointer_address_space().is_some_and(
-                                    mojito_types::types::AddressSpaceSlot::is_inferred,
-                                ) =>
+                                || kind
+                                    .pointer_address_space()
+                                    .is_some_and(|space| space.is_inferred()) =>
                             {
                                 Self::bind_unbound_tails(&expected, &found)
                             }

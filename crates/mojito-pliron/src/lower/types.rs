@@ -147,7 +147,7 @@ pub fn lower_ty(
     if ty.is_numeric_literal() || ty.is_string_literal() {
         return Ok(LowerTy::ZeroSized);
     }
-    if matches!(ty.kind(), TyKind::Struct(..)) {
+    if matches!(ty.kind(), TyKind::Struct(..)) && !ty.is_pointer() {
         let translated = declarations.translated_type(ty);
         if translated != *ty {
             return lower_ty(function, &translated, layout, declarations, location);
@@ -171,7 +171,7 @@ pub fn lower_ty(
         // one opaque target pointer in its address space, upstream's
         // `ptr addrspace(N)`, regardless of its element type.
         _ if let Some(space) = address_space_slot(ty) => Ok(LowerTy::Scalar(pointer_scalar(
-            function, ty, space, location,
+            function, ty, &space, location,
         )?)),
         // A `!kgen.generator` is a trivial register type that holds nothing,
         // and a `Never` register is never written: its call ends the block.
@@ -226,9 +226,9 @@ pub fn lower_ty(
 
 /// The address-space slot of a `Pointer`, a `!kgen.pointer`, a `!lit.ref`,
 /// or a reference.
-pub(super) fn address_space_slot(ty: &Ty) -> Option<&AddressSpaceSlot> {
+pub(super) fn address_space_slot(ty: &Ty) -> Option<AddressSpaceSlot> {
     match ty.kind() {
-        TyKind::Ref(reference) => Some(&reference.address_space),
+        TyKind::Ref(reference) => Some(reference.address_space.clone()),
         kind => kind.pointer_address_space(),
     }
 }

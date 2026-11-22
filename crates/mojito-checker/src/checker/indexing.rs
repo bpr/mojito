@@ -1055,7 +1055,9 @@ impl Checker {
                         .to_string(),
                 ));
             }
-            TyKind::Struct(..) | TyKind::Param { .. } if !object_type.is_simd() => {
+            TyKind::Struct(..) | TyKind::Param { .. }
+                if !object_type.is_simd() && !object_type.is_pointer() =>
+            {
                 let descriptor = self.synthetic_slice_descriptor(&span, 0, [lower, upper, step])?;
                 let result = self.infer_method_call(
                     &span,
@@ -1836,10 +1838,10 @@ impl Checker {
         // field is its `!kgen.simd` storage, and a pointer is the declared
         // `Pointer`, whose `_mlir_value` is the `!kgen.pointer` it wraps.
         let nominal = match obj_ty.kind() {
+            pointer if pointer.is_pointer() => self.member_struct(&obj_ty, field),
             TyKind::Struct(sname, targs) => {
                 Some((sname.as_str(), std::borrow::Cow::Borrowed(targs.as_slice())))
             }
-            pointer if pointer.is_pointer() => self.member_struct(&obj_ty, field),
             _ => None,
         };
         if let Some((sname, targs)) = nominal {

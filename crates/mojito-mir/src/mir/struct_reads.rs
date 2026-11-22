@@ -144,15 +144,18 @@ impl<'d, 'a> StructReads<'d, 'a> {
         // A numeric literal's register holds no value: every reader takes
         // the number from its type's `value` argument, so that argument is
         // read wherever the type is.
-        let numeric_literal = [
+        // A pointer's layout is still the compiler's own rule (R2486), which
+        // reads every argument its type spells.
+        let reads_every_argument = [
             mojito_types::types::INT_LITERAL_TYPE_NAME,
             mojito_types::types::FLOAT_LITERAL_TYPE_NAME,
+            mojito_types::types::POINTER_TYPE_NAME,
         ]
         .contains(&name);
         let Some(structure) = self
             .declarations
             .structure(name)
-            .filter(|_| !numeric_literal)
+            .filter(|_| !reads_every_argument)
         else {
             return LayoutReads::All;
         };

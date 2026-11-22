@@ -39,7 +39,6 @@ impl Checker {
         let address_space = ty
             .kind()
             .pointer_address_space()
-            .cloned()
             .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
         // A `ref[Self.o]` parameter receiver reads as the enclosing struct's
         // binder, as `Pointer(to=xs)` does: `array.unsafe_ptr()` in `Span`'s

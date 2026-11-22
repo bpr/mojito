@@ -470,6 +470,21 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                 solve_simd_slot_values(&dtype, &width, Some(actual_dtype), Some(actual_width), out);
             }
         }
+        // A pointer's address space is a value argument of its own: a
+        // binder slot (`Pointer[T, _, address_space=a]`) binds to the
+        // actual's space, and the pointees solve as types do.
+        (pattern_kind, actual_kind)
+            if let (Some((pattern_element, pattern_space)), Some((element, address_space))) =
+                (pattern_kind.address_parts(), actual_kind.address_parts())
+                && pattern_kind.is_pointer() == actual_kind.is_pointer()
+                && std::mem::discriminant(pattern_kind) == std::mem::discriminant(actual_kind) =>
+        {
+            if let Some(reference) = pattern_space.expr().and_then(ParamExpr::as_decl_ref) {
+                out.entry(reference.name.to_string())
+                    .or_insert_with(|| address_space.value());
+            }
+            solve_value_args(pattern_element, element, out);
+        }
         // A spread of a pack that is still a parameter (`Tuple[*Self.Ts]`
         // against `Tuple[Int, Bool]`, the fieldwise constructor of a variadic
         // struct) binds the pack to the actual's whole element list, whether
@@ -528,45 +543,6 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
                     _ => {}
                 }
             }
-        }
-        // A pointer's address space is a value argument of its own: a
-        // binder slot (`Pointer[T, _, address_space=a]`) binds to the
-        // actual's space, and the pointees solve as types do.
-        (
-            TyKind::Pointer {
-                element: pattern_element,
-                address_space: pattern_space,
-                ..
-            }
-            | TyKind::KgenPointer {
-                element: pattern_element,
-                address_space: pattern_space,
-            }
-            | TyKind::LitRef {
-                element: pattern_element,
-                address_space: pattern_space,
-                ..
-            },
-            TyKind::Pointer {
-                element,
-                address_space,
-                ..
-            }
-            | TyKind::KgenPointer {
-                element,
-                address_space,
-            }
-            | TyKind::LitRef {
-                element,
-                address_space,
-                ..
-            },
-        ) if std::mem::discriminant(pattern.kind()) == std::mem::discriminant(actual.kind()) => {
-            if let Some(reference) = pattern_space.expr().and_then(ParamExpr::as_decl_ref) {
-                out.entry(reference.name.to_string())
-                    .or_insert_with(|| address_space.value());
-            }
-            solve_value_args(pattern_element, element, out);
         }
         (TyKind::Ref(pattern_reference), TyKind::Ref(actual_reference)) => {
             if let Some(reference) = pattern_reference
@@ -638,15 +614,9 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
                 .collect(),
         )
         .into(),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => Ty::pointer(
-            substitute_self(element, replacement),
-            origin.clone(),
-            address_space.clone(),
-        ),
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
+            Ty::pointer(substitute_self(element, replacement), origin, address_space)
+        }
         TyKind::KgenPointer {
             element,
             address_space,
@@ -817,11 +787,9 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
             args: map_args(args),
         }
         .into(),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => Ty::pointer(recur(element), origin.clone(), space(address_space)),
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
+            Ty::pointer(recur(element), origin, space(&address_space))
+        }
         TyKind::KgenPointer {
             element,
             address_space,

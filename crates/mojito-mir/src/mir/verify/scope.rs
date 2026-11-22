@@ -363,6 +363,11 @@ impl ScopeCx<'_> {
                 self.expr(role, "mutability", expr, &MetaTy::value(Ty::bool()), nested);
             }
             TyKind::LitOrigin(_) | TyKind::LitOriginSet => {}
+            TyKind::Struct(..)
+                if let Some((element, _, address_space)) = ty.kind().pointer_parts() =>
+            {
+                self.address_in(role, element, &address_space, nested);
+            }
             TyKind::Struct(name, args) => {
                 let declared = self
                     .declarations
@@ -463,12 +468,7 @@ impl ScopeCx<'_> {
             | TyKind::VariadicPack(element) => {
                 self.walk_in(role, element, nested);
             }
-            TyKind::Pointer {
-                element,
-                address_space,
-                ..
-            }
-            | TyKind::KgenPointer {
+            TyKind::KgenPointer {
                 element,
                 address_space,
             }
@@ -476,13 +476,7 @@ impl ScopeCx<'_> {
                 element,
                 address_space,
                 ..
-            } => {
-                if let Some(expr) = address_space.expr() {
-                    let space = MetaTy::value(mojito_types::types::address_space_ty());
-                    self.expr(role, "address space", expr, &space, nested);
-                }
-                self.walk_in(role, element, nested);
-            }
+            } => self.address_in(role, element, address_space, nested),
             TyKind::LitRefPack { elements, .. } => {
                 for element in elements {
                     self.walk_in(role, element, nested);
@@ -519,6 +513,22 @@ impl ScopeCx<'_> {
             | TyKind::KgenDtype
             | TyKind::SelfType => {}
         }
+    }
+
+    /// A pointer's, `!kgen.pointer`'s, or `!lit.ref`'s symbolic address
+    /// space and pointee.
+    fn address_in(
+        &mut self,
+        role: &str,
+        element: &Ty,
+        address_space: &mojito_types::types::AddressSpaceSlot,
+        nested: &mut Vec<(ParamId, MetaTy)>,
+    ) {
+        if let Some(expr) = address_space.expr() {
+            let space = MetaTy::value(mojito_types::types::address_space_ty());
+            self.expr(role, "address space", expr, &space, nested);
+        }
+        self.walk_in(role, element, nested);
     }
 
     /// Bring a declaration list's binders into `nested` and walk each

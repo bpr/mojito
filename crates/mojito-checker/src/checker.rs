@@ -1761,7 +1761,12 @@ impl Checker {
         else {
             return (from.clone(), to.clone());
         };
-        if name != to_name || from_args.len() != to_args.len() || from.is_simd() {
+        if name != to_name
+            || from_args.len() != to_args.len()
+            || from.is_simd()
+            || from.is_pointer()
+            || to.is_pointer()
+        {
             return (from.clone(), to.clone());
         }
         let decls = self.structs.get(name).map(|info| info.params.as_slice());
@@ -2169,6 +2174,9 @@ impl Checker {
         let TyKind::Struct(name, arguments) = to.kind() else {
             return Vec::new();
         };
+        if to.is_pointer() {
+            return Vec::new();
+        }
         let Some(info) = self.structs.get(name).filter(|_| {
             mojito_symbol::symbol::lifecycle_constructor(target)
                 .is_some_and(|(_, method)| method == "__init__")
@@ -2271,9 +2279,9 @@ impl Checker {
     ) -> Result<Option<SelectedConversion>, TypeError> {
         // `SIMD`'s declared `@implicit` initializers take every dtype; an
         // instance their body rejects fails its own assert.
-        let Some((name, args)) = mojito_types::types::nominal_parts(to)
-            .filter(|_| matches!(to.kind(), TyKind::Struct(..)) && !to.is_string_literal())
-        else {
+        let Some((name, args)) = mojito_types::types::nominal_parts(to).filter(|_| {
+            matches!(to.kind(), TyKind::Struct(..)) && !to.is_pointer() && !to.is_string_literal()
+        }) else {
             return Ok(None);
         };
         let name = name.to_string();

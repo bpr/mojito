@@ -468,7 +468,7 @@ impl FnLowering<'_> {
         let space = address_space_slot(ty).ok_or_else(|| {
             self.unsupported_reg(format!("a pointer load of the non-pointer `{ty}`"), at)
         })?;
-        Ok(pointer_scalar(self.name, ty, space, self.reg_span(at))?.handle(ctx))
+        Ok(pointer_scalar(self.name, ty, &space, self.reg_span(at))?.handle(ctx))
     }
 }
 

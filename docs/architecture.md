@@ -3765,18 +3765,26 @@ binder or the receiver (`Origin::Projected`) and the unsafe-any origin
 (`Origin::owned_interior`/`subtree`). `PointerOrigin::as_origin` is the
 loan-tracked root, with the projection dropped, for the readers that ask
 which storage a loan keeps. A union origin argument over concrete members
-(`origin_of(x, y)`) is `PointerOrigin::Union`, the staged view of the
-`Origin::Union` it parts to, which R2210's struct-typed `Pointer` retires:
-its loans are each place member's (`Flatten::pointer_origin_loans`), and an
-argument carrying it carries every member place.
+(`origin_of(x, y)`) is `PointerOrigin::Union`, the view of the
+`Origin::Union` it parts to that the accessors and a `!lit.ref` give, until
+`!lit.ref` stops storing a `PointerOrigin` (R2211): its loans are each place
+member's (`Flatten::pointer_origin_loans`), and an argument carrying it
+carries every member place.
 
 The bundled library declares upstream's `struct Pointer`, and the
-compiler's pointer type is that struct's identity (`Ty::new` folds an
-application into `TyKind::Pointer`, `nominal_parts` answers it back). A
-pointer is a declared struct for member lookup, associated members, and
-conformance, read through `nominal_struct`, never through a kind test, and
-a scalar for layout and the runtime: no reader treats it as a one-field
-aggregate. Its parameters (`p.origin`, `type_of(p).T`), `comptime`
+compiler's pointer type is that struct's application
+`Pointer[mut, T, origin, address_space]` in one canonical form
+(`Ty::pointer`): the `origin` and `mut` arguments are the provenance's
+`PointerOrigin::parts`, the `mut` one a `Bool` or, when an origin binder
+decides it, that binder's implicit `mut` value binder
+(`Mutability::mut_argument`). `Ty::new` folds every other spelling into it,
+and the accessors (`TyKind::pointer_parts`) decode it losslessly; an
+application no provenance decodes stays the nominal struct. A pointer is a
+declared struct for member lookup, associated members, conformance, and
+reflection, read through `nominal_struct`, never through a kind test, and
+a scalar for layout, copies, loans, and the runtime:
+`TyKind::as_non_simd_struct` excludes it, as it does `SIMD`, so no struct
+rule treats it as a one-field aggregate (R2486). Its parameters (`p.origin`, `type_of(p).T`), `comptime`
 members (`_mlir_type`, `_mlir_lit_ref`), and conformances (`Intable`,
 `Writable`) are the declaration's, in the checker and the elaborator
 alike. The checker's rules still win for every member

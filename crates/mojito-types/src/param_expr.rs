@@ -5099,8 +5099,9 @@ impl MetaTy {
     pub fn is_unresolved_struct(&self, declared: &Self) -> bool {
         matches!(
             (self.as_value().map(Ty::kind), declared.as_value().map(Ty::kind)),
-            (Some(TyKind::Struct(found, _)), Some(TyKind::Struct(expected, _)))
-                if crate::types::struct_template(found) == crate::types::struct_template(expected)
+            (Some(found_kind @ TyKind::Struct(found, _)), Some(TyKind::Struct(expected, _)))
+                if !found_kind.is_pointer()
+                    && crate::types::struct_template(found) == crate::types::struct_template(expected)
         )
     }
 }

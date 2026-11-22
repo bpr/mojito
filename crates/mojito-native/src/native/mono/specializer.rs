@@ -5224,7 +5224,7 @@ fn folded_literal_operator(
 }
 
 fn declared_operator_receiver(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::Struct(..))
+    matches!(ty.kind(), TyKind::Struct(..)) && !ty.is_pointer()
 }
 
 /// The runtime pack of the type list `elements`, each substituted under

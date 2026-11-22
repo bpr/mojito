@@ -284,6 +284,7 @@ pub fn modelled_conformance(
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
                 return every(items, trait_name, element);
             }
+            kind if kind.is_pointer() => false,
             TyKind::Func(_)
             | TyKind::GenericFunc(_)
             | TyKind::Overload(_)
@@ -298,7 +299,6 @@ pub fn modelled_conformance(
             | TyKind::KgenPointer { .. }
             | TyKind::LitRef { .. }
             | TyKind::LitRefPack { .. }
-            | TyKind::Pointer { .. }
             | TyKind::Generator(_)
             | TyKind::AnyStruct(_)
             | TyKind::AnyTrait(_)
@@ -381,10 +381,10 @@ fn modelled_trivial_register_passable(ty: &Ty) -> bool {
         || simd_valued_ty(ty)
         || thin_callable(ty)
         || ty.is_bool()
+        || ty.is_pointer()
         || matches!(
             ty.kind(),
             TyKind::None
-                | TyKind::Pointer { .. }
                 | TyKind::Index
                 | TyKind::I1
                 | TyKind::Ui8

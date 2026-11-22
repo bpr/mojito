@@ -734,6 +734,32 @@ impl Mutability {
             Self::Immutable
         }
     }
+
+    /// This mutability as a `Pointer`'s `mut` argument: a `Bool`, or the
+    /// implicit `mut` value binder of the origin binder that decides it
+    /// (upstream's `o: Origin[mut=m]` ties a pointer's `mut` to `m`).
+    #[must_use]
+    pub fn mut_argument(self) -> crate::ct::CtValue {
+        match self {
+            Self::Mutable => crate::ct::CtValue::Bool(true),
+            Self::Immutable => crate::ct::CtValue::Bool(false),
+            Self::Param(id) => crate::ct::CtValue::Deferred(crate::param_expr::ParamRef {
+                id: crate::param_expr::ParamId::new(ORIGIN_MUT_BINDER_OWNER, id.0 as usize),
+                name: std::sync::Arc::from("mut"),
+            }),
+        }
+    }
+
+    /// The origin binder's mutability a `Pointer`'s deferred `mut`
+    /// argument names ([`Mutability::mut_argument`]), or `None` for any
+    /// other binder.
+    #[must_use]
+    pub fn of_mut_argument(binder: &crate::param_expr::ParamRef) -> Option<Self> {
+        (&*binder.id.owner == ORIGIN_MUT_BINDER_OWNER)
+            .then(|| u32::try_from(binder.id.slot).ok())
+            .flatten()
+            .map(|slot| Self::Param(OriginParamId(slot)))
+    }
 }
 
 /// The pointer projection a clone origin binder re-applies for a caller place.
@@ -815,9 +841,9 @@ pub enum PointerOrigin {
     },
     /// `origin_of(a, b)`: the normalized [`Origin::union`] of at least two
     /// concrete members (places, and the static, untracked, and unsafe-any
-    /// origins a union keeps). This is the staged view of the struct
-    /// argument's `Origin::Union`, until `TyKind::Pointer` carries that
-    /// argument itself.
+    /// origins a union keeps). This is the view of a pointer's
+    /// `Origin::Union` argument that the pointer accessors and a `!lit.ref`
+    /// give.
     Union {
         members: Vec<Origin>,
         mutability: Mutability,
@@ -894,13 +920,11 @@ impl PointerOrigin {
     /// `origin` struct argument and the `mut` argument. Lossless:
     /// [`PointerOrigin::from_parts`] inverts it.
     pub fn parts(&self) -> (Origin, Mutability) {
-        let flag = |mutable: bool| {
-            if mutable {
-                Mutability::Mutable
-            } else {
-                Mutability::Immutable
-            }
-        };
+        self.clone().into_parts()
+    }
+
+    /// [`PointerOrigin::parts`], consuming the provenance.
+    pub fn into_parts(self) -> (Origin, Mutability) {
         let projected = |base: Origin, interior: &[String], subtree: bool| {
             let path: Vec<_> = interior
                 .iter()
@@ -914,38 +938,28 @@ impl PointerOrigin {
             }
         };
         match self {
-            Self::Place { place, mutable } => (Origin::Place(place.clone()), flag(*mutable)),
+            Self::Place { place, mutable } => (Origin::Place(place), Mutability::of(mutable)),
             Self::Param {
                 id,
                 mutability,
                 interior,
                 subtree,
-            } => (
-                projected(Origin::Param(*id), interior, *subtree),
-                *mutability,
-            ),
+            } => (projected(Origin::Param(id), &interior, subtree), mutability),
             Self::SelfPlace {
                 mutability,
                 interior,
                 subtree,
-            } => (
-                projected(Origin::SelfParam, interior, *subtree),
-                *mutability,
-            ),
+            } => (projected(Origin::SelfParam, &interior, subtree), mutability),
             Self::Static { mutable } => (
-                Origin::mut_cast(Origin::Static, LitOriginMut::Known(*mutable)),
-                flag(*mutable),
+                Origin::mut_cast(Origin::Static, LitOriginMut::Known(mutable)),
+                Mutability::of(mutable),
             ),
-            Self::Untracked { mutable } => {
-                (Origin::Untracked { mutable: *mutable }, flag(*mutable))
-            }
-            Self::UnsafeAny { mutable } => {
-                (Origin::UnsafeAny { mutable: *mutable }, flag(*mutable))
-            }
+            Self::Untracked { mutable } => (Origin::Untracked { mutable }, Mutability::of(mutable)),
+            Self::UnsafeAny { mutable } => (Origin::UnsafeAny { mutable }, Mutability::of(mutable)),
             Self::Union {
                 members,
                 mutability,
-            } => (Origin::Union(members.clone()), *mutability),
+            } => (Origin::Union(members), mutability),
         }
     }
 
@@ -1443,6 +1457,10 @@ impl Origin {
     }
 }
 
+/// The reserved owner of an origin binder's implicit `mut` value binder,
+/// its slot the origin binder's id.
+const ORIGIN_MUT_BINDER_OWNER: &str = "$origin_mut";
+
 /// Upstream's `ImmStaticOrigin` attribute, the static constants' field of
 /// the static origin.
 const STATIC_CONSTANTS_ORIGIN: &str =
@@ -1785,12 +1803,7 @@ mod tests {
                 subtree: false,
             })
         );
-        for unheld in [
-            Origin::Unbound,
-            Origin::union([place(1, &[]), place(2, &[])]),
-        ] {
-            assert!(PointerOrigin::from_parts(unheld, Mutability::Immutable).is_none());
-        }
+        assert!(PointerOrigin::from_parts(Origin::Unbound, Mutability::Immutable).is_none());
     }
 
     #[test]

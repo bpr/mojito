@@ -140,8 +140,9 @@ the struct.
   moves `Pointer(to=)` and `p[]`.
 - R2209 makes a pointer's origin an `Origin` value. It waits on R2139's
   classification slices (R2339, R2340, R2341), which `--task` runs first.
-- R2210 deletes `TyKind::Pointer`, with schema and package bumps. It may
-  split in two.
+- R2210 deleted `TyKind::Pointer` with a package bump and no MIR schema
+  bump. R2486 and R2487 carry the struct rules and binding passes it
+  left as the compiler's.
 - R2211 plans folding `TyKind::Ref` and `TyKind::LitRef` into one type,
   as upstream has one.
 

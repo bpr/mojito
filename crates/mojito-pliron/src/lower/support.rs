@@ -264,9 +264,9 @@ pub fn scalar_type(
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(1),
         } => Ok(ScalarTy::of_dtype(*dtype)),
-        TyKind::Ref(_) | TyKind::Pointer { .. } => {
+        kind if matches!(kind, TyKind::Ref(_)) || kind.is_pointer() => {
             let space = address_space_slot(ty).expect("a reference or pointer has a space");
-            pointer_scalar(function, ty, space, location)
+            pointer_scalar(function, ty, &space, location)
         }
         other => Err(PlironError {
             function: Some(function.to_string()),

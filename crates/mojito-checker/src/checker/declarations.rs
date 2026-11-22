@@ -3321,7 +3321,9 @@ impl Checker {
         let instance = self
             .self_instance_ty(name)
             .map(|instance| match instance.kind() {
-                TyKind::Struct(_, arguments) => Self::struct_instance_type(name, arguments.clone()),
+                TyKind::Struct(_, arguments) if !instance.is_pointer() => {
+                    Self::struct_instance_type(name, arguments.clone())
+                }
                 _ => instance,
             });
         match constructed.zip(instance) {
@@ -5661,6 +5663,7 @@ impl Checker {
                 return Ok(
                     if self.coerces_by_origins(&found, &instance)
                         && matches!(found.kind(), TyKind::Struct(..))
+                        && !found.is_pointer()
                         && !found.is_numeric_literal()
                     {
                         found

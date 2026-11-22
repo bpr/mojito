@@ -1334,6 +1334,11 @@ subscript is a call of a declared `Pointer.__getitem__`, and
 reader rejects the tag. The package format moves to `mojito-package 252`,
 whose checked facts gain the `LitRefPlace` adjustment (R2474).
 
+The package format moves to `mojito-package 253` with schema 1.221
+unchanged: a pointer type is the declared `Pointer` struct's application
+rather than a variant of its own, so a packaged type's encoding changes
+while the `pointer` record keeps its fields (R2210).
+
 Schema 1.216 gives the types `pointer`, `kgen_pointer`, and `lit_ref` an
 optional `address_space` field, upstream's `AddressSpace` parameter of
 `Pointer[T, origin, address_space=...]`, `!kgen.pointer<T, as>`, and

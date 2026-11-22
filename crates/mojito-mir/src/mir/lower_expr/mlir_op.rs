@@ -120,7 +120,7 @@ impl<'a> Flatten<'a> {
                 .f
                 .reg_types
                 .get(&pointer.0)
-                .and_then(|ty| ty.kind().pointer_address_space().cloned())
+                .and_then(|ty| ty.kind().pointer_address_space())
                 .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
             Ty::from(TyKind::Ref(RefTy {
                 referent,

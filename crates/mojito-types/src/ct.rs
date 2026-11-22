@@ -1927,7 +1927,7 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         ),
         // A symbolic slot has no source spelling: its declaration is still
         // a template.
-        kind if kind.is_simd() => return None,
+        kind if kind.is_simd() || kind.is_pointer() => return None,
         // A generated public-Tuple specialization keeps its element types
         // behind an argument-less symbol: spell the canonical `Tuple[...]`
         // application, which the checker maps back onto the specialization.

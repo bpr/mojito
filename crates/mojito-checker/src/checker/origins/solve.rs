@@ -789,6 +789,7 @@ fn reconcile_origins(
             TyKind::Struct(declared_name, declared_args),
             TyKind::Struct(bound_name, bound_args),
         ) if !found.is_simd()
+            && !found.is_pointer()
             && found_name == declared_name
             && declared_name == bound_name
             && found_args.len() == declared_args.len()

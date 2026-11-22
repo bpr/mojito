@@ -3,7 +3,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::ArgConvention;
-use mojito_types::types::AddressSpaceSlot;
 use mojito_types::types::TyKind;
 use mojito_types::types::storage_ty;
 
@@ -1707,10 +1706,10 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
     if let (Some(to_space), Some(from_space)) = (
         to.kind()
             .pointer_address_space()
-            .and_then(AddressSpaceSlot::known),
+            .and_then(|space| space.known()),
         from.kind()
             .pointer_address_space()
-            .and_then(AddressSpaceSlot::known),
+            .and_then(|space| space.known()),
     ) && to_space != from_space
     {
         errors.push(format!(
@@ -1821,7 +1820,7 @@ fn same_address(found: &Ty, expected: &Ty) -> bool {
         )),
         pointer => Some((
             pointer.pointer_element()?.clone(),
-            pointer.pointer_address_space()?.clone(),
+            pointer.pointer_address_space()?,
             false,
         )),
     };

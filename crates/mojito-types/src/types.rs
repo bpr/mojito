@@ -487,9 +487,14 @@ impl AddressSpaceSlot {
 
     /// The `AddressSpace` value the slot holds, as a parameter value.
     pub fn value(&self) -> CtValue {
+        self.clone().into_value()
+    }
+
+    /// [`AddressSpaceSlot::value`], consuming the slot.
+    pub fn into_value(self) -> CtValue {
         match self {
-            Self::Known(space) => address_space_value(*space),
-            Self::Expr(space) => CtValue::Expr(space.clone()),
+            Self::Known(space) => address_space_value(space),
+            Self::Expr(space) => CtValue::Expr(space),
         }
     }
 
@@ -1097,15 +1102,6 @@ pub enum TyKind {
     /// The built-in tagged union `Variant[T1, ..., Tn]`.  The ordering is part
     /// of the type: it determines the runtime tag used by typed projection.
     Variant(Vec<Ty>),
-    /// Upstream's `Pointer[mut, T, origin, address_space]` struct, the
-    /// compiler's representation of its instances: [`Ty::new`] folds a
-    /// struct application into it. The VM erases the origin, but the
-    /// checked and MIR types retain it for lifetime/aggregate validation.
-    Pointer {
-        element: Ty,
-        origin: crate::origin::PointerOrigin,
-        address_space: AddressSpaceSlot,
-    },
     /// Upstream's raw address `!kgen.pointer<T>` (`Pointer[T, o]._mlir_type`),
     /// the one field a `Pointer` wraps, displayed
     /// ``__mlir_type.`!kgen.pointer<T>` ``. It carries no origin, so it lends
@@ -1506,23 +1502,31 @@ impl Ty {
         simd_ty_from_slots(dtype.clone(), width.clone()).unwrap_or_else(|_| simd_node(dtype, width))
     }
 
-    /// A `Pointer[element, origin]`. Code outside this crate builds and
-    /// reads a `Pointer` only through this constructor and
-    /// [`TyKind::as_pointer`], [`TyKind::pointer_element`], and
-    /// [`TyKind::is_pointer`]. An application of the struct
-    /// `std.memory.pointer` declares folds to this type ([`Ty::new`]), and
-    /// [`nominal_parts`] answers it as that application.
+    /// A `Pointer[mut, element, origin, address_space]`: the application
+    /// of the struct `std.memory.pointer` declares, in canonical form. Its
+    /// `origin` and `mut` arguments are `origin`'s
+    /// [parts](crate::origin::PointerOrigin::parts), the `mut` one a `Bool`
+    /// or, when an origin binder decides it, that binder's `mut`
+    /// ([`Mutability::mut_argument`](crate::origin::Mutability::mut_argument)).
+    /// Code outside this crate builds a pointer only through this
+    /// constructor and reads one through [`TyKind::pointer_parts`] and the
+    /// accessors beside it, which decode those arguments back; a struct
+    /// application in any other form folds to this one ([`Ty::new`]).
     pub fn pointer(
         element: Self,
         origin: crate::origin::PointerOrigin,
         address_space: AddressSpaceSlot,
     ) -> Self {
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        }
-        .into()
+        let (origin, mutability) = origin.into_parts();
+        Self(Arc::new(TyNode::new(TyKind::Struct(
+            POINTER_TYPE_NAME.to_string(),
+            vec![
+                TyArg::Val(mutability.mut_argument()),
+                TyArg::Ty(element),
+                TyArg::Origin(origin),
+                TyArg::Val(address_space.into_value()),
+            ],
+        ))))
     }
 
     /// The raw address `!kgen.pointer<element, address_space>`.
@@ -1598,14 +1602,17 @@ impl TyKind {
     }
 
     /// The name and arguments of a struct application other than a `SIMD`
-    /// one. A rule written for a declared struct reads this rather than
-    /// matching [`TyKind::Struct`], since `SIMD`'s copies and lanes are
-    /// still the compiler's own rules (R1575), though its application is
-    /// the declared struct. A `StringLiteral[v]`, `IntLiteral[v]`, or
-    /// `FloatLiteral[v]` application is the declared struct it names.
+    /// or a `Pointer` one. A rule written for a declared struct reads this
+    /// rather than matching [`TyKind::Struct`], since `SIMD`'s copies and
+    /// lanes (R1575) and a pointer's copies, loans, and layout are still the
+    /// compiler's own rules, though their applications are the declared
+    /// structs. A `StringLiteral[v]`, `IntLiteral[v]`, or `FloatLiteral[v]`
+    /// application is the declared struct it names.
     pub fn as_non_simd_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
         match self {
-            Self::Struct(name, arguments) if !self.is_simd() => Some((name, arguments)),
+            Self::Struct(name, arguments) if !self.is_simd() && !self.is_pointer() => {
+                Some((name, arguments))
+            }
             _ => None,
         }
     }
@@ -1624,29 +1631,21 @@ impl TyKind {
     /// The pointee and origin of a `Pointer[T, origin]`, owned: the origin
     /// is the struct's origin argument read with its `mut` one.
     pub fn as_pointer(&self) -> Option<(Ty, crate::origin::PointerOrigin)> {
-        match self {
-            Self::Pointer {
-                element, origin, ..
-            } => Some((element.clone(), origin.clone())),
-            _ => None,
-        }
+        self.pointer_parts()
+            .map(|(element, origin, _)| (element.clone(), origin))
     }
 
     /// The pointee of a `Pointer[T, origin]`, its type argument `T`.
-    pub const fn pointer_element(&self) -> Option<&Ty> {
-        match self {
-            Self::Pointer { element, .. } => Some(element),
-            _ => None,
-        }
+    pub fn pointer_element(&self) -> Option<&Ty> {
+        pointer_arguments(self)
+            .filter(|arguments| arguments.decode().is_some())
+            .map(|arguments| arguments.element)
     }
 
     /// The origin of a `Pointer[T, origin]`, owned
     /// ([`TyKind::as_pointer`]).
     pub fn pointer_origin(&self) -> Option<crate::origin::PointerOrigin> {
-        match self {
-            Self::Pointer { origin, .. } => Some(origin.clone()),
-            _ => None,
-        }
+        self.pointer_parts().map(|(_, origin, _)| origin)
     }
 
     /// The pointee and origin of a `Pointer[T, origin]` or of the
@@ -1678,13 +1677,36 @@ impl TyKind {
     }
 
     /// The address space of a `Pointer`, a `!kgen.pointer`, or a
-    /// `!lit.ref`.
-    pub const fn pointer_address_space(&self) -> Option<&AddressSpaceSlot> {
+    /// `!lit.ref` ([`TyKind::address_parts`]).
+    pub fn pointer_address_space(&self) -> Option<AddressSpaceSlot> {
+        self.address_parts().map(|(_, space)| space)
+    }
+
+    /// The pointee, provenance, and address space of a `Pointer[mut, T,
+    /// origin, address_space]`: its `T`, its `origin` read with its `mut`,
+    /// and its `address_space`.
+    pub fn pointer_parts(&self) -> Option<(&Ty, crate::origin::PointerOrigin, AddressSpaceSlot)> {
+        let arguments = pointer_arguments(self)?;
+        let (origin, address_space) = arguments.decode()?;
+        Some((arguments.element, origin, address_space))
+    }
+
+    /// The pointee and address space of a `Pointer`, a `!kgen.pointer`, or
+    /// a `!lit.ref`.
+    pub fn address_parts(&self) -> Option<(&Ty, AddressSpaceSlot)> {
         match self {
-            Self::Pointer { address_space, .. }
-            | Self::KgenPointer { address_space, .. }
-            | Self::LitRef { address_space, .. } => Some(address_space),
-            _ => None,
+            Self::KgenPointer {
+                element,
+                address_space,
+            }
+            | Self::LitRef {
+                element,
+                address_space,
+                ..
+            } => Some((element, address_space.clone())),
+            pointer => pointer
+                .pointer_parts()
+                .map(|(element, _, space)| (element, space)),
         }
     }
 
@@ -1696,9 +1718,12 @@ impl TyKind {
         }
     }
 
-    /// Whether this is a `Pointer[T, origin]`.
-    pub const fn is_pointer(&self) -> bool {
-        matches!(self, Self::Pointer { .. })
+    /// Whether this is a `Pointer[T, origin]`: an application of the
+    /// declared struct in the canonical form [`Ty::pointer`] builds. A
+    /// `Pointer` application no provenance decodes (the bare template, an
+    /// unbound origin) is the nominal struct alone.
+    pub fn is_pointer(&self) -> bool {
+        pointer_arguments(self).is_some_and(|arguments| arguments.decode().is_some())
     }
 
     /// The dtype and lane count of a `SIMD` vector whose slots are both
@@ -2859,6 +2884,7 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
         kind if kind.is_float_literal() => "SIMD[DType.float64, 1]".to_string(),
         kind if let Some((dtype, width)) = kind.as_simd() => format!("SIMD[{dtype}, {width}]"),
         kind if kind.is_string_literal() => "StringLiteral".to_string(),
+        kind if kind.is_pointer() => kind.to_string(),
         TyKind::None => "None".to_string(),
         TyKind::Struct(name, args) => {
             // A public tuple's specialization symbol encodes its elements;
@@ -2955,6 +2981,11 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
         }
     };
     match ty.kind() {
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
+            expand_pack_spread(element, pack, elements),
+            origin,
+            address_space,
+        ),
         // A spread of a list computed from packs closes over the bound
         // pack, to its elements once every length in it is known.
         TyKind::Struct(name, arguments) if let Some(list) = list_spread_argument(arguments) => {
@@ -3011,16 +3042,6 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
         TyKind::PopArray { size, element } => TyKind::PopArray {
             size: size.clone(),
             element: expand_pack_spread(element, pack, elements),
-        }
-        .into(),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => TyKind::Pointer {
-            element: expand_pack_spread(element, pack, elements),
-            origin: origin.clone(),
-            address_space: address_space.clone(),
         }
         .into(),
         TyKind::KgenPointer {
@@ -4824,7 +4845,7 @@ pub type TySubst = HashMap<ParamId, Ty>;
 ///
 /// Part of a struct type's identity, so `FixedBuffer[8] != FixedBuffer[9]`.
 /// Origins participate in checked identity but erase from the runtime ABI,
-/// exactly like `TyKind::Pointer` origins — a parameterized iterator's `origin`
+/// exactly like a pointer's origin — a parameterized iterator's `origin`
 /// argument distinguishes checked types without changing lowering.
 #[derive(Debug, Clone, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TyArg {
@@ -4894,6 +4915,14 @@ impl fmt::Display for TyKind {
         if let Some(value) = self.float_literal_value() {
             return write!(f, "FloatLiteral[{}]", value.pop_attribute_spelling());
         }
+        if let Some((element, origin, address_space)) = self.pointer_parts() {
+            write!(f, "Pointer[{element}, ")?;
+            fmt_pointer_origin(f, &origin)?;
+            if !address_space.is_generic() {
+                write!(f, ", address_space={address_space}")?;
+            }
+            return write!(f, "]");
+        }
         match self {
             Self::Infer => write!(f, "_"),
             Self::None => write!(f, "None"),
@@ -4927,18 +4956,6 @@ impl fmt::Display for TyKind {
             }
             Self::Dependent(dependent) => write!(f, "{}", dependent.expr()),
             Self::SelfType => write!(f, "Self"),
-            Self::Pointer {
-                element,
-                origin,
-                address_space,
-            } => {
-                write!(f, "Pointer[{element}, ")?;
-                fmt_pointer_origin(f, origin)?;
-                if !address_space.is_generic() {
-                    write!(f, ", address_space={address_space}")?;
-                }
-                write!(f, "]")
-            }
             Self::KgenPointer {
                 element,
                 address_space,
@@ -5133,6 +5150,9 @@ fn nominal_type_arguments<'a>(ty: &'a TyKind, expected: &str) -> Option<Vec<&'a 
 pub fn erase_origin_arguments(ty: &Ty) -> Ty {
     let recur = |ty: &Ty| erase_origin_arguments(ty);
     match ty.kind() {
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
+            Ty::pointer(recur(element), origin, address_space)
+        }
         TyKind::Struct(..) if ty.is_closed() => ty.clone(),
         TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
@@ -5159,16 +5179,6 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
         TyKind::PopArray { size, element } => TyKind::PopArray {
             size: size.clone(),
             element: recur(element),
-        }
-        .into(),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => TyKind::Pointer {
-            element: recur(element),
-            origin: origin.clone(),
-            address_space: address_space.clone(),
         }
         .into(),
         TyKind::KgenPointer {
@@ -5213,6 +5223,13 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
 pub fn erase_origins(ty: &Ty) -> Ty {
     let recur = erase_origins;
     match ty.kind() {
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
+            recur(element),
+            crate::origin::PointerOrigin::Static {
+                mutable: matches!(origin.parts().1, crate::origin::Mutability::Mutable),
+            },
+            address_space,
+        ),
         TyKind::Struct(..) if ty.is_closed() => ty.clone(),
         TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
@@ -5225,18 +5242,6 @@ pub fn erase_origins(ty: &Ty) -> Ty {
                 })
                 .collect(),
         )),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => TyKind::Pointer {
-            element: recur(element),
-            origin: crate::origin::PointerOrigin::Static {
-                mutable: matches!(origin.parts().1, crate::origin::Mutability::Mutable),
-            },
-            address_space: address_space.clone(),
-        }
-        .into(),
         TyKind::KgenPointer {
             element,
             address_space,
@@ -5430,30 +5435,21 @@ pub fn bind_origin_params<S: std::hash::BuildHasher>(
     let recur = |ty: &Ty| bind_origin_params(ty, origins);
     let mapped = substitute_origin_params(ty, origins);
     match mapped.kind() {
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => match origin {
-            PointerOrigin::Param {
-                id,
-                mutability: Mutability::Param(_),
-                ..
-            } if origins.contains_key(&id.0) => symbolic_cast_pointer(
-                recur(element),
-                origin.parts().0.substitute_params(origins),
-                address_space,
-            ),
-            _ => Err(recur(element)),
-        }
-        .unwrap_or_else(|element| {
-            TyKind::Pointer {
-                element,
-                origin: bind(origin),
-                address_space: address_space.clone(),
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
+            match &origin {
+                PointerOrigin::Param {
+                    id,
+                    mutability: Mutability::Param(_),
+                    ..
+                } if origins.contains_key(&id.0) => symbolic_cast_pointer(
+                    recur(element),
+                    origin.parts().0.substitute_params(origins),
+                    &address_space,
+                ),
+                _ => Err(recur(element)),
             }
-            .into()
-        }),
+            .unwrap_or_else(|element| Ty::pointer(element, bind(&origin), address_space))
+        }
         TyKind::LitRef {
             element,
             origin,
@@ -5505,21 +5501,14 @@ pub fn map_origins(ty: &Ty, map: &impl Fn(&crate::origin::Origin) -> crate::orig
             .collect()
     };
     match ty.kind() {
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
+            Ty::pointer(recur(element), origin, address_space)
+        }
         TyKind::Struct(name, args) => TyKind::Struct(name.clone(), map_args(args)).into(),
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
             base: recur(base),
             name: name.clone(),
             args: map_args(args),
-        }
-        .into(),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => TyKind::Pointer {
-            element: recur(element),
-            origin: origin.clone(),
-            address_space: address_space.clone(),
         }
         .into(),
         TyKind::KgenPointer {
@@ -5582,19 +5571,12 @@ pub fn map_struct_arguments(ty: &Ty, map: &impl Fn(&str, Vec<TyArg>) -> Vec<TyAr
             .collect()
     };
     match ty.kind() {
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
+            Ty::pointer(recur(element), origin, address_space)
+        }
         TyKind::Struct(name, args) => {
             ty.reusing(TyKind::Struct(name.clone(), map(name, map_args(args))))
         }
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => TyKind::Pointer {
-            element: recur(element),
-            origin: origin.clone(),
-            address_space: address_space.clone(),
-        }
-        .into(),
         TyKind::LitRef {
             element,
             origin,
@@ -5974,6 +5956,11 @@ fn canonical_pointer_application(kind: &TyKind) -> Option<Ty> {
     };
     let mutability = match mutable {
         CtValue::Bool(mutable) => crate::origin::Mutability::of(*mutable),
+        CtValue::Deferred(binder)
+            if let Some(mutability) = crate::origin::Mutability::of_mut_argument(binder) =>
+        {
+            mutability
+        }
         CtValue::Deferred(_) => symbolic()?,
         CtValue::Expr(expr) => match expr.as_constant() {
             Some(CtValue::Bool(mutable)) => crate::origin::Mutability::of(*mutable),
@@ -5990,13 +5977,55 @@ fn canonical_pointer_application(kind: &TyKind) -> Option<Ty> {
     ))
 }
 
-/// The `mut` binder of upstream's `Pointer`, its first declared parameter:
-/// the `mut` argument of a pointer whose mutability an origin binder decides.
-fn pointer_mut_binder() -> ParamRef {
-    ParamRef {
-        id: ParamId::new(POINTER_TYPE_NAME, 0),
-        name: Arc::from("mut"),
+/// The arguments of a `Pointer` application in [`Ty::pointer`]'s canonical
+/// form, before its provenance is decoded.
+struct PointerArguments<'a> {
+    mutability: crate::origin::Mutability,
+    element: &'a Ty,
+    origin: &'a crate::origin::Origin,
+    address_space: &'a CtValue,
+}
+
+impl PointerArguments<'_> {
+    /// The provenance and address space these arguments spell, or `None`
+    /// when no pointer holds them.
+    fn decode(&self) -> Option<(crate::origin::PointerOrigin, AddressSpaceSlot)> {
+        Some((
+            crate::origin::PointerOrigin::from_parts(self.origin.clone(), self.mutability)?,
+            AddressSpaceSlot::of_value(self.address_space)?,
+        ))
     }
+}
+
+/// The arguments of `kind` when it is a four-argument `Pointer` application
+/// whose `mut` argument is a `Bool` or an origin binder's `mut`.
+fn pointer_arguments(kind: &TyKind) -> Option<PointerArguments<'_>> {
+    let TyKind::Struct(name, args) = kind else {
+        return None;
+    };
+    let [
+        TyArg::Val(mutable),
+        TyArg::Ty(element),
+        TyArg::Origin(origin),
+        TyArg::Val(address_space),
+    ] = args.as_slice()
+    else {
+        return None;
+    };
+    if name != POINTER_TYPE_NAME {
+        return None;
+    }
+    let mutability = match mutable {
+        CtValue::Bool(mutable) => crate::origin::Mutability::of(*mutable),
+        CtValue::Deferred(binder) => crate::origin::Mutability::of_mut_argument(binder)?,
+        _ => return None,
+    };
+    Some(PointerArguments {
+        mutability,
+        element,
+        origin,
+        address_space,
+    })
 }
 
 /// The SIMD type of two slots that may still be symbolic.
@@ -6056,38 +6085,13 @@ pub fn simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
 /// The declared struct `ty` is an instance of, and its arguments.
 ///
 /// A struct application answers its own name and arguments, a literal's
-/// (`StringLiteral[value]`, `IntLiteral[value]`) included. A pointer
-/// answers upstream's `Pointer[mut, T, origin, address_space]`, its `mut`
-/// a `Bool` or, when an origin binder decides it, the struct's own `mut`
-/// binder. Two provenances have no exact spelling there, since upstream's
-/// `origin: Origin[mut=mut]` ties the two: a binder's origin at another
-/// binder's mutability reads back at its own binder's, and the receiver's
-/// origin at a binder's mutability does not fold back. A caller rebuilding
-/// a pointer goes through [`Ty::pointer`], never these parts.
+/// (`StringLiteral[value]`, `IntLiteral[value]`) and a pointer's
+/// (`Pointer[mut, T, origin, address_space]`, [`Ty::pointer`]) included.
+/// A caller rebuilding a pointer goes through [`Ty::pointer`], never these
+/// parts.
 pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
     match ty.kind() {
         TyKind::Struct(name, args) => Some((name, std::borrow::Cow::Borrowed(args))),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => {
-            let (origin, mutability) = origin.parts();
-            let mutable = match mutability {
-                crate::origin::Mutability::Mutable => CtValue::Bool(true),
-                crate::origin::Mutability::Immutable => CtValue::Bool(false),
-                crate::origin::Mutability::Param(_) => CtValue::Deferred(pointer_mut_binder()),
-            };
-            Some((
-                POINTER_TYPE_NAME,
-                std::borrow::Cow::Owned(vec![
-                    TyArg::Val(mutable),
-                    TyArg::Ty(element.clone()),
-                    TyArg::Origin(origin),
-                    TyArg::Val(address_space.value()),
-                ]),
-            ))
-        }
         _ => None,
     }
 }
@@ -6095,12 +6099,11 @@ pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
 /// The type of a string literal's bytes' address: a `Pointer[Byte]` into
 /// the static memory that lives for the whole program.
 pub fn static_string_address_ty() -> Ty {
-    TyKind::Pointer {
-        element: canonical_simd_ty(Dtype::UInt8, 1),
-        origin: crate::origin::PointerOrigin::Static { mutable: false },
-        address_space: AddressSpaceSlot::GENERIC,
-    }
-    .into()
+    Ty::pointer(
+        canonical_simd_ty(Dtype::UInt8, 1),
+        crate::origin::PointerOrigin::Static { mutable: false },
+        AddressSpaceSlot::GENERIC,
+    )
 }
 
 /// Whether `ty` is a width-one `SIMD` (a scalar alias such as `Int`
@@ -6243,7 +6246,15 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
     }
     match (from.kind(), to.kind()) {
         (TyKind::Param { binder: a, .. }, TyKind::Param { binder: b, .. }) => a == b,
-        (TyKind::Struct(an, aargs), TyKind::Struct(bn, bargs)) => {
+        (a, b)
+            if let (Some((a, ao, aa)), Some((b, bo, ba))) =
+                (a.pointer_parts(), b.pointer_parts()) =>
+        {
+            aa == ba && coerces(a, b) && ao.coerces_to(&bo)
+        }
+        (TyKind::Struct(an, aargs), TyKind::Struct(bn, bargs))
+            if !from.is_pointer() && !to.is_pointer() =>
+        {
             an == bn
                 && aargs.len() == bargs.len()
                 && aargs.iter().zip(bargs).all(|(a, b)| match (a, b) {
@@ -6287,18 +6298,6 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         | (TyKind::Ui8, TyKind::Ui8)
         | (TyKind::KgenDtype, TyKind::KgenDtype) => true,
         (
-            TyKind::Pointer {
-                element: a,
-                origin: ao,
-                address_space: aa,
-            },
-            TyKind::Pointer {
-                element: b,
-                origin: bo,
-                address_space: ba,
-            },
-        )
-        | (
             TyKind::LitRef {
                 element: a,
                 origin: ao,
@@ -6498,13 +6497,13 @@ pub fn callable_environment_coerces(
 
 /// Whether `Copyable.copy` on a value of this type has no callee.
 ///
-/// The compiler's own value types (`Bool`, tuples, packs, and variants)
+/// The compiler's own value types (`Bool`, a pointer, tuples, packs, and variants)
 /// copy by the ordinary value read. Structs (a `SIMD`, a `StringLiteral`,
 /// and a numeric literal application included),
 /// parametric, associated, and reference types resolve their `copy`
 /// through declarations or trait dispatch instead.
-pub const fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
-    !matches!(ty, TyKind::Struct(..))
+pub fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
+    (ty.is_pointer() || !matches!(ty, TyKind::Struct(..)))
         && !matches!(
             ty,
             TyKind::Param { .. }
@@ -6544,7 +6543,6 @@ pub fn copy_is_identity(ty: &TyKind) -> bool {
             | TyKind::Ui8
             | TyKind::KgenDtype
             | TyKind::None
-            | TyKind::Pointer { .. }
             | TyKind::KgenPointer { .. }
             | TyKind::LitRef { .. }
             | TyKind::LitRefPack { .. }
@@ -6552,7 +6550,8 @@ pub fn copy_is_identity(ty: &TyKind) -> bool {
                 width: SimdWidth::Known(1),
                 ..
             }
-    ) || is_scalar_simd(ty)
+    ) || ty.is_pointer()
+        || is_scalar_simd(ty)
         || ty.is_numeric_literal()
 }
 
@@ -7213,6 +7212,11 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             }
             .into()
         }),
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
+            substitute(element, subst),
+            origin,
+            substitute_address_space(&address_space, subst),
+        ),
         TyKind::Struct(..) if ty.is_closed() => ty.clone(),
         TyKind::Struct(name, args) => {
             let mut args = map_tyargs(args, |t| substitute(t, subst));
@@ -7271,16 +7275,6 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                 .map(|ty| substitute(ty, subst))
                 .collect(),
         )
-        .into(),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => TyKind::Pointer {
-            element: substitute(element, subst),
-            origin: origin.clone(),
-            address_space: substitute_address_space(address_space, subst),
-        }
         .into(),
         TyKind::KgenPointer {
             element,
@@ -7502,6 +7496,11 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             }
             .into(),
         },
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
+            rewrite_ty(element, rewrite)?,
+            origin,
+            address_space.try_map(|space| rewrite.expr(space))?,
+        ),
         TyKind::Struct(..) if ty.is_closed() && !rewrite.visits_closed() => ty.clone(),
         kind if let Some((dtype, width)) = kind.as_simd() => {
             let dtype = match dtype {
@@ -7559,16 +7558,6 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         TyKind::RuntimePack(elements) => TyKind::RuntimePack(list(elements, rewrite)?).into(),
         TyKind::Variant(alternatives) => TyKind::Variant(list(alternatives, rewrite)?).into(),
         TyKind::Overload(candidates) => TyKind::Overload(all(candidates, rewrite)?).into(),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => TyKind::Pointer {
-            element: rewrite_ty(element, rewrite)?,
-            origin: origin.clone(),
-            address_space: address_space.try_map(|space| rewrite.expr(space))?,
-        }
-        .into(),
         TyKind::KgenPointer {
             element,
             address_space,
@@ -8388,6 +8377,9 @@ fn symbolic_in(ty: &Ty, keyed: bool) -> bool {
         | TyKind::Assoc { .. }
         | TyKind::Dependent(_)
         | TyKind::SelfType => true,
+        kind if let Some((element, _, address_space)) = kind.pointer_parts() => {
+            address_space.is_symbolic() || symbolic_in(element, keyed)
+        }
         TyKind::Struct(..) if ty.is_closed() => false,
         // An instance's own `mut=` binder left deferred (an unbound
         // origin's) is erased with that origin.
@@ -8428,11 +8420,6 @@ fn symbolic_in(ty: &Ty, keyed: bool) -> bool {
         TyKind::KgenPointer {
             element,
             address_space,
-        }
-        | TyKind::Pointer {
-            element,
-            address_space,
-            ..
         }
         | TyKind::LitRef {
             element,
@@ -8632,31 +8619,18 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
         TyArg::Val(_) => false,
     };
     match ty.kind() {
+        kind if let Some((element, address_space)) = kind.address_parts() => {
+            address_space
+                .expr()
+                .is_some_and(|expr| expr_mentions(expr, predicate))
+                || mentions(element, predicate)
+        }
         TyKind::Struct(..) if skip_closed && ty.is_closed() => false,
         TyKind::Struct(_, arguments) => arguments.iter().any(argument_mentions),
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::AnyStruct(element)
         | TyKind::VariadicPack(element) => mentions(element, predicate),
-        TyKind::KgenPointer {
-            element,
-            address_space,
-        }
-        | TyKind::Pointer {
-            element,
-            address_space,
-            ..
-        }
-        | TyKind::LitRef {
-            element,
-            address_space,
-            ..
-        } => {
-            address_space
-                .expr()
-                .is_some_and(|expr| expr_mentions(expr, predicate))
-                || mentions(element, predicate)
-        }
         TyKind::LitRefPack { elements, .. } => {
             elements.iter().any(|element| mentions(element, predicate))
         }
@@ -8722,30 +8696,17 @@ fn decorated(ty: &Ty) -> bool {
         TyKind::Assoc { base, args, .. } => {
             base.carries_decorations() || args.iter().any(argument_decorated)
         }
-        TyKind::Struct(_, arguments) => arguments.iter().any(argument_decorated),
-        TyKind::ComptimeList(element)
-        | TyKind::ParamList(element)
-        | TyKind::AnyStruct(element)
-        | TyKind::VariadicPack(element) => element.carries_decorations(),
-        TyKind::KgenPointer {
-            element,
-            address_space,
-        }
-        | TyKind::Pointer {
-            element,
-            address_space,
-            ..
-        }
-        | TyKind::LitRef {
-            element,
-            address_space,
-            ..
-        } => {
+        kind if let Some((element, address_space)) = kind.address_parts() => {
             address_space
                 .expr()
                 .is_some_and(ParamExpr::carries_decorations)
                 || element.carries_decorations()
         }
+        TyKind::Struct(_, arguments) => arguments.iter().any(argument_decorated),
+        TyKind::ComptimeList(element)
+        | TyKind::ParamList(element)
+        | TyKind::AnyStruct(element)
+        | TyKind::VariadicPack(element) => element.carries_decorations(),
         TyKind::LitRefPack { elements, .. } => elements.iter().any(Ty::carries_decorations),
         TyKind::PopArray { size, element } => {
             matches!(size, ArraySize::Expr(expr) if expr.carries_decorations())
@@ -8856,6 +8817,7 @@ fn closed_kind(kind: &TyKind) -> bool {
         | TyKind::KgenDtype => true,
         TyKind::KgenSimd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
         TyKind::KgenAddressSimd { width } => !width.is_expr(),
+        kind if kind.is_pointer() => false,
         TyKind::Struct(_, arguments) => arguments.iter().all(closed_argument),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().all(Ty::is_closed)
@@ -9124,6 +9086,11 @@ fn expand_packs<S: std::hash::BuildHasher>(
             || TyKind::VariadicPack(recurse(element)),
             |elements| TyKind::Tuple(elements.clone()),
         )),
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
+            recurse(element),
+            origin,
+            expand_address_space(&address_space, subst, packs, values),
+        ),
         TyKind::Struct(name, arguments) => {
             let spread = spread_struct_arguments::<()>(
                 name,
@@ -9179,16 +9146,6 @@ fn expand_packs<S: std::hash::BuildHasher>(
             )
             .into()
         }
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => TyKind::Pointer {
-            element: recurse(element),
-            origin: origin.clone(),
-            address_space: expand_address_space(address_space, subst, packs, values),
-        }
-        .into(),
         TyKind::KgenPointer {
             element,
             address_space,
@@ -10025,14 +9982,9 @@ fn flatten_constraint<'a>(
 
 fn collect_named_origins(ty: &Ty, out: &mut Vec<crate::origin::Origin>) {
     match ty.kind() {
-        TyKind::Pointer {
-            element, origin, ..
-        }
-        | TyKind::LitRef {
-            element, origin, ..
-        } => {
+        kind if let Some((element, origin)) = kind.pointer_or_lit_ref() => {
             out.extend(origin.as_origin());
-            collect_named_origins(element, out);
+            collect_named_origins(&element, out);
         }
         TyKind::LitRefPack { elements, origin } => {
             out.extend(origin.as_origin());
@@ -10868,6 +10820,14 @@ mod pointer_application_tests {
         AddressSpaceSlot::GENERIC.value()
     }
 
+    /// The declaration's own `mut` binder, which its `Self` spells.
+    fn declared_mut() -> ParamRef {
+        ParamRef {
+            id: ParamId::new(POINTER_TYPE_NAME, 0),
+            name: Arc::from("mut"),
+        }
+    }
+
     fn symbolic_space() -> AddressSpaceSlot {
         AddressSpaceSlot::of(ParamContext::detached().decl_ref(
             ParamId::new(POINTER_TYPE_NAME, 3),
@@ -10933,7 +10893,7 @@ mod pointer_application_tests {
         let id = OriginParamId(2);
         assert_eq!(
             application(pointer_args(
-                CtValue::Deferred(pointer_mut_binder()),
+                CtValue::Deferred(declared_mut()),
                 Origin::Param(id),
                 space.value(),
             )),
@@ -10952,7 +10912,7 @@ mod pointer_application_tests {
 
     #[test]
     fn a_pointer_application_no_pointer_denotes_stays_the_struct() {
-        let deferred = CtValue::Deferred(pointer_mut_binder());
+        let deferred = CtValue::Deferred(declared_mut());
         for unfolded in [
             application(Vec::new()),
             application(pointer_args(
@@ -10965,7 +10925,7 @@ mod pointer_application_tests {
                 Origin::Place(place()),
                 generic(),
             )),
-            application(pointer_args(deferred, Origin::SelfParam, generic())),
+            application(pointer_args(deferred, Origin::Unbound, generic())),
             application(pointer_args(CtValue::Bool(true), Origin::Static, generic())),
             application(pointer_args(CtValue::Int(1), Origin::Static, generic())),
         ] {
@@ -11053,41 +11013,25 @@ mod pointer_application_tests {
             let pointer = Ty::pointer(Ty::int(), origin, AddressSpaceSlot::GENERIC);
             application(nominal_parts(&pointer).expect("a pointer").1.into_owned())
         };
-        assert_eq!(
-            parts(PointerOrigin::Param {
+        for origin in [
+            PointerOrigin::Param {
                 id,
                 mutability: Mutability::Param(OriginParamId(1)),
                 interior: Vec::new(),
                 subtree: false,
-            }),
-            Ty::pointer(
-                Ty::int(),
-                PointerOrigin::Param {
-                    id,
-                    mutability: Mutability::Param(id),
-                    interior: Vec::new(),
-                    subtree: false,
-                },
-                AddressSpaceSlot::GENERIC
-            )
-        );
-        assert_eq!(
-            parts(PointerOrigin::SelfPlace {
+            },
+            PointerOrigin::SelfPlace {
                 mutability: Mutability::Param(id),
                 interior: Vec::new(),
                 subtree: false,
-            }),
-            Ty::pointer(
-                Ty::int(),
-                PointerOrigin::SelfPlace {
-                    mutability: Mutability::RECEIVER,
-                    interior: Vec::new(),
-                    subtree: false,
-                },
-                AddressSpaceSlot::GENERIC
-            ),
-            "the receiver's origin reads at the receiver's mutability"
-        );
+            },
+        ] {
+            assert_eq!(
+                parts(origin.clone()),
+                Ty::pointer(Ty::int(), origin, AddressSpaceSlot::GENERIC),
+                "another binder's `mut` reads back as that binder's"
+            );
+        }
     }
 }
 

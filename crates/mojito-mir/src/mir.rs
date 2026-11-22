@@ -394,6 +394,9 @@ impl MirDeclarations {
         let TyKind::Struct(name, _) = ty.kind() else {
             return None;
         };
+        if ty.is_pointer() {
+            return None;
+        }
         let requirement = self
             .trait_declaration("Defaultable")?
             .requirements
@@ -409,7 +412,7 @@ impl MirDeclarations {
     /// trivial fieldwise copy, and any other type.
     pub fn copy_initializer(&self, ty: &Ty) -> Option<&str> {
         match ty.kind() {
-            TyKind::Struct(name, _) => {
+            TyKind::Struct(name, _) if !ty.is_pointer() => {
                 self.lifecycle_member(mojito_types::types::struct_template(name), "__copyinit__")
             }
             _ => None,
@@ -478,6 +481,9 @@ impl MirDeclarations {
         let TyKind::Struct(name, arguments) = ty.kind() else {
             return None;
         };
+        if ty.is_pointer() {
+            return None;
+        }
         mojito_symbol::symbol::member_table_name(ty)
             .filter(|instance| instance != name)
             .and_then(|instance| self.structure(&instance))

@@ -825,11 +825,8 @@ pub const fn pointer_address(allocation: u64, offset: i64, stride: i64) -> i64 {
 pub fn address_pointee(ty: &mojito_types::types::Ty) -> Option<&mojito_types::types::Ty> {
     use mojito_types::types::TyKind;
     match ty.kind() {
-        TyKind::Pointer { element, .. }
-        | TyKind::KgenPointer { element, .. }
-        | TyKind::LitRef { element, .. } => Some(element),
         TyKind::Ref(reference) => Some(&reference.referent),
-        _ => None,
+        kind => kind.address_parts().map(|(element, _)| element),
     }
 }
 
@@ -2340,17 +2337,13 @@ const fn low_bits(bits: usize) -> u64 {
 /// origin: the address the VM holds for it, whose mutability is no part of
 /// the value.
 fn held_address(ty: &mojito_types::types::Ty) -> mojito_types::types::Ty {
-    match ty.kind() {
-        mojito_types::types::TyKind::Pointer {
-            element,
-            address_space,
-            ..
-        } => mojito_types::types::Ty::pointer(
+    match ty.kind().pointer_parts() {
+        Some((element, _, address_space)) => mojito_types::types::Ty::pointer(
             held_address(element),
             mojito_types::origin::PointerOrigin::Static { mutable: false },
-            address_space.clone(),
+            address_space,
         ),
-        _ => ty.clone(),
+        None => ty.clone(),
     }
 }
 

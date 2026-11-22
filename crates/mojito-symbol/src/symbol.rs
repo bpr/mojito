@@ -1588,11 +1588,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // the struct's `mut` parameter, as an instance struct spells its
         // value arguments; an overload key, which `ast_raw` mirrors, does
         // not.
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => {
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
             let mutability = match (mode, origin.parts().1) {
                 (KeyMode::Instance, mojito_types::origin::Mutability::Mutable) => {
                     format!("{}$", value_argument_raw(&CtValue::Bool(true), mode))
@@ -1605,7 +1601,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
             format!(
                 "Pointer${mutability}{}{}",
                 ty_raw_in(element, self_ty, mode),
-                address_space_raw(address_space)
+                address_space_raw(&address_space)
             )
         }
         TyKind::KgenPointer {
@@ -2693,11 +2689,7 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         // A caller place a clone binder stands for spells as the first
         // clone binder (`Elab::clone_binding`): one clone serves every place
         // of the shape, as an erased struct origin tail does.
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => Ty::pointer(
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
             respell(element),
             origin.clone_bindable_place().map_or_else(
                 || origin.clone(),
@@ -2705,7 +2697,7 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
                     projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
                 },
             ),
-            address_space.clone(),
+            address_space,
         ),
         TyKind::KgenPointer {
             element,

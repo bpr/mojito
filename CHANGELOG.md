@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A pointer's type is the application of the declared `struct Pointer`,
+  `Pointer[mut, T, origin, address_space]`, in one canonical form, where
+  it was a compiler type of its own: `reflect[type_of(p)].field_count()`
+  now reads the declared struct and is `1`, as at the pin. The origin and
+  `mut` arguments round-trip exactly, so a pointer whose origin names one
+  binder and whose mutability another reads back as itself. A pointer's
+  copies, loans, and layout stay the compiler's rules (R2486). The package
+  format moves to `mojito-package 253`; MIR text is unchanged.
+
 - The pointer subscript syntax `p[]`, `p[i]`, and `p[unsafe_offset=i]`, in
   value, place, and augmented position, calls `Pointer`'s declared
   `__getitem__`s, retiring the checker's subscript rule: the reference's

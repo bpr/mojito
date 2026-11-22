@@ -305,12 +305,12 @@ pub fn accepts_arg(kind: CType, ty: &Ty) -> bool {
             is_integer_scalar(ty)
         }
         CType::ConstCharPtr => match ty.kind() {
-            TyKind::Pointer { element, .. } => is_byte(element),
+            kind if let Some(element) = kind.pointer_element() => is_byte(element),
             TyKind::Struct(name, _) => is_c_string_slice_struct(name),
             _ => false,
         },
         CType::CharPtr | CType::VoidPtr | CType::IntPtr => match ty.kind() {
-            TyKind::Pointer { .. } => true,
+            kind if kind.is_pointer() => true,
             TyKind::Struct(name, _) => is_c_string_slice_struct(name),
             _ => false,
         },
@@ -328,11 +328,13 @@ pub fn accepts_ret(kind: CType, ty: &Ty) -> bool {
             (ty.kind().is_int() || ty.kind().is_uint())
                 || matches!(scalar_simd_dtype(ty), Some(dtype) if is_integer_dtype(dtype))
         }
-        CType::IntPtr => matches!(ty.kind(), TyKind::Pointer { element, .. }
-            if matches!(scalar_simd_dtype(element), Some(Dtype::Int32 | Dtype::UInt32))),
-        CType::ConstCharPtr | CType::CharPtr | CType::VoidPtr => {
-            matches!(ty.kind(), TyKind::Pointer { .. })
-        }
+        CType::IntPtr => ty.pointer_element().is_some_and(|element| {
+            matches!(
+                scalar_simd_dtype(element),
+                Some(Dtype::Int32 | Dtype::UInt32)
+            )
+        }),
+        CType::ConstCharPtr | CType::CharPtr | CType::VoidPtr => ty.is_pointer(),
         CType::Void => matches!(ty.kind(), TyKind::None) || ty.kind().is_none_type(),
     }
 }
@@ -394,11 +396,11 @@ mod tests {
     #[test]
     fn argument_and_return_acceptance() {
         let int32 = canonical_simd_ty(Dtype::Int32, 1);
-        let byte_ptr = Ty::new(TyKind::Pointer {
-            element: canonical_simd_ty(Dtype::UInt8, 1),
-            origin: crate::origin::PointerOrigin::Untracked { mutable: true },
-            address_space: crate::types::AddressSpaceSlot::GENERIC,
-        });
+        let byte_ptr = Ty::pointer(
+            canonical_simd_ty(Dtype::UInt8, 1),
+            crate::origin::PointerOrigin::Untracked { mutable: true },
+            crate::types::AddressSpaceSlot::GENERIC,
+        );
         assert!(accepts_arg(CType::Int, &int32));
         assert!(accepts_arg(CType::Int, &Ty::int()));
         assert!(!accepts_arg(CType::Int, &Ty::string_literal_of("s")));
@@ -417,11 +419,11 @@ mod tests {
         assert!(!accepts_ret(CType::IntPtr, &byte_ptr));
         assert!(!accepts_ret(
             CType::Int,
-            &Ty::new(TyKind::Pointer {
-                element: Ty::int(),
-                origin: crate::origin::PointerOrigin::Untracked { mutable: false },
-                address_space: crate::types::AddressSpaceSlot::GENERIC,
-            })
+            &Ty::pointer(
+                Ty::int(),
+                crate::origin::PointerOrigin::Untracked { mutable: false },
+                crate::types::AddressSpaceSlot::GENERIC,
+            )
         ));
     }
 }

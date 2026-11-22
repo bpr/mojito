@@ -2738,7 +2738,7 @@ impl Checker {
                 || matches!(kind, TyKind::KgenSimd { .. } | TyKind::PopArray { .. })
                 || kind
                     .pointer_address_space()
-                    .is_some_and(mojito_types::types::AddressSpaceSlot::is_symbolic))
+                    .is_some_and(|space| space.is_symbolic()))
                 && !values.is_empty()
                 && mojito_types::types::is_symbolic(ty) =>
             {
@@ -2824,15 +2824,13 @@ impl Checker {
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .into(),
-            TyKind::Pointer {
-                element,
-                origin,
-                address_space,
-            } => Ty::pointer(
-                self.resolve_dependent_ty(element, values)?,
-                origin.clone(),
-                address_space.clone(),
-            ),
+            kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
+                Ty::pointer(
+                    self.resolve_dependent_ty(element, values)?,
+                    origin,
+                    address_space,
+                )
+            }
             // A reference's space closes at the bound `AddressSpace` binder.
             TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
                 referent: self.resolve_dependent_ty(&reference.referent, values)?,
@@ -3508,15 +3506,9 @@ impl Checker {
                     .collect(),
             )
             .into(),
-            TyKind::Pointer {
-                element,
-                origin,
-                address_space,
-            } => Ty::pointer(
-                self.resolve_assoc_ty(element),
-                origin.clone(),
-                address_space.clone(),
-            ),
+            kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
+                Ty::pointer(self.resolve_assoc_ty(element), origin, address_space)
+            }
             TyKind::Func(func) => {
                 let FuncTy {
                     environment,
@@ -4935,21 +4927,17 @@ impl Checker {
                     })
                     .unwrap_or_else(|| declared.clone())
             }
-            (
-                TyKind::Pointer {
-                    element,
-                    origin,
-                    address_space,
-                },
-                TyKind::Pointer {
-                    address_space: found_space,
-                    ..
-                },
-            ) if address_space.is_inferred() => {
-                Ty::pointer(element.clone(), origin.clone(), found_space.clone())
+            (declared_kind, found_kind)
+                if let (Some((element, origin, address_space)), Some((_, _, found_space))) =
+                    (declared_kind.pointer_parts(), found_kind.pointer_parts())
+                    && address_space.is_inferred() =>
+            {
+                Ty::pointer(element.clone(), origin, found_space)
             }
             (TyKind::Struct(name, declared_args), TyKind::Struct(found_name, found_args))
                 if !declared.is_simd()
+                    && !declared.is_pointer()
+                    && !found.is_pointer()
                     && name == found_name
                     && declared_args.len() == found_args.len() =>
             {
@@ -5556,6 +5544,9 @@ fn type_is_symbolic(ty: &Ty) -> bool {
             dtype.is_symbolic() || width.is_symbolic()
         }
         kind if kind.is_string_literal() || kind.is_numeric_literal() => false,
+        kind if let Some((element, _, address_space)) = kind.pointer_parts() => {
+            address_space.is_symbolic() || type_is_symbolic(element)
+        }
         TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::KgenAddressSimd { width } => width.is_symbolic(),
@@ -5588,12 +5579,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::VariadicPack(element) => type_is_symbolic(element),
         TyKind::PopArray { size, element } => size.is_symbolic() || type_is_symbolic(element),
         TyKind::LitOrigin(mutability) => mutability.is_symbolic(),
-        TyKind::Pointer {
-            element,
-            address_space,
-            ..
-        }
-        | TyKind::KgenPointer {
+        TyKind::KgenPointer {
             element,
             address_space,
         }

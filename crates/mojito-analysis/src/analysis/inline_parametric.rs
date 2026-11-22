@@ -3232,7 +3232,7 @@ impl TyRewrite for BoundMutabilities {
             {
                 *mutability = bound;
             }
-            let address_space = ty.kind().pointer_address_space()?.clone();
+            let address_space = ty.kind().pointer_address_space()?;
             return Some(Ty::pointer(
                 rewrite_ty(&element, self).ok()?,
                 origin,

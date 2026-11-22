@@ -564,14 +564,10 @@ pub(super) fn instantiate_checked_type(
                 .collect::<Result<Vec<_>, _>>()?,
         )
         .into(),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => Ty::pointer(
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
             instantiate_checked_type(element, type_arguments, value_arguments, bound_values)?,
-            origin.clone(),
-            instantiate_address_space(address_space, value_arguments)?,
+            origin,
+            instantiate_address_space(&address_space, value_arguments)?,
         ),
         TyKind::KgenPointer {
             element,

@@ -2342,6 +2342,18 @@ fn ty_value(ty: &Ty) -> String {
                 ("width", simd_width_slot(&width)),
             ],
         ),
+        // A pointer keeps its compact record, its `origin` read with its
+        // `mut` argument.
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => record(
+            "pointer",
+            &with_address_space(
+                vec![
+                    ("element", ty_value(element)),
+                    ("origin", pointer_origin(&origin)),
+                ],
+                &address_space,
+            ),
+        ),
         TyKind::Struct(name, args) => record(
             "struct_type",
             &[
@@ -2383,20 +2395,6 @@ fn ty_value(ty: &Ty) -> String {
         }
         TyKind::VariadicPack(value) => positional("variadic_pack", &ty_value(value)),
         TyKind::Variant(values) => positional("variant", &list(values.iter().map(ty_value))),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => record(
-            "pointer",
-            &with_address_space(
-                vec![
-                    ("element", ty_value(element)),
-                    ("origin", pointer_origin(origin)),
-                ],
-                address_space,
-            ),
-        ),
         TyKind::KgenPointer {
             element,
             address_space,

@@ -107,8 +107,11 @@ impl Specializer<'_> {
     /// `dispatch`, calls `receiver`'s witness dunder: a struct instance's
     /// always, and a `Pointer`'s, which declares its comparisons.
     pub(super) fn witness_operator_receiver(&self, receiver: &Ty, dispatch: &str) -> bool {
-        matches!(receiver.kind(), mojito_types::types::TyKind::Struct(..))
-            || receiver.is_pointer() && self.declares_witness(receiver, dispatch)
+        if receiver.is_pointer() {
+            self.declares_witness(receiver, dispatch)
+        } else {
+            matches!(receiver.kind(), mojito_types::types::TyKind::Struct(..))
+        }
     }
 
     /// Whether a display method takes the `Writable` protocol's writer; any

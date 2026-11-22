@@ -2286,7 +2286,8 @@ impl Checker {
                         | TyKind::KgenDtype
                         | TyKind::KgenDeferred
                         | TyKind::KgenTarget
-                ) && (called.is_some() || self.calls_compile_time_callee(expr)) =>
+                ) && !kind.is_pointer()
+                    && (called.is_some() || self.calls_compile_time_callee(expr)) =>
             {
                 ty
             }
@@ -3890,18 +3891,19 @@ impl Checker {
         }
         .filter(|ty| {
             ty.is_simd()
-                || matches!(
-                    ty.kind(),
-                    TyKind::Index
-                        | TyKind::I1
-                        | TyKind::Ui8
-                        | TyKind::None
-                        | TyKind::KgenDtype
-                        | TyKind::Struct(..)
-                        | TyKind::KgenDeferred
-                        | TyKind::KgenTarget
-                        | TyKind::KgenString
-                )
+                || !ty.is_pointer()
+                    && matches!(
+                        ty.kind(),
+                        TyKind::Index
+                            | TyKind::I1
+                            | TyKind::Ui8
+                            | TyKind::None
+                            | TyKind::KgenDtype
+                            | TyKind::Struct(..)
+                            | TyKind::KgenDeferred
+                            | TyKind::KgenTarget
+                            | TyKind::KgenString
+                    )
         })?;
         if function.raises {
             return None;
@@ -7389,17 +7391,18 @@ impl SlotType {
 /// or an origin is no such value.
 fn parameter_value_type(ty: &Ty) -> bool {
     ty.is_simd()
-        || matches!(
-            ty.kind(),
-            TyKind::None
-                | TyKind::Index
-                | TyKind::I1
-                | TyKind::Ui8
-                | TyKind::KgenDtype
-                | TyKind::KgenSimd { .. }
-                | TyKind::Struct(..)
-                | TyKind::Func(_)
-        )
+        || !ty.is_pointer()
+            && matches!(
+                ty.kind(),
+                TyKind::None
+                    | TyKind::Index
+                    | TyKind::I1
+                    | TyKind::Ui8
+                    | TyKind::KgenDtype
+                    | TyKind::KgenSimd { .. }
+                    | TyKind::Struct(..)
+                    | TyKind::Func(_)
+            )
 }
 
 /// The signature of a `def` or a static method, as its declaration spells

@@ -526,14 +526,10 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
             address_space: address_space.clone(),
         }
         .into(),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => Ty::pointer(
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
             substitute_pointer_origin_params(element, bindings),
-            bind(origin),
-            address_space.clone(),
+            bind(&origin),
+            address_space,
         ),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
             elements: elements
@@ -622,29 +618,27 @@ pub(in crate::checker) fn bind_pointer_origins(
             address_space: address_space.clone(),
         }
         .into(),
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => match origin {
-            PointerOrigin::Param {
-                id,
-                mutability: Mutability::Param(_),
-                interior,
-                subtree,
-            } if interior.is_empty() && !subtree => tails.get(id).map_or_else(
-                || Err(recur(element)),
-                |tail| {
-                    mojito_types::types::symbolic_cast_pointer(
-                        recur(element),
-                        tail.clone(),
-                        address_space,
-                    )
-                },
-            ),
-            _ => Err(recur(element)),
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
+            match &origin {
+                PointerOrigin::Param {
+                    id,
+                    mutability: Mutability::Param(_),
+                    interior,
+                    subtree,
+                } if interior.is_empty() && !subtree => tails.get(id).map_or_else(
+                    || Err(recur(element)),
+                    |tail| {
+                        mojito_types::types::symbolic_cast_pointer(
+                            recur(element),
+                            tail.clone(),
+                            &address_space,
+                        )
+                    },
+                ),
+                _ => Err(recur(element)),
+            }
+            .unwrap_or_else(|element| Ty::pointer(element, bind(&origin), address_space))
         }
-        .unwrap_or_else(|element| Ty::pointer(element, bind(origin), address_space.clone())),
         TyKind::LitRefPack { elements, origin } => TyKind::LitRefPack {
             elements: elements.iter().map(recur).collect(),
             origin: bind(origin),
@@ -705,11 +699,9 @@ pub(in crate::checker) fn substitute_struct_origins(
                     .collect(),
             ))
         }
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        } => Ty::pointer(recur(element), origin.clone(), address_space.clone()),
+        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
+            Ty::pointer(recur(element), origin, address_space)
+        }
         TyKind::LitRef {
             element,
             origin,

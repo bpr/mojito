@@ -322,7 +322,7 @@ impl Checker {
                 }),
             // A pointer's construction is its declared initializers'; its
             // bracket is the instance's.
-            TyKind::Pointer { .. } => {
+            kind if kind.is_pointer() => {
                 let constructed = self.infer_construction_of(
                     span,
                     POINTER_TYPE_NAME,
@@ -331,9 +331,7 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
-                if self.coerces_by_origins(&constructed, instance)
-                    || reads_back_at_own_binder(&constructed, instance)
-                {
+                if self.coerces_by_origins(&constructed, instance) {
                     Ok(instance.clone())
                 } else {
                     Err(TypeError::TypeMismatch {
@@ -3306,37 +3304,4 @@ fn bind_unbound_origin_attributes(
         attributes.bind(slot, position, Some(TyArg::Origin(bound.clone())));
     }
     Ok(())
-}
-
-/// Whether `constructed`, a declared `Pointer` initializer's `Self`, is
-/// `instance` read back from the folded struct's parts: the same element,
-/// origin, and address space, its symbolic `mut` at the origin's own binder
-/// where the instance's names another binder, which the fold's deferred
-/// `mut` argument does not carry (R2210).
-fn reads_back_at_own_binder(constructed: &Ty, instance: &Ty) -> bool {
-    use mojito_types::origin::Mutability;
-    let (
-        TyKind::Pointer {
-            element,
-            origin,
-            address_space,
-        },
-        TyKind::Pointer {
-            element: expected,
-            origin: expected_origin,
-            address_space: expected_space,
-        },
-    ) = (constructed.kind(), instance.kind())
-    else {
-        return false;
-    };
-    let ((origin, mutability), (expected_origin, expected_mutability)) =
-        (origin.parts(), expected_origin.parts());
-    element == expected
-        && address_space == expected_space
-        && origin == expected_origin
-        && matches!(
-            (mutability, expected_mutability),
-            (Mutability::Param(_), Mutability::Param(_))
-        )
 }

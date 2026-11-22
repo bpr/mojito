@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::{AddressSpaceSlot, TyKind};
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// A pointer retyped (`pop.pointer.bitcast`, a `Pointer`/`!kgen.pointer`/
@@ -20,7 +20,7 @@ impl FnLowering<'_> {
                 .reg_types
                 .get(&reg.0)
                 .and_then(address_space_slot)
-                .and_then(AddressSpaceSlot::known)
+                .and_then(|space| space.known())
         };
         match (space(value), space(dest)) {
             (Some(from), Some(to)) if from != to => {
