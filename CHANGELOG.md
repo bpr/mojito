@@ -1441,6 +1441,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A plain store into a call's reference result whose call binds a
+  by-address argument by keyword (`s.get(k=0) = 6` over
+  `get[I: Indexer](ref self, *, k: I) -> ref[self.a] Int`) now writes the
+  referent, as at the pin, where MIR verification failed with "store of ref
+  Int into storage of type Int": the stored value was bound as the call's
+  keyword argument, as if the call were a `__setitem__` store (R2481).
 - A store through a reference over a struct's `Origin[mut=m]` binder
   (`self.r[] = x` through a getter's `ref[Self.o]` result, `self.src[0] = x`
   or `+= 1` through a `ref` field, a `mut self` call on its element) now

@@ -7804,30 +7804,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2481 A plain store through a generic method's reference result
-  fails in MIR when the call passes a keyword argument**
-
-  `s.get(k=0) = 6`, over `def get[I: Indexer](ref self, *, k: I) ->
-  ref[self.a] Int`, prints `6` at the pin, where Mojito fails "invalid
-  checked program: MIR function 'main': store of ref Int into storage of
-  type Int" (`mir/verify/instr.rs`).
-  - The checker accepts the store (`check_place_impl`'s call arm,
-    `checker/indexing.rs`); the plain-assignment place for this call shape
-    lowers the result as an `Int` temporary that then receives the
-    `ref Int`.
-  - Start from `Flatten::place`'s call branch (`mir/lower_stmt.rs`,
-    `materialize_reference_result_place`), comparing `get(k=0)` with a
-    generic positional `get4(0)`.
-  - These work: a non-generic keyword method (`get2(k=0) = 5`), a generic
-    positional one (`get4(0) = 5`), `s.get(k=0) += 6`, and `ref r =
-    s.get(k=0); r = 6`.
-  - Probe: the store above prints `6`.
-  - Probe: `p.__getitem__(unsafe_offset=1) = 7` over `l.unsafe_ptr()` and
-    over `Pointer(to=x)` (offset 0) writes the element, as at the pin.
-  - Found while landing R2477 (2026-11-21).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2212 A pointer to one checked value cannot step off its
   value, where the pin computes the address**
 

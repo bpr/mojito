@@ -1878,7 +1878,10 @@ impl<'a> Flatten<'a> {
         target: Node<'a>,
         value_expression: Node<'a>,
     ) -> bool {
-        if target.call_contract().is_none() {
+        // A call's contract is its own callee's, never a setter's: a store
+        // into a call's reference result (`s.get(k=0) = 6`) writes through
+        // that reference, and its keyword arguments are no setter operands.
+        if target.call_contract().is_none() || target.is_call() {
             return false;
         }
         // A value of the element type is the setter's `value` argument

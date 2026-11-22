@@ -514,6 +514,7 @@ assets/ok/generic_field_pointer_deref_in_place.mojo	main	exe-differential	saniti
 assets/ok/generic_function_origin_binder.mojo	main	exe-differential	sanitized
 assets/ok/generic_function_value_binder.mojo	main	exe-differential	sanitized
 assets/ok/generic_iterable_explicit_iter.mojo	main	exe-differential	sanitized
+assets/ok/generic_keyword_reference_result_store.mojo	main	exe-differential	sanitized
 assets/ok/generic_lambda_callable_bound_argument.mojo	main	exe-differential	sanitized
 assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_nested_def_captures.mojo	main	exe-differential	sanitized
