@@ -22,7 +22,9 @@
 #   `unsafe_store`, and the strided, gather, and scatter forms: a rule
 #   still answers `unsafe_free`, and the rest are not yet declared
 #   (R2495, R2496).
-# - `_get_ref_with_unsafe_interior_origin` (R2478).
+# - `_get_ref_with_unsafe_interior_origin`: its interior tag names a
+#   `StringLiteral` parameter (R2498), and the `ref base` overload's
+#   pointer origin is a place of inferred mutability (R2499).
 # - `unsafe_as_noalias` and `_as_origin_superset`: `where O.contains[…]`
 #   (R2381); `unsafe_dangling`: the plugin hook.
 # - `NicheStorage`, `write_niche`, `isa_niche`, the `DevicePassable`

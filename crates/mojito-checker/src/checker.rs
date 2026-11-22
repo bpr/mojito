@@ -4302,24 +4302,25 @@ impl MethodInstantiation {
         checker: &Checker,
         reference: &mojito_types::origin::RefSig,
     ) -> mojito_types::origin::RefSig {
-        let bracketed = mojito_types::origin::RefSig {
-            origin: origins::bind_sig_origin(&reference.origin, &self.bracket_origins),
-            ..reference.clone()
-        };
-        self.bound_ref_return(checker, &bracketed)
+        self.bound_ref_return(checker, reference)
     }
 
     /// The declared `ref` result contract with the method's bound origin
-    /// binders substituted.
+    /// binders substituted, those its bracket bound first
+    /// (`p._get_ref_with_unsafe_interior_origin["element", origin_of(l)]()`).
     fn bound_ref_return(
         &self,
         checker: &Checker,
         reference: &mojito_types::origin::RefSig,
     ) -> mojito_types::origin::RefSig {
+        let bracketed = mojito_types::origin::RefSig {
+            origin: origins::bind_sig_origin(&reference.origin, &self.bracket_origins),
+            ..reference.clone()
+        };
         self.origin_bindings.as_ref().map_or_else(
-            || reference.clone(),
+            || bracketed.clone(),
             |bindings| {
-                bindings.substitute_ref_sig(reference, &|owner| {
+                bindings.substitute_ref_sig(&bracketed, &|owner| {
                     checker.owner_reference_mutability(owner)
                 })
             },

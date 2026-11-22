@@ -1449,6 +1449,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method's `ref[o]` result over an origin binder only its bracket binds
+  (`h.get[origin_of(y)]()`) now borrows that origin, as the receiver's
+  `ref` contract already did, where it kept the symbolic binder and held no
+  loan. `bump(h.get[origin_of(y)](), y)` is now rejected as aliasing, as at
+  the pin, where it ran (found while landing R2478; the method itself waits
+  on R2498 and R2499).
 - A construction now lends the storage its result type's origins name, one
   rule for `Pointer(to=)`, `Span(list)`, and user views, as upstream keeps
   an origin's memory live while a value whose type names it is (R2475).

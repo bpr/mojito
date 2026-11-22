@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2498**.
+Next free ID: **R2500**.
 
 ## Ordered Work
 
@@ -2012,6 +2012,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     pin reports `'e'` abandoned ('AnyType').
   - Probe: `for x in items` in `def total[C: Iterable](items: C)` runs,
     where the pin rejects the `__next__` result at `items` ('AnyType').
+  - Probe: a `ref[o]` result over an origin binder only the bracket
+    binds does the same: `ref r = get[origin_of(y)](Pointer(to=x))` over
+    `def get[o: MutOrigin, po: MutOrigin](p: Pointer[Int, po]) -> ref[o]
+    Int`, then `var z = y^` and `print(r, len(z))`, fails MIR
+    verification; the method form `h.get[origin_of(y)]()` does too.
   - Probe: `moving_an_iterable_while_its_generic_iterator_lives_rejects`
     (`tests/vm_test.rs`) discards an `Element: Movable` with `_ =
     it.__next__()`; give it a non-discarding read when this lands.
@@ -3029,6 +3034,58 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     for `k[ImmStaticOrigin]()`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2498 `Origin._get_owned_interior` is a checker spelling, not
+  upstream's declared comptime member, so its tag must be a literal**
+
+  Upstream declares `comptime _get_owned_interior[name: StringLiteral] =
+  Origin[_mlir_origin=#lit.interior.origin<…, name.value>]()` on
+  `Origin`, where the checker recognizes only the spelling
+  `base._get_owned_interior["tag"]` (`interior_origin_syntax`,
+  `checker/origins/sig.rs`).
+  - `OriginSeg::Interior` and `PointerOrigin`'s `interior` tags
+    (`mojito-types/origin.rs`) hold a closed `String`, so a tag naming a
+    `StringLiteral` parameter has no form to substitute at the call.
+  - Probe: `def g[name: StringLiteral, o: Origin](p: Pointer[Int, _]) ->
+    ref[o._get_owned_interior[name]] Int` is "Undefined variable 'o'";
+    the pin checks the signature.
+  - Probe: `comptime r = o._get_owned_interior["a"]` in `def f[o:
+    Origin]()` is "type 'Origin[_]' has no field '_get_owned_interior'";
+    the pin accepts it.
+  - Probe: declare upstream's `Pointer._get_ref_with_unsafe_interior_origin[
+    name, base_origin]` verbatim in `std/memory/pointer.mojo`. Then
+    `ref r = p._get_ref_with_unsafe_interior_origin["element",
+    origin_of(l)]()` over `p = l.unsafe_ptr()` prints `1`, and after `r =
+    10` and `r += 5`, `l[0]` and `r` print `15 15`, as at the pin. An
+    `l.append(2)` before a read of `r` rejects as "use of invalidated
+    interior reference".
+  - `_subtree` is the same kind of spelling, a declared member upstream.
+  - Its first session plans it and files the slices.
+  - Found while landing R2478 (2026-11-22).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2499 A pointer over a place below a `ref` parameter of inferred
+  mutability is rejected**
+
+  `var q: Optional[Pointer[Int, origin_of(x.a)]] = None` in `def g(ref x:
+  S)` is "the origin origin_of(#323.a) as a pointer's origin", where the
+  pin accepts it.
+  - The place's mutability is the `ref` parameter's binder, and
+    `PointerOrigin::Place` (`mojito-types/origin.rs`) holds a closed
+    `mutable: bool`, so `PointerOrigin::from_parts` has no form for it.
+  - `origin_of(x)` itself resolves to the binder and is accepted.
+  - Probe: the line above, and the same over
+    `origin_of(x)._get_owned_interior["e"]` in `def f(ref x: Int)`.
+  - Probe: declare upstream's second
+    `Pointer._get_ref_with_unsafe_interior_origin[name](self, ref base:
+    Some[AnyType])` overload verbatim. Then
+    `q.unsafe_ptr()._get_ref_with_unsafe_interior_origin["element"](l)`
+    over two distinct lists, with `s += 5` through the result, prints `12
+    12` for `q[0]` and the result, as at the pin.
+  - Found while landing R2478 (2026-11-22).
+  - Depends on R2498 (the second probe's tag).
+  - Model: Opus, Not Planned.
 
 - [ ] **R2384 A named origin whose `mut` is symbolic is rejected**
 
@@ -8990,6 +9047,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     initialization of the interior.
   - Found while baking an interior-projected `Pointer` type argument into
     its clone (2026-09-28).
+  - Probe: a method bracket argument spelling the interior,
+    `h.get[origin_of(items)._get_owned_interior["element"]]()` over `def
+    get[o: MutOrigin](self) -> ref[o] Int`, is accepted and reads `0`;
+    the pin reports the never-initialized interior at the call.
   - Ledger name: `pointer-type-argument-uninitialized-interior`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10948,26 +11009,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     which also needs `Span._unchecked_subspan`
     (`stdlib/std/collections/list.mojo`).
   - Found while landing R2467 (2026-11-21).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2478 `Pointer._get_ref_with_unsafe_interior_origin` is not
-  declared**
-
-  Upstream's two overloads (`[name, base_origin]`, and `[name](self, ref
-  base: Some[AnyType])`) are missing from `stdlib/std/memory/pointer.mojo`.
-  - Each returns a reference at `base_origin._get_owned_interior[name]`
-    through `__get_litref_as_mvalue` over a spelled `!lit.ref`
-    `__mlir_type`.
-  - Nothing bundled calls it, but upstream's `List`, `Dict`, `Deque`,
-    `LinkedList`, `OwnedPointer`, and `Variant` do, so porting those
-    bodies verbatim needs it.
-  - Unverified: whether the `!lit.ref` spelling with an interior origin
-    checks today. Probe it first and file the blocker if not.
-  - Probe: `p._get_ref_with_unsafe_interior_origin["element",
-    origin_of(l)]()` over `l.unsafe_ptr()` reads and writes through it and
-    keeps `l` borrowed, as at the pin.
-  - Found while planning R2473 (2026-11-21).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
