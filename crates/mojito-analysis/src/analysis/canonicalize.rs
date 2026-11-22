@@ -747,6 +747,7 @@ fn direct_call(
         if memory_only
             && let Some(handle) = mojito_mir::mir::mir_place_handle_ty(
                 storage,
+                function.binds_reference(storage.root),
                 Some(mojito_types::origin::Mutability::Immutable),
             )
         {
@@ -783,6 +784,7 @@ fn direct_call(
     for ((address, place), load) in operands.iter().zip(&mut loads) {
         if let Some(handle) = mojito_mir::mir::mir_place_handle_ty(
             place,
+            function.binds_reference(place.root),
             Some(mojito_types::origin::Mutability::Mutable),
         ) {
             function.reg_types.insert(address.0, handle);

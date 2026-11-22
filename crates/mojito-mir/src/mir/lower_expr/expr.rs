@@ -127,6 +127,7 @@ impl<'a> Flatten<'a> {
             let mut place = MirPlace::root(var, self.var_types.get(&var).cloned());
             let handle = match mir_place_handle_ty(
                 &place,
+                self.f.binds_reference(var),
                 Some(mojito_types::origin::Mutability::Immutable),
             ) {
                 Some(ty) => self.fresh_typed(location.clone(), Some(var), ty),

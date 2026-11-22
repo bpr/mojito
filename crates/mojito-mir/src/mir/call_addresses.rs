@@ -34,14 +34,15 @@ use crate::mir::legacy_places::{LegacyCallPlaces, LegacyCursor, LegacyOperandTab
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
     MirSubscriptArg, Proj, Reg, TraitRequirement, count_register_reads, instruction_regions,
-    instruction_regions_mut, mir_place_handle_ty,
+    instruction_regions_mut, mir_place_handle_ty, place_holds_reference,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
+use mojito_hir::hir::VarId;
 use mojito_symbol::symbol::is_initializer_symbol;
 use mojito_types::origin::{Mutability, OriginParamId};
 use mojito_types::types::{FuncTy, Ty, TyKind, erase_origins};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 /// The regular parameter each operand of a direct call of `declaration`
 /// binds.
@@ -424,17 +425,29 @@ pub fn same_storage(left: &MirPlace, right: &MirPlace) -> bool {
 /// that reference's type, for a callee wanting it as mutable as
 /// `mutability`; `None` when `place` holds no reference.
 ///
-/// A `ref` field's own place forwards its stored handle, lent immutably
-/// when `mutability` is; a `ref` binding's slot is reached through itself,
-/// as a runtime alias's read forms it, and lends its own handle.
-pub fn stored_handle(place: &MirPlace, mutability: Mutability) -> Option<(MirPlace, Ty)> {
+/// Whether `place` holds one is decided from declarations
+/// ([`place_holds_reference`]): `binds_root` says whether its root is a
+/// `ref` binding, and `declares_ref_field` whether a struct type declares
+/// a field `ref`. A `ref` field's own place forwards its stored handle,
+/// lent immutably when `mutability` is; a `ref` binding's slot is reached
+/// through itself, as a runtime alias's read forms it, and lends its own
+/// handle.
+pub fn stored_handle(
+    place: &MirPlace,
+    binds_root: bool,
+    declares_ref_field: impl Fn(&Ty, &str) -> bool,
+    mutability: Mutability,
+) -> Option<(MirPlace, Ty)> {
+    if !place_holds_reference(place, binds_root, declares_ref_field) {
+        return None;
+    }
     let TyKind::Ref(stored) = place.ty.as_ref()?.kind() else {
         return None;
     };
     if place.proj.is_empty() {
         let mut handle_place = place.clone();
         handle_place.through = place.through.or(Some(place.root));
-        let handle = mir_place_handle_ty(&handle_place, Some(mutability))?;
+        let handle = mir_place_handle_ty(&handle_place, binds_root, Some(mutability))?;
         return Some((handle_place, handle));
     }
     let handle = TyKind::Ref(mojito_types::origin::RefTy {
@@ -1107,9 +1120,22 @@ enum Operands {
 /// mutable as `mutability`, and that reference's type: the stored handle a
 /// place holding one forwards ([`stored_handle`]), else the place's own
 /// storage.
-fn operand_handle(place: MirPlace, mutability: Mutability) -> (MirPlace, Ty) {
-    stored_handle(&place, mutability).unwrap_or_else(|| {
-        let handle = mir_place_handle_ty(&place, Some(mutability)).unwrap_or_else(Ty::error);
+fn operand_handle(
+    place: MirPlace,
+    mutability: Mutability,
+    parameters: &ParameterKinds,
+    declarations: &MirDeclarations,
+) -> (MirPlace, Ty) {
+    let binds_root = parameters.ref_bindings.contains(&place.root);
+    stored_handle(
+        &place,
+        binds_root,
+        |base, field| declarations.declares_ref_field(base, field),
+        mutability,
+    )
+    .unwrap_or_else(|| {
+        let handle =
+            mir_place_handle_ty(&place, binds_root, Some(mutability)).unwrap_or_else(Ty::error);
         (place, handle)
     })
 }
@@ -1162,6 +1188,7 @@ fn address_function_operands(
         &Collector {
             callees: context.callees,
             declarations: context.declarations,
+            ref_bindings: &context.parameters.ref_bindings,
             reg_types: &function.reg_types,
             operands: context.operands,
         },
@@ -1196,7 +1223,12 @@ fn address_function_operands(
             },
             _ => continue,
         };
-        let (place, handle) = operand_handle(addressed, mutability);
+        let (place, handle) = operand_handle(
+            addressed,
+            mutability,
+            context.parameters,
+            context.declarations,
+        );
         rewrites.insert(
             operand.0,
             Rewrite {
@@ -1224,6 +1256,8 @@ struct ParameterKinds {
     count: usize,
     owned: Vec<bool>,
     reference: Vec<bool>,
+    /// The function's `ref` bindings ([`MirFunction::ref_bindings`]).
+    ref_bindings: BTreeSet<VarId>,
     /// Whether each slot is a `ref` parameter, the receiver counted, whose
     /// mutability is its inferred binder
     /// ([`OriginParamId::reference_binder`]).
@@ -1257,6 +1291,7 @@ impl ParameterKinds {
             count: function.n_params,
             owned: function.owned_params.clone(),
             reference: function.ref_params.clone(),
+            ref_bindings: function.ref_bindings.clone(),
             inferred,
         }
     }
@@ -1273,10 +1308,11 @@ impl ParameterKinds {
         let read_parameter = root < self.count
             && !self.owned.get(root).copied().unwrap_or(true)
             && !self.reference.get(root).copied().unwrap_or(true);
-        let immutable_reference = matches!(
-            place.root_ty.as_ref().map(Ty::kind),
-            Some(TyKind::Ref(reference)) if reference.mutability == Mutability::Immutable
-        );
+        let immutable_reference = self.ref_bindings.contains(&place.root)
+            && matches!(
+                place.root_ty.as_ref().map(Ty::kind),
+                Some(TyKind::Ref(reference)) if reference.mutability == Mutability::Immutable
+            );
         if read_parameter || immutable_reference || wanted == Mutability::Immutable {
             return Mutability::Immutable;
         }
@@ -1293,6 +1329,7 @@ impl ParameterKinds {
 struct Collector<'c, 'a> {
     callees: &'c Callees<'a>,
     declarations: &'c MirDeclarations,
+    ref_bindings: &'c BTreeSet<VarId>,
     reg_types: &'c HashMap<u32, Ty>,
     operands: Operands,
 }
@@ -1327,6 +1364,7 @@ fn collect(
                             places,
                             instruction,
                             collector.declarations,
+                            collector.ref_bindings,
                             collector.operands,
                         )
                         .into_iter()
@@ -1352,12 +1390,16 @@ fn by_address_operands(
     places: &LegacyCallPlaces,
     instruction: &MirInstr,
     declarations: &MirDeclarations,
+    ref_bindings: &BTreeSet<VarId>,
     operands: Operands,
 ) -> Vec<(Option<usize>, Reg, MirPlace, Mutability)> {
     let mut addressed = Vec::new();
     let value_ty = |place: &MirPlace| -> Option<Ty> {
         let ty = place.ty.as_ref()?;
-        let holds_reference = matches!(ty.kind(), TyKind::Ref(_));
+        let holds_reference =
+            place_holds_reference(place, ref_bindings.contains(&place.root), |base, field| {
+                declarations.declares_ref_field(base, field)
+            });
         (operands == Operands::All || holds_reference).then(|| operand_value_ty(ty).clone())
     };
     if let Some(register) = bound.receiver
@@ -1470,6 +1512,7 @@ fn address_remaining_in(
                     places,
                     instruction,
                     context.declarations,
+                    &context.parameters.ref_bindings,
                     context.operands,
                 )
             })
@@ -1490,7 +1533,8 @@ fn address_remaining_in(
                     continue;
                 };
                 let mutability = context.parameters.place_mutability(&place, wanted);
-                let (place, handle) = operand_handle(place, mutability);
+                let (place, handle) =
+                    operand_handle(place, mutability, context.parameters, context.declarations);
                 let address = Reg(*next);
                 *next += 1;
                 types.push((address.0, handle, register.0));
@@ -1550,7 +1594,7 @@ fn forward_read_addresses(
                         .is_some_and(|ty| !declarations.register_passable(ty)) =>
             {
                 let mutability = parameters.place_mutability(&place, Mutability::Mutable);
-                let (place, handle) = operand_handle(place, mutability);
+                let (place, handle) = operand_handle(place, mutability, parameters, declarations);
                 rewrites.insert(
                     operand.0,
                     Rewrite {
@@ -1916,5 +1960,44 @@ mod tests {
             &held,
             &reference(list_of_span(Origin::Static))
         ));
+    }
+
+    fn holder() -> Ty {
+        TyKind::Struct("Holder".into(), Vec::new()).into()
+    }
+
+    #[test]
+    fn stored_handle_forwards_only_a_declared_ref_field() {
+        let stored = reference(list_of_span(Origin::Static));
+        let mut place = field_place(stored);
+        place.root_ty = Some(holder());
+        let declares = |base: &Ty, field: &str| *base == holder() && field == "src";
+        let (forwarded, _) = stored_handle(&place, false, declares, Mutability::Mutable)
+            .expect("a `ref` field forwards its stored handle");
+        assert!(same_storage(&forwarded, &place));
+        assert!(stored_handle(&place, false, |_, _| false, Mutability::Mutable).is_none());
+    }
+
+    #[test]
+    fn stored_handle_forwards_only_a_ref_binding_slot() {
+        let stored = reference(list_of_span(Origin::Static));
+        let place = MirPlace::root(0, Some(stored));
+        let (handle_place, _) = stored_handle(&place, true, |_, _| false, Mutability::Mutable)
+            .expect("a `ref` binding's slot forwards its handle");
+        assert_eq!(handle_place.through, Some(0));
+        assert!(stored_handle(&place, false, |_, _| false, Mutability::Mutable).is_none());
+    }
+
+    #[test]
+    fn a_non_binding_reference_root_is_ordinary_storage() {
+        let stored = reference(list_of_span(Origin::Static));
+        let place = MirPlace::root(0, Some(stored.clone()));
+        assert_eq!(
+            mir_place_handle_ty(&place, true, Some(Mutability::Mutable)),
+            Some(stored.clone())
+        );
+        let handle = mir_place_handle_ty(&place, false, Some(Mutability::Mutable))
+            .expect("a typed slot has a handle");
+        assert!(matches!(handle.kind(), TyKind::Ref(outer) if outer.referent == stored));
     }
 }

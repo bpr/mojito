@@ -173,6 +173,7 @@ fn metadata_program() -> MirProgram {
             name: "Box".into(),
             module: String::new(),
             fields: vec![("value".into(), Ty::int())],
+            ref_fields: Vec::new(),
             fieldwise_init: true,
             param_decls: vec![ParamDecl::Type {
                 id: mojito::param_expr::ParamId::new("$test:T", 0),

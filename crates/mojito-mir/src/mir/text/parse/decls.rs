@@ -135,7 +135,11 @@ impl Decoder {
         // Schema 1.199 passes a `def(...)` bound's callee to its
         // `__call__` requirement by address; an older call passes the value.
         if self.minor < 199 {
-            crate::mir::bound_calls::upgrade_bound_receivers(&mut functions, &legacy);
+            crate::mir::bound_calls::upgrade_bound_receivers(
+                &mut functions,
+                &declarations,
+                &legacy,
+            );
         }
         // Schema 1.200 passes a `deinit` receiver as the call consumes it:
         // a memory-only one by address, a register-passable one moved out
@@ -474,6 +478,27 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
+        // Schema 1.225 names the fields declared `ref`; an older artifact
+        // wrote no other field with the `ref` type tag, so its `ref` fields
+        // are the fields that tag types.
+        let ref_fields = if self.minor < 225 {
+            let mut ref_fields: Vec<String> = struct_fields
+                .iter()
+                .filter(|(_, ty)| matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
+                .map(|(field, _)| field.clone())
+                .collect();
+            ref_fields.sort();
+            ref_fields
+        } else {
+            let mut ref_fields: Vec<String> = self
+                .field(fields, "ref_fields")
+                .ok()
+                .and_then(|names| self.list(names).ok())
+                .map(|names| names.iter().filter_map(|name| self.symbol(name)).collect())
+                .unwrap_or_default();
+            ref_fields.sort();
+            ref_fields
+        };
         // Schema 1.175 says whether the struct declares register-passability
         // unconditionally, written only when it does; an older artifact's
         // answer is decided from its declared rows once its traits are read.
@@ -495,6 +520,7 @@ impl Decoder {
             "fields",
             "mut_self_methods",
             "fieldwise_init",
+            "ref_fields",
             "param_decls",
             "origin_params",
             "explicit_destroy_message",
@@ -516,12 +542,14 @@ impl Decoder {
             .copied()
             .filter(|field| self.minor < 199 || *field != "mut_self_methods")
             .filter(|field| self.minor < 206 || *field != "origin_params")
+            .filter(|field| self.minor >= 225 || *field != "ref_fields")
             .collect();
         self.unknown(fields, &known);
         Some(MirStructDeclaration {
             name,
             module,
             fields: struct_fields,
+            ref_fields,
             fieldwise_init,
             param_decls,
             explicit_destructors,

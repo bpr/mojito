@@ -1850,6 +1850,7 @@ fn declaration_metadata_reprints_byte_identically() {
         name: "Box".into(),
         module: String::new(),
         fields: vec![("value".into(), Ty::int()), ("tag".into(), Ty::bool())],
+        ref_fields: Vec::new(),
         fieldwise_init: true,
         param_decls: vec![ParamDecl::Type {
             id: test_id("T"),
@@ -1979,6 +1980,7 @@ fn declaration_metadata_reprints_byte_identically() {
         name: "Zebra needs quoting!".into(),
         module: String::new(),
         fields: Vec::new(),
+        ref_fields: Vec::new(),
         fieldwise_init: false,
         param_decls: Vec::new(),
         explicit_destructors: HashMap::new(),
@@ -3118,6 +3120,7 @@ fn older_struct_instances_gain_their_mutability_arguments() {
         name: owner.into(),
         module: String::new(),
         fields: Vec::new(),
+        ref_fields: Vec::new(),
         fieldwise_init: false,
         param_decls: vec![mutability.clone(), origin],
         explicit_destructors: HashMap::new(),
@@ -5541,6 +5544,7 @@ fn an_artifact_older_than_1_214_declares_its_closure_storage_origins() {
         name: owner.into(),
         module: String::new(),
         fields: vec![("x".into(), field)],
+        ref_fields: Vec::new(),
         fieldwise_init: true,
         param_decls: vec![binder.clone()],
         explicit_destructors: HashMap::new(),
@@ -5562,4 +5566,73 @@ fn an_artifact_older_than_1_214_declares_its_closure_storage_origins() {
     };
     assert_eq!(read(213), vec![binder.clone(), origin]);
     assert_eq!(read(214), vec![binder]);
+}
+
+/// A struct with a `ref` field and a `!lit.ref`-typed one, whose reference
+/// types are the same but whose declarations differ.
+fn ref_field_program() -> MirProgram {
+    let reference = RefTy {
+        referent: Ty::int(),
+        origin: Origin::Static,
+        mutability: Mutability::Immutable,
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+    };
+    let holder = MirStructDeclaration {
+        name: "Holder".into(),
+        module: String::new(),
+        fields: vec![
+            ("view".into(), TyKind::Ref(reference.clone()).into()),
+            ("value".into(), Ty::lit_ref(reference)),
+        ],
+        ref_fields: vec!["view".into()],
+        fieldwise_init: false,
+        param_decls: Vec::new(),
+        explicit_destructors: HashMap::new(),
+        explicit_destroy: None,
+        conformances: Vec::new(),
+        declared: Vec::new(),
+        register_passable: false,
+        associated_types: Vec::new(),
+        parameterized_associated_types: Vec::new(),
+        associated_values: Vec::new(),
+        parameterized_associated_values: Vec::new(),
+        witness_tables: Vec::new(),
+        members: Vec::new(),
+    };
+    let mut program = program_with(vec![("main".into(), function_with(Vec::new(), Vec::new()))]);
+    program.declarations.structs.push(holder);
+    program
+}
+
+#[test]
+fn struct_ref_fields_name_only_the_declared_ref_field() {
+    let program = ref_field_program();
+    let text = write::program(&program);
+    assert!(text.contains("ref_fields: [view]"), "{text}");
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let holder = parsed
+        .program
+        .declarations
+        .structure("Holder")
+        .expect("Holder");
+    assert_eq!(holder.ref_fields, vec!["view".to_string()]);
+    assert_reprints(&program);
+}
+
+#[test]
+fn a_pre_1_225_struct_infers_its_ref_fields_from_the_ref_tag() {
+    let text = write::program(&ref_field_program())
+        .replacen(
+            &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
+            "mojito-mir 1.224",
+            1,
+        )
+        .replace(", ref_fields: [view]", "");
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let holder = parsed
+        .program
+        .declarations
+        .structure("Holder")
+        .expect("Holder");
+    assert_eq!(holder.ref_fields, vec!["view".to_string()]);
 }

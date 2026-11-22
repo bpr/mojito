@@ -146,6 +146,7 @@ fn call_of(
                 let place = MirPlace::root(*var, Some(ty));
                 let handle = crate::mir::mir_place_handle_ty(
                     &place,
+                    function.binds_reference(*var),
                     Some(mojito_types::origin::Mutability::Immutable),
                 )?;
                 let source = source_register(function, *dest, *var, handle);
@@ -186,6 +187,7 @@ fn call_of(
             {
                 let handle = crate::mir::mir_place_handle_ty(
                     place,
+                    function.binds_reference(place.root),
                     Some(mojito_types::origin::Mutability::Immutable),
                 )?;
                 let span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());

@@ -812,6 +812,7 @@ fn build_keyword_collector(
         });
         let handle = crate::mir::mir_place_handle_ty(
             &place,
+            false,
             Some(mojito_types::origin::Mutability::Mutable),
         )
         .unwrap_or_else(Ty::error);
@@ -2325,8 +2326,8 @@ fn bind_temporary(
         return read;
     }
     if default.by_address {
-        let handle =
-            mir_place_handle_ty(&place, Some(Mutability::Immutable)).unwrap_or_else(Ty::error);
+        let handle = mir_place_handle_ty(&place, false, Some(Mutability::Immutable))
+            .unwrap_or_else(Ty::error);
         let address = fresh_register(function, handle, location);
         prelude.push(MirInstr::MakeRef {
             dest: address,

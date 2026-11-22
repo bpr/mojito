@@ -155,6 +155,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         HashMap::new(),
         &HashMap::new(),
         &std::sync::Arc::default(),
+        OwnRefFields::default(),
         false,
         &[],
         &[],
@@ -514,6 +515,15 @@ impl MirDeclarations {
             })
             .collect::<Option<Vec<_>>>()
             .map(Cow::Owned)
+    }
+
+    /// Whether a value of the struct type `ty` declares its field `field`
+    /// `ref` ([`MirStructDeclaration::declares_ref_field`]), through the
+    /// same instance lookup as [`Self::field_types`]; false for any other
+    /// type.
+    pub fn declares_ref_field(&self, ty: &Ty, field: &str) -> bool {
+        self.struct_instance(ty)
+            .is_some_and(|(declaration, _)| declaration.declares_ref_field(field))
     }
 
     /// Whether a copy of a value of `ty` is the value itself, as upstream's
@@ -1264,6 +1274,12 @@ pub fn lower_unit(
                     .iter()
                     .filter_map(|field| Some((field.name.clone(), field.ty.clone()?)))
                     .collect();
+                let ref_fields: Vec<String> = declaration
+                    .fields
+                    .iter()
+                    .filter(|field| field.reference)
+                    .map(|field| field.name.clone())
+                    .collect();
                 let member = match unit {
                     LoweringUnit::CopyConstructor { .. } => SynthesizedMember::Copy,
                     LoweringUnit::MoveConstructor { .. } => SynthesizedMember::Move,
@@ -1278,7 +1294,7 @@ pub fn lower_unit(
                     .unwrap_or_default();
                 lower_synthesized_member(
                     (&declaration.name, &parameters),
-                    &fields,
+                    (&fields, &ref_fields),
                     member,
                     functions,
                     declarations,
@@ -1356,14 +1372,19 @@ pub fn lower_package_unit(
 /// A projection through an existing capability preserves that
 /// capability's permission; borrowing ordinary storage creates a new handle
 /// with the requested permission (mutable for legacy unchecked HIR).
+/// `binds_root` says whether the root slot is a `ref` binding
+/// ([`MirFunction::binds_reference`]): only then is a reference-typed root
+/// an existing capability, as upstream decides from the declaration; any
+/// other root is ordinary storage, a reference value among them.
 pub fn mir_place_handle_ty(
     place: &MirPlace,
+    binds_root: bool,
     requested: Option<mojito_types::origin::Mutability>,
 ) -> Option<Ty> {
     let storage = place.ty.clone()?;
     let root = place.root_ty.as_ref()?;
     let source_mutability = match root.kind() {
-        TyKind::Ref(reference) => Some(reference.mutability),
+        TyKind::Ref(reference) if binds_root => Some(reference.mutability),
         // The whole of a pointer slot is the pointer itself unless the place
         // is reached through it.
         pointer
@@ -1394,6 +1415,41 @@ pub fn mir_place_handle_ty(
         })
         .into(),
     )
+}
+
+/// Whether the storage `place` designates holds a reference that a read
+/// goes through and a borrow forwards.
+///
+/// It is MIR's form of the checker's `place_reference_storage`, decided
+/// from declarations as upstream decides it. A whole root holds one when it is a `ref` binding (`binds_root`)
+/// and the place designates its slot, of reference type, rather than the
+/// referent read through it; a member does when its field is declared `ref`
+/// (`declares_ref_field`, given the struct type the step applies to). No
+/// element holds one by declaration.
+pub fn place_holds_reference(
+    place: &MirPlace,
+    binds_root: bool,
+    declares_ref_field: impl Fn(&Ty, &str) -> bool,
+) -> bool {
+    let Some(last) = place.proj.last() else {
+        return binds_root
+            && place
+                .ty
+                .as_ref()
+                .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)));
+    };
+    let Proj::Field(field) = last else {
+        return false;
+    };
+    let base = match place.proj.len() {
+        1 => verify::place_base_ty(place),
+        n => place.projection_tys.get(n - 2),
+    };
+    base.map(|base| match base.kind() {
+        TyKind::Ref(reference) => &reference.referent,
+        _ => base,
+    })
+    .is_some_and(|base| declares_ref_field(base, field))
 }
 
 fn lower_program(
@@ -1461,6 +1517,7 @@ fn lower_program(
             HashMap::new(),
             &HashMap::new(),
             overloads,
+            OwnRefFields::of(&declarations),
             false,
             &[],
             &[],
@@ -1572,10 +1629,11 @@ enum SynthesizedMember {
 /// fields' through its body. A field whose copy is the value itself
 /// (`types::trivially_register_passable_leaf`) is stored as read. The copy
 /// and move constructors restate the struct's `parameters` as a written
-/// one does, each an `__init__` overload upstream.
+/// one does, each an `__init__` overload upstream. `ref_fields` names the
+/// fields declared `ref`.
 fn lower_synthesized_member(
     (name, parameters): (&str, &[ParamDecl]),
-    fields: &[(String, Ty)],
+    (fields, ref_fields): (&[(String, Ty)], &[String]),
     member: SynthesizedMember,
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
@@ -1621,7 +1679,8 @@ fn lower_synthesized_member(
         // A `ref` field holds a reference: its copy and its move both store
         // the handle the source field holds, read through a reference to
         // the field, since a load of the field reads through the handle.
-        if let TyKind::Ref(reference) = ty.kind()
+        if ref_fields.contains(field)
+            && let TyKind::Ref(reference) = ty.kind()
             && !matches!(member, SynthesizedMember::Destroy)
         {
             let field_ref: Ty = TyKind::Ref(mojito_types::origin::RefTy {
@@ -2010,6 +2069,15 @@ fn struct_declaration(
                 )
             })
             .collect(),
+        ref_fields: {
+            let mut ref_fields: Vec<String> = fields
+                .iter()
+                .filter(|field| field.reference)
+                .map(|field| field.name.clone())
+                .collect();
+            ref_fields.sort();
+            ref_fields
+        },
         fieldwise_init: *fieldwise_init,
         param_decls: checked
             .generic_parameters_at(&GenericSite::Struct {
@@ -2115,6 +2183,7 @@ fn inflated_function_declarations(checked: &CheckedProgram) -> Vec<MirStructDecl
             name,
             module: String::new(),
             fields: Vec::new(),
+            ref_fields: Vec::new(),
             fieldwise_init: false,
             explicit_destructors: HashMap::new(),
             explicit_destroy: None,
@@ -3334,6 +3403,25 @@ struct WalrusYield {
     copy: Option<Reg>,
 }
 
+/// The fields each of the program's own structs declares `ref`
+/// ([`MirStructDeclaration::ref_fields`]), for a struct that declares
+/// any, read by body lowering while it holds the declarations mutably.
+#[derive(Clone, Default)]
+struct OwnRefFields(std::sync::Arc<HashMap<String, Vec<String>>>);
+
+impl OwnRefFields {
+    fn of(declarations: &MirDeclarations) -> Self {
+        Self(std::sync::Arc::new(
+            declarations
+                .structs
+                .iter()
+                .filter(|declaration| !declaration.ref_fields.is_empty())
+                .map(|declaration| (declaration.name.clone(), declaration.ref_fields.clone()))
+                .collect(),
+        ))
+    }
+}
+
 /// Flattens nested `Expr`s into the instruction list of the region being
 /// built, which `f.body` holds while it builds.
 struct Flatten<'a> {
@@ -3355,6 +3443,9 @@ struct Flatten<'a> {
     /// overloaded call's lowered symbol, and a fieldwise constructor's
     /// parameters; shared by every function lowered from one program.
     overloads: std::sync::Arc<mojito_checked::package::ProgramOverloads>,
+    /// The fields the program's own structs declare `ref`; a package
+    /// struct's are its declaration's ([`Self::declares_ref_field`]).
+    own_ref_fields: OwnRefFields,
     /// The program's checked tables, shared with HIR construction.
     checked: &'a std::sync::Arc<mojito_checked::checked::CheckedTables>,
     /// The HIR being lowered, whose blocks a region op's regions name.
@@ -3510,6 +3601,58 @@ impl<'a> Flatten<'a> {
         self.f.ref_bindings.insert(var);
     }
 
+    /// Whether the struct type `base` declares its field `field` `ref`:
+    /// one of the program's own structs as its declaration records, a
+    /// package struct as the package's declaration does.
+    fn declares_ref_field(&self, base: &Ty, field: &str) -> bool {
+        let Some((name, _)) = base.kind().as_non_simd_struct() else {
+            return false;
+        };
+        self.own_ref_fields.0.get(name).map_or_else(
+            || {
+                self.overloads
+                    .package_structure(name)
+                    .is_some_and(|declaration| declaration.declares_ref_field(field))
+            },
+            |fields| fields.iter().any(|declared| declared == field),
+        )
+    }
+
+    /// Whether the storage `place` designates holds a reference by
+    /// declaration ([`place_holds_reference`]).
+    fn place_holds_reference(&self, place: &MirPlace) -> bool {
+        place_holds_reference(place, self.f.binds_reference(place.root), |base, field| {
+            self.declares_ref_field(base, field)
+        })
+    }
+
+    /// [`Self::place_holds_reference`] for a HIR place, before it lowers:
+    /// a whole `ref` binding of reference type, or a member whose field is
+    /// declared `ref`.
+    fn hir_place_holds_reference(&self, place: &hir::HirPlace) -> bool {
+        match place.projections.last() {
+            None => {
+                matches!(place.ty.kind(), TyKind::Ref(_))
+                    && self
+                        .owner_vars
+                        .get(&place.owner)
+                        .is_some_and(|var| self.f.binds_reference(*var))
+            }
+            Some(hir::HirPlaceProjection {
+                kind: hir::HirPlaceProjectionKind::Field(field),
+                base_ty,
+                ..
+            }) => self.declares_ref_field(
+                match base_ty.kind() {
+                    TyKind::Ref(reference) => &reference.referent,
+                    _ => base_ty,
+                },
+                field,
+            ),
+            Some(_) => false,
+        }
+    }
+
     /// Whether a variable's slot is typed as a pointer, so a projected
     /// place rooted at it addresses the pointee.
     fn pointer_valued_slot(&self, var: VarId) -> bool {
@@ -3524,9 +3667,12 @@ impl<'a> Flatten<'a> {
     /// through itself designates.
     fn binding_reference(&mut self, var: VarId, span: SourceSpan) -> Reg {
         let storage = MirPlace::root(var, self.var_types.get(&var).cloned());
-        let handle_ty =
-            mir_place_handle_ty(&storage, Some(mojito_types::origin::Mutability::Mutable))
-                .unwrap_or_else(Ty::error);
+        let handle_ty = mir_place_handle_ty(
+            &storage,
+            self.f.binds_reference(var),
+            Some(mojito_types::origin::Mutability::Mutable),
+        )
+        .unwrap_or_else(Ty::error);
         let handle = self.fresh_typed(span, Some(var), handle_ty);
         let mut place = storage;
         place.through = Some(var);
@@ -3689,7 +3835,8 @@ impl<'a> Flatten<'a> {
                 dest,
                 place: place.clone(),
             });
-            if let Some(ty) = mir_place_handle_ty(&place, None) {
+            if let Some(ty) = mir_place_handle_ty(&place, self.f.binds_reference(place.root), None)
+            {
                 self.f.reg_types.insert(dest.0, ty);
             }
             return dest;
@@ -3724,11 +3871,12 @@ impl<'a> Flatten<'a> {
                 let handle_ty = self
                     .var_types
                     .get(&var)
-                    .filter(|ty| matches!(ty.kind(), TyKind::Ref(_)))
+                    .filter(|ty| self.f.binds_reference(var) && matches!(ty.kind(), TyKind::Ref(_)))
                     .cloned()
                     .or_else(|| {
                         mir_place_handle_ty(
                             &loan.place,
+                            self.f.binds_reference(loan.place.root),
                             Some(if loan.mutable {
                                 mojito_types::origin::Mutability::Mutable
                             } else {
@@ -3748,7 +3896,8 @@ impl<'a> Flatten<'a> {
             if self.runtime_aliases.contains(&var) {
                 let mut place = MirPlace::root(var, self.var_types.get(&var).cloned());
                 place.through = Some(var);
-                let handle_ty = mir_place_handle_ty(&place, None).unwrap_or_else(Ty::error);
+                let handle_ty = mir_place_handle_ty(&place, self.f.binds_reference(var), None)
+                    .unwrap_or_else(Ty::error);
                 let dest = self.fresh_typed(expression.location(), Some(var), handle_ty);
                 self.emit(MirInstr::MakeRef { dest, place });
                 return dest;
@@ -3761,6 +3910,7 @@ impl<'a> Flatten<'a> {
                 let place = MirPlace::root(var, var_ty);
                 let handle_ty = mir_place_handle_ty(
                     &place,
+                    false,
                     expression.borrow_mutability().map(|mutable| {
                         if mutable {
                             mojito_types::origin::Mutability::Mutable
@@ -3785,7 +3935,9 @@ impl<'a> Flatten<'a> {
             // or `mut`/`ref` actual does; rebuilding the syntax as a raw List or
             // Dict place would bypass the checked accessor contract.
             if let Some(place) = self.lower_projected_reference_place(expression) {
-                let handle_ty = mir_place_handle_ty(&place, None).unwrap_or_else(Ty::error);
+                let handle_ty =
+                    mir_place_handle_ty(&place, self.f.binds_reference(place.root), None)
+                        .unwrap_or_else(Ty::error);
                 let dest = self.fresh_typed(expression.location(), Some(place.root), handle_ty);
                 self.emit(MirInstr::MakeRef { dest, place });
                 return dest;
@@ -3793,6 +3945,7 @@ impl<'a> Flatten<'a> {
             let place = self.place(expression);
             let handle_ty = mir_place_handle_ty(
                 &place,
+                self.f.binds_reference(place.root),
                 expression.borrow_mutability().map(|mutable| {
                     if mutable {
                         mojito_types::origin::Mutability::Mutable
@@ -3803,6 +3956,7 @@ impl<'a> Flatten<'a> {
             )
             .unwrap_or_else(Ty::error);
             let stored_ty = place.ty.clone().unwrap_or_else(Ty::error);
+            let holds_reference = self.place_holds_reference(&place);
             let storage = self.fresh_typed(expression.location(), Some(place.root), handle_ty);
             self.emit_interior_invalidations(expression, None);
             self.emit(MirInstr::MakeRef {
@@ -3812,7 +3966,7 @@ impl<'a> Flatten<'a> {
             // A slot that stores a handle forwards it (read the stored
             // reference); an owned member/element auto-borrows, so the storage
             // borrow itself is the requested handle.
-            if !matches!(stored_ty.kind(), TyKind::Ref(_)) {
+            if !holds_reference {
                 return storage;
             }
             let dest = self.fresh_typed(expression.location(), None, stored_ty);
@@ -4146,9 +4300,16 @@ impl<'a> Flatten<'a> {
     /// forwards, else a handle to the owned field.
     fn capture_storage_prologue(&mut self, storage: &CaptureStorage) -> Vec<MirInstr> {
         let outer = std::mem::take(&mut self.f.body);
-        for (slot, field, field_ty, mutable) in &storage.fields {
+        for CaptureField {
+            slot,
+            field,
+            ty: field_ty,
+            mutable,
+            reference,
+        } in &storage.fields
+        {
             let reference_ty: Ty = match field_ty.kind() {
-                TyKind::Ref(_) => field_ty.clone(),
+                TyKind::Ref(_) if *reference => field_ty.clone(),
                 _ => TyKind::Ref(mojito_types::origin::RefTy {
                     referent: field_ty.clone(),
                     origin: mojito_types::origin::Origin::Untracked { mutable: *mutable },
@@ -4742,10 +4903,22 @@ struct CaptureStorage {
     /// The storage parameter's slot.
     slot: VarId,
     ty: Ty,
-    /// Each capture's slot, the field keeping it, that field's type, and
-    /// whether a write through the capture may reach an owned field.
-    fields: Vec<(VarId, String, Ty, bool)>,
+    fields: Vec<CaptureField>,
     location: SourceSpan,
+}
+
+/// The field of a [`CaptureStorage`] keeping one capture.
+struct CaptureField {
+    /// The capture's slot.
+    slot: VarId,
+    field: String,
+    ty: Ty,
+    /// Whether a write through the capture may reach an owned field.
+    mutable: bool,
+    /// Whether the field is declared a reference field
+    /// ([`mojito_checked::checked::CheckedStorageField::reference`]), whose
+    /// stored handle the capture's slot binds.
+    reference: bool,
 }
 
 /// [`lower_cfg`] with a nested-`def` registry in scope: a call of a registered
@@ -4764,6 +4937,7 @@ fn lower_cfg_nested(
     declared: HashMap<VarId, Ty>,
     nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
+    own_ref_fields: OwnRefFields,
     returns_reference: bool,
     reference_parameters: &[bool],
     inferred_reference_parameters: &[bool],
@@ -4826,6 +5000,7 @@ fn lower_cfg_nested(
             comptime_thunks: std::mem::take(comptime_thunks),
             parameter_reads: enclosing_binders.loop_bindings.iter().cloned().collect(),
             overloads: std::sync::Arc::clone(overloads),
+            own_ref_fields,
             checked: &cfg.checked,
             cfg,
             next_label: cfg.labels,
@@ -4972,6 +5147,9 @@ struct NestedCapture {
     binding: mojito_types::origin::OwnerId,
     ty: Ty,
     kind: mojito_ast::ast::CaptureKind,
+    /// The captured binding is a `ref` declaration
+    /// ([`mojito_checked::checked::CheckedCapture::binds_reference`]).
+    binds_reference: bool,
 }
 
 /// The runtime spelling of name node `node`: the slot HIR resolved it to,
@@ -5063,11 +5241,16 @@ fn close_register_types(
     /// `const_ints` holds the compile-time integer registers seen so far,
     /// so a tuple index through a constant register can copy the selected
     /// element type.
+    ///
+    /// `ref_bindings` are the function's `ref` bindings: a read derefs only
+    /// a place that holds a reference by declaration
+    /// ([`place_holds_reference`]), never a reference value.
     fn close_blocks(
         block: &MirBlock,
         reg_types: &mut HashMap<u32, Ty>,
         var_tys: &mut HashMap<VarId, Ty>,
         declarations: &MirDeclarations,
+        ref_bindings: &BTreeSet<VarId>,
         const_ints: &mut HashMap<u32, i64>,
     ) -> bool {
         let mut changed = false;
@@ -5111,9 +5294,16 @@ fn close_register_types(
                 MirInstr::MaterializeLiteral { dest, target, .. } => {
                     Some((dest, Some(target.clone())))
                 }
-                MirInstr::UseVar { dest, var, .. } => {
-                    Some((dest, var_tys.get(var).cloned().map(deref)))
-                }
+                MirInstr::UseVar { dest, var, .. } => Some((
+                    dest,
+                    var_tys.get(var).cloned().map(|ty| {
+                        if ref_bindings.contains(var) {
+                            deref(ty)
+                        } else {
+                            ty
+                        }
+                    }),
+                )),
                 MirInstr::DefVar {
                     var,
                     src,
@@ -5133,9 +5323,25 @@ fn close_register_types(
                     }
                     None
                 }
-                MirInstr::LoadPlace { dest, place } => Some((dest, place.ty.clone().map(deref))),
+                MirInstr::LoadPlace { dest, place } => Some((
+                    dest,
+                    place.ty.clone().map(|ty| {
+                        if place_holds_reference(
+                            place,
+                            ref_bindings.contains(&place.root),
+                            |base, field| declarations.declares_ref_field(base, field),
+                        ) {
+                            deref(ty)
+                        } else {
+                            ty
+                        }
+                    }),
+                )),
                 MirInstr::MovePlace { dest, place } => Some((dest, place.ty.clone())),
-                MirInstr::MakeRef { dest, place } => Some((dest, mir_place_handle_ty(place, None))),
+                MirInstr::MakeRef { dest, place } => Some((
+                    dest,
+                    mir_place_handle_ty(place, ref_bindings.contains(&place.root), None),
+                )),
                 MirInstr::ReadRef { dest, reference } => Some((
                     dest,
                     reg_types
@@ -5181,10 +5387,15 @@ fn close_register_types(
                     dest, base, field, ..
                 } => Some((
                     dest,
-                    reg_types
-                        .get(&base.0)
-                        .and_then(|base| struct_field(declarations, base, field))
-                        .map(deref),
+                    reg_types.get(&base.0).and_then(|base| {
+                        struct_field(declarations, base, field).map(|ty| {
+                            if declarations.declares_ref_field(base, field) {
+                                deref(ty)
+                            } else {
+                                ty
+                            }
+                        })
+                    }),
                 )),
                 MirInstr::Index {
                     dest, base, index, ..
@@ -5369,7 +5580,14 @@ fn close_register_types(
                 changed |= record(reg_types, dest, ty);
             }
             for region in instruction_regions(instr) {
-                changed |= close_blocks(region, reg_types, var_tys, declarations, const_ints);
+                changed |= close_blocks(
+                    region,
+                    reg_types,
+                    var_tys,
+                    declarations,
+                    ref_bindings,
+                    const_ints,
+                );
             }
             let results = match instr {
                 MirInstr::If {
@@ -5440,6 +5658,7 @@ fn close_register_types(
             &mut reg_types,
             &mut var_tys,
             declarations,
+            &f.ref_bindings,
             &mut const_ints,
         ) {
             break;

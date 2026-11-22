@@ -4548,6 +4548,7 @@ mod tests {
                     .enumerate()
                     .map(|(at, ty)| (format!("f{at}"), ty))
                     .collect(),
+                ref_fields: Vec::new(),
                 fieldwise_init: true,
                 param_decls: Vec::new(),
                 explicit_destructors: HashMap::new(),
@@ -4692,6 +4693,7 @@ mod tests {
                     fields: (0..fields)
                         .map(|at| (format!("f{at}"), Ty::int()))
                         .collect(),
+                    ref_fields: Vec::new(),
                     fieldwise_init: true,
                     param_decls: Vec::new(),
                     explicit_destructors: HashMap::new(),
@@ -4761,6 +4763,7 @@ mod tests {
                 "f0".into(),
                 Ty::new(TyKind::Struct("String".into(), Vec::new())),
             )],
+            ref_fields: Vec::new(),
             fieldwise_init: true,
             param_decls: Vec::new(),
             explicit_destructors: HashMap::new(),
@@ -4847,6 +4850,7 @@ mod tests {
                 name: name.into(),
                 module: String::new(),
                 fields: Vec::new(),
+                ref_fields: Vec::new(),
                 fieldwise_init: false,
                 param_decls: vec![ParamDecl::Type {
                     id,
@@ -4944,6 +4948,7 @@ mod tests {
                 name: mojito_types::types::STRING_LITERAL_TYPE_NAME.into(),
                 module: String::new(),
                 fields: Vec::new(),
+                ref_fields: Vec::new(),
                 fieldwise_init: false,
                 param_decls: Vec::new(),
                 explicit_destructors: HashMap::new(),

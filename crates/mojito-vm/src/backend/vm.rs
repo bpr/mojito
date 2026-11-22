@@ -2016,6 +2016,7 @@ mod held_struct_tests {
             fields: (0..fields)
                 .map(|at| (format!("f{at}"), Ty::int()))
                 .collect(),
+            ref_fields: Vec::new(),
             fieldwise_init: true,
             param_decls: Vec::new(),
             explicit_destructors: HashMap::new(),

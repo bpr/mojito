@@ -1210,6 +1210,21 @@ impl PackageScope {
         self.lowered(entry)?.type_alias(name).cloned()
     }
 
+    /// The reached library struct declaration `name`, decoded on first
+    /// use, noting a record that does not decode.
+    pub fn structure(&self, name: &str) -> Option<&StructDeclaration> {
+        let position = self.package.struct_position(name)?;
+        let entry = self.package.directory.word(Section::Structs, position, 1) as usize;
+        if !self.reaches(entry) {
+            return None;
+        }
+        let declaration = self.package.structure_at(position);
+        if declaration.is_none() {
+            self.failures.note(&self.package, Some(entry));
+        }
+        declaration
+    }
+
     /// The lowered part of the declaration at `entry`, noting a record
     /// that does not decode.
     fn lowered(&self, entry: usize) -> Option<&LoweredDeclaration> {
@@ -1345,6 +1360,13 @@ impl ProgramOverloads {
             own: OverloadSets::default(),
             package,
         }
+    }
+
+    /// The imported package's reached struct declaration `name`
+    /// ([`PackageScope::structure`]); `None` for a program importing no
+    /// package, or a name the package does not declare.
+    pub fn package_structure(&self, name: &str) -> Option<&StructDeclaration> {
+        self.package.as_ref()?.structure(name)
     }
 
     /// The program's own sets.

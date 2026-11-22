@@ -120,6 +120,7 @@ impl StructCatalog {
                             name: (*name).to_string(),
                             module: String::new(),
                             fields: Vec::new(),
+                            ref_fields: Vec::new(),
                             fieldwise_init: false,
                             param_decls: vec![ParamDecl::Type {
                                 id: mojito_types::param_expr::ParamId::new(name, 0),

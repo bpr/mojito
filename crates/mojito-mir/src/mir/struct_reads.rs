@@ -467,6 +467,7 @@ mod tests {
                 .enumerate()
                 .map(|(index, ty)| (format!("f{index}"), ty))
                 .collect(),
+            ref_fields: Vec::new(),
             fieldwise_init: false,
             param_decls: vec![decl],
             explicit_destructors: HashMap::new(),

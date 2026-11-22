@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2524**.
+Next free ID: **R2525**.
 
 ## Ordered Work
 
@@ -11321,25 +11321,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2506 MIR lowering decides a stored handle, a forwarded handle,
-  or a capture by address from a place's `TyKind::Ref` type**
+- [ ] **R2524 MIR lowering reads a reference from a checked
+  expression's `TyKind::Ref` type**
 
-  Upstream decides each from the declaration: a `ref` binding, a `ref`
-  field, a capture's declared kind. Once `!lit.ref` is `TyKind::Ref`, these
-  sites would treat a `!lit.ref` value as a binding.
-  - Whole slot (ask `binds_reference(root)` or `place.through`):
-    `mir_place_handle_ty`, `close_register_types`' gap-fill `UseVar`,
-    `call_addresses.rs`'s `stored_handle` whole-root case, and the
-    whole-slot tests in `calls.rs` and `call_addresses.rs`.
-  - Projected place (ask the field's `ref` marker, publishing
-    `StructInfo::ref_fields` through `MirDeclarations` if lowering cannot
-    reach it): synthesized copy/move in `mir.rs`, the `GetField`/
-    `LoadPlace` typing in `close_register_types`, `lower_stmt.rs`'s
-    `stores_reference` and `forwards_handle`, and the projected tests in
-    `calls.rs`, `call_addresses.rs`, and `expr_access.rs`.
-  - Captures (ask `field.reference`): `nested.rs`'s `capture_referent`
-    and its other capture tests, and the capture arm in `lower_stmt.rs`.
-  - Found while landing R2492 (2026-11-22).
+  Since R2489–R2491 the checker types a `ref` binding, a `ref` field, and a
+  `ref` result by its referent, so a `Ref`-typed checked expression is a
+  `!lit.ref` value. These guards still treat it as a reference to read
+  through or keep, which a merged `!lit.ref` would trip.
+  - Probe each guard with an `eprintln!` over the smoke list, delete the
+    ones that never fire, and move any that fires onto the fact behind it
+    (`ReferenceResult`, `place_holds_reference`, `binds_reference`), as
+    commit `592e27a91` did in the checker.
+  - `lower_expr/expr_access.rs`: `field_referent`'s `e.ty()` test, the
+    three `node.ty` tests in `member_expr`, and `index_expr`'s
+    `e.place_ty()` arm (no element holds a reference by declaration).
+  - `lower_expr/expr.rs`: `read_slot`'s `CopyPlaceValue` guard.
+  - `calls.rs`: the `e.ty()` test near the reference-result receiver.
+  - `call_results.rs`: the `e.ty()` filter of the call-result slot.
+  - Found while landing R2506 (2026-11-22).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11410,8 +11409,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Upstream's `!lit.ref` reads through only where a declaration says so.
   The VM reads through any `Ref`-typed place or register, and picks its
   runtime handle by type.
-  - VM read and write paths (decide by `binds_reference`, the `ref` field
-    marker, or the by-address operand list): `load_place_value`'s final
+  - VM read and write paths (decide by `mir::place_holds_reference` with
+    `MirDeclarations::declares_ref_field`, or the by-address operand list): `load_place_value`'s final
     branch, `Store`'s else-branch, `call_operand`, `value_operand`,
     `register_field`, `heap_handle_place`, and `heap_reference_result`.
   - VM handle choice: `address_as` / `pointer_valued` (`vm.rs`) make a
@@ -11461,7 +11460,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Plan: `R2492-tykind-litref-is-a-second-reference-plan.md`, section E7.
   - Go sites-first: `scripts/smoke --suites`, then `scripts/focused`.
   - Found while landing R2211 (2026-11-21).
-  - Depends on R2505, R2506, R2507, R2508, R2509, R2510.
+  - Depends on R2505, R2506, R2507, R2508, R2509, R2510, R2524.
   - Model: Fable, Planned.
 
 - [ ] **R2512 Pointer readers below the checker read the `PointerOrigin`

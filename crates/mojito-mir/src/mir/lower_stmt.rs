@@ -1827,7 +1827,8 @@ impl<'a> Flatten<'a> {
         let p = self
             .lower_projected_reference_place(place)
             .unwrap_or_else(|| self.place(place));
-        let stores_reference = matches!(p.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+        let holds_reference = self.place_holds_reference(&p);
+        let stores_reference = holds_reference
             && value.adjustments().iter().any(|adjustment| {
                 matches!(
                     adjustment,
@@ -1844,7 +1845,7 @@ impl<'a> Flatten<'a> {
             // A checked Copyable write-through runs the referent's
             // copy lifecycle before the store, so the written value
             // owns its storage instead of sharing the source's.
-            let src = if matches!(p.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+            let src = if holds_reference
                 && value.adjustments().iter().any(|adjustment| {
                     matches!(
                         adjustment,
@@ -2831,13 +2832,15 @@ impl<'a> Flatten<'a> {
         {
             let place = self.capture_place(capture);
             if capture.kind != mojito_ast::ast::CaptureKind::Move
-                && let TyKind::Ref(reference) = field.kind()
+                && let Some(reference) = declared.reference
             {
                 args.push(self.place_address(at.clone(), &place, reference.mutability));
                 continue;
             }
             let ty = match field.kind() {
-                TyKind::Ref(reference) => reference.referent.clone(),
+                TyKind::Ref(reference) if declared.reference.is_some() => {
+                    reference.referent.clone()
+                }
                 _ => field.clone(),
             };
             let dest = self.fresh_typed(at.clone(), Some(place.root), ty);
@@ -2944,7 +2947,8 @@ impl<'a> Flatten<'a> {
                     let slot_ty = Some(slot_ty);
                     let mut place = MirPlace::root(var, slot_ty.clone());
                     place.through = Some(var);
-                    let handle_ty = mir_place_handle_ty(&place, None).unwrap_or_else(Ty::error);
+                    let handle_ty =
+                        mir_place_handle_ty(&place, true, None).unwrap_or_else(Ty::error);
                     let handle = self.fresh_typed(node.location(), Some(var), handle_ty);
                     self.emit(MirInstr::MakeRef {
                         dest: handle,
@@ -3160,6 +3164,7 @@ impl<'a> Flatten<'a> {
                     .or_else(|| {
                         mir_place_handle_ty(
                             &place,
+                            self.f.binds_reference(place.root),
                             Some(if mutable {
                                 mojito_types::origin::Mutability::Mutable
                             } else {
@@ -3237,16 +3242,17 @@ impl<'a> Flatten<'a> {
                             in_place: false,
                         });
                     }
-                } else if matches!(
-                    place.place_ty().as_ref().map(Ty::kind),
-                    Some(TyKind::Ref(_))
-                ) {
-                    // A projected ref-valued slot (for example an element of
-                    // `List[ref T]`) is two distinct places: the container slot
-                    // stores the handle, while augmented assignment reads and
-                    // writes the referent. Preserve the handle explicitly so a
-                    // nominal container's index dunder cannot feed `ref` itself
-                    // into the arithmetic operation.
+                } else if place
+                    .hir
+                    .place
+                    .as_ref()
+                    .is_some_and(|hir_place| self.hir_place_holds_reference(hir_place))
+                {
+                    // A projected slot holding a reference (a `ref` field) is
+                    // two distinct places: the slot stores the handle, while
+                    // augmented assignment reads and writes the referent.
+                    // Preserve the handle explicitly so the stored `ref`
+                    // itself never feeds the arithmetic operation.
                     let reference = self.reference_handle(place);
                     let cur = self.fresh(place.location(), None);
                     self.emit(MirInstr::ReadRef {
@@ -4192,17 +4198,20 @@ impl<'a> Flatten<'a> {
             // reference-producing expression, instead returns the existing
             // handle. Borrowing the ref-valued slot would manufacture `ref ref T`
             // at runtime.
-            let forwards_handle = matches!(
-                (expression.place.as_ref().map(|place| &place.ty)).map(Ty::kind),
-                Some(TyKind::Ref(_))
-            ) || self.hir_node(expression).adjustments.iter().any(
-                |adjustment| {
-                    matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                    )
-                },
-            );
+            let forwards_handle = expression
+                .place
+                .as_ref()
+                .is_some_and(|place| self.hir_place_holds_reference(place))
+                || self
+                    .hir_node(expression)
+                    .adjustments
+                    .iter()
+                    .any(|adjustment| {
+                        matches!(
+                            adjustment,
+                            mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
+                        )
+                    });
             if forwards_handle {
                 self.reference_handle_hir(expression)
             } else {

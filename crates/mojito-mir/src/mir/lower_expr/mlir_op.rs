@@ -198,7 +198,7 @@ impl<'a> Flatten<'a> {
                 let slot = self.temporary_storage(args[0], *value, false, "$store_r");
                 let place = MirPlace::root(slot, self.f.reg_types.get(&value.0).cloned());
                 let slot_handle_ty =
-                    crate::mir::mir_place_handle_ty(&place, Some(Mutability::Immutable))
+                    crate::mir::mir_place_handle_ty(&place, false, Some(Mutability::Immutable))
                         .unwrap_or_else(Ty::error);
                 let slot_handle = self.fresh_typed(location.clone(), Some(slot), slot_handle_ty);
                 self.emit(MirInstr::MakeRef {

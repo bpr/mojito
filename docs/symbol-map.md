@@ -1632,6 +1632,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the `lower_cfg`/`lower_program` entry points, whose bodies keep their
   structured region ops. `Flatten`'s methods are split by
   responsibility across `impl<'a> Flatten<'a>` blocks in the submodules below.
+  It owns MIR's reference-storage rule, `place_holds_reference` (MIR's
+  `place_reference_storage`: a whole `ref` binding's slot, or a member
+  whose field is declared `ref`), which `mir_place_handle_ty` (given
+  whether the root binds), `call_addresses.rs` `stored_handle`, register
+  closure (`close_register_types`), and lowering's
+  `Flatten::{place_holds_reference, hir_place_holds_reference}` ask, never
+  a place's `TyKind::Ref` type. The field fact is
+  `MirStructDeclaration::ref_fields` (`StructDeclaration::{ref_fields,
+  declares_ref_field}`, crate `mojito-checked`, from
+  `CheckedField::reference`), read through
+  `MirDeclarations::declares_ref_field`, or during body lowering through
+  `Flatten::declares_ref_field` (`OwnRefFields`, and
+  `ProgramOverloads::package_structure` / `PackageScope::structure` for a
+  package struct). A capture reads through only a `ref` binding
+  (`CheckedCapture::binds_reference`, set by the checker's
+  `checked_capture` from `owner_binds_reference`).
 - `mir/node.rs` owns `Node`, the handle MIR lowering reads a checked
   expression through (HIR's tree with its checked node), and its operand
   accessors (`operands`, `operand`, `operand_of`, `object`, `index`, `args`,

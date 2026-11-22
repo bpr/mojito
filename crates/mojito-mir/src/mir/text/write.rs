@@ -393,6 +393,14 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                 ),
             ));
         }
+        // Schema 1.225 names the fields declared `ref`, written only when
+        // the struct declares one.
+        if !declaration.ref_fields.is_empty() {
+            entries.push((
+                "ref_fields",
+                list(declaration.ref_fields.iter().map(|field| symbol(field))),
+            ));
+        }
         // Schema 1.175 says whether the struct declares register-passability
         // unconditionally, written only when it does.
         if declaration.register_passable {

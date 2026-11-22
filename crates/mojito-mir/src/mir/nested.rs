@@ -106,6 +106,7 @@ pub(super) fn lower_fn_nested(
         declared,
         &registry,
         overloads,
+        crate::mir::OwnRefFields::of(declarations),
         returns_reference,
         &ref_params,
         &inferred_reference_parameters,
@@ -919,11 +920,11 @@ fn captured_storage<'r>(
     registry.get(&capture.binding)?.storage.as_ref()
 }
 
-/// The type a reference capture names: the referent of a captured
-/// reference binding (a loop's reference target), else the capture's own.
+/// The type a reference capture names: the referent of a captured `ref`
+/// binding (a loop's reference target), else the capture's own.
 fn capture_referent(capture: &NestedCapture) -> Ty {
     match capture.ty.kind() {
-        TyKind::Ref(reference) => reference.referent.clone(),
+        TyKind::Ref(reference) if capture.binds_reference => reference.referent.clone(),
         _ => mir_nested_callable_ty(capture.ty.clone()),
     }
 }
@@ -985,11 +986,12 @@ fn lower_closure_storage(
         .collect();
     let param_writes = parameters
         .iter()
-        .map(|parameter| match parameter.ty.kind() {
-            TyKind::Ref(reference) => {
-                reference.mutability == mojito_types::origin::Mutability::Mutable
-            }
-            _ => is_owned(&parameter.convention),
+        .zip(&storage.declared.fields)
+        .map(|(parameter, declared)| {
+            declared.reference.map_or_else(
+                || is_owned(&parameter.convention),
+                |reference| reference.mutability == mojito_types::origin::Mutability::Mutable,
+            )
         })
         .collect();
     lower_fieldwise_members(
@@ -999,13 +1001,21 @@ fn lower_closure_storage(
         functions,
         declarations,
     );
+    let mut ref_fields: Vec<String> = storage
+        .declared
+        .fields
+        .iter()
+        .filter(|field| field.reference.is_some())
+        .map(|field| field.name.clone())
+        .collect();
+    ref_fields.sort();
     // Upstream's storage `__del__` is trivial exactly when the storage is
     // trivially register-passable (`ClosureEmitter`'s
     // `__del__is_trivial`), as are its copy and move.
     if !storage.declared.trivially_register_passable() {
         lower_synthesized_member(
             (name, &storage.param_decls),
-            &storage.fields,
+            (&storage.fields, &ref_fields),
             SynthesizedMember::Destroy,
             functions,
             declarations,
@@ -1017,7 +1027,7 @@ fn lower_closure_storage(
     if !storage.declared.trivially_register_passable() {
         lower_synthesized_member(
             (name, &storage.param_decls),
-            &storage.fields,
+            (&storage.fields, &ref_fields),
             SynthesizedMember::Move,
             functions,
             declarations,
@@ -1025,7 +1035,7 @@ fn lower_closure_storage(
         if copyable {
             lower_synthesized_member(
                 (name, &storage.param_decls),
-                &storage.fields,
+                (&storage.fields, &ref_fields),
                 SynthesizedMember::Copy,
                 functions,
                 declarations,
@@ -1036,6 +1046,7 @@ fn lower_closure_storage(
         name: name.clone(),
         module: String::new(),
         fields: storage.fields.clone(),
+        ref_fields,
         fieldwise_init: true,
         param_decls: storage.param_decls.clone(),
         explicit_destructors: HashMap::new(),
@@ -1168,6 +1179,7 @@ fn lower_storage_call_witness(
         let place = root(0, &storage.ty);
         let handle = crate::mir::mir_place_handle_ty(
             &place,
+            false,
             Some(mojito_types::origin::Mutability::Immutable),
         )
         .unwrap_or_else(Ty::error);
@@ -1186,14 +1198,14 @@ fn lower_storage_call_witness(
             .get(index)
             .copied()
             .unwrap_or(false)
-            && !matches!(ty.kind(), TyKind::Ref(_));
+            && *convention != Some(ArgConvention::Ref);
         let mutability = if matches!(convention, Some(ArgConvention::Mut | ArgConvention::Ref)) {
             mojito_types::origin::Mutability::Mutable
         } else {
             mojito_types::origin::Mutability::Immutable
         };
         let dest = register(&if by_address {
-            crate::mir::mir_place_handle_ty(&root(var, ty), Some(mutability))
+            crate::mir::mir_place_handle_ty(&root(var, ty), false, Some(mutability))
                 .unwrap_or_else(Ty::error)
         } else {
             ty.clone()
@@ -1681,6 +1693,7 @@ fn lower_nested_node(
         declared,
         &registry,
         overloads,
+        crate::mir::OwnRefFields::of(declarations),
         effect.returns_reference,
         &refp2,
         &inferred2,
@@ -1817,14 +1830,14 @@ fn capture_slots(
             fields: captures
                 .iter()
                 .zip(&storage.fields)
+                .zip(&storage.declared.fields)
                 .enumerate()
-                .map(|(index, (capture, (field, ty)))| {
-                    (
-                        slot(index),
-                        field.clone(),
-                        ty.clone(),
-                        capture.kind == mojito_ast::ast::CaptureKind::Move,
-                    )
+                .map(|(index, ((capture, (field, ty)), declared))| CaptureField {
+                    slot: slot(index),
+                    field: field.clone(),
+                    ty: ty.clone(),
+                    mutable: capture.kind == mojito_ast::ast::CaptureKind::Move,
+                    reference: declared.reference.is_some(),
                 })
                 .collect(),
             location,
@@ -1911,6 +1924,7 @@ fn analyze_captures(def: &mojito_checked::checked::CheckedDef) -> Vec<NestedCapt
             binding: capture.binding,
             ty: capture.ty.clone(),
             kind: capture.kind,
+            binds_reference: capture.binds_reference,
         })
         .collect()
 }
@@ -2039,22 +2053,24 @@ pub(super) fn upgrade_closure_storage_origins(declarations: &mut MirDeclarations
             .fields
             .iter()
             .filter_map(|(field, ty)| match ty.kind() {
-                TyKind::Ref(reference) => match reference.origin {
-                    mojito_types::origin::Origin::Param(origin) => Some(ParamDecl::Origin {
-                        id: mojito_types::param_expr::ParamId::new(
-                            &structure.name,
-                            origin.0 as usize,
-                        ),
-                        name: format!("__origin_{field}"),
-                        origin,
-                        mutability: mojito_types::types::OriginMutability::Fixed(
-                            reference.mutability == mojito_types::origin::Mutability::Mutable,
-                        ),
-                        infer_only: false,
-                        lit: false,
-                    }),
-                    _ => None,
-                },
+                TyKind::Ref(reference) if structure.declares_ref_field(field) => {
+                    match reference.origin {
+                        mojito_types::origin::Origin::Param(origin) => Some(ParamDecl::Origin {
+                            id: mojito_types::param_expr::ParamId::new(
+                                &structure.name,
+                                origin.0 as usize,
+                            ),
+                            name: format!("__origin_{field}"),
+                            origin,
+                            mutability: mojito_types::types::OriginMutability::Fixed(
+                                reference.mutability == mojito_types::origin::Mutability::Mutable,
+                            ),
+                            infer_only: false,
+                            lit: false,
+                        }),
+                        _ => None,
+                    }
+                }
                 _ => None,
             })
             .filter(|decl| {

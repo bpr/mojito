@@ -749,7 +749,7 @@ impl<'a> Flatten<'a> {
         if place.ty.is_none() || is_reference(self.f.reg_types.get(&register.0)) {
             return lowered;
         }
-        if is_reference(place.ty.as_ref()) {
+        if self.place_holds_reference(place) {
             let (register, place) = (*register, place.clone());
             let address = self.forward_stored_handle(location, register, &place, wanted);
             return (address, Some(place));
@@ -784,10 +784,12 @@ impl<'a> Flatten<'a> {
     /// `ref` binds its operand's own mutability.
     fn place_handle_ty(&self, place: &MirPlace, wanted: mojito_types::origin::Mutability) -> Ty {
         use mojito_types::origin::{Mutability, OriginParamId};
-        let immutable_root = matches!(
-            place.root_ty.as_ref().map(Ty::kind),
-            Some(TyKind::Ref(reference)) if reference.mutability == Mutability::Immutable
-        );
+        let binds_root = self.f.binds_reference(place.root);
+        let immutable_root = binds_root
+            && matches!(
+                place.root_ty.as_ref().map(Ty::kind),
+                Some(TyKind::Ref(reference)) if reference.mutability == Mutability::Immutable
+            );
         let mutability = if self.read_parameters.contains(&place.root)
             || immutable_root
             || wanted == Mutability::Immutable
@@ -798,13 +800,13 @@ impl<'a> Flatten<'a> {
         } else {
             wanted
         };
-        mir_place_handle_ty(place, Some(mutability)).unwrap_or_else(Ty::error)
+        mir_place_handle_ty(place, binds_root, Some(mutability)).unwrap_or_else(Ty::error)
     }
 
     /// Pass the reference `place` holds, rather than the value read through
     /// it into `register`, as upstream passes a `ref` field's or a `ref`
     /// binding's `!lit.ref` as the operand: the read defining `register`
-    /// becomes a `ref.make` of the stored handle ([`stored_handle`]),
+    /// becomes a `ref.make` of the stored handle ([`Self::stored_handle`]),
     /// or, where no read of it is found, a fresh one follows. The retained
     /// place is unchanged.
     fn forward_stored_handle(
@@ -814,12 +816,29 @@ impl<'a> Flatten<'a> {
         place: &MirPlace,
         wanted: mojito_types::origin::Mutability,
     ) -> Reg {
-        let (handle_place, handle) = stored_handle(place, wanted);
+        let (handle_place, handle) = self.stored_handle(place, wanted);
         if self.forward_definition(register, place, &handle_place) {
             self.f.reg_types.insert(register.0, handle);
             return register;
         }
         self.emit_make_ref(location, handle_place, handle)
+    }
+
+    /// The place whose `ref.make` forwards the reference `place` holds,
+    /// with that reference's type
+    /// ([`crate::mir::call_addresses::stored_handle`]).
+    fn stored_handle(
+        &self,
+        place: &MirPlace,
+        wanted: mojito_types::origin::Mutability,
+    ) -> (MirPlace, Ty) {
+        crate::mir::call_addresses::stored_handle(
+            place,
+            self.f.binds_reference(place.root),
+            |base, field| self.declares_ref_field(base, field),
+            wanted,
+        )
+        .unwrap_or_else(|| (place.clone(), Ty::error()))
     }
 
     /// Emit a `ref.make` of `place` typed `handle`.
@@ -1089,7 +1108,9 @@ impl<'a> Flatten<'a> {
             // referent, which a load of the field reads through to; a
             // by-address operand forwards the stored handle in its stead
             // (`Self::forward_stored_handle`).
-            if let Some(TyKind::Ref(reference)) = place.ty.as_ref().map(Ty::kind) {
+            if self.place_holds_reference(&place)
+                && let Some(TyKind::Ref(reference)) = place.ty.as_ref().map(Ty::kind)
+            {
                 let value = self.fresh_typed(
                     expression.location(),
                     Some(place.root),
@@ -2353,7 +2374,7 @@ impl<'a> Flatten<'a> {
     /// read `raw` from `place`: a fresh `ref.make` of the base when the
     /// setter takes it by address, as upstream's `SubscriptDLValue` store
     /// forms its own `!lit.ref` of the base (the reference a base holding
-    /// one stores, [`stored_handle`]); otherwise the base read again
+    /// one stores, [`Self::stored_handle`]); otherwise the base read again
     /// when the getter may have written it (`getter_mutates`) or took it by
     /// address, so a getter's reference never reaches a by-value setter.
     pub(super) fn setter_receiver(
@@ -2369,8 +2390,8 @@ impl<'a> Flatten<'a> {
             && place.ty.is_some()
             && let Some(wanted) = receiver_by_address(setter, receiver.register_passable_read())
         {
-            return if is_reference(place.ty.as_ref()) {
-                let (handle_place, handle) = stored_handle(place, wanted);
+            return if self.place_holds_reference(place) {
+                let (handle_place, handle) = self.stored_handle(place, wanted);
                 self.emit_make_ref(receiver.location(), handle_place, handle)
             } else {
                 self.place_address(receiver.location(), place, wanted)
@@ -3341,13 +3362,6 @@ fn rooted_in_temporary(expression: Node<'_>) -> bool {
         }
     }
     node.is_fresh_temporary() && node.reference_result().is_none()
-}
-
-/// The place whose `ref.make` forwards the reference `place` holds, with
-/// that reference's type ([`crate::mir::call_addresses::stored_handle`]).
-fn stored_handle(place: &MirPlace, wanted: mojito_types::origin::Mutability) -> (MirPlace, Ty) {
-    crate::mir::call_addresses::stored_handle(place, wanted)
-        .unwrap_or_else(|| (place.clone(), Ty::error()))
 }
 
 /// How the method call (or subscript accessor) bound by `contract`

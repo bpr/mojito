@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.199
+# Mojito Textual MIR Format, Version 1.225
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.199 is implemented end to end for inspection and loading: canonical
+Version 1.225 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -1356,6 +1356,20 @@ contract source is the keyword one past the last index's, as upstream's
 `SubscriptDLValue::emitStore` appends it. An older record, whose setter
 passed no keyword index, reads with an empty list. The package format moves
 to `mojito-package 255` (R2480).
+
+Schema 1.225 gives a struct record the optional `ref_fields: [symbol,
+...]` list, sorted, before `register_passable` (written only when
+non-empty): the fields its declaration marks `ref`
+(`MirStructDeclaration::ref_fields`, from `CheckedField::reference`, or a
+closure storage's reference captures). Lowering decides from it, never
+from a field's `ref` type, whether a member place holds a reference that a
+read goes through and a borrow forwards (`place_holds_reference`), as
+upstream decides it from the field declaration. An older struct, which
+recorded no such fact, reads with every field typed by the `ref` tag (not
+`lit_ref`) as a `ref` field, since a field was then typed `ref` exactly
+when it was declared so. The checked field and capture records gain
+`reference` and `binds_reference`, so the package format moves to
+`mojito-package 259` (R2506).
 
 Schema 1.224 gives a function header the optional `ref_bindings: [$vN,
 ...]` list after `returns_reference`, the slots that bind a reference

@@ -3120,6 +3120,10 @@ pub struct CheckedField {
     /// ([`ConformanceFacts::fieldwise_ref_params`]); absent for any other
     /// field.
     pub fieldwise_ref: Option<mojito_types::origin::RefSig>,
+    /// The field is declared `ref`: its storage holds a reference that a
+    /// read goes through, as upstream decides from the field declaration.
+    #[serde(default)]
+    pub reference: bool,
 }
 
 /// A struct's associated `comptime` member.
@@ -4214,6 +4218,10 @@ pub struct CheckedCapture {
     /// copy/move captures contribute only loans already stored in their value;
     /// read/ref/mut captures also contribute their source place.
     pub origins: Vec<mojito_types::origin::CaptureOrigin>,
+    /// The captured binding is a `ref` declaration, whose slot holds the
+    /// reference a read goes through.
+    #[serde(default)]
+    pub binds_reference: bool,
 }
 
 /// A node a [`CheckedTables::walk`] reaches.
@@ -6908,6 +6916,7 @@ impl<'a> ArenaBuilder<'a> {
                     .enumerate()
                     .map(|(field, declared)| CheckedField {
                         name: declared.name.clone(),
+                        reference: matches!(declared.ty, mojito_ast::ast::SourceType::Ref { .. }),
                         fieldwise_convention: conventions
                             .and_then(|conventions| conventions.get(field).copied().flatten()),
                         fieldwise_ref: ref_params

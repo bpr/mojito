@@ -178,24 +178,29 @@ fn consumed_by_address(
     ty: Ty,
     span: Option<&SourceSpan>,
 ) -> (Reg, Option<MirInstr>) {
-    let handle = consumed_place_handle(&place, ty);
+    let handle = consumed_place_handle(&place, function.binds_reference(place.root), ty);
     let recv = fresh_register(function, handle, span);
     (recv, Some(MirInstr::MakeRef { dest: recv, place }))
 }
 
 /// The type of the mutable reference a `deinit` call consumes `place`,
-/// of type `ty`, through.
-fn consumed_place_handle(place: &MirPlace, ty: Ty) -> Ty {
-    super::mir_place_handle_ty(place, Some(mojito_types::origin::Mutability::Mutable))
-        .unwrap_or_else(|| {
-            TyKind::Ref(mojito_types::origin::RefTy {
-                referent: ty,
-                origin: mojito_types::origin::Origin::Untracked { mutable: true },
-                mutability: mojito_types::origin::Mutability::Mutable,
-                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
-            })
-            .into()
+/// of type `ty`, through; `binds_root` says whether its root is a `ref`
+/// binding.
+fn consumed_place_handle(place: &MirPlace, binds_root: bool, ty: Ty) -> Ty {
+    super::mir_place_handle_ty(
+        place,
+        binds_root,
+        Some(mojito_types::origin::Mutability::Mutable),
+    )
+    .unwrap_or_else(|| {
+        TyKind::Ref(mojito_types::origin::RefTy {
+            referent: ty,
+            origin: mojito_types::origin::Origin::Untracked { mutable: true },
+            mutability: mojito_types::origin::Mutability::Mutable,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         })
+        .into()
+    })
 }
 
 /// [`upgrade_deinit_receivers`] over `block` and its regions.
@@ -242,7 +247,11 @@ fn upgrade_deinit_receivers_in(
                 register
             }
             (Some(at), false) => {
-                let handle = consumed_place_handle(&place, ty.unwrap_or_else(Ty::error));
+                let handle = consumed_place_handle(
+                    &place,
+                    function.binds_reference(place.root),
+                    ty.unwrap_or_else(Ty::error),
+                );
                 function.reg_types.insert(register.0, handle);
                 block.instrs[at] = MirInstr::MakeRef {
                     dest: register,
@@ -259,7 +268,11 @@ fn upgrade_deinit_receivers_in(
                 taken
             }
             (None, false) => {
-                let handle = consumed_place_handle(&place, ty.unwrap_or_else(Ty::error));
+                let handle = consumed_place_handle(
+                    &place,
+                    function.binds_reference(place.root),
+                    ty.unwrap_or_else(Ty::error),
+                );
                 let address = fresh_register(function, handle, None);
                 block.instrs.insert(
                     index,

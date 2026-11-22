@@ -1160,6 +1160,7 @@ impl RewriteTypes for CheckedField {
             ty,
             fieldwise_convention: _,
             fieldwise_ref: _,
+            reference: _,
         } = self;
         ty.rewrite_types(rewrite);
     }
@@ -1313,6 +1314,7 @@ impl RewriteTypes for CheckedCapture {
             ty,
             kind: _,
             origins: _,
+            binds_reference: _,
         } = self;
         ty.rewrite_types(rewrite);
     }

@@ -2353,6 +2353,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowering decides whether a place holds a reference — whether a read
+  goes through it and a borrow forwards its stored handle — from
+  declarations, as upstream does: a whole slot when it is a `ref` binding,
+  a member when its field is declared `ref` (the struct declaration's new
+  `ref_fields`, MIR schema 1.225), a capture when the captured binding is a
+  `ref` one, never from a place's `TyKind::Ref` type. Accepted programs and
+  their output are unchanged; a `!lit.ref` value can now merge into `ref`
+  without lowering mistaking it for a binding (R2506). The package format
+  moves to `mojito-package 259`.
+
 - The checker's expression rules no longer peel a `TyKind::Ref` off an
   inferred type: the subscript place and read, `__getitem_param__` and
   `__getattr_param__` receivers, a call's assignable result, a

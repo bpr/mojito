@@ -33,6 +33,11 @@ pub struct StructDeclaration {
     /// qualifies its name in `reflect[T].name()`.
     pub module: String,
     pub fields: Vec<(String, Ty)>,
+    /// The fields declared `ref`, sorted: each one's storage holds a
+    /// reference that a read goes through and a borrow forwards, as
+    /// upstream decides from the field declaration rather than its type.
+    #[serde(default)]
+    pub ref_fields: Vec<String>,
     pub fieldwise_init: bool,
     pub param_decls: Vec<ParamDecl>,
     /// The struct's named destructors (`deinit self` methods), beside
@@ -183,6 +188,13 @@ pub struct StructMember {
 }
 
 impl StructDeclaration {
+    /// Whether `field` is declared `ref` ([`Self::ref_fields`]).
+    pub fn declares_ref_field(&self, field: &str) -> bool {
+        self.ref_fields
+            .binary_search_by(|name| name.as_str().cmp(field))
+            .is_ok()
+    }
+
     /// The binders an instance binds by position, in declared order
     /// ([`ParamDecl::argument_binders`]): an instance carries its origins
     /// as a tail after them.
@@ -1011,6 +1023,7 @@ mod tests {
             name: "Bag".into(),
             module: String::new(),
             fields: Vec::new(),
+            ref_fields: Vec::new(),
             fieldwise_init: false,
             param_decls: origin_params
                 .into_iter()

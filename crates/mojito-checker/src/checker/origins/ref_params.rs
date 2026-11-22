@@ -334,6 +334,7 @@ impl Checker {
             ty,
             kind,
             origins,
+            binds_reference: self.owner_binds_reference(binding),
         }
     }
 

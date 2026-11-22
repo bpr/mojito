@@ -3222,6 +3222,21 @@ when the field is recorded, never because its type is `TyKind::Ref`; a
 constructor (`lower_fieldwise_members`) takes a `ref` parameter from the
 published `CheckedField::fieldwise_convention`.
 
+MIR lowering decides by the same declarations. Whether a place holds a
+reference that a read goes through and a borrow forwards is
+`place_holds_reference`, MIR's `place_reference_storage`: a whole root
+holds one when it is a `ref` binding (`MirFunction::binds_reference`), a
+member when its field is declared `ref` (`MirStructDeclaration::ref_fields`,
+published from `CheckedField::reference`; `MirDeclarations::declares_ref_field`
+after lowering, `Flatten::declares_ref_field` during it, a package struct's
+read from the package scope), and no element ever does. A handle's type
+(`mir_place_handle_ty`), a stored handle's forwarding (`stored_handle`), a
+`ref`-field store or augmented assignment, register-type closure's
+read-through, and the synthesized copy and move of a `ref` field all ask it,
+never a place's `TyKind::Ref` type. A capture reads through only a captured
+`ref` binding (`CheckedCapture::binds_reference`), and a closure storage's
+field is a reference field by `CheckedStorageField::reference`.
+
 A call's result is a reference by the same rule: the callee's `ref`
 result convention, never its result type. The check records
 `SemanticAdjustment::ReferenceResult` where the call binds its result

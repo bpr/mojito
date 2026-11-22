@@ -4583,6 +4583,7 @@ impl<'a> Specializer<'a> {
             .map(|capture| {
                 let ty = mojito_mir::mir::mir_place_handle_ty(
                     &capture.place,
+                    function.binds_reference(capture.place.root),
                     Some(mojito_types::origin::Mutability::Mutable),
                 )
                 .ok_or_else(|| {

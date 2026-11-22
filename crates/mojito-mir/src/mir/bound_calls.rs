@@ -127,11 +127,12 @@ pub fn direct_from_inflated_bound_call(
 /// one is emitted before the call.
 pub fn upgrade_bound_receivers(
     functions: &mut [(String, MirFunction)],
+    declarations: &super::MirDeclarations,
     legacy: &LegacyOperandTables,
 ) {
     for (index, (_, function)) in functions.iter_mut().enumerate() {
         let mut body = std::mem::take(&mut function.body);
-        upgrade_bound_receivers_in(&mut body, function, &mut legacy.cursor(index));
+        upgrade_bound_receivers_in(&mut body, function, declarations, &mut legacy.cursor(index));
         function.body = body;
     }
 }
@@ -216,12 +217,13 @@ fn peel_refs(ty: &Ty) -> &Ty {
 fn upgrade_bound_receivers_in(
     block: &mut super::MirBlock,
     function: &mut MirFunction,
+    declarations: &super::MirDeclarations,
     cursor: &mut LegacyCursor<'_>,
 ) {
     let mut index = 0;
     while index < block.instrs.len() {
         for region in super::instruction_regions_mut(&mut block.instrs[index]) {
-            upgrade_bound_receivers_in(region, function, cursor);
+            upgrade_bound_receivers_in(region, function, declarations, cursor);
         }
         let place = cursor
             .visit(&block.instrs[index])
@@ -246,12 +248,19 @@ fn upgrade_bound_receivers_in(
             index += 1;
             continue;
         };
-        let (place, handle) = super::call_addresses::stored_handle(&place, Mutability::Immutable)
-            .unwrap_or_else(|| {
-                let handle = super::mir_place_handle_ty(&place, Some(Mutability::Immutable))
+        let binds_root = function.binds_reference(place.root);
+        let (place, handle) = super::call_addresses::stored_handle(
+            &place,
+            binds_root,
+            |base, field| declarations.declares_ref_field(base, field),
+            Mutability::Immutable,
+        )
+        .unwrap_or_else(|| {
+            let handle =
+                super::mir_place_handle_ty(&place, binds_root, Some(Mutability::Immutable))
                     .unwrap_or_else(Ty::error);
-                (place, handle)
-            });
+            (place, handle)
+        });
         let defined = block.instrs[..index]
             .iter()
             .rposition(|instruction| match instruction {

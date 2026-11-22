@@ -107,7 +107,8 @@ impl<'a> Flatten<'a> {
     pub(in crate::mir) fn field_referent(&mut self, e: Node<'a>, value: Reg) -> Reg {
         let loads_field = matches!(
             self.f.body.instrs.last(),
-            Some(MirInstr::LoadPlace { dest, .. }) if *dest == value
+            Some(MirInstr::LoadPlace { dest, place })
+                if *dest == value && self.place_holds_reference(place)
         );
         if loads_field
             && !matches!(e.ty().as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
@@ -181,6 +182,7 @@ impl<'a> Flatten<'a> {
         if let Some(place) = self.pure_field_place(e) {
             let place_root = place.root;
             let place_ty = place.ty.clone();
+            let holds_reference = self.place_holds_reference(&place);
             let loaded = self.fresh_typed(
                 e.location(),
                 Some(place_root),
@@ -207,7 +209,8 @@ impl<'a> Flatten<'a> {
             // whose handle a method receiver or a place operation keeps. A
             // value use, a copy or a read argument, is the referent, as a
             // `ref` binding's is.
-            if let Some(TyKind::Ref(reference)) = place_ty.as_ref().map(Ty::kind) {
+            if holds_reference && let Some(TyKind::Ref(reference)) = place_ty.as_ref().map(Ty::kind)
+            {
                 if (copies_place_value(node) || reads_argument(node))
                     && !matches!(node.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
                 {

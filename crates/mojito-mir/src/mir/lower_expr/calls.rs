@@ -378,6 +378,7 @@ impl<'a> Flatten<'a> {
                 binding: info.binding,
                 ty: storage.ty.clone(),
                 kind: mojito_ast::ast::CaptureKind::Imm,
+                binds_reference: false,
             })
         })
     }
@@ -614,6 +615,7 @@ impl<'a> Flatten<'a> {
                     .into()
                 }),
                 kind: mojito_ast::ast::CaptureKind::Imm,
+                binds_reference: false,
             };
             self.collect_capture_keepalives(&callable_capture, &mut owners, &mut seen);
             for capture in info.captures {
