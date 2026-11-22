@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2519**.
+Next free ID: **R2520**.
 
 ## Ordered Work
 
@@ -856,6 +856,20 @@ How much generic instantiation multiplies a program, and proof that a pass
 which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
+
+- [ ] **R2519 5 fixtures stopped elaborating after batch 4**
+
+  The instantiation ratchet finds `assets/ok` fixtures that elaborated at the last baseline and now fail to compile.
+  - Probe: `assets/ok/list_contiguous_slice_view.mojo` (failed: run error: Elaboration error: unsupported concrete MIR that does not verify after the post-elaboration pipeline: MIR function 'main': binding of Span$mono$Vfalse$TInt[false, Int] to a slot of type Span$mono$Vtrue$TInt[true, Int]).
+  - Probe: `assets/ok/nominal_string_codepoint_iter.mojo` (failed: run error: invalid checked program: after pre-elaboration pass `inline-parametric`: MIR function 'main': argument 0 of '__module$std$collections$string$iterators$CodepointsIter.__init__' has type StringSpan[true], declared StringSpan[false]; after pre-elaboration pass `remove-unused-params`: MIR function 'main': argument 0 of '__module$std$collections$string$iterators$CodepointsIter.__init__' has type StringSpan[true], declared StringSpan[false]; after pre-elaboration pass `sroa`: MIR function 'main': argument 0 of '__module$std$collections$string$iterators$CodepointsIter.__init__' has type StringSpan[true], declared StringSpan[false]; after pre-elaboration pass `mem-2-reg`: MIR function 'main': argument 0 of '__module$std$collections$string$iterators$CodepointsIter.__init__' has type StringSpan[true], declared StringSpan[false]; after pre-elaboration pass `sccp`: MIR function 'main': argument 0 of '__module$std$collections$string$iterators$CodepointsIter.__init__' has type StringSpan[true], declared StringSpan[false]; after pre-elaboration pass `canonicalize`: MIR function 'main': argument 0 of '__module$std$collections$string$iterators$CodepointsIter.__init__' has type StringSpan[true], declared StringSpan[false]; after pre-elaboration pass `sroa`: MIR function 'main': argument 0 of '__module$std$collections$string$iterators$CodepointsIter.__init__' has type StringSpan[true], declared StringSpan[false]; after pre-elaboration pass `mem-2-reg`: MIR function 'main': argument 0 of '__module$std$collections$string$iterators$CodepointsIter.__init__' has type StringSpan[true], declared StringSpan[false]; after pre-elaboration pass `canonicalize`: MIR function 'main': argument 0 of '__module$std$collections$string$iterators$CodepointsIter.__init__' has type StringSpan[true], declared StringSpan[false]; MIR function 'main': argument 0 of '__module$std$collections$string$iterators$CodepointsIter.__init__' has type StringSpan[true], declared StringSpan[false]).
+  - Probe: `assets/ok/origin_binder_mutable_ref_result.mojo` (failed: run error: access to 'x' conflicts with live reference '$arg_loan_r8').
+  - Probe: `assets/ok/origin_parameter_before_value_parameter.mojo` (failed: run error: Elaboration error: unsupported specialized MIR that does not verify: MIR function 'main': copied value has type StringSpan$mono$Vtrue[true], destination has type StringSpan$mono$Vfalse[false]).
+  - Probe: `assets/ok/pointer_address_space_shared.mojo` (failed: run error: Elaboration error: in `main`: unsupported MIR function 'main' keeps the parameter constant `kgen.get_sizeof[Pointer[Int, MutUnsafeAnyOrigin, address_space=AddressSpace(270)]](__module$std$sys$info$_current_target())` in elaborated MIR; MIR function 'main' keeps the parameter constant `kgen.get_sizeof[Pointer[Int, MutUnsafeAnyOrigin, address_space=AddressSpace.SHARED]](__module$std$sys$info$_current_target())` in elaborated MIR after monomorphization).
+  - Ratchet log: `target/run-batches/20261120-073546/batch4-ratchet.log`.
+  - Fix the regression, or delete this entry and file one entry per cause in the track that owns it.
+  - Filed by `scripts/run-batches` (2026-11-22).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2465 Concrete instructions grew by 671027 instructions (+13.81%) over batch 3**
 
