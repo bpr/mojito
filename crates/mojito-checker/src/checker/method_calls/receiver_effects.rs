@@ -383,13 +383,17 @@ impl Checker {
             struct_ty if let Some((sname, targs)) = struct_ty.as_non_pointer_struct() => {
                 match self.structs.get(sname) {
                     Some(info) => (
-                        info.instance_origin_bindings(targs),
+                        {
+                            let mut bindings = info.instance_substitution(targs);
+                            bindings.infer_mutabilities(&|_, _| None);
+                            bindings
+                        },
                         TyKind::Struct(sname.clone(), info.self_arguments()).into(),
                     ),
-                    None => (HashMap::new(), obj_ty.clone()),
+                    None => (OriginBindings::default(), obj_ty.clone()),
                 }
             }
-            _ => (HashMap::new(), obj_ty.clone()),
+            _ => (OriginBindings::default(), obj_ty.clone()),
         };
         let self_declared = substitute_struct_origins(&self_declared, &tail_bindings);
         let declared: Vec<Ty> = resolved

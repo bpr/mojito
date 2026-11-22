@@ -772,20 +772,19 @@ pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
     substitute(&substitute_values(&bound, &values), &bindings.types)
 }
 
-/// `ty` with every struct origin tail naming an explicitly bound origin
-/// binder rebound to that origin, and every pointer nested in it too, a
-/// parametric binder's (`Origin[mut=mut]`) at the mutability
-/// `binder_mutability` gives the bound origin, as upstream infers the
-/// binder's `mut` with the origin its bracket binds.
+/// `ty` with every origin argument naming an explicitly bound origin
+/// binder rebound to that origin, a pointer's included, and each bound
+/// binder's `mut` at the mutability `binder_mutability` gives the bound
+/// origin, as upstream infers the binder's `mut` with the origin its
+/// bracket binds ([`super::origins::OriginBindings::inferred`]).
 pub(super) fn bind_struct_origins(
     ty: &Ty,
     tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
     binder_mutability: super::origins::BinderMutability<'_>,
 ) -> Ty {
-    super::origins::bind_pointer_origins(
-        &super::origins::substitute_struct_origins(ty, tails),
-        tails,
-        Some(binder_mutability),
+    super::origins::substitute_struct_origins(
+        ty,
+        &super::origins::OriginBindings::inferred(tails.clone(), binder_mutability),
     )
 }
 
@@ -3011,9 +3010,10 @@ pub(super) fn method_declared_arguments(
         .filter(|declared| declared.len() == signature.declared.len())
 }
 
-/// [`substitute_at`], binding the receiver's origin tail into pointer
-/// provenances too when `binder_mutability` resolves a parametric binder's
-/// mutability (see [`Checker::substitute_at_instance`]).
+/// [`substitute_at`], deciding each bound binder's `mut` the instance
+/// leaves open by `binder_mutability` when given (see
+/// [`Checker::substitute_at_instance`]), else by the bound origin alone; a
+/// pointer whose `mut` reads a binder still undecided keeps that binder.
 fn substitute_at_with(
     ty: &Ty,
     info: &StructInfo,
@@ -3029,11 +3029,12 @@ fn substitute_at_with(
     // before the type arguments go in: a caller's origin binder inside a type
     // argument (`Span[Span[Int, o], _]`) shares the id space of the struct's
     // own slots, and must not be captured by them.
-    let tails = info.instance_origin_bindings(targs);
-    let mut bound = substitute_struct_origins(&expanded, &tails);
-    if binder_mutability.is_some() {
-        bound = super::origins::bind_pointer_origins(&bound, &tails, binder_mutability);
+    let mut tails = info.instance_substitution(targs);
+    if let Some(binder_mutability) = binder_mutability {
+        tails.infer_mutabilities(binder_mutability);
     }
+    tails.infer_mutabilities(&|_, _| None);
+    let bound = substitute_struct_origins(&expanded, &tails);
     substitute_assoc(
         &bound,
         &AssocBindings {

@@ -2248,7 +2248,7 @@ impl Checker {
                 |(index, ((defined, binder), argument))| match (defined, argument) {
                     (TyArg::Origin(origin), TyArg::Origin(target)) if defined != binder => {
                         let solved = origins::substitute_origin_params(origin.clone(), &|id| {
-                            origins.origins.get(&id).cloned()
+                            origins.tail(id)
                         });
                         solved.coerces_to(target)
                             || slot_mutability(index).is_some_and(|mutable| {
@@ -3458,6 +3458,37 @@ impl StructInfo {
         ParamDecl::instance_origins(&self.params, arguments)
             .map(|(id, origin)| (id, origin.clone()))
             .collect()
+    }
+
+    /// [`Self::instance_origin_bindings`] with each origin binder's `mut`
+    /// the instance's closed argument for the `mut=` binder governing it
+    /// (`Span[True, Int, origin_of(xs)]` binds `origin`'s `mut` to `True`),
+    /// as upstream substitutes every parameter of the instance at once.
+    /// The caller decides the rest ([`origins::OriginBindings::infer_mutabilities`]).
+    fn instance_substitution(&self, arguments: &[TyArg]) -> origins::OriginBindings {
+        use mojito_types::types::OriginMutability;
+        let values: Vec<_> = ParamDecl::aligned_pairs(&self.params, arguments)
+            .filter_map(|(decl, argument)| match (decl, argument) {
+                (ParamDecl::Value { .. }, TyArg::Val(value @ CtValue::Bool(_))) => {
+                    Some((decl.binder().id, value.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        let mut bindings =
+            origins::OriginBindings::of_origins(self.instance_origin_bindings(arguments));
+        for decl in &self.params {
+            if let ParamDecl::Origin {
+                origin,
+                mutability: OriginMutability::Binder(binder),
+                ..
+            } = decl
+                && let Some((_, value)) = values.iter().find(|(id, _)| *id == binder.id)
+            {
+                bindings.mutabilities.insert(*origin, value.clone());
+            }
+        }
+        bindings
     }
 
     /// The origins of `instance`, an instance of the struct, when there is

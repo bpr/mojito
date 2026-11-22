@@ -12,13 +12,11 @@ use super::*;
 use mojito_types::origin::{Mutability, Origin, OriginParamId, PointerOrigin};
 use mojito_types::types::TyKind;
 
-/// The struct origin binders one construction binds: pointer provenance for
-/// substitution into pointer-typed parameters, and the origin every bound
-/// binder names for the constructed value's tail.
+/// The struct origin binders one construction binds: each binder's one
+/// origin, and the `mut` a pointer argument bound it with.
 #[derive(Default)]
 pub(in crate::checker) struct ConstructorOriginBindings {
-    pub(in crate::checker) pointers: HashMap<OriginParamId, PointerOrigin>,
-    pub(in crate::checker) origins: HashMap<OriginParamId, Origin>,
+    pub(in crate::checker) bound: OriginBindings,
     /// The capability a `ref` argument lent a binder, where it is not its
     /// origin's storage's: a pointer dereference's is the pointer's.
     references: HashMap<OriginParamId, Mutability>,
@@ -159,34 +157,25 @@ pub(in crate::checker) fn bracket_mutable_binders<'a>(
 }
 
 impl ConstructorOriginBindings {
-    /// Substitute the bound binders into a parameter or field type: pointer
-    /// binders through their provenance, struct tails through their origin.
+    /// Substitute the bound binders into a parameter or field type
+    /// ([`substitute_struct_origins`]).
     pub(in crate::checker) fn substitute(&self, ty: &Ty) -> Ty {
-        substitute_struct_origins(
-            &substitute_pointer_origin_params(ty, &self.pointers),
-            &self.origins,
-        )
+        substitute_struct_origins(ty, &self.bound)
     }
 
     /// [`Self::substitute`] for a declared result: a binder this call bound
     /// only through a struct argument's origin tail (`v: View[o]` over
-    /// `-> Pointer[T, o]`) rebinds the result's pointer provenances too,
-    /// taking a parametric binder's mutability from `binder_mutability`
-    /// ([`bind_pointer_origins`]).
-    /// The tail binding goes in first, so a caller binder the pointer
-    /// bindings substitute is never captured.
+    /// `-> Pointer[T, o]`) takes its `mut` from `binder_mutability` too
+    /// ([`OriginBindings::infer_mutabilities`]), as upstream infers `m`
+    /// with `o`, so the result's pointers over it bind.
     pub(in crate::checker) fn substitute_result(
         &self,
         ty: &Ty,
         binder_mutability: &dyn Fn(OriginParamId, &Origin) -> Option<Mutability>,
     ) -> Ty {
-        let tails: HashMap<OriginParamId, Origin> = self
-            .origins
-            .iter()
-            .filter(|(id, _)| !self.pointers.contains_key(id))
-            .map(|(id, origin)| (*id, origin.clone()))
-            .collect();
-        self.substitute(&bind_pointer_origins(ty, &tails, Some(binder_mutability)))
+        let mut bound = self.bound.clone();
+        bound.infer_mutabilities(binder_mutability);
+        substitute_struct_origins(ty, &bound)
     }
 
     /// [`Self::substitute`] over a parameter list.
@@ -196,7 +185,7 @@ impl ConstructorOriginBindings {
 
     /// Whether the call bound no binder.
     pub(in crate::checker) fn is_empty(&self) -> bool {
-        self.pointers.is_empty() && self.origins.is_empty()
+        self.bound.is_empty()
     }
 
     /// Substitute the bound binders into a `ref` result contract: each
@@ -241,21 +230,27 @@ impl ConstructorOriginBindings {
         slots
             .zip(tail)
             .map(|(id, explicit)| match explicit {
-                Origin::Unbound => self.origins.get(&id).cloned().unwrap_or(Origin::Unbound),
+                Origin::Unbound => self.tail(id).unwrap_or(Origin::Unbound),
                 bound => bound.clone(),
             })
             .collect()
     }
 
-    /// The mutability binder `id` was bound with: a pointer's provenance,
+    /// The origin binder `id` names in a constructed value's tail: its
+    /// bound origin, a pointer argument's `_subtree` dropped.
+    pub(in crate::checker) fn tail(&self, id: OriginParamId) -> Option<Origin> {
+        self.bound.origins.get(&id).cloned().map(tail_origin)
+    }
+
+    /// The mutability binder `id` was bound with: a pointer argument's,
     /// else the storage its origin names.
     pub(in crate::checker) fn bound_mutability(
         &self,
         id: OriginParamId,
         owner_mutability: &dyn Fn(mojito_types::origin::OwnerId) -> Mutability,
     ) -> Option<Mutability> {
-        if let Some(provenance) = self.pointers.get(&id) {
-            return match (provenance.statically_mutable(), provenance) {
+        if let Some(provenance) = self.pointer_binding(id) {
+            return match (provenance.statically_mutable(), &provenance) {
                 (Some(true), _) => Some(Mutability::Mutable),
                 (Some(false), _) => Some(Mutability::Immutable),
                 (
@@ -269,7 +264,15 @@ impl ConstructorOriginBindings {
         if let Some(mutability) = self.references.get(&id) {
             return Some(*mutability);
         }
-        origin_mutability(self.origins.get(&id)?, owner_mutability)
+        origin_mutability(self.bound.origins.get(&id)?, owner_mutability)
+    }
+
+    /// The provenance a pointer argument bound binder `id` with.
+    fn pointer_binding(&self, id: OriginParamId) -> Option<PointerOrigin> {
+        PointerOrigin::from_parts(
+            self.bound.origins.get(&id)?.clone(),
+            self.bound.mutability(id)?,
+        )
     }
 
     fn substitute_sig_origin(
@@ -280,7 +283,7 @@ impl ConstructorOriginBindings {
         match origin {
             SigOrigin::Bound(bound) => {
                 SigOrigin::Bound(super::substitute_origin_params(bound.clone(), &|id| {
-                    self.origins.get(&id).cloned()
+                    self.bound.origins.get(&id).cloned()
                 }))
             }
             SigOrigin::Projected(base, path) => {
@@ -305,15 +308,16 @@ impl ConstructorOriginBindings {
         if !self.binders.binds(id) {
             return Ok(());
         }
-        match self.pointers.get(&id) {
+        match self.pointer_binding(id) {
             None => {
-                self.pointers.insert(id, provenance.clone());
-                self.origins
-                    .entry(id)
-                    .or_insert_with(|| tail_origin(provenance.parts().0));
+                let (origin, mutability) = provenance.parts();
+                self.bound.origins.insert(id, origin);
+                self.bound
+                    .mutabilities
+                    .insert(id, mutability.mut_argument());
                 Ok(())
             }
-            Some(existing) if existing == provenance => Ok(()),
+            Some(existing) if existing == *provenance => Ok(()),
             Some(_) => Err(conflict()),
         }
     }
@@ -330,9 +334,9 @@ impl ConstructorOriginBindings {
             return Ok(());
         }
         let origin = tail_origin(origin.clone());
-        match self.origins.get(&id) {
+        match self.bound.origins.get(&id) {
             None => {
-                self.origins.insert(id, origin);
+                self.bound.origins.insert(id, origin);
                 Ok(())
             }
             Some(existing) if origin.coerces_to(existing) => Ok(()),
@@ -369,8 +373,8 @@ impl Checker {
         let origin = |id: OriginParamId| {
             bracket
                 .get(&id)
-                .or_else(|| bindings.and_then(|bindings| bindings.origins.get(&id)))
                 .cloned()
+                .or_else(|| bindings.and_then(|bindings| bindings.tail(id)))
         };
         let bound = |id: OriginParamId| {
             bindings?.bound_mutability(id, &|owner| self.owner_reference_mutability(owner))
@@ -586,7 +590,7 @@ impl Checker {
                     } if binder.id == *decl.id() => Some(*origin),
                     _ => None,
                 })?;
-                let origin = bindings.origins.get(&governed)?;
+                let origin = bindings.bound.origins.get(&governed)?;
                 let bound = bindings
                     .bound_mutability(governed, &|owner| self.owner_reference_mutability(owner));
                 Some((
@@ -868,7 +872,7 @@ impl Checker {
             // The constructor's own binders the arguments or its bracket
             // solved (`out self: V[Self.T, ImmOrigin(src)]`) are the call's.
             let mut origin = super::substitute_origin_params(origin.clone(), &|binder| {
-                bindings.origins.get(&binder).cloned().or_else(|| {
+                bindings.tail(binder).or_else(|| {
                     application
                         .own
                         .iter()
@@ -988,14 +992,19 @@ impl Checker {
         bound: &[(usize, &Ty)],
         binders: CalleeBinders,
     ) -> Result<ConstructorOriginBindings, TypeError> {
+        let pointers = Self::bind_callable_pointer_origins(callee, names, params, bound, &binders)?;
         let mut bindings = ConstructorOriginBindings {
-            pointers: Self::bind_callable_pointer_origins(callee, names, params, bound, &binders)?,
-            origins: HashMap::new(),
+            bound: OriginBindings::default(),
             references: HashMap::new(),
             binders,
         };
-        for (id, provenance) in &bindings.pointers {
-            bindings.origins.insert(*id, provenance.parts().0);
+        for (id, provenance) in pointers {
+            let (origin, mutability) = provenance.into_parts();
+            bindings.bound.origins.insert(id, origin);
+            bindings
+                .bound
+                .mutabilities
+                .insert(id, mutability.mut_argument());
         }
         for (index, actual) in bound {
             let Some(pattern) = params.get(*index) else {

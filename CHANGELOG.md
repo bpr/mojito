@@ -2327,6 +2327,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pointer's `origin` and `mut` arguments bind as any struct's origin
+  argument: the checker substitutes a bound origin binder, and the `mut`
+  inferred with it, in one pass over every struct application, where two
+  pointer passes and a struct pass ran in turn. A receiver instance's own
+  `mut=` argument now decides its pointers' `mut` (R2487).
+
 - Below the MIR waist a pointer is the declared `Pointer` struct: its
   default and copy constructions, its layout reads, and its native type are
   the struct rules, so Pliron lowers it as its one `!kgen.pointer` field and

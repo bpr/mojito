@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2503**.
+Next free ID: **R2504**.
 
 ## Ordered Work
 
@@ -9974,6 +9974,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     follow alias chains, and bind the hole at that parameter's spelling
     (`MutOrigin` as `Origin[mut=True]`), then retire the parameter-position
     arm of `bind_alias_origin_placeholders`.
+  - `bind_alias_origin_placeholders` binds one `_` binder by two
+    substitutions, a struct slot to `Origin::Unbound` and then a
+    pointer's origin to unsafe-any, where upstream's one parameter has
+    one binding; a hole that is a binder needs neither.
   - Probe: `same(o, o)` over `def same(p: OpaquePointer[_], q:
     MutOpaquePointer[_])` and `o = Pointer(to=x).unsafe_bitcast[NoneType]()`
     runs; the pin rejects it likewise.
@@ -11052,8 +11056,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     untracked, and unsafe-any origins).
   - A binder or receiver member needs call-site substitution and rebasing
     of each union member: `rebase_self_place_pointer`,
-    `substitute_pointer_origin_params` (`checker/subst.rs`), `bind_tail`,
-    and the pointer arm of `inline_parametric.rs`.
+    `substitute_struct_origins` (`checker/origins/subst.rs`), whose
+    pointer decode guard keeps an undecodable union, and the pointer arm
+    of `inline_parametric.rs`.
   - Probe: `struct S` with `def m(self, x: Int) -> Int: var y = x; var p =
     Pointer[Int, origin_of(self, y)](to=y); return p[]`, then
     `S(1).m(5)`.
@@ -11164,8 +11169,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     placeholders exactly ("cannot implicitly convert
     'Pointer[mut, T, origin_of(self)._get_owned_interior["element"], …]'").
   - Probe: past that, `Span[Byte](unsafe_ptr=data, length=n)`
-    (`std/hash/_ahash.mojo`) finds no overload, because the struct arms of
-    `origins/subst.rs` bind a pointer before its pointer arms (R2487).
+    (`std/hash/_ahash.mojo`) found no overload while `origins/subst.rs`
+    bound a pointer by a struct pass and pointer passes in turn; one
+    substitution binds it now, so re-run the probe.
   - Probe: past that, `Span.__init__(ref [Self.origin] array: Array[…])`
     fails, since `rebase_self_place_pointer` reads `as_pointer()`, which the
     struct substitution already rewrote (R2493).
@@ -11197,24 +11203,29 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2501.
   - Model: Opus, Planned.
 
-- [ ] **R2487 A pointer's origin and `mut` arguments bind by passes of
-  their own, not as a struct's origin arguments**
+- [ ] **R2503 `types::bind_origin_params` binds a pointer's origin by an
+  arm of its own, not as the struct's origin and `mut` arguments**
 
-  `substitute_struct_origins` (`checker/origins/subst.rs`) binds every
-  struct origin argument but a pointer's, which
-  `substitute_pointer_origin_params` and `bind_pointer_origins` bind.
-  - A pointer binder does three things a struct tail does not: it rebinds
-    the `mut` argument (`BinderMutability`), re-applies interior and
-    `_subtree` projections (`append_interior_tag`, `append_subtree`), and
-    builds symbolic-cast pointers (`symbolic_cast_pointer`).
-  - The callers run the passes in different orders:
-    `generics.rs` runs the struct pass first, while
-    `origins/construct.rs` and `type_resolution.rs` run the pointer pass
-    first. Make them agree before merging.
-  - When it lands, a pointer's arguments bind as any struct's, and the
-    two pointer passes go.
+  `bind_origin_params` (`mojito-types/src/types.rs`) substitutes origin
+  binders into struct origin arguments, then rebinds each pointer's
+  provenance through a separate pointer arm that builds
+  `symbolic_cast_pointer` itself.
+  - The checker binds a pointer as any struct application:
+    `substitute_struct_origins` substitutes each origin argument and each
+    `mut` argument reading a bound binder's `mut` at once, and
+    `Ty::new` refolds the pointer.
+  - Do the same here: substitute `$origin_mut` values from the bound
+    origin's `static_mutability` (a symbolic cast's `m`) in the same
+    `map_origins` walk, then delete the pointer arm and
+    `symbolic_cast_pointer`.
+  - Callers: `generics.rs::substitute_assoc`,
+    `mojito-types/src/param_expr.rs`, and
+    `mojito-analysis/src/analysis/inline_parametric.rs`.
+  - The end state moves the checker's `OriginBindings` and its one pass
+    down to `mojito-types`, which both then call.
+  - Found while landing R2487 (2026-11-22).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2488 A MIR variable slot is a `ref` binding because its type is
   `TyKind::Ref`, where upstream's `ref` binding is the `!lit.ref` value
@@ -11631,6 +11642,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`Mutability::mut_argument`, `origin.rs`). Once every origin binder
     declares its `mut`, the pointer's `mut` argument is that declared
     binder's read, as `o: Origin[mut=m]` makes it `m`.
+  - `substitute_struct_origins` (`checker/origins/subst.rs`) therefore
+    leaves a pointer's origin binder unbound when its bindings decide no
+    `mut` for it (`OriginBindings::undecided_mut_binders`): a receiver's
+    instance with no closed `mut=` argument, or an `o: Origin` binder with
+    no declared `mut` binder, bound to a place. With a declared binder,
+    the `mut` binds as any value argument and that rule goes.
   - Found while landing R2375 (2026-11-21).
   - Depends on nothing.
   - Model: Fable, Planned.

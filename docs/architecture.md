@@ -1273,8 +1273,10 @@ value binders and records each such `_`'s attribute as the origin it bound;
 a method call's bracket binds
 its method's whole declared list (`MethodSig::declared`) the same way in
 `instantiate_method_generics`, which substitutes the bound origins into the
-method's parameters and result through `bind_struct_origins` (a
-parametric `Origin[mut=m]` binder's pointer at the mutability the bound
+method's parameters and result through `bind_struct_origins`, the one
+origin substitution (`substitute_struct_origins` over `OriginBindings`),
+which binds a pointer's origin and `mut` arguments as any struct's (a
+parametric `Origin[mut=m]` binder's `m` at the mutability the bound
 origin decides, an `ImmOrigin(o)` argument's `False`) and binds the
 origin binders its bracket left open in `resolve_call_params`'s one solve,
 as a free call's: a method's declared origin binder is numbered past its

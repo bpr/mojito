@@ -5604,55 +5604,6 @@ pub(super) fn is_value_parameter(param: &mojito_ast::ast::TypeParam) -> bool {
         || matches!(param.bounds.as_slice(), [only] if scalar_type_name(only).is_some())
 }
 
-/// Upstream's `_get_owned_interior[tag]` on a pointer's origin argument, by
-/// the projection rule a struct origin argument follows
-/// ([`mojito_types::origin::Origin::owned_interior`]).
-pub(in crate::checker) fn append_interior_tag(
-    origin: &mojito_types::origin::PointerOrigin,
-    tag: &str,
-) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-    project_pointer_origin(
-        origin,
-        |base| base.owned_interior(tag),
-        "interior origin projection",
-    )
-}
-
-/// Upstream's `_subtree` on a pointer's origin argument. Subtree is
-/// terminal: nothing projects below it, including another `._subtree`.
-/// Untracked provenances have no place to project into.
-pub(in crate::checker) fn append_subtree(
-    origin: &mojito_types::origin::PointerOrigin,
-) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-    project_pointer_origin(
-        origin,
-        mojito_types::origin::Origin::subtree,
-        "'_subtree' origin projection",
-    )
-}
-
-/// `origin`'s struct-argument part projected by `project`, as a pointer of
-/// the same mutability.
-fn project_pointer_origin(
-    origin: &mojito_types::origin::PointerOrigin,
-    project: impl Fn(&mojito_types::origin::Origin) -> Option<mojito_types::origin::Origin>,
-    context: &str,
-) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-    if origin.subtree() {
-        return Err(super::origins::subtree_is_terminal_error());
-    }
-    let (base, mutability) = origin.parts();
-    project(&base)
-        .and_then(|projected| {
-            mojito_types::origin::PointerOrigin::from_parts(projected, mutability)
-        })
-        .ok_or_else(|| TypeError::TypeMismatch {
-            expected: "an origin parameter or origin_of(place) base".to_string(),
-            found: "an untracked origin".to_string(),
-            context: context.to_string(),
-        })
-}
-
 /// The literal address space `N` an MLIR type spelling's text ends with
 /// after `prefix` (`!lit.ref<{},{},1>`).
 fn literal_address_space(
@@ -5726,21 +5677,23 @@ fn unbound_struct_spelling(name: &str, params: &[ParamDecl]) -> Option<String> {
 
 /// `ty`, an alias's expansion, with each origin binder the bracket
 /// `args` leaves to inference (`MutPointer[T, _]`, `AS[_]`) bound as
-/// a parameter's `_` binds it: a struct's origin slot unbound, and a
-/// pointer's provenance any origin at the binder's declared mutability
+/// a parameter's `_` binds it: a struct's origin slot unbound, and then a
+/// pointer's origin any origin at the binder's declared mutability
 /// (immutable for a parametric binder, whose capability the body
-/// cannot prove).
+/// cannot prove). An unbound slot is no pointer's origin, so the first
+/// substitution leaves pointers to the second.
 fn bind_alias_origin_placeholders(
     ty: &Ty,
     decls: &[ParamDecl],
     args: &[mojito_ast::ast::ParamArg],
 ) -> Ty {
-    use mojito_types::origin::{Origin, PointerOrigin};
+    use super::origins::{OriginBindings, substitute_struct_origins};
+    use mojito_types::origin::{Mutability, Origin};
     let Ok(slots) = mojito_ast::call::bracket_unbound_slots(decls, args) else {
         return ty.clone();
     };
-    let mut tails = HashMap::new();
-    let mut pointers = HashMap::new();
+    let mut tails = OriginBindings::default();
+    let mut pointers = OriginBindings::default();
     for (decl, open) in decls.iter().zip(&slots.open) {
         if let (
             ParamDecl::Origin {
@@ -5750,17 +5703,16 @@ fn bind_alias_origin_placeholders(
         ) = (decl, open)
         {
             let mutable = matches!(mutability, OriginMutability::Fixed(true));
-            tails.insert(*origin, Origin::Unbound);
-            pointers.insert(*origin, PointerOrigin::UnsafeAny { mutable });
+            tails.origins.insert(*origin, Origin::Unbound);
+            pointers
+                .origins
+                .insert(*origin, Origin::UnsafeAny { mutable });
+            pointers
+                .mutabilities
+                .insert(*origin, Mutability::of(mutable).mut_argument());
         }
     }
-    if tails.is_empty() {
-        return ty.clone();
-    }
-    super::origins::substitute_pointer_origin_params(
-        &super::origins::substitute_struct_origins(ty, &tails),
-        &pointers,
-    )
+    substitute_struct_origins(&substitute_struct_origins(ty, &tails), &pointers)
 }
 
 fn origin_placeholder(argument: &mojito_ast::ast::ParamArg) -> bool {

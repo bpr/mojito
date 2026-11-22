@@ -3661,7 +3661,11 @@ impl Checker {
                     // `MethodInstantiation::bound_result` orders them.
                     let own: Vec<_> = bracket_origins
                         .into_iter()
-                        .chain(own_bindings.into_iter().flat_map(|bound| bound.origins))
+                        .chain(
+                            own_bindings
+                                .into_iter()
+                                .flat_map(|bound| bound.bound.origins),
+                        )
                         .collect();
                     let (params, origin_bindings) = match self.bind_constructor_pointer_params(
                         name,

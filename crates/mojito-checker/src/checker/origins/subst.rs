@@ -6,13 +6,163 @@ use super::*;
 use mojito_types::types::TyKind;
 
 /// The mutability a parametric (`Origin[mut=mut]`) origin binder takes when
-/// bound to an origin ([`bind_pointer_origins`]); `None` leaves the
-/// binder unbound.
+/// bound to an origin ([`OriginBindings::inferred`]); `None` leaves its
+/// `mut` to the bound origin alone.
 pub(in crate::checker) type BinderMutability<'a> =
     &'a dyn Fn(
         mojito_types::origin::OriginParamId,
         &mojito_types::origin::Origin,
     ) -> Option<mojito_types::origin::Mutability>;
+
+/// What one origin substitution ([`substitute_struct_origins`]) binds:
+/// each origin binder's origin, and the `mut` its implicit value binder
+/// (upstream's `m` in `o: Origin[mut=m]`) takes with it — a `Bool`,
+/// another binder's `mut`, or a symbolic cast's expression — as upstream
+/// infers `m` with the origin and substitutes both at once.
+#[derive(Clone, Debug, Default)]
+pub(in crate::checker) struct OriginBindings {
+    pub(in crate::checker) origins:
+        HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+    pub(in crate::checker) mutabilities: HashMap<mojito_types::origin::OriginParamId, CtValue>,
+}
+
+impl OriginBindings {
+    /// `origins` with no binder's `mut` decided: an application whose
+    /// `mut` reads a bound binder keeps that binder.
+    pub(in crate::checker) fn of_origins(
+        origins: HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+    ) -> Self {
+        Self {
+            origins,
+            mutabilities: HashMap::new(),
+        }
+    }
+
+    /// `origins`, each binder's `mut` inferred from the origin it binds
+    /// ([`inferred_mut_argument`]).
+    pub(in crate::checker) fn inferred(
+        origins: HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
+        binder_mutability: BinderMutability<'_>,
+    ) -> Self {
+        let mut bindings = Self::of_origins(origins);
+        bindings.infer_mutabilities(binder_mutability);
+        bindings
+    }
+
+    /// Decide the `mut` of every bound binder that has none yet
+    /// ([`inferred_mut_argument`]).
+    pub(in crate::checker) fn infer_mutabilities(
+        &mut self,
+        binder_mutability: BinderMutability<'_>,
+    ) {
+        for (id, origin) in &self.origins {
+            if !self.mutabilities.contains_key(id)
+                && let Some(value) = inferred_mut_argument(*id, origin, binder_mutability)
+            {
+                self.mutabilities.insert(*id, value);
+            }
+        }
+    }
+
+    /// Whether nothing is bound.
+    pub(in crate::checker) fn is_empty(&self) -> bool {
+        self.origins.is_empty()
+    }
+
+    /// The `mut` binder `id` is bound with, as a reference's mutability:
+    /// `None` when undecided or a symbolic cast's expression.
+    pub(in crate::checker) fn mutability(
+        &self,
+        id: mojito_types::origin::OriginParamId,
+    ) -> Option<mojito_types::origin::Mutability> {
+        use mojito_types::origin::Mutability;
+        match self.mutabilities.get(&id)? {
+            CtValue::Bool(mutable) => Some(Mutability::of(*mutable)),
+            CtValue::Deferred(binder) => Mutability::of_mut_argument(binder),
+            _ => None,
+        }
+    }
+
+    /// `origin` with each bound binder but those `held` substituted.
+    fn bind_origin(
+        &self,
+        origin: &mojito_types::origin::Origin,
+        held: &[mojito_types::origin::OriginParamId],
+    ) -> mojito_types::origin::Origin {
+        substitute_origin_params(origin.clone(), &|id| {
+            (!held.contains(&id))
+                .then(|| self.origins.get(&id).cloned())
+                .flatten()
+        })
+    }
+
+    /// A `mut` argument reading a binder's `mut` this binds, substituted.
+    fn bind_mut_argument(&self, value: &CtValue) -> CtValue {
+        match value {
+            CtValue::Deferred(binder)
+                if let Some(mojito_types::origin::Mutability::Param(id)) =
+                    mojito_types::origin::Mutability::of_mut_argument(binder) =>
+            {
+                self.mutabilities
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| value.clone())
+            }
+            other => other.clone(),
+        }
+    }
+
+    /// The binders whose `mut` the arguments read and this leaves
+    /// undecided: their origins stay unbound in that application, which
+    /// would otherwise pair a bound origin with the callee's own `mut`.
+    fn undecided_mut_binders(
+        &self,
+        arguments: &[TyArg],
+    ) -> Vec<mojito_types::origin::OriginParamId> {
+        arguments
+            .iter()
+            .filter_map(|argument| match argument {
+                TyArg::Val(CtValue::Deferred(binder)) => {
+                    match mojito_types::origin::Mutability::of_mut_argument(binder)? {
+                        mojito_types::origin::Mutability::Param(id)
+                            if !self.mutabilities.contains_key(&id) =>
+                        {
+                            Some(id)
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A reference's origin and mutability with what this binds
+    /// substituted, unchanged when no pointer holds the result.
+    fn bind_reference(
+        &self,
+        origin: &mojito_types::origin::Origin,
+        mutability: mojito_types::origin::Mutability,
+    ) -> (
+        mojito_types::origin::Origin,
+        mojito_types::origin::Mutability,
+    ) {
+        use mojito_types::origin::{Mutability, PointerOrigin};
+        let (held, bound_mutability) = match mutability {
+            Mutability::Param(id) => match self.mutability(id) {
+                Some(bound) => (Vec::new(), bound),
+                None => (vec![id], mutability),
+            },
+            fixed => (Vec::new(), fixed),
+        };
+        let bound = self.bind_origin(origin, &held);
+        if PointerOrigin::from_parts(bound.clone(), bound_mutability).is_some() {
+            (bound, bound_mutability)
+        } else {
+            (origin.clone(), mutability)
+        }
+    }
+}
 
 pub(in crate::checker) fn lower_sig_origin_expression(
     expression: &Expr,
@@ -489,173 +639,70 @@ pub(in crate::checker) fn field_carries_origin_param(
     }
 }
 
-/// Replace each pointer provenance `PointerOrigin::Param { id, .. }` that
-/// `bindings` binds with the bound provenance, re-applying the parameter's
-/// interior tags and `_subtree` projection on top of it, recursing through
-/// struct arguments, references, and tuples. A projection that cannot be
-/// expressed on the bound provenance (an untracked base) leaves the
-/// parameter origin in place for the coercion check to report.
-pub(in crate::checker) fn substitute_pointer_origin_params(
-    ty: &Ty,
-    bindings: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::PointerOrigin>,
-) -> Ty {
-    use mojito_types::origin::{Mutability, PointerOrigin};
-    let bind = |origin: &PointerOrigin| match origin {
-        PointerOrigin::Param {
-            id,
-            mutability,
-            interior,
-            subtree,
-        } if bindings.contains_key(id) => {
-            // A pointer fixed immutable over the binder (`Pointer[T, o]` at
-            // `o: ImmOrigin`) stays immutable over what the binder binds.
-            let bound = bindings[id].clone();
-            let mut bound = Ok(if *mutability == Mutability::Immutable {
-                bound.immutable()
+/// Substitute what `bindings` binds into `ty`, simultaneously, recursing
+/// through struct arguments, tuples, and reference referents: every struct
+/// origin argument naming a bound binder, a projection re-applied below
+/// the bound origin ([`Origin::reprojected`]), and every `mut` argument
+/// reading a bound binder's `mut`. A `Pointer` is one more struct
+/// application, refolded by [`Ty::new`], so a pointer over a binder bound
+/// to a symbolic cast becomes the nominal symbolic-cast pointer. An
+/// application that held a pointer keeps its origin and `mut` arguments
+/// when the bound ones are no pointer's (an unbound slot, a `mut` its
+/// origin contradicts), and a `!lit.ref` or reference pack its own,
+/// alike. `Ref` origins are the reference solver's.
+///
+/// [`Origin::reprojected`]: mojito_types::origin::Origin::reprojected
+pub(in crate::checker) fn substitute_struct_origins(ty: &Ty, bindings: &OriginBindings) -> Ty {
+    if bindings.is_empty() {
+        return ty.clone();
+    }
+    let recur = |ty: &Ty| substitute_struct_origins(ty, bindings);
+    match ty.kind() {
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+            let held = bindings.undecided_mut_binders(arguments);
+            let rebuild = |bind: bool| {
+                ty.reusing(TyKind::Struct(
+                    name.clone(),
+                    arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
+                            TyArg::Origin(origin) if bind => {
+                                TyArg::Origin(bindings.bind_origin(origin, &held))
+                            }
+                            TyArg::Val(value) if bind => {
+                                TyArg::Val(bindings.bind_mut_argument(value))
+                            }
+                            other => other.clone(),
+                        })
+                        .collect(),
+                ))
+            };
+            let bound = rebuild(true);
+            if struct_ty.is_pointer() && !bound.kind().is_pointer() && !holds_symbolic_cast(&bound)
+            {
+                rebuild(false)
             } else {
                 bound
-            });
-            for tag in interior {
-                bound = bound.and_then(|origin| {
-                    crate::checker::type_resolution::append_interior_tag(&origin, tag)
-                });
             }
-            if *subtree {
-                bound = bound
-                    .and_then(|origin| crate::checker::type_resolution::append_subtree(&origin));
-            }
-            bound.unwrap_or_else(|_| origin.clone())
         }
-        other => other.clone(),
-    };
-    match ty.kind() {
         TyKind::LitRef(reference) => {
-            let mut reference = reference.map_pointer_origin(bind);
-            reference.referent = substitute_pointer_origin_params(&reference.referent, bindings);
-            TyKind::LitRef(reference).into()
-        }
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
-            substitute_pointer_origin_params(element, bindings),
-            bind(&origin),
-            address_space,
-        ),
-        TyKind::LitRefPack {
-            elements,
-            origin,
-            mutability,
-        } => {
-            let (origin, mutability) = PointerOrigin::map_parts(origin, *mutability, bind);
-            TyKind::LitRefPack {
-                elements: elements
-                    .iter()
-                    .map(|element| substitute_pointer_origin_params(element, bindings))
-                    .collect(),
+            let (origin, mutability) =
+                bindings.bind_reference(&reference.origin, reference.mutability);
+            TyKind::LitRef(mojito_types::origin::RefTy {
+                referent: recur(&reference.referent),
                 origin,
                 mutability,
-            }
+                address_space: reference.address_space.clone(),
+            })
             .into()
-        }
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
-            ty.reusing(TyKind::Struct(
-                name.clone(),
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(substitute_pointer_origin_params(ty, bindings)),
-                        other => other.clone(),
-                    })
-                    .collect(),
-            ))
-        }
-        TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
-            referent: substitute_pointer_origin_params(&reference.referent, bindings),
-            origin: reference.origin.clone(),
-            mutability: reference.mutability,
-            address_space: reference.address_space.clone(),
-        })
-        .into(),
-        TyKind::Tuple(elements) => TyKind::Tuple(
-            elements
-                .iter()
-                .map(|element| substitute_pointer_origin_params(element, bindings))
-                .collect(),
-        )
-        .into(),
-        _ => ty.clone(),
-    }
-}
-
-/// `ty` with each pointer origin naming a bound binder rebound to the origin
-/// it binds, below which it re-applies its interior and subtree projection
-/// (an explicitly bound callable's `g[origin_of(xs)]`, a receiver's
-/// origin tail, a binder solved from a struct argument's tail). A binder of fixed mutability keeps
-/// it. A parametric one (`Origin[mut=mut]`) takes the mutability
-/// `binder_mutability` gives the bound origin, as upstream infers the
-/// binder's `mut` with its origin; without a resolver it stays unbound, as
-/// does every binder bound to a caller's own binder.
-pub(in crate::checker) fn bind_pointer_origins(
-    ty: &Ty,
-    tails: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
-    binder_mutability: Option<BinderMutability<'_>>,
-) -> Ty {
-    use mojito_types::origin::{Mutability, Origin, PointerOrigin};
-    let recur = |ty: &Ty| bind_pointer_origins(ty, tails, binder_mutability);
-    // The pointer's own projection re-applies below the tail's origin, by
-    // the projection rule a struct origin argument follows.
-    let bind = |origin: &PointerOrigin| -> Option<PointerOrigin> {
-        let PointerOrigin::Param { id, mutability, .. } = origin else {
-            return None;
-        };
-        let tail = tails.get(id)?;
-        let mutability = match mutability {
-            Mutability::Param(_) => binder_mutability?(*id, tail)?,
-            fixed => *fixed,
-        };
-        let path = match origin.parts().0 {
-            Origin::Projected(_, path) => path,
-            _ => Vec::new(),
-        };
-        bind_tail(
-            tail.uncast(),
-            &path,
-            mutability,
-            binder_mutability.is_some(),
-        )
-    };
-    let bind = |origin: &PointerOrigin| bind(origin).unwrap_or_else(|| origin.clone());
-    match ty.kind() {
-        TyKind::LitRef(reference) => {
-            let mut reference = reference.map_pointer_origin(bind);
-            reference.referent = recur(&reference.referent);
-            TyKind::LitRef(reference).into()
-        }
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-            match &origin {
-                PointerOrigin::Param {
-                    id,
-                    mutability: Mutability::Param(_),
-                    interior,
-                    subtree,
-                } if interior.is_empty() && !subtree => tails.get(id).map_or_else(
-                    || Err(recur(element)),
-                    |tail| {
-                        mojito_types::types::symbolic_cast_pointer(
-                            recur(element),
-                            tail.clone(),
-                            &address_space,
-                        )
-                    },
-                ),
-                _ => Err(recur(element)),
-            }
-            .unwrap_or_else(|element| Ty::pointer(element, bind(&origin), address_space))
         }
         TyKind::LitRefPack {
             elements,
             origin,
             mutability,
         } => {
-            let (origin, mutability) = PointerOrigin::map_parts(origin, *mutability, bind);
+            let (origin, mutability) = bindings.bind_reference(origin, *mutability);
             TyKind::LitRefPack {
                 elements: elements.iter().map(recur).collect(),
                 origin,
@@ -663,79 +710,6 @@ pub(in crate::checker) fn bind_pointer_origins(
             }
             .into()
         }
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
-            ty.reusing(TyKind::Struct(
-                name.clone(),
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
-                        other => other.clone(),
-                    })
-                    .collect(),
-            ))
-        }
-        TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
-            referent: recur(&reference.referent),
-            origin: reference.origin.clone(),
-            mutability: reference.mutability,
-            address_space: reference.address_space.clone(),
-        })
-        .into(),
-        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
-        _ => ty.clone(),
-    }
-}
-
-/// Replace each struct origin-tail argument `Origin::Param(id)` that `bindings`
-/// binds with the bound origin, recursing through struct arguments, tuples,
-/// pointer elements, and reference referents. Pointer and reference origins
-/// themselves are left alone: those bind through
-/// [`substitute_pointer_origin_params`] and the reference solver.
-pub(in crate::checker) fn substitute_struct_origins(
-    ty: &Ty,
-    bindings: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::Origin>,
-) -> Ty {
-    if bindings.is_empty() {
-        return ty.clone();
-    }
-    let recur = |ty: &Ty| substitute_struct_origins(ty, bindings);
-    match ty.kind() {
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
-            ty.reusing(TyKind::Struct(
-                name.clone(),
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
-                        TyArg::Origin(origin) => {
-                            TyArg::Origin(substitute_origin_params(origin.clone(), &|id| {
-                                bindings.get(&id).cloned()
-                            }))
-                        }
-                        TyArg::Val(_) => argument.clone(),
-                    })
-                    .collect(),
-            ))
-        }
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-            Ty::pointer(recur(element), origin, address_space)
-        }
-        TyKind::LitRef(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = recur(&reference.referent);
-            TyKind::LitRef(reference).into()
-        }
-        TyKind::LitRefPack {
-            elements,
-            origin,
-            mutability,
-        } => TyKind::LitRefPack {
-            elements: elements.iter().map(recur).collect(),
-            origin: origin.clone(),
-            mutability: *mutability,
-        }
-        .into(),
         TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
             referent: recur(&reference.referent),
             origin: reference.origin.clone(),
@@ -1166,36 +1140,44 @@ pub(in crate::checker) fn callable_value_argument(
     }
 }
 
-/// The provenance a binder pointer projected by `path` takes once its
-/// binder is bound to `tail`: a place, an untracked or static origin, which
-/// stands whole, or (when `symbolic`) another binder,
-/// with the projection re-applied below it. `None` leaves it unbound.
-fn bind_tail(
-    tail: &mojito_types::origin::Origin,
-    path: &[mojito_types::origin::OriginSeg],
-    mutability: mojito_types::origin::Mutability,
-    symbolic: bool,
-) -> Option<mojito_types::origin::PointerOrigin> {
-    use mojito_types::origin::{Mutability, Origin, PointerOrigin};
-    match tail {
-        Origin::Place(_) | Origin::Union(_) => PointerOrigin::from_parts(
-            tail.project_path(path)?,
-            if mutability == Mutability::Mutable {
-                Mutability::Mutable
-            } else {
-                Mutability::Immutable
-            },
-        ),
-        // An origin naming no tracked storage has no region to project.
-        Origin::Static | Origin::Untracked { .. } | Origin::UnsafeAny { .. } => {
-            PointerOrigin::from_parts(tail.clone(), mutability)
-        }
-        Origin::Param(_) | Origin::SelfParam | Origin::Projected(..)
-            if symbolic
-                && matches!(tail.projection_base(), Origin::Param(_) | Origin::SelfParam) =>
-        {
-            PointerOrigin::from_parts(tail.project_path(path)?, mutability)
-        }
-        _ => None,
+/// The `mut` an `Origin[mut=m]` binder `id` takes bound to `origin`, as
+/// upstream infers `m` from the bound origin's type: a symbolic cast's
+/// own expression, else `binder_mutability`'s answer (a place's storage
+/// never takes a binder's), else the binder or receiver the origin is
+/// rooted in, else the mutability the origin alone decides. An unbound
+/// slot decides none.
+fn inferred_mut_argument(
+    id: mojito_types::origin::OriginParamId,
+    origin: &mojito_types::origin::Origin,
+    binder_mutability: BinderMutability<'_>,
+) -> Option<CtValue> {
+    use mojito_types::origin::{Mutability, Origin};
+    if matches!(origin, Origin::Unbound) {
+        return None;
     }
+    if let Some(expression) = origin.symbolic_cast_mutability() {
+        return Some(CtValue::Expr(expression.clone()));
+    }
+    let symbolic = origin.uncast().binder_mutability().or_else(|| {
+        matches!(origin.uncast().projection_base(), Origin::SelfParam)
+            .then_some(Mutability::RECEIVER)
+    });
+    let mutability = match binder_mutability(id, origin) {
+        Some(Mutability::Param(_)) if symbolic.is_none() => Mutability::Immutable,
+        Some(mutability) => mutability,
+        None => symbolic.or_else(|| origin.static_mutability().map(Mutability::of))?,
+    };
+    Some(mutability.mut_argument())
+}
+
+/// Whether `ty` is an application with a symbolic-cast origin argument
+/// (`o.unsafe_mut_cast[m]()`), which stays nominal until `m` folds.
+fn holds_symbolic_cast(ty: &Ty) -> bool {
+    ty.kind()
+        .as_non_simd_struct()
+        .is_some_and(|(_, arguments)| {
+            arguments.iter().any(|argument| {
+            matches!(argument, TyArg::Origin(origin) if origin.symbolic_cast_mutability().is_some())
+        })
+        })
 }

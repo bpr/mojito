@@ -3295,12 +3295,12 @@ fn bind_unbound_origin_attributes(
             continue;
         };
         let bound = origins
-            .and_then(|origins| origins.origins.get(origin))
+            .and_then(|origins| origins.tail(*origin))
             .ok_or_else(|| TypeError::BadCall {
                 func: name.to_string(),
                 reason: format!("failed to infer parameter '{binder}'"),
             })?;
-        attributes.bind(slot, position, Some(TyArg::Origin(bound.clone())));
+        attributes.bind(slot, position, Some(TyArg::Origin(bound)));
     }
     Ok(())
 }
