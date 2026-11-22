@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin mutability is not known here
+# expect: reference returned by '__getitem__' whose origin mutability is not known here
 # A free function's `Pointer[T, o]` parameter over its own `Origin[mut=m]`
 # binder is symbolic in the body, exactly like a struct's field.
 def poke[m: Bool, //, o: Origin[mut=m]](p: Pointer[List[Int], o]):

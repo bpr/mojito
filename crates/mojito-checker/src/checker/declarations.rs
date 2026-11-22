@@ -803,7 +803,6 @@ impl Checker {
                 .any(|decorator| decorator.path.len() == 1 && decorator.path[0] == "implicit"),
             // Populated by struct signature registration, which has the
             // enclosing struct's resolved field types in hand.
-            parametric_origin_writes: Vec::new(),
             origin_binders: regular_params
                 .iter()
                 .map(|param| self.reference_parameter_struct_binder(param.origin.as_deref()))
@@ -1976,7 +1975,6 @@ impl Checker {
         method_index: usize,
         overload_index: usize,
     ) -> Result<(), TypeError> {
-        self.parametric_write_frames.borrow_mut().push(Vec::new());
         let owner = self.method_binder_owner(declaration, method_index, m);
         // The body reads every value binder the method declares, an
         // origin's `mut=` binder included.
@@ -2047,25 +2045,6 @@ impl Checker {
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.pop_param_scope();
         self.method_site = saved_site;
-        let propagated = self
-            .parametric_write_frames
-            .borrow_mut()
-            .pop()
-            .expect("method write-requirement frame");
-        if result.is_ok() && !propagated.is_empty() {
-            let method_name = lifecycle_method_name(m);
-            let signature = self
-                .structs
-                .get_mut(declaration)
-                .and_then(|info| info.methods.get_mut(method_name))
-                .and_then(|methods| methods.get_mut(overload_index))
-                .expect("checked method signature remains registered");
-            for id in propagated {
-                if !signature.parametric_origin_writes.contains(&id) {
-                    signature.parametric_origin_writes.push(id);
-                }
-            }
-        }
         result
     }
 
@@ -3711,7 +3690,6 @@ impl Checker {
                             ref_return: None,
                             param_types: params,
                             param_decls: sig.declared.clone(),
-                            parametric_origin_writes: sig.parametric_origin_writes.clone(),
                             instantiation,
                             declared_instantiation,
                             parameter_names: sig.names.clone(),

@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # A pointer whose origin is `ImmOrigin(o)` is read-only even when `o`
 # itself is mutable.
 struct Cell[mut: Bool, //, origin: Origin[mut=mut]](Copyable, Movable):

@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # The capability dropped by the conversion is enforced on the result.
 def main():
     var x = 5

@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin mutability is not known here
+# expect: reference returned by '__getitem__' whose origin mutability is not known here
 # A store through the reference a `__getitem__` returns, reached through a
 # `Pointer[T, o]` parameter over the function's own `Origin[mut=m]` binder,
 # rejects in the generic body, as a direct store through the pointer does.

@@ -524,7 +524,6 @@ impl Checker {
                     ref_return,
                     param_types: params,
                     param_decls: sig.declared.clone(),
-                    parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     instantiation: instantiation.clone(),
                     declared_instantiation: declared_instantiation.clone(),
                     parameter_names: sig.names.clone(),

@@ -851,10 +851,6 @@ pub struct Checker {
     /// a reference-valued field, assigning a reference here stores its handle;
     /// later assignments write through the established handle instead.
     self_initializing: bool,
-    /// Per-method accumulation of symbolic origin write requirements inherited
-    /// from calls through generic receiver fields. The completed frame is
-    /// merged into that method's registered signature.
-    parametric_write_frames: RefCell<Vec<Vec<mojito_types::origin::OriginParamId>>>,
     /// Whether a parameter annotation is being resolved: the only position
     /// where a bare `Pointer[T, _]` placeholder is concrete (as the immutable
     /// alias; upstream infers the origin per call there and rejects the
@@ -1263,7 +1259,6 @@ impl Checker {
             origin_values: declaration_table::DeclarationTable::default(),
             self_mutable: false,
             self_initializing: false,
-            parametric_write_frames: RefCell::new(Vec::new()),
             bundled_stdlib_declaration: false,
             enum_declaration: false,
             node_facts: RefCell::new(FactMap::default()),
@@ -3171,11 +3166,6 @@ struct MethodSig {
     /// places (`-> P[origin_of(self.xs)]`); see [`ViewReturnOrigin`].
     view_return: Vec<ViewReturnOrigin>,
     implicit: bool,
-    /// Origin parameters the body writes through via a parametric-mut ref
-    /// field subscript (`self.field[i] = v`). The write is legal only for
-    /// instantiations binding the origin to a mutable source, judged at each
-    /// call site against the receiver's concrete origin arguments.
-    parametric_origin_writes: Vec<mojito_types::origin::OriginParamId>,
     /// Per regular parameter, the enclosing struct's origin binder its `ref`
     /// clause names (`ref [Self.origin] list`), so a constructor call can
     /// check an explicitly applied origin against the argument filling that
@@ -3252,7 +3242,6 @@ impl MethodSig {
             view_return_interior: Vec::new(),
             view_return: Vec::new(),
             implicit: false,
-            parametric_origin_writes: Vec::new(),
             origin_binders: vec![None; len],
             synthesized_default: false,
             nested_origins: NestedOrigins::AsDeclared,
@@ -4012,8 +4001,6 @@ struct MethodCallResolution {
     ref_return: Option<mojito_types::origin::RefSig>,
     param_types: Vec<Ty>,
     param_decls: Vec<ParamDecl>,
-    /// See [`MethodSig::parametric_origin_writes`].
-    parametric_origin_writes: Vec<mojito_types::origin::OriginParamId>,
     /// The method's own resolved compile-time arguments, in declaration
     /// order, when the selected signature declares any.
     instantiation: Option<Vec<TyArg>>,

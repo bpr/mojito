@@ -97,7 +97,7 @@ impl Checker {
                     _ => None,
                 });
             if let Some(reference) = returned_reference {
-                if !self.require_writable_reference(reference.mutability) {
+                if !Self::require_writable_reference(reference.mutability) {
                     return Err(TypeError::ImmutableBinding(
                         "reference-returning method receiver".to_string(),
                     ));
@@ -120,132 +120,21 @@ impl Checker {
         Ok(())
     }
 
-    /// Whether a write through a reference of `mutability` may stand. A
-    /// parametric one (`Origin[mut=m]`) over an origin parameter of the
-    /// enclosing struct is recorded as the method's requirement on it,
-    /// judged per instantiation at each call site
-    /// (`judge_parametric_origin_writes`). Over the function's own binder
-    /// the mutability is unknown in the generic body, which upstream judges
-    /// there and rejects, as `check_pointer_write` does for a direct
-    /// `Pointer` store.
+    /// Whether a write through a reference of `mutability` may stand: only
+    /// a provably mutable one. A parametric one (`Origin[mut=m]`), whether
+    /// over the enclosing struct's binder or the function's own, is judged
+    /// in the generic body as upstream judges it, where `m` is not provably
+    /// `True` however a caller binds it, and rejects.
     pub(in crate::checker) fn require_writable_reference(
-        &self,
         mutability: mojito_types::origin::Mutability,
     ) -> bool {
-        match mutability {
-            mojito_types::origin::Mutability::Mutable => true,
-            mojito_types::origin::Mutability::Immutable => false,
-            mojito_types::origin::Mutability::Param(id) => {
-                if (id.0 as usize) >= self.enclosing_struct_type_params.get() {
-                    return false;
-                }
-                if let Some(frame) = self.parametric_write_frames.borrow_mut().last_mut()
-                    && !frame.contains(&id)
-                {
-                    frame.push(id);
-                }
-                true
-            }
-        }
-    }
-
-    /// A method body writing through a parametric-mut ref field is legal
-    /// only for instantiations binding that origin parameter to a mutable
-    /// source; judge each recorded write against the receiver's concrete
-    /// origin arguments here, at the instantiation site.
-    pub(super) fn judge_parametric_origin_writes(
-        &self,
-        site: MethodCallSite<'_>,
-        resolved: &MethodCallResolution,
-    ) -> Result<(), TypeError> {
-        let MethodCallSite {
-            span,
-            object,
-            method,
-            ..
-        } = site;
-        for id in &resolved.parametric_origin_writes {
-            let origin = self.resolve_receiver_origin_arguments(
-                mojito_types::origin::Origin::Param(*id),
-                object,
-            );
-            // A resolution that only reaches the receiver's own storage found
-            // no construction-time binding for the parameter — that is a
-            // symbolic origin for write legality, not a mutable source.
-            let verdict = if self
-                .origin_place(object)
-                .is_ok_and(|place| crate::checker::origins::origin_rooted_at(&origin, place.root))
-            {
-                None
-            } else {
-                self.origin_writably_rooted(&origin)
-            };
-            match verdict {
-                Some(true) => {
-                    // The call writes the borrowed storage: invalidate interior
-                    // references into it, as a direct mutation would.
-                    self.record_aggregate_origin_invalidation_except(span.clone(), origin, None);
-                }
-                Some(false) => {
-                    return Err(TypeError::BadCall {
-                        func: method.to_string(),
-                        reason: "writes through an origin parameter bound to an immutable \
-                                 source (an Origin[mut=False] instantiation)"
-                            .to_string(),
-                    });
-                }
-                None => {
-                    let mut propagated = Vec::new();
-                    crate::checker::origins::collect_origin_params(&origin, &mut propagated);
-                    if propagated.is_empty() {
-                        let enclosing = (0..self.enclosing_type_params.len())
-                            .filter(|index| {
-                                self.origin_binder_at(&self.enclosing_type_params, *index)
-                                    .is_some_and(|decl| !decl.is_origin_set())
-                            })
-                            .map(|index| {
-                                mojito_types::origin::OriginParamId(
-                                    u32::try_from(index).unwrap_or(u32::MAX),
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        if let [id] = enclosing.as_slice() {
-                            propagated.push(*id);
-                        }
-                    }
-                    let mut frames = self.parametric_write_frames.borrow_mut();
-                    let Some(frame) = frames.last_mut() else {
-                        return Err(TypeError::BadCall {
-                            func: method.to_string(),
-                            reason: "writes through a parametric origin that is not concrete at \
-                                     this call site"
-                                .to_string(),
-                        });
-                    };
-                    if propagated.is_empty() {
-                        return Err(TypeError::BadCall {
-                            func: method.to_string(),
-                            reason: "writes through a parametric origin whose receiver binding \
-                                     cannot be propagated"
-                                .to_string(),
-                        });
-                    }
-                    for id in propagated {
-                        if !frame.contains(&id) {
-                            frame.push(id);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
+        mutability == mojito_types::origin::Mutability::Mutable
     }
 
     /// A `ref self` receiver classifies as an immutable access for
-    /// ownership unless the call needs the receiver's mutable capability:
-    /// a recorded parametric write in the body, or a reference result
-    /// (whose loan carries the receiver's mutability) — and then only when
-    /// the receiver is provably mutable. A `ref self` method returning a
+    /// ownership unless the call needs the receiver's mutable capability
+    /// for a reference result (whose loan carries the receiver's
+    /// mutability), and then only when the receiver is provably mutable. A `ref self` method returning a
     /// value (`s[byte=a:b]`, `xs.__iter__()`) names `origin_of(self)` for
     /// the result's shared loan and cannot store into its receiver, so it
     /// reads: two live byte views of one String coexist. Receiver-aliasing
@@ -258,7 +147,7 @@ impl Checker {
         let MethodCallSite { object, .. } = site;
         Ok(
             if resolved.self_convention == Some(ArgConvention::Ref)
-                && ((resolved.parametric_origin_writes.is_empty() && resolved.ref_return.is_none())
+                && (resolved.ref_return.is_none()
                     || self.materialized_reference_actual(object)?.mutability
                         != mojito_types::origin::Mutability::Mutable)
             {
@@ -643,9 +532,10 @@ impl Checker {
             {
                 mojito_types::origin::Mutability::Mutable
             }
-            // A parametric-mut receiver stays symbolic: the write legality
-            // is judged per instantiation at the enclosing call site, not
-            // collapsed to immutable inside the generic body.
+            // A parametric-mut receiver's result stays symbolic: a store
+            // through it rejects in the generic body
+            // (`require_writable_reference`), and each instantiation
+            // substitutes the binder's decided mutability.
             _ if matches!(
                 self_reference.mutability,
                 mojito_types::origin::Mutability::Param(_)

@@ -14,26 +14,6 @@ pub(in crate::checker) type CallRefContracts<'a> = (
     &'a dyn Fn(mojito_types::origin::OriginParamId) -> bool,
 );
 
-pub(super) fn collect_origin_params(
-    origin: &mojito_types::origin::Origin,
-    out: &mut Vec<mojito_types::origin::OriginParamId>,
-) {
-    match origin {
-        mojito_types::origin::Origin::Param(id) => {
-            if !out.contains(id) {
-                out.push(*id);
-            }
-        }
-        mojito_types::origin::Origin::Union(origins) => {
-            for origin in origins {
-                collect_origin_params(origin, out);
-            }
-        }
-        mojito_types::origin::Origin::Projected(base, _) => collect_origin_params(base, out),
-        _ => {}
-    }
-}
-
 type SolvedCallOrigins = (
     Vec<Option<ArgConvention>>,
     Option<mojito_types::origin::RefTy>,

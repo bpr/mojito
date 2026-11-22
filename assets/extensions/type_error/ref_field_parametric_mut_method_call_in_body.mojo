@@ -1,7 +1,7 @@
-# expect: writes through an origin parameter bound to an immutable source
-# A `mut self` method call on a parametric-mut ref field's element is a write
-# through the view, rejected at the call site whose receiver binds the origin
-# parameter to an immutable source (a read parameter's storage).
+# expect: reference-returning method receiver
+# A `mut self` method call on a parametric-mut ref field's element
+# (`Origin[mut=m]`) rejects in the method body, as upstream judges the
+# binder there: `m` is not provably `True`, however a caller binds it.
 @fieldwise_init
 struct C(Copyable, Movable):
     var n: Int
@@ -16,7 +16,7 @@ struct View[m: Bool, //, o: Origin[mut=m]]:
     def bump(mut self):
         self.src[0].inc()
 
-def poke(data: List[C]):
+def poke(mut data: List[C]):
     var v = View(data)
     v.bump()
 

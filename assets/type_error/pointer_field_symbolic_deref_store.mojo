@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # The empty-subscript store through a symbolic-origin pointer field is judged
 # by the same binding.
 @fieldwise_init

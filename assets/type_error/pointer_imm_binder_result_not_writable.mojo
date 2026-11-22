@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # A `Pointer[T, o]` over an `o: ImmOrigin` binder is immutable over what
 # the binder binds, even when the argument pointer is mutable: the result of
 # `same(Pointer(to=x))` takes no store.

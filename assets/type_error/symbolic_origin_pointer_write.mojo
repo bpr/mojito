@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # A pointer field whose origin binder has symbolic mutability
 # (`Origin[mut=m]`) is judged per binding: `P(Pointer(to=xs))` from a read
 # parameter binds `m` False, so the write rejects as upstream's does.

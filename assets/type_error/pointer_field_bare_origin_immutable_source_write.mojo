@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # A bare `o: Origin` binder is judged per binding too, as the pin does.
 @fieldwise_init
 struct P[o: Origin]:

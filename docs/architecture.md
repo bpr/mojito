@@ -6193,8 +6193,11 @@ its address, never its origin. Aggregates that store place-origin pointers carry
 loan exactly like reference-valued aggregates. Because an origin-bearing
 pointer designates one checked value rather than an allocation, the checker
 rejects non-zero offsets, pointer arithmetic and comparison, `free()`, writes
-through immutable or unresolved symbolic provenance
-(`pointer_write_capability`: a pointer field's `Origin[mut=m]` binder resolves
+through immutable or unresolved symbolic provenance (a store below a
+subscript by the getter's `ref[Self.origin]` result alone,
+`require_writable_reference`, which rejects an `Origin[mut=m]` binder in the
+generic body, the enclosing struct's or the function's own, as upstream
+does; `Pointer.write` by `pointer_write_capability`: a pointer field's `Origin[mut=m]` binder resolves
 through the holder's construction-time origins — for a call result, the
 origins its callee's view-return contract (`ViewReturnOrigin`, resolved into
 `call_result_origins` at the call) bound with the callee's own capability —

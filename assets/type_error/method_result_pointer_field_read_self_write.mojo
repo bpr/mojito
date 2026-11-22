@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # A read `self` receiver binds the returned view's slot immutably, so a
 # write through the view's pointer field rejects even on a `var` holder.
 @fieldwise_init

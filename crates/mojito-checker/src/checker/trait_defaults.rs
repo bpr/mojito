@@ -910,7 +910,6 @@ impl Checker {
                 ))
             })?;
         let effect_key = self.method_effect_key(declaration, method, overload_index)?;
-        self.parametric_write_frames.borrow_mut().push(Vec::new());
         let saved_site = self
             .method_site
             .replace((wrapper.module.clone(), declaration.to_string()));
@@ -929,7 +928,6 @@ impl Checker {
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.pop_param_scope();
         self.method_site = saved_site;
-        self.parametric_write_frames.borrow_mut().pop();
         result
     }
 

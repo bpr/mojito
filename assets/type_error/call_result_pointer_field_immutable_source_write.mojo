@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # The callee holds `xs` read-only, so the view it returns over
 # `origin_of(xs)` binds the slot immutably whatever the caller's `var` allows.
 @fieldwise_init

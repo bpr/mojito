@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # An `ImmOrigin(o)` origin argument binds the binder immutably whatever the
 # source allows; the binding keeps the cast for its writes.
 @fieldwise_init

@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # A bare `ref` parameter propagates caller mutability but cannot assume
 # write permission, so the subtree pointer minted from it is not statically
 # mutable and writes reject.

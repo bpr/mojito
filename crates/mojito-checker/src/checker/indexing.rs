@@ -54,6 +54,21 @@ pub(super) fn subscript_argument_sources(place: &Expr) -> Vec<SourceSpan> {
     }
 }
 
+/// The diagnostic for a store through a reference `accessor` returns that
+/// `require_writable_reference` refused: an immutable one, or one over an
+/// `Origin[mut=m]` binder, whose mutability the generic body does not know.
+pub(super) fn unwritable_reference(
+    mutability: mojito_types::origin::Mutability,
+    accessor: &str,
+) -> TypeError {
+    TypeError::ImmutableBinding(match mutability {
+        mojito_types::origin::Mutability::Param(_) => {
+            format!("reference returned by '{accessor}' whose origin mutability is not known here")
+        }
+        _ => format!("immutable reference returned by '{accessor}'"),
+    })
+}
+
 impl Checker {
     /// The getter a subscript of a value of type `obj_ty` reads through: a
     /// struct's `__getitem_param__` when it declares one, else its
@@ -203,7 +218,7 @@ impl Checker {
                     .and_then(|facts| facts.selected_call.as_deref())
                     .and_then(|contract| contract.reference_result.clone());
                 match reference {
-                    Some(reference) if self.require_writable_reference(reference.mutability) => {
+                    Some(reference) if Self::require_writable_reference(reference.mutability) => {
                         // The place retains the accessor's handle; it is
                         // written through, never read out as a value. Writing
                         // the projected payload replaces it, so references
@@ -383,7 +398,7 @@ impl Checker {
                         }),
                 };
                 match reference {
-                    Some(reference) if self.require_writable_reference(reference.mutability) => {
+                    Some(reference) if Self::require_writable_reference(reference.mutability) => {
                         self.record_at(span).reference_value_use = Some(true);
                         Ok(reference.referent)
                     }
@@ -917,7 +932,7 @@ impl Checker {
             .and_then(|contract| contract.reference_result)
             .map(|reference| reference.mutability);
         match mutability {
-            Some(mutability) if self.require_writable_reference(mutability) => {
+            Some(mutability) if Self::require_writable_reference(mutability) => {
                 self.record_at(span).reference_value_use = Some(true);
                 Ok(referent)
             }
@@ -1005,9 +1020,6 @@ impl Checker {
                 "a subscript reference store's target is not a subscript".to_string(),
             ));
         };
-        // A pointer dereference on the way to the receiver needs its
-        // provenance's mutable capability, as an augmented store does.
-        self.check_pointer_derefs(target)?;
         let object_ty = self.infer(object)?;
         let element = self.infer(target)?;
         let site = target.source_span();
@@ -1025,10 +1037,9 @@ impl Checker {
                 "the value a subscript of '{object_ty}' returns"
             )));
         };
-        // A provably immutable reference rejects here, as does one over the
-        // function's own `Origin[mut=m]` binder; a struct binder's is judged
-        // per instantiation at the enclosing method's call sites instead.
-        if !self.require_writable_reference(reference.mutability) {
+        // A provably immutable reference rejects here, as does one over an
+        // `Origin[mut=m]` binder, the struct's or the function's own.
+        if !Self::require_writable_reference(reference.mutability) {
             return Err(unwritable_reference(reference.mutability, "__getitem__"));
         }
         let found = self.infer_in_context(value, &element, true)?;
@@ -1478,8 +1489,8 @@ impl Checker {
     /// Reject a write through `pointer` unless its provenance carries
     /// mutable capability at this site: an immutable provenance, and a
     /// `Origin[mut=m]` binder that no binding resolves (the generic body
-    /// itself, a `Pointer[T, o]` parameter), both reject — upstream judges
-    /// the binder per instantiation and never inside the generic body.
+    /// itself, a `Pointer[T, o]` parameter), both reject, as upstream judges
+    /// the binder in the generic body, where `m` is not provably `True`.
     pub(super) fn check_pointer_write(
         &self,
         pointer: &Expr,
@@ -1536,27 +1547,6 @@ impl Checker {
             | PointerOrigin::Static { .. }
             | PointerOrigin::Untracked { .. }
             | PointerOrigin::UnsafeAny { .. } => None,
-        }
-    }
-
-    /// Reject any pointer dereference on the way to a written place whose
-    /// provenance is not writable here, as `check_place` does for a plain
-    /// assignment; a nominal subscript's getter/setter path does not walk
-    /// its receiver chain as a place. The capability is the pointer's
-    /// origin's, which the getter's `ref[Self.origin]` result names, judged
-    /// in the body as upstream judges an `Origin[mut=m]` binder there.
-    pub(super) fn check_pointer_derefs(&self, place: &Expr) -> Result<(), TypeError> {
-        match &place.kind {
-            ExprKind::Index { object, .. }
-            | ExprKind::Slice { object, .. }
-            | ExprKind::MultiIndex { object, .. } => {
-                if let Some(origin) = self.infer(object)?.kind().pointer_origin() {
-                    return self.check_pointer_write(object, &origin);
-                }
-                self.check_pointer_derefs(object)
-            }
-            ExprKind::Member { object, .. } => self.check_pointer_derefs(object),
-            _ => Ok(()),
         }
     }
 
@@ -2520,19 +2510,6 @@ impl Checker {
         };
         Ok(mojito_checked::checked::OmittedSliceOperand { conversion })
     }
-}
-
-/// The diagnostic for a store through a reference `accessor` returns that
-/// `require_writable_reference` refused: an immutable one, or one over the
-/// function's own `Origin[mut=m]` binder, whose mutability the generic body
-/// does not know.
-fn unwritable_reference(mutability: mojito_types::origin::Mutability, accessor: &str) -> TypeError {
-    TypeError::ImmutableBinding(match mutability {
-        mojito_types::origin::Mutability::Param(_) => {
-            format!("reference returned by '{accessor}' whose origin mutability is not known here")
-        }
-        _ => format!("immutable reference returned by '{accessor}'"),
-    })
 }
 
 /// The name of `setter`'s last argument, which upstream takes as every

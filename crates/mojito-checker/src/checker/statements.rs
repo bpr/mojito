@@ -2028,8 +2028,6 @@ impl Checker {
                     other => other,
                 };
                 let target = if nominal_subscript {
-                    self.check_pointer_derefs(place)
-                        .map_err(in_place_destination)?;
                     self.infer(place)?
                 } else {
                     self.check_place(place).map_err(in_place_destination)?
@@ -2047,14 +2045,13 @@ impl Checker {
                                 "augmented nominal subscript lost its getter contract".to_string(),
                             )
                         })?;
-                    // Provably immutable rejects; parametric-mut is judged per
-                    // instantiation at the enclosing method's call sites.
                     if let Some(reference) = &contract.reference_result
-                        && reference.mutability == mojito_types::origin::Mutability::Immutable
+                        && !Self::require_writable_reference(reference.mutability)
                     {
-                        return Err(TypeError::ImmutableBinding(
-                            "immutable reference returned by '__getitem__'".to_string(),
-                        ));
+                        return Err(in_place_destination(super::indexing::unwritable_reference(
+                            reference.mutability,
+                            "__getitem__",
+                        )));
                     }
                     Some(contract)
                 } else {

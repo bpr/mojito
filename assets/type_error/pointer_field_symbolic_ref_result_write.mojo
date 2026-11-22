@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin mutability is not known here
+# expect: reference returned by '__getitem__' whose origin mutability is not known here
 # A store through the reference a `__getitem__` returns, reached through a
 # pointer field over the struct's `Origin[mut=m]` binder, rejects in the
 # method body however the receiver was constructed.

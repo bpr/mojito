@@ -1,7 +1,7 @@
-# A field store into, and a `mut self` method call on, the element a
-# parametric-mut ref field (`Origin[mut=m]`) reaches are writes through the
-# view, judged per instantiation like `self.src[0] += 1`: over a mutable
-# source, both land in the borrowed storage.
+# A field store into, and a `mut self` method call on, the element a ref
+# field over a `MutOrigin` binder reaches are writes through the view: the
+# binder is mutable in the method body, and both land in the borrowed
+# storage.
 @fieldwise_init
 struct C(Copyable, Movable):
     var n: Int
@@ -10,7 +10,7 @@ struct C(Copyable, Movable):
         self.n += 1
 
 @fieldwise_init
-struct View[m: Bool, //, o: Origin[mut=m]]:
+struct View[o: MutOrigin]:
     var src: ref[o] List[C]
 
     def put(mut self, x: Int):

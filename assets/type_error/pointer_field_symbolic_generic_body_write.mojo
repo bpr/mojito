@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin mutability is not known here
+# expect: reference returned by '__getitem__' whose origin mutability is not known here
 # A `mut self` method's write through the symbolic-origin pointer field
 # rejects in the body: `m` is not provably True there, however the receiver
 # was constructed.

@@ -423,7 +423,6 @@ impl Checker {
                     ref_return: ref_return.map(|signature| {
                         super::super::call_inference::close_ref_space(signature, &close_space)
                     }),
-                    parametric_origin_writes: sig.parametric_origin_writes.clone(),
                     instantiation: instantiation.clone(),
                     declared_instantiation: declared_instantiation.clone(),
                     parameter_names: sig.names.clone(),
@@ -642,7 +641,6 @@ impl Checker {
                 }),
                 param_types: params,
                 param_decls: sig.declared.clone(),
-                parametric_origin_writes: sig.parametric_origin_writes.clone(),
                 instantiation: None,
                 declared_instantiation: None,
                 parameter_names: Vec::new(),
@@ -785,7 +783,6 @@ fn intrinsic_resolution(
         ref_return: None,
         param_types,
         param_decls: vec![],
-        parametric_origin_writes: vec![],
         instantiation: None,
         declared_instantiation: None,
         parameter_names: Vec::new(),

@@ -248,7 +248,6 @@ impl Checker {
         }
         self.replay_callee_effects(site, &resolved, selected_target.as_deref())?;
         self.check_mutated_receiver(site, &resolved)?;
-        self.judge_parametric_origin_writes(site, &resolved)?;
         let effective_receiver_convention = self.effective_receiver_convention(site, &resolved)?;
         self.check_consumed_receiver(site, &resolved)?;
         let (effective_conventions, solved_return) =

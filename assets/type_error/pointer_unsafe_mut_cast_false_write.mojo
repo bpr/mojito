@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # `Pointer.unsafe_mut_cast[False]()` over a mutable borrow returns an
 # immutable pointer, so a write through it is rejected.
 def main():

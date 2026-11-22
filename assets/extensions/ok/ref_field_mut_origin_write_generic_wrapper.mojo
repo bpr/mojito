@@ -1,14 +1,15 @@
-# A write requirement inherited from a wrapped parametric-origin view propagates
-# through the wrapper method and is discharged at its concrete call site.
+# A wrapper over a `MutOrigin` view calls the view's writing method from its
+# own body: both binders are mutable there, and the write lands in the
+# borrowed storage.
 @fieldwise_init
-struct View[m: Bool, //, o: Origin[mut=m]]:
+struct View[o: MutOrigin]:
     var src: ref[o] List[Int]
 
     def bump(mut self):
         self.src[0] += 1
 
 @fieldwise_init
-struct Wrap[m: Bool, //, o: Origin[mut=m]]:
+struct Wrap[o: MutOrigin]:
     var view: View[o]
 
     def poke(mut self):

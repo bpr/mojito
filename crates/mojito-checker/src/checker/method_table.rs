@@ -40,10 +40,6 @@ impl MethodTable {
         self.get(name).is_some()
     }
 
-    pub(super) fn get_mut(&mut self, name: &str) -> Option<&mut Vec<MethodSig>> {
-        self.methods.get_mut(name)
-    }
-
     pub(super) fn entry(&mut self, name: String) -> Entry<'_, String, Vec<MethodSig>> {
         self.methods.entry(name)
     }

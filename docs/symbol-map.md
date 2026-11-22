@@ -495,7 +495,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   records with the `litref_place` node fact and the `ReferenceResult`
   `litref_reference` builds from `r`'s `!lit.ref`), the subscript receiver
   chain's write check over the getters' reference results
-  (`check_pointer_derefs`), the pointer-write
+  (`require_writable_reference`, which rejects an `Origin[mut=m]` binder's
+  in the generic body), the pointer-write
   capability (`pointer_write_capability`, the per-binding resolution of a
   symbolic origin binder — through a call result's recorded
   `call_result_origins` and a holder type's `ImmOrigin` slot

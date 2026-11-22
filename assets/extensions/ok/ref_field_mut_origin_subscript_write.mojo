@@ -1,9 +1,8 @@
-# Subscript writes through a parametric-mut ref field (`Origin[mut=m]`) are
-# accepted inside the generic body and judged per instantiation: a receiver
-# whose origin binds a mutable source may write through the view, and the
-# write lands in the borrowed storage.
+# Subscript writes through a ref field over a `MutOrigin` binder are
+# accepted in the method body, where the binder is mutable, and land in the
+# borrowed storage.
 @fieldwise_init
-struct View[m: Bool, //, o: Origin[mut=m]]:
+struct View[o: MutOrigin]:
     var src: ref[o] List[Int]
 
     def bump(mut self):

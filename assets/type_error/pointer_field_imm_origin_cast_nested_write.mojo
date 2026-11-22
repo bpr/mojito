@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # An `ImmOrigin(o)` cast on a nested construction survives the field chain:
 # `w.cell` finds the cast `Wrap(Cell[ImmOrigin(…)](…))` recorded under `cell`.
 @fieldwise_init

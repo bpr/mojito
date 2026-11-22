@@ -1441,6 +1441,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A store through a reference over a struct's `Origin[mut=m]` binder
+  (`self.r[] = x` through a getter's `ref[Self.o]` result, `self.src[0] = x`
+  or `+= 1` through a `ref` field, a `mut self` call on its element) now
+  rejects in the method body with "expression must be mutable in
+  assignment", as at the pin, where it was accepted and judged at each call
+  site (R2482). A store below a pointer dereference is judged by the
+  getter's result alone.
+
 - Natively, a call through a `ref` field passes the reference the field
   holds when the element type carries an origin argument, where it passed
   the field slot's address: iterating a `List[StaticString]` whose

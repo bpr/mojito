@@ -649,7 +649,6 @@ impl Checker {
             view_return_interior: view_return_interior_tags(m.ret.as_ref()),
             view_return: Vec::new(),
             implicit: false,
-            parametric_origin_writes: Vec::new(),
             origin_binders: vec![None; regular_params.len()],
             synthesized_default: false,
             nested_origins: NestedOrigins::AsDeclared,
@@ -1432,7 +1431,7 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let name = declaration.name;
         let method_name = lifecycle_method_name(m);
-        let (all_types, mut sig) = loop {
+        let (all_types, sig) = loop {
             self.take_method_demands(declaration, registration.peers);
             let lifted = self.lifted_applications.borrow().len();
             let counts = self.lifted_counts.borrow().clone();
@@ -1473,9 +1472,6 @@ impl Checker {
             },
             sig.declared.clone(),
         );
-        if let Some(info) = self.structs.get(name) {
-            sig.parametric_origin_writes = parametric_origin_writes_in_body(&m.body, &info.fields);
-        }
         for (param, ty) in all_types.iter().enumerate() {
             self.declaration_types.borrow_mut().insert(
                 mojito_checked::checked::AnnotationSite::MethodParam {
@@ -2246,7 +2242,6 @@ impl Checker {
             view_return_interior: req_sig.view_return_interior.clone(),
             view_return: req_sig.view_return.clone(),
             implicit: req_sig.implicit,
-            parametric_origin_writes: req_sig.parametric_origin_writes.clone(),
             origin_binders: req_sig.origin_binders.clone(),
             synthesized_default: false,
             nested_origins: req_sig.nested_origins,
@@ -4740,88 +4735,6 @@ fn generator_witnesses(decls: &[ParamDecl], body: &ParamExpr, expected: &Ty) -> 
         }
         None => mojito_types::types::generator_converts(&actual, expected),
     }
-}
-
-fn parametric_origin_writes_in_body(
-    body: &[mojito_ast::ast::Stmt],
-    fields: &[(String, Ty)],
-) -> Vec<mojito_types::origin::OriginParamId> {
-    use mojito_ast::ast::{ExprKind, Stmt, StmtKind};
-    use mojito_types::origin::{Mutability, Origin};
-
-    fn written_self_field(place: &mojito_ast::ast::Expr) -> Option<&str> {
-        let ExprKind::Index { object, .. } = &place.kind else {
-            return None;
-        };
-        let ExprKind::Member { object, field } = &object.kind else {
-            return None;
-        };
-        matches!(&object.kind, ExprKind::Identifier(name) if name == "self")
-            .then_some(field.as_str())
-    }
-
-    fn walk(
-        stmts: &[Stmt],
-        fields: &[(String, Ty)],
-        out: &mut Vec<mojito_types::origin::OriginParamId>,
-    ) {
-        for stmt in stmts {
-            match &stmt.kind {
-                StmtKind::AugAssign { place, .. } | StmtKind::SetPlace { place, value: _ } => {
-                    if let Some(field) = written_self_field(place)
-                        && let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field)
-                        && let TyKind::Ref(reference) = field_ty.kind()
-                        && matches!(reference.mutability, Mutability::Param(_))
-                        && let Origin::Param(id) = reference.origin.clone()
-                        && !out.contains(&id)
-                    {
-                        out.push(id);
-                    }
-                }
-                StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                    for (_, branch) in branches {
-                        walk(branch, fields, out);
-                    }
-                    if let Some(branch) = orelse {
-                        walk(branch, fields, out);
-                    }
-                }
-                StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
-                    walk(body, fields, out);
-                    if let Some(branch) = orelse {
-                        walk(branch, fields, out);
-                    }
-                }
-                StmtKind::ComptimeFor { body, .. }
-                | StmtKind::With { body, .. }
-                | StmtKind::Scope(body) => {
-                    walk(body, fields, out);
-                }
-                StmtKind::Try {
-                    body,
-                    except,
-                    orelse,
-                    finalbody,
-                } => {
-                    walk(body, fields, out);
-                    if let Some((_, handler)) = except {
-                        walk(handler, fields, out);
-                    }
-                    if let Some(branch) = orelse {
-                        walk(branch, fields, out);
-                    }
-                    if let Some(branch) = finalbody {
-                        walk(branch, fields, out);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let mut out = Vec::new();
-    walk(body, fields, &mut out);
-    out
 }
 
 /// The outer checker scope saved while a struct's members resolve at the

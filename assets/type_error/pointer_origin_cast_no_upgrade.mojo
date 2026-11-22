@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # `unsafe_origin_cast` rebinds provenance but never upgrades a statically
 # immutable capability: the cast itself is accepted, a write through its
 # result is not.

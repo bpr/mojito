@@ -7804,29 +7804,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2482 A store through a getter's `ref[Self.o]` result over a
-  struct's `Origin[mut=m]` binder is accepted in the method body, where the
-  pin rejects it**
-
-  `self.r[] = x` in a `mut self` method of `View[m: Bool, //, o:
-  Origin[mut=m]]`, over a field `r: R[Self.o]` whose `__getitem__(self) ->
-  ref[Self.o] Int`, prints `9`, where the pin rejects "expression must be
-  mutable in assignment": `m` is not provably `True` in the body.
-  - Cause: `require_writable_reference` (`checker/indexing.rs`) defers a
-    struct binder's `Mutability::Param` to the enclosing method's call
-    sites, while upstream judges it in the body.
-  - Because of it, `check_pointer_derefs` still judges a pointer
-    subscript on the way to a store by the pointer's provenance
-    (`check_pointer_write`) rather than by the getter's result; retire
-    that once the getter's mutability is judged in the body.
-  - Probe: the store above is rejected with the pin's message.
-  - Probe: `assets/type_error/pointer_field_symbolic_ref_result_write.mojo`
-    and `pointer_field_symbolic_generic_body_write.mojo` still reject
-    with `check_pointer_write` gone from `check_pointer_derefs`.
-  - Found while landing R2473 (2026-11-21).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2481 A plain store through a generic method's reference result
   fails in MIR when the call passes a keyword argument**
 
@@ -10710,8 +10687,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R627 An overload probe leaves the lifting memo, effect
-  observations, and parametric write frames a losing candidate wrote**
+- [ ] **R627 An overload probe leaves the lifting memo and effect
+  observations a losing candidate wrote**
 
   `Checker::probe` undoes every fact store, but a losing candidate's writes
   to the checker's other state survive it.
@@ -10720,8 +10697,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     lifted still becomes a `$comptime$$N` function.
   - `effect_observations` and `call_through_observations`: a loser's reads
     only make a body re-infer instead of copying its facts.
-  - `parametric_write_frames` (`method_calls/receiver_effects.rs`): a
-    loser's mutating method call on a parametric origin counts as a write.
   - The owner-identity cursors advance: a loser's identities go unused,
     which is harmless.
   - The lever: give each a probe mark (truncate, or journal the map), and
