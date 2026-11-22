@@ -1110,6 +1110,7 @@ assets/ok/pointer_field_view_read_parameter.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/pointer_field_view_ref_yield.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_view_returned.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_wrapper_iterator_protocol.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_getitem_explicit_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_immutable_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_memory_members_declared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_mlir_values.mojo	-	ineligible	no-scalar-entry-shape

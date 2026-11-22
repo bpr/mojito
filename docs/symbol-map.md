@@ -489,7 +489,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   it, else `__getitem__(i)`), which `infer_index` types and
   `selected_application_at` applies at a compile-time position, one
   policy for both (an `Array` receiver is declined until R511 gives it
-  `__getitem_param__`, R2043),
+  `__getitem_param__`, R2043; a pointer receiver's subscript syntax stays
+  the checker rule's, `pointer_subscript_rule`, until R2473),
   pointer offset/write checks (the single-place
   rule and its multi-element interior-domain lift), the pointer-write
   capability (`pointer_write_capability`, the per-binding resolution of a
@@ -516,7 +517,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   receivers that answer without a declared signature, `resolution.rs`
   selects a signature per receiver family (struct, bound, builtin),
   `receiver_effects.rs` checks the receiver
-  and argument conventions and builds the reference result, and
+  and argument conventions and builds the reference result (a
+  `ref[Self.o]` result over `o: Origin[mut=m]` takes the receiver
+  instance's `mut`, `receiver_bool_argument`, else the resolved origin's
+  `decided_origin_mutability`, `origins/construct.rs`), and
   `call_contract.rs` records the `CheckedCallContract`. `selection.rs`,
   `statics.rs`, and `builtin_types.rs` hold the scoring, static, and
   pointer/List helpers, `mlir_op.rs` the ownership-marker `__mlir_op`
@@ -2085,7 +2089,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `read_reference_projection`, `extend_reference`, and `MakeRef`). A heap
   pointer stays a `Value::Pointer`, which also holds a reference to a heap
   element, so `MakeRef` asks the slot's type whether a whole slot holding
-  one is the pointer (`Prog::pointer_slot`, `backend/vm.rs`). A place
+  one is the pointer (`Prog::pointer_slot`, `backend/vm.rs`). A reference
+  binding holding a heap pointer (a `ref`-returning call's result over an
+  allocation, `p.__getitem__()`) is read, written, and projected through
+  that pointer by one helper, `heap_handle_place`, which the load, `Store`,
+  and `MakeRef` arms ask first. A place
   pointer's integer address (`__int__`, `VmBackend::method_call`) is
   `VmBackend::place_address`: an interned synthetic allocation per place
   (`place_allocations`), or the heap element's own address for one rooted

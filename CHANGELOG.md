@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An explicit `p.__getitem__()`, `p.__getitem__(unsafe_offset=i)`, or
+  deprecated positional `p.__getitem__(i)` call runs upstream's declared
+  `Pointer` getters, where it found no method: a read, store, `+=`, and
+  field access through the returned reference work over place and heap
+  pointers on both backends (`assets/ok/pointer_getitem_explicit_call.mojo`).
+  The subscript syntax stays the checker's rule (roadmap R2473). A
+  `ref[Self.o]` result over `o: Origin[mut=m]` now takes the receiver
+  instance's `mut`, so a read method of a holder over a mutable origin
+  mutates through `self.p.get()`, for user structs too, as at the pin. A
+  whole-value store through a generic keyword call's reference
+  (`s.get(k=0) = 6`) still fails in MIR (roadmap R2481).
 - A store or augmented store through a getter's mutable reference accepts
   every bracket shape, as upstream's `emitGetterSetterAccess` writes through
   the getter whenever there is no setter: a keyword (`s[k=0] = 5`, `s[k=0]

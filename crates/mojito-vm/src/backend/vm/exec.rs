@@ -29,14 +29,10 @@ impl VmBackend {
             // the rest of the projection within it.
             let referent = self.read_reference(&element, frame_id, vars)?;
             self.read_reference_projection(frame_id, vars, &referent, &suffix)?
-        } else if place.through == Some(place.root)
-            && let pointer @ Value::Pointer { .. } = &vars[place.root as usize]
-        {
+        } else if let Some(handle) = self.heap_handle_place(place, regs, vars)? {
             // A reference binding of a static-origin call result holds
             // the element's heap pointer (`heap_reference_result`).
-            let referent = self.read_reference(pointer, frame_id, vars)?;
-            let projection = super::references::place_projection_segments(place, regs)?;
-            self.read_reference_projection(frame_id, vars, &referent, &projection)?
+            self.read_reference(&handle, frame_id, vars)?
         } else if let Some(reference) =
             self.extend_reference(&vars[place.root as usize], place, regs)?
         {
@@ -212,6 +208,10 @@ impl VmBackend {
                 return Err(parametric_instruction("interior invalidation"));
             }
             MirInstr::MakeRef { dest, place } => {
+                if let Some(handle) = self.heap_handle_place(place, regs, vars)? {
+                    regs[dest.0 as usize] = handle;
+                    return Ok(());
+                }
                 let root = vars[place.root as usize].clone();
                 // A place within a tracked pointer variable's pointee, the
                 // variable holding a heap pointer (a constructor's
@@ -1931,6 +1931,11 @@ impl VmBackend {
             }
             MirInstr::Store { place, src } => {
                 let mut v = regs[src.0 as usize].clone();
+                if let Some(handle) = self.heap_handle_place(place, regs, vars)? {
+                    self.canonicalize_value_references(frame_id, vars, &mut v);
+                    self.write_reference(&handle, frame_id, vars, v)?;
+                    return Ok(());
+                }
                 // A place projected from a pointer slot writes within its
                 // pointee, as the load of one reads within it.
                 if let Some((Value::Pointer { allocation, offset }, suffix)) =

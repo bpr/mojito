@@ -1082,6 +1082,24 @@ impl Checker {
         Ok(bindings)
     }
 
+    /// The mutability `origin` decides by itself: a place's owner's, a
+    /// static or cast origin's, a projection's base's, or an enclosing
+    /// binder's ([`Self::bound_origin_mutability`]).
+    pub(in crate::checker) fn decided_origin_mutability(
+        &self,
+        origin: &Origin,
+    ) -> Option<Mutability> {
+        match origin {
+            Origin::Projected(base, _) => self.decided_origin_mutability(base),
+            Origin::Param(_) => self.bound_origin_mutability(origin),
+            // The receiver's origin has the receiver's capability.
+            Origin::SelfParam => self
+                .lookup_owner("self")
+                .map(|owner| self.owner_reference_mutability(owner)),
+            _ => origin_mutability(origin, &|owner| self.owner_reference_mutability(owner)),
+        }
+    }
+
     /// The origin a struct's origin slot `decl` holds for the origin its
     /// construction bound: an `ImmOrigin` (`Origin[mut=False]`) slot holds
     /// the `ImmOrigin(o)` cast of an `o` not already immutable, as
@@ -1094,21 +1112,6 @@ impl Checker {
                 ..
             } => self.fold_origin_mut_cast(&Origin::immutable(origin)),
             _ => origin,
-        }
-    }
-
-    /// The mutability `origin` decides by itself: a place's owner's, a
-    /// static or cast origin's, a projection's base's, or an enclosing
-    /// binder's ([`Self::bound_origin_mutability`]).
-    fn decided_origin_mutability(&self, origin: &Origin) -> Option<Mutability> {
-        match origin {
-            Origin::Projected(base, _) => self.decided_origin_mutability(base),
-            Origin::Param(_) => self.bound_origin_mutability(origin),
-            // The receiver's origin has the receiver's capability.
-            Origin::SelfParam => self
-                .lookup_owner("self")
-                .map(|owner| self.owner_reference_mutability(owner)),
-            _ => origin_mutability(origin, &|owner| self.owner_reference_mutability(owner)),
         }
     }
 

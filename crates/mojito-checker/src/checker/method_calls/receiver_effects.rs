@@ -624,6 +624,17 @@ impl Checker {
             // static origin) makes the reference read-only, as upstream's
             // `ref[o]` takes `o`'s mutability, whatever the receiver is.
             _ if decided_read_only(&origin) => mojito_types::origin::Mutability::Immutable,
+            // `ref[o]` over `o: Origin[mut=m]` has `m`'s mutability: the
+            // receiver instance's `mut` argument, else what the resolved
+            // origin decides (an enclosing binder's `mut`, a place's owner).
+            mojito_types::origin::SigMutability::BoolParam(slot)
+                if let Some(decided) = self
+                    .receiver_bool_argument(object, slot)
+                    .map(mojito_types::origin::Mutability::of)
+                    .or_else(|| self.decided_origin_mutability(&origin)) =>
+            {
+                decided
+            }
             _ if (self_reference.mutability == mojito_types::origin::Mutability::Mutable
                 && origin_may_name_receiver(&signature.origin, resolved))
                 || solved_return.is_some_and(|reference| {
@@ -666,6 +677,28 @@ impl Checker {
                 .insert(span.clone());
         }
         Ok(Some(reference))
+    }
+
+    /// The receiver `object`'s instance argument for the struct's `Bool`
+    /// binder at `slot`, counted as [`super::origins::origin_decl_mutability`]
+    /// counts it (a pack's implicit list binder takes no slot), when the
+    /// instance decides it.
+    fn receiver_bool_argument(&self, object: &Expr, slot: usize) -> Option<bool> {
+        let receiver = self.infer(object).ok()?;
+        let (name, arguments) = self.nominal_struct(&receiver)?;
+        let position = self
+            .structs
+            .get(name)?
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, decl)| !decl.is_pack_list())
+            .nth(slot)?
+            .0;
+        match arguments.get(position) {
+            Some(TyArg::Val(mojito_types::ct::CtValue::Bool(value))) => Some(*value),
+            _ => None,
+        }
     }
 }
 

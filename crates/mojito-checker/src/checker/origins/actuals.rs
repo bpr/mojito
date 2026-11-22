@@ -948,6 +948,8 @@ impl Checker {
     /// constructed — mirroring what `reference_actual` does for a directly-read
     /// reference field. Without it a returned reference records no loan on its
     /// ultimate source, so the source is dropped while the reference is still live.
+    /// The receiver's declared struct is its nominal one, so a pointer
+    /// receiver binds `Pointer`'s own `origin` to its origin argument.
     pub(in crate::checker) fn resolve_receiver_origin_arguments(
         &self,
         origin: mojito_types::origin::Origin,
@@ -956,9 +958,10 @@ impl Checker {
         let Ok(inferred) = self.infer(object) else {
             return origin;
         };
-        let Some((name, arguments)) = inferred.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = self.nominal_struct(&inferred) else {
             return origin;
         };
+        let arguments = &*arguments;
         let Some(info) = self.structs.get(name) else {
             return origin;
         };

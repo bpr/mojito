@@ -685,6 +685,36 @@ impl VmBackend {
         Ok(())
     }
 
+    /// The handle a place rooted at a reference binding that holds a heap
+    /// pointer names (`ref r = p.__getitem__()` over an allocation): the
+    /// pointer itself for the whole binding, else a reference into its
+    /// pointee. `None` for any other place. The write and projection twin of
+    /// the load's static-origin read through such a binding.
+    pub(super) fn heap_handle_place(
+        &mut self,
+        place: &MirPlace,
+        registers: &[Value],
+        variables: &[Value],
+    ) -> Result<Option<Value>, RuntimeError> {
+        if place.through != Some(place.root) {
+            return Ok(None);
+        }
+        let Value::Pointer { allocation, offset } = variables[place.root as usize] else {
+            return Ok(None);
+        };
+        let segments = place_projection_segments(place, registers)?;
+        if segments.is_empty() {
+            return Ok(Some(Value::Pointer { allocation, offset }));
+        }
+        Ok(Some(Value::Ref {
+            frame: POINTER_ROOT_FRAME,
+            slot: self.pointer_root(allocation, offset),
+            projection: std::iter::once(RefProjection::Index(0))
+                .chain(segments)
+                .collect(),
+        }))
+    }
+
     #[allow(
         clippy::unused_self,
         reason = "TODO: make an associated function or use the receiver"

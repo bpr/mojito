@@ -1111,6 +1111,7 @@ assets/ok/pointer_field_view_read_parameter.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_ref_yield.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_view_returned.mojo	main	exe-differential	sanitized
 assets/ok/pointer_field_wrapper_iterator_protocol.mojo	main	exe-differential	sanitized
+assets/ok/pointer_getitem_explicit_call.mojo	main	exe-differential	sanitized
 assets/ok/pointer_immutable_conversion.mojo	main	exe-differential	sanitized
 assets/ok/pointer_memory_members_declared.mojo	main	exe-differential	sanitized
 assets/ok/pointer_mlir_values.mojo	main	exe-differential	sanitized

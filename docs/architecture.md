@@ -3781,10 +3781,15 @@ aggregate. Its parameters (`p.origin`, `type_of(p).T`), `comptime`
 members (`_mlir_type`, `_mlir_lit_ref`), and conformances (`Intable`,
 `Writable`) are the declaration's, in the checker and the elaborator
 alike. The checker's rules still win for every member
-`POINTER_RULE_MEMBERS` names (the subscript members, `write`, `free`,
+`POINTER_RULE_MEMBERS` names (`__setitem__`, `write`, `free`,
 `unsafe_free`, and the static rules), so those declared bodies are
 checked but no call selects them until the rules retire (R2473, R2468,
-R2444). Every initializer, `to=` included, is the declaration's. Any other
+R2444). The subscript syntax (`p[]`, `p[i]`, `p[unsafe_offset=i]`) is
+the rule arms of `infer_index` and the place checks, which
+`pointer_subscript_rule` (`checker/indexing.rs`) keeps ahead of the
+nominal getter lookup until R2473, while an explicit `p.__getitem__(…)`
+call selects among the three declared getters. Every initializer, `to=`
+included, is the declaration's. Any other
 member (the memory members `unsafe_write`, `unsafe_write_move_from`,
 `unsafe_take_pointee`, and `unsafe_deinit_pointee[_with]` over the two
 `!kgen.pointer` builtins, the address members `__int__`,

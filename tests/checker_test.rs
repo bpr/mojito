@@ -11463,6 +11463,68 @@ def main():
 }
 
 #[test]
+fn a_ref_origin_result_takes_the_receiver_instances_mut() {
+    // `ref[Self.o]` over `o: Origin[mut=m]` has `m`'s mutability, so a read
+    // method of a holder whose origin is mutable mutates through it.
+    ok_std(
+        "
+struct Acc(Movable):
+    var n: Int
+    def __init__(out self):
+        self.n = 0
+    def bump(mut self, k: Int):
+        self.n += k
+struct MyPtr[mut: Bool, //, T: AnyType, o: Origin[mut=mut]](ImplicitlyCopyable):
+    var p: Pointer[Self.T, Self.o]
+    def __init__(out self, p: Pointer[Self.T, Self.o]):
+        self.p = p
+    def get(self) -> ref[Self.o] Self.T:
+        return self.p[]
+struct Holder[o: Origin[mut=True]]:
+    var p: MyPtr[Acc, Self.o]
+    var q: Pointer[Acc, Self.o]
+    def __init__(out self, p: MyPtr[Acc, Self.o], q: Pointer[Acc, Self.o]):
+        self.p = p
+        self.q = q
+    def go(self):
+        self.p.get().bump(3)
+        self.q.__getitem__().bump(3)
+def main():
+    var a = Acc()
+    var b = Acc()
+    var h = Holder(MyPtr(Pointer(to=a)), Pointer(to=b))
+    h.go()
+",
+    );
+    // An `ImmOrigin` instance argument makes the same result immutable,
+    // whatever origin it resolves to.
+    for store in [
+        "var q: Pointer[Int, ImmOrigin(origin_of(x))] = Pointer(to=x)\n    q.__getitem__() = 5",
+        "var q = MyPtr[Int, ImmOrigin(origin_of(x))](Pointer(to=x))\n    q.get() = 5",
+    ] {
+        let error = err_std(&format!(
+            "
+struct MyPtr[mut: Bool, //, T: AnyType, o: Origin[mut=mut]](ImplicitlyCopyable):
+    var p: Pointer[Self.T, Self.o]
+    def __init__(out self, p: Pointer[Self.T, Self.o]):
+        self.p = p
+    def get(self) -> ref[Self.o] Self.T:
+        return self.p[]
+def main():
+    var x = 3
+    {store}
+"
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains("immutable reference returned by method call"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn a_structs_associated_type_binds_its_origin_binders() {
     ok_std(
         "

@@ -1,13 +1,14 @@
 # std.memory.pointer — upstream's `Pointer` and its aliases, ported with
 # these departures. The compiler folds every application of the struct into
-# its own pointer type, and its rules still answer `p[]` (R2473), `write`,
-# and `unsafe_free`; every initializer, `Pointer(to=)` included, and every
-# member no rule answers, the casts, address members, and comparisons
-# included, reaches its body here. Conformances `DevicePassable`,
-# `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable` are absent from
-# the bundle. `unsafe_deinit_pointee_with` and `unsafe_write(init_with=)`
-# take an explicit `F` binder where upstream's parameter is
-# `Some[def(...)]` (R813).
+# its own pointer type, and its rules still answer the subscript syntax
+# `p[]`, `p[i]`, and `p[unsafe_offset=i]` (R2473), `write`, and
+# `unsafe_free`; every initializer, `Pointer(to=)` included, every explicit
+# `__getitem__` call, and every member no rule answers, the casts, address
+# members, and comparisons included, reaches its body here. Conformances
+# `DevicePassable`, `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable`
+# are absent from the bundle. `unsafe_deinit_pointee_with` and
+# `unsafe_write(init_with=)` take an explicit `F` binder where upstream's
+# parameter is `Some[def(...)]` (R813).
 # Members omitted, by blocker:
 # - `__merge_with__`: its result `origin_of(Self.origin, other_type.origin)`
 #   is `origin_of` over origin values (R1299), and its `other_type` bound is
@@ -21,8 +22,7 @@
 #   `unsafe_load`, `unsafe_store`, and the strided, gather, and scatter
 #   forms: the compiler's rules answer `write` and `unsafe_free`, and
 #   `@__allow_legacy_custom_self_type` is not modelled (R2468).
-# - the indexed and keyword `__getitem__`s and
-#   `_get_ref_with_unsafe_interior_origin`: the subscript rule (R2473).
+# - `_get_ref_with_unsafe_interior_origin` (R2478).
 # - `unsafe_as_noalias` and `_as_origin_superset`: `where O.contains[…]`
 #   (R2381); `unsafe_dangling`: the plugin hook.
 # - `NicheStorage`, `write_niche`, `isa_niche`, the `DevicePassable`
@@ -315,6 +315,54 @@ struct Pointer[
                 _type=Self._mlir_lit_ref, name="(pointer pointee)".value
             ](self._mlir_value)
         )
+
+    @__unsafe_nested_origins_read_only
+    @inline(.nodebug)
+    def __getitem__[
+        I: Indexer
+    ](self, *, unsafe_offset: I) -> ref[Self.origin, Self.address_space] Self.T:
+        """Return a reference to the underlying data, offset by the given index.
+
+        Parameters:
+            I: A type that can be used as an index.
+
+        Args:
+            unsafe_offset: The offset index.
+
+        Returns:
+            An offset reference.
+
+        Safety:
+
+        - The pointer does not track the bounds of the memory it points
+          into, so this does not check whether `unsafe_offset` (in elements
+          of `T`) keeps the result within those bounds. `self` offset by
+          `unsafe_offset` must point to a valid, initialized element of
+          `T`; an out-of-bounds `unsafe_offset` is undefined behavior.
+        """
+        return self.unsafe_offset(unsafe_offset)[]
+
+    @__unsafe_nested_origins_read_only
+    @doc_hidden
+    @inline(.nodebug)
+    @deprecated(
+        "positional `__getitem__` is deprecated, use `unsafe_offset=` instead"
+    )
+    def __getitem__[
+        I: Indexer, //
+    ](self, offset: I) -> ref[Self.origin, Self.address_space] Self.T:
+        """Return a reference to the underlying data, offset by the given index.
+
+        Parameters:
+            I: A type that can be used as an index.
+
+        Args:
+            offset: The offset index.
+
+        Returns:
+            An offset reference.
+        """
+        return self[unsafe_offset=offset]
 
     @doc_hidden
     @inline(.nodebug)

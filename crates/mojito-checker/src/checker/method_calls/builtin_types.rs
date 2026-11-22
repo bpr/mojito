@@ -6,14 +6,15 @@ use super::*;
 use mojito_types::types::TyKind;
 
 /// The members of the declared `Pointer` a checker rule answers ahead of
-/// the declaration: `infer_pointer_method`'s arms, the subscript rules,
-/// the construction rules, and the static rules. A member
-/// off this list resolves to the declared body.
+/// the declaration: `infer_pointer_method`'s arms, the subscript store
+/// rule, the construction rules, and the static rules. A member off this
+/// list resolves to the declared body: an explicit `p.__getitem__(…)`
+/// call runs a declared getter, while the subscript syntax (`p[]`, `p[i]`,
+/// `p[unsafe_offset=i]`) stays the rule's until R2473.
 pub(in crate::checker) const POINTER_RULE_MEMBERS: &[&str] = &[
     "write",
     "free",
     "unsafe_free",
-    "__getitem__",
     "__setitem__",
     "__init__",
     "__merge_with__",

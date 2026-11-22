@@ -67,6 +67,9 @@ impl Checker {
         {
             return Some(SubscriptGetter::Param);
         }
+        if pointer_subscript_rule(obj_ty) {
+            return None;
+        }
         self.member_struct(obj_ty, "__getitem__")
             .and_then(|(name, _)| self.structs.get(name))
             .is_some_and(|info| info.methods.contains_key("__getitem__"))
@@ -620,6 +623,9 @@ impl Checker {
             TyKind::Ref(reference) => reference.referent.clone(),
             _ => receiver,
         };
+        if pointer_subscript_rule(&receiver) {
+            return Ok(None);
+        }
         let Some((name, _)) = self.member_struct(&receiver, "__getitem__") else {
             return Ok(None);
         };
@@ -1423,10 +1429,11 @@ impl Checker {
         // A user struct with `__getitem__` is subscriptable: `c[i]` →
         // `c.__getitem__(i)`, typed by the method (the index need not be `Int`).
         // A `SIMD` lane subscript is its declared `__getitem__` too.
-        if obj_ty.kind().is_non_simd_struct()
-            || self
-                .declared_receiver_member(&obj_ty, "__getitem__")
-                .is_some()
+        if !pointer_subscript_rule(&obj_ty)
+            && (obj_ty.kind().is_non_simd_struct()
+                || self
+                    .declared_receiver_member(&obj_ty, "__getitem__")
+                    .is_some())
         {
             if self.subscript_getter(&obj_ty) == Some(SubscriptGetter::Call) {
                 let result = self.infer_struct_getitem_call(
@@ -2642,6 +2649,14 @@ fn unwritable_reference(mutability: mojito_types::origin::Mutability, accessor: 
         }
         _ => format!("immutable reference returned by '{accessor}'"),
     })
+}
+
+/// Whether the subscript syntax over `ty` is the checker's pointer rule
+/// (`p[]`, `p[i]`, `p[unsafe_offset=i]`) rather than a call of `Pointer`'s
+/// declared `__getitem__`s, which answer only an explicit
+/// `p.__getitem__(…)` until the syntax switches to them (R2473).
+fn pointer_subscript_rule(ty: &Ty) -> bool {
+    ty.is_pointer()
 }
 
 /// The name of `setter`'s last argument, which upstream takes as every
