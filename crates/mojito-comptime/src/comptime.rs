@@ -558,24 +558,6 @@ fn source_type_from_ty_with_origins(
             name: "_mlir_type".to_string(),
             args: Vec::new(),
         },
-        TyKind::Ref(reference) => {
-            let origin_name = match &reference.origin {
-                mojito_types::origin::Origin::Param(id) => origin_names.get(id)?.clone(),
-                // A named origin is spelled by the `std.origin` value
-                // declaring it (`ImmUntrackedOrigin`).
-                origin @ mojito_types::origin::Origin::Untracked { mutable: false } => {
-                    origin.to_string()
-                }
-                _ => return None,
-            };
-            Type::Ref {
-                referent: Box::new(source_type_from_ty_with_origins(
-                    &reference.referent,
-                    origin_names,
-                )?),
-                origin: Some(vec![Expr::new(ExprKind::Identifier(origin_name), (0, 0))]),
-            }
-        }
         _ => return None,
     })
 }

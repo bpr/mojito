@@ -3183,15 +3183,16 @@ Whether a slot binds a reference is a fact of its own,
 value itself: the binding position decides it, never the slot's type.
 Lowering records each `ref` local, borrowed iteration source, call-result
 reference slot, and capture reference where it binds it
-(`Flatten::bind_reference`), and a synthetic slot a reference value
-initializes as `close_register_types` types it; every pass that makes,
+(`Flatten::bind_reference`), and a loop's or comprehension's yield slot
+when the checked iteration plan says `__next__` returns by its `ref` result
+convention (`CheckedIterationBinding::yields_reference`); every pass that makes,
 splices, renumbers, or retires a slot keeps the set (`retire`,
 `inline-parametric`'s splice, the `comptime for` unroll). Slot readers ask
 the fact (`binds_reference`, and the VM's `var.use` read-through
 `reads_through`, which adds the borrowed parameters a call binds by
 address); a place's designated type stays a type question, since a whole
 slot's place may designate the referent. `mir::verify` requires a binding
-to be typed as a reference and, until `!lit.ref` folds into `ref` (R2492),
+to be typed as a reference and, until `!lit.ref` folds into `ref` (R2511),
 every reference-typed slot to be a binding.
 
 The checker holds the same fact one phase up: `Checker::ref_bindings` is the

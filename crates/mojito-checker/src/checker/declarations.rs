@@ -2531,8 +2531,7 @@ impl Checker {
         if matches!(convention, Some(mojito_ast::ast::ArgConvention::Ref)) {
             self.register_reference_parameter(name, pty.clone(), writable, binder);
         }
-        if !matches!(pty.kind(), TyKind::Ref(_))
-            && self.type_may_carry_loans(pty)
+        if self.type_may_carry_loans(pty)
             && let Some(owner) = self.lookup_owner(name)
         {
             self.set_aggregate_origins(
@@ -4606,7 +4605,7 @@ impl Checker {
             .map(|(argument, (field, &declared_ref))| {
                 // A `ref` field's argument auto-borrows into the reference.
                 if declared_ref || self.type_contains_reference(field) {
-                    self.infer_storage_value(argument, field)
+                    self.infer_storage_value(argument, field, declared_ref)
                 } else if matches!(field.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) {
                     // Callable fields keep uncontextualized inference: the
                     // storage rule below must still see a capturing closure's
@@ -4708,9 +4707,6 @@ impl Checker {
             // `ref` convention retains it ([`Self::record_constructor_call`]).
             if ref_fields[i] {
                 continue;
-            }
-            if self.type_contains_reference(&expected) {
-                self.mark_reference_storage_uses(&args[i], &expected);
             }
             // A constructor stores each argument in a field by value — a consuming
             // position.

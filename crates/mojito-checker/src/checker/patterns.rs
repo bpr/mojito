@@ -178,7 +178,7 @@ impl Checker {
         let bound_place = super::places::is_place_expr(subject)
             && super::overload_support::place_root_name(subject)
                 .is_some_and(|root| self.lookup(root).is_some());
-        let temporary = !(bound_place || matches!(self.infer(subject)?.kind(), TyKind::Ref(_)));
+        let temporary = !bound_place;
         let anchor = synth.stmt(if temporary {
             StmtKind::VarDecl {
                 name: name.to_string(),

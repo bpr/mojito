@@ -2327,6 +2327,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A loop's or comprehension's yield slot binds the `__next__` reference
+  because the checked iteration plan says the call returns by its `ref`
+  convention, rather than because the slot's type is `TyKind::Ref`, and the
+  checker's storage and origin rules ask a field's `ref` declaration
+  instead of its type. Type tests that no longer fired (a `ref`-typed
+  argument's storage path, aggregate-origin and return-escape exclusions,
+  and the reference-element marking) are gone. This prepares merging
+  `!lit.ref` into the one reference type (R2492, now R2505–R2511).
 - A call's `ref` result is a reference because the callee's result
   convention says so, as upstream's `lit.call` decides, instead of because
   its result type is `TyKind::Ref`. Free and indirect calls record the

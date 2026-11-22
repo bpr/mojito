@@ -5417,7 +5417,6 @@ fn close_register_types(
 
     let mut reg_types = std::mem::take(&mut f.reg_types);
     let mut var_tys = std::mem::take(&mut f.var_tys);
-    let declared: BTreeSet<VarId> = var_tys.keys().copied().collect();
     // Chains (a handle read of a fresh handle, a call through a just-typed
     // callable) settle in a few passes; the bound keeps lowering total.
     let mut const_ints = HashMap::new();
@@ -5442,14 +5441,6 @@ fn close_register_types(
             ));
         }
     }
-    // A synthetic binding initialized by a reference value (a `ref`
-    // `__next__` result's yield slot) holds that `!lit.ref` itself.
-    f.ref_bindings.extend(
-        var_tys
-            .iter()
-            .filter(|(var, ty)| !declared.contains(var) && matches!(ty.kind(), TyKind::Ref(_)))
-            .map(|(var, _)| *var),
-    );
     f.reg_types = reg_types;
     f.var_tys = var_tys;
 }

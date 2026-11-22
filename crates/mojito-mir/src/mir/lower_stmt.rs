@@ -354,6 +354,10 @@ impl<'a> Flatten<'a> {
         use mojito_checked::checked::IterationBindingAction;
         let span = SourceSpan::new(None, DUMMY_SPAN);
         self.owner_vars.insert(binding, dest);
+        // A `ref` `__next__` result's yield slot holds that reference.
+        if plan.yields_reference() {
+            self.f.ref_bindings.insert(raw);
+        }
         match plan.action {
             // A value result binds directly into the loop variable's own
             // storage: `var` owns and may transfer it onward; an immutable or

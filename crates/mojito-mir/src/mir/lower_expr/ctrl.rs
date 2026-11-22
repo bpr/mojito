@@ -840,10 +840,6 @@ impl<'a> Flatten<'a> {
                     let raw_var = this.var(&format!("$compyield{}${}", var, binding.owner.0));
                     this.var_types
                         .insert(raw_var, binding.plan.yielded_ty.clone());
-                    // A `ref` `__next__` result's slot holds that `!lit.ref`.
-                    if matches!(binding.plan.yielded_ty.kind(), TyKind::Ref(_)) {
-                        this.f.ref_bindings.insert(raw_var);
-                    }
                     let raw = (raw_var, &binding.plan.yielded_ty);
                     match (&protocol.exhaustion, protocol.next.as_deref()) {
                         (Some(error), Some(call)) => {

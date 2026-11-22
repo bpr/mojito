@@ -671,12 +671,18 @@ impl Checker {
 
     /// Infer the type stored by `expr` when the surrounding context expects a
     /// reference-bearing value.  Normal expression inference intentionally reads
-    /// through a `ref`; aggregate construction instead needs to preserve the
-    /// handle.  Keeping this contextual and recursive avoids changing ordinary
-    /// expression semantics for tuples/lists which merely contain references.
-    pub(super) fn infer_storage_value(&self, expr: &Expr, expected: &Ty) -> Result<Ty, TypeError> {
+    /// through a `ref`; a slot `declared_ref` (a `ref` field, as its
+    /// declaration says) instead binds the handle.  Keeping this contextual
+    /// and recursive avoids changing ordinary expression semantics for
+    /// tuples/lists which merely contain references.
+    pub(super) fn infer_storage_value(
+        &self,
+        expr: &Expr,
+        expected: &Ty,
+        declared_ref: bool,
+    ) -> Result<Ty, TypeError> {
         match expected.kind() {
-            TyKind::Ref(_) => {
+            TyKind::Ref(_) if declared_ref => {
                 // Record ordinary read-through facts (expression/place types)
                 // for the argument span before resolving the handle: MIR place
                 // builders need them to type a ref-field projection such as
@@ -715,7 +721,7 @@ impl Checker {
                     let actual = values
                         .iter()
                         .zip(expected_elements)
-                        .map(|(value, expected)| self.infer_storage_value(value, expected))
+                        .map(|(value, expected)| self.infer_storage_value(value, expected, false))
                         .collect::<Result<Vec<_>, _>>()
                         .map(nominal_tuple_type)?;
                     self.record_display_construction(expr, expected, true)?;
@@ -733,7 +739,7 @@ impl Checker {
                 };
                 if let Some(values) = values {
                     for value in values {
-                        let actual = self.infer_storage_value(value, expected_element)?;
+                        let actual = self.infer_storage_value(value, expected_element, false)?;
                         if !Self::storage_value_coerces(&actual, expected_element) {
                             return Err(TypeError::TypeMismatch {
                                 expected: expected_element.to_string(),
@@ -833,52 +839,6 @@ impl Checker {
                 false
             }
             _ => coerces(from, to),
-        }
-    }
-
-    /// Mark every syntax leaf that must lower to a reference handle rather than
-    /// an ordinary read-through value.  MIR consumes these checked adjustments;
-    /// it never has to rediscover aggregate reference semantics from source AST.
-    pub(super) fn mark_reference_storage_uses(&self, expr: &Expr, expected: &Ty) {
-        match expected.kind() {
-            TyKind::Ref(reference) => {
-                // The outer `Transfer` retains its Move adjustment.  Mark the
-                // transferred place itself so MIR loads the stored reference
-                // handle instead of reading through it to the referent.
-                let expr = match &expr.kind {
-                    ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => inner,
-                    _ => expr,
-                };
-                self.record_at(expr.source_span()).reference_value_use =
-                    Some(reference.mutability == mojito_types::origin::Mutability::Mutable);
-            }
-            _ if tuple_elements(expected).is_some() => {
-                let expected_elements = tuple_elements(expected).expect("tuple elements");
-                let values = match &expr.kind {
-                    ExprKind::TupleLit(values) => Some(values.as_slice()),
-                    ExprKind::Call { name, args, .. } if name == "Tuple" => Some(args.as_slice()),
-                    _ => None,
-                };
-                if let Some(values) = values {
-                    for (value, expected) in values.iter().zip(expected_elements) {
-                        self.mark_reference_storage_uses(value, expected);
-                    }
-                }
-            }
-            _ if list_element(expected).is_some() => {
-                let expected_element = list_element(expected).expect("list element");
-                let values = match &expr.kind {
-                    ExprKind::ListLit(values) => Some(values.as_slice()),
-                    ExprKind::Call { name, args, .. } if name == "List" => Some(args.as_slice()),
-                    _ => None,
-                };
-                if let Some(values) = values {
-                    for value in values {
-                        self.mark_reference_storage_uses(value, expected_element);
-                    }
-                }
-            }
-            _ => {}
         }
     }
 
@@ -2126,24 +2086,6 @@ impl Checker {
         {
             return self.infer_initializer_list(expression, construction?, expected, record);
         }
-        // Reference-typed values normally read through to their referents in
-        // expression position.  A reference-typed parameter is a storage
-        // context, just like a reference field: infer and forward the handle
-        // itself, as a fieldwise initializer's `ref` field parameter needs.
-        if matches!(expected.kind(), TyKind::Ref(_)) {
-            let actual = self.infer_storage_value(expression, expected)?;
-            if !Self::storage_value_coerces(&actual, expected) {
-                return Err(TypeError::TypeMismatch {
-                    expected: expected.to_string(),
-                    found: actual.to_string(),
-                    context: "reference-valued argument".to_string(),
-                });
-            }
-            if record {
-                self.mark_reference_storage_uses(expression, expected);
-            }
-            return Ok(actual);
-        }
         // A list literal bound to callable-element storage checks each
         // element with the storage rule: a capturing closure must not erase
         // its environment into plain `def(...)` element storage.
@@ -2959,7 +2901,7 @@ impl Checker {
                 .clone();
             for (i, arg) in args.iter().enumerate() {
                 let aty = if self.type_contains_reference(&elem) {
-                    self.infer_storage_value(arg, &elem)?
+                    self.infer_storage_value(arg, &elem, false)?
                 } else {
                     self.infer(arg)?
                 };
@@ -2971,7 +2913,6 @@ impl Checker {
                     });
                 }
                 self.record_literal_materializations(arg, &aty, &elem)?;
-                self.mark_reference_storage_uses(arg, &elem);
             }
             return Ok(list_type(elem));
         }
@@ -3021,7 +2962,7 @@ impl Checker {
         }
         for (index, (argument, expected)) in args.iter().zip(&elements).enumerate() {
             let actual = if self.type_contains_reference(expected) {
-                self.infer_storage_value(argument, expected)?
+                self.infer_storage_value(argument, expected, false)?
             } else {
                 self.infer(argument)?
             };
@@ -3037,7 +2978,6 @@ impl Checker {
                     context: format!("element {} of Tuple", index + 1),
                 });
             }
-            self.mark_reference_storage_uses(argument, expected);
         }
         Ok(mojito_types::types::tuple_type(elements))
     }

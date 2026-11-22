@@ -1743,9 +1743,7 @@ impl Checker {
                 self.record_at(value.source_span()).binding_ty = Some(declared.clone());
                 self.record_binding_verdict(value.source_span(), &declared);
                 let (aggregate_origins, aggregate_field_origins) =
-                    if !matches!(declared.kind(), TyKind::Ref(_))
-                        && self.type_may_carry_loans(&declared)
-                    {
+                    if self.type_may_carry_loans(&declared) {
                         (
                             self.aggregate_origins(value),
                             self.aggregate_field_origins(value),
@@ -2831,7 +2829,6 @@ impl Checker {
                     None => self.value_coerces(&found, expected),
                 };
                 if let Some(expression) = expr
-                    && !matches!(expected.kind(), TyKind::Ref(_))
                     && (self.type_may_carry_loans(expected) || self.type_may_carry_loans(&found))
                     && self
                         .aggregate_origins(expression)
@@ -3530,7 +3527,6 @@ impl Checker {
                         );
                     }
                     if result.is_ok()
-                        && !matches!(bind_ty.kind(), TyKind::Ref(_))
                         && self.type_carries_loans(&bind_ty)
                         && let Some(owner) = self.lookup_owner(&param.name)
                     {

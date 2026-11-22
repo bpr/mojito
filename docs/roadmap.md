@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2505**.
+Next free ID: **R2512**.
 
 ## Ordered Work
 
@@ -108,6 +108,10 @@ which names the upstream pass each one follows. Each is measured by the
     `Pointer.unsafe_mut_cast` return: expected `Pointer[target_mut, T,
     address_space]`, found `Pointer[UInt8, origin#1]`"
     (`pre_elaboration::pliron_closure_env`).
+  - Probe: on 2026-11-22 `pre_elaboration::lit_ref_of_reference_result`
+    and `pre_elaboration::lit_ref_struct_field_initializer` stop at
+    elaboration: "unsupported monomorphizing `Pointer.__init__$ov$LitRef…`:
+    conflicting solutions for `mut`".
   - The bundled `Pointer` initializers run their declared bodies, and
     the call omits a defaulted argument that only the pipeline's passes
     fill or remove.
@@ -1824,6 +1828,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     the write through the result, which borrows `l`, collides with the
     anchor's loan. The same with `o: Origin`. A named span (`var s =
     Span(l); at(s) = 5`) runs.
+  - Probe: `assets/ok/origin_binder_mutable_ref_result.mojo`
+    (`at(Pointer(to=x)) = 5`) fails with "access to 'x' conflicts with
+    live reference '$arg_loan_r8'" as of 2026-11-22, an `ok` fixture.
   - Found while landing R685 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11244,53 +11251,166 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2492 `TyKind::LitRef` is a second reference type beside
+- [ ] **R2505 Checker expression peels read through a `TyKind::Ref`
+  type, which only a `!lit.ref` value still reaches**
+
+  Since R2489–R2491, `infer` reads `ref` bindings, fields, and results
+  through by their declarations, so a peel of an inferred `TyKind::Ref`
+  type fires only on a `!lit.ref` value once the two reference types merge.
+  There it would read through a value the pin keeps as a `!lit.ref`.
+  - Sites: `indexing.rs`'s `subscript_lvalue` and `infer_index` peels and
+    the three other `TyKind::Ref(r) => r.referent` arms over an inferred
+    receiver, `destructure.rs`'s, and `closure_uses.rs`'s.
+  - `patterns.rs`'s `dereferenced`: its `infer` callers drop the peel, and
+    its declared-name callers ask `lookup_ref_binding`.
+  - R2491 found the `subscript_lvalue` and `infer_index` peels never fire.
+    Rerun that probe (a logged line per peel over the corpus's `check`,
+    reverted afterwards) before deleting each.
+  - Found while landing R2492 (2026-11-22).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2506 MIR lowering decides a stored handle, a forwarded handle,
+  or a capture by address from a place's `TyKind::Ref` type**
+
+  Upstream decides each from the declaration: a `ref` binding, a `ref`
+  field, a capture's declared kind. Once `!lit.ref` is `TyKind::Ref`, these
+  sites would treat a `!lit.ref` value as a binding.
+  - Whole slot (ask `binds_reference(root)` or `place.through`):
+    `mir_place_handle_ty`, `close_register_types`' gap-fill `UseVar`,
+    `call_addresses.rs`'s `stored_handle` whole-root case, and the
+    whole-slot tests in `calls.rs` and `call_addresses.rs`.
+  - Projected place (ask the field's `ref` marker, publishing
+    `StructInfo::ref_fields` through `MirDeclarations` if lowering cannot
+    reach it): synthesized copy/move in `mir.rs`, the `GetField`/
+    `LoadPlace` typing in `close_register_types`, `lower_stmt.rs`'s
+    `stores_reference` and `forwards_handle`, and the projected tests in
+    `calls.rs`, `call_addresses.rs`, and `expr_access.rs`.
+  - Captures (ask `field.reference`): `nested.rs`'s `capture_referent`
+    and its other capture tests, and the capture arm in `lower_stmt.rs`.
+  - Found while landing R2492 (2026-11-22).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2507 A MIR by-address operand is recognized by its register's
+  `TyKind::Ref` type, not by the argument against the parameter**
+
+  Upstream's `LowerArgConventions` loads or addresses an argument when it
+  is `ref<P>` and the parameter is `P`. Mojito asks whether the register is
+  a `Ref`, which a merged `!lit.ref` register would also answer yes.
+  - Lowering sites: `call_addresses.rs`'s `operand_value_ty`,
+    `read_addressed_operands`, and `read_operand`, the operand tests in
+    `calls.rs`, `lower_stmt.rs`, `lower_expr/ctrl.rs`, `nested.rs`,
+    `type_construction.rs`, `bound_calls.rs`, and `copy_calls.rs`.
+  - Verifier mirror: the operand tests in `verify/calls.rs` and
+    `verify/intrinsics.rs`.
+  - If the first pass finds more than about 30 sites, land lowering and
+    file the verifier half as its own entry.
+  - Found while landing R2492 (2026-11-22).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2508 MIR verifier rules read a `ref` binding from a slot's
+  type**
+
+  A merged `!lit.ref` slot would pass for a binding in each rule.
+  - `verify/concrete.rs`'s `reference_read` (`referent_of`) should ask
+    `binds_reference(slot)`.
+  - `pointer_root_is_value` (`verify/calls.rs`) adds
+    `!binds_reference(root)`.
+  - `same_address` (`verify/instr.rs`) is gated on the `DefVar`'s slot not
+    binding. Merged, it would accept `Ref`↔`Ref` with mutability erased at
+    every binding.
+  - Decide the merged rule now, as a function of the `RefTy` record, so
+    R2511 only deletes arms: `types_compatible` (referent and address
+    space agree, mutability may weaken), `verify/scope.rs`'s two arms
+    (`address_in`), and `reference_capability` (the record's own
+    mutability).
+  - Found while landing R2492 (2026-11-22).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2509 Inline-parametric and mono decide a handle binding or a
+  by-address receiver from a `TyKind::Ref` type**
+
+  Each site tells a `ref` handle from a pointer by its type, which a merged
+  type cannot.
+  - `inline_parametric.rs`'s `passes_address` feeds
+    `HandleSource::Register` and `handle_place`. Use the call's by-address
+    operands and the callee's `ref_params`.
+  - `stores_handle` and `HandleSource::Field`: the field's `ref` marker.
+  - `bound_place` and `access_bound_parameters_in_place`:
+    `caller.binds_reference(root)`.
+  - `argument_mutabilities`: `binds_reference` and `ref_params`.
+  - `returns_bound_place`'s `is_static`: decide beside R2511's
+    `erase_origins` choice.
+  - mono: `bound_value_ty` (`infer.rs`) asks the callee's `ref_params`,
+    and `builtin_copy_receiver` (`substitute.rs`) whether the receiver
+    operand is by-address.
+  - `register_loans.rs`'s subscript arm: the call's `reference_result`, as
+    its `MethodCall` arm does.
+  - Found while landing R2492 (2026-11-22).
+  - Depends on R2507 (its by-address operand list).
+  - Model: Fable, Not Planned.
+
+- [ ] **R2510 The VM and the Pliron backend choose a handle or a
+  read-through from a `TyKind::Ref` type**
+
+  Upstream's `!lit.ref` reads through only where a declaration says so.
+  The VM reads through any `Ref`-typed place or register, and picks its
+  runtime handle by type.
+  - VM read and write paths (decide by `binds_reference`, the `ref` field
+    marker, or the by-address operand list): `load_place_value`'s final
+    branch, `Store`'s else-branch, `call_operand`, `value_operand`,
+    `register_field`, `heap_handle_place`, and `heap_reference_result`.
+  - VM handle choice: `address_as` / `pointer_valued` (`vm.rs`) make a
+    `Value::Ref` only for a binding (a `ref_bindings` slot, a `MakeRef`
+    destination, a call with a `reference_result`), and a
+    `Value::PlacePointer` elsewhere.
+  - `PointerConvert` reads its direction from the checked op
+    (`lit.ref.from_pointer` / `to_pointer`), since both sides merge.
+  - Pliron: `ctors.rs`'s whole-slot `make_ref` asks `binds_reference`, and
+    `abi.rs`'s `is_reference_operand` the call's by-address operand list.
+  - If the VM's two handle values must merge too, file that separately on
+    this track: it is internal structure, not a language divergence.
+  - Found while landing R2492 (2026-11-22).
+  - Depends on R2506, R2507.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2511 `TyKind::LitRef` is a second reference type beside
   `TyKind::Ref`, where upstream's `!lit.ref` is the one reference type**
 
-  Both variants hold the same `RefTy` record, an origin beside a
-  mutability, and differ only in their tag, which still means "reads
-  through" for `TyKind::Ref`.
-  - Once no reader takes the read-through from the type, delete
-    `TyKind::LitRef` and its arms, and the MIR reader maps `lit_ref` to
-    `ref`.
-  - Audit every read-through peel (`TyKind::Ref(r) => r.referent`,
-    mostly in `indexing.rs`, `statements.rs`, and `inference.rs`) for
-    whether a `!lit.ref` value reaches it.
-  - The one display left is upstream's `ref[origin] T`, so diagnostics
-    that print a `ref` binding's type change and their expect lines move.
-  - `same_address` and the VM's `!lit.ref` exemptions go away.
-  - `verify_function`'s `ref_bindings` rule (`verify/calls.rs`) keeps
-    only its forward half: a binding is typed as a reference, but a
-    reference-typed slot need not bind.
-  - Three slot makers still decide a binding from a type, which a merged
-    type cannot: `close_register_types`'s synthetic slot a reference
-    value initializes (`mir.rs`), a comprehension's yield slot
-    (`lower_expr/ctrl.rs`), and `inline-parametric`'s
-    `HandleSource::Register` binding, which tells a `ref` handle from a
-    pointer by its type. The two yield slots can read the protocol's
-    `next.reference_result`, as the checker's iteration plan does.
-  - A whole-slot MIR place can designate its referent with no
-    `through` (`inline-parametric`'s `bound_place` meets one), so place
-    readers still take the read-through from `place.ty`: the VM's
-    `load_place_value`, `Store`, `store_through_handle`, and
-    `heap_handle_place`'s `wants_slot`, `store_drops.rs`'s
-    `overwrites_through_reference`, `bound_place` and
-    `access_bound_parameters_in_place`, `lower_stmt.rs`'s
-    `stores_reference` write, `verify::place_base_ty`, and
-    `mir_place_handle_ty`.
-  - `infer_storage_value`'s top-level `TyKind::Ref` arm auto-borrows any
-    argument into a reference-typed slot; merged, it would auto-borrow
-    into a `!lit.ref` aggregate element or parameter slot, where upstream
-    requires a `!lit.ref` value. It must ask the slot's declaration (a
-    `ref` field's `StructInfo::ref_fields` marker, a `ref` parameter's
-    convention).
-  - `mojito-comptime`'s `source_type_from_ty_with_origins` spells every
-    `TyKind::Ref` back as `Type::Ref`; merged, a generated specialization
-    of a struct with a `!lit.ref` field would gain a `ref` marker. It must
-    spell from the field's marker.
+  Both variants hold the same `RefTy` record and differ only in their tag.
+  Once R2505–R2510 move every decision onto declarations, delete
+  `TyKind::LitRef` and make a `!lit.ref` value `TyKind::Ref`.
+  - Type lattice (`mojito-types`): take the `!lit.ref` answer wherever the
+    arms differ (`copy_is_identity`, `coerces`, conformance, and
+    `erase_origins` to Static keeping mutability), the union of both arms
+    in the origin walkers, and `pointer_or_lit_ref`, `as_lit_ref`,
+    `matching_pointer_parts`, `address_parts` for every `Ref`.
+  - Checker: `type_storage_contains`' top-level `TyKind::Ref => true` arm
+    takes the `pointer_or_lit_ref` loan rule (a declared `ref` field
+    already answers through `declares_ref_field`).
+  - Checker `!lit.ref` rules to decide: `substitute_struct_origins` binds
+    a `!lit.ref`'s origin but not a `ref`'s, `origins/construct.rs`'s arm
+    order, and `storage_value_coerces`.
+  - Display is `ref[origin(, space)] T` only. Move the `ref T` expect
+    lines (`tests/verify_test.rs`, and what the type-error run shows).
+  - Mangling: `ty_raw_in` (`symbol.rs`) gets one `Ref` arm. Update any
+    instance-symbol goldens.
+  - mono `equiv.rs` and `unify.rs`: one rule.
+  - MIR text: the writer emits `ref {…}`, the reader keeps `lit_ref` as an
+    alias, the pre-1.224 binding inference keys on the written tag, and
+    the schema and package format bump (`docs/mir-text-format.md`).
+  - `verify_function` (`verify/calls.rs`) keeps only "a binding is typed
+    as a reference".
+  - Docs: `docs/architecture.md` and `docs/mir-text-format.md`'s "until
+    `!lit.ref` folds into `ref`" sentences, `docs/symbol-map.md`'s
+    `!lit.ref` row.
+  - Plan: `R2492-tykind-litref-is-a-second-reference-plan.md`, section E7.
   - Go sites-first: `scripts/smoke --suites`, then `scripts/focused`.
   - Found while landing R2211 (2026-11-21).
-  - Depends on R2488, R2491.
+  - Depends on R2505, R2506, R2507, R2508, R2509, R2510.
   - Model: Fable, Planned.
 
 - [ ] **R2493 Pointer provenance readers read the `PointerOrigin` view
@@ -13183,6 +13303,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Sites: `infer_list_construction` and the `Tuple` arm of `infer_storage_value` in the checker, the element-slot comments in `crates/mojito-mir/src/mir/lower_stmt.rs` and `mir/verify/instr.rs`, `MirInstr`'s element-handle note in `mir.rs`, and `lower_make_ref` in `crates/mojito-pliron/src/lower/ctors.rs`.
   - Most of these also serve a struct with a direct `ref` field as an element, so delete only a branch whose sole trigger is a top-level reference element.
   - A bare `List[ref Int]` still parses and is rejected by the checker, so a `Ty::Ref` element type can still be formed until it is rejected.
+  - Probe: the checker's element peels over an aggregate element type (`indexing.rs`'s element arms, `infer_reference_value`'s `Index` arm, `statements.rs`'s element read) fire on no corpus fixture. Once `!lit.ref` merges into `TyKind::Ref` (R2511) they would read through a `!lit.ref` alias element.
   - Depends on nothing.
   - Model: Opus, Planned.
 

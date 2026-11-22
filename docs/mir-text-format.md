@@ -2113,7 +2113,7 @@ A function with a `ref` binding carries `ref_bindings: [$vN, ...]` after
 reference their reads go through, upstream's `!lit.ref`-valued bindings.
 The binding position decides membership, never the slot's type. The
 verifier requires a binding to be typed as a reference and, until
-`!lit.ref` folds into `ref` (R2492), every `ref`-typed slot to be a
+`!lit.ref` folds into `ref` (R2511), every `ref`-typed slot to be a
 binding.
 
 A raising function carries `error_slot: $vN` after `error_type` (schema

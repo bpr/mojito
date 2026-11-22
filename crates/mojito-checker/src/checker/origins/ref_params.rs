@@ -259,10 +259,10 @@ impl Checker {
                         .into_iter()
                         .map(|(id, origin)| (id, bound(origin, origins)))
                         .collect();
-                    for (_, field) in &info.fields {
+                    for (name, field) in &info.fields {
                         let field = substitute(field, &subst);
                         match field.kind() {
-                            TyKind::Ref(reference) => {
+                            TyKind::Ref(reference) if info.declares_ref_field(name) => {
                                 out.push(CaptureOrigin {
                                     origin: bound(reference.origin.clone(), &own),
                                     access: if reference.mutability == Mutability::Mutable {
@@ -369,10 +369,15 @@ impl Checker {
                     }
                     let result = checker.structs.get(name).is_some_and(|info| {
                         let subst = struct_subst(&info.params, args);
-                        info.fields
-                            .iter()
-                            .map(|(_, field)| substitute(field, &subst))
-                            .any(|field| contains(checker, &field, pointer_loans, seen))
+                        info.fields.iter().any(|(name, field)| {
+                            info.declares_ref_field(name)
+                                || contains(
+                                    checker,
+                                    &substitute(field, &subst),
+                                    pointer_loans,
+                                    seen,
+                                )
+                        })
                     });
                     seen.remove(&key);
                     result

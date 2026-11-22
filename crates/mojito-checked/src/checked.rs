@@ -379,6 +379,17 @@ pub struct CheckedIterationBinding {
     pub mutable: bool,
 }
 
+impl CheckedIterationBinding {
+    /// Whether `__next__` returns by its `ref` result convention, so the
+    /// yield slot holding its result binds that reference.
+    pub const fn yields_reference(&self) -> bool {
+        matches!(
+            self.action,
+            IterationBindingAction::CopyReference | IterationBindingAction::BorrowReference
+        )
+    }
+}
+
 /// Exact checked contract for one iterator `__next__` call.
 ///
 /// The result type is the type produced by the call itself, so a
