@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1319
+# swept-count	1320
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -1338,6 +1338,7 @@ assets/type_error/where_conforms_to_unknown_pack.mojo	compile-reject	agree	error
 assets/type_error/where_conforms_to_unknown_subject.mojo	compile-reject	agree	error: use of unknown declaration 'Undeclared'
 assets/type_error/where_dtype_predicate_lacks_evidence.mojo	compile-reject	agree	error: invalid call to 'lane_kind': lacking evidence to prove correctness
 assets/type_error/where_dtype_predicate_violated.mojo	compile-reject	agree	error: invalid call to 'lane_kind': violated constraint
+assets/type_error/where_inherited_trait_default_operator_unproven.mojo	compile-reject	agree	error: invalid call to 'g': lacking evidence to prove correctness
 assets/type_error/where_message_violated.mojo	compile-reject	agree	error: invalid call to 'disabled': violated constraint
 assets/type_error/where_negated_conformance_lacks_evidence.mojo	compile-reject	agree	error: invalid call to 'g': lacking evidence to prove correctness
 assets/type_error/where_on_inherited_trait_default.mojo	compile-reject	agree	error: 'where' clauses on trait methods are not supported

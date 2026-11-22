@@ -1849,6 +1849,7 @@ assets/ok/where_arithmetic_operand_declarations.mojo	-	ineligible	no-scalar-entr
 assets/ok/where_conformance_disjunction_assumed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_conforms_to_concrete_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_dtype_predicate.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/where_inherited_trait_default_operator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_message_satisfied.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_module_constant_operand.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_reads_arguments.mojo	-	ineligible	no-scalar-entry-shape

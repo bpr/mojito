@@ -882,6 +882,125 @@ impl Checker {
             .insert(binding, vec![declaration.function]);
     }
 
+    /// List the wrapper of a trait default that struct `declaration`
+    /// inherits, `method`, its `method_index`-th member, as a callable a compile-time
+    /// call applies under `Type.method`: its signature is the one its
+    /// registration resolved from the trait's (`signature`), lowered to
+    /// `lowered`, as upstream's `synthesizeDefaultTraitMethodWrapper` gives
+    /// the wrapper the resolved trait function signature, so `a != b` over
+    /// `Equatable`'s `__ne__` applies the struct's member. A wrapper whose
+    /// receiver or parameters take no compile-time value, that collects
+    /// arguments, or that returns a reference is listed for no call.
+    pub(super) fn list_default_wrapper(
+        &mut self,
+        declaration: &super::StructDeclaration<'_>,
+        method: &str,
+        method_index: usize,
+        lowered: &str,
+        params: &[mojito_checked::checked::SignatureParam],
+        signature: &super::MethodSig,
+    ) {
+        let Some(self_ty) = self.self_ty.clone() else {
+            return;
+        };
+        let passed = |convention: Option<ArgConvention>| {
+            matches!(
+                convention,
+                None | Some(ArgConvention::Imm | ArgConvention::Var | ArgConvention::Ref)
+            )
+        };
+        if signature.variadic.is_some()
+            || signature.kw_variadic.is_some()
+            || signature.ref_return.is_some()
+            || !signature.has_self
+            || !passed(signature.self_convention)
+            || params.len() != signature.params.len()
+        {
+            return;
+        }
+        let slot = |ty: &Ty| {
+            if *ty == self_ty {
+                Some(SlotType::Owner)
+            } else {
+                parameter_value_type(ty).then(|| SlotType::Declared(None, Some(ty.clone())))
+            }
+        };
+        // A defaulted parameter's default is the trait member's, which a
+        // call omitting it does not reach here: every argument is spelled.
+        let Some(applicable_params) = params
+            .iter()
+            .zip(&signature.params)
+            .map(|(param, ty)| {
+                (param.kind == mojito_ast::ast::ParamKind::Regular && passed(param.convention))
+                    .then_some(())?;
+                Some(ApplicableParameter {
+                    name: param.name.clone(),
+                    ty: slot(ty)?,
+                    default: None,
+                    by_reference: param.convention == Some(ArgConvention::Ref),
+                    convention: param.convention,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            return;
+        };
+        let decls = ParamDecl::argument_decls(&signature.declared);
+        // Its `where` clauses are its registered availability, over the
+        // binders its signature declares.
+        if decls.len() != signature.declared.len() && !signature.availability.is_empty() {
+            return;
+        }
+        let (result, applied_result) = if signature.ret == self_ty {
+            (SourceType::SelfType, None)
+        } else {
+            (SourceType::None, Some(signature.ret.clone()))
+        };
+        let name = format!("{}.{method}", declaration.name);
+        let ordinal = self.applicable_functions.get(&name).map_or(0, Vec::len);
+        let function = ApplicableFunction {
+            owner: mojito_symbol::symbol::applicable_owner(&name, ordinal),
+            site: Some(mojito_checked::checked::GenericSite::Method {
+                module: declaration.module.clone(),
+                declaration: declaration.name.to_string(),
+                method: method_index,
+            }),
+            symbol: Some(lowered.to_string()),
+            enclosing: Vec::new(),
+            on_instance: !declaration.type_params.is_empty(),
+            self_slot: SelfSlot::Receiver {
+                by_reference: signature.self_convention == Some(ArgConvention::Ref),
+            },
+            binders: decls.iter().map(|decl| decl.name().to_string()).collect(),
+            signature: Some(AppliedSignature {
+                decls,
+                result: applied_result,
+                refined_self: None,
+            }),
+            params: applicable_params,
+            collector: None,
+            positional_only: signature.positional_only,
+            keyword_only: signature.keyword_only,
+            result,
+            returns: ResultConvention::Value,
+            raises: signature.raises,
+            refined_self: None,
+            implicit: false,
+            inline: mojito_checked::declaration::InlineLevel::Automatic,
+            folded_body: None,
+            assertions: BuiltinAssertions::None,
+            where_clauses: Vec::new(),
+            gate: None,
+            constraints: Some(signature.availability.clone()),
+        };
+        match self.applicable_functions.get_mut(&name) {
+            Some(overloads) => overloads.push(function),
+            None => {
+                self.applicable_functions.insert(name, vec![function]);
+            }
+        }
+    }
+
     /// The nested `def` a call of `name` applies, when `name` is a nested
     /// `def` that captures nothing the check listed
     /// ([`Self::list_nested_application`]).
@@ -3165,7 +3284,8 @@ impl Checker {
                     .map(|collector| &collector.element),
             )
             .map(|slot| match slot {
-                SlotType::Declared(source, _) => self.ty_from_anno(source).ok().map(Some),
+                SlotType::Declared(Some(source), _) => self.ty_from_anno(source).ok().map(Some),
+                SlotType::Declared(None, ty) => Some(ty.clone()),
                 SlotType::Scalar(_) | SlotType::Owner => Some(None),
             })
             .collect::<Option<Vec<_>>>();
@@ -7370,7 +7490,9 @@ enum SlotType {
     /// parameters — as its signature classifies it
     /// ([`Checker::classify_applicable_signatures`]); `None` until it does,
     /// and one that resolves to no [`parameter_value_type`] takes no call.
-    Declared(SourceType, Option<Ty>),
+    /// A trait default's wrapper spells none: its slot is its registered
+    /// signature's type ([`Checker::list_default_wrapper`]).
+    Declared(Option<SourceType>, Option<Ty>),
 }
 
 impl SlotType {
@@ -7442,7 +7564,7 @@ impl ApplicableShape<'_> {
             ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
             ty if is_mlir_source(ty, "!kgen.dtype") => Some(SlotType::Scalar(Ty::kgen_dtype())),
             SourceType::Named(..) | SourceType::SelfParam(_) | SourceType::Assoc { .. } => {
-                Some(SlotType::Declared(ty.clone(), None))
+                Some(SlotType::Declared(Some(ty.clone()), None))
             }
             _ => None,
         };

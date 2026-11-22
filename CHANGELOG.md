@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `where` clause comparing struct values through an operator method
+  inherited from a trait default (`where Self.a != .GENERIC` over
+  `struct S[a: AddressSpace = .GENERIC]`, `AddressSpace.__ne__` being
+  `Equatable`'s) checks, where it was rejected as "no generic
+  proposition": a trait default's wrapper is now a callable a compile-time
+  call applies, with its registered signature. A call of such a method is
+  rejected for lacking evidence, as at the pin (R2469).
 - `__get_mvalue_as_litref(p[])` over `Pointer[T, o]` is `ref[o] T`, the
   getter's reference itself, as at the pin, so it stores into a `!lit.ref`
   field over a struct's own origin and returns as a `_mlir_lit_ref` result;

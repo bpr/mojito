@@ -5101,27 +5101,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2469 A `where` comparison through an inherited trait-default
-  operator is rejected**
-
-  `def g(self) -> Int where Self.a != AddressSpace.GENERIC` over `struct
-  S[a: AddressSpace = .GENERIC]` stops the check with "a comparison of
-  struct values is no generic proposition", where the pin compiles it.
-  - Cause: `applicable_declarations` (`checker/comptime_validation.rs`)
-    lists a struct's declared methods only, so `AddressSpace`'s `__ne__`,
-    `Equatable`'s default, has no `applicable_functions` entry. The
-    `a.__ne__(b)` call that `Checker::struct_operator_value` builds selects
-    nothing, and `Checker::struct_comparison` rejects the clause.
-  - A `comptime if Self.a != .GENERIC` and a module `comptime b =
-    AddressSpace.GENERIC != AddressSpace.GLOBAL` already work.
-  - Probe: the clause above, leading-dot (`!= .GENERIC`) or spelled,
-    checks, and `S().g()` is rejected as at the pin.
-  - Upstream's `Pointer.gather` and `Pointer.scatter` spell `Self.address_space
-    != .GENERIC` (in a `comptime if` today).
-  - Found while landing R2466 (2026-11-21).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2007 A struct's `comptime` member that constructs the struct
   through an initializer typed by a struct alias does not evaluate**
 
@@ -7915,6 +7894,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     the pin prints `8`.
   - The address members and comparisons themselves run the declared
     bodies, and no checker rule rejects them any more.
+  - The trap fixture has no `conformance/pliron-parity.tsv` row, so
+    `scripts/check-parity-manifest` fails, and the heavy sweep would panic
+    on it: `TrapCategory::from_vm_message` maps no "designates a single
+    value" message and `UNDEFINED_RUNS` (`tests/heavy/main.rs`) omits it.
   - Found while planning R1681 (2026-11-14).
   - Ledger name: `pointer-origin-bearing-arithmetic`.
   - Depends on R2473 (the subscript rule), R2437 (a place pointer's VM
@@ -12269,6 +12252,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     passed to `use[b](x: Tag[b])` fails ("expected Tag[b], found
     Tag[$comptime$k$c0(b)]"), where the pin runs it: `Bool.__mlir_bool__`'s
     builtin body is never folded.
+  - Probe: a plain `Bool` method call as the proposition, `def a(self) ->
+    Int where Self.k.near(K(0), 2)` over `struct T[k: K]`, is rejected the
+    same way, spelled on `K` or inherited from a trait default, where the
+    pin checks it: like `struct_comparison`'s, it is a kept application
+    the elaborator runs.
+  - Probe: the same call omitting a defaulted parameter of an inherited
+    trait default (`Self.k.near(K(0))`) selects nothing:
+    `Checker::list_default_wrapper` lists the wrapper's parameters without
+    the trait member's defaults, which no `SignatureParam` carries.
   - Depends on R2008.
   - Model: Opus, Not Planned.
 

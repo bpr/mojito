@@ -733,6 +733,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   overload prescan, `register_default_wrappers` registers its signature
   from the default's, its binders reowned
   (`types::reown_generic_signature`), after the struct's spelled methods,
+  and lists it under `Type.method` in `applicable_functions` with that
+  signature (`Checker::list_default_wrapper`), so a compile-time call
+  (a `where` comparison's operator method) applies it,
   `check_default_wrappers` checks its one statement after every trait
   member, which calls the trait's member with `Self` bound first and every argument forwarded, and
   `checked_default_wrappers` hands it over as

@@ -1850,6 +1850,7 @@ assets/ok/where_arithmetic_operand_declarations.mojo	main	exe-differential	sanit
 assets/ok/where_conformance_disjunction_assumed.mojo	main	exe-differential	sanitized
 assets/ok/where_conforms_to_concrete_type.mojo	main	exe-differential	sanitized
 assets/ok/where_dtype_predicate.mojo	main	exe-differential	sanitized
+assets/ok/where_inherited_trait_default_operator.mojo	main	exe-differential	sanitized
 assets/ok/where_message_satisfied.mojo	main	exe-differential	sanitized
 assets/ok/where_module_constant_operand.mojo	main	exe-differential	sanitized
 assets/ok/where_reads_arguments.mojo	main	exe-differential	sanitized

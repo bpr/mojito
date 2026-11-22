@@ -517,7 +517,17 @@ impl Checker {
                 &mut body,
             );
             wrapper.body = body;
-            wrapper.lowered_name = self.register_default_wrapper(declaration, &wrapper)?;
+            let signature;
+            (wrapper.lowered_name, signature) =
+                self.register_default_wrapper(declaration, &wrapper)?;
+            self.list_default_wrapper(
+                declaration,
+                &wrapper.shape.method,
+                wrapper.method_index,
+                &wrapper.lowered_name,
+                &wrapper.shape.params,
+                &signature,
+            );
             self.default_wrappers[slot] = wrapper;
         }
         Ok(())
@@ -729,12 +739,12 @@ impl Checker {
     }
 
     /// Register `wrapper`'s signature on struct `declaration`, returning the
-    /// symbol it lowers to.
+    /// symbol it lowers to and the signature.
     fn register_default_wrapper(
         &mut self,
         declaration: &StructDeclaration<'_>,
         wrapper: &DefaultWrapper,
-    ) -> Result<String, TypeError> {
+    ) -> Result<(String, MethodSig), TypeError> {
         use mojito_checked::checked::{AnnotationSite, DeclarationEffect, GenericSite};
         let name = declaration.name;
         let method = wrapper.shape.method.as_str();
@@ -856,8 +866,8 @@ impl Checker {
         {
             return Err(TypeError::Redeclaration(method.to_string()));
         }
-        overloads.push(sig);
-        Ok(lowered)
+        overloads.push(sig.clone());
+        Ok((lowered, sig))
     }
 
     /// `wrapper`'s default as its trait registered it, its member named.
