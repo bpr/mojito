@@ -1552,11 +1552,7 @@ impl Checker {
                 }
                 self.origin_writably_rooted(&resolved)
             }
-            PointerOrigin::Place { .. }
-            | PointerOrigin::Union { .. }
-            | PointerOrigin::Static { .. }
-            | PointerOrigin::Untracked { .. }
-            | PointerOrigin::UnsafeAny { .. } => None,
+            _ => None,
         }
     }
 

@@ -235,11 +235,11 @@ impl Checker {
                         origins,
                     )));
                 }
-                handle if let Some((element, origin)) = handle.pointer_or_lit_ref() => {
-                    if let Some(origin) = origin.as_origin() {
+                handle if let Some(reference) = handle.pointer_or_lit_ref() => {
+                    if let Some(origin) = reference.origin.pointer_loan_origin() {
                         out.push(CaptureOrigin::read(bound(origin, origins)));
                     }
-                    collect(checker, &element, origins, out);
+                    collect(checker, &reference.referent, origins, out);
                 }
                 TyKind::ComptimeList(element) => collect(checker, element, origins, out),
                 TyKind::Tuple(elements)
@@ -351,9 +351,9 @@ impl Checker {
             }
             match ty.kind() {
                 TyKind::Ref(_) => true,
-                handle if let Some((element, origin)) = handle.pointer_or_lit_ref() => {
-                    (pointer_loans && origin.as_origin().is_some())
-                        || contains(checker, &element, pointer_loans, seen)
+                handle if let Some(reference) = handle.pointer_or_lit_ref() => {
+                    (pointer_loans && reference.origin.pointer_loan_origin().is_some())
+                        || contains(checker, &reference.referent, pointer_loans, seen)
                 }
                 TyKind::ComptimeList(element) => contains(checker, element, pointer_loans, seen),
                 TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
@@ -464,8 +464,9 @@ impl Checker {
                 }
                 let found = self.lookup(name);
                 match found.map(Ty::kind) {
-                    Some(handle) if let Some((_, origin)) = handle.pointer_or_lit_ref() => origin
-                        .as_origin()
+                    Some(handle) if let Some(reference) = handle.pointer_or_lit_ref() => reference
+                        .origin
+                        .pointer_loan_origin()
                         .map(|origin| vec![origin])
                         .unwrap_or_default(),
                     Some(TyKind::Func(_) | TyKind::GenericFunc(_)) => self

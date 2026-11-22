@@ -97,8 +97,10 @@ impl Decoder {
         })
     }
 
-    pub(super) fn pointer_origin(&mut self, value: &Value) -> Option<PointerOrigin> {
-        match &value.kind {
+    /// A `pointer_*` provenance record, read as the pointer's `origin`
+    /// argument and its `mut` one.
+    pub(super) fn pointer_origin(&mut self, value: &Value) -> Option<(Origin, Mutability)> {
+        let view = match &value.kind {
             ValueKind::Atom(tag) if tag == "pointer_static" => {
                 Some(PointerOrigin::Static { mutable: false })
             }
@@ -150,15 +152,17 @@ impl Decoder {
                     })?;
                     let mutability = self.req(value, fields, "mutability", Self::mutability)?;
                     self.unknown(fields, &["members", "mutability"]);
-                    let origin = PointerOrigin::from_parts(Origin::union(members), mutability)
-                        .filter(|origin| matches!(origin, PointerOrigin::Union { .. }));
-                    if origin.is_none() {
+                    let origin = Origin::union(members);
+                    if !matches!(origin, Origin::Union(_))
+                        || PointerOrigin::from_parts(origin.clone(), mutability).is_none()
+                    {
                         self.error(
                             value.span,
                             "`pointer_union` needs two or more concrete members",
                         );
+                        return None;
                     }
-                    origin
+                    return Some((origin, mutability));
                 }
                 "pointer_untracked" | "pointer_unsafe_any" => {
                     let mutable = self.req(value, fields, "mutable", Self::boolean)?;
@@ -178,7 +182,8 @@ impl Decoder {
                 self.error(value.span, "expected pointer origin");
                 None
             }
-        }
+        };
+        view.map(PointerOrigin::into_parts)
     }
 
     pub(super) fn ref_ty(&mut self, value: &Value) -> Option<RefTy> {

@@ -862,7 +862,7 @@ impl Checker {
                 mojito_types::types::LitOriginMut::Known(*mutable),
             ),
             PointerOrigin::Param { id, .. } => Origin::Param(*id),
-            tracked => pointer_origin_at_receiver(tracked.clone(), receiver.as_ref())
+            _ => origin_at_receiver(&reference.origin, receiver.as_ref())
                 .unwrap_or(Origin::SelfParam),
         };
         Some(RefTy {
@@ -1097,33 +1097,26 @@ impl Checker {
     }
 }
 
-/// The origin a pointer or `!lit.ref` of provenance `origin` designates,
-/// with `origin_of(self)` read at the receiver's place `self_place`: `None`
-/// for an abstract provenance, or a receiver one with no receiver place.
-fn pointer_origin_at_receiver(
-    origin: mojito_types::origin::PointerOrigin,
+/// The origin a pointer or `!lit.ref` under the origin argument `origin`
+/// designates, with `origin_of(self)` read at the receiver's place
+/// `self_place`: `None` for a binder's origin, one holding no loan, or a
+/// receiver one with no receiver place.
+fn origin_at_receiver(
+    origin: &mojito_types::origin::Origin,
     self_place: Option<&mojito_types::origin::OriginPlace>,
 ) -> Option<mojito_types::origin::Origin> {
-    use mojito_types::origin::{Origin, OriginSeg, PointerOrigin};
-    match origin {
-        PointerOrigin::Place { place, .. } => Some(Origin::Place(place)),
-        PointerOrigin::Union { members, .. } => Some(Origin::Union(members)),
-        PointerOrigin::SelfPlace {
-            interior, subtree, ..
-        } => {
+    use mojito_types::origin::Origin;
+    let origin = origin.uncast();
+    match origin.projection_base() {
+        Origin::SelfParam => {
             let mut place = self_place?.clone();
-            place
-                .path
-                .extend(interior.into_iter().map(OriginSeg::Interior));
-            if subtree {
-                place.path.push(OriginSeg::Subtree);
+            if let Origin::Projected(_, path) = origin {
+                place.path.extend(path.iter().cloned());
             }
             Some(Origin::Place(place))
         }
-        PointerOrigin::Param { .. }
-        | PointerOrigin::Static { .. }
-        | PointerOrigin::Untracked { .. }
-        | PointerOrigin::UnsafeAny { .. } => None,
+        Origin::Param(_) => None,
+        _ => origin.pointer_loan_origin(),
     }
 }
 

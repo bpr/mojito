@@ -539,6 +539,87 @@ impl Origin {
     }
 }
 
+impl Origin {
+    /// The loan-tracked origin a pointer under this origin argument keeps:
+    /// the storage below a mutability cast, with a binder's or the
+    /// receiver's projection dropped. `None` for the static, untracked, and
+    /// unsafe-any origins, which hold no loan, and for an unbound slot.
+    #[must_use]
+    pub fn pointer_loan_origin(&self) -> Option<Self> {
+        match self.uncast() {
+            Self::Place(_) | Self::Union(_) | Self::Param(_) | Self::SelfParam => {
+                Some(self.uncast().clone())
+            }
+            Self::Projected(base, _) => {
+                matches!(**base, Self::Param(_) | Self::SelfParam).then(|| (**base).clone())
+            }
+            Self::Static
+            | Self::Untracked { .. }
+            | Self::UnsafeAny { .. }
+            | Self::Unbound
+            | Self::MutCast(..) => None,
+        }
+    }
+
+    /// The places this origin names below a mutability cast: the place
+    /// itself, or each place member of a union, in the union's normalized
+    /// order.
+    pub fn places(&self) -> impl Iterator<Item = &OriginPlace> {
+        let members = match self.uncast() {
+            Self::Union(members) => members.as_slice(),
+            single => std::slice::from_ref(single),
+        };
+        members.iter().filter_map(|member| match member.uncast() {
+            Self::Place(place) => Some(place),
+            _ => None,
+        })
+    }
+
+    /// Whether a pointer under this origin argument statically designates
+    /// one checked place: a place, or the receiver's `origin_of(self)`, not
+    /// projected into a multi-element domain. Such a pointer is a
+    /// frame/slot handle, so indexing it is the offset-0 dereference and
+    /// address arithmetic over it is rejected (R2212). A callable's own
+    /// origin binder is not one: a call may bind it to heap storage, as a
+    /// static, untracked, or unsafe-any origin may be.
+    #[must_use]
+    pub fn single_place(&self) -> bool {
+        matches!(
+            self.uncast().projection_base(),
+            Self::Place(_) | Self::SelfParam
+        ) && !self.multi_element()
+    }
+
+    /// Whether a pointer under this origin argument designates a
+    /// multi-element domain, making non-zero offset dereferences legal: a
+    /// place, origin binder, or receiver origin projected into an
+    /// interior-generation segment (collection-owned element storage).
+    #[must_use]
+    pub fn multi_element(&self) -> bool {
+        matches!(self.projection_path().last(), Some(OriginSeg::Interior(_)))
+    }
+
+    /// Whether this origin ends in the conservative `._subtree` projection.
+    /// A subtree pointer designates its root or any descendant, so nothing
+    /// may re-derive an exact place from its origin: dereferences go
+    /// through the runtime handle, and its generation stales on any
+    /// mutation at or below the root.
+    #[must_use]
+    pub fn ends_in_subtree(&self) -> bool {
+        matches!(self.projection_path().last(), Some(OriginSeg::Subtree))
+    }
+
+    /// The projection below this origin's place, binder, or receiver,
+    /// beneath a mutability cast.
+    fn projection_path(&self) -> &[OriginSeg] {
+        match self.uncast() {
+            Self::Place(place) => &place.path,
+            Self::Projected(_, path) => path,
+            _ => &[],
+        }
+    }
+}
+
 impl std::fmt::Display for Origin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -732,6 +813,17 @@ impl Mutability {
             Self::Mutable
         } else {
             Self::Immutable
+        }
+    }
+
+    /// Whether this mutability permits writes, when that is statically
+    /// known: `None` for an origin binder's symbolic `mut`.
+    #[must_use]
+    pub const fn known(self) -> Option<bool> {
+        match self {
+            Self::Mutable => Some(true),
+            Self::Immutable => Some(false),
+            Self::Param(_) => None,
         }
     }
 
@@ -1070,61 +1162,25 @@ impl PointerOrigin {
     /// keeps. `Static`, `Untracked`, and `UnsafeAny` pointers carry no owner
     /// loan. The struct argument a provenance spells is [`PointerOrigin::parts`].
     pub fn as_origin(&self) -> Option<Origin> {
-        match self {
-            Self::Place { place, .. } => Some(Origin::Place(place.clone())),
-            Self::Union { members, .. } => Some(Origin::Union(members.clone())),
-            Self::Param { id, .. } => Some(Origin::Param(*id)),
-            Self::SelfPlace { .. } => Some(Origin::SelfParam),
-            Self::Static { .. } | Self::Untracked { .. } | Self::UnsafeAny { .. } => None,
-        }
+        self.parts().0.pointer_loan_origin()
     }
 
-    /// Whether this provenance statically designates one checked place: a
-    /// place, or the receiver's `origin_of(self)`, not projected into a
-    /// multi-element domain. Such a pointer is a frame/slot handle, so
-    /// indexing it is the offset-0 dereference and address arithmetic over
-    /// it is rejected (R2212). A callable's own origin binder is not one: a
-    /// call may bind it to heap storage, as a static, untracked, or
-    /// unsafe-any provenance may be.
+    /// Whether this provenance statically designates one checked place
+    /// ([`Origin::single_place`]).
     pub fn single_place(&self) -> bool {
-        matches!(self, Self::Place { .. } | Self::SelfPlace { .. }) && !self.multi_element()
+        self.parts().0.single_place()
     }
 
-    /// Whether this tracked provenance designates a multi-element domain,
-    /// making non-zero offset dereferences legal: a place, origin binder, or
-    /// receiver origin projected into an interior-generation segment
-    /// (collection-owned element storage). Untracked/static provenances
-    /// never reach the offset rule.
+    /// Whether this provenance designates a multi-element domain
+    /// ([`Origin::multi_element`]).
     pub fn multi_element(&self) -> bool {
-        match self {
-            Self::Union { .. } => false,
-            Self::Place { place, .. } => {
-                matches!(place.path.last(), Some(OriginSeg::Interior(_)))
-            }
-            Self::Param {
-                interior, subtree, ..
-            }
-            | Self::SelfPlace {
-                interior, subtree, ..
-            } => !interior.is_empty() && !subtree,
-            Self::Static { .. } | Self::Untracked { .. } | Self::UnsafeAny { .. } => false,
-        }
+        self.parts().0.multi_element()
     }
 
-    /// Whether this provenance ends in the conservative `._subtree` projection.
-    /// A subtree pointer designates its root or any descendant, so nothing may
-    /// re-derive an exact place from its origin: dereferences go through the
-    /// runtime handle, and its generation stales on any mutation at or below
-    /// the root.
+    /// Whether this provenance ends in the conservative `._subtree`
+    /// projection ([`Origin::ends_in_subtree`]).
     pub fn subtree(&self) -> bool {
-        match self {
-            Self::Union { .. } => false,
-            Self::Place { place, .. } => {
-                matches!(place.path.last(), Some(OriginSeg::Subtree))
-            }
-            Self::Param { subtree, .. } | Self::SelfPlace { subtree, .. } => *subtree,
-            Self::Static { .. } | Self::Untracked { .. } | Self::UnsafeAny { .. } => false,
-        }
+        self.parts().0.ends_in_subtree()
     }
 
     /// Whether writes through the pointer are permitted, when that is statically
@@ -1139,11 +1195,7 @@ impl PointerOrigin {
             | Self::Static { mutable } => Some(*mutable),
             Self::Param { mutability, .. }
             | Self::SelfPlace { mutability, .. }
-            | Self::Union { mutability, .. } => match mutability {
-                Mutability::Mutable => Some(true),
-                Mutability::Immutable => Some(false),
-                Mutability::Param(_) => None,
-            },
+            | Self::Union { mutability, .. } => mutability.known(),
         }
     }
 
@@ -1271,16 +1323,7 @@ impl PointerOrigin {
                 mutability,
             } => {
                 let (origin, own) = self.parts();
-                let origin = match origin {
-                    Origin::MutCast(inner, _) => *inner,
-                    origin => origin,
-                };
-                origin.coerces_to(&Origin::Union(members.clone()))
-                    && match mutability {
-                        Mutability::Immutable => true,
-                        Mutability::Mutable => self.statically_mutable() == Some(true),
-                        Mutability::Param(_) => own == *mutability,
-                    }
+                union_provenance_coerces(&origin, own, members, *mutability)
             }
             _ => self == expected,
         }
@@ -1314,6 +1357,22 @@ impl RefTy {
             mutability,
             address_space,
         }
+    }
+
+    /// Whether a pointer or `!lit.ref` under this reference's origin and
+    /// mutability coerces to one under `expected`'s: a union expectation
+    /// accepts any origin within it at no more than the permission held;
+    /// any other pair coerces as the provenances they read as do
+    /// ([`PointerOrigin::coerces_to`]), and two that read as none only when
+    /// equal.
+    #[must_use]
+    pub fn provenance_coerces_to(&self, expected: &Self) -> bool {
+        provenance_coerces(
+            &self.origin,
+            self.mutability,
+            &expected.origin,
+            expected.mutability,
+        )
     }
 
     /// This reference's origin and mutability read as a pointer's
@@ -1475,6 +1534,30 @@ pub fn places_overlap(left: &OriginPlace, right: &OriginPlace) -> bool {
     })
 }
 
+/// Whether a reference under `from`'s origin and mutability coerces to one
+/// under `to`'s ([`RefTy::provenance_coerces_to`]).
+pub fn provenance_coerces(
+    from: &Origin,
+    from_mutability: Mutability,
+    to: &Origin,
+    to_mutability: Mutability,
+) -> bool {
+    let decode =
+        |origin: &Origin, mutability| PointerOrigin::from_parts(origin.clone(), mutability);
+    if let Origin::Union(members) = to.uncast()
+        && members.iter().all(concrete_union_member)
+    {
+        return decode(from, from_mutability).is_some_and(|view| {
+            let (origin, own) = view.into_parts();
+            union_provenance_coerces(&origin, own, members, to_mutability)
+        });
+    }
+    match (decode(from, from_mutability), decode(to, to_mutability)) {
+        (Some(from), Some(to)) => from.coerces_to(&to),
+        _ => from == to && from_mutability == to_mutability,
+    }
+}
+
 impl Origin {
     /// One interior or subtree projection step below this origin: a place
     /// extends its path, an origin binder or the receiver becomes
@@ -1524,6 +1607,24 @@ fn concrete_union_member(origin: &Origin) -> bool {
         origin.uncast(),
         Origin::Place(_) | Origin::Static | Origin::Untracked { .. } | Origin::UnsafeAny { .. }
     )
+}
+
+/// Whether a provenance whose parts are `origin` and `own` coerces to the
+/// union of concrete `members` at `mutability`: its storage lies within
+/// the union, and it holds at least the union's permission (exactly a
+/// binder's symbolic one).
+fn union_provenance_coerces(
+    origin: &Origin,
+    own: Mutability,
+    members: &[Origin],
+    mutability: Mutability,
+) -> bool {
+    origin.uncast().coerces_to(&Origin::Union(members.to_vec()))
+        && match mutability {
+            Mutability::Immutable => true,
+            Mutability::Mutable => own.known() == Some(true),
+            Mutability::Param(_) => own == mutability,
+        }
 }
 
 fn cmp_origin(left: &Origin, right: &Origin) -> Ordering {

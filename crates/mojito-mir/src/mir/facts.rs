@@ -1084,31 +1084,21 @@ impl<'a> Flatten<'a> {
         self.aggregate_borrows_unmaterialized(node)
     }
 
-    /// The shared loans a pointer of provenance `origin` holds on the places
-    /// it names ([`Self::pointer_place_loan`]): its place, or each place
-    /// member of its union. `None` for a provenance naming no place.
+    /// The shared loans a pointer under the origin argument `origin` holds
+    /// on the places it names ([`Self::pointer_place_loan`]): its place, or
+    /// each place member of its union. `None` for an origin naming neither.
     fn pointer_origin_loans(
         &mut self,
-        origin: &mojito_types::origin::PointerOrigin,
+        origin: &mojito_types::origin::Origin,
         mutable: bool,
     ) -> Option<Vec<MirLoan>> {
-        use mojito_types::origin::{Origin, PointerOrigin};
-        match origin {
-            PointerOrigin::Place { place, .. } => {
-                Some(self.pointer_place_loan(place, mutable, None, true))
-            }
-            PointerOrigin::Union { members, .. } => Some(
-                members
-                    .iter()
-                    .filter_map(|member| match member.uncast() {
-                        Origin::Place(place) => Some(place.clone()),
-                        _ => None,
-                    })
-                    .flat_map(|place| self.pointer_place_loan(&place, mutable, None, true))
-                    .collect(),
-            ),
-            _ => None,
-        }
+        use mojito_types::origin::Origin;
+        matches!(origin.uncast(), Origin::Place(_) | Origin::Union(_)).then(|| {
+            origin
+                .places()
+                .flat_map(|place| self.pointer_place_loan(place, mutable, None, true))
+                .collect()
+        })
     }
 
     /// The loan an origin-bearing pointer's concrete place induces: rooted at
@@ -1205,7 +1195,7 @@ impl<'a> Flatten<'a> {
         let result_mutable = ty
             .kind()
             .pointer_or_lit_ref()
-            .and_then(|(_, origin)| origin.statically_mutable());
+            .and_then(|reference| reference.mutability.known());
         let recorded = borrowed_ref_arguments(node)
             .into_iter()
             .flatten()
@@ -1672,11 +1662,13 @@ impl<'a> Flatten<'a> {
                     let source = node
                         .place_address_operand()
                         .expect("checked pointer construction has a place argument");
-                    if let Some(mojito_types::origin::PointerOrigin::Place { place, .. }) =
-                        node.checked.ty.as_ref().and_then(|ty| match ty.kind() {
-                            TyKind::LitRef(reference) => reference.pointer_origin(),
-                            pointer => pointer.pointer_origin(),
-                        })
+                    if let Some(reference) = node
+                        .checked
+                        .ty
+                        .as_ref()
+                        .and_then(|ty| ty.kind().pointer_or_lit_ref())
+                        && let mojito_types::origin::Origin::Place(place) =
+                            reference.origin.uncast()
                         && matches!(
                             place.path.last(),
                             Some(mojito_types::origin::OriginSeg::Subtree)
@@ -1687,7 +1679,7 @@ impl<'a> Flatten<'a> {
                         // place and link instead of competing with the
                         // binding's own loan.
                         let source = self.place(source);
-                        return self.pointer_place_loan(&place, *mutable, Some(source), true);
+                        return self.pointer_place_loan(place, *mutable, Some(source), true);
                     }
                     let place = self.place(source);
                     let root = place.root;
@@ -1700,11 +1692,14 @@ impl<'a> Flatten<'a> {
                     }];
                     // A union origin (`Pointer[T, origin_of(x, y)](to=x)`)
                     // also keeps its other members alive.
-                    if let Some(origin @ mojito_types::origin::PointerOrigin::Union { .. }) =
-                        node.checked.ty.as_ref().and_then(|ty| ty.pointer_origin())
+                    if let Some(reference) = node.checked.ty.as_ref().and_then(Ty::pointer_lit_ref)
+                        && matches!(
+                            reference.origin.uncast(),
+                            mojito_types::origin::Origin::Union(_)
+                        )
                     {
                         loans.extend(
-                            self.pointer_origin_loans(&origin, *mutable)
+                            self.pointer_origin_loans(&reference.origin, *mutable)
                                 .into_iter()
                                 .flatten()
                                 .filter(|loan| loan.place.root != root),
@@ -1801,9 +1796,9 @@ impl<'a> Flatten<'a> {
                 // shared alias, as `Pointer(to=place)` does: copies of the
                 // returned pointer coexist.
                 if let Some(contract) = node.call_contract()
-                    && let Some(origin) = contract.result_ty.kind().pointer_origin()
-                    && let Some(mutable) = origin.statically_mutable()
-                    && let Some(loans) = self.pointer_origin_loans(&origin, mutable)
+                    && let Some(reference) = contract.result_ty.pointer_lit_ref()
+                    && let Some(mutable) = reference.mutability.known()
+                    && let Some(loans) = self.pointer_origin_loans(&reference.origin, mutable)
                 {
                     return loans;
                 }

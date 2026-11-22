@@ -786,24 +786,26 @@ impl Checker {
                     }
             }
             (actual_kind, expected_kind)
-                if let Some((
-                    (actual_element, actual_origin),
-                    (expected_element, expected_origin),
-                )) = actual_kind.matching_pointer_parts(expected_kind) =>
+                if let Some((actual, expected)) =
+                    actual_kind.matching_pointer_parts(expected_kind) =>
             {
-                coerces(&actual_element, &expected_element)
-                    && match (&actual_origin, &expected_origin) {
-                        // A concrete place provenance may bind a declared origin
-                        // parameter, but storage must not invent mutable
-                        // capability an immutable place never had: only a
-                        // binder spelled `mut=True` demands a mutable place;
-                        // a parametric `mut=m` takes its mutability from the
-                        // place.
-                        (
-                            mojito_types::origin::PointerOrigin::Place { mutable, .. },
-                            expected @ mojito_types::origin::PointerOrigin::Param { .. },
-                        ) => *mutable || expected.statically_mutable() != Some(true),
-                        _ => actual_origin.coerces_to(&expected_origin),
+                // A concrete place provenance may bind a declared origin
+                // parameter, but storage must not invent mutable capability
+                // an immutable place never had: only a binder spelled
+                // `mut=True` demands a mutable place; a parametric `mut=m`
+                // takes its mutability from the place.
+                coerces(&actual.referent, &expected.referent)
+                    && if matches!(
+                        actual.origin.uncast(),
+                        mojito_types::origin::Origin::Place(_)
+                    ) && matches!(
+                        expected.origin.uncast().projection_base(),
+                        mojito_types::origin::Origin::Param(_)
+                    ) {
+                        actual.mutability.known() == Some(true)
+                            || expected.mutability.known() != Some(true)
+                    } else {
+                        actual.provenance_coerces_to(&expected)
                     }
             }
             (actual, expected)

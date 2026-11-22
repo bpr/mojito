@@ -2362,14 +2362,17 @@ fn ty_value(ty: &Ty) -> String {
         ),
         // A pointer keeps its compact record, its `origin` read with its
         // `mut` argument.
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => record(
+        kind if let Some(reference) = kind.pointer_lit_ref() => record(
             "pointer",
             &with_address_space(
                 vec![
-                    ("element", ty_value(element)),
-                    ("origin", pointer_origin(&origin)),
+                    ("element", ty_value(&reference.referent)),
+                    (
+                        "origin",
+                        pointer_origin_parts(&reference.origin, reference.mutability),
+                    ),
                 ],
-                &address_space,
+                &reference.address_space,
             ),
         ),
         TyKind::Struct(name, args) => record(
@@ -3189,6 +3192,29 @@ fn origin(value: &Origin) -> String {
         }
     }
 }
+/// A pointer's `origin` argument read with its `mut` one, as the
+/// `pointer_*` provenance record spells it.
+fn pointer_origin_parts(value: &Origin, mutability: Mutability) -> String {
+    PointerOrigin::from_parts(value.clone(), mutability).map_or_else(
+        || pointer_union(value, mutability),
+        |view| pointer_origin(&view),
+    )
+}
+/// The `pointer_union` record of a union origin argument (`origin_of(a,
+/// b)`) under `mutability`.
+fn pointer_union(value: &Origin, mutability: Mutability) -> String {
+    let members = match value.uncast() {
+        Origin::Union(members) => members.as_slice(),
+        single => std::slice::from_ref(single),
+    };
+    record(
+        "pointer_union",
+        &[
+            ("members", list(members.iter().map(origin))),
+            ("mutability", mutability_value(mutability)),
+        ],
+    )
+}
 fn pointer_origin(value: &PointerOrigin) -> String {
     match value {
         PointerOrigin::Place { place, mutable } => record(
@@ -3243,16 +3269,11 @@ fn pointer_origin(value: &PointerOrigin) -> String {
         PointerOrigin::UnsafeAny { mutable } => {
             record("pointer_unsafe_any", &[("mutable", mutable.to_string())])
         }
-        PointerOrigin::Union {
-            members,
-            mutability,
-        } => record(
-            "pointer_union",
-            &[
-                ("members", list(members.iter().map(origin))),
-                ("mutability", mutability_value(*mutability)),
-            ],
-        ),
+        // A union origin argument is the origin value.
+        other => {
+            let (value, mutability) = other.parts();
+            pointer_union(&value, mutability)
+        }
     }
 }
 fn ref_ty(value: &RefTy) -> String {

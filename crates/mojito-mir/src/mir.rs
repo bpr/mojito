@@ -1351,21 +1351,12 @@ pub fn mir_place_handle_ty(
         // is reached through it.
         pointer
             if (!place.is_whole_root() || place.through == Some(place.root))
-                && let Some(origin) = pointer.pointer_origin() =>
+                && let Some(reference) = pointer.pointer_lit_ref() =>
         {
-            match origin {
-                mojito_types::origin::PointerOrigin::Place { mutable, .. } => Some(if mutable {
-                    mojito_types::origin::Mutability::Mutable
-                } else {
-                    mojito_types::origin::Mutability::Immutable
-                }),
-                mojito_types::origin::PointerOrigin::Param { mutability, .. }
-                | mojito_types::origin::PointerOrigin::SelfPlace { mutability, .. }
-                | mojito_types::origin::PointerOrigin::Union { mutability, .. } => Some(mutability),
-                mojito_types::origin::PointerOrigin::Static { .. }
-                | mojito_types::origin::PointerOrigin::Untracked { .. }
-                | mojito_types::origin::PointerOrigin::UnsafeAny { .. } => None,
-            }
+            reference
+                .origin
+                .pointer_loan_origin()
+                .map(|_| reference.mutability)
         }
         _ => None,
     };

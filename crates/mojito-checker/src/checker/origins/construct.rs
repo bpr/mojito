@@ -1039,21 +1039,22 @@ impl Checker {
         let mut bindings: HashMap<OriginParamId, PointerOrigin> = HashMap::new();
         for (index, actual) in bound {
             let (
-                Some((
-                    _,
-                    PointerOrigin::Param {
-                        id,
-                        mutability,
-                        interior,
-                        subtree,
-                    },
-                )),
-                Some((_, actual_origin)),
+                Some(PointerOrigin::Param {
+                    id,
+                    mutability,
+                    interior,
+                    subtree,
+                }),
+                Some(actual_origin),
             ) = (
                 params
                     .get(*index)
-                    .and_then(|param| param.kind().pointer_or_lit_ref()),
-                actual.kind().pointer_or_lit_ref(),
+                    .and_then(|param| param.kind().pointer_or_lit_ref())
+                    .and_then(|reference| reference.pointer_origin()),
+                actual
+                    .kind()
+                    .pointer_or_lit_ref()
+                    .and_then(|reference| reference.pointer_origin()),
             )
             else {
                 continue;
@@ -1193,18 +1194,15 @@ impl Checker {
         let slot_of = |id: &OriginParamId| super::super::struct_origin_decl(params, *id);
         match (pattern.kind(), actual.kind()) {
             (pattern_kind, actual_kind)
-                if let Some((
-                    (
-                        _,
-                        PointerOrigin::Param {
-                            id,
-                            interior,
-                            subtree,
-                            ..
-                        },
-                    ),
-                    (_, actual_origin),
-                )) = pattern_kind.matching_pointer_parts(actual_kind) =>
+                if let Some((pattern, actual)) =
+                    pattern_kind.matching_pointer_parts(actual_kind)
+                    && let Some(PointerOrigin::Param {
+                        id,
+                        interior,
+                        subtree,
+                        ..
+                    }) = pattern.pointer_origin()
+                    && let Some(actual_origin) = actual.pointer_origin() =>
             {
                 let Some(slot) = slot_of(&id) else {
                     return Ok(());
@@ -1363,9 +1361,10 @@ pub(in crate::checker) fn names_origin_binder_in(
     among: &dyn Fn(OriginParamId) -> bool,
 ) -> bool {
     mojito_types::types::mentions(parameter, &|candidate| match candidate.kind() {
-        handle if let Some((_, origin)) = handle.pointer_or_lit_ref() => {
-            matches!(origin, PointerOrigin::Param { id, .. } if among(id))
-        }
+        handle if let Some(reference) = handle.pointer_or_lit_ref() => matches!(
+            reference.origin.uncast().projection_base(),
+            Origin::Param(id) if among(*id)
+        ),
         TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(id) if among(id)),
         struct_ty if let Some((_, arguments)) = struct_ty.as_non_pointer_struct() => arguments
             .iter()
@@ -1390,20 +1389,22 @@ fn bind_callable_tail_pattern(
         // the projection, and one the actual does not end in is checked by
         // coercion, not bound.
         (pattern_kind, actual_kind)
-            if let Some(((pattern_element, declared), (element, provenance))) =
+            if let Some((declared, provenance)) =
                 pattern_kind.matching_pointer_parts(actual_kind) =>
         {
-            if let PointerOrigin::Param {
+            if let Some(PointerOrigin::Param {
                 id,
                 interior,
                 subtree,
                 ..
-            } = declared
-                && let Some(base) = provenance.without_projection(&interior, subtree)
+            }) = declared.pointer_origin()
+                && let Some(base) = provenance
+                    .pointer_origin()
+                    .and_then(|provenance| provenance.without_projection(&interior, subtree))
             {
                 bindings.bind_pointer(id, &base, conflict)?;
             }
-            bind_callable_tail_pattern(&pattern_element, &element, bindings, conflict)
+            bind_callable_tail_pattern(&declared.referent, &provenance.referent, bindings, conflict)
         }
         (TyKind::Struct(pattern_name, pattern_args), TyKind::Struct(actual_name, actual_args))
             if !pattern.is_simd()

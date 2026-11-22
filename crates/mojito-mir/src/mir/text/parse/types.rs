@@ -182,10 +182,16 @@ impl Decoder {
                 }
                 "pointer" => {
                     let element = self.req(value, fields, "element", Self::ty)?;
-                    let origin = self.req(value, fields, "origin", Self::pointer_origin)?;
+                    let (origin, mutability) =
+                        self.req(value, fields, "origin", Self::pointer_origin)?;
                     let address_space = self.address_space_slot(fields)?;
                     self.unknown(fields, &["element", "origin", "address_space"]);
-                    Ty::pointer(element, origin, address_space)
+                    Ty::pointer_from_lit_ref(&RefTy {
+                        referent: element,
+                        origin,
+                        mutability,
+                        address_space,
+                    })
                 }
                 "kgen_pointer" => {
                     let element = self.req(value, fields, "element", Self::ty)?;
@@ -197,10 +203,16 @@ impl Decoder {
                 // spelled its origin and mutability as one pointer provenance.
                 "lit_ref" if self.field(fields, "element").is_ok() => {
                     let element = self.req(value, fields, "element", Self::ty)?;
-                    let origin = self.req(value, fields, "origin", Self::pointer_origin)?;
+                    let (origin, mutability) =
+                        self.req(value, fields, "origin", Self::pointer_origin)?;
                     let address_space = self.address_space_slot(fields)?;
                     self.unknown(fields, &["element", "origin", "address_space"]);
-                    Ty::lit_ref(RefTy::from_pointer_origin(element, origin, address_space))
+                    Ty::lit_ref(RefTy {
+                        referent: element,
+                        origin,
+                        mutability,
+                        address_space,
+                    })
                 }
                 "lit_ref" => {
                     let referent = self.req(value, fields, "referent", Self::ty)?;
@@ -227,7 +239,6 @@ impl Decoder {
                         (origin, mutability)
                     } else {
                         self.req(value, fields, "origin", Self::pointer_origin)?
-                            .into_parts()
                     };
                     self.unknown(fields, &["elements", "origin", "mutability"]);
                     TyKind::LitRefPack {

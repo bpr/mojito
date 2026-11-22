@@ -109,23 +109,18 @@ impl Checker {
             ExprKind::Index { object, .. } => Some(object.as_ref()),
             _ => None,
         };
-        let pointer_origin = pointer_object
+        if let Some(reference) = pointer_object
             .and_then(|object| self.infer(object).ok())
-            .and_then(|ty| ty.kind().pointer_origin());
-        match pointer_origin {
-            Some(mojito_types::origin::PointerOrigin::Place { place: origin, .. }) => {
-                self.record_origin_invalidation(site, origin, None);
-                return;
+            .and_then(|ty| ty.pointer_lit_ref())
+            && matches!(
+                reference.origin.uncast(),
+                mojito_types::origin::Origin::Place(_) | mojito_types::origin::Origin::Union(_)
+            )
+        {
+            for origin in reference.origin.places() {
+                self.record_origin_invalidation(site.clone(), origin.clone(), None);
             }
-            Some(mojito_types::origin::PointerOrigin::Union { members, .. }) => {
-                for member in members {
-                    if let mojito_types::origin::Origin::Place(origin) = member {
-                        self.record_origin_invalidation(site.clone(), origin, None);
-                    }
-                }
-                return;
-            }
-            _ => {}
+            return;
         }
 
         if self.place_reference_storage(place).is_some() {

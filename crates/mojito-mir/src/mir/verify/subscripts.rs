@@ -143,42 +143,27 @@ pub(super) fn verify_subscript_instruction(
 /// untracked pointer values use allocation arithmetic and are not valid
 /// operands for `ReadRef`/`WriteRef`.
 pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
-    let (element, origin) = match ty.kind() {
+    let (element, reference) = match ty.kind() {
         TyKind::Ref(reference) => {
             return Some(ReferenceCapability {
                 target: &reference.referent,
                 permission: ReferencePermission::from_mutability(reference.mutability),
             });
         }
-        TyKind::LitRef(reference) => (&reference.referent, reference.pointer_origin()?),
-        pointer => (pointer.pointer_element()?, pointer.pointer_origin()?),
+        TyKind::LitRef(reference) => (&reference.referent, ty.kind().pointer_or_lit_ref()?),
+        pointer => (pointer.pointer_element()?, pointer.pointer_lit_ref()?),
     };
-    let permission = match origin {
-        PointerOrigin::Place { mutable, .. } => {
-            if mutable {
-                ReferencePermission::Mutable
-            } else {
-                ReferencePermission::Immutable
-            }
-        }
-        PointerOrigin::Param { mutability, .. }
-        | PointerOrigin::SelfPlace { mutability, .. }
-        | PointerOrigin::Union { mutability, .. } => {
-            ReferencePermission::from_mutability(mutability)
-        }
-        // An untracked or unsafe-any pointer addresses its pointee with
-        // the permission it is declared with, a `VariadicList`'s element
-        // pointer and `Pointer[T, MutAnyOrigin](to=x)`'s `!lit.ref` among
-        // them.
-        PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
-            if mutable {
-                ReferencePermission::Mutable
-            } else {
-                ReferencePermission::Immutable
-            }
-        }
-        PointerOrigin::Static { .. } => return None,
-    };
+    // Static storage holds no frame/slot handle. Every other origin,
+    // untracked and unsafe-any ones included (a `VariadicList`'s element
+    // pointer, `Pointer[T, MutAnyOrigin](to=x)`'s `!lit.ref`), addresses its
+    // pointee with the permission its `mut` argument declares.
+    if matches!(
+        reference.origin.uncast(),
+        mojito_types::origin::Origin::Static
+    ) {
+        return None;
+    }
+    let permission = ReferencePermission::from_mutability(reference.mutability);
     Some(ReferenceCapability {
         target: element,
         permission,

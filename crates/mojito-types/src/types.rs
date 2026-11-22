@@ -1561,6 +1561,11 @@ impl Ty {
         self.kind().as_pointer()
     }
 
+    /// The pointer's `!lit.ref` record ([`TyKind::pointer_lit_ref`]).
+    pub fn pointer_lit_ref(&self) -> Option<crate::origin::RefTy> {
+        self.kind().pointer_lit_ref()
+    }
+
     /// The pointee of a `Pointer` ([`TyKind::pointer_element`]).
     pub fn pointer_element(&self) -> Option<&Self> {
         self.kind().pointer_element()
@@ -1664,22 +1669,26 @@ impl TyKind {
         self.pointer_parts().map(|(_, origin, _)| origin)
     }
 
-    /// The pointee and origin of a `Pointer[T, origin]` or of the
-    /// `!lit.ref<T, origin>` a `Pointer` is built from, owned.
-    pub fn pointer_or_lit_ref(&self) -> Option<(Ty, crate::origin::PointerOrigin)> {
+    /// The `!lit.ref` record of a `!lit.ref` whose origin and mutability a
+    /// pointer could hold, or the one a `Pointer` is built from
+    /// ([`TyKind::pointer_lit_ref`]).
+    pub fn pointer_or_lit_ref(&self) -> Option<crate::origin::RefTy> {
         match self {
-            Self::LitRef(reference) => {
-                Some((reference.referent.clone(), reference.pointer_origin()?))
-            }
-            pointer => pointer.as_pointer(),
+            Self::LitRef(reference) => reference
+                .pointer_origin()
+                .is_some()
+                .then(|| reference.clone()),
+            pointer => pointer.pointer_lit_ref(),
         }
     }
 
-    /// The `!lit.ref` a `Pointer[mut, T, origin, address_space]` is built
-    /// from (`_mlir_lit_ref`): its `T`, `origin`, `mut`, and
-    /// `address_space`, read straight off its arguments.
+    /// The pointer's `!lit.ref` record (`_mlir_lit_ref`): its `T`,
+    /// `origin`, `mut`, and `address_space` arguments, read straight off
+    /// the application. It answers exactly where [`TyKind::is_pointer`]
+    /// does.
     pub fn pointer_lit_ref(&self) -> Option<crate::origin::RefTy> {
         let arguments = pointer_arguments(self)?;
+        arguments.decode()?;
         Some(crate::origin::RefTy {
             referent: arguments.element.clone(),
             origin: arguments.origin.clone(),
@@ -1696,20 +1705,17 @@ impl TyKind {
         }
     }
 
-    /// The pointee and origin of `self` and of `other` when both are
+    /// The `!lit.ref` records of `self` and of `other` when both are
     /// `Pointer`s or both are `!lit.ref`s ([`TyKind::pointer_or_lit_ref`]).
     pub fn matching_pointer_parts(
         &self,
         other: &Self,
-    ) -> Option<(
-        (Ty, crate::origin::PointerOrigin),
-        (Ty, crate::origin::PointerOrigin),
-    )> {
+    ) -> Option<(crate::origin::RefTy, crate::origin::RefTy)> {
         match (self, other) {
             (Self::LitRef { .. }, Self::LitRef { .. }) => {
                 self.pointer_or_lit_ref().zip(other.pointer_or_lit_ref())
             }
-            _ => self.as_pointer().zip(other.as_pointer()),
+            _ => self.pointer_lit_ref().zip(other.pointer_lit_ref()),
         }
     }
 
@@ -4978,11 +4984,11 @@ impl fmt::Display for TyKind {
         if let Some(value) = self.float_literal_value() {
             return write!(f, "FloatLiteral[{}]", value.pop_attribute_spelling());
         }
-        if let Some((element, origin, address_space)) = self.pointer_parts() {
-            write!(f, "Pointer[{element}, ")?;
-            fmt_pointer_origin(f, &origin)?;
-            if !address_space.is_generic() {
-                write!(f, ", address_space={address_space}")?;
+        if let Some(reference) = self.pointer_lit_ref() {
+            write!(f, "Pointer[{}, ", reference.referent)?;
+            fmt_origin_parts(f, &reference.origin, reference.mutability)?;
+            if !reference.address_space.is_generic() {
+                write!(f, ", address_space={}", reference.address_space)?;
             }
             return write!(f, "]");
         }
@@ -6361,7 +6367,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         (TyKind::LitRef(a), TyKind::LitRef(b)) => {
             a.address_space == b.address_space
                 && coerces(&a.referent, &b.referent)
-                && pointer_origin_coerces(&a.origin, a.mutability, &b.origin, b.mutability)
+                && a.provenance_coerces_to(b)
         }
         (
             TyKind::KgenPointer {
@@ -6387,7 +6393,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         ) => {
             a.len() == b.len()
                 && a.iter().zip(b).all(|(a, b)| coerces(a, b))
-                && pointer_origin_coerces(ao, *am, bo, *bm)
+                && crate::origin::provenance_coerces(ao, *am, bo, *bm)
         }
         (TyKind::Func(from), TyKind::Func(to)) => {
             let FuncTy {
@@ -9602,9 +9608,9 @@ fn fmt_simd(f: &mut fmt::Formatter<'_>, dtype: &SimdDtype, width: &SimdWidth) ->
     }
 }
 
-/// A pointer origin as a `Pointer` or a `!lit.ref` displays it.
-/// A `!lit.ref`'s origin and mutability, spelled as a pointer's
-/// provenance when they read as one and as the bare origin otherwise.
+/// A `Pointer`'s or a `!lit.ref`'s origin and mutability, spelled as a
+/// pointer's provenance when they read as one and as the bare origin
+/// otherwise.
 fn fmt_origin_parts(
     f: &mut fmt::Formatter<'_>,
     origin: &crate::origin::Origin,
@@ -9612,28 +9618,21 @@ fn fmt_origin_parts(
 ) -> fmt::Result {
     match crate::origin::PointerOrigin::from_parts(origin.clone(), mutability) {
         Some(origin) => fmt_pointer_origin(f, &origin),
-        None if mutability == crate::origin::Mutability::Immutable => {
-            write!(f, "ImmOrigin({origin})")
-        }
-        None => write!(f, "{origin}"),
+        None => fmt_bare_origin(f, origin, mutability),
     }
 }
 
-/// Whether a `!lit.ref` under `from`'s origin and mutability coerces to
-/// one under `to`'s, as the pointers built from them do.
-fn pointer_origin_coerces(
-    from: &crate::origin::Origin,
-    from_mutability: crate::origin::Mutability,
-    to: &crate::origin::Origin,
-    to_mutability: crate::origin::Mutability,
-) -> bool {
-    use crate::origin::PointerOrigin;
-    match (
-        PointerOrigin::from_parts(from.clone(), from_mutability),
-        PointerOrigin::from_parts(to.clone(), to_mutability),
-    ) {
-        (Some(from), Some(to)) => from.coerces_to(&to),
-        _ => from == to && from_mutability == to_mutability,
+/// An origin value under `mutability`, spelled as the origin itself:
+/// `ImmOrigin(origin)` when immutable.
+fn fmt_bare_origin(
+    f: &mut fmt::Formatter<'_>,
+    origin: &crate::origin::Origin,
+    mutability: crate::origin::Mutability,
+) -> fmt::Result {
+    if mutability == crate::origin::Mutability::Immutable {
+        write!(f, "ImmOrigin({origin})")
+    } else {
+        write!(f, "{origin}")
     }
 }
 
@@ -9643,17 +9642,6 @@ fn fmt_pointer_origin(
 ) -> fmt::Result {
     use crate::origin::{Mutability, PointerOrigin};
     match origin {
-        PointerOrigin::Union {
-            members,
-            mutability,
-        } => {
-            let union = crate::origin::Origin::Union(members.clone());
-            if *mutability == Mutability::Immutable {
-                write!(f, "ImmOrigin({union})")?;
-            } else {
-                write!(f, "{union}")?;
-            }
-        }
         PointerOrigin::Place {
             place,
             mutable: false,
@@ -9722,6 +9710,11 @@ fn fmt_pointer_origin(
         }
         PointerOrigin::UnsafeAny { mutable: false } => {
             write!(f, "ImmUnsafeAnyOrigin")?;
+        }
+        // A union origin argument (`origin_of(a, b)`) is the origin value.
+        other => {
+            let (origin, mutability) = other.parts();
+            fmt_bare_origin(f, &origin, mutability)?;
         }
     }
     Ok(())
@@ -10080,9 +10073,9 @@ fn flatten_constraint<'a>(
 
 fn collect_named_origins(ty: &Ty, out: &mut Vec<crate::origin::Origin>) {
     match ty.kind() {
-        kind if let Some((element, origin)) = kind.pointer_or_lit_ref() => {
-            out.extend(origin.as_origin());
-            collect_named_origins(&element, out);
+        kind if let Some(reference) = kind.pointer_or_lit_ref() => {
+            out.extend(reference.origin.pointer_loan_origin());
+            collect_named_origins(&reference.referent, out);
         }
         TyKind::LitRefPack {
             elements,

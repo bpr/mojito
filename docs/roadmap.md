@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2512**.
+Next free ID: **R2514**.
 
 ## Ordered Work
 
@@ -11181,12 +11181,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     substitution binds it now, so re-run the probe.
   - Probe: past that, `Span.__init__(ref [Self.origin] array: Array[…])`
     fails, since `rebase_self_place_pointer` reads `as_pointer()`, which the
-    struct substitution already rewrote (R2493).
+    struct substitution already rewrote (R2513).
   - Decide whether pointer instance symbols change (`mojito-symbol`), and
     plan the package bump if they do.
   - The mut-to-imm coercion is `coerces`'s pointer arm today; the struct
     arm rejects it without the declared implicit `__init__` (R2443).
-  - Depends on R2487, R2493, R2443.
+  - Depends on R2487, R2513, R2443.
   - Model: Fable, Not Planned.
 
 - [ ] **R2502 Pointer arms beside a struct arm answer what the struct arm
@@ -11413,25 +11413,73 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2505, R2506, R2507, R2508, R2509, R2510.
   - Model: Fable, Planned.
 
-- [ ] **R2493 Pointer provenance readers read the `PointerOrigin` view
-  rather than the pointer struct's `origin` and `mut` arguments, which
+- [ ] **R2512 Pointer readers below the checker read the `PointerOrigin`
+  view, not the pointer's `!lit.ref` record**
+
+  Upstream reads a pointer's `origin` value and `mut` parameter directly,
+  but these readers still decode both into `PointerOrigin` through
+  `pointer_parts`, `as_pointer`, or `TyKind::pointer_origin`.
+  - Each moves to `TyKind::pointer_lit_ref` and asks `Origin` and
+    `Mutability` (`pointer_loan_origin`, `places`, `single_place`,
+    `multi_element`, `ends_in_subtree`, `Mutability::known`).
+  - A rebuild arm `Ty::pointer(element, f(origin), space)` becomes
+    `Ty::pointer_from_lit_ref(&f(reference))`.
+  - `mojito-mir`: `mir.rs:3236`, `verify/instr.rs:745`, `:930`, `:1741`,
+    `verify/types.rs:566`, `verify/scope.rs:367`, `verify/places.rs:182`,
+    `lower_stmt.rs:2046`.
+  - `mojito-analysis`: `inline_parametric.rs:3160`, `:3164`, `:3241`,
+    `:3260`; `register_loans.rs:613`.
+  - `mojito-vm`: `runtime.rs:2340`, `backend/vm/references.rs:934`.
+  - `mojito-native`: `mono/substitute.rs:419`, `:780`, `:791`;
+    `mono/equiv.rs:161`, `:333`.
+  - `mojito-symbol`: `symbol.rs:1615`, `:2712`. The mangling arm must keep
+    every existing pointer key; R2501 owns any symbol change.
+  - `mojito-types`' own arms in `types.rs`: `:3053`, `:5222`, `:5295`,
+    `:5507` (`bind_origin_params`, which R2503 deletes; whichever lands
+    second rebases), `:5576`, `:5646`, `:6318`, `:7281`, `:7566`, `:8450`,
+    `:9157`.
+  - Plan: `R2493-pointer-provenance-readers-read-the-pointerorigin-plan.md`,
+    Slice 1.6.
+  - Found while landing R2493 (2026-11-22).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R2513 Checker pointer readers read the `PointerOrigin` view, which
   keeps `PointerOrigin::Union` alive**
 
-  A `!lit.ref` no longer stores a `PointerOrigin`, but the pointer
-  accessors still decode every pointer to one, and a union origin argument
-  (`origin_of(x, y)`) to `PointerOrigin::Union`.
-  - Readers that need the union: `Flatten::pointer_origin_loans` and the
-    subtree read in `mir/facts.rs`, `checker/origins/actuals.rs`,
-    `checker/origins/interior.rs`, `checker/indexing.rs`,
-    `mir/verify/subscripts.rs`, `mir.rs`, MIR text's `pointer_origin`
-    record, and the pointer display in `types.rs`.
-  - Retiring the variant means `pointer_parts` stops decoding to
-    `PointerOrigin` (288 uses), overlapping R2487's merge of the pointer
-    origin passes.
-  - Its first session plans it and files the slices.
-  - Found while landing R2211 (2026-11-21).
-  - Depends on R2487.
-  - Model: Fable, Not Planned.
+  No reader outside `origin.rs` matches `PointerOrigin::Union` any more,
+  but the checker still decodes pointers into the view, and the decode
+  still builds the variant for a union origin argument (`origin_of(x, y)`).
+  - Move the checker's view readers to `pointer_lit_ref` or
+    `pointer_or_lit_ref` (both a `RefTy`): `generics.rs:211`, `:212`,
+    `:647`, `:819`; `method_calls/intrinsic_receivers.rs:97`;
+    `method_calls/selection.rs:26`, `:35`; `origins/exclusivity.rs:507`;
+    `origins/subst.rs:628`, `:637`; `origins/construct.rs:1053`, `:1057`,
+    `:1203`, `:1204`, `:1399`, `:1401`; `declarations.rs:5844`;
+    `origins/actuals.rs:845`; `origins/binders.rs:573`;
+    `origins/transfer.rs:878`; `origins/ref_params.rs:417`, `:696`,
+    `:837`; `origins/interior.rs:474`; `type_resolution.rs:2834`,
+    `:3516`, `:4939`, `:5554`.
+  - Then delete `TyKind::{as_pointer, pointer_origin}` and
+    `Ty::as_pointer`, and make `pointer_parts` return the `RefTy` or
+    delete it.
+  - `PointerArguments::decode` asks a parts-level
+    `Origin::holdable_by_pointer(mutability)` predicate, and
+    `canonical_pointer_application` builds through
+    `Ty::pointer_from_lit_ref`.
+  - Delete `PointerOrigin::Union` and its arms in `origin.rs`;
+    `provenance_coerces` already answers a union expectation from the
+    parts.
+  - File the follow-on for the variant matchers left
+    (`rebase_self_place_pointer`, `pointer_write_capability`,
+    `CloneBinderProjection`, the `pointer_*` MIR text records and their
+    schema move to `pointer { element, origin, mutability }`).
+  - Probe: R2501's `rebase_self_place_pointer` bullet.
+  - Plan: `R2493-pointer-provenance-readers-read-the-pointerorigin-plan.md`,
+    Slice 1.6.
+  - Found while landing R2493 (2026-11-22).
+  - Depends on R2512.
+  - Model: Opus, Planned.
 
 - [ ] **R1292 A MIR `try` may lack its `except` or `else` region, where
   upstream's `lit.try` always holds both**

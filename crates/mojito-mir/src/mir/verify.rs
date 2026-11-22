@@ -40,7 +40,7 @@ use super::{
     MirIntrinsicSubscript, MirPlace, MirProgram, MirTerm, Proj, Reg,
 };
 use mojito_types::ct::CtValue;
-use mojito_types::origin::{Mutability, PointerOrigin};
+use mojito_types::origin::Mutability;
 use mojito_types::types::{DependentType, ParamDecl, Ty, TyArg, tuple_elements};
 use std::collections::{HashMap, HashSet};
 

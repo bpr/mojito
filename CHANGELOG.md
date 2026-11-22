@@ -2327,6 +2327,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pointer's provenance readers that handled a union origin argument
+  (`origin_of(x, y)`) now read the pointer's `!lit.ref` record — its
+  `origin` value and `mut` argument — rather than decoding it to
+  `PointerOrigin::Union`: loans, write invalidation, coercion, reference
+  capability, the type display, and the MIR text `pointer` record. Output
+  is unchanged; the remaining view readers are R2512 and R2513 (R2493).
 - A loop's or comprehension's yield slot binds the `__next__` reference
   because the checked iteration plan says the call returns by its `ref`
   convention, rather than because the slot's type is `TyKind::Ref`, and the
