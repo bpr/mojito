@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2522**.
+Next free ID: **R2523**.
 
 ## Ordered Work
 
@@ -856,6 +856,15 @@ How much generic instantiation multiplies a program, and proof that a pass
 which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
+
+- [ ] **R2522 1 fixture stopped elaborating after batch 4**
+
+  The instantiation ratchet finds `assets/ok` fixtures that elaborated at the last baseline and now fail to compile; the baseline records them as failed, so this entry is all that tracks them.
+  - Probe: `assets/ok/list_contiguous_slice_view.mojo` (failed: run error: Elaboration error: unsupported concrete MIR that does not verify after the post-elaboration pipeline: MIR function 'main': binding of Span$mono$Vfalse$TInt[false, Int] to a slot of type Span$mono$Vtrue$TInt[true, Int]).
+  - Ratchet log: `target/run-batches/20261120-073546/batch4-ratchet-repair2.log`.
+  - Filed by `scripts/run-batches` (2026-11-22).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2465 Concrete instructions grew by 671027 instructions (+13.81%) over batch 3**
 
