@@ -98,10 +98,8 @@ impl FnLowering<'_> {
         if self.func.error_slot == Some(var) {
             return self.stage_function_error(ctx, src);
         }
-        if matches!(
-            self.func.var_tys.get(&var).map(Ty::kind),
-            Some(TyKind::Ref(_))
-        ) && let Some(place) = self.made_ref_places.get(&src.0)
+        if self.func.binds_reference(var)
+            && let Some(place) = self.made_ref_places.get(&src.0)
         {
             self.reference_places.insert(var, place.clone());
         }

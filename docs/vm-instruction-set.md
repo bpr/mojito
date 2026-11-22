@@ -87,6 +87,12 @@ accessed; the compact notation omits this analysis-only field.
 | `var.borrow_mut` | `UseVar(BorrowMut)` | Read through an exclusive borrow |
 | `var.store` | `DefVar` | Define or redefine a variable slot |
 
+A non-moving `UseVar` of a slot holding a reference reads through it when
+the slot binds a reference (`MirFunction::ref_bindings`) or is a borrowed
+parameter, which a call binds to its argument's address
+(`MirFunction::reads_through`). Any other slot's reference, a `!lit.ref`
+or `!kgen.pointer` value among them, is the slot's value.
+
 ### Scalar computation
 
 | Mnemonic | MIR operation | Purpose |

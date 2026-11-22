@@ -37,6 +37,7 @@
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
+        ref_bindings: [$v2],
         var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: ref { referent: Int, origin: origin_union([origin_place { root: $v133, path: [] }, origin_place { root: $v134, path: [] }]), mutability: mutable } }, var_type { var: $v3, type: Bool }, var_type { var: $v4, type: Int }, var_type { var: $v5, type: Int }],
         return_type: present(None),
         raises: false,

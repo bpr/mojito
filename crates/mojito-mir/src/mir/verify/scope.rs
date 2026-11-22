@@ -1047,6 +1047,7 @@ pub(super) mod tests {
             deinit_params: Vec::new(),
             ref_params: Vec::new(),
             returns_reference: false,
+            ref_bindings: std::collections::BTreeSet::new(),
             var_tys: HashMap::new(),
             ret_ty: Some(Ty::none()),
             raises: false,

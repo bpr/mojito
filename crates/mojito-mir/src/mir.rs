@@ -3484,6 +3484,14 @@ fn comptime_iteration(
 }
 
 impl<'a> Flatten<'a> {
+    /// Record `var` as a `ref` binding ([`MirFunction::ref_bindings`]): its
+    /// slot holds a run-time reference its reads go through. The record is
+    /// the function's, so leaving a `try` part does not undo it.
+    fn bind_reference(&mut self, var: VarId) {
+        self.runtime_aliases.insert(var);
+        self.f.ref_bindings.insert(var);
+    }
+
     /// Whether a variable's slot is typed as a pointer, so a projected
     /// place rooted at it addresses the pointee.
     fn pointer_valued_slot(&self, var: VarId) -> bool {
@@ -3731,7 +3739,7 @@ impl<'a> Flatten<'a> {
             // (a `ref` ctor field fed a bare place); a variable that itself
             // stores a handle instead falls through to the plain load below.
             let var_ty = self.var_types.get(&var).cloned();
-            if !matches!(var_ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
+            if !self.f.binds_reference(var) {
                 let place = MirPlace::root(var, var_ty);
                 let handle_ty = mir_place_handle_ty(
                     &place,
@@ -4144,7 +4152,7 @@ impl<'a> Flatten<'a> {
             );
             self.emit(MirInstr::MakeRef { dest, place });
             self.var_types.insert(*slot, reference_ty.clone());
-            self.runtime_aliases.insert(*slot);
+            self.bind_reference(*slot);
             self.emit(MirInstr::DefVar {
                 var: *slot,
                 src: dest,
@@ -4765,6 +4773,7 @@ fn lower_cfg_nested(
         deinit_params: Vec::new(),
         ref_params: Vec::new(),
         returns_reference,
+        ref_bindings: BTreeSet::new(),
         var_tys: HashMap::new(),
         // An expression thunk's result converts at its type as it returns,
         // since no check recorded the conversion on the expression.
@@ -5404,6 +5413,7 @@ fn close_register_types(
 
     let mut reg_types = std::mem::take(&mut f.reg_types);
     let mut var_tys = std::mem::take(&mut f.var_tys);
+    let declared: BTreeSet<VarId> = var_tys.keys().copied().collect();
     // Chains (a handle read of a fresh handle, a call through a just-typed
     // callable) settle in a few passes; the bound keeps lowering total.
     let mut const_ints = HashMap::new();
@@ -5428,6 +5438,14 @@ fn close_register_types(
             ));
         }
     }
+    // A synthetic binding initialized by a reference value (a `ref`
+    // `__next__` result's yield slot) holds that `!lit.ref` itself.
+    f.ref_bindings.extend(
+        var_tys
+            .iter()
+            .filter(|(var, ty)| !declared.contains(var) && matches!(ty.kind(), TyKind::Ref(_)))
+            .map(|(var, _)| *var),
+    );
     f.reg_types = reg_types;
     f.var_tys = var_tys;
 }

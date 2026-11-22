@@ -86,7 +86,9 @@ impl FnLowering<'_> {
         // `mut`/`ref` pointer parameter's handle designates the caller's
         // pointer.
         let designated_ty = match root_ty.kind() {
-            TyKind::Ref(reference) => reference.referent.clone(),
+            TyKind::Ref(reference) if self.func.binds_reference(place.root) => {
+                reference.referent.clone()
+            }
             pointer
                 if place.through == Some(place.root)
                     && !ref_param_root
@@ -102,14 +104,14 @@ impl FnLowering<'_> {
                 let load = LoadOp::new(ctx, through_slot, handle);
                 self.append(ctx, load.get_operation(), Some(dest));
                 (recorded_ty, load.get_result(ctx), projected)
-            } else if place.through.is_some() || matches!(root_ty.kind(), TyKind::Ref(_)) {
+            } else if place.through.is_some() || self.func.binds_reference(place.root) {
                 let (ty, address) = match through_ty.kind() {
                     // A `mut`/`ref` parameter is typed as its referent and its
                     // aliased slot already IS the referent address.
                     pointer if pointer.is_pointer_layout() && ref_param_root => {
                         (designated_ty, through_slot)
                     }
-                    kind if kind.is_pointer_layout() || matches!(kind, TyKind::Ref(_)) => {
+                    kind if kind.is_pointer_layout() || self.func.binds_reference(through_var) => {
                         let handle = self.pointer_handle(ctx, &through_ty, dest)?;
                         let load = LoadOp::new(ctx, through_slot, handle);
                         self.append(ctx, load.get_operation(), Some(dest));

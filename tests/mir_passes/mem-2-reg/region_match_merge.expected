@@ -10,6 +10,7 @@
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
+        ref_bindings: [$v1, $v2],
         var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: ref { referent: Int, origin: origin_place { root: $v128, path: [] }, mutability: immutable } }, var_type { var: $v2, type: ref { referent: Int, origin: origin_place { root: $v128, path: [] }, mutability: immutable } }],
         return_type: present(Int),
         raises: false,

@@ -278,10 +278,7 @@ fn writes_nothing(instruction: &MirInstr, function: &MirFunction) -> bool {
         destructor: None,
     } = instruction
     {
-        return matches!(
-            function.var_tys.get(var).map(Ty::kind),
-            Some(TyKind::Ref(_))
-        );
+        return function.binds_reference(*var);
     }
     matches!(
         instruction,

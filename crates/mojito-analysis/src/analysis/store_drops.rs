@@ -191,10 +191,7 @@ fn overwrites_through_reference(state: &[Node], place: &MirPlace, f: &MirFunctio
     let root = place.root as usize;
     let reference_root = through != place.root
         || (root < f.n_params && f.ref_params.get(root).copied().unwrap_or(false))
-        || place
-            .root_ty
-            .as_ref()
-            .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)));
+        || f.binds_reference(place.root);
     reference_root
         && place
             .ty

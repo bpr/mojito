@@ -47,6 +47,7 @@ fn function(blocks: MirBlock, n_regs: u32, reg_types: &[(u32, Ty)]) -> MirFuncti
         deinit_params: Vec::new(),
         ref_params: Vec::new(),
         returns_reference: false,
+        ref_bindings: std::collections::BTreeSet::new(),
         var_tys: HashMap::new(),
         ret_ty: Some(Ty::int()),
         raises: false,

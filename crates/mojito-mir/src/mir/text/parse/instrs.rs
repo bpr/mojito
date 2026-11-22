@@ -31,6 +31,21 @@ impl Decoder {
             "var",
             "$v",
         );
+        // Before 1.224 a slot bound a reference exactly when it was typed
+        // as one.
+        let ref_bindings = match self.field(fields, "ref_bindings").ok() {
+            Some(value) => self
+                .list(value)
+                .ok()
+                .map(|values| values.iter().filter_map(|value| self.var(value)).collect())
+                .unwrap_or_default(),
+            None if self.minor < 224 => var_tys
+                .iter()
+                .filter(|(_, ty)| matches!(ty.kind(), TyKind::Ref(_)))
+                .map(|(id, _)| *id as u32)
+                .collect(),
+            None => std::collections::BTreeSet::new(),
+        };
         let ret_ty = self.option_ty(self.field(fields, "return_type").ok());
         let raises = self.boolean(self.field(fields, "raises").ok()?)?;
         let error_ty = self.option_ty(self.field(fields, "error_type").ok());
@@ -117,6 +132,7 @@ impl Decoder {
                 "deinit_params",
                 "ref_params",
                 "returns_reference",
+                "ref_bindings",
                 "var_types",
                 "return_type",
                 "raises",
@@ -142,6 +158,7 @@ impl Decoder {
             deinit_params,
             ref_params,
             returns_reference,
+            ref_bindings,
             var_tys: var_tys
                 .into_iter()
                 .map(|(id, ty)| (id as u32, ty))

@@ -42,6 +42,7 @@
         deinit_params: [false, false],
         ref_params: [false, true],
         returns_reference: false,
+        ref_bindings: [$v2],
         var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v2, type: ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) } }, var_type { var: $v3, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v4, type: pointer { element: Int, origin: pointer_self { mutability: mutability_param(65537), interior: [], subtree: false } } }],
         return_type: present(Int),
         raises: false,

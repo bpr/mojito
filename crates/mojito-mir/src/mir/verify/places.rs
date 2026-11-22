@@ -175,13 +175,13 @@ pub(super) fn verify_place(
                                 )
                             )
                     });
-            let local_handle = match function.var_tys.get(&through).map(Ty::kind) {
-                Some(TyKind::Ref(_)) => true,
-                Some(pointer) => pointer
-                    .pointer_origin()
-                    .is_some_and(|origin| origin.as_origin().is_some()),
-                None => false,
-            };
+            let local_handle = function.binds_reference(through)
+                || function.var_tys.get(&through).is_some_and(|pointer| {
+                    pointer
+                        .kind()
+                        .pointer_origin()
+                        .is_some_and(|origin| origin.as_origin().is_some())
+                });
             if !parameter_handle && !receiver_handle && !local_handle {
                 let declared = function
                     .var_tys

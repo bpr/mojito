@@ -682,6 +682,7 @@ fn verify_rejects_an_untyped_used_slot() {
                     deinit_params: vec![false],
                     ref_params: vec![false],
                     returns_reference: false,
+                    ref_bindings: std::collections::BTreeSet::new(),
                     var_tys,
                     ret_ty: Some(Ty::int()),
                     raises: false,

@@ -1357,6 +1357,14 @@ contract source is the keyword one past the last index's, as upstream's
 passed no keyword index, reads with an empty list. The package format moves
 to `mojito-package 255` (R2480).
 
+Schema 1.224 gives a function header the optional `ref_bindings: [$vN,
+...]` list after `returns_reference`, the slots that bind a reference
+(`MirFunction::ref_bindings`), upstream's `!lit.ref`-valued bindings. It
+is written only when non-empty. An older function, which recorded no such
+fact, reads with every `ref`-typed slot as a binding, since a slot then
+bound a reference exactly when it was typed as one. The package format
+moves to `mojito-package 257` (R2488).
+
 The package format moves to `mojito-package 256` (R2468): a packaged
 method's checked signature carries its custom receiver type under
 `@__allow_legacy_custom_self_type` (`CheckedSignature::receiver`, the
@@ -2094,6 +2102,14 @@ fn {
 Counts are explicit and checked against referenced identities. Parameter masks
 align with `param_types`. Production artifacts require a present return type.
 Register types are explicit and are not re-inferred from mnemonics.
+
+A function with a `ref` binding carries `ref_bindings: [$vN, ...]` after
+`returns_reference` (schema 1.224), ascending: the slots that hold a
+reference their reads go through, upstream's `!lit.ref`-valued bindings.
+The binding position decides membership, never the slot's type. The
+verifier requires a binding to be typed as a reference and, until
+`!lit.ref` folds into `ref` (R2492), every `ref`-typed slot to be a
+binding.
 
 A raising function carries `error_slot: $vN` after `error_type` (schema
 1.108): the local slot its raises out of the function store their error

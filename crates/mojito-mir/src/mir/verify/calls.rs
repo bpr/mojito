@@ -977,6 +977,28 @@ pub(super) fn verify_function(
             function.n_vars
         ));
     }
+    for (&slot, ty) in &function.var_tys {
+        let typed = matches!(ty.kind(), TyKind::Ref(_));
+        if typed != function.binds_reference(slot) {
+            errors.push(format!(
+                "MIR function '{name}' slot $v{slot} `{}` {} a reference but is typed `{ty}`",
+                function
+                    .var_names
+                    .get(slot as usize)
+                    .map_or("?", String::as_str),
+                if typed { "does not bind" } else { "binds" }
+            ));
+        }
+    }
+    if let Some(slot) = function
+        .ref_bindings
+        .iter()
+        .find(|slot| !function.var_tys.contains_key(slot))
+    {
+        errors.push(format!(
+            "MIR function '{name}' slot $v{slot} binds a reference but has no type"
+        ));
+    }
     match function.error_slot {
         None if function.raises => {
             errors.push(format!(

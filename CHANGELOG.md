@@ -2327,6 +2327,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A MIR slot's `ref` binding is a fact of its own,
+  `MirFunction::ref_bindings`, as upstream's `ref` binding is the
+  `!lit.ref` value itself, instead of being read off the slot's
+  `TyKind::Ref` type. The VM's `var.use` read-through, the verifier's
+  through-slot check, stack reuse, store drops, the loan check, inlining,
+  and Pliron's place lowering consult it, so a `!lit.ref` or
+  `!kgen.pointer` local needs no exemption (R2488). MIR text moves to
+  schema 1.224 (`ref_bindings` in a function header; older functions
+  derive it from their slot types) and the package format to
+  `mojito-package 257`.
+
 - A pointer's `origin` and `mut` arguments bind as any struct's origin
   argument: the checker substitutes a bound origin binder, and the `mut`
   inferred with it, in one pass over every struct application, where two

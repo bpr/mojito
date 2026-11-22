@@ -623,6 +623,7 @@ mod tests {
                     deinit_params: Vec::new(),
                     ref_params: Vec::new(),
                     returns_reference: false,
+                    ref_bindings: std::collections::BTreeSet::new(),
                     var_tys: std::collections::HashMap::new(),
                     ret_ty: None,
                     raises: false,

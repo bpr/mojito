@@ -1,4 +1,4 @@
-mojito-mir 1.202
+mojito-mir 1.224
 artifact {
   features: [],
   files: [
@@ -59,6 +59,7 @@ artifact {
         deinit_params: [false, false],
         ref_params: [false, true],
         returns_reference: false,
+        ref_bindings: [$v2],
         var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v2, type: ref { referent: Int, origin: origin_place { root: $v320, path: [] }, mutability: mutability_param(65537) } }],
         return_type: present(Int),
         raises: false,

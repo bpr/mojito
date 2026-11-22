@@ -85,6 +85,7 @@ impl<'t> SymbolTable<'t> {
             deinit_params: _,
             ref_params: _,
             returns_reference: _,
+            ref_bindings: _,
             raises: _,
             error_slot: _,
             spans: _,

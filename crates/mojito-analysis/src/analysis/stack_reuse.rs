@@ -212,10 +212,11 @@ impl Analysis {
             (*var as usize) >= function.n_params
                 && function.error_slot != Some(*var)
                 && !escaped.contains(var)
+                && !function.binds_reference(*var)
                 && function
                     .var_tys
                     .get(var)
-                    .is_some_and(|ty| !matches!(ty.kind(), TyKind::Ref(_) | TyKind::LitRef { .. }))
+                    .is_some_and(|ty| !matches!(ty.kind(), TyKind::LitRef { .. }))
         };
         let mut slots = BTreeMap::new();
         let mut variants: HashMap<usize, Vec<VarId>> = HashMap::new();

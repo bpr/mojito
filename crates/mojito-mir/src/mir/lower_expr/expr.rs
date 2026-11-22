@@ -225,7 +225,7 @@ impl<'a> Flatten<'a> {
             // the caller's value in place; a captured pack owns its
             // elements.
             let slot_ty = self.var_types.get(&var).cloned();
-            let reference_slot = matches!(slot_ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
+            let reference_slot = self.f.binds_reference(var);
             if ((var as usize) < self.f.n_params || reference_slot)
                 && self.runtime_aliases.contains(&var)
             {

@@ -904,15 +904,16 @@ fn check_loans_at(
                 // accessor's receiver alive (`p[]` keeps `p`): they lend no
                 // permission, so they do not make a write through it a
                 // conflict.
-                let mutable = matches!(
-                    f.var_tys.get(reference).map(mojito_types::types::Ty::kind),
-                    Some(mojito_types::types::TyKind::Ref(
-                        mojito_types::origin::RefTy {
-                            mutability: mojito_types::origin::Mutability::Mutable,
-                            ..
-                        }
-                    ))
-                );
+                let mutable = f.binds_reference(*reference)
+                    && matches!(
+                        f.var_tys.get(reference).map(mojito_types::types::Ty::kind),
+                        Some(mojito_types::types::TyKind::Ref(
+                            mojito_types::origin::RefTy {
+                                mutability: mojito_types::origin::Mutability::Mutable,
+                                ..
+                            }
+                        ))
+                    );
                 if access == LoanAccess::Write
                     && reference_loans
                         .iter()

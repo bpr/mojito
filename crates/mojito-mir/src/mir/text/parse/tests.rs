@@ -69,6 +69,7 @@ fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
         deinit_params: Vec::new(),
         ref_params: Vec::new(),
         returns_reference: false,
+        ref_bindings: std::collections::BTreeSet::new(),
         var_tys: HashMap::new(),
         ret_ty: Some(Ty::none()),
         raises: false,

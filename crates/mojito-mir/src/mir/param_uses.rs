@@ -487,7 +487,8 @@ pub fn erase_forward_chains(
 
 /// Retire the storage no instruction of `function` names any more, which an
 /// erasure left behind: a register's type is dropped, and a local slot takes
-/// the `Int` placeholder erased callable storage takes. Neither then names
+/// the `Int` placeholder erased callable storage takes and binds no
+/// reference. Neither then names
 /// a parameter an instance removed.
 pub fn retire_unnamed_storage(function: &mut MirFunction) {
     let reads = register_reads(function);
@@ -498,11 +499,14 @@ pub fn retire_unnamed_storage(function: &mut MirFunction) {
     });
     let mut named = HashSet::new();
     named_slots(&function.body, &mut named);
+    let n_params = function.n_params;
+    let unnamed = |slot: &VarId| (*slot as usize) >= n_params && !named.contains(slot);
     for (slot, ty) in &mut function.var_tys {
-        if (*slot as usize) >= function.n_params && !named.contains(slot) {
+        if unnamed(slot) {
             *ty = Ty::int();
         }
     }
+    function.ref_bindings.retain(|slot| !unnamed(slot));
 }
 
 /// Add every register an instruction of `block` or of their regions

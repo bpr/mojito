@@ -1,4 +1,4 @@
-mojito-mir 1.202
+mojito-mir 1.224
 artifact {
   features: [],
   files: [
@@ -78,6 +78,7 @@ artifact {
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
+        ref_bindings: [$v1, $v2],
         var_types: [var_type { var: $v0, type: struct_type { name: Counter, arguments: [] } }, var_type { var: $v1, type: ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable } }, var_type { var: $v2, type: ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable } }],
         return_type: present(None),
         raises: false,

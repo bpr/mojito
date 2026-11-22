@@ -65,6 +65,7 @@ impl Specializer<'_> {
             n_vars,
             var_names,
             var_tys,
+            ref_bindings,
             spans,
             reg_types,
             ..
@@ -77,6 +78,7 @@ impl Specializer<'_> {
             n_vars,
             var_names,
             var_tys,
+            ref_bindings,
             retired: &mut retired,
             dangling,
         };
@@ -710,6 +712,7 @@ struct FrameTables<'a> {
     n_vars: &'a mut usize,
     var_names: &'a mut Vec<String>,
     var_tys: &'a mut HashMap<VarId, Ty>,
+    ref_bindings: &'a mut BTreeSet<VarId>,
     /// The template slots a clone replaced, removed once every loop is
     /// unrolled.
     retired: &'a mut BTreeSet<VarId>,
@@ -864,6 +867,9 @@ fn fresh_slots(
             if let Some(ty) = tables.var_tys.get(&slot) {
                 let ty = substitute_ty(ty, iteration).unwrap_or_else(|_| ty.clone());
                 tables.var_tys.insert(fresh, ty);
+            }
+            if tables.ref_bindings.contains(&slot) {
+                tables.ref_bindings.insert(fresh);
             }
             (slot, fresh)
         })

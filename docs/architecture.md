@@ -3176,7 +3176,23 @@ local of its own (`renumber_locals`). HIR may suffix the internal slot name, but
 by owner identity; independently inferred sibling types therefore never merge
 in `MirFunction::var_tys`. A substituted local `ref` alias has no runtime handle
 payload, yet its analytical slot retains the checked `TyKind::Ref` capability used
-by every `MirPlace::through` access. Opaque structured statements may retain a
+by every `MirPlace::through` access.
+
+Whether a slot binds a reference is a fact of its own,
+`MirFunction::ref_bindings`, as upstream's `ref` binding is the `!lit.ref`
+value itself: the binding position decides it, never the slot's type.
+Lowering records each `ref` local, borrowed iteration source, call-result
+reference slot, and capture reference where it binds it
+(`Flatten::bind_reference`), and a synthetic slot a reference value
+initializes as `close_register_types` types it; every pass that makes,
+splices, renumbers, or retires a slot keeps the set (`retire`,
+`inline-parametric`'s splice, the `comptime for` unroll). Slot readers ask
+the fact (`binds_reference`, and the VM's `var.use` read-through
+`reads_through`, which adds the borrowed parameters a call binds by
+address); a place's designated type stays a type question, since a whole
+slot's place may designate the referent. `mir::verify` requires a binding
+to be typed as a reference and, until `!lit.ref` folds into `ref` (R2492),
+every reference-typed slot to be a binding. Opaque structured statements may retain a
 source spelling after HIR has assigned a shadowed declaration a suffixed slot,
 so MIR resolves identifier writes through the checked `OwnerId` exactly as it
 does reads; the two halves of augmented assignment cannot select different

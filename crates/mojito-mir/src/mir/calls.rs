@@ -639,11 +639,8 @@ impl<'a> Flatten<'a> {
                 ..
             }) if *dest == value => {
                 let var = *var;
-                let ty = self.var_types.get(&var).cloned();
-                if !ty
-                    .as_ref()
-                    .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)))
-                {
+                if !self.f.binds_reference(var) {
+                    let ty = self.var_types.get(&var).cloned();
                     return (value, Some(MirPlace::root(var, ty)));
                 }
             }
@@ -1674,7 +1671,7 @@ impl<'a> Flatten<'a> {
         let handle = self.fresh_typed(location, Some(var), reference.clone());
         self.emit(MirInstr::StoreToMem { dest: handle, src });
         self.var_types.insert(var, reference.clone());
-        self.runtime_aliases.insert(var);
+        self.bind_reference(var);
         self.emit(MirInstr::DefVar {
             var,
             src: handle,
@@ -1706,7 +1703,7 @@ impl<'a> Flatten<'a> {
         let variable = self.var(&format!("$call_ref_r{}", handle.0));
         let storage_ty = Ty::new(TyKind::Ref(reference.clone()));
         self.var_types.insert(variable, storage_ty.clone());
-        self.runtime_aliases.insert(variable);
+        self.bind_reference(variable);
         self.emit(MirInstr::DefVar {
             var: variable,
             src: handle,

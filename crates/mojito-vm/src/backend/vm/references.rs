@@ -693,11 +693,12 @@ impl VmBackend {
     /// not it is spelled as read through the root.
     pub(super) fn heap_handle_place(
         &mut self,
+        function: &MirFunction,
         place: &MirPlace,
         registers: &[Value],
         variables: &[Value],
     ) -> Result<Option<Value>, RuntimeError> {
-        let reference_root = matches!(place.root_ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
+        let reference_root = function.binds_reference(place.root);
         let projected_from_reference =
             reference_root && !place.proj.is_empty() && !place_crosses_reference(place);
         if place.through != Some(place.root) && !projected_from_reference {

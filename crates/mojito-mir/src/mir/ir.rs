@@ -1226,6 +1226,12 @@ fn retire(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
         .filter(|(var, _)| !retired.contains(var))
         .map(|(var, ty)| (renumber(*var), ty.clone()))
         .collect();
+    function.ref_bindings = function
+        .ref_bindings
+        .iter()
+        .filter(|var| !retired.contains(var))
+        .map(|var| renumber(*var))
+        .collect();
     function.n_vars -= retired.len();
 }
 
@@ -3941,6 +3947,11 @@ pub struct MirFunction {
     /// a `mut self` receiver is parameter 0 and is flagged here.
     pub ref_params: Vec<bool>,
     pub returns_reference: bool,
+    /// The slots that bind a reference, upstream's `!lit.ref`-valued
+    /// binding: a `ref` parameter or local, whose reads read through the
+    /// reference it holds. The binding position decides it, never the
+    /// slot's type; a binding's type is the reference type.
+    pub ref_bindings: BTreeSet<VarId>,
     /// Checked type of each variable slot, as far as lowering recorded one.
     /// Parameters, bindings, and synthetic locals are covered on the checked
     /// path; instruction typing and verification read slot types from here.
@@ -4085,6 +4096,24 @@ pub struct LoweredCall {
 }
 
 impl MirFunction {
+    /// Whether slot `var` binds a reference ([`Self::ref_bindings`]).
+    pub fn binds_reference(&self, var: VarId) -> bool {
+        self.ref_bindings.contains(&var)
+    }
+
+    /// Whether a read of slot `var` reads through the reference it holds:
+    /// a `ref` binding, or a borrowed parameter, which a call binds to its
+    /// argument's address as upstream binds it to a `!lit.ref`.
+    pub fn reads_through(&self, var: VarId) -> bool {
+        self.binds_reference(var)
+            || ((var as usize) < self.n_params
+                && !self
+                    .owned_params
+                    .get(var as usize)
+                    .copied()
+                    .unwrap_or(false))
+    }
+
     /// The instructions of this body at any depth: a region op counts once,
     /// and its regions' instructions with it. Terminators are not counted.
     pub fn instruction_count(&self) -> usize {

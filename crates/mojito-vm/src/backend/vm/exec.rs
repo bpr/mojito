@@ -15,6 +15,7 @@ impl VmBackend {
     pub(super) fn load_place_value(
         &mut self,
         prog: &Prog,
+        function: usize,
         frame_id: FrameId,
         regs: &[Value],
         vars: &mut [Value],
@@ -22,6 +23,7 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         // The read half of `c[i] += e` on a user struct goes through
         // `c.__getitem__(i)`; any other place reads its slot / SIMD lane.
+        let holds_reference = matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
         let value = if let Some((element, suffix)) =
             super::references::pointer_element(&vars[place.root as usize], place, regs)?
         {
@@ -30,7 +32,9 @@ impl VmBackend {
             // the rest of the projection within it.
             let referent = self.read_reference(&element, frame_id, vars)?;
             self.read_reference_projection(frame_id, vars, &referent, &suffix)?
-        } else if let Some(handle) = self.heap_handle_place(place, regs, vars)? {
+        } else if let Some(handle) =
+            self.heap_handle_place(&prog.mir.functions[function].1, place, regs, vars)?
+        {
             // A reference binding of a static-origin call result holds
             // the element's heap pointer (`heap_reference_result`).
             self.read_reference(&handle, frame_id, vars)?
@@ -45,9 +49,7 @@ impl VmBackend {
             // already reaches its referent (a directly aliased value) must
             // keep it, so gate on the loaded value still being a handle.
             let value = self.read_reference(&reference, frame_id, vars)?;
-            if matches!(value, Value::Ref { .. })
-                && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-            {
+            if matches!(value, Value::Ref { .. }) && holds_reference {
                 self.read_reference(&value, frame_id, vars)?
             } else {
                 value
@@ -63,16 +65,14 @@ impl VmBackend {
             if super::references::place_crosses_reference(place) {
                 let composed = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
                 let value = self.read_reference(&composed, frame_id, vars)?;
-                if matches!(value, Value::Ref { .. })
-                    && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                {
+                if matches!(value, Value::Ref { .. }) && holds_reference {
                     self.read_reference(&value, frame_id, vars)?
                 } else {
                     value
                 }
             } else {
                 let value = load_place(vars, regs, place)?;
-                if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
+                if holds_reference {
                     self.read_reference(&value, frame_id, vars)?
                 } else {
                     value
@@ -218,7 +218,9 @@ impl VmBackend {
                 return Err(parametric_instruction("interior invalidation"));
             }
             MirInstr::MakeRef { dest, place } => {
-                if let Some(handle) = self.heap_handle_place(place, regs, vars)? {
+                if let Some(handle) =
+                    self.heap_handle_place(&prog.mir.functions[function].1, place, regs, vars)?
+                {
                     // A `ref` field (a closure's `mut` capture) forwards the
                     // handle it stores when the destination is typed as
                     // that handle, as below.
@@ -794,20 +796,11 @@ impl VmBackend {
                         moved
                     }
                 } else if let Value::Ref { .. } = &vars[slot]
-                    && !prog.mir.functions[function]
-                        .1
-                        .var_tys
-                        .get(var)
-                        .is_some_and(|ty| {
-                            matches!(
-                                ty.kind(),
-                                TyKind::LitRef { .. } | TyKind::KgenPointer { .. }
-                            )
-                        })
+                    && prog.mir.functions[function].1.reads_through(*var)
                 {
-                    // A reference binding reads through its stored handle; a
-                    // place pointer the slot holds is its value, as is the
-                    // address a `!lit.ref` or `!kgen.pointer` slot holds.
+                    // A reference binding, or a borrowed parameter bound to
+                    // its argument's address, reads through its stored
+                    // handle; any other slot's handle is its value.
                     self.read_reference(&vars[slot], frame_id, vars)?
                 } else {
                     match mode {
@@ -1947,7 +1940,9 @@ impl VmBackend {
             }
             MirInstr::Store { place, src } => {
                 let mut v = regs[src.0 as usize].clone();
-                if let Some(handle) = self.heap_handle_place(place, regs, vars)? {
+                if let Some(handle) =
+                    self.heap_handle_place(&prog.mir.functions[function].1, place, regs, vars)?
+                {
                     self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&handle, frame_id, vars, v)?;
                     return Ok(());
@@ -1979,7 +1974,13 @@ impl VmBackend {
                         self.canonicalize_value_references(frame_id, vars, &mut v);
                         self.write_reference(&handle, frame_id, vars, v)?;
                     } else {
-                        self.store_through_handle(frame_id, place, handle, v, vars)?;
+                        self.store_through_handle(
+                            frame_id,
+                            matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))),
+                            handle,
+                            v,
+                            vars,
+                        )?;
                     }
                 } else if !slot && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
                     let reference = load_place(vars, regs, place)?;
@@ -2009,7 +2010,8 @@ impl VmBackend {
                 self.store_at_place(frame_id, place, handle, regs, vars)?;
             }
             MirInstr::LoadPlace { dest, place } => {
-                regs[dest.0 as usize] = self.load_place_value(prog, frame_id, regs, vars, place)?;
+                regs[dest.0 as usize] =
+                    self.load_place_value(prog, function, frame_id, regs, vars, place)?;
             }
             MirInstr::MovePlace { dest, place } => {
                 // A partial move `p.a^`: transfer the field's value out, leaving a

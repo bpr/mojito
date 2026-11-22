@@ -688,6 +688,14 @@ fn write_function(
         function.returns_reference
     )
     .unwrap();
+    if !function.ref_bindings.is_empty() {
+        writeln!(
+            output,
+            "{pad}    ref_bindings: {},",
+            list(function.ref_bindings.iter().copied().map(var_value))
+        )
+        .unwrap();
+    }
     let var_types = function
         .var_tys
         .iter()

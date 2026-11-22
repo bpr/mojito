@@ -210,8 +210,8 @@ impl VmBackend {
         }
     }
 
-    /// Write a value through the handle a place designates. A `ref`-typed
-    /// place holds *another* handle, and the assignment reaches its referent —
+    /// Write a value through the handle a place designates. A place that
+    /// holds a reference (`holds_reference`) holds *another* handle, and the assignment reaches its referent —
     /// the store twin of `LoadPlace`'s second dereference — rather than
     /// overwriting the handle slot. The write can land in another frame's
     /// storage, so handles inside the written value that root in this frame
@@ -219,12 +219,12 @@ impl VmBackend {
     pub(super) fn store_through_handle(
         &mut self,
         frame_id: FrameId,
-        place: &MirPlace,
+        holds_reference: bool,
         handle: Value,
         mut value: Value,
         vars: &mut [Value],
     ) -> Result<(), RuntimeError> {
-        let target = if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
+        let target = if holds_reference {
             match self.read_reference(&handle, frame_id, vars)? {
                 inner @ Value::Ref { .. } => inner,
                 _ => handle,

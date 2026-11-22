@@ -10,6 +10,7 @@
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
+        ref_bindings: [$v1],
         var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v1, type: ref { referent: Int, origin: origin_place { root: $v126, path: [] }, mutability: immutable } }, var_type { var: $v2, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v3, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }, var_type { var: $v4, type: struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] } }],
         return_type: present(Int),
         raises: false,

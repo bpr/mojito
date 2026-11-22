@@ -11227,28 +11227,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2488 A MIR variable slot is a `ref` binding because its type is
-  `TyKind::Ref`, where upstream's `ref` binding is the `!lit.ref` value
-  itself**
-
-  MIR has no fact saying a slot binds a reference: every reader asks
-  whether the slot's type is `TyKind::Ref`, so a `!lit.ref`-typed slot
-  needs its own exemption.
-  - Give `MirFunction` a per-slot reference-binding fact beside
-    `ref_params` and `returns_reference` (`mir/ir.rs`), with a schema bump.
-  - Readers to move onto it: the VM's `var.use` and `pointer_valued`
-    (`backend/vm/exec.rs`, `backend/vm.rs`), which exempt a `!lit.ref` or
-    `!kgen.pointer` slot from the read-through.
-  - `same_address` (`mir/verify/instr.rs`), which admits a pointer or
-    reference register bound to a `!lit.ref` slot.
-  - The slot tests in `mir.rs` and `lower_stmt.rs`, `stack_reuse.rs`,
-    `store_drops.rs`, `register_loans.rs`, and Pliron's `lower/places.rs`.
-  - Go sites-first: make the readers consult the fact, then run
-    `scripts/smoke --suites`.
-  - Found while landing R2211 (2026-11-21).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2489 A checker local is a `ref` binding because its stored type
   is `TyKind::Ref`, where upstream puts the read-through on the
   declaration**
@@ -11310,6 +11288,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The one display left is upstream's `ref[origin] T`, so diagnostics
     that print a `ref` binding's type change and their expect lines move.
   - `same_address` and the VM's `!lit.ref` exemptions go away.
+  - `verify_function`'s `ref_bindings` rule (`verify/calls.rs`) keeps
+    only its forward half: a binding is typed as a reference, but a
+    reference-typed slot need not bind.
+  - Three slot makers still decide a binding from a type, which a merged
+    type cannot: `close_register_types`'s synthetic slot a reference
+    value initializes (`mir.rs`), a comprehension's yield slot
+    (`lower_expr/ctrl.rs`), and `inline-parametric`'s
+    `HandleSource::Register` binding, which tells a `ref` handle from a
+    pointer by its type.
+  - A whole-slot MIR place can designate its referent with no
+    `through` (`inline-parametric`'s `bound_place` meets one), so place
+    readers still take the read-through from `place.ty`: the VM's
+    `load_place_value`, `Store`, `store_through_handle`, and
+    `heap_handle_place`'s `wants_slot`, `store_drops.rs`'s
+    `overwrites_through_reference`, `bound_place` and
+    `access_bound_parameters_in_place`, `lower_stmt.rs`'s
+    `stores_reference` write, `verify::place_base_ty`, and
+    `mir_place_handle_ty`.
   - Go sites-first: `scripts/smoke --suites`, then `scripts/focused`.
   - Found while landing R2211 (2026-11-21).
   - Depends on R2488, R2489, R2490, R2491.

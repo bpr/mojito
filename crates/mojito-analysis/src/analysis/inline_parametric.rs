@@ -1952,6 +1952,9 @@ impl<'c> Inliner<'_, 'c> {
                     .insert(var as VarId + var_base, mutabilities.ty(ty));
             }
         }
+        function
+            .ref_bindings
+            .extend(callee.ref_bindings.iter().map(|var| var + var_base));
         function.n_vars += callee.n_vars;
         let mut resumed = Vec::with_capacity(after.len() + 1);
         // A lent register's value comes back forwarded from its slot past
@@ -2084,6 +2087,13 @@ impl<'c> Inliner<'_, 'c> {
                 // A reference register is the handle itself.
                 Binding::Handle(HandleSource::Register(reference, handle_ty)) => {
                     function.var_tys.insert(var + var_base, handle_ty.clone());
+                    // A pointer the caller passes is a value the slot
+                    // holds, not a reference it binds.
+                    if matches!(handle_ty.kind(), TyKind::Ref(_)) {
+                        function.ref_bindings.insert(var + var_base);
+                    } else {
+                        function.ref_bindings.remove(&(var + var_base));
+                    }
                     caller.instrs.push(MirInstr::DefVar {
                         var: var + var_base,
                         src: *reference,
@@ -2117,6 +2127,7 @@ impl<'c> Inliner<'_, 'c> {
                         reference: field_ref,
                     });
                     function.var_tys.insert(var + var_base, handle_ty.clone());
+                    function.ref_bindings.insert(var + var_base);
                     caller.instrs.push(MirInstr::DefVar {
                         var: var + var_base,
                         src: handle,
@@ -3496,15 +3507,11 @@ fn bound_place(address: &MirPlace, caller: &MirFunction) -> MirPlace {
 }
 
 /// Whether the caller's slot `root` holds a handle: the caller's `mut` or
-/// `ref` parameter, or a slot of a reference type. A place [`bound_place`]
+/// `ref` parameter, or a `ref` binding. A place [`bound_place`]
 /// rebases on such a slot names the referent the handle reaches, not
 /// storage of the slot's own.
 fn holds_handle(caller: &MirFunction, root: VarId) -> bool {
-    is_reference_parameter(caller, root as usize)
-        || caller
-            .var_tys
-            .get(&root)
-            .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)))
+    is_reference_parameter(caller, root as usize) || caller.binds_reference(root)
 }
 
 /// The referent behind any number of reference layers.

@@ -288,6 +288,7 @@
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
+        ref_bindings: [$v3],
         var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: struct_type { name: Bounded, arguments: [] } }, var_type { var: $v3, type: ref { referent: struct_type { name: Bounded, arguments: [] }, origin: origin_place { root: $v147, path: [] }, mutability: immutable } }, var_type { var: $v4, type: struct_type { name: Bounded, arguments: [] } }, var_type { var: $v5, type: Int }, var_type { var: $v6, type: Int }, var_type { var: $v7, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }, var_type { var: $v8, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }, var_type { var: $v9, type: struct_type { name: Bounded, arguments: [] } }, var_type { var: $v10, type: struct_type { name: Bounded, arguments: [] } }, var_type { var: $v11, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
         return_type: present(Int),
         raises: false,

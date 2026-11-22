@@ -414,7 +414,7 @@ impl<'a> Flatten<'a> {
                     dest: handle,
                     place: MirPlace::root(raw, Some(plan.yielded_ty.clone())),
                 });
-                self.runtime_aliases.insert(dest);
+                self.bind_reference(dest);
                 self.var_types.insert(dest, plan.binding_ty.clone());
                 self.emit(MirInstr::DefVar {
                     var: dest,
@@ -477,6 +477,7 @@ impl<'a> Flatten<'a> {
             address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
         }));
         self.var_types.insert(dest, ref_ty.clone());
+        self.f.ref_bindings.insert(dest);
         self.iteration_sources.insert(dest, place.clone());
         let handle = self.fresh_typed(span.clone(), Some(place.root), ref_ty.clone());
         self.emit(MirInstr::MakeRef {
@@ -2933,8 +2934,8 @@ impl<'a> Flatten<'a> {
                     && let var = self.expression_var(&name, value)
                     && (var as usize) >= self.f.n_params
                     && self.runtime_aliases.contains(&var)
+                    && self.f.binds_reference(var)
                     && let Some(slot_ty) = self.var_types.get(&var).cloned()
-                    && matches!(slot_ty.kind(), TyKind::Ref(_))
                 {
                     let slot_ty = Some(slot_ty);
                     let mut place = MirPlace::root(var, slot_ty.clone());
@@ -2948,7 +2949,7 @@ impl<'a> Flatten<'a> {
                     if let Some(ty) = slot_ty.clone() {
                         self.var_types.insert(reference, ty);
                     }
-                    self.runtime_aliases.insert(reference);
+                    self.bind_reference(reference);
                     self.emit(MirInstr::DefVar {
                         var: reference,
                         src: handle,
@@ -2983,7 +2984,7 @@ impl<'a> Flatten<'a> {
                         )))
                 {
                     let source = self.expr(value);
-                    self.runtime_aliases.insert(reference);
+                    self.bind_reference(reference);
                     // A reference-producing expression stores a runtime handle
                     // in this local slot. Carry its checked `TyKind::Ref` onto the
                     // slot immediately: later aggregate construction may need
@@ -3166,6 +3167,7 @@ impl<'a> Flatten<'a> {
                 self.var_types
                     .entry(reference)
                     .or_insert_with(|| handle_ty.clone());
+                self.f.ref_bindings.insert(reference);
                 let handle = self.fresh_typed(node.location(), Some(place.root), handle_ty.clone());
                 self.emit(MirInstr::MakeRef {
                     dest: handle,
@@ -3725,7 +3727,7 @@ impl<'a> Flatten<'a> {
         let variable = self.var(&format!("$destr_ref_r{}", handle.0));
         let storage_ty = Ty::new(TyKind::Ref(reference.clone()));
         self.var_types.insert(variable, storage_ty.clone());
-        self.runtime_aliases.insert(variable);
+        self.bind_reference(variable);
         self.emit(MirInstr::DefVar {
             var: variable,
             src: handle,
@@ -3783,7 +3785,7 @@ impl<'a> Flatten<'a> {
         if let Some(ty) = binding_ty.clone() {
             self.var_types.insert(var, ty);
         }
-        self.runtime_aliases.insert(var);
+        self.bind_reference(var);
         self.emit(MirInstr::DefVar {
             var,
             src: raw,
