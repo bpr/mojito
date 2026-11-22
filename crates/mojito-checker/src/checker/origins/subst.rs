@@ -1178,7 +1178,7 @@ fn bind_tail(
 ) -> Option<mojito_types::origin::PointerOrigin> {
     use mojito_types::origin::{Mutability, Origin, PointerOrigin};
     match tail {
-        Origin::Place(_) => PointerOrigin::from_parts(
+        Origin::Place(_) | Origin::Union(_) => PointerOrigin::from_parts(
             tail.project_path(path)?,
             if mutability == Mutability::Mutable {
                 Mutability::Mutable

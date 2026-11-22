@@ -2145,6 +2145,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     where the pin prints `5`; a user view built by `P(to=x)` or `P(x)` over
     a `ref[Self.origin] to` parameter reports the same (found while landing
     R2472, 2026-11-21).
+  - Probe: two mutable user views over one place, `var v = MV(x); var w =
+    MV(x)` over `struct MV[o: MutOrigin]` with a `ref[Self.o]` initializer,
+    are rejected at the second construction's argument access ("conflicts
+    with live reference 'v'"), where the pin accepts. The loans are shared;
+    the `mut` access against them is the cause (found while landing R2475,
+    2026-11-22).
   - Found while landing R192 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10945,26 +10951,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2475 A construction's `ref[origin]` loan comes from two rules,
-  where upstream derives it from the result type's origin**
-
-  `aggregate_borrows_unmaterialized` (`crates/mojito-mir/src/mir/facts.rs`)
-  loans a declared `Pointer` initializer through its own arm and every other
-  construction through `borrowed_ref_arguments`.
-  - The `Pointer` arm's loans are shared, cover a union origin's other
-    members, and reborrow a `Subtree` place through its `ref` binding.
-  - `borrowed_ref_arguments`' loans are whole-place and `shared: false`,
-    with no union members.
-  - Probe: dropping the `declared_pointer_init` guard in front of
-    `borrowed_ref_arguments` changes `assets/ok/pointer_union_origin.mojo`'s
-    drop order and rejects `assets/ok/pointer_temporary_dereference_place.mojo`
-    ("conflicts with live reference '$mat_r32'").
-  - One rule over the constructed value's origin should replace both, and
-    the `Pointer` arm and the guard should go.
-  - Found while landing R2472 (2026-11-21).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2478 `Pointer._get_ref_with_unsafe_interior_origin` is not
   declared**
 
@@ -11034,20 +11020,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1299.
   - Model: Fable, Not Planned.
 
-- [ ] **R2461 An origin a value's type names holds no loan unless the
-  value's construction borrowed it**
+- [ ] **R2461 A call result's type names an origin it holds no loan on
+  unless an argument lent it**
 
-  `var v = V[origin_of(a, b)](7)` over `struct V[o: Origin]` destroys `a`
-  and `b` before `v`'s last use, where the pin keeps both alive until it.
-  - MIR's loans (`crates/mojito-mir/src/mir/facts.rs`) come from what a
-    construction borrows (`Pointer(to=a)`, a `ref` argument), not from the
-    origins the result's type names.
+  `var v = mk[origin_of(a, b)](7)` over `def mk[o: Origin](k: Int) -> V[o]`
+  destroys `a` and `b` before `v`'s last use, where the pin prints `use 7
+  del 2 del 1 end`.
+  - A construction already lends what its result type names
+    (`Flatten::construction_origin_loans`, `crates/mojito-mir/src/mir/facts.rs`).
+  - A call that is not a construction still falls to
+    `result_argument_borrows`, which lends only what its arguments carry.
   - Upstream's lifetime checker extends every origin a live value's type
-    carries.
-  - Probe: the `V` program above, with a `D` whose `__deinit__` prints.
-  - Probe: `var p: Pointer[D, origin_of(a, b)] = Pointer(to=a)` destroys
-    `b` before `p[]`; the constructed form `Pointer[D, origin_of(a,
-    b)](to=a)` keeps it (`assets/ok/pointer_union_origin.mojo`).
+    carries, whatever produced the value.
+  - Probe: the `mk` program above, with a `D` whose `__deinit__` prints.
   - Found while landing R2429 (2026-11-21).
   - Depends on nothing.
   - Model: Fable, Not Planned.

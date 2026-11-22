@@ -1149,6 +1149,198 @@ impl<'a> Flatten<'a> {
         }]
     }
 
+    /// The loans a construction's result holds on the storage the origins
+    /// its checked type names ([`mojito_types::types::named_origins`]),
+    /// each union member included, as upstream keeps an origin's memory
+    /// live while a value whose type names it is.
+    ///
+    /// A place an argument lends is loaned shared at that argument's place
+    /// (`Pointer(to=self.a)` loans `self.a`), reborrowed through it for a
+    /// `_subtree` origin. A place no argument lends takes the loans a value
+    /// moved into the result carries on it, else a keep-alive loan that
+    /// grants no access. An origin binder names the storage of the `ref`
+    /// arguments bound to it. `None` when the type names no tracked storage.
+    fn construction_origin_loans(&mut self, node: Node<'a>) -> Option<Vec<MirLoan>> {
+        use mojito_types::origin::{Origin, OriginPlace, OriginSeg};
+        // Each place an origin names, with a cast's mutability; `None` for
+        // an origin binder or the receiver, which names the storage the
+        // `ref` arguments bound to it reach.
+        fn places(
+            origin: &Origin,
+            cast: Option<bool>,
+            out: &mut Vec<(Option<OriginPlace>, Option<bool>)>,
+        ) {
+            match origin {
+                Origin::Place(place) => out.push((Some(place.clone()), cast)),
+                Origin::Param(_) | Origin::SelfParam | Origin::Projected(..) => {
+                    out.push((None, cast));
+                }
+                Origin::Union(members) => {
+                    for member in members {
+                        places(member, cast, out);
+                    }
+                }
+                Origin::MutCast(inner, _) => {
+                    places(inner, origin.static_mutability().or(cast), out);
+                }
+                Origin::Static
+                | Origin::Untracked { .. }
+                | Origin::UnsafeAny { .. }
+                | Origin::Unbound => {}
+            }
+        }
+        let ty = node.ty()?;
+        let mut named = Vec::new();
+        for origin in mojito_types::types::named_origins(&ty) {
+            places(&origin, None, &mut named);
+        }
+        let binders = named.iter().any(|(place, _)| place.is_none());
+        let named: Vec<(OriginPlace, Option<bool>)> = named
+            .into_iter()
+            .filter_map(|(place, cast)| place.map(|place| (place, cast)))
+            .collect();
+        if named.is_empty() && !binders {
+            return None;
+        }
+        let result_mutable = ty
+            .kind()
+            .pointer_or_lit_ref()
+            .and_then(|(_, origin)| origin.statically_mutable());
+        let recorded = borrowed_ref_arguments(node)
+            .into_iter()
+            .flatten()
+            .filter_map(|&(source, mutable)| {
+                node.argument_at(source)
+                    .map(|argument| (argument, Some(mutable)))
+            });
+        let candidates: Vec<(Node<'a>, Option<bool>)> = recorded
+            .chain(
+                node.kwargs()
+                    .into_iter()
+                    .map(|(_, value)| value)
+                    .chain(node.args())
+                    .map(|argument| (argument, None)),
+            )
+            .filter(|(argument, _)| {
+                argument.checked.category == mojito_checked::checked::ValueCategory::Place
+            })
+            .collect();
+        // A field path lowers without evaluating anything, so it is matched
+        // by its executable root (a `ref` binding's referent); a subscripted
+        // place is lowered only once chosen, by its checked root owner.
+        let mut lowered: Vec<Option<MirPlace>> = candidates
+            .iter()
+            .map(|(argument, _)| field_path(*argument).then(|| self.place(*argument)))
+            .collect();
+        let mut loans = Vec::new();
+        let mut chosen_sources = Vec::new();
+        let mut carried: Option<Vec<MirLoan>> = None;
+        for (place, cast) in named {
+            let Some(root) = self.owner_vars.get(&place.root).copied() else {
+                continue;
+            };
+            let chosen = candidates
+                .iter()
+                .zip(&lowered)
+                .position(|((argument, _), source)| match source {
+                    Some(source) => {
+                        source.root == root
+                            && source_within(place_fields(source).as_deref(), &place.path)
+                    }
+                    None => subscript_root(*argument) == Some(place.root),
+                });
+            chosen_sources.extend(chosen);
+            let mutable = result_mutable
+                .or(cast)
+                .or_else(|| chosen.and_then(|index| candidates[index].1))
+                .unwrap_or(false);
+            let source = chosen.map(|index| {
+                if let Some(place) = &lowered[index] {
+                    return place.clone();
+                }
+                let place = self.place(candidates[index].0);
+                lowered[index] = Some(place.clone());
+                place
+            });
+            match source {
+                Some(source)
+                    if source.root == root
+                        && !matches!(place.path.last(), Some(OriginSeg::Subtree)) =>
+                {
+                    loans.push(MirLoan {
+                        place: source,
+                        mutable,
+                        interior: None,
+                        shared: true,
+                        setup: false,
+                    });
+                }
+                Some(source) => {
+                    loans.extend(self.pointer_place_loan(&place, mutable, Some(source), true));
+                }
+                None => {
+                    // A value moved into the result carries the loans its
+                    // own type names on that storage (`Wrap(b.view())`).
+                    let carried = carried.get_or_insert_with(|| {
+                        node.args()
+                            .into_iter()
+                            .chain(node.kwargs().into_iter().map(|(_, value)| value))
+                            .filter(|argument| {
+                                argument.checked.category
+                                    != mojito_checked::checked::ValueCategory::Place
+                            })
+                            .flat_map(|argument| self.aggregate_borrows(argument))
+                            .collect()
+                    });
+                    let from_values: Vec<MirLoan> = carried
+                        .iter()
+                        .filter(|loan| loan.place.root == root)
+                        .cloned()
+                        .collect();
+                    if from_values.is_empty() {
+                        // Storage nothing lent is kept live by the value's
+                        // type alone, which grants no access of its own.
+                        loans.extend(
+                            self.pointer_place_loan(&place, mutable, None, true)
+                                .into_iter()
+                                .map(|loan| MirLoan {
+                                    setup: true,
+                                    ..loan
+                                }),
+                        );
+                    } else {
+                        loans.extend(from_values);
+                    }
+                }
+            }
+        }
+        if binders {
+            for &(source, mutable) in borrowed_ref_arguments(node).into_iter().flatten() {
+                let Some(argument) = node.argument_at(source) else {
+                    continue;
+                };
+                let index = candidates
+                    .iter()
+                    .position(|(candidate, _)| candidate.address() == argument.address());
+                if index.is_some_and(|index| chosen_sources.contains(&index)) {
+                    continue;
+                }
+                let place = match index.and_then(|index| lowered[index].clone()) {
+                    Some(place) => place,
+                    None => self.place(argument),
+                };
+                loans.push(MirLoan {
+                    place,
+                    mutable,
+                    interior: None,
+                    shared: true,
+                    setup: false,
+                });
+            }
+        }
+        (!loans.is_empty()).then_some(loans)
+    }
+
     /// One loan per reference capture (transitively through captured closure
     /// slots), rooted at the captured owner's variable. `imm` loans
     /// immutably; `mut`/`ref` loan mutably; copy/move captures live in the
@@ -1455,21 +1647,12 @@ impl<'a> Flatten<'a> {
         };
         match node.op() {
             CheckedOp::Call { .. } => {
-                let declared_pointer_init =
-                    super::callable_target(node.adjustments()).is_some_and(|target| {
-                        mojito_symbol::symbol::split_method_symbol(&target).is_some_and(
-                            |(owner, member)| {
-                                owner == mojito_types::types::POINTER_TYPE_NAME
-                                    && member.starts_with("__init__")
-                            },
-                        )
-                    });
-                // A view construction borrows the places its `ref [origin]`
-                // parameters bound (the checker recorded the argument
-                // sources), so the stored aggregate keeps its source alive.
-                // A declared `Pointer` initializer loans through its own arm
-                // below, from its checked result's origin.
-                if !declared_pointer_init && let Some(loans) = self.borrowed_ref_arguments(node) {
+                // A construction lends the storage its result type's
+                // origins name, as upstream keeps an origin's memory live
+                // while a value whose type names it is.
+                if is_construction(node)
+                    && let Some(loans) = self.construction_origin_loans(node)
+                {
                     return loans;
                 }
                 // A checked pointer construction loans exactly its source
@@ -1528,44 +1711,6 @@ impl<'a> Flatten<'a> {
                         );
                     }
                     return loans;
-                }
-                // A declared `Pointer` initializer loans the place its checked
-                // result's origin names: exactly the place a `ref` argument
-                // bound (`Pointer(to=self.a)` loans `self.a`, not `self`),
-                // reborrowed through the `ref` binding a subtree origin was
-                // taken through, else the origin's owner.
-                if declared_pointer_init
-                    && let Some(origin) = node.ty().and_then(|ty| ty.pointer_origin())
-                    && let Some(mutable) = origin.statically_mutable()
-                {
-                    if let mojito_types::origin::PointerOrigin::Place { place, .. } = &origin
-                        && let Some(root) = self.owner_vars.get(&place.root).copied()
-                        && let Some(source) = node
-                            .place_address_operand()
-                            .filter(|operand| {
-                                operand.checked.category
-                                    == mojito_checked::checked::ValueCategory::Place
-                            })
-                            .map(|operand| self.place(operand))
-                            .filter(|source| source.root == root)
-                    {
-                        if matches!(
-                            place.path.last(),
-                            Some(mojito_types::origin::OriginSeg::Subtree)
-                        ) {
-                            return self.pointer_place_loan(place, mutable, Some(source), true);
-                        }
-                        return vec![MirLoan {
-                            place: source,
-                            mutable,
-                            interior: None,
-                            shared: true,
-                            setup: false,
-                        }];
-                    }
-                    if let Some(loans) = self.pointer_origin_loans(&origin, mutable) {
-                        return loans;
-                    }
                 }
                 // A free-function call returning a ref-field struct (a
                 // borrowing view) lends its borrowed sources to the result,
@@ -1643,10 +1788,11 @@ impl<'a> Flatten<'a> {
                     _ => None,
                 };
                 // A static call binding `ref [Self.o]` arguments (the checker
-                // recorded the argument indexes, as for a view construction)
-                // lends those places to the returned aggregate.
+                // recorded them, as for a view construction) lends what its
+                // result type's origins name, as a construction does.
                 if method_object.is_some()
-                    && let Some(loans) = self.borrowed_ref_arguments(node)
+                    && borrowed_ref_arguments(node).is_some()
+                    && let Some(loans) = self.construction_origin_loans(node)
                 {
                     return loans;
                 }
@@ -1755,36 +1901,6 @@ impl<'a> Flatten<'a> {
             }
         }
         arguments
-    }
-
-    /// The loans of the places a call binds to its `ref [origin]`
-    /// parameters (the argument sources the checker recorded), when it
-    /// records any and some argument is there to lend.
-    fn borrowed_ref_arguments(&mut self, node: Node<'a>) -> Option<Vec<MirLoan>> {
-        let Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
-            arguments, ..
-        }) = node.adjustments().iter().find(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::BorrowRefArguments { .. }
-            )
-        })
-        else {
-            return None;
-        };
-        let loans = arguments
-            .iter()
-            .filter_map(|&(source, mutable)| {
-                node.argument_at(source).map(|argument| MirLoan {
-                    place: self.place(argument),
-                    mutable,
-                    interior: None,
-                    shared: false,
-                    setup: false,
-                })
-            })
-            .collect::<Vec<_>>();
-        (!loans.is_empty()).then_some(loans)
     }
 
     /// The loans a borrowing view a method returns takes on `source`, its
@@ -1924,4 +2040,83 @@ fn carries_references(ty: &Ty) -> bool {
         | TyKind::PopArray { element: item, .. } => carries_references(item),
         _ => false,
     }
+}
+
+/// The `ref [origin]` arguments the checker recorded call `node` lending,
+/// with each one's mutability.
+fn borrowed_ref_arguments(
+    node: Node<'_>,
+) -> Option<&[(mojito_checked::checked::CheckedCallArgumentSource, bool)]> {
+    node.adjustments()
+        .iter()
+        .find_map(|adjustment| match adjustment {
+            mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
+                arguments, ..
+            } => Some(arguments.as_slice()),
+            _ => None,
+        })
+}
+
+/// Whether call `node` builds a value: its callable target is a
+/// `T.__init__*` method, or the checker recorded the `ref [origin]`
+/// arguments it lends ([`borrowed_ref_arguments`]).
+fn is_construction(node: Node<'_>) -> bool {
+    borrowed_ref_arguments(node).is_some()
+        || super::callable_target(node.adjustments()).is_some_and(|target| {
+            mojito_symbol::symbol::split_method_symbol(&target)
+                .is_some_and(|(_, member)| member.starts_with("__init__"))
+        })
+}
+
+/// Whether `node` is a place spelled by fields alone from a name, which
+/// lowers without evaluating an operand.
+fn field_path(node: Node<'_>) -> bool {
+    match node.op() {
+        CheckedOp::Identifier(_) => true,
+        CheckedOp::Member { .. } => node.object().is_some_and(field_path),
+        _ => false,
+    }
+}
+
+/// The field steps of `place` from its root, `None` once a step is not a
+/// field.
+fn place_fields(place: &MirPlace) -> Option<Vec<&str>> {
+    place
+        .proj
+        .iter()
+        .map(|proj| match proj {
+            crate::mir::ir::Proj::Field(name) => Some(name.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The owner a subscripted place expression is rooted at.
+fn subscript_root(node: Node<'_>) -> Option<mojito_types::origin::OwnerId> {
+    match node.op() {
+        CheckedOp::Identifier(_) => node.owner(),
+        CheckedOp::Member { .. } | CheckedOp::Index { .. } => {
+            node.object().and_then(subscript_root)
+        }
+        _ => None,
+    }
+}
+
+/// Whether an argument place of field steps `fields` lends the storage an
+/// origin of place path `path` names: its field steps are a prefix of the
+/// origin's leading field steps, so it does not name narrower or sibling
+/// storage. A place with a subscript step (`None`) is taken as it stands.
+fn source_within(fields: Option<&[&str]>, path: &[mojito_types::origin::OriginSeg]) -> bool {
+    let Some(fields) = fields else {
+        return true;
+    };
+    let origin_fields = path.iter().map_while(|segment| match segment {
+        mojito_types::origin::OriginSeg::Field(name) => Some(name.as_str()),
+        _ => None,
+    });
+    fields.len() <= origin_fields.clone().count()
+        && fields
+            .iter()
+            .zip(origin_fields)
+            .all(|(field, origin)| *field == origin)
 }

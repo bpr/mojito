@@ -1258,6 +1258,18 @@ impl Checker {
                 Some(Mutability::of(*mutable))
             }
             Origin::Static => Some(Mutability::Immutable),
+            // A union is mutable only when every member is.
+            Origin::Union(members) => {
+                members
+                    .iter()
+                    .try_fold(Mutability::Mutable, |union, member| {
+                        match self.bound_origin_mutability(member)? {
+                            Mutability::Mutable => Some(union),
+                            Mutability::Immutable => Some(Mutability::Immutable),
+                            Mutability::Param(_) => None,
+                        }
+                    })
+            }
             // A collector's pack origin is `Origin[mut=elt_is_mutable]`, which
             // a `read` collector, the only `VariadicPack` one, binds `False`.
             Origin::Param(id) if id.is_pack_binder() => Some(Mutability::Immutable),
@@ -1265,7 +1277,7 @@ impl Checker {
                 .origin_binder_at(&self.enclosing_type_params, id.0 as usize)
                 .filter(|decl| !decl.is_origin_set())
                 .map(|decl| origin_binder_mutability(&decl, *id)),
-            _ => None,
+            Origin::Unbound => None,
         }
     }
 

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1326
+# swept-count	1325
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -181,7 +181,6 @@ assets/ownership_error/reference_loop_element_held_across_append.mojo	runs	subse
 assets/ownership_error/reference_row_iteration_invalidated_by_row_append.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/self_field_store_under_live_view.mojo	compile-reject	agree	error: use of invalidated interior reference 'self.name["bytes"]'
 assets/ownership_error/template_method_reference_local_invalidated.mojo	compile-reject	agree	error: use of invalidated interior reference 'self.items["element"]'
-assets/ownership_error/template_served_def_keeps_loan.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/template_served_instance_keeps_loan.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/transfer_into_var_parameter.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/try_break_move_then_use_after_loop.mojo	compile-reject	agree	error: use of uninitialized value 'x'

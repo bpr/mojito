@@ -868,7 +868,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Origin` plus `mut` argument, by `append_interior_tag`/`append_subtree`
   and `bind_pointer_origins`; `PointerOrigin::Union` is a pointer's union
   origin over concrete members, whose loans `Flatten::pointer_origin_loans`
-  (`mojito-mir/src/mir/facts.rs`) answers for a place and a union alike;
+  (`mojito-mir/src/mir/facts.rs`) answers for a method's pointer result and
+  `Flatten::construction_origin_loans` for any construction, from the
+  origins its result type names (`named_origins`);
   `PointerOrigin::single_place` is the one
   representation predicate for a pointer to one known place, which the
   MIR's `origin_bearing_pointer`,

@@ -314,7 +314,10 @@ assets/ok/conforms_to_trivial_register_passable_undeclared.mojo	main	exe-differe
 assets/ok/conforms_to_undeclared_compiler_trait.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_user_and_unasked_traits.mojo	main	exe-differential	sanitized
 assets/ok/constrained_constant_instantiated_at_read.mojo	main	exe-differential	sanitized
+assets/ok/construction_type_only_origin.mojo	main	exe-differential	sanitized
 assets/ok/construction_unbound_slot_from_arguments.mojo	main	exe-differential	sanitized
+assets/ok/construction_union_origin_mut_write.mojo	main	exe-differential	sanitized
+assets/ok/construction_union_origin_view.mojo	main	exe-differential	sanitized
 assets/ok/construction_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/constructor_overload_shortest_signature.mojo	main	exe-differential	sanitized
 assets/ok/constructor_read_temporary_drop_order.mojo	main	exe-differential	sanitized
@@ -1891,6 +1894,7 @@ assets/ownership_ok/move_without_later_use.mojo	main	exe-differential	sanitized
 assets/ownership_ok/origin_delegated_parameter_receiver_source_write.mojo	main	exe-differential	sanitized
 assets/ownership_ok/partial_move_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/shared_iterations_coexist.mojo	main	exe-differential	sanitized
+assets/ownership_ok/template_served_def_keeps_loan.mojo	main	exe-differential	sanitized
 assets/ownership_ok/try_break_mut_parameter_refilled_after_loop.mojo	main	exe-differential	sanitized
 assets/ownership_ok/try_break_partial_move_refilled_after_loop.mojo	main	exe-differential	sanitized
 assets/ownership_ok/view_live_across_reading_loop.mojo	main	exe-differential	sanitized

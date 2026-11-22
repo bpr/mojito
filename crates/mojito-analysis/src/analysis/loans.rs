@@ -925,10 +925,17 @@ fn check_loans_at(
             }
             if reference_loans.iter().any(|loan| {
                 loan.interior.is_none()
-                    && !loan.setup
-                    && !(loan.shared && through_shared)
                     && mir_places_overlap(&place, &loan.place)
-                    && (access != LoanAccess::Read || excludes_reads(*loan))
+                    && if loan.setup {
+                        // A shared loan that only keeps its storage live (a
+                        // value whose type alone names it) grants no access,
+                        // but its owner's old value cannot end at a store or
+                        // move of it while the loan holds it live.
+                        loan.shared && place.through.is_none() && redefines(instr)
+                    } else {
+                        !(loan.shared && through_shared)
+                            && (access != LoanAccess::Read || excludes_reads(*loan))
+                    }
             }) {
                 return Err(loan_error(f, &place, *reference, span));
             }
@@ -1000,5 +1007,18 @@ impl ForwardScan for LoanScan<'_> {
 
     fn enters(&self, _instr: &MirInstr) -> bool {
         true
+    }
+}
+
+/// Whether `instr` stores into or moves out of the storage it names
+/// directly, ending the value there: a definition, a store, or a move.
+const fn redefines(instr: &MirInstr) -> bool {
+    match instr {
+        MirInstr::DefVar { .. }
+        | MirInstr::Store { .. }
+        | MirInstr::StoreRef { .. }
+        | MirInstr::MovePlace { .. } => true,
+        MirInstr::UseVar { mode, .. } => mode.moves(),
+        _ => false,
     }
 }

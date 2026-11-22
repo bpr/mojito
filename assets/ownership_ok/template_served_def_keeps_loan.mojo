@@ -1,10 +1,8 @@
-# expect: access to 'xs' conflicts with live reference 'm'
 # A generic `def` its template serves stores a copy of its argument, which no
-# argument expression hands over. Its transfer summary carries the stored
-# type, and the call closes it with the type it binds to the `def`'s
-# parameter: the list borrows `xs`, which the pointer type names, so `xs` is
-# not written while the list is still read.
-# requires: stdlib
+# argument expression hands over. The list's type names `xs`, so the list
+# keeps `xs` alive while it is read; that loan grants no access of its own,
+# so `xs.append(9)` beside it runs, as at the pin, and the pointer the list
+# holds reads the appended list.
 def keep[T: Copyable & Deinitable](mut into: List[T], value: T):
     into.append(value.copy())
 

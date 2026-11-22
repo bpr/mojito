@@ -1449,6 +1449,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A construction now lends the storage its result type's origins name, one
+  rule for `Pointer(to=)`, `Span(list)`, and user views, as upstream keeps
+  an origin's memory live while a value whose type names it is (R2475).
+  `View[origin_of(a, b)](a)` over a `Pointer[D, Self.o]` field crashed the
+  VM reading the destroyed `a`, and `V[origin_of(a, b)](7)` destroyed both
+  members before the value's last use; both now match the pin. A struct's
+  origin binder bound to a union now binds its pointer fields, mutable only
+  when every member is. A loan held only because a value's type names the
+  storage grants no access, so `xs.append(9)` beside a
+  `List[Pointer[List[Int], ImmOrigin(origin_of(xs))]]` that a generic `def`
+  filled now runs as at the pin (`assets/ownership_ok/template_served_def_keeps_loan.mojo`);
+  a store to or move of such an owner is still rejected (R1160).
 - A plain store into a call's reference result whose call binds a
   by-address argument by keyword (`s.get(k=0) = 6` over
   `get[I: Indexer](ref self, *, k: I) -> ref[self.a] Int`) now writes the

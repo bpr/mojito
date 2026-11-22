@@ -3767,7 +3767,10 @@ loan-tracked root, with the projection dropped, for the readers that ask
 which storage a loan keeps. A union origin argument over concrete members
 (`origin_of(x, y)`) is `PointerOrigin::Union`, the view of the
 `Origin::Union` it parts to that the pointer accessors give: its loans are
-each place member's (`Flatten::pointer_origin_loans`), and an argument
+each place member's (`Flatten::construction_origin_loans` for a
+construction, `Flatten::pointer_origin_loans` for a method's pointer
+result), a union binds a struct's origin binder as a place does, mutable
+only when every member is, and an argument
 carrying it carries every member place. A `!lit.ref` stores no
 `PointerOrigin`: `TyKind::LitRef` holds the `RefTy` a `ref` holds, an
 `Origin` beside a `Mutability`, and `TyKind::LitRefPack` the same pair, so
@@ -3841,13 +3844,26 @@ call's type, not an adjustment; the `_mlir_value` field read lowers to
 `pointer.convert` by its object's type, as the store does.
 
 Borrowed views (`Span`, `StringSpan`) are pointer-plus-length structs over
-that capability. Their loans flow through three checked channels: a
-constructor's `ref [origin]` parameter, bound positionally or by keyword,
-records `BorrowRefArguments` (the binding loans each lent place), a view-typed subscript result records
-`BorrowViewResult` (the result inherits the receiver's loans, falling back
-to the receiver's own place for a plain owner), and `unsafe_origin_cast`/
-`unsafe_offset` results carry their rebound or forwarded origins through the
-aggregate-origin walks. The loans are whole-place and shared, so reads
+that capability. A construction (a `T.__init__*` call, or a static call
+recording `BorrowRefArguments`) lends the storage its result type's origins
+name (`Flatten::construction_origin_loans` over `named_origins`), as
+upstream keeps an origin's memory live while a value whose type names it
+is; one rule covers `Pointer(to=)`, `Span(list)`, and a user view alike. A
+place an argument lends is loaned shared at that argument's place, field
+precise (`Pointer(to=self.a)` loans `self.a`) and reborrowed through the
+`ref` binding a `_subtree` origin was taken through. Each other member of
+a union origin, and an origin no argument lent (`V[origin_of(a, b)](7)`),
+takes the loans a value moved into the result carries on it, else a
+keep-alive loan (`setup`) that grants no access but still excludes a store
+to or move of its owner, which the drop walk could not end under it. An
+origin binder (`View[Self.o](x)` in a generic body) names the storage of
+the `ref` arguments bound to it. `BorrowRefArguments` stays the checker's
+record of which arguments were lent (mutability, materialization), not
+the loan source. A view-typed subscript result records `BorrowViewResult`
+(the result inherits the receiver's loans, falling back to the receiver's
+own place for a plain owner), and `unsafe_origin_cast`/`unsafe_offset`
+results carry their rebound or forwarded origins through the
+aggregate-origin walks. The loans are shared, so reads
 coexist while structural mutation of the source conflicts with any live
 view — including a `for ref` loop over the source, whose element loan is
 mutable and therefore exclusive against the view (a value loop's element
