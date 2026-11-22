@@ -45,7 +45,6 @@ use super::*;
 use mojito_ast::ast::{BindingMode, DestructureTarget, DestructureTargetKind, SequenceTarget};
 use mojito_checked::checked::CheckedTupleUnpackElement;
 use mojito_types::origin::{Mutability, Origin, OriginPlace, RefTy};
-use mojito_types::types::TyKind;
 
 impl Checker {
     /// Check the statement `stmt`, `target = value`. For a tuple target the
@@ -141,13 +140,9 @@ impl Checker {
             .map(|(item, value)| {
                 let element = match &item.kind {
                     DestructureTargetKind::Place(place) => {
-                        let ty = match self.subscript_lvalue(place).ok()? {
+                        Some(match self.subscript_lvalue(place).ok()? {
                             Some(SubscriptLValue::GetterSetter { element, .. }) => element,
                             _ => self.infer(place).ok()?,
-                        };
-                        Some(match ty.kind() {
-                            TyKind::Ref(reference) => reference.referent.clone(),
-                            _ => ty,
                         })
                     }
                     DestructureTargetKind::Tuple(inner) => self.display_target_ty(inner, value),

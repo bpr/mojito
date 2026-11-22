@@ -11321,25 +11321,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2505 Checker expression peels read through a `TyKind::Ref`
-  type, which only a `!lit.ref` value still reaches**
-
-  Since R2489–R2491, `infer` reads `ref` bindings, fields, and results
-  through by their declarations, so a peel of an inferred `TyKind::Ref`
-  type fires only on a `!lit.ref` value once the two reference types merge.
-  There it would read through a value the pin keeps as a `!lit.ref`.
-  - Sites: `indexing.rs`'s `subscript_lvalue` and `infer_index` peels and
-    the three other `TyKind::Ref(r) => r.referent` arms over an inferred
-    receiver, `destructure.rs`'s, and `closure_uses.rs`'s.
-  - `patterns.rs`'s `dereferenced`: its `infer` callers drop the peel, and
-    its declared-name callers ask `lookup_ref_binding`.
-  - R2491 found the `subscript_lvalue` and `infer_index` peels never fire.
-    Rerun that probe (a logged line per peel over the corpus's `check`,
-    reverted afterwards) before deleting each.
-  - Found while landing R2492 (2026-11-22).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2506 MIR lowering decides a stored handle, a forwarded handle,
   or a capture by address from a place's `TyKind::Ref` type**
 

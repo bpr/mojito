@@ -2353,6 +2353,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker's expression rules no longer peel a `TyKind::Ref` off an
+  inferred type: the subscript place and read, `__getitem_param__` and
+  `__getattr_param__` receivers, a call's assignable result, a
+  destructuring place, match subjects and field patterns, and closure
+  capture contents. A logged probe over the corpus's `check` found none
+  of them fired, since `infer` already reads a `ref` binding, field, or
+  result through by its declaration; a pattern path read asks
+  `lookup_ref_binding`. No accepted program changes (R2505).
 - `Self` inside a struct's member now holds the struct's own origin `mut=`
   binder, as upstream's does, where it held a deferred slot: a member's
   `Span[Int, Self.o]` is `Span[mut, Int, o]`, and `reflect[Self]` or

@@ -406,7 +406,7 @@ impl Checker {
             // `bump(k) += 1`, `w.at[0]() = 5`): its result handle is the
             // place, written through and never read out as a value.
             ExprKind::MethodCall { .. } | ExprKind::Call { .. } | ExprKind::Invoke { .. } => {
-                let found = self.infer(place)?;
+                self.infer(place)?;
                 // A call the check spelled as another (`f(x)` of a closure
                 // value is `f.__call__(x)`) is that call's place.
                 if let Some(construction) = self.spelled_construction(place) {
@@ -418,30 +418,27 @@ impl Checker {
                     _ => "the call".to_string(),
                 };
                 let span = place.source_span();
-                let reference = match found.kind() {
-                    TyKind::Ref(reference) => Some(reference.clone()),
-                    _ => self
-                        .node_facts
-                        .borrow()
-                        .get(&span)
-                        .and_then(|facts| facts.selected_call.as_deref())
-                        .and_then(|contract| contract.reference_result.clone())
-                        .or_else(|| {
-                            match self
-                                .node_facts
-                                .borrow()
-                                .get(&span)
-                                .and_then(|facts| facts.adjustment.as_deref())
-                            {
-                                Some(
-                                    mojito_checked::checked::SemanticAdjustment::ReferenceResult {
-                                        reference,
-                                    },
-                                ) => Some(reference.clone()),
-                                _ => None,
-                            }
-                        }),
-                };
+                let reference = self
+                    .node_facts
+                    .borrow()
+                    .get(&span)
+                    .and_then(|facts| facts.selected_call.as_deref())
+                    .and_then(|contract| contract.reference_result.clone())
+                    .or_else(|| {
+                        match self
+                            .node_facts
+                            .borrow()
+                            .get(&span)
+                            .and_then(|facts| facts.adjustment.as_deref())
+                        {
+                            Some(
+                                mojito_checked::checked::SemanticAdjustment::ReferenceResult {
+                                    reference,
+                                },
+                            ) => Some(reference.clone()),
+                            _ => None,
+                        }
+                    });
                 match reference {
                     Some(reference) if Self::require_writable_reference(reference.mutability) => {
                         self.record_at(span).reference_value_use = Some(true);
@@ -626,10 +623,6 @@ impl Checker {
             _ => return Ok(None),
         };
         let receiver = self.infer(object)?;
-        let receiver = match receiver.kind() {
-            TyKind::Ref(reference) => reference.referent.clone(),
-            _ => receiver,
-        };
         let Some((name, _)) = self.member_struct(&receiver, "__getitem__") else {
             return Ok(None);
         };
@@ -1262,15 +1255,6 @@ impl Checker {
         index: &Expr,
     ) -> Result<Ty, TypeError> {
         let obj_ty = self.infer(object)?;
-        // A reference-typed base (a `ref` field projected off a collection
-        // element, or reached through a binding) indexes its referent:
-        // select the subscript on the referent type; the VM reads through
-        // the handle at dispatch (the read twin of the ref-field store's
-        // second dereference).
-        let obj_ty = match obj_ty.kind() {
-            TyKind::Ref(reference) => reference.referent.clone(),
-            _ => obj_ty,
-        };
         // The empty subscript `value[]` calls the receiver's zero-argument
         // `__getitem__` (`Pointer`'s dereference, current Optional's raising
         // extraction); the EmptySubscript node is syntax-only and is not
@@ -1313,16 +1297,12 @@ impl Checker {
         // an exact callable target for HIR/MIR.
         if self.subscript_getter(&obj_ty) == Some(SubscriptGetter::Param) {
             let parameter_arguments = [mojito_ast::ast::subscript_param_arg(index)];
-            let result = self.infer_method_call(
+            return self.infer_method_call(
                 &span,
                 object,
                 "__getitem_param__",
                 MethodCallArguments::parameterized(&parameter_arguments, &[], &[]),
-            )?;
-            return Ok(match result.kind() {
-                TyKind::Ref(reference) => reference.referent.clone(),
-                _ => result,
-            });
+            );
         }
         // A tuple is heterogeneous, so its index must be a **compile-time** `Int`
         // constant — the result type is that element's type.
@@ -1931,7 +1911,6 @@ impl Checker {
             .or_else(|| self.probe(|| self.infer(object)).ok())?;
         let subject = match subject.kind() {
             TyKind::AnyStruct(inner) => inner.clone(),
-            TyKind::Ref(reference) => reference.referent.clone(),
             _ => subject,
         };
         let hooked = if let TyKind::Param { bounds, .. } = subject.kind() {

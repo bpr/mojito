@@ -381,8 +381,8 @@ impl Checker {
             // materialization.
             let declared = self.parameter_value_ty(subject).cloned();
             let ty = declared
-                .map_or_else(|| self.infer(subject), Ok)
-                .map_or_else(|_| Ty::error(), dereferenced);
+                .or_else(|| self.infer(subject).ok())
+                .unwrap_or_else(Ty::error);
             let mut root = MatchSubject::root(synth, paths, &name, ty, false);
             root.reading = Reading::Comptime(Some(subject.clone()));
             return Ok((None, root));
@@ -398,7 +398,7 @@ impl Checker {
         let ty = self.lookup(&name).cloned().ok_or_else(|| {
             TypeError::InvariantViolation("the comptime match subject was not declared".into())
         })?;
-        let mut root = MatchSubject::root(synth, paths, &name, dereferenced(ty), false);
+        let mut root = MatchSubject::root(synth, paths, &name, ty, false);
         root.reading = Reading::Comptime(None);
         Ok((Some(anchor), root))
     }
@@ -795,13 +795,13 @@ impl Checker {
             .unwrap_or_default();
         let mut names = Vec::new();
         for binding in &first {
-            let declared = dereferenced(self.infer(&binding.value)?);
+            let declared = self.infer(&binding.value)?;
             let mut values = Vec::new();
             for (condition, bindings) in &compiled {
                 let Some(value) = bindings.iter().find(|bound| bound.name == binding.name) else {
                     continue;
                 };
-                let found = dereferenced(self.infer(&value.value)?);
+                let found = self.infer(&value.value)?;
                 if found != declared {
                     return Err(TypeError::MatchPattern(format!(
                         "or-pattern binding '{}' has incompatible types across alternatives: \
@@ -1064,12 +1064,17 @@ impl Checker {
         if reference && !element.by_reference {
             self.make_reference_immutable(&name, &declaration, value_span);
         }
-        let ty = self.lookup(&name).cloned().ok_or_else(|| {
-            TypeError::InvariantViolation("a pattern path read was not declared".into())
-        })?;
+        let ty = self
+            .lookup_ref_binding(&name)
+            .map(|binding| &binding.referent)
+            .or_else(|| self.lookup(&name))
+            .cloned()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation("a pattern path read was not declared".into())
+            })?;
         let read = Read {
             name,
-            ty: dereferenced(ty),
+            ty,
             owned: !reference,
         };
         Ok((read, declaration))
@@ -1405,10 +1410,7 @@ impl Checker {
             // The field's checked type; an unknown field is the selection's
             // own rejection.
             let ty = self.infer(&child.value())?;
-            let child = MatchSubject {
-                ty: dereferenced(ty),
-                ..child
-            };
+            let child = MatchSubject { ty, ..child };
             self.compile_pattern(pattern, &child, join.reborrow(), commands)?;
         }
         Ok(())
@@ -1454,7 +1456,7 @@ impl Checker {
                     )));
                 };
                 let value = subject.bound_value();
-                let found = dereferenced(self.infer(&value)?);
+                let found = self.infer(&value)?;
                 if found != declared {
                     return Err(TypeError::MatchPattern(format!(
                         "or-pattern binding '{name}' has incompatible types across \
@@ -1925,14 +1927,6 @@ fn head_spelling(owner: &Expr) -> String {
         ExprKind::Member { object, field } => format!("{}.{field}", head_spelling(object)),
         _ if let Some((name, _)) = owner.bracket_application() => name.to_string(),
         _ => "pattern head".to_string(),
-    }
-}
-
-/// `ty` with a reference stripped to its referent.
-fn dereferenced(ty: Ty) -> Ty {
-    match ty.kind() {
-        TyKind::Ref(reference) => reference.referent.clone(),
-        _ => ty,
     }
 }
 

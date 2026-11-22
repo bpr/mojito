@@ -839,15 +839,9 @@ fn closure_uses(
         .fields
         .iter()
         .zip(&def.captures)
-        .map(|(field, capture)| {
-            let referent = match field.reference {
-                Some(_) => registry.get(&capture.binding).unwrap_or(&field.ty),
-                None => &field.ty,
-            };
-            match referent.kind() {
-                TyKind::Ref(reference) if field.reference.is_none() => &reference.referent,
-                _ => referent,
-            }
+        .map(|(field, capture)| match field.reference {
+            Some(_) => registry.get(&capture.binding).unwrap_or(&field.ty),
+            None => &field.ty,
         })
         .collect();
     let names_binder = |ty: &Ty, id: &ParamId| {
