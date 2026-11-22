@@ -24,7 +24,7 @@ impl Checker {
         }
         match &expr.kind {
             ExprKind::Identifier(name) => {
-                if let Some(TyKind::Ref(reference)) = self.lookup(name).map(Ty::kind)
+                if let Some(reference) = self.lookup_ref_binding(name)
                     && let mojito_types::origin::Origin::Place(place) = &reference.origin
                 {
                     return Ok(place.clone());

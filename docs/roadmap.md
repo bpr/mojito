@@ -11227,24 +11227,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2489 A checker local is a `ref` binding because its stored type
-  is `TyKind::Ref`, where upstream puts the read-through on the
-  declaration**
-
-  The checker's scope stores a `ref` local as a `TyKind::Ref`-typed
-  binding, so a `!lit.ref` value typed `TyKind::Ref` would read through.
-  - Add a binding kind to the scope record (`checker/scopes.rs`,
-    `declare_with_mutability` and `lookup`).
-  - Readers: `infer_reference_value` (`inference.rs`),
-    `infer_place_provenance` (`operators.rs`), the `RefDecl` arm and the
-    rebinding-store checks in `statements.rs`, and `patterns.rs`,
-    `iteration.rs`, `destructure.rs`.
-  - Parameters already carry their convention
-    (`lookup_reference_parameter`).
-  - Found while landing R2211 (2026-11-21).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2490 A direct `ref` struct field is a reference because its type
   is `TyKind::Ref`, where upstream reads the field declaration's `ref`
   marker**
@@ -11256,7 +11238,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Sites: the field arms of `inference.rs` and `indexing.rs`,
     `declarations.rs`, and mono `substitute.rs`/`unify.rs`.
   - Found while landing R2211 (2026-11-21).
-  - Depends on R2489.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R2491 A callable's `ref` result is a reference because its result
@@ -11270,7 +11252,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `symbol.rs`'s reference-result spelling, and mono
     `substitute.rs`/`unify.rs`.
   - Found while landing R2211 (2026-11-21).
-  - Depends on R2489.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R2492 `TyKind::LitRef` is a second reference type beside
@@ -11308,7 +11290,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `mir_place_handle_ty`.
   - Go sites-first: `scripts/smoke --suites`, then `scripts/focused`.
   - Found while landing R2211 (2026-11-21).
-  - Depends on R2488, R2489, R2490, R2491.
+  - Depends on R2488, R2490, R2491.
   - Model: Fable, Planned.
 
 - [ ] **R2493 Pointer provenance readers read the `PointerOrigin` view

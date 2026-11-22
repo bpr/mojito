@@ -454,9 +454,11 @@ impl Checker {
                 if !aggregate.is_empty() {
                     return aggregate;
                 }
+                if let Some(reference) = self.lookup_ref_binding(name) {
+                    return vec![reference.origin.clone()];
+                }
                 let found = self.lookup(name);
                 match found.map(Ty::kind) {
-                    Some(TyKind::Ref(reference)) => vec![reference.origin.clone()],
                     Some(handle) if let Some((_, origin)) = handle.pointer_or_lit_ref() => origin
                         .as_origin()
                         .map(|origin| vec![origin])

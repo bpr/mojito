@@ -83,9 +83,7 @@ impl Checker {
             return;
         };
         let except = match &base.kind {
-            ExprKind::Identifier(name)
-                if matches!(self.lookup(name).map(Ty::kind), Some(TyKind::Ref(_))) =>
-            {
+            ExprKind::Identifier(name) if self.lookup_ref_binding(name).is_some() => {
                 self.lookup_owner(name)
             }
             _ => None,
@@ -130,10 +128,7 @@ impl Checker {
             _ => {}
         }
 
-        if matches!(
-            self.place_storage_ty(place).as_ref().map(Ty::kind),
-            Some(TyKind::Ref(_))
-        ) {
+        if self.place_reference_storage(place).is_some() {
             // An `out self` initializer stores the incoming reference handle;
             // subsequent assignments write through that established handle.
             if self.self_initializing && place_root_name(place) == Some("self") {

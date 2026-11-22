@@ -2327,6 +2327,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A checker local's `ref` binding is a fact of its declaration,
+  `Checker::ref_bindings`, as upstream's `ref` declaration makes its name
+  an lvalue of the referent, instead of being read off the binding's
+  `TyKind::Ref` type. Every reader of a name's read-through (assignment,
+  augmented assignment, walrus, transfer, provenance, origin
+  invalidation, destructuring stores, match anchors, closure captures)
+  asks it, so no accepted program changes (R2489).
 - A MIR slot's `ref` binding is a fact of its own,
   `MirFunction::ref_bindings`, as upstream's `ref` binding is the
   `!lit.ref` value itself, instead of being read off the slot's

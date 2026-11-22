@@ -578,8 +578,7 @@ impl Checker {
                     };
                     reference.mutability = Mutability::Immutable;
                     element.reference = Some(reference.clone());
-                    let binding_ty = Ty::new(TyKind::Ref(reference));
-                    self.declare_with_mutability(name, binding_ty, false)?;
+                    self.declare_reference(name, reference, false)?;
                     self.record_declared_leaf(item, name);
                 }
                 DestructureTargetKind::Place(place) => {
@@ -727,7 +726,8 @@ impl Checker {
                 context: format!("unpacking into '{name}'"),
             });
         }
-        if matches!(existing.kind(), TyKind::Ref(_)) {
+        let reference = self.lookup_ref_binding(name).cloned();
+        if reference.is_some() {
             self.record_place_write_invalidation(place.source_span(), place);
         } else if let Some(owner) = self.lookup_owner(name) {
             self.record_owner_invalidation(place.source_span(), owner, Vec::new());
@@ -738,10 +738,8 @@ impl Checker {
             // expression, so its complete slot metadata is retained
             // explicitly for checked MIR verification and for a nested
             // closure that captures the introduction.
-            let value_ty = match existing.kind() {
-                TyKind::Ref(reference) => reference.referent.clone(),
-                _ => existing.clone(),
-            };
+            let value_ty =
+                reference.map_or_else(|| existing.clone(), |reference| reference.referent);
             self.record_at(place.source_span()).ty = Some(value_ty);
             self.record_at(place.source_span()).place_ty = Some(existing.clone());
             self.record_at(place.source_span()).binding_ty = Some(existing);

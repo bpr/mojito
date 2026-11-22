@@ -3192,7 +3192,22 @@ the fact (`binds_reference`, and the VM's `var.use` read-through
 address); a place's designated type stays a type question, since a whole
 slot's place may designate the referent. `mir::verify` requires a binding
 to be typed as a reference and, until `!lit.ref` folds into `ref` (R2492),
-every reference-typed slot to be a binding. Opaque structured statements may retain a
+every reference-typed slot to be a binding.
+
+The checker holds the same fact one phase up: `Checker::ref_bindings` is the
+set of owners whose declaration is a `ref` binding — a `ref` local
+(`declare_reference`, from the `RefDecl` arm and the match subject's
+anchor), a `ref` or bare destructuring leaf, and a loop or comprehension
+target the iteration plan binds by `BorrowReference`
+(`declare_loop_binder`). A name reads through to its referent only when
+its owner is recorded (`lookup_ref_binding`; `owner_binds_reference` for a
+capture, which holds only the owner); a binding typed `TyKind::Ref` by any
+other declaration is a value binding. The binding's published type stays
+`TyKind::Ref`, the reference value it holds, as upstream's is `!lit.ref`.
+A module-scope `ref` binding has no interface carrier, so a package refuses
+to export one.
+
+Opaque structured statements may retain a
 source spelling after HIR has assigned a shadowed declaration a suffixed slot,
 so MIR resolves identifier writes through the checked `OwnerId` exactly as it
 does reads; the two halves of augmented assignment cannot select different

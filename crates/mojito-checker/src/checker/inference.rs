@@ -344,10 +344,9 @@ impl Checker {
                 });
             }
             // The walrus yields its destination, read at the variable's type.
-            let destination = match existing.kind() {
-                TyKind::Ref(reference) => reference.referent.clone(),
-                _ => existing,
-            };
+            let destination = self
+                .lookup_ref_binding(name)
+                .map_or(existing, |reference| reference.referent.clone());
             self.record_at(expression.source_span()).ty = Some(destination);
             return Ok(());
         }
@@ -618,10 +617,10 @@ impl Checker {
             ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
                 self.infer_reference_value(inner)
             }
-            ExprKind::Identifier(name) => match self.lookup(name).map(Ty::kind) {
-                Some(TyKind::Ref(reference)) => Some(reference.clone()),
-                _ => self.lookup_reference_parameter(name),
-            },
+            ExprKind::Identifier(name) => self
+                .lookup_ref_binding(name)
+                .cloned()
+                .or_else(|| self.lookup_reference_parameter(name)),
             ExprKind::Member { object, field } => {
                 let object_ty = self.infer(object).ok()?;
                 let (name, _) = object_ty.kind().as_non_pointer_struct()?;
@@ -1287,9 +1286,9 @@ impl Checker {
                 // the generator it is, the runtime closure each call through
                 // it binds.
                 self.lookup(name)
-                    .map(|ty| match ty.kind() {
-                        TyKind::Ref(reference) => reference.referent.clone(),
-                        _ => ty.clone(),
+                    .map(|ty| {
+                        self.lookup_ref_binding(name)
+                            .map_or_else(|| ty.clone(), |reference| reference.referent.clone())
                     })
                     .map(|ty| self.bake_value_transfer_effects(name, ty))
                     .map_or_else(

@@ -785,6 +785,14 @@ pub struct Checker {
     /// the yielded element by reference, as upstream, so it is no tracked
     /// root a `^` may move out of.
     reference_binders: HashSet<mojito_types::origin::OwnerId>,
+    /// The owners whose declaration is a `ref` binding (a `ref` local, a
+    /// `ref` or bare destructuring leaf, a loop or comprehension target
+    /// that borrows its element): as upstream's `ref` declaration binds a
+    /// `!lit.ref` value and makes every use of its name an lvalue of the
+    /// referent, a read of such a name reads through. The declaration
+    /// decides it, never the binding's `TyKind::Ref` type
+    /// ([`Self::lookup_ref_binding`]).
+    ref_bindings: HashSet<mojito_types::origin::OwnerId>,
     /// Whether each function's positional collector is `var`, by name, for
     /// the ownership a forwarded pack must match (`TyKind::GenericFunc` carries
     /// the regular conventions only). A name whose overloads disagree is
@@ -1242,6 +1250,7 @@ impl Checker {
             nested_applications: HashMap::new(),
             nested_symbols: HashMap::new(),
             reference_binders: HashSet::new(),
+            ref_bindings: HashSet::new(),
             owned_collectors: declaration_table::DeclarationTable::default(),
             collector_names: declaration_table::DeclarationTable::default(),
             compile_time_bindings: vec![HashSet::new()],

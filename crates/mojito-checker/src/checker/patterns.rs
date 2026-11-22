@@ -198,7 +198,10 @@ impl Checker {
         let ty = self.lookup(name).cloned().ok_or_else(|| {
             TypeError::InvariantViolation("the match subject's anchor was not declared".into())
         })?;
-        Ok((anchor, dereferenced(ty), temporary))
+        let ty = self
+            .lookup_ref_binding(name)
+            .map_or(ty, |reference| reference.referent.clone());
+        Ok((anchor, ty, temporary))
     }
 
     /// Make the reference binding `name`, declared by `declaration` over
@@ -212,10 +215,7 @@ impl Checker {
     ) {
         self.set_binding_mutable(name, false);
         self.record_at(value_span).reference_value_use = Some(false);
-        if let Some(ty) = self.lookup(name).cloned()
-            && let TyKind::Ref(reference) = ty.kind()
-        {
-            let mut reference = reference.clone();
+        if let Some(mut reference) = self.lookup_ref_binding(name).cloned() {
             reference.mutability = mojito_types::origin::Mutability::Immutable;
             let ty = Ty::new(TyKind::Ref(reference));
             self.set_binding_type(name, ty.clone());

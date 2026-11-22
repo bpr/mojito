@@ -1562,9 +1562,9 @@ impl Checker {
                     self.record_at(value.source_span()).interior_reference = Some(origin.clone());
                 }
                 self.record_at(value.source_span()).reference_value_use = Some(mutable);
-                let binding_ty = Ty::new(TyKind::Ref(reference));
-                self.record_at(stmt.source_span()).binding_ty = Some(binding_ty.clone());
-                self.declare_with_mutability(name, binding_ty, mutable)?;
+                self.record_at(stmt.source_span()).binding_ty =
+                    Some(Ty::new(TyKind::Ref(reference.clone())));
+                self.declare_reference(name, reference, mutable)?;
                 self.record_statement_binding(stmt, name);
                 Ok(())
             }
@@ -1849,25 +1849,25 @@ impl Checker {
                 } else {
                     self.lookup(name).cloned()
                 };
-                let target = self.rebind_assignment_target(stmt, name, target)?;
+                // A `ref` binding's assignment writes its referent; the
+                // declaration decides it, never the binding's type.
+                let reference = target
+                    .as_ref()
+                    .and_then(|_| self.lookup_ref_binding(name).cloned());
+                let (target, reference) =
+                    self.rebind_assignment_target(stmt, name, target, reference)?;
                 self.record_assignment_rebind(stmt, value);
+                let assigned = reference
+                    .as_ref()
+                    .map(|reference| reference.referent.clone())
+                    .or_else(|| target.clone());
                 // A re-assigned binding's type is the expected context, so a
                 // collection display materializes against it (`values = [40]`
                 // stays `List[Int]` for a List-typed variable).
-                let found = match &target {
-                    Some(target) => {
-                        let expected = match target.kind() {
-                            TyKind::Ref(reference) => reference.referent.clone(),
-                            _ => target.clone(),
-                        };
-                        self.infer_in_context(value, &expected, true)?
-                    }
+                let found = match &assigned {
+                    Some(expected) => self.infer_in_context(value, expected, true)?,
                     None => self.infer(value)?,
                 };
-                let assigned = target.as_ref().map(|target| match target.kind() {
-                    TyKind::Ref(reference) => reference.referent.clone(),
-                    _ => target.clone(),
-                });
                 let conversion_borrows_source =
                     self.storage_conversion_borrows_source(&found, assigned.as_ref());
                 if !conversion_borrows_source {
@@ -1881,12 +1881,12 @@ impl Checker {
                         }
                         // Judged before the old value's invalidation, so the
                         // diagnostic names the aliasing call, not a stale use.
-                        let destination = match target.kind() {
-                            TyKind::Ref(reference) => match &reference.origin {
+                        let destination = match &reference {
+                            Some(reference) => match &reference.origin {
                                 mojito_types::origin::Origin::Place(place) => Some(place.clone()),
                                 _ => None,
                             },
-                            _ => self.lookup_owner(name).map(|root| {
+                            None => self.lookup_owner(name).map(|root| {
                                 mojito_types::origin::OriginPlace {
                                     root,
                                     path: Vec::new(),
@@ -1896,14 +1896,14 @@ impl Checker {
                         if let Some(destination) = destination {
                             self.check_result_aliases_destination(&destination, value)?;
                         }
-                        match target.kind() {
+                        match &reference {
                             // Assignment to a reference binding writes through
                             // the handle; it does not rebind the handle.  Use
                             // the reference's checked origin so replacing a
                             // whole container also expires references into its
                             // owned interior regions.  The handle itself stays
                             // valid across that write.
-                            TyKind::Ref(reference) => {
+                            Some(reference) => {
                                 if let mojito_types::origin::Origin::Place(base) = &reference.origin
                                 {
                                     self.record_origin_invalidation(
@@ -1913,7 +1913,7 @@ impl Checker {
                                     );
                                 }
                             }
-                            _ => {
+                            None => {
                                 if let Some(owner) = self.lookup_owner(name) {
                                     self.record_owner_invalidation(
                                         value.source_span(),
@@ -1923,14 +1923,11 @@ impl Checker {
                                 }
                             }
                         }
-                        let target_is_reference = matches!(target.kind(), TyKind::Ref(_));
-                        if let TyKind::Ref(reference) = target.kind() {
+                        let target_is_reference = reference.is_some();
+                        if let Some(reference) = &reference {
                             self.check_overwritten_referent(name, &reference.referent)?;
                         }
-                        let target = match target.kind() {
-                            TyKind::Ref(reference) => reference.referent.clone(),
-                            _ => target,
-                        };
+                        let target = reference.map_or(target, |reference| reference.referent);
                         // Assigning a closure, or an aggregate storing one,
                         // could move it to an outer binding; a thin function
                         // value captures nothing. A parametric function binds
@@ -2060,8 +2057,7 @@ impl Checker {
                 if !nominal_subscript {
                     self.record_place_write_invalidation(place.source_span(), place);
                 }
-                if let Some(TyKind::Ref(reference)) =
-                    self.place_storage_ty(place).as_ref().map(Ty::kind)
+                if let Some(reference) = self.place_reference_storage(place)
                     && reference.mutability != mojito_types::origin::Mutability::Mutable
                 {
                     return Err(TypeError::ImmutableBinding(
@@ -3861,7 +3857,13 @@ impl Checker {
         let fields: Vec<_> = captures
             .iter()
             .map(|capture| {
-                let ty = capture_referent(&capture.ty).clone();
+                // A capture of a `ref` binding holds its referent.
+                let ty = match capture.ty.kind() {
+                    TyKind::Ref(reference) if self.owner_binds_reference(capture.binding) => {
+                        reference.referent.clone()
+                    }
+                    _ => capture.ty.clone(),
+                };
                 let reference = match capture.kind {
                     CaptureKind::Copy | CaptureKind::Move => None,
                     CaptureKind::Imm | CaptureKind::Mut | CaptureKind::Ref => {
@@ -5008,15 +5010,6 @@ fn conforms_to_deferred(
                     .map(|(name, _)| name),
             )
             .any(|name| trait_is_deferred(stmts, deferred, name))
-}
-
-/// The type a closure's storage holds a capture as: a reference capture's
-/// referent, and any other capture's own type.
-fn capture_referent(ty: &Ty) -> &Ty {
-    match ty.kind() {
-        TyKind::Ref(reference) => &reference.referent,
-        _ => ty,
-    }
 }
 
 /// A function declaration's resolved signature: what binding its name and

@@ -19,6 +19,7 @@
 use super::*;
 use mojito_ast::ast::ParamArg;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
+use mojito_types::origin::RefTy;
 use mojito_types::types::TyKind;
 use mojito_types::types::{erase_origins, is_symbolic};
 
@@ -128,23 +129,25 @@ impl Checker {
 
     /// The type a reassignment of `name` writes when the statement was
     /// `rebind[Dest](name) = value`: the variable's own type retyped to
-    /// `Dest` (behind the handle, for a `ref` binding). A by-value rebind is
-    /// not a place and is rejected as the target.
+    /// `Dest`, behind the handle when `name` is a `ref` binding of
+    /// `reference`. A by-value rebind is not a place and is rejected as the
+    /// target.
     pub(super) fn rebind_assignment_target(
         &self,
         statement: &Stmt,
         name: &str,
         target: Option<Ty>,
-    ) -> Result<Option<Ty>, TypeError> {
+        reference: Option<RefTy>,
+    ) -> Result<(Option<Ty>, Option<RefTy>), TypeError> {
         let Some(rebind) = self
             .rebind_targets
             .assignments
             .get(&statement.source_span())
         else {
-            return Ok(target);
+            return Ok((target, reference));
         };
         let Some(target) = target else {
-            return Ok(None);
+            return Ok((None, None));
         };
         let rebound = |operand: &Ty| {
             if self.rebinds_by_value(operand) {
@@ -152,14 +155,13 @@ impl Checker {
             }
             self.rebound_ty(rebind, operand, &statement.source_span())
         };
-        Ok(Some(match target.kind() {
-            TyKind::Ref(reference) => {
-                let mut reference = reference.clone();
+        match reference {
+            Some(mut reference) => {
                 reference.referent = rebound(&reference.referent)?;
-                TyKind::Ref(reference).into()
+                Ok((Some(TyKind::Ref(reference.clone()).into()), Some(reference)))
             }
-            _ => rebound(&target)?,
-        }))
+            None => Ok((Some(rebound(&target)?), None)),
+        }
     }
 
     /// A rebound whole-variable assignment (`rebind[Dest](x) = value`)

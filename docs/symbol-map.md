@@ -910,6 +910,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/scopes.rs` owns lexical scope, binding declaration/mutability, and
   nested-def capture-access checks (a compile-time binding of a validated
   body — a `comptime for` variable or a value parameter — captures nothing).
+  A `ref` binding is its declaration's fact, `Checker::ref_bindings` by
+  owner: `declare_reference` (a `ref` local or destructuring leaf) and
+  `declare_loop_binder` (a `BorrowReference` target) record it, and
+  `lookup_ref_binding` / `owner_binds_reference` are how every reader asks
+  whether a name reads through, never by its `TyKind::Ref` type;
+  `indexing.rs` `place_reference_storage` asks it of a place.
   `in_signature_scope` is a signature's value scope: the receiver and each
   parameter (`param_tys`, `statements.rs`) are declared, without storage,
   as their annotations resolve, so a later annotation or the result reads

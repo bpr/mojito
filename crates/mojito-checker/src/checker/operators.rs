@@ -1195,7 +1195,7 @@ impl Checker {
             return Ok(PlaceAddress::Provenance(reference.referent, origin));
         }
         if let ExprKind::Identifier(name) = &value.kind
-            && (matches!(self.lookup(name).map(Ty::kind), Some(TyKind::Ref(_)))
+            && (self.lookup_ref_binding(name).is_some()
                 || self.lookup_reference_parameter(name).is_some())
         {
             // A `ref` binding names a borrowed region, not owned storage, so

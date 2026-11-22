@@ -421,9 +421,7 @@ impl Checker {
             };
             if let Some(origin) = origins.get(index).and_then(Clone::clone) {
                 let except = match &expression.kind {
-                    ExprKind::Identifier(name)
-                        if matches!(self.lookup(name).map(Ty::kind), Some(TyKind::Ref(_))) =>
-                    {
+                    ExprKind::Identifier(name) if self.lookup_ref_binding(name).is_some() => {
                         self.lookup_owner(name)
                     }
                     _ => None,

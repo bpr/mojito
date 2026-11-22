@@ -424,10 +424,10 @@ impl Checker {
         if super::is_closure_storage(ty) || self.is_compile_time_binding(root) {
             return Ok(TransferVerdict::PlaceMove);
         }
-        let Some(binding) = self.lookup(root) else {
+        if self.lookup(root).is_none() {
             return Ok(TransferVerdict::PassThrough);
-        };
-        if matches!(binding.kind(), TyKind::Ref(_))
+        }
+        if self.lookup_ref_binding(root).is_some()
             || self
                 .lookup_owner(root)
                 .is_some_and(|owner| self.reference_binders.contains(&owner))

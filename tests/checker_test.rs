@@ -1675,6 +1675,19 @@ fn rejects_transfer_out_of_read_parameter_but_allows_owned_and_trivial() {
 }
 
 #[test]
+fn every_ref_declaration_reads_through_its_name() {
+    // A `ref` local, a `ref` destructuring leaf, a borrowing loop target,
+    // and a capture of a `ref` local each read and write their referent:
+    // the declaration makes the name an lvalue of the referent.
+    ok_std(
+        "def main():\n    var x = 1\n    ref r = x\n    r += 1\n    r = 5\n    \
+         var y: Int = r\n    var t = (1, 2)\n    ref (a, b) = t\n    var c: Int = a + b\n    \
+         var xs = [1, 2]\n    for ref e in xs:\n        e += y + c\n    \
+         def show() {r}:\n        var z: Int = r\n        print(z)\n    show()\n",
+    );
+}
+
+#[test]
 fn transfer_needs_a_tracked_root_and_no_indirect_capture() {
     for source in [
         "def f(mut s: String) -> String:\n    ref r = s\n    return r^\n",

@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::origin::RefTy;
 use mojito_types::types::FuncTy;
 use mojito_types::types::TyKind;
 
@@ -81,12 +82,50 @@ impl Checker {
         plan: &mojito_checked::checked::CheckedIterationBinding,
     ) -> Result<(), TypeError> {
         self.declare_with_mutability(name, plan.binding_ty.clone(), plan.mutable)?;
-        if plan.mode != mojito_ast::ast::BindingMode::Var
-            && let Some(owner) = self.lookup_owner(name)
-        {
+        let Some(owner) = self.lookup_owner(name) else {
+            return Ok(());
+        };
+        if plan.mode != mojito_ast::ast::BindingMode::Var {
             self.reference_binders.insert(owner);
         }
+        if plan.action == mojito_checked::checked::IterationBindingAction::BorrowReference {
+            self.ref_bindings.insert(owner);
+        }
         Ok(())
+    }
+
+    /// Bind `name` as upstream's `ref` declaration binds it: a `!lit.ref`
+    /// value of type `reference` whose every use reads through to its
+    /// referent ([`Self::lookup_ref_binding`]).
+    pub(super) fn declare_reference(
+        &mut self,
+        name: &str,
+        reference: RefTy,
+        mutable: bool,
+    ) -> Result<(), TypeError> {
+        self.declare_with_mutability(name, TyKind::Ref(reference).into(), mutable)?;
+        if let Some(owner) = self.lookup_owner(name) {
+            self.ref_bindings.insert(owner);
+        }
+        Ok(())
+    }
+
+    /// The reference `name` binds when its declaration is a `ref` binding,
+    /// the one binding a read of whose name reads through to its referent;
+    /// `None` for every other binding, whatever its type.
+    pub(super) fn lookup_ref_binding(&self, name: &str) -> Option<&RefTy> {
+        self.lookup_owner(name)
+            .filter(|owner| self.ref_bindings.contains(owner))
+            .and_then(|_| match self.lookup(name).map(Ty::kind) {
+                Some(TyKind::Ref(reference)) => Some(reference),
+                _ => None,
+            })
+    }
+
+    /// Whether `owner`'s declaration is a `ref` binding, for the consumers
+    /// that hold a binding's owner after its scope is gone (a capture).
+    pub(super) fn owner_binds_reference(&self, owner: mojito_types::origin::OwnerId) -> bool {
+        self.ref_bindings.contains(&owner)
     }
 
     /// Bind every value parameter among `decls` at its declared type, a

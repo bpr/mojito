@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::origin::RefTy;
 use mojito_types::types::TyKind;
 
 /// A nominal subscript as an assignment target, as upstream's
@@ -114,6 +115,21 @@ impl Checker {
         result
     }
 
+    /// The reference a place's storage holds: a named place's when its
+    /// declaration is a `ref` binding ([`Self::lookup_ref_binding`]), a
+    /// field's or element's when its storage type is a reference.
+    pub(super) fn place_reference_storage(&self, place: &Expr) -> Option<RefTy> {
+        match &place.kind {
+            ExprKind::Identifier(name) => self.lookup_ref_binding(name).cloned(),
+            _ => self
+                .place_storage_ty(place)
+                .and_then(|ty| match ty.into_kind() {
+                    TyKind::Ref(reference) => Some(reference),
+                    _ => None,
+                }),
+        }
+    }
+
     pub(super) fn place_storage_ty(&self, place: &Expr) -> Option<Ty> {
         match &place.kind {
             ExprKind::Identifier(name) => self.lookup(name).cloned(),
@@ -174,9 +190,9 @@ impl Checker {
                     return Err(TypeError::ImmutableBinding(name.clone()));
                 }
                 self.lookup(name)
-                    .map(|ty| match ty.kind() {
-                        TyKind::Ref(reference) => reference.referent.clone(),
-                        _ => ty.clone(),
+                    .map(|ty| {
+                        self.lookup_ref_binding(name)
+                            .map_or_else(|| ty.clone(), |reference| reference.referent.clone())
                     })
                     .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
             }

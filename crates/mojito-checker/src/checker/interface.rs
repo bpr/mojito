@@ -1084,6 +1084,19 @@ impl Checker {
                 "compile-time displays",
                 scope_names(&self.local_comptime_displays),
             ),
+            (
+                "reference bindings",
+                self.owner_scopes
+                    .first()
+                    .map(|scope| {
+                        scope
+                            .iter()
+                            .filter(|(_, owner)| self.ref_bindings.contains(owner))
+                            .map(|(name, _)| name.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            ),
         ];
         for (table, names) in uncarried {
             if let Some(name) = names.iter().find(|name| modules.module_of(name).is_some()) {
