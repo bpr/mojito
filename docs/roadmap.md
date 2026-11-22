@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2504**.
+Next free ID: **R2505**.
 
 ## Ordered Work
 
@@ -11227,19 +11227,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2491 A callable's `ref` result is a reference because its result
-  type is `TyKind::Ref`, where upstream reads the result convention**
+- [ ] **R2504 The checked callable display drops a `ref` result, so a
+  `ref`-result contract spells and keys as a value-result one**
 
-  A `-> ref[...]` result is typed `TyKind::Ref`, and its callers peel the
-  type rather than read the callee's result convention.
-  - Read `DeclarationEffect::returns_reference`
-    (`mojito-checked/checked.rs`) and the `ReferenceResult` adjustment.
-  - Sites: `indexing.rs`'s getter result arms, `call_inference.rs`,
-    `symbol.rs`'s reference-result spelling, and mono
-    `substitute.rs`/`unify.rs`.
-  - Found while landing R2211 (2026-11-21).
+  `write_callable` (`mojito-types/types.rs`) prints `-> {ret}` and ignores
+  `FuncTy::ref_return`, where upstream's function type carries its result
+  convention.
+  - `ty_raw_in` (`symbol.rs`) keys a callable bound through that display,
+    so `def(ref a: Int) -> ref[a] Int` and `def(ref a: Int) -> Int` bounds
+    key alike (`apply$ov$F$Callable$def$Int$$$$$Int…`).
+  - The declaration side spells it: `annotation_display`'s `Type::Ref`
+    arm writes `ref T` for a `def(...)` annotation key.
+  - Probe: two overloads of one function whose callable bounds differ
+    only in a `ref` result.
+  - Found while landing R2491 (2026-11-22).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2492 `TyKind::LitRef` is a second reference type beside
   `TyKind::Ref`, where upstream's `!lit.ref` is the one reference type**
@@ -11264,7 +11267,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     value initializes (`mir.rs`), a comprehension's yield slot
     (`lower_expr/ctrl.rs`), and `inline-parametric`'s
     `HandleSource::Register` binding, which tells a `ref` handle from a
-    pointer by its type.
+    pointer by its type. The two yield slots can read the protocol's
+    `next.reference_result`, as the checker's iteration plan does.
   - A whole-slot MIR place can designate its referent with no
     `through` (`inline-parametric`'s `bound_place` meets one), so place
     readers still take the read-through from `place.ty`: the VM's

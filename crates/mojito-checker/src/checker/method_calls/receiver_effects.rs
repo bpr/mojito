@@ -131,6 +131,36 @@ impl Checker {
         mutability == mojito_types::origin::Mutability::Mutable
     }
 
+    /// Record that the call at `span` returns `reference` by its `ref`
+    /// result convention, as upstream's `lit.call` hands back the
+    /// `!lit.ref` the expression reads through, and give the referent as
+    /// the expression's type. A call carrying another checked adjustment
+    /// has no slot for its result convention and is rejected.
+    pub(in crate::checker) fn record_reference_result(
+        &self,
+        span: &SourceSpan,
+        reference: mojito_types::origin::RefTy,
+    ) -> Result<Ty, TypeError> {
+        let occupied = self
+            .fact(span, |facts| facts.adjustment.as_deref())
+            .is_some_and(|adjustment| {
+                !matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
+                )
+            });
+        if occupied {
+            return Err(TypeError::Unsupported(
+                "a reference result of a call carrying another checked adjustment".to_string(),
+            ));
+        }
+        let referent = reference.referent.clone();
+        self.record_at(span.clone()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference },
+        ));
+        Ok(referent)
+    }
+
     /// A `ref self` receiver classifies as an immutable access for
     /// ownership unless the call needs the receiver's mutable capability
     /// for a reference result (whose loan carries the receiver's
@@ -555,11 +585,7 @@ impl Checker {
             mutability: mutable,
             address_space: signature.address_space.clone(),
         };
-        self.record_at(span.clone()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::ReferenceResult {
-                reference: reference.clone(),
-            },
-        ));
+        self.record_reference_result(span, reference.clone())?;
         // Iterator refinement: a `ref`-returning `__next__` satisfying a
         // by-value `Self.Element` contract is read out as a checked copy
         // (`CopyIteratorReference`). The generic body sees only the

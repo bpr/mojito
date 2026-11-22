@@ -75,7 +75,15 @@ impl Checker {
                     .to_string(),
             ));
         }
-        protocol.binding = Some(Box::new(self.iteration_binding_plan(binding, &yielded_ty)?));
+        let reference = protocol
+            .next
+            .as_deref()
+            .and_then(|next| next.reference_result.as_ref());
+        protocol.binding = Some(Box::new(self.iteration_binding_plan(
+            binding,
+            &yielded_ty,
+            reference,
+        )?));
         Ok((protocol, raises))
     }
 
@@ -93,18 +101,21 @@ impl Checker {
         (source, mutable)
     }
 
-    /// Combine a target convention with the exact checked `__next__` result.
-    /// This is the single matrix shared by statements and comprehensions.
+    /// Combine a target convention with the exact checked `__next__` result:
+    /// `yielded_ty`, and the `reference` it returns by its `ref` result
+    /// convention, if any. This is the single matrix shared by statements
+    /// and comprehensions.
     pub(super) fn iteration_binding_plan(
         &self,
         mode: mojito_ast::ast::BindingMode,
         yielded_ty: &Ty,
+        reference: Option<&mojito_types::origin::RefTy>,
     ) -> Result<mojito_checked::checked::CheckedIterationBinding, TypeError> {
         use mojito_ast::ast::BindingMode;
         use mojito_checked::checked::{CheckedIterationBinding, IterationBindingAction};
         use mojito_types::origin::Mutability;
 
-        if let TyKind::Ref(reference) = yielded_ty.kind() {
+        if let Some(reference) = reference {
             return match mode {
                 BindingMode::Immutable => {
                     let mut binding = reference.clone();

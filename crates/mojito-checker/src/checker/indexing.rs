@@ -1283,10 +1283,7 @@ impl Checker {
                     "__getitem__",
                     MethodCallArguments::ordinary(&[], &[]),
                 )?;
-                return Ok(match result.kind() {
-                    TyKind::Ref(reference) => reference.referent.clone(),
-                    _ => result,
-                });
+                return Ok(result);
             }
             return Err(TypeError::NotIndexable(obj_ty.to_string()));
         }
@@ -1426,15 +1423,7 @@ impl Checker {
                     std::slice::from_ref(index),
                     &obj_ty,
                 )?;
-                // A source `ref[...] T` subscript result is a reference handle
-                // only in a reference-valued context. Ordinary expression
-                // inference reads through it to `T`; `RefDecl` and aggregate
-                // storage recover the checked handle from the interior-origin
-                // and place-type facts recorded above.
-                return Ok(match result.kind() {
-                    TyKind::Ref(reference) => reference.referent.clone(),
-                    _ => result,
-                });
+                return Ok(result);
             }
             return Err(TypeError::NotIndexable(obj_ty.to_string()));
         }
@@ -1495,7 +1484,7 @@ impl Checker {
     /// subscript read — the shared entry for `infer_index`'s tail and the bare
     /// element-call re-dispatch, generalized to the multi-index arity. Records
     /// the interior-reference fact for list/dict-backed receivers and returns
-    /// the getter's raw result type; callers read through `TyKind::Ref`.
+    /// the getter's result, read through a `ref` result.
     pub(super) fn infer_struct_getitem_call(
         &self,
         span: SourceSpan,
@@ -1512,17 +1501,15 @@ impl Checker {
         // A view-typed result (a `Span` over a `ContiguousSlice` index)
         // stays borrowed from its receiver's sources; a referent the getter
         // returns by reference is no view, whatever loans its type carries.
-        let returns_reference = matches!(result.kind(), TyKind::Ref(_))
-            || self
-                .fact(&span, |facts| facts.selected_call.as_deref())
-                .is_some_and(|getter| getter.reference_result.is_some());
-        if !returns_reference && self.type_carries_loans(&result) {
+        let element = self
+            .fact(&span, |facts| facts.selected_call.as_deref())
+            .is_some_and(|getter| getter.reference_result.is_some());
+        if !element && self.type_carries_loans(&result) {
             self.record_borrowed_view_result(&span, &result);
             return Ok(result);
         }
         // An owned result (a `StridedSlice` copy) is no interior of the
         // receiver.
-        let element = matches!(result.kind(), TyKind::Ref(_));
         if element && list_element(obj_ty).is_some() {
             self.record_interior_reference(span, object, "element");
         } else if element && dict_elements(obj_ty).is_some() {
@@ -2291,10 +2278,9 @@ impl Checker {
     fn record_borrowed_view_result(&self, span: &SourceSpan, result: &Ty) {
         // A referent the getter returns by reference is no view, whatever
         // loans its type carries.
-        let returns_reference = matches!(result.kind(), TyKind::Ref(_))
-            || self
-                .fact(span, |facts| facts.selected_call.as_deref())
-                .is_some_and(|getter| getter.reference_result.is_some());
+        let returns_reference = self
+            .fact(span, |facts| facts.selected_call.as_deref())
+            .is_some_and(|getter| getter.reference_result.is_some());
         if returns_reference || !self.type_carries_loans(result) {
             return;
         }

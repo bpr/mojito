@@ -1517,30 +1517,19 @@ impl Checker {
     ) -> Result<(), TypeError> {
         match &stmt.kind {
             StmtKind::RefDecl { name, value } => {
-                let ty = self.infer(value)?;
+                self.infer(value)?;
                 // A sugar the check spelled binds the construction it spells
                 // (`f(x)` over a callable struct, its `f.__call__(x)`).
                 let spelled = self.spelled_construction(value);
                 let value = spelled.as_ref().unwrap_or(value);
-                let reference = match ty.into_kind() {
-                    TyKind::Ref(reference) => reference,
-                    _ => {
-                        // Ordinary expression inference reads through a
-                        // reference-returning method to its referent.  The
-                        // method call nevertheless left an exact checked
-                        // `ReferenceResult` adjustment, which a `ref` binding
-                        // must retain instead of trying to reinterpret the call
-                        // expression as a syntactic place. The materializing
-                        // variant consumes that checked result, remains the
-                        // shared fallback for an ordinary place binding, and
-                        // accepts an owned temporary (`ref x = make_list()`)
-                        // by minting it a hidden owned slot, upstream's
-                        // temporary-lifetime rule.
-                        self.materialized_reference_actual(value)?
-                    }
-                };
+                // A call's `ref` result left its checked `ReferenceResult`,
+                // which the binding retains instead of reinterpreting the
+                // call as a syntactic place. The materializing reading
+                // consumes that result, binds an ordinary place, and accepts
+                // an owned temporary (`ref x = make_list()`) by minting it a
+                // hidden owned slot, upstream's temporary-lifetime rule.
+                let mut reference = self.materialized_reference_actual(value)?;
                 // An erased `rebind` retypes the referent the binding views.
-                let mut reference = reference;
                 reference.referent = self.apply_rebind_target(value, reference.referent.clone())?;
                 let mutable = reference.mutability == mojito_types::origin::Mutability::Mutable;
                 // A reference to an ordinary projection below a named owned

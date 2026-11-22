@@ -543,22 +543,6 @@ impl Checker {
         Ok((effective, returned, bool_bindings))
     }
 
-    /// A free call's result type: `referent`, or the reference `returned`
-    /// to it.
-    #[must_use]
-    pub(in crate::checker) fn call_result_ty(
-        returned: Option<mojito_types::origin::RefTy>,
-        referent: Ty,
-    ) -> Ty {
-        match returned {
-            Some(mut reference) => {
-                reference.referent = referent;
-                TyKind::Ref(reference).into()
-            }
-            None => referent,
-        }
-    }
-
     /// A callee's ref-return signature with its implicit pack origin
     /// (`ref[args.origin]`) bound to the places of the arguments its `read`
     /// collector gathers (`overflow`, positions in `args`), as upstream's

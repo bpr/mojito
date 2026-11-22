@@ -520,7 +520,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   receivers that answer without a declared signature, `resolution.rs`
   selects a signature per receiver family (struct, bound, builtin),
   `receiver_effects.rs` checks the receiver
-  and argument conventions and builds the reference result (a
+  and argument conventions and builds the reference result, recorded by
+  `record_reference_result`, the one place a call's `ref` result is
+  recorded (a
   `ref[Self.o]` result over `o: Origin[mut=m]` takes the receiver
   instance's `mut`, `receiver_bool_argument`, else the resolved origin's
   `decided_origin_mutability`, `origins/construct.rs`), and
@@ -645,7 +647,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `__UninitStorage[T]` write/take/destroy crossings behind
   `MaybeUninit`).
 - `checker/call_inference.rs` owns free-function and callable-value call
-  inference (`infer_call`, generic-call instantiation). A call whose callee
+  inference (`infer_call`, generic-call instantiation); a `ref`-result
+  callee's call records its result through `record_reference_result` in
+  the tails of `infer_callable_ty` and `infer_generic_call`. A call whose callee
   is a struct value declaring `__call__`, or a value of a type parameter
   whose bounds declare it, is spelled as its `__call__` method call and
   recorded as a `SpelledConstruction` (`infer_call_method`, reached by

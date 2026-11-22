@@ -528,7 +528,6 @@ impl Checker {
         let result = self
             .infer_impl(expr)
             .and_then(|ty| self.apply_rebind_target(expr, ty))
-            .map(|ty| self.read_through_call_reference(expr, ty))
             .map(|ty| match expr.kind {
                 ExprKind::MethodCall { .. } | ExprKind::Invoke { .. } => {
                     self.settle_symbolic_cast_pointer(ty)
@@ -3319,13 +3318,6 @@ impl Checker {
         }
     }
 
-    /// A free call returning `ref T` read as a value, as a reference-returning
-    /// method call is: its type is the referent, and the call is marked a
-    /// `ReferenceResult` (`infer` then records the copyable read), so
-    /// lowering copies the referent out of the handle, the deferred read
-    /// check demands `ImplicitlyCopyable`, and a context that keeps the
-    /// handle (`ref r = f(x)`, a forwarded `return`) still finds it through
-    /// `infer_reference_value`. Any other expression keeps `found`.
     /// The metatype of a type binder or a trait named as an expression, as
     /// upstream types the reference: a binder `T: Copyable` reads as a
     /// `Copyable` value, and a trait, a trait constant, or a `&`
@@ -3347,35 +3339,6 @@ impl Checker {
         (name != "_" && self.denotes_type_value(expr))
             .then(|| self.denoted_type(expr, "a type read as a value"))
             .map(|ty| ty.map(|ty| self.metatype_of(ty)))
-    }
-
-    fn read_through_call_reference(&self, value: &Expr, found: Ty) -> Ty {
-        let TyKind::Ref(reference) = found.kind() else {
-            return found;
-        };
-        let span = value.source_span();
-        if !matches!(value.kind, ExprKind::Call { .. })
-            || self
-                .node_facts
-                .borrow()
-                .get(&span)
-                .and_then(|facts| facts.adjustment.as_deref())
-                .is_some_and(|adjustment| {
-                    !matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                    )
-                })
-        {
-            return TyKind::Ref(reference.clone()).into();
-        }
-        let referent = reference.referent.clone();
-        self.record_at(span).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::ReferenceResult {
-                reference: reference.clone(),
-            },
-        ));
-        referent
     }
 
     /// `found`, unless `value` is a run-time call returning `!kgen.deferred`

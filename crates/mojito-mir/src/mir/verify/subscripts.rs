@@ -341,20 +341,16 @@ pub(super) fn verify_subscript_call(
             ));
         }
     }
-    let retained_reference_ty = call
+    if let Some(expected) = call
         .reference_result
         .as_ref()
-        .map(|reference| TyKind::Ref(reference.clone()));
-    match &retained_reference_ty {
-        Some(expected) if &call.result_ty != expected => errors.push(format!(
+        .map(|reference| Ty::from(TyKind::Ref(reference.clone())))
+        && call.result_ty != expected
+    {
+        errors.push(format!(
             "{prefix}: subscript reference-result metadata {expected} does not match selected result type {}",
             call.result_ty
-        )),
-        None if matches!(call.result_ty.kind(), TyKind::Ref(_)) => errors.push(format!(
-            "{prefix}: subscript selected result type {} lacks reference-result metadata",
-            call.result_ty
-        )),
-        _ => {}
+        ));
     }
     if let Some(dest) = dest
         && let Some(found) = function.reg_types.get(&dest.0)

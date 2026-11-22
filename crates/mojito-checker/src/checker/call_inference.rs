@@ -838,10 +838,7 @@ impl Checker {
             },
         };
         let element = super::initializer_list::spelled_node(call, 2, subscript, call.span);
-        let element_ty = match self.infer(&element).ok()?.into_kind() {
-            TyKind::Ref(reference) => reference.referent,
-            kind => Ty::new(kind),
-        };
+        let element_ty = self.infer(&element).ok()?;
         self.infer_call_method(call, element, &element_ty, args, kwargs)
     }
 
@@ -1550,12 +1547,8 @@ impl Checker {
         for (position, index) in indices.iter().enumerate() {
             self.prepare_index_argument(receiver_ty, index, "__getitem__", position)?;
         }
-        let result =
+        let element_ty =
             self.infer_struct_getitem_call(span.clone(), receiver, indices, receiver_ty)?;
-        let element_ty = match result.kind() {
-            TyKind::Ref(reference) => reference.referent.clone(),
-            _ => result,
-        };
         let getter = self
             .clear_fact(&span, |facts| facts.selected_call.take().map(|fact| *fact))
             .ok_or_else(|| {
@@ -1907,7 +1900,7 @@ impl Checker {
             None,
         );
 
-        let result = Self::call_result_ty(return_ref, ret);
+        let result = self.free_call_result(span, return_ref, ret)?;
         Ok((
             result,
             concrete_overload_rank(score, variadic.is_some() || has_kw_collector, &declared)
@@ -2231,7 +2224,7 @@ impl Checker {
             // over the caller's own pack.
             referent = self.close_pack_elements(referent, &[(decls, &tyargs)]);
         }
-        let result = Self::call_result_ty(return_ref, referent);
+        let result = self.free_call_result(span, return_ref, referent)?;
         let error = error.as_ref().map(resolve).transpose()?;
         self.call_bindings
             .borrow_mut()
@@ -2264,6 +2257,26 @@ impl Checker {
             attributes,
             generic.clone(),
         ))
+    }
+
+    /// A free call's result: `referent`, read through the reference it
+    /// `returned` by its `ref` result convention, which the call records.
+    fn free_call_result(
+        &self,
+        span: &SourceSpan,
+        returned: Option<mojito_types::origin::RefTy>,
+        referent: Ty,
+    ) -> Result<Ty, TypeError> {
+        match returned {
+            Some(reference) => self.record_reference_result(
+                span,
+                mojito_types::origin::RefTy {
+                    referent,
+                    ..reference
+                },
+            ),
+            None => Ok(referent),
+        }
     }
 
     /// The `where` clauses of `binders`' origin `mut=` binders, the last

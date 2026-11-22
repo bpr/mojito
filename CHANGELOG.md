@@ -2327,6 +2327,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call's `ref` result is a reference because the callee's result
+  convention says so, as upstream's `lit.call` decides, instead of because
+  its result type is `TyKind::Ref`. Free and indirect calls record the
+  `ReferenceResult` where they bind their result, as method calls did;
+  getter, element-call, `ref` binding, and iteration readers ask the
+  recorded convention; the MIR subscript verifier no longer infers it
+  from the type; and the elaborator peels a destination's reference only
+  for a `ref` callee without a result adapter. No accepted program
+  changes (R2491).
 - A struct field is a reference because its declaration says `ref`,
   `StructInfo::ref_fields`, as upstream's `ref` declaration decides,
   instead of because its type is `TyKind::Ref`. Field reads, stores,

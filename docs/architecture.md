@@ -3221,6 +3221,23 @@ when the field is recorded, never because its type is `TyKind::Ref`; a
 constructor (`lower_fieldwise_members`) takes a `ref` parameter from the
 published `CheckedField::fieldwise_convention`.
 
+A call's result is a reference by the same rule: the callee's `ref`
+result convention, never its result type. The check records
+`SemanticAdjustment::ReferenceResult` where the call binds its result
+(`Checker::record_reference_result`, from `method_reference_result` and
+the free-call tails of `infer_callable_ty`/`infer_generic_call`) and types
+the expression as the referent; a getter's view and interior facts, an
+element call, and a `ref` binding read that recorded convention. The
+iteration plan (`iteration_binding_plan`) reads
+`CheckedIteratorCall::reference_result`, and the elaborator's
+`unify_result` peels a destination's reference only when the callee
+returns one and no result adapter copies the referent out. The executable
+result types (`CheckedCallContract::result_ty`,
+`MirSubscriptCall::result_ty`, a call's destination register) stay the
+reference value, as upstream's `lit.call` returns `!lit.ref`; no reader
+takes the convention from them, so a call returning a reference-typed
+value is an rvalue of that type.
+
 Opaque structured statements may retain a
 source spelling after HIR has assigned a shadowed declaration a suffixed slot,
 so MIR resolves identifier writes through the checked `OwnerId` exactly as it

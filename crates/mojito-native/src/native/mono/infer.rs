@@ -91,11 +91,16 @@ impl Specializer<'_> {
         if !self.functions.contains_key(target.as_str()) {
             return Ok(None);
         }
-        // The checker-selected result fact is the authoritative anchor even
-        // for a reference result. `unify_result` peels the handle layer, so a
-        // bare implicit-view receiver can recover its owner element type from
-        // `ref Int` without confusing it with a reference-valued element.
-        let result = Some(&call.result_ty);
+        // The checker-selected result fact is the authoritative anchor: the
+        // referent of a `ref` result, read by the call's result convention,
+        // else the value result, so a bare implicit-view receiver recovers
+        // its owner element type without confusing a reference result with
+        // a reference-valued element.
+        let result = Some(
+            call.reference_result
+                .as_ref()
+                .map_or(&call.result_ty, |reference| &reference.referent),
+        );
         let callable_parameter =
             self.declarations[target.as_str()]
                 .argument_binders()
@@ -161,7 +166,7 @@ impl Specializer<'_> {
                 function,
                 &target,
                 Some(receiver),
-                dest.unwrap_or(receiver),
+                (dest.unwrap_or(receiver), false),
                 (operands.registers, None),
                 &[],
                 &call.param_arg_regs,
@@ -244,7 +249,7 @@ impl Specializer<'_> {
         caller: &MirFunction,
         target: &str,
         receiver: Option<Reg>,
-        dest: Reg,
+        (dest, adapted): (Reg, bool),
         (args, collector): (&[Reg], Option<usize>),
         kwargs: &[(String, Reg)],
         param_args: &[mojito_mir::mir::MirParamArg],
@@ -480,12 +485,15 @@ impl Specializer<'_> {
         if receiver != Some(dest)
             && let Some(actual) = caller.reg_types.get(&dest.0)
         {
-            unify_result(&declaration.ret_ty, actual, &mut bindings).map_err(|e| {
-                self.error(
-                    Some(owner),
-                    format!("monomorphizing `{target}` return: {e}"),
-                )
-            })?;
+            let holds_reference = declaration.returns_reference && !adapted;
+            unify_result(&declaration.ret_ty, actual, holds_reference, &mut bindings).map_err(
+                |e| {
+                    self.error(
+                        Some(owner),
+                        format!("monomorphizing `{target}` return: {e}"),
+                    )
+                },
+            )?;
         }
         if bindings.self_instance.is_none()
             && let Some(receiver_pattern) = receiver_pattern_for_instance.as_ref()
@@ -713,7 +721,7 @@ impl Specializer<'_> {
                 .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
         }
         if let Some(result) = demand.result {
-            unify_result(&declaration.ret_ty, result, &mut bindings).map_err(|e| {
+            unify_result(&declaration.ret_ty, result, false, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing `{target}` return: {e}"),

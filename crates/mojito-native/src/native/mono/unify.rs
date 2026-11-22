@@ -739,33 +739,27 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
     }
 }
 
-/// Unify a callee's declared result against the caller's checked result type,
-/// stripping `ref` layers on both sides first: a reference-returning call
-/// spells its declared referent and the checked handle with differing layers.
+/// Unify a callee's declared result against the caller's checked result type.
+/// The declared result is the referent of a `ref` result; when the caller's
+/// result `holds_reference` (the callee returns by its `ref` result
+/// convention and no adapter copies the referent out), the caller holds the
+/// reference to it, whose one layer is peeled. Any other result, a
+/// reference-typed value included, unifies as it stands.
 pub(super) fn unify_result(
     pattern: &Ty,
     actual: &Ty,
+    holds_reference: bool,
     bindings: &mut Bindings,
 ) -> Result<(), String> {
-    let mut pattern = pattern;
-    while let TyKind::Ref(reference) = pattern.kind() {
-        pattern = &reference.referent;
-    }
-    let mut actual = actual;
-    while let TyKind::Ref(reference) = actual.kind() {
-        actual = &reference.referent;
-    }
-    // A container element may itself be a reference. Receiver inference has
-    // then already bound `T = ref U`, while the checker-flattened reference
-    // result is spelled `ref U`; stripping its handle above leaves `U`.
-    // Preserve the established element solution instead of mistaking the
-    // flattened handle for a conflicting `T = U` solution.
-    if let TyKind::Param { binder, .. } = pattern.kind()
-        && let Some(TyKind::Ref(reference)) = bindings.types.get(binder).map(Ty::kind)
-        && ty_equal_modulo_origins(&reference.referent, actual)
-    {
-        return Ok(());
-    }
+    let actual = match actual.kind() {
+        TyKind::Ref(reference) if holds_reference => &reference.referent,
+        _ if holds_reference => {
+            return Err(format!(
+                "a `ref` result of `{pattern}` held by a non-reference destination `{actual}`"
+            ));
+        }
+        _ => actual,
+    };
     unify(pattern, actual, bindings)
 }
 
