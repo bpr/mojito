@@ -1815,13 +1815,17 @@ fn lower_fieldwise_members(
         .iter()
         .map(|field| (field.field, field.ty.clone(), field.convention))
         .collect();
-    let referent = |ty: &Ty| match ty.kind() {
-        TyKind::Ref(reference) => Some(reference.referent.clone()),
+    // A `ref` parameter, as the check publishes it for a field declared
+    // `ref`, binds the field's referent.
+    let referent = |ty: &Ty, convention: Option<ArgConvention>| match ty.kind() {
+        TyKind::Ref(reference) if convention == Some(ArgConvention::Ref) => {
+            Some(reference.referent.clone())
+        }
         _ => None,
     };
     let param_types: Vec<Ty> = fields
         .iter()
-        .map(|(_, ty, _)| referent(ty).unwrap_or_else(|| ty.clone()))
+        .map(|(_, ty, convention)| referent(ty, *convention).unwrap_or_else(|| ty.clone()))
         .collect();
     // An immutable reference field stores an immutable handle, which an
     // immutable argument can lend.
@@ -1842,7 +1846,7 @@ fn lower_fieldwise_members(
             ty: Some(ty.clone()),
             through: None,
         };
-        if let Some(referent) = referent(ty) {
+        if let Some(referent) = referent(ty, *convention) {
             let mutable = mutable(ty);
             let reference: Ty = TyKind::Ref(mojito_types::origin::RefTy {
                 referent: referent.clone(),
@@ -1890,7 +1894,7 @@ fn lower_fieldwise_members(
     let conventions: Vec<Option<ArgConvention>> = fields.iter().map(|field| field.2).collect();
     let ref_params: Vec<bool> = fields
         .iter()
-        .map(|(_, ty, _)| matches!(ty.kind(), TyKind::Ref(_)))
+        .map(|(_, ty, convention)| referent(ty, *convention).is_some())
         .collect();
     let arity = fields.len();
     declarations.functions.push(MirFunctionDeclaration {

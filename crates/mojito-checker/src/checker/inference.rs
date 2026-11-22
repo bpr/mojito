@@ -624,18 +624,7 @@ impl Checker {
             ExprKind::Member { object, field } => {
                 let object_ty = self.infer(object).ok()?;
                 let (name, _) = object_ty.kind().as_non_pointer_struct()?;
-                self.structs
-                    .get(name)?
-                    .fields
-                    .iter()
-                    .find_map(|(candidate, ty)| {
-                        (candidate == field)
-                            .then_some(ty)
-                            .and_then(|ty| match ty.kind() {
-                                TyKind::Ref(reference) => Some(reference.clone()),
-                                _ => None,
-                            })
-                    })
+                super::indexing::declared_field_reference(self.structs.get(name)?, field).cloned()
             }
             _ if expr.bracket_application().is_some() && self.is_variant_projection(expr) => self
                 .fact(&expr.source_span(), |facts| {

@@ -334,17 +334,14 @@ impl Checker {
         if method != "__init__"
             || !info.fieldwise_init
             || info.methods.contains_key(method)
-            || info
-                .fields
-                .iter()
-                .any(|(_, ty)| matches!(ty.kind(), TyKind::Ref(_)))
+            || !info.ref_fields.is_empty()
         {
             return None;
         }
         let params = info.fields.iter().map(|(_, ty)| ty.clone()).collect();
         Some(MethodSig {
             names: info.fields.iter().map(|(name, _)| name.clone()).collect(),
-            conventions: self.fieldwise_conventions(&info.fields),
+            conventions: self.fieldwise_conventions(info),
             self_convention: Some(mojito_ast::ast::ArgConvention::Out),
             ..MethodSig::intrinsic(params, Ty::none())
         })

@@ -435,10 +435,11 @@ impl Checker {
                     return self.call_result_field_origins(expression);
                 };
                 let fields = info.fields.clone();
+                let ref_fields = info.ref_fields.clone();
                 let mut result = HashMap::new();
                 if info.fieldwise_init {
                     for ((field_name, field_ty), argument) in fields.into_iter().zip(args) {
-                        let origins = if matches!(field_ty.kind(), TyKind::Ref(_)) {
+                        let origins = if ref_fields.contains(&field_name) {
                             // An owned place auto-borrows into a ref field;
                             // synthesize its place origin like the equivalent
                             // `ref` binding would.

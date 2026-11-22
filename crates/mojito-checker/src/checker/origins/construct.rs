@@ -929,12 +929,12 @@ impl Checker {
     /// Bind the struct origin binders a `@fieldwise_init` construction's
     /// field types name from the arguments filling those fields, checking
     /// them against the explicitly applied origins like a hand-written
-    /// constructor's parameters.
+    /// constructor's parameters. A field declared `ref` binds from the
+    /// argument's place, as its `ref` parameter retains it.
     pub(in crate::checker) fn bind_fieldwise_origins(
         &self,
         struct_name: &str,
-        params: &[ParamDecl],
-        fields: &[(String, Ty)],
+        info: &crate::checker::StructInfo,
         args: &[Expr],
         arg_tys: &[Ty],
         explicit: &[super::super::BoundOrigin],
@@ -945,25 +945,28 @@ impl Checker {
             receiver: receiver.as_ref(),
         };
         let mut bindings = ConstructorOriginBindings::default();
-        for (((field, pattern), expression), actual) in fields.iter().zip(args).zip(arg_tys) {
+        let params = &info.params;
+        for (((field, pattern), expression), actual) in info.fields.iter().zip(args).zip(arg_tys) {
             let context = || format!("field '{field}' of '{struct_name}'");
             // A reference field binds from the argument's origin when the
             // argument's own type carries no reference.
             let reference_actual;
             let actual = match (pattern.kind(), actual.kind()) {
                 (TyKind::Ref(_), TyKind::Ref(_)) => actual,
-                (TyKind::Ref(declared), _) => match self.reference_argument_origin(expression) {
-                    Some(origin) => {
-                        reference_actual = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
-                            referent: declared.referent.clone(),
-                            origin,
-                            mutability: declared.mutability,
-                            address_space: declared.address_space.clone(),
-                        }));
-                        &reference_actual
+                (TyKind::Ref(declared), _) if info.declares_ref_field(field) => {
+                    match self.reference_argument_origin(expression) {
+                        Some(origin) => {
+                            reference_actual = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
+                                referent: declared.referent.clone(),
+                                origin,
+                                mutability: declared.mutability,
+                                address_space: declared.address_space.clone(),
+                            }));
+                            &reference_actual
+                        }
+                        None => actual,
                     }
-                    None => actual,
-                },
+                }
                 _ => actual,
             };
             Self::bind_origin_pattern(

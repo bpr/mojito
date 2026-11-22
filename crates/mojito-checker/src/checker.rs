@@ -3334,6 +3334,11 @@ struct StructInfo {
     /// typed `fields` arrive later), so a `Self.<field>` in a compile-time
     /// position can be told from an unknown parameter.
     declared_field_names: Vec<String>,
+    /// The fields declared `ref` (`var src: ref[o] T`), from shell
+    /// registration on: a read of one reads through to its referent and its
+    /// fieldwise parameter is `ref`, as upstream's `ref` declaration decides,
+    /// never the field's type (a `!lit.ref` field holds a reference value).
+    ref_fields: std::collections::BTreeSet<String>,
     /// The declared fields' source annotations, in order, which a
     /// compile-time read of the fields resolves on demand before the typed
     /// `fields` arrive (a `#lit.struct` attribute in a module alias).
@@ -3397,6 +3402,11 @@ impl StructInfo {
             || self.associated_value_types.contains_key(name)
             || self.parameterized_associated.contains_key(name)
             || self.methods.contains_key(name)
+    }
+
+    /// Whether the struct declares `field` a `ref` field ([`Self::ref_fields`]).
+    fn declares_ref_field(&self, field: &str) -> bool {
+        self.ref_fields.contains(field)
     }
 
     /// The parameters an instance binds by position, in declared order

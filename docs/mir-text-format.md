@@ -1365,6 +1365,11 @@ fact, reads with every `ref`-typed slot as a binding, since a slot then
 bound a reference exactly when it was typed as one. The package format
 moves to `mojito-package 257` (R2488).
 
+The package format moves to `mojito-package 258` (R2490): a struct's
+interface residue carries the fields its declaration marks `ref`
+(`StructInfo::ref_fields`), which decide a field's read-through and its
+fieldwise parameter's `ref` convention. The MIR schema is unchanged.
+
 The package format moves to `mojito-package 256` (R2468): a packaged
 method's checked signature carries its custom receiver type under
 `@__allow_legacy_custom_self_type` (`CheckedSignature::receiver`, the

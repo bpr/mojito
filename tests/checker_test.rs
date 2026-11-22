@@ -10853,6 +10853,20 @@ fn comptime_assert_reads_a_values_type_parameter_but_not_its_field() {
 }
 
 #[test]
+fn a_field_reads_through_by_its_ref_declaration_not_its_reference_type() {
+    // A field declared `ref` reads as its referent; a `!lit.ref` field holds
+    // a reference value, which a read keeps, though both store a reference.
+    let source = "struct Holder[o: ImmOrigin]:\n    var src: ref[Self.o] Int\n    var r: Pointer[Int, Self.o]._mlir_lit_ref\n\n    def __init__(out self, ref[Self.o] src: Int, var r: Pointer[Int, Self.o]._mlir_lit_ref):\n        self.src = src\n        self.r = r\n\ndef main():\n    var x = 7\n    var h = Holder(x, __get_mvalue_as_litref(x))\n    var n: Int = h.FIELD\n";
+    check_with_std(&source.replace("FIELD", "src")).expect("a `ref` field reads through");
+    let error = check_with_std(&source.replace("FIELD", "r"))
+        .expect_err("a `!lit.ref` field does not read through");
+    assert!(
+        matches!(&error, TypeError::TypeMismatch { expected, .. } if expected == "Int"),
+        "{error}"
+    );
+}
+
+#[test]
 fn fieldwise_ref_field_construction_binds_as_its_synthesized_init_call() {
     // The construction is the synthesized `View.__init__`'s call, whose
     // `ref` parameter retains the argument's place and lends it to the

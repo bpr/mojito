@@ -2093,6 +2093,7 @@ mod tests {
             conformance_conditions: HashMap::new(),
             fields: Vec::new(),
             declared_field_names: Vec::new(),
+            ref_fields: std::collections::BTreeSet::new(),
             declared_field_types: Vec::new(),
             field_origin_arguments: HashMap::new(),
             associated: HashMap::new(),

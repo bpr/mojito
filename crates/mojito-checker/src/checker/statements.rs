@@ -1367,13 +1367,12 @@ impl Checker {
     /// `ref` destination counts even when the value type carries no loan:
     /// the destination handle itself becomes the loan. An accepted store
     /// records its transfer effect for call-site replay.
-    #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
     pub(super) fn check_outward_store(
         &self,
         place: &Expr,
         value: &Expr,
         found: &Ty,
-        storage: &Option<Ty>,
+        reference: Option<&mojito_types::origin::RefTy>,
     ) -> Result<(), TypeError> {
         // Outward storage: the frame's outliving owners (`self`, `mut`/`ref`
         // parameters, capture-reachable extensions), or ANY enclosing-frame
@@ -1389,15 +1388,12 @@ impl Checker {
                         allowed.contains(&owner) || self.owner_in_enclosing_scope(owner)
                     })
             });
-        if outward
-            && (self.type_carries_loans(found)
-                || matches!(storage.as_ref().map(Ty::kind), Some(TyKind::Ref(_))))
-        {
+        if outward && (self.type_carries_loans(found) || reference.is_some()) {
             let mut origins = self.aggregate_origins(value);
             // A rebinding store's loan roots at the right-hand place
             // itself, which a plain value expression does not surface
             // as an aggregate origin.
-            if matches!(storage.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+            if reference.is_some()
                 && let Ok(rhs_place) = self.origin_place(value)
             {
                 origins.push(mojito_types::origin::Origin::Place(rhs_place));
@@ -1411,7 +1407,7 @@ impl Checker {
             // Accepted: every origin is caller-visible. Record the
             // transfer so later call sites install the caller-side
             // loan this store implies.
-            self.record_transfer_effect(place, &origins, storage, None);
+            self.record_transfer_effect(place, &origins, reference, None);
         } else if outward
             && mojito_types::types::is_symbolic(found)
             && self.type_may_carry_loans(found)
@@ -1427,9 +1423,9 @@ impl Checker {
                 if let Some(frame) = self.transfer_frames.borrow_mut().last_mut() {
                     frame.latent_escapes = true;
                 }
-                self.record_transfer_effect(place, &[], storage, Some(found));
+                self.record_transfer_effect(place, &[], reference, Some(found));
             } else {
-                self.record_transfer_effect(place, &origins, storage, Some(found));
+                self.record_transfer_effect(place, &origins, reference, Some(found));
             }
         }
         Ok(())
@@ -3039,7 +3035,7 @@ impl Checker {
             self.check_overwritten_referent(&format!("{name}(...)"), &target)?;
         }
         self.record_place_write_invalidation(place.source_span(), place);
-        let storage = self.place_storage_ty(place);
+        let reference = self.place_reference_storage(place);
         // The place's type is the assignment's expected context, so a
         // collection display materializes against it (`self.items =
         // [7, 8, 9]` stays `List[Int]` for a List-typed field).
@@ -3057,8 +3053,8 @@ impl Checker {
         // (augmented writes), and handle replacement or ref-append is
         // not offered by any overload, so no collection store can
         // install a frame-local handle.
-        self.check_outward_store(place, value, &found, &storage)?;
-        if let Some(TyKind::Ref(expected_reference)) = storage.as_ref().map(Ty::kind) {
+        self.check_outward_store(place, value, &found, reference.as_ref())?;
+        if let Some(expected_reference) = &reference {
             let initializes_reference =
                 self.self_initializing && place_root_name(place) == Some("self");
             if initializes_reference {
@@ -3113,7 +3109,7 @@ impl Checker {
         // generic parameter to be installed without spelling a second
         // source-level transfer. Preserve that constructor convention;
         // this marker is needed only for an actual Copyable place read.
-        if !matches!(storage.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+        if reference.is_none()
             && self.is_copyable(&found)
             && !self.storage_conversion_borrows_source(&found, Some(&target))
         {
@@ -4484,6 +4480,12 @@ impl Checker {
                 (field.name.clone(), ty)
             })
             .collect();
+        let ref_fields = storage
+            .fields
+            .iter()
+            .filter(|field| field.reference.is_some())
+            .map(|field| field.name.clone())
+            .collect();
         let arguments = storage
             .origin_arguments
             .iter()
@@ -4510,6 +4512,7 @@ impl Checker {
                 conformance_conditions: HashMap::new(),
                 fields,
                 declared_field_names: Vec::new(),
+                ref_fields,
                 declared_field_types: Vec::new(),
                 field_origin_arguments: HashMap::new(),
                 associated: HashMap::new(),
@@ -4562,6 +4565,7 @@ impl Checker {
             conformance_conditions: HashMap::new(),
             fields: Vec::new(),
             declared_field_names: Vec::new(),
+            ref_fields: std::collections::BTreeSet::new(),
             declared_field_types: Vec::new(),
             field_origin_arguments: HashMap::new(),
             associated: HashMap::new(),

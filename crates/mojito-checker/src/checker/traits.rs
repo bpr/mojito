@@ -767,6 +767,12 @@ impl Checker {
                     .iter()
                     .map(|field| field.name.clone())
                     .collect(),
+                ref_fields: declaration
+                    .fields
+                    .iter()
+                    .filter(|field| matches!(field.ty, SourceType::Ref { .. }))
+                    .map(|field| field.name.clone())
+                    .collect(),
                 declared_field_types: declaration
                     .fields
                     .iter()
@@ -2929,7 +2935,7 @@ impl Checker {
         let fieldwise_conventions = own
             .iter()
             .filter(|(_, info)| info.fieldwise_init)
-            .map(|(name, info)| (name.clone(), self.fieldwise_conventions(&info.fields)))
+            .map(|(name, info)| (name.clone(), self.fieldwise_conventions(info)))
             .collect();
         let fieldwise_ref_params = own
             .iter()
@@ -2956,21 +2962,22 @@ impl Checker {
     }
 
     /// The parameter conventions of the fieldwise `__init__` synthesized
-    /// over `fields`, as upstream's `StructEmitter::synthesizeFieldwiseInit`
+    /// for `info`, as upstream's `StructEmitter::synthesizeFieldwiseInit`
     /// declares them from each field type's register passability: a read
     /// for a register-passable-trivial field (`ImmReg`), whose copy is the
     /// value itself, and `var` (`OwnedMem`) for any other, so a copy
     /// happens in the caller, where a transfer or temporary elides it. A
-    /// `ref` field's parameter is `ref`, as a written constructor's
-    /// `ref [Self.o] field: T` is, binding the argument's place.
+    /// field declared `ref` has a `ref` parameter, as a written
+    /// constructor's `ref [Self.o] field: T` is, binding the argument's
+    /// place.
     pub(super) fn fieldwise_conventions(
         &self,
-        fields: &[(String, Ty)],
+        info: &StructInfo,
     ) -> Vec<Option<mojito_ast::ast::ArgConvention>> {
-        fields
+        info.fields
             .iter()
-            .map(|(_, ty)| {
-                if matches!(ty.kind(), TyKind::Ref(_)) {
+            .map(|(name, ty)| {
+                if info.declares_ref_field(name) {
                     Some(mojito_ast::ast::ArgConvention::Ref)
                 } else {
                     (!self.is_trivial_register_passable(ty))
@@ -2982,24 +2989,24 @@ impl Checker {
 
     /// The `ref` contract of each parameter of the fieldwise `__init__`
     /// synthesized for `info`, as `lower_ref_sig` lowers a written
-    /// `ref [Self.o] field: T`: for a field whose origin is the struct's
-    /// binder `o`, the union of the parameters whose fields name `o`, with
+    /// `ref [Self.o] field: T`: for a field declared `ref` whose origin is
+    /// the struct's binder `o`, the union of the parameters whose `ref`
+    /// fields name `o`, with
     /// `o`'s declared mutability; for a concrete origin, that origin and
     /// the field's mutability. Every other field's is absent.
     pub(super) fn fieldwise_ref_params(info: &StructInfo) -> Vec<Option<RefSig>> {
         info.fields
             .iter()
-            .map(|(_, ty)| {
-                let TyKind::Ref(reference) = ty.kind() else {
-                    return None;
-                };
+            .map(|(name, _)| {
+                let reference = super::indexing::declared_field_reference(info, name)?;
                 if let Origin::Param(binder) = &reference.origin {
                     let mut members = info
                         .fields
                         .iter()
                         .enumerate()
-                        .filter(|(_, (_, other))| {
-                            matches!(other.kind(), TyKind::Ref(other) if other.origin == reference.origin)
+                        .filter(|(_, (other_name, _))| {
+                            super::indexing::declared_field_reference(info, other_name)
+                                .is_some_and(|other| other.origin == reference.origin)
                         })
                         .map(|(index, _)| SigOrigin::Param(index))
                         .collect::<Vec<_>>();

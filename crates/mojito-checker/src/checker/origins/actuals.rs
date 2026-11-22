@@ -38,10 +38,7 @@ impl Checker {
                 })
             }
             ExprKind::Member { object, field } => {
-                if matches!(
-                    self.place_storage_ty(expr).as_ref().map(Ty::kind),
-                    Some(TyKind::Ref(_))
-                ) {
+                if self.place_reference_storage(expr).is_some() {
                     fn collect_places(
                         origin: mojito_types::origin::Origin,
                         places: &mut Vec<OriginPlace>,
@@ -272,10 +269,7 @@ impl Checker {
         let mut path = Vec::new();
         let mut root = expr;
         while let ExprKind::Member { object, field } = &root.kind {
-            if matches!(
-                self.place_storage_ty(root).as_ref().map(Ty::kind),
-                Some(TyKind::Ref(_))
-            ) {
+            if self.place_reference_storage(root).is_some() {
                 return None;
             }
             path.push(mojito_types::origin::OriginSeg::Field(field.clone()));

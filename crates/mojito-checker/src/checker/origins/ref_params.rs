@@ -544,10 +544,8 @@ impl Checker {
                 let mut result = Vec::new();
                 if let Some(info) = self.structs.get(name) {
                     if info.fieldwise_init {
-                        let fields: Vec<Ty> =
-                            info.fields.iter().map(|(_, ty)| ty.clone()).collect();
-                        for (field, argument) in fields.iter().zip(args) {
-                            if matches!(field.kind(), TyKind::Ref(_)) {
+                        for ((field, _), argument) in info.fields.iter().zip(args) {
+                            if info.declares_ref_field(field) {
                                 if let Ok(reference) = self.materialized_reference_actual(argument)
                                 {
                                     append_unique(&mut result, [reference.origin]);

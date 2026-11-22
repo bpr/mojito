@@ -3207,6 +3207,20 @@ other declaration is a value binding. The binding's published type stays
 A module-scope `ref` binding has no interface carrier, so a package refuses
 to export one.
 
+A struct field is a reference by the same rule: a `ref` field is its
+declaration's fact, `StructInfo::ref_fields`, recorded at shell
+registration from the field's `ref` annotation (and, for a closure's
+storage, from its reference captures). A field read reads through
+(`infer_member`, `infer_reference_value` via `declared_field_reference`),
+a field place stores a reference (`place_reference_storage`), and a
+fieldwise parameter is `ref` (`fieldwise_conventions`,
+`fieldwise_ref_params`, the fieldwise tail of `infer_construction`) only
+when the field is recorded, never because its type is `TyKind::Ref`; a
+`!lit.ref` field holds a reference value. The field's stored type stays
+`TyKind::Ref`, as upstream's storage is `!lit.ref`, and MIR's fieldwise
+constructor (`lower_fieldwise_members`) takes a `ref` parameter from the
+published `CheckedField::fieldwise_convention`.
+
 Opaque structured statements may retain a
 source spelling after HIR has assigned a shadowed declaration a suffixed slot,
 so MIR resolves identifier writes through the checked `OwnerId` exactly as it

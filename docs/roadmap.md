@@ -11227,20 +11227,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2490 A direct `ref` struct field is a reference because its type
-  is `TyKind::Ref`, where upstream reads the field declaration's `ref`
-  marker**
-
-  A field read peels a `TyKind::Ref` field type to its referent, so the
-  type, not the declaration, decides the read-through.
-  - Read the declaration's `ref` marker instead (the `reference` field
-    `closure_uses.rs` already consults).
-  - Sites: the field arms of `inference.rs` and `indexing.rs`,
-    `declarations.rs`, and mono `substitute.rs`/`unify.rs`.
-  - Found while landing R2211 (2026-11-21).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2491 A callable's `ref` result is a reference because its result
   type is `TyKind::Ref`, where upstream reads the result convention**
 
@@ -11288,9 +11274,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `access_bound_parameters_in_place`, `lower_stmt.rs`'s
     `stores_reference` write, `verify::place_base_ty`, and
     `mir_place_handle_ty`.
+  - `infer_storage_value`'s top-level `TyKind::Ref` arm auto-borrows any
+    argument into a reference-typed slot; merged, it would auto-borrow
+    into a `!lit.ref` aggregate element or parameter slot, where upstream
+    requires a `!lit.ref` value. It must ask the slot's declaration (a
+    `ref` field's `StructInfo::ref_fields` marker, a `ref` parameter's
+    convention).
+  - `mojito-comptime`'s `source_type_from_ty_with_origins` spells every
+    `TyKind::Ref` back as `Type::Ref`; merged, a generated specialization
+    of a struct with a `!lit.ref` field would gain a `ref` marker. It must
+    spell from the field's marker.
   - Go sites-first: `scripts/smoke --suites`, then `scripts/focused`.
   - Found while landing R2211 (2026-11-21).
-  - Depends on R2488, R2490, R2491.
+  - Depends on R2488, R2491.
   - Model: Fable, Planned.
 
 - [ ] **R2493 Pointer provenance readers read the `PointerOrigin` view

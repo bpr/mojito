@@ -70,6 +70,21 @@ pub(super) fn unwritable_reference(
     })
 }
 
+/// The reference a `ref` field of `info` declares, at the declaration's own
+/// binders: `None` for any other field, a `!lit.ref` one included.
+pub(super) fn declared_field_reference<'a>(info: &'a StructInfo, field: &str) -> Option<&'a RefTy> {
+    if !info.declares_ref_field(field) {
+        return None;
+    }
+    info.fields
+        .iter()
+        .find(|(name, _)| name == field)
+        .and_then(|(_, ty)| match ty.kind() {
+            TyKind::Ref(reference) => Some(reference),
+            _ => None,
+        })
+}
+
 impl Checker {
     /// The getter a subscript of a value of type `obj_ty` reads through: a
     /// struct's `__getitem_param__` when it declares one, else its
@@ -117,10 +132,24 @@ impl Checker {
 
     /// The reference a place's storage holds: a named place's when its
     /// declaration is a `ref` binding ([`Self::lookup_ref_binding`]), a
-    /// field's or element's when its storage type is a reference.
+    /// field's when its declaration is a `ref` field
+    /// ([`declared_field_reference`]), an element's when its storage type is
+    /// a reference.
     pub(super) fn place_reference_storage(&self, place: &Expr) -> Option<RefTy> {
         match &place.kind {
             ExprKind::Identifier(name) => self.lookup_ref_binding(name).cloned(),
+            ExprKind::Member { object, field } => {
+                let base = self.infer(object).ok()?;
+                let (name, _) = base.kind().as_non_pointer_struct()?;
+                self.structs
+                    .get(name)
+                    .filter(|info| info.declares_ref_field(field))?;
+                self.place_storage_ty(place)
+                    .and_then(|ty| match ty.into_kind() {
+                        TyKind::Ref(reference) => Some(reference),
+                        _ => None,
+                    })
+            }
             _ => self
                 .place_storage_ty(place)
                 .and_then(|ty| match ty.into_kind() {
@@ -1874,7 +1903,9 @@ impl Checker {
                 // field's declared type (`Cell[Self.o]` on a `Wrap[origin_of(xs)]`).
                 let value = self.substitute_at_instance(fty, info, targs);
                 return Ok(match value.kind() {
-                    TyKind::Ref(reference) => reference.referent.clone(),
+                    TyKind::Ref(reference) if info.declares_ref_field(field) => {
+                        reference.referent.clone()
+                    }
                     _ => value,
                 });
             }

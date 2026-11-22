@@ -4588,6 +4588,11 @@ impl Checker {
         let decls = info.decls().into_owned();
         let explicit = &bracket.explicit;
         let field_tys: Vec<Ty> = info.fields.iter().map(|(_, t)| t.clone()).collect();
+        let ref_fields: Vec<bool> = info
+            .fields
+            .iter()
+            .map(|(name, _)| info.declares_ref_field(name))
+            .collect();
         if field_tys.len() != args.len() {
             return Err(TypeError::ArityMismatch {
                 name: name.to_string(),
@@ -4597,9 +4602,10 @@ impl Checker {
         }
         let arg_tys = args
             .iter()
-            .zip(&field_tys)
-            .map(|(argument, field)| {
-                if self.type_contains_reference(field) {
+            .zip(field_tys.iter().zip(&ref_fields))
+            .map(|(argument, (field, &declared_ref))| {
+                // A `ref` field's argument auto-borrows into the reference.
+                if declared_ref || self.type_contains_reference(field) {
                     self.infer_storage_value(argument, field)
                 } else if matches!(field.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) {
                     // Callable fields keep uncontextualized inference: the
@@ -4654,14 +4660,8 @@ impl Checker {
             (&[], &field_names),
             (&tyargs, &[]),
         );
-        let origin_bindings = self.bind_fieldwise_origins(
-            name,
-            &info.params,
-            &info.fields,
-            args,
-            &arg_tys,
-            &bracket.bound,
-        )?;
+        let origin_bindings =
+            self.bind_fieldwise_origins(name, info, args, &arg_tys, &bracket.bound)?;
         // A field type names the struct's own value parameters; the resolved
         // application binds them beside its type parameters.
         let bindings = AssocBindings {
@@ -4670,10 +4670,11 @@ impl Checker {
             ids: mojito_types::param_expr::ParamBindings::new(),
             origins: HashMap::new(),
         };
-        // The type each synthesized parameter binds: a `ref` field's is its
-        // referent, as a written `ref [Self.o] field: T` parameter's is.
-        let parameter_ty = |ty: Ty| match ty.kind() {
-            TyKind::Ref(reference) => reference.referent.clone(),
+        // The type each synthesized parameter binds: a field declared
+        // `ref`'s is its referent, as a written `ref [Self.o] field: T`
+        // parameter's is.
+        let parameter_ty = |i: usize, ty: Ty| match ty.kind() {
+            TyKind::Ref(reference) if ref_fields[i] => reference.referent.clone(),
             _ => ty,
         };
         let mut bound = Vec::with_capacity(args.len());
@@ -4702,10 +4703,10 @@ impl Checker {
                     context: format!("field {} of '{}'", i + 1, name),
                 });
             }
-            bound.push(parameter_ty(expected.clone()));
+            bound.push(parameter_ty(i, expected.clone()));
             // A `ref` field's argument binds its place, as the parameter's
             // `ref` convention retains it ([`Self::record_constructor_call`]).
-            if matches!(expected.kind(), TyKind::Ref(_)) {
+            if ref_fields[i] {
                 continue;
             }
             if self.type_contains_reference(&expected) {
@@ -4716,7 +4717,7 @@ impl Checker {
             self.check_consuming(&args[i], aty, &format!("field {} of '{}'", i + 1, name))?;
         }
         let constructed = self.constructed_type(name, tyargs, &bracket, &origin_bindings)?;
-        let conventions = self.fieldwise_conventions(&info.fields);
+        let conventions = self.fieldwise_conventions(info);
         let ref_params = Self::fieldwise_ref_params(info);
         let slots: Vec<ArgSlot> = (0..args.len()).map(ArgSlot::Positional).collect();
         let exclusivity = ConstructorExclusivity {
@@ -4724,7 +4725,8 @@ impl Checker {
             parameter_names: &field_names,
             declared: field_tys
                 .iter()
-                .map(|ty| parameter_ty(origin_bindings.substitute(ty)))
+                .enumerate()
+                .map(|(i, ty)| parameter_ty(i, origin_bindings.substitute(ty)))
                 .collect(),
             bound,
             nested_origins: NestedOrigins::AsDeclared,

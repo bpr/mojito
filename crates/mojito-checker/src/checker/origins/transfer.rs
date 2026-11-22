@@ -711,12 +711,11 @@ impl Checker {
     /// ([`TransferFrame::record`]), and publishes one whose source is the
     /// stored type itself, which a call closes with its receiver's
     /// arguments.
-    #[allow(clippy::ref_option, reason = "TODO: take Option<&T>")]
     pub(in crate::checker) fn record_transfer_effect(
         &self,
         place: &Expr,
         origins: &[mojito_types::origin::Origin],
-        storage: &Option<Ty>,
+        reference: Option<&mojito_types::origin::RefTy>,
         latent: Option<&Ty>,
     ) {
         use mojito_types::origin::SigOrigin;
@@ -772,12 +771,9 @@ impl Checker {
             base if dest_path.is_empty() => base,
             base => SigOrigin::Projected(Box::new(base), dest_path),
         };
-        let mutable = match storage.as_ref().map(Ty::kind) {
-            Some(TyKind::Ref(reference)) => {
-                reference.mutability == mojito_types::origin::Mutability::Mutable
-            }
-            _ => true,
-        };
+        let mutable = reference.is_none_or(|reference| {
+            reference.mutability == mojito_types::origin::Mutability::Mutable
+        });
         if let Some(stored) = latent
             && !nested
         {

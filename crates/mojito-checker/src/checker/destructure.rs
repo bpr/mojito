@@ -670,8 +670,7 @@ impl Checker {
         // copyable elements and place targets type-match exactly), so this is
         // defensive coverage that keeps the boundary closed if those
         // restrictions loosen.
-        let storage = Some(target_ty);
-        self.check_outward_store(place, element_value, elem, &storage)
+        self.check_outward_store(place, element_value, elem, None)
     }
 
     /// Write element `elem` through the setter of the nominal subscript

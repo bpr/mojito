@@ -2327,6 +2327,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct field is a reference because its declaration says `ref`,
+  `StructInfo::ref_fields`, as upstream's `ref` declaration decides,
+  instead of because its type is `TyKind::Ref`. Field reads, stores,
+  provenance, and the fieldwise constructor's `ref` parameters ask it,
+  and MIR's fieldwise constructor takes a `ref` parameter from the
+  check's published convention, so a `!lit.ref` field keeps its
+  reference value and no accepted program changes (R2490). The package
+  format moves to `mojito-package 258`.
 - A checker local's `ref` binding is a fact of its declaration,
   `Checker::ref_bindings`, as upstream's `ref` declaration makes its name
   an lvalue of the referent, instead of being read off the binding's
