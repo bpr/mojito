@@ -857,16 +857,6 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R2521 1 fixture stopped elaborating after batch 4**
-
-  The instantiation ratchet finds `assets/ok` fixtures that elaborated at the last baseline and now fail to compile.
-  - Probe: `assets/ok/list_contiguous_slice_view.mojo` (failed: run error: Elaboration error: unsupported concrete MIR that does not verify after the post-elaboration pipeline: MIR function 'main': binding of Span$mono$Vfalse$TInt[false, Int] to a slot of type Span$mono$Vtrue$TInt[true, Int]).
-  - Ratchet log: `target/run-batches/20261120-073546/batch4-ratchet-repair1.log`.
-  - Fix the regression, or delete this entry and file one entry per cause in the track that owns it.
-  - Filed by `scripts/run-batches` (2026-11-22).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2465 Concrete instructions grew by 671027 instructions (+13.81%) over batch 3**
 
   The elaborated corpus grew past `scripts/run-batches`' `--max-growth`, and the growth was accepted into the baseline.
@@ -11782,6 +11772,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     returns a read-only span that inlining hands a mutable caller. The
     same over a user `def view(ref self) -> Span[Int,
     origin_of(self.xs)._get_owned_interior["element"]]` iterated in a loop.
+    It last ran before `Self` held the struct's `mut=` binder (2d7e175e9),
+    when the inlined `Span.__iter__` receiver kept a deferred slot that
+    hid the mismatch.
   - Lever: `auto_parameterize` (`mojito-comptime`) appends the pair
     (`$x_is_mut`, an origin `Origin[mut=$x_is_mut]`) after the
     declaration's own infer-only binders and names the origin in the

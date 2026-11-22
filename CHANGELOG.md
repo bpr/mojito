@@ -2364,7 +2364,12 @@ to evolve under the `0.x` compatibility rules.
   parametric's owner instance, MIR's field types, and the elaborator's
   owner bindings — and defers one the instance leaves open, replacing the
   checker's and the elaborator's closing of deferred slots after
-  substitution (R2470).
+  substitution (R2470). Typing `Span.__iter__`'s receiver as `Span[True,
+  …]` exposes the read-only `Span` that the shared `List.__getitem__(ref
+  self, ContiguousSlice)` instance builds, so `for x in xs[:2]` over a
+  `var xs: List[Int]` (`assets/ok/list_contiguous_slice_view.mojo`) fails
+  post-elaboration verification until a bare `ref` declares its implicit
+  `self_is_mut` binder (R2516).
 - A pointer's provenance readers that handled a union origin argument
   (`origin_of(x, y)`) now read the pointer's `!lit.ref` record — its
   `origin` value and `mut` argument — rather than decoding it to
