@@ -1,12 +1,12 @@
 # std.memory.pointer — upstream's `Pointer` and its aliases, ported with
 # these departures. The compiler folds every application of the struct into
-# its own pointer type, and its rules still answer the subscript syntax
-# `p[]`, `p[i]`, and `p[unsafe_offset=i]` (R2473), `write`, and
-# `unsafe_free`; every initializer, `Pointer(to=)` included, every explicit
-# `__getitem__` call, and every member no rule answers, the casts, address
-# members, and comparisons included, reaches its body here. Conformances
-# `DevicePassable`, `UnsafeCustomNicheStorage`, and `UnsafeSingleNicheable`
-# are absent from the bundle. `unsafe_deinit_pointee_with` and
+# its own pointer type, and its rules still answer `write` and
+# `unsafe_free`; every initializer, `Pointer(to=)` included, every
+# `__getitem__`, the subscript syntax `p[]`, `p[i]`, and
+# `p[unsafe_offset=i]` included, and every member no rule answers, the
+# casts, address members, and comparisons included, reaches its body here.
+# Conformances `DevicePassable`, `UnsafeCustomNicheStorage`, and
+# `UnsafeSingleNicheable` are absent from the bundle. `unsafe_deinit_pointee_with` and
 # `unsafe_write(init_with=)` take an explicit `F` binder where upstream's
 # parameter is `Some[def(...)]` (R813).
 # Members omitted, by blocker:

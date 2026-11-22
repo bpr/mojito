@@ -349,8 +349,10 @@ struct Dict[
             var displaced = Optional[DictEntry[Self.K, Self.V, Self.H]](
                 data.unsafe_offset(i).unsafe_take_pointee()
             )
-            data[i] = DictEntry[Self.K, Self.V, Self.H](
-                key^, value^, unsafe_hash=key_hash
+            data.unsafe_offset(i).unsafe_write(
+                DictEntry[Self.K, Self.V, Self.H](
+                    key^, value^, unsafe_hash=key_hash
+                )
             )
             return displaced^
         self._append_new(

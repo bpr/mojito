@@ -152,13 +152,13 @@ struct Optional[T: AnyType](
         self._size = 1
         self.data = unsafe_alloc[Self.T](1)
         self._none = ()
-        self.data[0] = value^
+        self.data.unsafe_write(value^)
 
     def __init__[F: def() -> Self.T](out self, *, init_with: F):
         self._size = 1
         self.data = unsafe_alloc[Self.T](1)
         self._none = ()
-        self.data[0] = init_with()
+        self.data.unsafe_write(init_with=init_with)
 
     def __init__(out self, *, copy: Self) where conforms_to(Self.T, Copyable):
         self._size = copy._size

@@ -620,19 +620,6 @@ impl<'a> Flatten<'a> {
                 e.project_member(&mut p, field);
                 p
             }
-            // `p[unsafe_offset=i]`: the pointer element place, as `p[i]`.
-            (CheckedOp::MultiIndex { .. }, _)
-                if let Some((object, offset)) = e.pointer_keyword_subscript() =>
-            {
-                let mut p = self.place(object);
-                let idx = self.index_operand(offset);
-                if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
-                    p.project(Proj::Index(idx), ty);
-                } else {
-                    p.proj.push(Proj::Index(idx));
-                }
-                p
-            }
             // A type-keyed projection (`v[Int]` on the self-hosted
             // `Variant`): the accessor call's reference result is the place.
             (CheckedOp::Index { .. }, Some(_))
@@ -1400,11 +1387,17 @@ impl<'a> Flatten<'a> {
                 ),
                 Some(ref span) => {
                     let MirSubscriptArg::Index(register) = argument;
-                    MirSubscriptArg::Index(self.apply_checked_call_value_adjustments(
+                    let adjusted = self.apply_checked_call_value_adjustments(
                         getter,
                         call_source,
                         register,
                         span.clone(),
+                    );
+                    MirSubscriptArg::Index(self.address_index_operand(
+                        span.clone(),
+                        getter,
+                        call_source,
+                        (adjusted, place.as_ref().filter(|_| adjusted == register)),
                     ))
                 }
             };
@@ -1807,7 +1800,7 @@ impl<'a> Flatten<'a> {
         // loaded before the invalidation boundary, so a first write
         // through a subtree pointer uses its still-live generation and
         // only later uses observe the self-invalidation.
-        if let Some((object, _)) = place.pointer_offset_subscript()
+        if let Some(object) = place.primitive_pointer_dereference()
             && object.is_origin_bearing_pointer()
         {
             let reference = self.expr(object);
@@ -2653,18 +2646,6 @@ impl<'a> Flatten<'a> {
             return Some(place);
         }
         match (e.op(), e.object()) {
-            (CheckedOp::MultiIndex { .. }, _)
-                if let Some((object, offset)) = e.pointer_keyword_subscript() =>
-            {
-                let mut p = self.try_place(object)?;
-                let idx = self.index_operand(offset);
-                if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
-                    p.project(Proj::Index(idx), ty);
-                } else {
-                    p.proj.push(Proj::Index(idx));
-                }
-                Some(p)
-            }
             (CheckedOp::Member { field, .. }, Some(object)) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
                 if e.is_dtype_constant()
@@ -2988,7 +2969,7 @@ impl<'a> Flatten<'a> {
                                     | CheckedOp::Member { .. }
                                     | CheckedOp::Index { .. }
                             )
-                        ) || value.pointer_keyword_subscript().is_some()))
+                        )))
                 {
                     let source = self.expr(value);
                     self.runtime_aliases.insert(reference);
@@ -3239,7 +3220,7 @@ impl<'a> Flatten<'a> {
                             in_place: false,
                         });
                     }
-                } else if let Some((object, _)) = place.pointer_offset_subscript()
+                } else if let Some(object) = place.primitive_pointer_dereference()
                     && object.is_origin_bearing_pointer()
                 {
                     // `p[0] OP= e` through an origin-bearing pointer: read and

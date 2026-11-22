@@ -264,7 +264,7 @@ struct List[T: AnyType](
     def append(mut self, var value: Self.T) where conforms_to(Self.T, Movable):
         if self._len == self.capacity():
             self.grow()
-        self._storage._alloc._ptr[self._len] = value^
+        self._storage._alloc._ptr.unsafe_offset(self._len).unsafe_write(value^)
         self._len += 1
 
     @inline(.always)
@@ -276,9 +276,11 @@ struct List[T: AnyType](
         var data = self._storage._alloc._ptr
         var i = self._len
         while i > index:
-            data[i] = data.unsafe_offset(i - 1).unsafe_take_pointee()
+            data.unsafe_offset(i).unsafe_write(
+                data.unsafe_offset(i - 1).unsafe_take_pointee()
+            )
             i -= 1
-        data[index] = value^
+        data.unsafe_offset(index).unsafe_write(value^)
         self._len += 1
 
     @inline(.nodebug)
@@ -335,8 +337,8 @@ struct List[T: AnyType](
         var data = self._storage._alloc._ptr
         var first = data.unsafe_offset(elt_idx_1).unsafe_take_pointee()
         var second = data.unsafe_offset(elt_idx_2).unsafe_take_pointee()
-        data[elt_idx_1] = second^
-        data[elt_idx_2] = first^
+        data.unsafe_offset(elt_idx_1).unsafe_write(second^)
+        data.unsafe_offset(elt_idx_2).unsafe_write(first^)
 
     # A borrowed multi-element pointer over the element storage (current
     # Mojo's `unsafe_ptr` accessor). The interior-generation origin keeps the
@@ -429,7 +431,7 @@ struct List[T: AnyType](
         Self.T, Deinitable
     ) and conforms_to(Self.T, Movable):
         self._storage._alloc._ptr.unsafe_offset(idx).unsafe_deinit_pointee()
-        self._storage._alloc._ptr[idx] = value^
+        self._storage._alloc._ptr.unsafe_offset(idx).unsafe_write(value^)
 
     # Upstream feeds each element to the caller's hasher with no length
     # prefix (`element.__hash__(hasher)`), read where it lies. The walk
@@ -470,7 +472,9 @@ struct List[T: AnyType](
         var result = data.unsafe_offset(index).unsafe_take_pointee()
         var i = index
         while i + 1 < self._len:
-            data[i] = data.unsafe_offset(i + 1).unsafe_take_pointee()
+            data.unsafe_offset(i).unsafe_write(
+                data.unsafe_offset(i + 1).unsafe_take_pointee()
+            )
             i += 1
         self._len -= 1
         return result^
@@ -503,8 +507,8 @@ struct List[T: AnyType](
             var data = self._storage._alloc._ptr
             var left_value = data.unsafe_offset(left).unsafe_take_pointee()
             var right_value = data.unsafe_offset(right).unsafe_take_pointee()
-            data[left] = right_value^
-            data[right] = left_value^
+            data.unsafe_offset(left).unsafe_write(right_value^)
+            data.unsafe_offset(right).unsafe_write(left_value^)
             left += 1
             right -= 1
 
@@ -648,7 +652,9 @@ struct List[T: AnyType](
         var old_data = self._storage._alloc._ptr
         var i = 0
         while i < self._len:
-            new_data[i] = old_data.unsafe_offset(i).unsafe_take_pointee()
+            new_data.unsafe_offset(i).unsafe_write(
+                old_data.unsafe_offset(i).unsafe_take_pointee()
+            )
             i += 1
         var old_storage = self._storage^
         self._storage = new_storage^

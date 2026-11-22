@@ -137,7 +137,9 @@ struct StringDict[V: Movable](
             var displaced = Optional[DictEntry[String, Self.V]](
                 data.unsafe_offset(existing).unsafe_take_pointee()
             )
-            data[existing] = DictEntry[String, Self.V](key, value^)
+            data.unsafe_offset(existing).unsafe_write(
+                DictEntry[String, Self.V](key, value^)
+            )
             return displaced^
         # Fresh-key path: append and index directly (like `__setitem__`'s
         # fresh branch) — delegating would demand its `Deinitable` bound.

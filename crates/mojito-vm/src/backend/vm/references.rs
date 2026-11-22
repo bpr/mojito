@@ -686,33 +686,63 @@ impl VmBackend {
     }
 
     /// The handle a place rooted at a reference binding that holds a heap
-    /// pointer names (`ref r = p.__getitem__()` over an allocation): the
-    /// pointer itself for the whole binding, else a reference into its
-    /// pointee. `None` for any other place. The write and projection twin of
-    /// the load's static-origin read through such a binding.
+    /// pointer names (`ref r = p.__getitem__()` over an allocation): a
+    /// reference to its pointee, projected by the place. `None` for any other place. The write and projection twin of
+    /// the load's static-origin read through such a binding. A place
+    /// projected from the binding (`e.items`) names the pointee whether or
+    /// not it is spelled as read through the root.
     pub(super) fn heap_handle_place(
         &mut self,
         place: &MirPlace,
         registers: &[Value],
         variables: &[Value],
     ) -> Result<Option<Value>, RuntimeError> {
-        if place.through != Some(place.root) {
+        let reference_root = matches!(place.root_ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
+        let projected_from_reference =
+            reference_root && !place.proj.is_empty() && !place_crosses_reference(place);
+        if place.through != Some(place.root) && !projected_from_reference {
             return Ok(None);
         }
         let Value::Pointer { allocation, offset } = variables[place.root as usize] else {
             return Ok(None);
         };
         let segments = place_projection_segments(place, registers)?;
-        if segments.is_empty() {
-            return Ok(Some(Value::Pointer { allocation, offset }));
+        // A `ref` field on the way (a closure's `mut` capture) stores a
+        // handle of its own: the rest of the place lies behind it.
+        let storage = place.storage();
+        let wants_slot = matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
+        let last = segments.len().saturating_sub(1);
+        let mut handle = self.pointee_reference(allocation, offset);
+        for (position, segment) in segments.into_iter().enumerate() {
+            if let Value::Ref { projection, .. } = &mut handle {
+                projection.push(segment);
+            }
+            let stores_handle = matches!(
+                storage.projection_tys.get(position).map(Ty::kind),
+                Some(TyKind::Ref(_))
+            );
+            if stores_handle && !(position == last && wants_slot) {
+                let roots = self.pointer_roots.clone();
+                handle = match self.read_reference(&handle, FrameId(POINTER_ROOT_FRAME), &roots)? {
+                    stored @ Value::Ref { .. } => stored,
+                    Value::Pointer { allocation, offset } => {
+                        self.pointee_reference(allocation, offset)
+                    }
+                    _ => return Ok(None),
+                };
+            }
         }
-        Ok(Some(Value::Ref {
+        Ok(Some(handle))
+    }
+
+    /// The reference to the pointee of the heap pointer
+    /// `allocation`+`offset`.
+    fn pointee_reference(&mut self, allocation: u64, offset: i64) -> Value {
+        Value::Ref {
             frame: POINTER_ROOT_FRAME,
             slot: self.pointer_root(allocation, offset),
-            projection: std::iter::once(RefProjection::Index(0))
-                .chain(segments)
-                .collect(),
-        }))
+            projection: vec![RefProjection::Index(0)],
+        }
     }
 
     #[allow(

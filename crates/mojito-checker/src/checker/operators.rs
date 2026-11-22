@@ -1289,33 +1289,7 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         use super::initializer_list::spelled_node;
-        let spelled = if litref {
-            let operand = single_address_operand(name, param_args, args, kwargs)?;
-            let found = self.infer(operand)?;
-            if !matches!(found.kind(), TyKind::LitRef { .. }) {
-                return Err(TypeError::InvalidAddressOperand(format!(
-                    "operand isn't a '!lit.ref' type '{found}'"
-                )));
-            }
-            let pointer = spelled_node(
-                call,
-                1,
-                ExprKind::Call {
-                    name: "Pointer".to_string(),
-                    param_args: Vec::new(),
-                    args: Vec::new(),
-                    kwargs: vec![mojito_ast::ast::KwArg {
-                        name: "_mlir_value".to_string(),
-                        value: operand.clone(),
-                    }],
-                },
-                call.span,
-            );
-            ExprKind::Index {
-                object: Box::new(pointer),
-                index: Box::new(spelled_node(call, 3, ExprKind::EmptySubscript, call.span)),
-            }
-        } else {
+        if !litref {
             let (operand, found) = self.kgen_pointer_operand(name, param_args, args, kwargs)?;
             let element = found.kind().kgen_pointee().cloned().ok_or_else(|| {
                 TypeError::InvariantViolation(format!("'{found}' has no pointee"))
@@ -1341,8 +1315,40 @@ impl Checker {
             ));
             self.record_spelled_construction(call, take, &element);
             return Ok(element);
-        };
-        self.infer_spelled(call, spelled_node(call, 0, spelled, call.span))
+        }
+        let operand = single_address_operand(name, param_args, args, kwargs)?;
+        let found = self.infer(operand)?;
+        if !matches!(found.kind(), TyKind::LitRef { .. }) {
+            return Err(TypeError::InvalidAddressOperand(format!(
+                "operand isn't a '!lit.ref' type '{found}'"
+            )));
+        }
+        let pointer = spelled_node(
+            call,
+            1,
+            ExprKind::Call {
+                name: "Pointer".to_string(),
+                param_args: Vec::new(),
+                args: Vec::new(),
+                kwargs: vec![mojito_ast::ast::KwArg {
+                    name: "_mlir_value".to_string(),
+                    value: operand.clone(),
+                }],
+            },
+            call.span,
+        );
+        let dereference = spelled_node(
+            call,
+            0,
+            ExprKind::Index {
+                object: Box::new(pointer),
+                index: Box::new(spelled_node(call, 3, ExprKind::EmptySubscript, call.span)),
+            },
+            call.span,
+        );
+        self.record_at(dereference.source_span())
+            .primitive_pointer_deref = true;
+        self.infer_spelled(call, dereference)
     }
 
     /// The one operand of the `!kgen.pointer` address builtin `name` and

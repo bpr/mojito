@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2482**.
+Next free ID: **R2483**.
 
 ## Ordered Work
 
@@ -3956,7 +3956,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `@deprecated(use=unsafe_offset)` `__add__` silently, where the pin
     warns "'__add__' is deprecated, use 'unsafe_offset' instead".
   - Probe: `p[0]` over `Pointer(to=x)` warns at the pin that positional
-    `__getitem__` is deprecated, once R2473 dispatches it.
+    `__getitem__` is deprecated, where Mojito's call of it is silent.
   - Probe: an explicit `p.__getitem__(1)` over `l.unsafe_ptr()` calls the
     deprecated positional getter silently, where the pin warns "positional
     `__getitem__` is deprecated, use `unsafe_offset=` instead".
@@ -7845,6 +7845,29 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2482 A store through a getter's `ref[Self.o]` result over a
+  struct's `Origin[mut=m]` binder is accepted in the method body, where the
+  pin rejects it**
+
+  `self.r[] = x` in a `mut self` method of `View[m: Bool, //, o:
+  Origin[mut=m]]`, over a field `r: R[Self.o]` whose `__getitem__(self) ->
+  ref[Self.o] Int`, prints `9`, where the pin rejects "expression must be
+  mutable in assignment": `m` is not provably `True` in the body.
+  - Cause: `require_writable_reference` (`checker/indexing.rs`) defers a
+    struct binder's `Mutability::Param` to the enclosing method's call
+    sites, while upstream judges it in the body.
+  - Because of it, `check_pointer_derefs` still judges a pointer
+    subscript on the way to a store by the pointer's provenance
+    (`check_pointer_write`) rather than by the getter's result; retire
+    that once the getter's mutability is judged in the body.
+  - Probe: the store above is rejected with the pin's message.
+  - Probe: `assets/type_error/pointer_field_symbolic_ref_result_write.mojo`
+    and `pointer_field_symbolic_generic_body_write.mojo` still reject
+    with `check_pointer_write` gone from `check_pointer_derefs`.
+  - Found while landing R2473 (2026-11-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2481 A plain store through a generic method's reference result
   fails in MIR when the call passes a keyword argument**
 
@@ -7875,9 +7898,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
   The checker and the VM both treat a pointer whose origin is one known
   place as a handle to one value (`PointerOrigin::single_place`), where
   upstream's `Pointer` is one `!kgen.pointer` address whatever its origin.
-  - The checker rejects a non-zero `p[i]` (`check_pointer_offset`,
-    `checker/indexing.rs`: "an origin-bearing Pointer designates a single
-    value").
+  - A non-zero `p[i]` runs the declared offset getter, whose
+    `self.unsafe_offset(i)[]` traps in the VM below
+    (`assets/runtime_error/pointer_to_place_offset_traps.mojo`, whose
+    ledger row and `docs/non-goals.md` entry change with it).
   - The VM traps on a non-zero offset of a place pointer outside an
     indexed projection (`offset_place_projection`,
     `mojito-vm/src/backend/vm/references.rs`), since a place handle has no
@@ -10963,57 +10987,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2473 `p[]`, `p[i]`, and `p[unsafe_offset=i]` are checker rules,
-  where upstream's are the declared `Pointer.__getitem__`s**
-
-  The pointer arms of `infer_index`, `infer_multi_subscript`, and
-  `check_place_impl` (`checker/indexing.rs`) type them, with
-  `check_pointer_offset` and `check_pointer_derefs`.
-  - Route the three spellings, in value, place, and augmented position,
-    to `Pointer`'s three declared getters, which an explicit
-    `p.__getitem__(…)` call already reaches, and delete
-    `pointer_subscript_rule` (`checker/indexing.rs`). They move together:
-    dispatching one alone fails with "subscript reference assignment lost
-    its getter contract".
-  - `__get_litref_as_mvalue(r)` is spelled `Pointer(_mlir_value=r)[]`
-    (`infer_spelled_address_builtin`, `checker/operators.rs`). Mark that
-    node primitive with a node fact, not a shape test, or the declared
-    `__getitem__` calls itself forever. Ordinary source spelling it
-    dispatches, as at the pin.
-  - Loans and liveness must come from the getter's `ReferenceResult`.
-    The pointer-deref arms in `origins/actuals.rs` (`dereferenced_pointer`
-    and its users, the `MultiIndex` arms, `materialize_temporary_holder`'s
-    keyword walk) key on the node's shape, so owners die under the
-    reference and `ref` arguments bind wrongly.
-  - Delete them, with `places.rs::pointer_offset_keyword_subscript`,
-    `origins/interior.rs`'s keyword arm, and MIR's
-    `pointer_offset_subscript` and `pointer_keyword_subscript`
-    (`mir/facts.rs`, `calls.rs`, `lower_stmt.rs`, `expr_access.rs`).
-  - The pointer-value arms in `origins/exclusivity.rs` and
-    `origins/ref_params.rs` stay: they handle a pointer's carried loans,
-    not its subscript.
-  - The VM's checked-subscript `Index` rejects a `Pointer` receiver
-    ("checked nominal subscript receiver is Pointer", `exec.rs`).
-  - Write capability comes from the `ref[Self.origin]` result's
-    mutability. `check_pointer_write` stays for `write` (R2468).
-  - Probe: `p[1]` on `Pointer(to=x)` runs the declared offset getter and
-    traps in the VM where the pin reads the neighbouring slot (R2212).
-    `assets/type_error/pointer_to_place_offset_rejected.mojo` then moves to
-    `runtime_error`, with its ledger row and `docs/non-goals.md`'s
-    "rejects".
-  - Probe: every fixture spelling a pointer subscript prints what it
-    printed before. The plan file `R2473-p-p-i-and-p-unsafe-plan.md` lists
-    the 71 a prototype changed, by site.
-  - Found while planning R2208 (2026-11-21).
-  - Substituting the receiver's arguments one binder at a time captures an
-    inner `Pointer` application's binders: in `Pointer.__init__(
-    unsafe_from_address: Int)`, `Pointer(to=..).unsafe_bitcast[
-    type_of(self)]()[]` mistypes once the outer `address_space :=
-    GENERIC` reaches it. Apply the arguments simultaneously rather than
-    keep the rule for pointer-to-pointer receivers.
-  - Depends on R2476 (keyword stores), R2477 (the declared getters).
-  - Model: Fable, Not Planned.
-
 - [ ] **R2478 `Pointer._get_ref_with_unsafe_interior_origin` is not
   declared**
 
@@ -11052,6 +11025,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The MIR text schema drops the `pointer` intrinsic tag, so bump it and
     regenerate the `tests/mir_passes/inline-parametric` goldens that spell
     it.
+  - The checker's primitive arms go with it: the `primitive_pointer_deref`
+    node fact's arms in `infer_index` and `check_place_impl`
+    (`checker/indexing.rs`), and `dereferenced_pointer` and its users in
+    `origins/actuals.rs` (`reference_actual`'s pointer arm,
+    `place_address_space`, `returned_pointer_dereference_origin`), which
+    a pointer subscript reaches only when no getter's reference answers
+    it. MIR's `Node::primitive_pointer_dereference` store paths
+    (`lower_stmt.rs`) go too.
   - Found while planning R2208 (2026-11-21).
   - Depends on R2473.
   - Model: Fable, Not Planned.

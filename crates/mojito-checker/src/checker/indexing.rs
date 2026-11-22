@@ -67,9 +67,6 @@ impl Checker {
         {
             return Some(SubscriptGetter::Param);
         }
-        if pointer_subscript_rule(obj_ty) {
-            return None;
-        }
         self.member_struct(obj_ty, "__getitem__")
             .and_then(|(name, _)| self.structs.get(name))
             .is_some_and(|info| info.methods.contains_key("__getitem__"))
@@ -122,10 +119,6 @@ impl Checker {
                 Some(substitute_at(field_ty, info, arguments))
             }),
             ExprKind::Index { object, index } => self.index_storage_ty(object, index),
-            ExprKind::MultiIndex { .. } => {
-                let (object, offset) = super::places::pointer_offset_keyword_subscript(place)?;
-                self.index_storage_ty(object, offset)
-            }
             _ => None,
         }
     }
@@ -230,32 +223,24 @@ impl Checker {
                 }
             }
             ExprKind::Index { object, index } => {
-                // The empty-subscript store `p[] = v` writes the pointee at
-                // offset 0. The pointer itself is only read — a plain `self`
-                // method may write through `self.p[]` — so the provenance,
-                // not the pointer's own place, must carry mutable capability
-                // (as upstream: a `Pointer[T, MutOrigin]` field is writable
-                // from any receiver).
-                // A nominal receiver's zero-argument `__getitem__` is the
+                // A receiver's zero-argument `__getitem__` (`p[]`) is the
                 // getter lvalue below.
                 if matches!(index.kind, ExprKind::EmptySubscript) {
                     let receiver = self.infer(object)?;
-                    match receiver.kind() {
-                        pointer if let Some((element, origin)) = pointer.as_pointer() => {
-                            self.check_pointer_write(object, &origin)?;
-                            return Ok(element);
-                        }
-                        _ if self.has_empty_subscript_getter(&receiver) => {}
-                        other => {
-                            return Err(TypeError::Unsupported(format!(
-                                "an empty subscript ('value[]') is the pointer dereference; \
-                                 '{other}' is not a pointer"
-                            )));
-                        }
+                    // The primitive dereference is the pointee's place,
+                    // written with the provenance's capability.
+                    if self.has_fact(&place.source_span(), |facts| facts.primitive_pointer_deref)
+                        && let Some((element, origin)) = receiver.as_pointer()
+                    {
+                        self.check_pointer_write(object, &origin)?;
+                        return Ok(element);
+                    }
+                    if self.member_struct(&receiver, "__getitem__").is_none() {
+                        return Err(TypeError::NotIndexable(receiver.to_string()));
                     }
                 }
-                // A pointer is a value: a store through it needs its origin's
-                // mutable capability (`check_pointer_write` below), not a
+                // A pointer is a value: a store through it needs its
+                // getter's `ref[Self.origin]` result to be mutable, not a
                 // mutable binding, so `def w(p: MutPointer[Int, _]): p[0] = 2`
                 // writes through the parameter as upstream does.
                 let inferred = self.infer(object)?;
@@ -342,23 +327,7 @@ impl Checker {
                     self.check_place(object)?;
                     return self.infer(place);
                 }
-                let elem = match obj_ty.kind() {
-                    // A pointer store `ptr[i] = e`: the target is the pointee type.
-                    // An origin-bearing pointer designates one value and its
-                    // provenance must carry mutable capability.
-                    pointer if let Some((element, origin)) = pointer.as_pointer() => {
-                        self.check_pointer_offset(&origin, index)?;
-                        self.check_pointer_write(object, &origin)?;
-                        element
-                    }
-                    _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
-                };
-                let idx_ty = self.infer(index)?;
-                self.check_subscript_index(&idx_ty, "index")?;
-                Ok(match elem.kind() {
-                    TyKind::Ref(reference) => reference.referent.clone(),
-                    _ => elem,
-                })
+                Err(TypeError::NotIndexable(obj_ty.to_string()))
             }
             ExprKind::Slice { object, .. } => {
                 let object_type = self.check_place(object)?;
@@ -368,28 +337,14 @@ impl Checker {
                 }
             }
             ExprKind::MultiIndex { object, .. } => {
-                // `ptr[unsafe_offset=i] = e` (current Mojo's keyword
-                // dereference): the pointer store, exactly like `ptr[i] = e`.
-                if let Some((object, offset)) =
-                    super::places::pointer_offset_keyword_subscript(place)
-                    && let Some((element, origin)) = self.infer(object)?.as_pointer()
-                {
-                    self.check_pointer_offset(&origin, offset)?;
-                    self.check_pointer_write(object, &origin)?;
-                    let idx_ty = self.infer(offset)?;
-                    if !self.is_index_type(&idx_ty) {
-                        return Err(TypeError::TypeMismatch {
-                            expected: "Indexer".to_string(),
-                            found: idx_ty.to_string(),
-                            context: "index".to_string(),
-                        });
-                    }
-                    return Ok(match element.kind() {
-                        TyKind::Ref(reference) => reference.referent.clone(),
-                        _ => element,
-                    });
-                }
-                let object_type = self.check_place(object)?;
+                // A pointer is a value, written through its getter's
+                // reference rather than as a place of its own.
+                let inferred = self.infer(object)?;
+                let object_type = if inferred.is_pointer() {
+                    inferred
+                } else {
+                    self.check_place(object)?
+                };
                 match self.subscript_lvalue(place)? {
                     Some(lvalue) => self.subscript_reference_place(place, &object_type, &lvalue),
                     None => Err(TypeError::NotIndexable(object_type.to_string())),
@@ -609,6 +564,9 @@ impl Checker {
         &self,
         target: &Expr,
     ) -> Result<Option<SubscriptLValue>, TypeError> {
+        if self.has_fact(&target.source_span(), |facts| facts.primitive_pointer_deref) {
+            return Ok(None);
+        }
         let object = match &target.kind {
             ExprKind::Index { object, index } if self.type_keyed_projection(object, index) => {
                 return Ok(None);
@@ -623,9 +581,6 @@ impl Checker {
             TyKind::Ref(reference) => reference.referent.clone(),
             _ => receiver,
         };
-        if pointer_subscript_rule(&receiver) {
-            return Ok(None);
-        }
         let Some((name, _)) = self.member_struct(&receiver, "__getitem__") else {
             return Ok(None);
         };
@@ -913,24 +868,6 @@ impl Checker {
         }
     }
 
-    /// Whether `receiver` declares a zero-argument `__getitem__`, which an
-    /// empty subscript (`value[]`) calls (`Optional`'s and `OwnedPointer`'s).
-    fn has_empty_subscript_getter(&self, receiver: &Ty) -> bool {
-        receiver
-            .kind()
-            .as_non_simd_struct()
-            .is_some_and(|(name, _)| {
-                self.structs
-                    .get(name)
-                    .and_then(|info| info.methods.get("__getitem__"))
-                    .is_some_and(|methods| {
-                        methods
-                            .iter()
-                            .any(|method| method.has_self && method.params.is_empty())
-                    })
-            })
-    }
-
     /// The nominal subscript `place`, of a `receiver` whose accessors form
     /// `lvalue`, as a place: the getter's mutable reference result, written
     /// through as a call returning one is.
@@ -1154,32 +1091,9 @@ impl Checker {
         arguments: &[SubscriptArg],
     ) -> Result<Ty, TypeError> {
         let object_type = self.infer(object)?;
-        // `ptr[unsafe_offset=i]` is current Mojo's keyword spelling of the
-        // indexed dereference (the positional `ptr[i]` is its deprecated
-        // form). It is the only keyword subscript a pointer has.
-        if let Some((element, origin)) = object_type.as_pointer() {
-            if let [SubscriptArg::Keyword { name, value }] = arguments
-                && name == "unsafe_offset"
-            {
-                self.check_pointer_offset(&origin, value)?;
-                let index = self.infer(value)?;
-                if !self.is_index_type(&index) {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "Indexer".to_string(),
-                        found: index.to_string(),
-                        context: "index".to_string(),
-                    });
-                }
-                self.materialize_temporary_holder(object, false);
-                return Ok(element);
-            }
-            return Err(TypeError::Unsupported(
-                "a Pointer keyword subscript is spelled exactly \
-                 'pointer[unsafe_offset=i]'"
-                    .to_string(),
-            ));
-        }
-        if !object_type.is_non_simd_struct() && !matches!(object_type.kind(), TyKind::Param { .. })
+        if !object_type.is_non_simd_struct()
+            && !object_type.is_pointer()
+            && !matches!(object_type.kind(), TyKind::Param { .. })
         {
             return Err(TypeError::NotIndexable(object_type.to_string()));
         }
@@ -1280,30 +1194,32 @@ impl Checker {
             TyKind::Ref(reference) => reference.referent.clone(),
             _ => obj_ty,
         };
-        // The empty subscript `p[]` dereferences a pointer at offset 0 (always
-        // in provenance, so no offset check). A nominal receiver may declare a
-        // zero-argument `__getitem__` (current Optional's raising extraction);
-        // the EmptySubscript node is syntax-only and is not passed as an
-        // ordinary argument.
+        // The empty subscript `value[]` calls the receiver's zero-argument
+        // `__getitem__` (`Pointer`'s dereference, current Optional's raising
+        // extraction); the EmptySubscript node is syntax-only and is not
+        // passed as an ordinary argument. Only the dereference
+        // `__get_litref_as_mvalue` is spelled as, which the declared
+        // `Pointer.__getitem__` bottoms out in, is the primitive.
         if matches!(index.kind, ExprKind::EmptySubscript) {
-            if self.has_empty_subscript_getter(&obj_ty) {
-                return self.infer_method_call(
+            if self.has_fact(&span, |facts| facts.primitive_pointer_deref)
+                && let Some(element) = obj_ty.pointer_element()
+            {
+                self.materialize_temporary_holder(object, false);
+                return Ok((*element).clone());
+            }
+            if self.member_struct(&obj_ty, "__getitem__").is_some() {
+                let result = self.infer_method_call(
                     &span,
                     object,
                     "__getitem__",
                     MethodCallArguments::ordinary(&[], &[]),
-                );
+                )?;
+                return Ok(match result.kind() {
+                    TyKind::Ref(reference) => reference.referent.clone(),
+                    _ => result,
+                });
             }
-            return match obj_ty.kind() {
-                pointer if let Some(element) = pointer.pointer_element() => {
-                    self.materialize_temporary_holder(object, false);
-                    Ok((*element).clone())
-                }
-                other => Err(TypeError::Unsupported(format!(
-                    "an empty subscript ('value[]') is the pointer dereference; \
-                     '{other}' is not a pointer"
-                ))),
-            };
+            return Err(TypeError::NotIndexable(obj_ty.to_string()));
         }
         // Compiler-private inline uninit storage: `storage[0]` designates the
         // payload place (upstream's `self._array[0]`), assuming initialization
@@ -1429,11 +1345,10 @@ impl Checker {
         // A user struct with `__getitem__` is subscriptable: `c[i]` →
         // `c.__getitem__(i)`, typed by the method (the index need not be `Int`).
         // A `SIMD` lane subscript is its declared `__getitem__` too.
-        if !pointer_subscript_rule(&obj_ty)
-            && (obj_ty.kind().is_non_simd_struct()
-                || self
-                    .declared_receiver_member(&obj_ty, "__getitem__")
-                    .is_some())
+        if obj_ty.kind().is_non_simd_struct()
+            || self
+                .declared_receiver_member(&obj_ty, "__getitem__")
+                .is_some()
         {
             if self.subscript_getter(&obj_ty) == Some(SubscriptGetter::Call) {
                 let result = self.infer_struct_getitem_call(
@@ -1466,21 +1381,7 @@ impl Checker {
                 MethodCallArguments::ordinary(std::slice::from_ref(index), &[]),
             );
         }
-        // The result of indexing a pointer: its pointee.
-        let result = match obj_ty.kind() {
-            pointer if let Some((element, origin)) = pointer.as_pointer() => {
-                self.check_pointer_offset(&origin, index)?;
-                self.materialize_temporary_holder(object, false);
-                element
-            }
-            _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
-        };
-        let idx_ty = self.infer(index)?;
-        self.check_subscript_index(&idx_ty, "index")?;
-        Ok(match result.kind() {
-            TyKind::Ref(reference) => reference.referent.clone(),
-            _ => result,
-        })
+        Err(TypeError::NotIndexable(obj_ty.to_string()))
     }
 
     /// The type of element `index` of heterogeneous storage holding
@@ -1540,8 +1441,13 @@ impl Checker {
             MethodCallArguments::ordinary(indices, &[]),
         )?;
         // A view-typed result (a `Span` over a `ContiguousSlice` index)
-        // stays borrowed from its receiver's sources.
-        if !matches!(result.kind(), TyKind::Ref(_)) && self.type_carries_loans(&result) {
+        // stays borrowed from its receiver's sources; a referent the getter
+        // returns by reference is no view, whatever loans its type carries.
+        let returns_reference = matches!(result.kind(), TyKind::Ref(_))
+            || self
+                .fact(&span, |facts| facts.selected_call.as_deref())
+                .is_some_and(|getter| getter.reference_result.is_some());
+        if !returns_reference && self.type_carries_loans(&result) {
             self.record_borrowed_view_result(&span, &result);
             return Ok(result);
         }
@@ -1554,31 +1460,6 @@ impl Checker {
             self.record_interior_reference(span, object, "value");
         }
         Ok(result)
-    }
-
-    /// An origin-bearing pointer to a precise place designates exactly one
-    /// checked value, so only offset 0 can be dereferenced; any other offset
-    /// would be out-of-provenance access that Mojo leaves undefined. A
-    /// provenance that is no single place ([`mojito_types::origin::PointerOrigin::single_place`]) —
-    /// an interior-generation domain or a callable's own origin binder —
-    /// dereferences at any offset, with the VM's arena bounds check as the
-    /// dynamic backstop.
-    pub(super) fn check_pointer_offset(
-        &self,
-        origin: &mojito_types::origin::PointerOrigin,
-        index: &Expr,
-    ) -> Result<(), TypeError> {
-        if !origin.single_place() {
-            return Ok(());
-        }
-        match self.eval_ct(index) {
-            Ok(value) if value.is_zero() => Ok(()),
-            _ => Err(TypeError::Unsupported(
-                "an origin-bearing Pointer designates a single value; only \
-                 offset 0 can be dereferenced"
-                    .to_string(),
-            )),
-        }
     }
 
     /// Reject a write through `pointer` unless its provenance carries
@@ -1646,9 +1527,11 @@ impl Checker {
     }
 
     /// Reject any pointer dereference on the way to a written place whose
-    /// provenance is not writable, as `check_place` does for a plain
+    /// provenance is not writable here, as `check_place` does for a plain
     /// assignment; a nominal subscript's getter/setter path does not walk
-    /// its receiver chain as a place.
+    /// its receiver chain as a place. The capability is the pointer's
+    /// origin's, which the getter's `ref[Self.origin]` result names, judged
+    /// in the body as upstream judges an `Origin[mut=m]` binder there.
     pub(super) fn check_pointer_derefs(&self, place: &Expr) -> Result<(), TypeError> {
         match &place.kind {
             ExprKind::Index { object, .. }
@@ -1662,24 +1545,6 @@ impl Checker {
             ExprKind::Member { object, .. } => self.check_pointer_derefs(object),
             _ => Ok(()),
         }
-    }
-
-    /// Check a primitive pointer subscript's index type: an `Int`, or an
-    /// `Indexer` normalized through `__mlir_index__`
-    /// (`assets/ok/indexer_normalization.mojo`).
-    pub(super) fn check_subscript_index(
-        &self,
-        idx_ty: &Ty,
-        context: &str,
-    ) -> Result<(), TypeError> {
-        if self.is_index_type(idx_ty) {
-            return Ok(());
-        }
-        Err(TypeError::TypeMismatch {
-            expected: "Indexer".to_string(),
-            found: idx_ty.to_string(),
-            context: context.to_string(),
-        })
     }
 
     /// Whether a value can be normalized to an `Int` index. A numeric
@@ -2396,7 +2261,13 @@ impl Checker {
     /// an owner a `ref self` consumer already minted for this view
     /// temporary.
     fn record_borrowed_view_result(&self, span: &SourceSpan, result: &Ty) {
-        if !self.type_carries_loans(result) {
+        // A referent the getter returns by reference is no view, whatever
+        // loans its type carries.
+        let returns_reference = matches!(result.kind(), TyKind::Ref(_))
+            || self
+                .fact(span, |facts| facts.selected_call.as_deref())
+                .is_some_and(|getter| getter.reference_result.is_some());
+        if returns_reference || !self.type_carries_loans(result) {
             return;
         }
         let mut record = self.record_at(span.clone());
@@ -2651,14 +2522,6 @@ fn unwritable_reference(mutability: mojito_types::origin::Mutability, accessor: 
     })
 }
 
-/// Whether the subscript syntax over `ty` is the checker's pointer rule
-/// (`p[]`, `p[i]`, `p[unsafe_offset=i]`) rather than a call of `Pointer`'s
-/// declared `__getitem__`s, which answer only an explicit
-/// `p.__getitem__(…)` until the syntax switches to them (R2473).
-fn pointer_subscript_rule(ty: &Ty) -> bool {
-    ty.is_pointer()
-}
-
 /// The name of `setter`'s last argument, which upstream takes as every
 /// `__setitem__` overload's value name. `None` when it takes only `self`.
 fn setter_value_name(setter: &MethodSig) -> Option<String> {
@@ -2670,9 +2533,8 @@ fn setter_value_name(setter: &MethodSig) -> Option<String> {
 
 /// Reject a store through `__setitem__` with a keyword index argument
 /// (`s[k=0] = v` over a keyword-only setter): MIR's setter call carries
-/// positional indices only. A keyword store through a `ref` getter writes
-/// its reference, and a pointer's keyword offset (`p[unsafe_offset=1] = v`)
-/// stores through the pointer.
+/// positional indices only. A keyword store through a `ref` getter
+/// (`p[unsafe_offset=1] = v` among them) writes its reference.
 fn reject_keyword_setter_store(target: &Expr) -> Result<(), TypeError> {
     let ExprKind::MultiIndex { args, .. } = &target.kind else {
         return Ok(());

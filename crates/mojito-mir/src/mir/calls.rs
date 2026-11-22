@@ -1793,6 +1793,12 @@ impl<'a> Flatten<'a> {
                 origins.push(place.clone());
             }
         }
+        // A pointer's pointee (`p[]`, `p.__getitem__()`) is a shared pointer
+        // alias of the storage, as the pointer's own loan is.
+        let shared = expression
+            .object()
+            .and_then(Node::ty)
+            .is_some_and(|ty| ty.is_pointer());
         let mut loans = Vec::new();
         for origin in origins {
             let Some(canonical) = self.mir_interior_origin(&origin, fallback) else {
@@ -1811,7 +1817,7 @@ impl<'a> Flatten<'a> {
                     mojito_types::origin::Mutability::Immutable => false,
                 },
                 interior,
-                shared: false,
+                shared,
                 setup,
             });
         }
@@ -1826,11 +1832,19 @@ impl<'a> Flatten<'a> {
             && let Some(view_loans) = self.aggregate_loans.get(&receiver.root)
         {
             for loan in &mut loans {
-                if view_loans
+                let mut same_root = view_loans
                     .iter()
-                    .any(|view_loan| view_loan.place.root == loan.place.root)
-                {
+                    .filter(|view_loan| view_loan.place.root == loan.place.root);
+                if let Some(view_loan) = same_root.next() {
                     loan.setup = true;
+                    // The view's own loan names the storage exactly (a
+                    // pointer to `self.a` lends `self.a`, not `self`).
+                    if same_root.next().is_none()
+                        && view_loan.place.through.is_none()
+                        && !view_loan.place.proj.is_empty()
+                    {
+                        loan.place = view_loan.place.clone();
+                    }
                 }
             }
         }
@@ -3269,7 +3283,7 @@ impl<'a> Flatten<'a> {
     }
 
     /// The place a field chain or intrinsic subscript over a reference
-    /// (`p[unsafe_offset=i]` included) names: the projection below an
+    /// names: the projection below an
     /// accessor's returned reference
     /// ([`Self::lower_projected_reference_place`]) or through a pointer's
     /// pointee ([`Self::try_place`]). A bare name, a temporary, a
@@ -3280,7 +3294,6 @@ impl<'a> Flatten<'a> {
         let projected = match expression.op() {
             CheckedOp::Member { .. } => true,
             CheckedOp::Index { .. } => expression.call_contract().is_none(),
-            CheckedOp::MultiIndex { .. } => expression.pointer_keyword_subscript().is_some(),
             _ => false,
         };
         if !projected || expression.is_fresh_temporary() || rooted_in_temporary(expression) {

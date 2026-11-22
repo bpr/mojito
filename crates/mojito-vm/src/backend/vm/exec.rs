@@ -209,7 +209,22 @@ impl VmBackend {
             }
             MirInstr::MakeRef { dest, place } => {
                 if let Some(handle) = self.heap_handle_place(place, regs, vars)? {
-                    regs[dest.0 as usize] = handle;
+                    // A `ref` field (a closure's `mut` capture) forwards the
+                    // handle it stores when the destination is typed as
+                    // that handle, as below.
+                    let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                    regs[dest.0 as usize] =
+                        match (place.ty.as_ref().map(Ty::kind), target.map(Ty::kind)) {
+                            (Some(TyKind::Ref(stored)), Some(TyKind::Ref(made)))
+                                if made.referent == stored.referent =>
+                            {
+                                match self.read_reference(&handle, frame_id, vars)? {
+                                    stored @ (Value::Ref { .. } | Value::Pointer { .. }) => stored,
+                                    _ => handle,
+                                }
+                            }
+                            _ => handle,
+                        };
                     return Ok(());
                 }
                 let root = vars[place.root as usize].clone();
@@ -1295,11 +1310,16 @@ impl VmBackend {
                     // Use the checked argument contract, not the mere presence
                     // of a selected symbol, to distinguish those ABIs.
                     let base_ty = prog.mir.functions[function].1.reg_types.get(&base.0);
-                    // A `SIMD` receiver is the builtin value `method_call`
-                    // dispatches to the selected declared member.
+                    // A `SIMD` or `Pointer` receiver is the builtin value
+                    // `method_call` dispatches to the selected declared
+                    // member.
                     let recv = match prog.boxed(base_value, base_ty.map(peel_references)) {
                         recv @ Value::Struct { .. } => recv,
-                        recv if base_ty.is_some_and(|ty| peel_references(ty).kind().is_simd()) => {
+                        recv if base_ty.is_some_and(|ty| {
+                            let kind = peel_references(ty).kind();
+                            kind.is_simd() || kind.is_pointer()
+                        }) =>
+                        {
                             recv
                         }
                         other => {
@@ -1974,7 +1994,17 @@ impl VmBackend {
                 }
             }
             MirInstr::StoreRef { place, reference } => {
-                let handle = regs[reference.0 as usize].clone();
+                // A heap pointer standing for a getter's reference into an
+                // allocation (`heap_reference_result`) is stored as the
+                // reference to its pointee.
+                let handle = match regs[reference.0 as usize].clone() {
+                    Value::Pointer { allocation, offset } => Value::Ref {
+                        frame: POINTER_ROOT_FRAME,
+                        slot: self.pointer_root(allocation, offset),
+                        projection: vec![RefProjection::Index(0)],
+                    },
+                    handle => handle,
+                };
                 if !matches!(handle, Value::Ref { .. }) {
                     return Err(RuntimeError::TypeError(
                         "vm: reference storage requires a reference handle".to_string(),

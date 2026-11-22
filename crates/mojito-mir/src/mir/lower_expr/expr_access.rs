@@ -563,14 +563,6 @@ impl<'a> Flatten<'a> {
         let bound = |this: &mut Self, id: Option<CheckedNodeId>| {
             id.map(|id| this.outside_call_setup(|this| this.expr(operand(id))))
         };
-        // `ptr[unsafe_offset=i]` — the keyword spelling of pointer
-        // indexed dereference — reads exactly like `ptr[i]`.
-        if is_pointer(object)
-            && let [CheckedSubscriptArg::Keyword { name, value }] = args
-            && name == "unsafe_offset"
-        {
-            return self.pointer_subscript_read(e, object, operand(*value));
-        }
         let has_call = e.call_contract().is_some();
         let object_reg = if has_call {
             self.lower_setup_receiver_with(e, object, |this| {
@@ -770,9 +762,9 @@ impl<'a> Flatten<'a> {
         copied
     }
 
-    /// Read pointer subscript node `e`, `object[index]` or
-    /// `object[unsafe_offset=index]`. Upstream's `__getitem__` returns
-    /// `ref T`, so the subscript is a place: the read borrows the pointee,
+    /// Read the primitive pointer dereference node `e`, `object[]`, which
+    /// the declared `__getitem__` bottoms out in. It returns `ref T`, so
+    /// the dereference is a place: the read borrows the pointee,
     /// and only the checked value-copy boundary copies it, through the
     /// pointee's reference ([`Self::pointee_reference_read`]).
     fn pointer_subscript_read(&mut self, e: Node<'a>, object: Node<'a>, index: Node<'a>) -> Reg {

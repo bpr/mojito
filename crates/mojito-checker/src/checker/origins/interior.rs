@@ -109,8 +109,7 @@ impl Checker {
     ) {
         let pointer_object = match &place.kind {
             ExprKind::Index { object, .. } => Some(object.as_ref()),
-            _ => crate::checker::places::pointer_offset_keyword_subscript(place)
-                .map(|(object, _)| object),
+            _ => None,
         };
         let pointer_origin = pointer_object
             .and_then(|object| self.infer(object).ok())

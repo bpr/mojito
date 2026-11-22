@@ -756,17 +756,20 @@ pub(super) struct AssocBindings {
 }
 
 /// Substitute a parameterized associated type's template with concrete
-/// arguments. Origin parameters (`Origin::Param`) are replaced first, while
-/// the template names only its own: an origin id is a slot number, so a type
-/// argument's binder of the same number (an enclosing clone's) must not be
-/// reached. Types are then substituted with the ordinary type substitution,
-/// and a last pass replaces symbolic value parameters (`CtValue::Expr`),
-/// which the type-only pass carries through.
+/// arguments, every binder at once. Origin parameters (`Origin::Param`) are
+/// replaced first, while the template names only its own: an origin id is a
+/// slot number, so a type argument's binder of the same number (an enclosing
+/// clone's) must not be reached. Symbolic value parameters
+/// (`CtValue::Expr`) go next, for the same reason: they bind by name, and a
+/// type argument may hold another application of the same struct
+/// (`Pointer[Pointer[T, o, address_space=a], …]`), whose binders share
+/// those names. Types are substituted last, with the ordinary type
+/// substitution.
 pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
     let bound = mojito_types::types::bind_origin_params(ty, &bindings.origins);
     let mut values = bindings.ids.clone();
     values.bind_named_values(&ParamContext::detached(), &bindings.values);
-    substitute_values(&substitute(&bound, &bindings.types), &values)
+    substitute(&substitute_values(&bound, &values), &bindings.types)
 }
 
 /// `ty` with every struct origin tail naming an explicitly bound origin

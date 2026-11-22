@@ -115,14 +115,6 @@ impl Checker {
                 place.path.push(OriginSeg::AnyIndex);
                 Ok(place)
             }
-            ExprKind::MultiIndex { .. }
-                if let Some((object, _)) =
-                    crate::checker::places::pointer_offset_keyword_subscript(expr) =>
-            {
-                let mut place = self.origin_place(object)?;
-                place.path.push(OriginSeg::AnyIndex);
-                Ok(place)
-            }
             // A reference-returning call is a place: the one its result
             // origin names, so `inner(w).t` projects `w.t`.
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
@@ -584,10 +576,7 @@ impl Checker {
             root = match &root.kind {
                 ExprKind::Member { object, .. } => object,
                 ExprKind::Index { object, .. } => object,
-                _ => match crate::checker::places::pointer_offset_keyword_subscript(root) {
-                    Some((object, _)) => object,
-                    None => break,
-                },
+                _ => break,
             };
         }
         // A pointer the expression forms in place (a `Pointer(...)`
@@ -766,19 +755,6 @@ impl Checker {
             // the parameter directly from its declared origin; the VM re-roots the
             // returned handle at the pointee and forwards the offset-0 index.
             ExprKind::Index { object, .. } => {
-                if let Some(mojito_types::origin::PointerOrigin::Param { id, .. }) = self
-                    .infer(object)
-                    .ok()
-                    .and_then(|ty| ty.kind().pointer_origin())
-                {
-                    return Some(Origin::Param(id));
-                }
-                self.returned_reference_parameter_origin(object)
-            }
-            ExprKind::MultiIndex { .. }
-                if let Some((object, _)) =
-                    crate::checker::places::pointer_offset_keyword_subscript(expr) =>
-            {
                 if let Some(mojito_types::origin::PointerOrigin::Param { id, .. }) = self
                     .infer(object)
                     .ok()
@@ -1149,13 +1125,12 @@ impl Checker {
     }
 }
 
-/// The pointer object of a dereference expression (`p[]`, `p[i]`,
-/// `p[unsafe_offset=i]`), if `expression` is one.
+/// The pointer object of a dereference expression (`p[]`, `p[i]`), if
+/// `expression` is one.
 fn dereferenced_pointer(expression: &Expr) -> Option<&Expr> {
     match &expression.kind {
         ExprKind::Index { object, .. } => Some(object),
-        _ => crate::checker::places::pointer_offset_keyword_subscript(expression)
-            .map(|(object, _)| object),
+        _ => None,
     }
 }
 

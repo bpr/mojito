@@ -594,8 +594,7 @@ pub(super) fn is_place_expr(e: &Expr) -> bool {
     matches!(
         e.kind,
         ExprKind::Identifier(_) | ExprKind::Member { .. } | ExprKind::Index { .. }
-    ) || pointer_offset_keyword_subscript(e).is_some()
-        || walrus_destination(e).is_some()
+    ) || walrus_destination(e).is_some()
 }
 
 /// The destination the walrus `e` yields borrowed after its store, as
@@ -616,22 +615,6 @@ pub(super) fn walrus_destination(e: &Expr) -> Option<&Expr> {
         {
             Some(target)
         }
-        _ => None,
-    }
-}
-
-/// The pointer keyword subscript (`p[unsafe_offset=i]`, current Mojo's
-/// offset-dereference spelling) as its pointer object and offset expression.
-/// It is a place exactly like the positional `p[i]`; every other keyword
-/// subscript is a nominal `__getitem__` call.
-pub(super) fn pointer_offset_keyword_subscript(e: &Expr) -> Option<(&Expr, &Expr)> {
-    match &e.kind {
-        ExprKind::MultiIndex { object, args } => match args.as_slice() {
-            [mojito_ast::ast::SubscriptArg::Keyword { name, value }] if name == "unsafe_offset" => {
-                Some((object, value))
-            }
-            _ => None,
-        },
         _ => None,
     }
 }
@@ -991,12 +974,6 @@ pub(super) fn place_path(e: &Expr) -> Option<(&str, Vec<PlaceSeg>)> {
                 Some(r)
             }
             ExprKind::Index { object, .. } => {
-                let r = go(object, path)?;
-                path.push(PlaceSeg::Index);
-                Some(r)
-            }
-            ExprKind::MultiIndex { .. } => {
-                let (object, _) = pointer_offset_keyword_subscript(e)?;
                 let r = go(object, path)?;
                 path.push(PlaceSeg::Index);
                 Some(r)

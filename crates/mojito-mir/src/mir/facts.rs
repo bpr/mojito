@@ -77,34 +77,13 @@ impl<'a> Node<'a> {
         self.object().zip(self.index())
     }
 
-    /// The pointer subscript this place node spells — positional `p[i]` on
-    /// a pointer-typed object, or current Mojo's keyword `p[unsafe_offset=i]`
-    /// — as its pointer object and offset.
-    pub(super) fn pointer_offset_subscript(self) -> Option<(Self, Self)> {
-        match self.index_operands() {
-            Some((object, index)) if object.ty().as_ref().is_some_and(Ty::is_pointer) => {
-                Some((object, index))
-            }
-            Some(_) => None,
-            None => self.pointer_keyword_subscript(),
-        }
-    }
-
-    /// The keyword pointer subscript (`p[unsafe_offset=i]`) this node is, as
-    /// its object and offset; every other keyword subscript is a nominal
-    /// call.
-    pub(super) fn pointer_keyword_subscript(self) -> Option<(Self, Self)> {
-        let CheckedOp::MultiIndex { args, .. } = self.op() else {
-            return None;
-        };
-        match args.as_slice() {
-            [mojito_checked::checked::CheckedSubscriptArg::Keyword { name, value }]
-                if name == "unsafe_offset" =>
-            {
-                self.object().zip(self.operand_of(*value))
-            }
-            _ => None,
-        }
+    /// The pointer this node dereferences when it is the primitive
+    /// dereference (`__get_litref_as_mvalue(r)`'s `Pointer(_mlir_value=r)[]`),
+    /// the one pointer subscript the check selected no `__getitem__` for.
+    pub(super) fn primitive_pointer_dereference(self) -> Option<Self> {
+        let (object, _) = self.index_operands()?;
+        (self.call_contract().is_none() && object.ty().as_ref().is_some_and(Ty::is_pointer))
+            .then_some(object)
     }
 
     /// Whether this field/dereference chain roots at a fresh temporary the
@@ -115,7 +94,6 @@ impl<'a> Node<'a> {
         while let Some(object) = root
             .member_object()
             .or_else(|| root.index_operands().map(|(object, _)| object))
-            .or_else(|| root.pointer_keyword_subscript().map(|(object, _)| object))
         {
             root = object;
         }
@@ -571,7 +549,6 @@ impl<'a> Node<'a> {
             CheckedOp::Index { .. } => self
                 .call_contract()
                 .is_none_or(|contract| contract.reference_result.is_some()),
-            CheckedOp::MultiIndex { .. } => self.pointer_keyword_subscript().is_some(),
             _ => false,
         };
         self.transfer_operand().is_none()

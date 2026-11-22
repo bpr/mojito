@@ -3783,13 +3783,18 @@ members (`_mlir_type`, `_mlir_lit_ref`), and conformances (`Intable`,
 alike. The checker's rules still win for every member
 `POINTER_RULE_MEMBERS` names (`__setitem__`, `write`, `free`,
 `unsafe_free`, and the static rules), so those declared bodies are
-checked but no call selects them until the rules retire (R2473, R2468,
-R2444). The subscript syntax (`p[]`, `p[i]`, `p[unsafe_offset=i]`) is
-the rule arms of `infer_index` and the place checks, which
-`pointer_subscript_rule` (`checker/indexing.rs`) keeps ahead of the
-nominal getter lookup until R2473, while an explicit `p.__getitem__(…)`
-call selects among the three declared getters. Every initializer, `to=`
-included, is the declaration's. Any other
+checked but no call selects them until the rules retire (R2468, R2444).
+The subscript syntax (`p[]`, `p[i]`, `p[unsafe_offset=i]`), in value,
+place, and augmented position, is a call of one of the three declared
+`__getitem__`s, as an explicit `p.__getitem__(…)` is: its loans, its
+liveness, and its write capability come from the selected getter's
+`ref[Self.origin, Self.address_space]` result. The one pointer subscript
+no getter answers is the primitive dereference
+`__get_litref_as_mvalue(r)` is spelled as (`Pointer(_mlir_value=r)[]`),
+which `infer_spelled_address_builtin` marks with the
+`primitive_pointer_deref` node fact and the declared zero-argument getter
+bottoms out in; ordinary source spelling the same shape dispatches.
+Every initializer, `to=` included, is the declaration's. Any other
 member (the memory members `unsafe_write`, `unsafe_write_move_from`,
 `unsafe_take_pointee`, and `unsafe_deinit_pointee[_with]` over the two
 `!kgen.pointer` builtins, the address members `__int__`,
@@ -6546,9 +6551,9 @@ the call alone over its register, or, where its block read the register
 through a reference with nothing written since, over that reference, or,
 where its block loaded the register from a place with nothing written
 since, over a `ref.make` of that place, as upstream's `copy: Self` takes
-the source's `!lit.ref`. A pointer subscript in copy position (`p[0]`,
-`p[]`, `unsafe_write(copy=p[i])`) is read as upstream's `__getitem__`
-reads it, through the pointee's reference: the offset pointer's
+the source's `!lit.ref`. The primitive pointer dereference in copy
+position (the declared `__getitem__`'s `__get_litref_as_mvalue`) is read
+as upstream's `__getitem__` reads it, through the pointee's reference: the offset pointer's
 `pointer.convert` to an immutable `ref` (`lit.ref.from_pointer`) and a
 `ref.read` through it, so its copy passes that reference; a pointer with a
 stably known address loads the pointee's place instead, whose copy passes

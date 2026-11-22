@@ -253,6 +253,7 @@ assets/runtime_error/pliron_trap_pow_negative.mojo	trap	agree	error: execution c
 assets/runtime_error/pointer_dangling.mojo	trap	agree	error: execution crashed
 assets/runtime_error/pointer_double_free.mojo	runs	subset	the pin runs it; Mojito rejects: double free
 assets/runtime_error/pointer_take_tracked_nontrivial.mojo	runs	subset	the pin runs it; Mojito rejects: use after Pointer deallocation
+assets/runtime_error/pointer_to_place_offset_traps.mojo	runs	subset	the pin runs it; Mojito traps: designates a single value
 assets/runtime_error/pointer_use_after_free.mojo	runs	subset	the pin runs it; Mojito rejects: use after
 assets/runtime_error/simd_element_list_too_few.mojo	timeout	skip	timed out after 60s
 assets/runtime_error/span_index_out_of_range.mojo	trap	agree	error: execution crashed
@@ -1007,7 +1008,6 @@ assets/type_error/pointer_placeholder_immutable_write.mojo	compile-reject	agree	
 assets/type_error/pointer_placeholder_mutable_forward.mojo	compile-reject	agree	error: invalid call to 'w': value passed to 'q' cannot be converted from 'Pointer[Int, origin]' to 'MutPointer[Int, q.origin]'
 assets/type_error/pointer_placeholder_return.mojo	compile-reject	agree	error: 'Pointer[Int, _]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/pointer_subtract_int_rejected.mojo	compile-reject	agree	error: invalid call to '__sub__': value passed to 'rhs' cannot be converted from 'IntLiteral[1]' to 'Pointer[Int, rhs.origin]', it depends on an unresolved parameter 'rhs.origin.mut'
-assets/type_error/pointer_to_place_offset_rejected.mojo	runs	subset	the pin runs it;Mojito rejects: designates a single value
 assets/type_error/pointer_to_ref_param_write_rejected.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/pointer_union_origin_aliasing.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed mutably to 'b' argument in 'bump' call
 assets/type_error/pointer_union_origin_narrowing.mojo	compile-reject	agree	error: cannot implicitly convert 'Pointer[Int, origin_of(x, y)]' value to 'Pointer[Int, origin_of(x)]'

@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The pointer subscript syntax `p[]`, `p[i]`, and `p[unsafe_offset=i]`, in
+  value, place, and augmented position, calls `Pointer`'s declared
+  `__getitem__`s, retiring the checker's subscript rule: the reference's
+  loans, liveness, and write capability are the getter's `ref[Self.origin]`
+  result's, and only the dereference `__get_litref_as_mvalue` is spelled as
+  stays primitive. `p[1]` over `Pointer(to=x)` now runs the offset getter
+  and traps in the VM where it was rejected
+  (`assets/runtime_error/pointer_to_place_offset_traps.mojo`). Fixed with
+  it, for every getter: a `ref` result passed to a `mut` or `ref`
+  parameter (`bump(h[])`) no longer conflicts with itself, a pointer
+  getter's reference is a shared alias of its storage, a `ref` binding to
+  a `List` element whose type carries an origin keeps the list alive, and
+  a getter's reference result in `mono` closes its address space; a
+  compile-time call's reference into the heap freezes as its referent, and
+  a heap reference stores into a `ref` field or capture. The
+  bundled `List`, `Dict`, `StringDict`, `Optional`, and `Array` bodies
+  initialize moved-from slots with `unsafe_write`, as upstream does, since
+  an assignment through the getter destroys the old value.
 - A generic body passing a reference whose mutability is a binder's
   (`Pointer(to=self.get())` under `o: Origin[mut=m]`) no longer fails MIR
   verification after `inline-parametric`: inlining binds the initializer's

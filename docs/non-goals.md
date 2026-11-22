@@ -179,7 +179,7 @@ Mojito may reject valid Mojo.
 - `mapping_key_ref_write.mojo` and `set_element_ref_write.mojo` reject a write
   through a `for ref` key or set element. The pin accepts it and then answers
   membership from a stale hash index (`set-ref-write-gap`).
-- `pointer_to_place_offset_rejected.mojo` rejects offset 1 of a pointer to a
+- `pointer_to_place_offset_traps.mojo` traps at offset 1 of a pointer to a
   single local, which the pin reads from the neighbouring stack slot.
 - `span_implicit_return_escape.mojo` rejects returning a frame-local `List` as a
   `Span`; the pin returns a dangling view.

@@ -1,4 +1,4 @@
-# expect: write through a Pointer whose origin is immutable
+# expect: immutable reference returned by '__getitem__'
 # A free function's `Pointer[T, o]` result over a `View[ImmOrigin(...)]`
 # argument names its origin immutably, as the slot's `mut` is `False`.
 struct Noisy(Copyable):

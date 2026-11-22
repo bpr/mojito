@@ -130,7 +130,7 @@ struct Array[T: AnyType, length: Int](
         self.data = unsafe_alloc[Self.T](Self.length)
         var i = 0
         for var value in values^:
-            self.data[i] = value^
+            self.data.unsafe_offset(i).unsafe_write(value^)
             i += 1
 
     # Upstream marks its inline storage initialized; this one leaves its

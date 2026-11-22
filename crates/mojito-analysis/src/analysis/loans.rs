@@ -887,11 +887,24 @@ fn check_loans_at(
                 .then_some(loans)
             });
             if place.through == Some(*reference) || reborrowed.is_some() {
+                // A mutable reference's immutable setup loans only keep its
+                // accessor's receiver alive (`p[]` keeps `p`): they lend no
+                // permission, so they do not make a write through it a
+                // conflict.
+                let mutable = matches!(
+                    f.var_tys.get(reference).map(mojito_types::types::Ty::kind),
+                    Some(mojito_types::types::TyKind::Ref(
+                        mojito_types::origin::RefTy {
+                            mutability: mojito_types::origin::Mutability::Mutable,
+                            ..
+                        }
+                    ))
+                );
                 if access == LoanAccess::Write
                     && reference_loans
                         .iter()
                         .chain(reborrowed.iter().flatten())
-                        .any(|loan| !loan.mutable)
+                        .any(|loan| !(loan.mutable || mutable && loan.setup))
                 {
                     return Err(loan_error(f, &place, *reference, span));
                 }

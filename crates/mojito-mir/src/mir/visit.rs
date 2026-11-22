@@ -107,6 +107,17 @@ macro_rules! slice_iter {
     };
 }
 
+/// The mutating walk writes a visited reference type back into the
+/// instruction's reference result; the read-only walk leaves it.
+macro_rules! write_back_reference {
+    (mut $built:ident, $reference:ident) => {
+        if let mojito_types::types::TyKind::Ref(visited) = $built.kind() {
+            *$reference = visited.clone();
+        }
+    };
+    ($built:ident, $reference:ident) => {};
+}
+
 /// The mutating walk writes a visited vector type's slots back into the
 /// instruction; the read-only walk leaves them.
 macro_rules! write_back_slots {
@@ -363,12 +374,9 @@ macro_rules! type_visitor {
                         opt_ref!($($m)? raises).map(|raises| &$($m)? raises.ty),
                         TySite::Contract,
                     )?;
-                    $helpers::visit_opt_ty(
-                        visitor,
-                        opt_ref!($($m)? reference_result)
-                            .map(|reference| &$($m)? reference.referent),
-                        TySite::Result,
-                    )?;
+                    if let Some(reference) = opt_deref!($($m)? reference_result) {
+                        $helpers::visit_reference(visitor, reference)?;
+                    }
                     $helpers::visit_ty_args(visitor, instantiated_args)?;
                     $helpers::visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)?;
                     visitor.visit_param_decls(param_decls, ParamDeclSite::MethodContract)
@@ -537,6 +545,19 @@ macro_rules! type_visitor {
                 ParamDeclSite, SimdDtype, SimdWidth, Ty, TyArg, TySite,
             };
 
+            /// A reference result, visited as the reference type it names,
+            /// so its address space closes with its referent.
+            pub(super) fn visit_reference<V: $Visitor + ?Sized>(
+                visitor: &mut V,
+                reference: &$($m)? mojito_types::origin::RefTy,
+            ) -> Result<(), V::Error> {
+                let $($m)? built =
+                    Ty::new(mojito_types::types::TyKind::Ref((*reference).clone()));
+                visitor.visit_ty(&$($m)? built, TySite::Result)?;
+                write_back_reference!($($m)? built, reference);
+                Ok(())
+            }
+
             pub(super) fn visit_opt_ty<V: $Visitor + ?Sized>(
                 visitor: &mut V,
                 ty: Option<&$($m)? Ty>,
@@ -568,7 +589,7 @@ macro_rules! type_visitor {
             }
 
             /// A subscript call's error, result, and parameter types, its
-            /// bracket arguments, its reference result's referent, then its
+            /// bracket arguments, its reference result, then its
             /// contract.
             pub(super) fn walk_subscript_call<V: $Visitor + ?Sized>(
                 visitor: &mut V,
@@ -584,12 +605,9 @@ macro_rules! type_visitor {
                     visitor.visit_ty(&$($m)? argument.parameter_ty, TySite::SubscriptParameter)?;
                 }
                 visit_param_args(visitor, &$($m)? call.param_arg_regs, ParamArgSite::Subscript)?;
-                visit_opt_ty(
-                    visitor,
-                    opt_ref!($($m)? call.reference_result)
-                        .map(|reference| &$($m)? reference.referent),
-                    TySite::Result,
-                )?;
+                if let Some(reference) = opt_ref!($($m)? call.reference_result) {
+                    visit_reference(visitor, reference)?;
+                }
                 visitor.visit_param_decls(
                     &$($m)? call.param_decls,
                     ParamDeclSite::SubscriptContract,

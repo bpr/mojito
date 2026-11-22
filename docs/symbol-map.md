@@ -489,10 +489,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   it, else `__getitem__(i)`), which `infer_index` types and
   `selected_application_at` applies at a compile-time position, one
   policy for both (an `Array` receiver is declined until R511 gives it
-  `__getitem_param__`, R2043; a pointer receiver's subscript syntax stays
-  the checker rule's, `pointer_subscript_rule`, until R2473),
-  pointer offset/write checks (the single-place
-  rule and its multi-element interior-domain lift), the pointer-write
+  `__getitem_param__`, R2043; a pointer receiver's subscript is a call of
+  its declared `__getitem__`s too, except the primitive dereference the
+  `primitive_pointer_deref` node fact marks), the subscript receiver
+  chain's write check over the getters' reference results
+  (`check_pointer_derefs`), the pointer-write
   capability (`pointer_write_capability`, the per-binding resolution of a
   symbolic origin binder — through a call result's recorded
   `call_result_origins` and a holder type's `ImmOrigin` slot
@@ -866,8 +867,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`mojito-mir/src/mir/facts.rs`) answers for a place and a union alike;
   `PointerOrigin::single_place` is the one
   representation predicate for a pointer to one known place, which the
-  checker's subscript offset rule (`check_pointer_offset`), MIR's
-  `origin_bearing_pointer`,
+  MIR's `origin_bearing_pointer`,
   and the VM's `single_pointee_pointer` share,
   `lower_ref_sig_resolved`; `origins/sig.rs`'s `check_result_origins` is the
   one rule for which parameter or receiver a result may name the origin
@@ -1483,9 +1483,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Flatten::normalize_iterator` (`lower_stmt.rs`).
 - `checker/calls.rs` adapts neutral call matching to `TypeError` and validates
   checker-only signature rules.
-- `checker/places.rs` owns call-site place classification and alias rejection
-  (the pointer keyword subscript `p[unsafe_offset=i]` is a place:
-  `pointer_offset_keyword_subscript`), and how a selected call's read
+- `checker/places.rs` owns call-site place classification and alias rejection,
+  and how a selected call's read
   parameters bind their arguments (`record_argument_borrows`: the borrowable
   place reads and the owned temporaries the caller destroys after the call,
   `read_temporary_arguments`; the arguments a read `*args` collector gathers
@@ -1610,7 +1609,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   owner, raises, adjustments, call_contract, instantiated_args,
   reference_places, interior_references, element_receiver, reference_result,
   implicit_conversion, index_normalization, recorded_value,
-  intrinsic_index_dispatch, pointer_offset_subscript, rebound_place,
+  intrinsic_index_dispatch, primitive_pointer_dereference, rebound_place,
   is_fresh_temporary, …}`; a fresh temporary is a call's, a dispatched
   operator's, a by-value subscript's, or a display's or comprehension's
   result) and
@@ -1795,13 +1794,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   member, subscript, slice, and variant-projection reads (a slice literal's
   argument is `slice_literal_argument`, its `__slice_literal__`
   constructor's call, passed like any index by `emit_slice_read`; both projection
-  spellings share `variant_payload_read`, and both pointer subscript
-  spellings share `pointer_subscript_read`, a borrowed pointee read
+  spellings share `variant_payload_read`, and the primitive pointer
+  dereference reads through `pointer_subscript_read`, a borrowed pointee read
   followed by the checked `copy_boundary`; a copied one first reads through
   the pointee's `pointer.convert` reference, `pointee_reference_read`, which
   `unsafe_write(copy=)`'s operand shares). The place builders
-  (`lower_stmt.rs`), `lower_projected_reference_place`, and
-  `Flatten::pointer_keyword_subscript` (`mir.rs`) decide by the op, and
+  (`lower_stmt.rs`) and `lower_projected_reference_place` decide by the
+  op, and
   `Node::{member_object, index_operands, transfer_operand,
   spread_operand, named_value}` (`facts.rs`) bind a member, subscript,
   transfer, spread, or walrus node's operands for the predicates. The module

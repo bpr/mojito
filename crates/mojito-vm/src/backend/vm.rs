@@ -678,6 +678,30 @@ impl VmBackend {
             return Ok(CtValue::Str(text));
         }
         match value {
+            // A reference a pointer's getter returns into the heap is held
+            // as the element's heap pointer (`heap_reference_result`): a
+            // value of a type that is no pointer, or of a reference type, is
+            // the frozen reference to that element.
+            pointer @ Value::Pointer { .. }
+                if ty.is_some_and(|ty| {
+                    matches!(ty.kind(), TyKind::Ref(_))
+                        || !(ty.is_pointer() || matches!(ty.kind(), TyKind::KgenPointer { .. }))
+                }) =>
+            {
+                let referent_ty = match ty.map(Ty::kind) {
+                    Some(TyKind::Ref(reference)) => Some(&reference.referent),
+                    _ => ty,
+                };
+                let roots = self.pointer_roots.clone();
+                let referent =
+                    self.read_reference(&pointer, FrameId(POINTER_ROOT_FRAME), &roots)?;
+                Ok(CtValue::StoreToMem(Box::new(self.freeze_value(
+                    prog,
+                    referent,
+                    referent_ty,
+                    active,
+                )?)))
+            }
             Value::Pointer { allocation, offset } => {
                 let memory = if allocation == 0 {
                     None

@@ -7732,6 +7732,11 @@ node_facts! {
     }
     flags {
         explicit_destroy_call,
+        /// The empty subscript `__get_litref_as_mvalue(r)` is spelled as
+        /// (`Pointer(_mlir_value=r)[]`): the primitive dereference the
+        /// declared `Pointer.__getitem__`s bottom out in, never a call of
+        /// one.
+        primitive_pointer_deref,
         copy_place_value_use,
         /// See [`SemanticAdjustment::CompileTimeLoad`].
         compile_time_load,
