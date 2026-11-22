@@ -165,7 +165,7 @@ impl Checker {
         fn contains_type_parameter(ty: &Ty) -> bool {
             match ty.kind() {
                 TyKind::Param { .. } => true,
-                struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+                struct_ty if let Some((_, arguments)) = struct_ty.as_non_pointer_struct() => {
                     arguments.iter().any(|argument| match argument {
                         mojito_types::types::TyArg::Ty(ty) => contains_type_parameter(ty),
                         _ => false,
@@ -180,7 +180,7 @@ impl Checker {
             // A struct's fields, at the application's arguments, may hold
             // a type parameter the arguments leave open.
             match ty.kind() {
-                struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+                struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
                     self.structs.get(name).is_some_and(|info| {
                         let subst = struct_subst(&info.params, arguments);
                         info.fields
@@ -249,7 +249,7 @@ impl Checker {
                         collect(checker, element, origins, out);
                     }
                 }
-                struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+                struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
                     let Some(info) = checker.structs.get(name) else {
                         return;
                     };
@@ -362,7 +362,7 @@ impl Checker {
                 TyKind::Variant(alternatives) => alternatives
                     .iter()
                     .any(|alternative| contains(checker, alternative, pointer_loans, seen)),
-                struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
+                struct_ty if let Some((name, args)) = struct_ty.as_non_pointer_struct() => {
                     let key = ty.to_string();
                     if !seen.insert(key.clone()) {
                         return false;

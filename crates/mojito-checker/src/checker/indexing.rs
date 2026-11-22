@@ -74,7 +74,7 @@ impl Checker {
     /// struct's `__getitem_param__` when it declares one, else its
     /// `__getitem__`. `None` for any other type.
     pub(super) fn subscript_getter(&self, obj_ty: &Ty) -> Option<SubscriptGetter> {
-        if let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
+        if let Some((name, _)) = obj_ty.kind().as_non_pointer_struct()
             && self
                 .structs
                 .get(name)
@@ -125,7 +125,7 @@ impl Checker {
                 None
             }
             ExprKind::Member { object, field } => self.infer(object).ok().and_then(|base| {
-                let (name, arguments) = base.kind().as_non_simd_struct()?;
+                let (name, arguments) = base.kind().as_non_pointer_struct()?;
                 let info = self.structs.get(name)?;
                 let (_, field_ty) = info
                     .fields
@@ -283,7 +283,7 @@ impl Checker {
                     return self.subscript_reference_place(place, &obj_ty, &lvalue);
                 }
                 self.prepare_index_argument(&obj_ty, index, "__setitem__", 0)?;
-                if let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
+                if let Some((name, _)) = obj_ty.kind().as_non_pointer_struct()
                     && !self.structs.contains_key(name)
                 {
                     if let Some(element) = list_element(&obj_ty) {
@@ -526,7 +526,7 @@ impl Checker {
         let span = subscript.source_span();
         let (descriptors, _) = self.fact(&span, |facts| facts.subscript_descriptor.as_ref())?;
         let target = descriptors.into_iter().next()??.target;
-        let (name, _) = target.kind().as_non_simd_struct()?;
+        let (name, _) = target.kind().as_non_pointer_struct()?;
         // Identities past every position `synthetic_slice_descriptor`
         // derives, so no synthetic operand is taken for the descriptor.
         let synthetic = |kind: ExprKind, ordinal: u32| {
@@ -1094,7 +1094,7 @@ impl Checker {
             // bare positional `s[i]`): the byte or codepoint unit is spelled
             // explicitly through a keyword slice.
             struct_ty
-                if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                if let Some((name, arguments)) = struct_ty.as_non_pointer_struct()
                     && arguments.is_empty()
                     && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
@@ -1131,7 +1131,7 @@ impl Checker {
         arguments: &[SubscriptArg],
     ) -> Result<Ty, TypeError> {
         let object_type = self.infer(object)?;
-        if !object_type.is_non_simd_struct()
+        if !object_type.is_non_pointer_struct()
             && !object_type.is_pointer()
             && !matches!(object_type.kind(), TyKind::Param { .. })
         {
@@ -1317,7 +1317,7 @@ impl Checker {
                 _ => element.clone(),
             });
         }
-        if let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
+        if let Some((name, _)) = obj_ty.kind().as_non_pointer_struct()
             && self.is_abstract_struct(name)
         {
             // A discovery-round abstract scalar range subscripts by Int to
@@ -1369,7 +1369,7 @@ impl Checker {
         // A user struct with `__getitem__` is subscriptable: `c[i]` →
         // `c.__getitem__(i)`, typed by the method (the index need not be `Int`).
         // A `SIMD` lane subscript is its declared `__getitem__` too.
-        if obj_ty.kind().is_non_simd_struct()
+        if obj_ty.kind().is_non_pointer_struct()
             || self
                 .declared_receiver_member(&obj_ty, "__getitem__")
                 .is_some()
@@ -1534,7 +1534,7 @@ impl Checker {
     /// upstream's `index()` casts to `Int`.
     pub(super) fn is_index_type(&self, ty: &Ty) -> bool {
         self.coerces_by_origins(ty, &Ty::int())
-            || (ty.is_non_simd_struct() || matches!(ty.kind(), TyKind::Param { .. }))
+            || (ty.is_non_pointer_struct() || matches!(ty.kind(), TyKind::Param { .. }))
                 && self.conforms_to(ty, "Indexer")
     }
 
@@ -1544,7 +1544,7 @@ impl Checker {
     pub(super) fn index_normalization_target(&self, ty: &Ty) -> Option<String> {
         match ty.kind() {
             struct_ty
-                if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                if let Some((name, arguments)) = struct_ty.as_non_pointer_struct()
                     && self.conforms_to(ty, "Indexer") =>
             {
                 let info = self.structs.get(name)?;
@@ -1616,7 +1616,7 @@ impl Checker {
         let Some(target) = self.index_normalization_target(&actual) else {
             return Ok(());
         };
-        let Some((name, arguments)) = receiver.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = receiver.kind().as_non_pointer_struct() else {
             if receiver.is_pointer() || matches!(receiver.kind(), TyKind::VariadicPack(_)) {
                 self.record_at(expression.source_span()).implicit_conversion = Some(target);
             }
@@ -1752,7 +1752,7 @@ impl Checker {
         // (`struct_value_field`), so a chain folds through `G[Int]` as
         // through any struct.
         if self.comptime_positions.get() == 0
-            && (self.infer(object)?).kind().is_non_simd_struct()
+            && (self.infer(object)?).kind().is_non_pointer_struct()
             && (self.is_parameter_read(object) || self.is_parameter_value_read(object))
             && let Some(value) = self.struct_value_field(object, field)
         {
@@ -2096,7 +2096,7 @@ impl Checker {
                 .and_then(|(_, width)| self.simd_length_parameter(&width))
                 .is_some_and(|length| length.meta().as_value().is_some()),
             _ => match ty.kind() {
-                struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                struct_ty if let Some((name, _)) = struct_ty.as_non_pointer_struct() => {
                     self.structs.get(name).is_some_and(|info| {
                         info.params.iter().any(|decl| decl.name() == field)
                             && !info.fields.iter().any(|(name, _)| name == field)
@@ -2228,7 +2228,7 @@ impl Checker {
     /// no type or `field` is not a type member of it.
     fn type_member_through(&self, base: &Expr, field: &str) -> Option<Result<Ty, TypeError>> {
         let base_ty = self.member_type_operand(base)?;
-        let (name, _) = base_ty.kind().as_non_simd_struct()?;
+        let (name, _) = base_ty.kind().as_non_pointer_struct()?;
         matches!(
             self.structs.get(name)?.associated.get(field),
             Some(CtValue::Type(_))
@@ -2358,7 +2358,7 @@ impl Checker {
         operands: &[Option<Expr>; 3],
         record: bool,
     ) -> Result<Option<mojito_checked::checked::CheckedSliceLiteral>, TypeError> {
-        let Some((name, arguments)) = target.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = target.kind().as_non_pointer_struct() else {
             return Ok(None);
         };
         let Some(info) = self.structs.get(name) else {

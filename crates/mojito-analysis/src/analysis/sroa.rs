@@ -435,7 +435,7 @@ fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fie
     fields
         .iter()
         .all(|(_, field)| {
-            let addressed = field.is_pointer() || matches!(field.kind(), TyKind::Ref(_));
+            let addressed = field.is_pointer_layout() || matches!(field.kind(), TyKind::Ref(_));
             let unnamed_lifecycle = trivial && records_lifecycle(field);
             !(addressed || unnamed_lifecycle)
         })

@@ -1606,17 +1606,14 @@ impl TyKind {
     }
 
     /// The name and arguments of a struct application other than a `SIMD`
-    /// or a `Pointer` one. A rule written for a declared struct reads this
-    /// rather than matching [`TyKind::Struct`], since `SIMD`'s copies and
-    /// lanes (R1575) and a pointer's copies, loans, and layout are still the
-    /// compiler's own rules, though their applications are the declared
-    /// structs. A `StringLiteral[v]`, `IntLiteral[v]`, or `FloatLiteral[v]`
-    /// application is the declared struct it names.
+    /// one. A rule written for a declared struct reads this rather than
+    /// matching [`TyKind::Struct`], since `SIMD`'s copies and lanes are still
+    /// the compiler's own rules, though its applications are the declared
+    /// struct. A `Pointer[…]`, `StringLiteral[v]`, `IntLiteral[v]`, or
+    /// `FloatLiteral[v]` application is the declared struct it names.
     pub fn as_non_simd_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
         match self {
-            Self::Struct(name, arguments) if !self.is_simd() && !self.is_pointer() => {
-                Some((name, arguments))
-            }
+            Self::Struct(name, arguments) if !self.is_simd() => Some((name, arguments)),
             _ => None,
         }
     }
@@ -1625,6 +1622,21 @@ impl TyKind {
     /// ([`TyKind::as_non_simd_struct`]).
     pub fn is_non_simd_struct(&self) -> bool {
         self.as_non_simd_struct().is_some()
+    }
+
+    /// [`TyKind::as_non_simd_struct`], answering `None` for a pointer whose
+    /// provenance decodes ([`TyKind::is_pointer`]) as well. The checker,
+    /// symbol, and comptime crates read this, since above the MIR waist a
+    /// pointer's copies, loans, and origin binding are still the compiler's
+    /// own rules (R2501); below it a pointer is the declared struct.
+    pub fn as_non_pointer_struct(&self) -> Option<(&String, &Vec<TyArg>)> {
+        self.as_non_simd_struct().filter(|_| !self.is_pointer())
+    }
+
+    /// Whether this is a struct application other than a `SIMD` or a
+    /// decoded `Pointer` one ([`TyKind::as_non_pointer_struct`]).
+    pub fn is_non_pointer_struct(&self) -> bool {
+        self.as_non_pointer_struct().is_some()
     }
 
     /// The dtype and width slots of a `SIMD` vector, symbolic or not.
@@ -1725,10 +1737,40 @@ impl TyKind {
                 address_space,
             } => Some((element, address_space.clone())),
             Self::LitRef(reference) => Some((&reference.referent, reference.address_space.clone())),
-            pointer => pointer
-                .pointer_parts()
-                .map(|(element, _, space)| (element, space)),
+            pointer => pointer.pointer_layout(),
         }
+    }
+
+    /// The pointee and address space of a `Pointer` application, its
+    /// `T` and `address_space`: the arguments its one declared field,
+    /// `!kgen.pointer<T, address_space>`, reads. Unlike
+    /// [`TyKind::pointer_parts`] it reads no provenance, so it also answers
+    /// for an elaborated instance whose `mut` argument the elaborator
+    /// erased (`_REMOVED_ARG`), as it erases any argument a struct's layout
+    /// does not read.
+    pub fn pointer_layout(&self) -> Option<(&Ty, AddressSpaceSlot)> {
+        let Self::Struct(name, args) = self else {
+            return None;
+        };
+        let [
+            _,
+            TyArg::Ty(element),
+            TyArg::Origin(_),
+            TyArg::Val(address_space),
+        ] = args.as_slice()
+        else {
+            return None;
+        };
+        (name == POINTER_TYPE_NAME)
+            .then(|| AddressSpaceSlot::of_value(address_space))
+            .flatten()
+            .map(|space| (element, space))
+    }
+
+    /// Whether this is a `Pointer` application, its provenance decoded or
+    /// erased ([`TyKind::pointer_layout`]).
+    pub fn is_pointer_layout(&self) -> bool {
+        self.pointer_layout().is_some()
     }
 
     /// The pointee of a `!kgen.pointer`.
@@ -4411,7 +4453,7 @@ impl ParamDecl {
                 return self.origin_value_ty().map(|declared| {
                     let mutable = declared
                         .kind()
-                        .as_non_simd_struct()
+                        .as_non_pointer_struct()
                         .and_then(|(_, arguments)| arguments.first().cloned());
                     match mutable {
                         Some(TyArg::Val(mutable)) => origin_struct_ty(mutable, argument.clone()),

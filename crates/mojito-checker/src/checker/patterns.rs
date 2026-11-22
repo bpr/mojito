@@ -1116,7 +1116,7 @@ impl Checker {
             ));
         }
         let matches_head = match subject.ty.kind() {
-            struct_ty if let Some((subject_name, _)) = struct_ty.as_non_simd_struct() => {
+            struct_ty if let Some((subject_name, _)) = struct_ty.as_non_pointer_struct() => {
                 subject_name == name || subject_name.rsplit('$').next() == Some(name)
             }
             _ => false,
@@ -1208,7 +1208,9 @@ impl Checker {
     /// subject type's nominal family, parameters ignored.
     fn check_enum_owner(&self, owner: &Expr, subject: &Ty) -> Result<(), TypeError> {
         let family = |ty: &Ty| match ty.kind() {
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => Some(name.clone()),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_pointer_struct() => {
+                Some(name.clone())
+            }
             _ => None,
         };
         let owner_family = match &owner.kind {
@@ -2046,7 +2048,7 @@ fn subject_binder(payload: Ty, subject: &Ty) -> Ty {
         return payload;
     };
     let (mojito_types::param_expr::ParamKind::DeclRef(reference), Some((_, arguments))) =
-        (expr.kind(), subject.kind().as_non_simd_struct())
+        (expr.kind(), subject.kind().as_non_pointer_struct())
     else {
         return payload;
     };

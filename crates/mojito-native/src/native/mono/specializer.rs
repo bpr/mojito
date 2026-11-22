@@ -502,16 +502,18 @@ impl<'a> Specializer<'a> {
             Some((_, instance))
                 if let Some((name, _)) = instance.kind().as_non_simd_struct()
                     && !instance.is_numeric_literal()
-                    && !instance.is_string_literal() =>
+                    && !instance.is_string_literal()
+                    && !instance.is_pointer_layout() =>
             {
                 Some(name.clone())
             }
-            // The `SIMD` bridge and a literal, whose application keeps its
-            // template name, are no struct instance a member retargets to
-            // (R1558): their owner arguments lead the member's own, as a
-            // generator's kept ones do, so `Int`'s and `UInt`'s instances
-            // of one member are two, as are `(2.5).__neg__`'s and
-            // `(1.5).__neg__`'s.
+            // The `SIMD` bridge, a literal, and a `Pointer`, whose
+            // application keeps its template name, are no struct instance a
+            // member retargets to (R1558): their owner arguments lead the
+            // member's own, as a generator's kept ones do, so `Int`'s and
+            // `UInt`'s instances of one member are two, as are
+            // `(2.5).__neg__`'s and `(1.5).__neg__`'s, and a pointer's to
+            // each pointee.
             Some((owner_template, _)) => {
                 let decls = self
                     .structs
@@ -3745,7 +3747,7 @@ impl<'a> Specializer<'a> {
                     dest,
                     values: Const::Value(CtValue::Tuple(items)),
                 } if function.reg_types.get(&dest.0).is_some_and(|ty| {
-                    ty.pointer_element().is_some_and(|element| {
+                    ty.pointer_layout().is_some_and(|(element, _)| {
                         matches!(element.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
                     })
                 }) =>
@@ -3998,7 +4000,7 @@ impl<'a> Specializer<'a> {
             }
             let mut nested = Vec::new();
             collect_nested_types(&ty, &mut nested);
-            let opaque = ty.is_non_simd_struct() || ty.is_pointer();
+            let opaque = ty.is_non_simd_struct();
             types.extend(nested.into_iter().map(|nested| (nested, held && !opaque)));
             if ty.kind().known_simd().is_some() {
                 self.declare_simd_instance(owner, &ty)?;
@@ -5228,6 +5230,9 @@ fn folded_literal_operator(
     Some(MirInstr::Const { dest, k })
 }
 
+/// Whether a binary operator on a `ty` left operand calls its declared
+/// operator method. A pointer's arithmetic is still the checker's rule
+/// (R2501), lowered as the builtin operator over a normalized index.
 fn declared_operator_receiver(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Struct(..)) && !ty.is_pointer()
 }

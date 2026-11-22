@@ -234,7 +234,7 @@ impl Checker {
             .clone()
             .or_else(|| match obj_ty.kind() {
                 struct_ty
-                    if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                    if let Some((name, _)) = struct_ty.as_non_pointer_struct()
                         && self.structs.contains_key(name) =>
                 {
                     Some(format!("{name}.{method}"))

@@ -855,7 +855,7 @@ pub(super) fn validate_dependent_bindings_in(
             TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => {
                 walk(element, bound, frames)?;
             }
-            pointer if let Some(element) = pointer.pointer_element() => {
+            pointer if let Some((element, _)) = pointer.pointer_layout() => {
                 walk(element, bound, frames)?;
             }
             TyKind::Tuple(elements)
@@ -936,7 +936,7 @@ pub(super) fn make_ref_target<'p>(
                 .skip(1)
                 .zip(&place.projection_tys)
                 .filter(|(projection, base)| {
-                    matches!(projection, Proj::Index(_)) && base.is_pointer()
+                    matches!(projection, Proj::Index(_)) && base.is_pointer_layout()
                 })
                 .filter_map(|(_, base)| reference_capability(base))
                 .next_back()
@@ -961,7 +961,7 @@ pub(super) fn pointer_root_is_value(place: &MirPlace, function: &MirFunction) ->
         && place
             .root_ty
             .as_ref()
-            .is_some_and(|ty| ty.is_pointer() || matches!(ty.kind(), TyKind::LitRef { .. }))
+            .is_some_and(|ty| ty.is_pointer_layout() || matches!(ty.kind(), TyKind::LitRef { .. }))
 }
 
 pub(super) fn verify_function(

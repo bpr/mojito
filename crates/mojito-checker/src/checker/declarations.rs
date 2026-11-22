@@ -2333,7 +2333,7 @@ impl Checker {
         // once, before any read, on every path) is left for a later refinement.
         if result.is_ok()
             && out_init
-            && let Some((sname, _)) = self_ty.kind().as_non_simd_struct()
+            && let Some((sname, _)) = self_ty.kind().as_non_pointer_struct()
         {
             result = self.check_definite_init(sname, &m.name, &m.body);
         }
@@ -3237,7 +3237,7 @@ impl Checker {
     /// operands: among the overloads no argument binds whose `where` clause
     /// holds under `target`'s arguments, the best ranked.
     pub(super) fn empty_constructor(&self, target: &Ty) -> Result<String, TypeError> {
-        let Some((name, arguments)) = target.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = target.kind().as_non_pointer_struct() else {
             return Err(TypeError::InvariantViolation(format!(
                 "empty construction of non-nominal '{target}'"
             )));
@@ -5343,7 +5343,7 @@ impl Checker {
                 // `String`-typed read of the binder materializes yet.
                 if solved
                     .kind()
-                    .as_non_simd_struct()
+                    .as_non_pointer_struct()
                     .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
                 {
                     return Err(TypeError::Unsupported(format!(
@@ -5845,7 +5845,7 @@ impl Checker {
                 TyKind::Ref(reference) | TyKind::LitRef(reference) => {
                     matches!(reference.origin, mojito_types::origin::Origin::Param(_))
                 }
-                struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+                struct_ty if let Some((_, arguments)) = struct_ty.as_non_pointer_struct() => {
                     arguments.iter().any(|argument| {
                         matches!(
                             argument,
@@ -6465,7 +6465,7 @@ fn mentioned_binder<'d>(argument: &TyArg, decls: &'d [ParamDecl]) -> Option<&'d 
                     TyKind::Param {
                         binder: reference, ..
                     } => binder(&reference.id),
-                    struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+                    struct_ty if let Some((_, arguments)) = struct_ty.as_non_pointer_struct() => {
                         arguments.iter().find_map(|argument| match argument {
                             TyArg::Val(value) => in_value(value),
                             _ => None,

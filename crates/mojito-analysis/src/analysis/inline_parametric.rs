@@ -2597,7 +2597,10 @@ fn stores_handle(place: &MirPlace) -> bool {
 fn handle_place(slot: VarId, handle_ty: &Ty) -> MirPlace {
     let referent = match handle_ty.kind() {
         TyKind::Ref(reference) => Some(reference.referent.clone()),
-        pointer => pointer.pointer_element().cloned(),
+        pointer => pointer
+            .pointer_layout()
+            .map(|(element, _)| element)
+            .cloned(),
     };
     MirPlace {
         root: slot,
@@ -3669,10 +3672,9 @@ fn access_bound_parameters_in_place<'b>(
             (Some(outer), Some(MirInstr::WriteRef { reference, value })) if reference == dest => {
                 let slot = outer.is_whole_root()
                     && outer.through.is_none()
-                    && !outer
-                        .root_ty
-                        .as_ref()
-                        .is_some_and(|ty| ty.is_pointer() || matches!(ty.kind(), TyKind::Ref(_)));
+                    && !outer.root_ty.as_ref().is_some_and(|ty| {
+                        ty.is_pointer_layout() || matches!(ty.kind(), TyKind::Ref(_))
+                    });
                 Some(if slot {
                     MirInstr::DefVar {
                         var: outer.root,

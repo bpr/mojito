@@ -236,7 +236,7 @@ impl Checker {
             }
             return Ok(true);
         }
-        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = ty.kind().as_non_pointer_struct() else {
             return Ok(false);
         };
         let Some(info) = self.structs.get(name) else {

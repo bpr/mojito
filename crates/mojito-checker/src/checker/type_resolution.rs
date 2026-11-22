@@ -1031,7 +1031,7 @@ impl Checker {
     /// The arguments the enclosing struct's `Self` gives its argument
     /// binders (`self_decls`), position by position.
     pub(super) fn self_view_arguments(&self) -> Option<std::borrow::Cow<'_, [TyArg]>> {
-        let (owner, arguments) = self.self_ty.as_ref()?.kind().as_non_simd_struct()?;
+        let (owner, arguments) = self.self_ty.as_ref()?.kind().as_non_pointer_struct()?;
         Some(
             self.structs
                 .get(owner)
@@ -1257,7 +1257,7 @@ impl Checker {
                             Some(ty)
                                 if ty.is_simd()
                                     || ty.is_pointer()
-                                    || ty.kind().is_non_simd_struct() =>
+                                    || ty.kind().is_non_pointer_struct() =>
                             {
                                 ty.clone()
                             }
@@ -1323,7 +1323,7 @@ impl Checker {
             // comes from the struct's own parameterized definition, so an
             // application such as a conformer's `Self.IteratorType[origin_of(self)]`
             // resolves concretely rather than falling through to dependent indexing.
-            _ if base_ty.kind().is_non_simd_struct() || base_ty.is_pointer() => self
+            _ if base_ty.kind().is_non_pointer_struct() || base_ty.is_pointer() => self
                 .nominal_struct(base_ty)
                 .and_then(|(sname, _)| self.structs.get(sname))
                 .and_then(|info| info.parameterized_associated.get(name))
@@ -1400,7 +1400,7 @@ impl Checker {
         // resolve it through the same path as a non-indexed struct-based
         // application. An abstract base (`Self` or a bounded parameter) stays
         // symbolic until the base becomes a conforming struct.
-        if base_ty.kind().is_non_simd_struct() || base_ty.is_pointer() {
+        if base_ty.kind().is_non_pointer_struct() || base_ty.is_pointer() {
             return Ok(Some(
                 self.associated_type_from_base(base_ty, name, &arguments)?,
             ));
@@ -2527,7 +2527,7 @@ impl Checker {
         let generated = self.generated_declaration.get()
             || self.self_ty.as_ref().is_some_and(|ty| {
                 ty.kind()
-                    .as_non_simd_struct()
+                    .as_non_pointer_struct()
                     .is_some_and(|(name, _)| name.contains('$'))
             });
         if self.annotation_depth.get() > 1 && !generated {
@@ -2627,7 +2627,7 @@ impl Checker {
             return Ok(elements.into_iter().cloned().collect());
         }
 
-        let Some((struct_name, arguments)) = base_ty.kind().as_non_simd_struct() else {
+        let Some((struct_name, arguments)) = base_ty.kind().as_non_pointer_struct() else {
             return Err(TypeError::NoSuchAssociatedType {
                 object_type: base_ty.to_string(),
                 member: name.clone(),
@@ -2756,7 +2756,7 @@ impl Checker {
             }
             // A spread of a list computed from packs closes as they bind.
             struct_ty
-                if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                if let Some((name, arguments)) = struct_ty.as_non_pointer_struct()
                     && !values.is_empty()
                     && let Some(list) = mojito_types::types::list_spread_argument(arguments) =>
             {
@@ -2768,7 +2768,7 @@ impl Checker {
                     .map_err(param_error)?;
                 ty.reusing(TyKind::Struct(name.clone(), spread))
             }
-            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => ty
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => ty
                 .reusing(TyKind::Struct(
                     name.clone(),
                     arguments
@@ -2931,7 +2931,7 @@ impl Checker {
         let Some(self_ty) = &self.self_ty else {
             return Err(TypeError::UnknownSelfParam(name.to_string()));
         };
-        if let Some((sname, _)) = self_ty.kind().as_non_simd_struct()
+        if let Some((sname, _)) = self_ty.kind().as_non_pointer_struct()
             && !self.structs.contains_key(sname)
         {
             return Err(TypeError::UnknownSelfParam(name.to_string()));
@@ -2946,7 +2946,7 @@ impl Checker {
         args: &[TyArg],
     ) -> Result<Ty, TypeError> {
         match base.kind() {
-            struct_ty if let Some((sname, targs)) = struct_ty.as_non_simd_struct() => {
+            struct_ty if let Some((sname, targs)) = struct_ty.as_non_pointer_struct() => {
                 self.declared_associated_type(base, sname, targs, name, args)
             }
             TyKind::Param { .. } => {
@@ -3481,7 +3481,7 @@ impl Checker {
                         .into()
                     })
             }
-            struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
+            struct_ty if let Some((name, args)) = struct_ty.as_non_pointer_struct() => {
                 let rebuilt = ty.reusing(TyKind::Struct(
                     name.clone(),
                     map_tyargs(args, |t| self.resolve_assoc_ty(t)),
@@ -3756,7 +3756,7 @@ impl Checker {
                     };
                     let display = ty
                         .kind()
-                        .is_non_simd_struct()
+                        .is_non_pointer_struct()
                         .then(|| self.display_application(expr, Some(ty)))
                         .flatten();
                     let value = match display {
@@ -3764,7 +3764,7 @@ impl Checker {
                             return Ok(applied_display_argument(applied(display)?));
                         }
                         None => match self.eval_associated_ct(expr) {
-                            Ok(value) if ty.kind().is_non_simd_struct() => {
+                            Ok(value) if ty.kind().is_non_pointer_struct() => {
                                 match self.aggregate_application(&value, ty) {
                                     Some(aggregate) => {
                                         return Ok(applied_display_argument(applied(aggregate)?));
@@ -4582,7 +4582,7 @@ impl Checker {
                 kwargs,
             } if self.comptime_aliases.contains_key(name) => {
                 let ty = self.applied_type(name, param_args)?.0;
-                let Some((name, _)) = ty.kind().as_non_simd_struct() else {
+                let Some((name, _)) = ty.kind().as_non_pointer_struct() else {
                     return Err(not_construction());
                 };
                 let name = name.clone();
@@ -4604,7 +4604,7 @@ impl Checker {
                     args: param_args.clone(),
                 };
                 let ty = self.ty_from_anno(&member)?;
-                let Some((name, _)) = ty.kind().as_non_simd_struct() else {
+                let Some((name, _)) = ty.kind().as_non_pointer_struct() else {
                     return Err(not_construction());
                 };
                 let name = name.clone();
@@ -4658,7 +4658,7 @@ impl Checker {
         let computes_string = application.meta().as_value().is_some_and(|computed| {
             computed
                 .kind()
-                .as_non_simd_struct()
+                .as_non_pointer_struct()
                 .is_some_and(|(name, computed_args)| {
                     computed_args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
                 })
@@ -4873,7 +4873,7 @@ impl Checker {
                 .self_ty
                 .as_ref()
                 .and_then(|ty| match ty.kind() {
-                    struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
+                    struct_ty if let Some((name, _)) = struct_ty.as_non_pointer_struct() => {
                         self.structs.get(name)
                     }
                     _ => None,
@@ -4894,7 +4894,7 @@ impl Checker {
             |origin: &mojito_types::origin::Origin| self.display_origin_with_names(origin);
         match ty.kind() {
             struct_ty
-                if let Some((name, args)) = struct_ty.as_non_simd_struct()
+                if let Some((name, args)) = struct_ty.as_non_pointer_struct()
                     && !args.is_empty() =>
             {
                 let base = mojito_types::types::unqualified_type_name(&Ty::new(TyKind::Struct(
@@ -4988,8 +4988,8 @@ impl Checker {
             });
         }
         let (Some((found_name, found_args)), Some((expected_name, expected_args))) = (
-            found.kind().as_non_simd_struct(),
-            expected.kind().as_non_simd_struct(),
+            found.kind().as_non_pointer_struct(),
+            expected.kind().as_non_pointer_struct(),
         ) else {
             return None;
         };

@@ -819,7 +819,7 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         let nominal_ok = match rt.kind() {
             struct_ty
-                if let Some((name, _)) = struct_ty.as_non_simd_struct()
+                if let Some((name, _)) = struct_ty.as_non_pointer_struct()
                     && !self.structs.contains_key(name) =>
             {
                 if let Some(element) = list_element(rt).or_else(|| set_element(rt)) {
@@ -854,7 +854,7 @@ impl Checker {
         if let Some(span) = span
             && (rt
                 .kind()
-                .as_non_simd_struct()
+                .as_non_pointer_struct()
                 .is_some_and(|(name, _)| self.structs.contains_key(name))
                 || self.declared_receiver_member(rt, "__contains__").is_some())
         {
@@ -1387,7 +1387,7 @@ impl Checker {
         if matches!(operand.kind, ExprKind::Index { .. })
             && ty
                 .kind()
-                .as_non_simd_struct()
+                .as_non_pointer_struct()
                 .is_some_and(|(name, _)| self.structs.contains_key(name))
             && self.infer_reference_value(operand).is_some()
         {
@@ -1400,7 +1400,7 @@ impl Checker {
     /// its dunders' method calls.
     fn is_checked_struct(&self, ty: &Ty) -> bool {
         ty.kind()
-            .as_non_simd_struct()
+            .as_non_pointer_struct()
             .is_some_and(|(name, _)| self.structs.contains_key(name))
     }
 

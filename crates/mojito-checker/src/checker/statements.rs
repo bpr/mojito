@@ -1221,7 +1221,7 @@ impl Checker {
         };
         let dunder = op.inplace_dunder().ok_or_else(missing)?;
         let has_method = match operand_ty.kind() {
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => self
+            struct_ty if let Some((name, _)) = struct_ty.as_non_pointer_struct() => self
                 .structs
                 .get(name)
                 .is_some_and(|info| info.methods.contains_key(dunder)),
@@ -1494,7 +1494,7 @@ impl Checker {
         &'s self,
         vt: &'s Ty,
     ) -> Option<(&'s str, &'s MethodSig)> {
-        let (name, _) = vt.kind().as_non_simd_struct()?;
+        let (name, _) = vt.kind().as_non_pointer_struct()?;
         tuple_elements(vt)?;
         let [accessor] = self
             .structs
@@ -2077,7 +2077,7 @@ impl Checker {
                 // the operator path below.
                 let inplace_operand = target
                     .kind()
-                    .as_non_simd_struct()
+                    .as_non_pointer_struct()
                     .is_some_and(|(name, _)| self.structs.contains_key(name))
                     || target.is_pointer()
                     || self.bound_inplace_operator(&target, *op)
@@ -2586,9 +2586,12 @@ impl Checker {
                 self.register_named_bindings(expr)?;
                 let ty = self.infer(expr)?;
                 let stringish = ty.is_string_literal()
-                    || ty.kind().as_non_simd_struct().is_some_and(|(name, args)| {
-                        args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    });
+                    || ty
+                        .kind()
+                        .as_non_pointer_struct()
+                        .is_some_and(|(name, args)| {
+                            args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
+                        });
                 let target = self
                     .propagated_error()
                     .cloned()
@@ -3926,7 +3929,7 @@ impl Checker {
         &self,
         capture: &mojito_checked::checked::CheckedCapture,
     ) -> Option<mojito_checked::checked::CheckedClosureStorage> {
-        let (name, _) = capture.ty.kind().as_non_simd_struct()?;
+        let (name, _) = capture.ty.kind().as_non_pointer_struct()?;
         let site = self.closure_sites.get(name)?;
         (self.fact(site, |facts| facts.statement_binding.as_ref()) == Some(capture.binding))
             .then(|| self.fact(site, |facts| facts.closure_storage.as_deref()))
@@ -4897,7 +4900,7 @@ fn holds_closure(ty: &Ty) -> bool {
             )
         }),
         TyKind::Overload(_) => true,
-        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments.iter().any(|argument| {
+        struct_ty if let Some((_, arguments)) = struct_ty.as_non_pointer_struct() => arguments.iter().any(|argument| {
             matches!(argument, mojito_types::types::TyArg::Ty(element) if holds_closure(element))
         }),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {

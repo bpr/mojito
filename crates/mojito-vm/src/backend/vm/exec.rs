@@ -152,7 +152,9 @@ impl VmBackend {
 
     /// The value a builtin takes for the call operand `register`: a
     /// by-address operand read through its reference, as upstream loads an
-    /// argument a callee takes by value, and a held struct as its box.
+    /// argument a callee takes by value, and a held struct as its box, but
+    /// for a `Pointer`, whose builtins read the address its held
+    /// `!kgen.pointer` field is.
     pub(super) fn value_operand(
         &self,
         prog: &Prog,
@@ -160,6 +162,13 @@ impl VmBackend {
         (frame_id, regs, vars): (FrameId, &[Value], &[Value]),
         register: Reg,
     ) -> Result<Value, RuntimeError> {
+        let operand = |value: Value, ty: Option<&Ty>| {
+            if ty.is_some_and(|ty| ty.kind().is_pointer_layout()) {
+                prog.unboxed(value, ty)
+            } else {
+                prog.boxed(value, ty)
+            }
+        };
         let ty = prog.mir.functions[function].1.reg_types.get(&register.0);
         let value = regs[register.0 as usize].clone();
         Ok(match ty.map(Ty::kind) {
@@ -167,9 +176,9 @@ impl VmBackend {
                 if matches!(value, Value::Ref { .. } | Value::Pointer { .. }) =>
             {
                 let referent = self.read_reference(&value, frame_id, vars)?;
-                prog.boxed(referent, Some(&reference.referent))
+                operand(referent, Some(&reference.referent))
             }
-            _ => prog.boxed(value, ty),
+            _ => operand(value, ty),
         })
     }
 
@@ -1314,7 +1323,7 @@ impl VmBackend {
                         recv @ Value::Struct { .. } => recv,
                         recv if base_ty.is_some_and(|ty| {
                             let kind = peel_references(ty).kind();
-                            kind.is_simd() || kind.is_pointer()
+                            kind.is_simd() || kind.is_pointer_layout()
                         }) =>
                         {
                             recv

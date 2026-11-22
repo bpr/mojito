@@ -1540,8 +1540,8 @@ fn verify_ref_pack_create(cx: &InstrCx<'_>, dest: Reg, elems: &[Reg], errors: &m
             Some(TyKind::LitRef(mojito_types::origin::RefTy { referent: found, .. })) if types_compatible(found, element) => {}
             Some(pointer_ty)
                 if pointer_ty
-                    .pointer_element()
-                    .is_some_and(|found| types_compatible(found, element)) => {}
+                    .pointer_layout()
+                    .is_some_and(|(found, _)| types_compatible(found, element)) => {}
             Some(TyKind::Ref(reference)) if types_compatible(&reference.referent, element) => {}
             Some(found) => errors.push(format!(
                 "{prefix}: lit.ref.pack.create operand {index} has type {found}, not a reference to {element}"
@@ -1691,7 +1691,7 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
         }) => Some(element.clone()),
         // A `ref` value is the `!lit.ref` upstream holds it as.
         TyKind::Ref(reference) => Some(reference.referent.clone()),
-        pointer => pointer.pointer_element().cloned(),
+        pointer => pointer.pointer_layout().map(|(element, _)| element.clone()),
     };
     let (Some(to_element), Some(from_element)) = (element(to), element(from)) else {
         errors.push(format!(
@@ -1823,7 +1823,10 @@ fn same_address(found: &Ty, expected: &Ty) -> bool {
             false,
         )),
         pointer => Some((
-            pointer.pointer_element()?.clone(),
+            pointer
+                .pointer_layout()
+                .map(|(element, _)| element)?
+                .clone(),
             pointer.pointer_address_space()?,
             false,
         )),

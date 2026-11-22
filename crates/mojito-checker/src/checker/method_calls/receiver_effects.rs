@@ -34,7 +34,7 @@ impl Checker {
                 struct_subst(&ParamDecl::argument_view(&resolved.param_decls), arguments)
             })
             .unwrap_or_default();
-        if let Some((struct_name, _)) = obj_ty.kind().as_non_simd_struct() {
+        if let Some((struct_name, _)) = obj_ty.kind().as_non_pointer_struct() {
             let method_key = format!("{struct_name}.{method}");
             let effect_key = selected_target.unwrap_or(&method_key);
             self.apply_transfer_effects(effect_key, Some(object), args, span, &bindings)?;
@@ -235,7 +235,7 @@ impl Checker {
             });
         }
         if resolved.consumes_receiver
-            && let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
+            && let Some((name, _)) = obj_ty.kind().as_non_pointer_struct()
             && self
                 .structs
                 .get(name)
@@ -380,7 +380,7 @@ impl Checker {
         // declared signature (`Self`, `RefBox[Self.o]`), whose slots fix
         // their own mutability; type parameters stay abstract there.
         let (tail_bindings, self_declared) = match obj_ty.kind() {
-            struct_ty if let Some((sname, targs)) = struct_ty.as_non_simd_struct() => {
+            struct_ty if let Some((sname, targs)) = struct_ty.as_non_pointer_struct() => {
                 match self.structs.get(sname) {
                     Some(info) => (
                         info.instance_origin_bindings(targs),

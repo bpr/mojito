@@ -498,7 +498,7 @@ fn source_type_from_ty_with_origins(
         // the discovered specialization, instead of applying the retained
         // arguments to the erased symbol.
         struct_ty
-            if let Some((name, _)) = struct_ty.as_non_simd_struct()
+            if let Some((name, _)) = struct_ty.as_non_pointer_struct()
                 && name != mojito_types::types::TUPLE_TYPE_NAME
                 && let Some(elements) = mojito_types::types::tuple_elements(ty) =>
         {
@@ -513,28 +513,30 @@ fn source_type_from_ty_with_origins(
                     .collect(),
             )
         }
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => Type::Named(
-            name.clone(),
-            arguments
-                .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => {
-                        source_type_from_ty_with_origins(ty, origin_names).map(ParamArg::Type)
-                    }
-                    TyArg::Val(value) => value.materialize((0, 0)).map(ParamArg::Value),
-                    // An origin tail entry spells as the binder it names, with
-                    // its interior or subtree projection, when the clone has
-                    // one in scope, else as upstream's `_` placeholder: a
-                    // concrete place has no source spelling, and the slot
-                    // infers again at the clone's own use sites.
-                    TyArg::Origin(origin) => Some(ParamArg::Value(
-                        binder_origin_spelling(origin, origin_names).unwrap_or_else(|| {
-                            Expr::new(ExprKind::Identifier("_".to_string()), (0, 0))
-                        }),
-                    )),
-                })
-                .collect::<Option<Vec<_>>>()?,
-        ),
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
+            Type::Named(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => {
+                            source_type_from_ty_with_origins(ty, origin_names).map(ParamArg::Type)
+                        }
+                        TyArg::Val(value) => value.materialize((0, 0)).map(ParamArg::Value),
+                        // An origin tail entry spells as the binder it names, with
+                        // its interior or subtree projection, when the clone has
+                        // one in scope, else as upstream's `_` placeholder: a
+                        // concrete place has no source spelling, and the slot
+                        // infers again at the clone's own use sites.
+                        TyArg::Origin(origin) => Some(ParamArg::Value(
+                            binder_origin_spelling(origin, origin_names).unwrap_or_else(|| {
+                                Expr::new(ExprKind::Identifier("_".to_string()), (0, 0))
+                            }),
+                        )),
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            )
+        }
         // A symbolic slot has no source spelling; the elaborator only spells
         // bound instances.
         kind if let Some((dtype, width)) = kind.as_simd() => Type::Named(

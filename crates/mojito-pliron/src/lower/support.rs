@@ -264,7 +264,7 @@ pub fn scalar_type(
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(1),
         } => Ok(ScalarTy::of_dtype(*dtype)),
-        kind if matches!(kind, TyKind::Ref(_)) || kind.is_pointer() => {
+        kind if matches!(kind, TyKind::Ref(_)) || kind.is_pointer_layout() => {
             let space = address_space_slot(ty).expect("a reference or pointer has a space");
             pointer_scalar(function, ty, &space, location)
         }

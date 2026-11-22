@@ -116,7 +116,7 @@ impl Checker {
     ) -> Result<(Expr, Ty, Ty), TypeError> {
         let ty = self.infer(iter)?;
         let has_iter = match ty.kind() {
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => self
+            struct_ty if let Some((name, _)) = struct_ty.as_non_pointer_struct() => self
                 .structs
                 .get(name)
                 .is_some_and(|info| info.methods.contains_key("__iter__")),
@@ -223,7 +223,7 @@ fn iterable_spelling(ty: &Ty) -> String {
     let elements: Vec<Ty> = match ty.kind() {
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
         struct_ty
-            if let Some((name, args)) = struct_ty.as_non_simd_struct()
+            if let Some((name, args)) = struct_ty.as_non_pointer_struct()
                 && name == mojito_types::types::TUPLE_TYPE_NAME =>
         {
             args.iter()

@@ -49,7 +49,7 @@ impl FnLowering<'_> {
         ty: &Ty,
     ) -> Result<(), PlironError> {
         match ty.kind() {
-            pointer if pointer.is_pointer() => {
+            pointer if pointer.is_pointer_layout() => {
                 let handle = ScalarTy::PTR.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);

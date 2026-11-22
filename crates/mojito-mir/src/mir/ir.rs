@@ -3364,7 +3364,8 @@ impl MirInstr {
                         referent: element, ..
                     }) => Some(mojito_types::types::erase_origins(element)),
                     pointer => pointer
-                        .pointer_element()
+                        .pointer_layout()
+                        .map(|(element, _)| element)
                         .map(mojito_types::types::erase_origins),
                 };
                 (matches!(

@@ -309,7 +309,7 @@ impl Checker {
             self.is_requested_binding_read(expr)
         };
         if read
-            && ty.kind().is_non_simd_struct()
+            && ty.kind().is_non_pointer_struct()
             && self.is_materialized_parameter_read(expr)
             && !self
                 .consumed_parameter_reads
@@ -377,7 +377,7 @@ impl Checker {
     /// `View[origin_of(h)]` at the call site. A slot the contract did not
     /// resolve keeps its declared entry.
     pub(in crate::checker) fn bind_call_result_origins(&self, span: &SourceSpan, ty: Ty) -> Ty {
-        let Some((name, arguments)) = ty.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = ty.kind().as_non_pointer_struct() else {
             return ty;
         };
         let recorded = self.call_result_origins.borrow();
@@ -711,7 +711,7 @@ impl Checker {
                     return Some(origin);
                 }
                 let inferred = self.infer(object).ok()?;
-                let (name, arguments) = inferred.kind().as_non_simd_struct()?;
+                let (name, arguments) = inferred.kind().as_non_pointer_struct()?;
                 let info = self.structs.get(name)?;
                 let signature = info
                     .methods

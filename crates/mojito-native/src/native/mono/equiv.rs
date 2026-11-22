@@ -45,7 +45,7 @@ pub(super) fn functions_equivalent(a: &MirFunction, b: &MirFunction) -> bool {
 
 pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
     match (a.kind(), b.kind()) {
-        (a, b) if a.is_pointer() && b.is_pointer() => true,
+        (a, b) if a.is_pointer_layout() && b.is_pointer_layout() => true,
         (TyKind::KgenPointer { .. }, TyKind::KgenPointer { .. })
         | (TyKind::LitRef { .. }, TyKind::LitRef { .. }) => true,
         (TyKind::LitRefPack { elements: a, .. }, TyKind::LitRefPack { elements: b, .. }) => {
@@ -323,7 +323,7 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         | TyKind::LitRef { .. }
         | TyKind::LitRefPack { .. }
         | TyKind::Ref(_) => true,
-        pointer if pointer.is_pointer() => true,
+        pointer if pointer.is_pointer_layout() => true,
         struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => !ty.is_closed(),
         _ => false,
     };

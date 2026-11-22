@@ -476,7 +476,7 @@ impl Checker {
     /// reference origins, recursing through type arguments and tuples.
     fn record_carried_places(&self, access: &mut ArgumentAccess, ty: &Ty) {
         match ty.kind() {
-            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
                 for argument in arguments {
                     if let TyArg::Ty(inner) = argument {
                         self.record_carried_places(access, inner);

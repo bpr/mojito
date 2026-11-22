@@ -1072,7 +1072,8 @@ impl<'p> CallEdges<'p, '_> {
                 dest,
                 values: mojito_mir::mir::Const::Value(mojito_types::ct::CtValue::Tuple(items)),
             } if self.function.reg_types.get(&dest.0).is_some_and(|ty| {
-                ty.pointer_element()
+                ty.pointer_layout()
+                    .map(|(element, _)| element)
                     .is_some_and(|element| matches!(element.kind(), TyKind::Func(_)))
             }) =>
             {
@@ -1199,7 +1200,7 @@ fn collect_struct_types<'p>(
                 collect_struct_types(element, structs, seen, discovered);
             }
         }
-        pointer if let Some(element) = pointer.pointer_element() => {
+        pointer if let Some((element, _)) = pointer.pointer_layout() => {
             collect_struct_types(element, structs, seen, discovered);
         }
         TyKind::Ref(ref_ty) => collect_struct_types(&ref_ty.referent, structs, seen, discovered),

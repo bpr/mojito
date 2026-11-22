@@ -788,7 +788,7 @@ pub(super) fn concrete_overload_rank(conversions: usize, variadic: bool, params:
 pub(super) fn inferred_origin_count(params: &[Ty]) -> usize {
     fn count(ty: &Ty) -> usize {
         match ty.kind() {
-            struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments
+            struct_ty if let Some((_, arguments)) = struct_ty.as_non_pointer_struct() => arguments
                 .iter()
                 .map(|argument| match argument {
                     TyArg::Ty(ty) => count(ty),
@@ -936,7 +936,7 @@ pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
     } else if actual.is_string_literal()
         && !expected
             .kind()
-            .as_non_simd_struct()
+            .as_non_pointer_struct()
             .is_some_and(|(name, args)| {
                 args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
             })

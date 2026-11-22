@@ -1130,7 +1130,7 @@ impl Checker {
             _ => {}
         }
         // A pointer's members are the declared `Pointer`'s.
-        let (name, arguments) = match subject.kind().as_non_simd_struct() {
+        let (name, arguments) = match subject.kind().as_non_pointer_struct() {
             Some((name, arguments)) => (
                 name.as_str(),
                 std::borrow::Cow::Borrowed(arguments.as_slice()),
@@ -1453,7 +1453,7 @@ impl Checker {
         let (enum_name, enum_arguments) = self
             .self_ty
             .as_ref()
-            .and_then(|ty| ty.kind().as_non_simd_struct())?;
+            .and_then(|ty| ty.kind().as_non_pointer_struct())?;
         let index = index
             .to_u64()
             .and_then(|index| usize::try_from(index).ok())?;
@@ -3734,7 +3734,7 @@ impl Checker {
                     .ok()?
                     .meta()
                     .as_value()
-                    .filter(|ty| ty.kind().is_non_simd_struct())
+                    .filter(|ty| ty.kind().is_non_pointer_struct())
                     .cloned()
                     .map(Ok),
             },
@@ -3941,7 +3941,7 @@ impl Checker {
                 let is_view = |meta: &MetaTy| {
                     matches!(meta, MetaTy::Value(ty) if ty
                         .kind()
-                        .as_non_simd_struct()
+                        .as_non_pointer_struct()
                         .is_some_and(|(name, _)| mojito_types::types::is_stdlib_string_span_struct(name)))
                 };
                 if !is_view(string.meta()) {
@@ -4204,7 +4204,7 @@ impl Checker {
         let ty = mojito_types::types::DependentType::resolve(self.bracket_operand(ty, recording)?);
         let Some((name, info)) = ty
             .kind()
-            .as_non_simd_struct()
+            .as_non_pointer_struct()
             .filter(|(_, args)| args.is_empty())
             .and_then(|(name, _)| self.structs.get(name).map(|info| (name, info)))
         else {
@@ -4495,7 +4495,7 @@ impl Checker {
         let (owner, arguments) = base
             .meta()
             .as_value()
-            .and_then(|ty| ty.kind().as_non_simd_struct())?;
+            .and_then(|ty| ty.kind().as_non_pointer_struct())?;
         // The value's type arguments bind the field's declared type
         // (`_mlir_value` of a `StaticTuple[SIMDLength, n]`), as a run-time
         // read does; a builtin body folds before the struct's fields
@@ -4687,7 +4687,7 @@ impl Checker {
             else {
                 return None;
             };
-            (subject.kind().is_non_simd_struct() && !mojito_types::types::is_symbolic(subject))
+            (subject.kind().is_non_pointer_struct() && !mojito_types::types::is_symbolic(subject))
                 .then(|| subject.clone())
         })
     }
@@ -4764,7 +4764,7 @@ impl Checker {
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let type_list = self.type_pack_type_list(pack)?;
-        let (name, arguments) = type_list.kind().as_non_simd_struct()?;
+        let (name, arguments) = type_list.kind().as_non_pointer_struct()?;
         self.struct_value_member(self.structs.get(name)?, arguments, field)
     }
 
@@ -7056,7 +7056,7 @@ impl Checker {
     /// The raw list a construction of `ty` binds when `ty` is a
     /// `TypeList` application: the argument at its `values` parameter.
     fn type_list_construction(&self, ty: &Ty) -> Option<CtValue> {
-        let (name, arguments) = ty.kind().as_non_simd_struct()?;
+        let (name, arguments) = ty.kind().as_non_pointer_struct()?;
         if name != super::comptime_validation::TYPE_LIST {
             return None;
         }
@@ -7162,7 +7162,7 @@ enum ModuleConstant<'a> {
 /// no leading-dot chain or `left` is no struct value.
 fn rooted_contextual_operand(left: &ParamExpr, right: &Expr) -> Option<Expr> {
     super::inference::contextual_root_span(right)?;
-    let (name, _) = left.meta().as_value()?.kind().as_non_simd_struct()?;
+    let (name, _) = left.meta().as_value()?.kind().as_non_pointer_struct()?;
     Some(super::inference::with_contextual_root(
         right,
         &ExprKind::Identifier(name.clone()),
@@ -7192,7 +7192,7 @@ fn struct_valued(value: &ParamExpr) -> bool {
 /// shared folder computes over that attribute. A literal construction
 /// ([`literal_construction`]) still applies its dunder.
 fn folds_as_struct(ty: &Ty) -> bool {
-    ty.kind().is_non_simd_struct() && !ty.kind().is_bool() && !ty.is_numeric_literal()
+    ty.kind().is_non_pointer_struct() && !ty.kind().is_bool() && !ty.is_numeric_literal()
 }
 
 /// Whether `value` constructs a numeric literal (`type_of(exp)()` over `exp:

@@ -1495,7 +1495,7 @@ fn initializer_call(value: &Expr, result: &Ty) -> Option<Expr> {
         ExprKind::InitializerList { args, kwargs } => (args.clone(), kwargs.clone()),
         _ => return None,
     };
-    let (name, _) = result.kind().as_non_simd_struct()?;
+    let (name, _) = result.kind().as_non_pointer_struct()?;
     let mut call = Expr::new(
         ExprKind::Call {
             name: name.clone(),

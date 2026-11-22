@@ -28,7 +28,7 @@ impl Checker {
         let (owner, _) = self
             .self_ty
             .as_ref()
-            .and_then(|ty| ty.kind().as_non_simd_struct())?;
+            .and_then(|ty| ty.kind().as_non_pointer_struct())?;
         let mut owner = owner.clone();
         let mut current: Option<Vec<(u32, u32)>> = None;
         for field in &fields {
@@ -45,7 +45,7 @@ impl Checker {
                 })
                 .collect();
             let (_, field_ty) = info.fields.iter().find(|(name, _)| name == field)?;
-            let (next, _) = field_ty.kind().as_non_simd_struct()?;
+            let (next, _) = field_ty.kind().as_non_pointer_struct()?;
             owner = next.clone();
             current = Some(composed);
         }
@@ -117,7 +117,7 @@ impl Checker {
             let OriginSeg::Field(field) = seg else {
                 unreachable!("receiver path collects field segments only");
             };
-            let Some((name, arguments)) = receiver_ty.kind().as_non_simd_struct() else {
+            let Some((name, arguments)) = receiver_ty.kind().as_non_pointer_struct() else {
                 return Err(TypeError::Unsupported(format!(
                     "delegated-call origin receiver field '{field}' projects a non-struct type"
                 )));
@@ -134,7 +134,8 @@ impl Checker {
             };
             receiver_ty = substitute_at(field_ty, info, arguments);
         }
-        let Some((callee_struct, receiver_args)) = receiver_ty.kind().as_non_simd_struct() else {
+        let Some((callee_struct, receiver_args)) = receiver_ty.kind().as_non_pointer_struct()
+        else {
             return Err(TypeError::Unsupported(
                 "a delegated-call origin expression requires a struct-typed receiver".to_string(),
             ));
@@ -308,7 +309,7 @@ impl Checker {
             Err(_) if param_args.is_empty() => self.self_instance_ty(name)?,
             Err(_) => return None,
         };
-        let (head, arguments) = callee.kind().as_non_simd_struct()?;
+        let (head, arguments) = callee.kind().as_non_pointer_struct()?;
         if head != "Origin" || !self.is_library_origin(head) {
             return None;
         }
@@ -602,7 +603,7 @@ impl Checker {
         Option<mojito_types::origin::Mutability>,
     )> {
         let ty = self.lookup(name)?;
-        let (head, arguments) = ty.kind().as_non_simd_struct()?;
+        let (head, arguments) = ty.kind().as_non_pointer_struct()?;
         let params = &self.structs.get(head)?.params;
         let slot = params
             .iter()

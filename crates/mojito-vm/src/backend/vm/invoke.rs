@@ -179,9 +179,22 @@ impl VmBackend {
         } = frame;
         // A receiver read out of a `ref`-typed field arrives as a reference
         // handle: dispatch on its referent.
-        // A held struct receiver dispatches as its box, which the method's
-        // frame entry unboxes.
-        let recv = if prog.held_field(receiver_ty).is_some() {
+        // `Pointer`'s rule members, which its declaration does not declare
+        // yet, run on the address a held pointer is. Any other held struct
+        // receiver dispatches as its box, which the method's frame entry
+        // unboxes.
+        let pointer_rule = resolved.is_none()
+            && matches!(method, "free" | "unsafe_free" | "__int__")
+            && receiver_ty
+                .map(peel_references)
+                .is_some_and(|ty| ty.kind().is_pointer_layout());
+        let recv = if pointer_rule {
+            if matches!(recv, Value::Ref { .. }) {
+                self.read_reference(&recv, frame_id, vars)?
+            } else {
+                recv
+            }
+        } else if prog.held_field(receiver_ty).is_some() {
             prog.boxed(recv, receiver_ty)
         } else if matches!(recv, Value::Ref { .. }) {
             let referent = self.read_reference(&recv, frame_id, vars)?;

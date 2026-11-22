@@ -186,14 +186,14 @@ impl VmBackend {
             CtValue::StoreToMem(referent) => {
                 let referent_ty = match target.map(Ty::kind) {
                     Some(TyKind::Ref(reference)) => Some(&reference.referent),
-                    _ => target.and_then(Ty::pointer_element).or(target),
+                    _ => target.and_then(address_element).or(target),
                 };
                 let referent = self.thaw(prog, referent, referent_ty)?;
                 let reference = self.store_to_comptime_memory(referent);
                 return Ok(address_as(&prog.structs, reference, target));
             }
             CtValue::Pointer { memory, offset } => {
-                let Some(element) = target.and_then(Ty::pointer_element) else {
+                let Some(element) = target.and_then(address_element) else {
                     return Err(RuntimeError::Unsupported(
                         "frozen pointer has no checked element type".to_string(),
                     ));
@@ -545,4 +545,10 @@ fn comptime_pointer(reference: Value) -> Value {
         },
         other => other,
     }
+}
+
+/// The pointee of a pointer target: a `Pointer`'s, or the `!kgen.pointer`
+/// a held `Pointer` is.
+fn address_element(ty: &Ty) -> Option<&Ty> {
+    ty.kind().address_parts().map(|(element, _)| element)
 }

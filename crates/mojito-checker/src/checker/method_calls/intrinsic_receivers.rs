@@ -32,7 +32,7 @@ impl Checker {
         {
             return Ok(None);
         }
-        if let Some((name, _)) = obj_ty.kind().as_non_simd_struct()
+        if let Some((name, _)) = obj_ty.kind().as_non_pointer_struct()
             && !self.structs.contains_key(name)
             && let Some(ty) = self.infer_unregistered_collection_method(site)?
         {
@@ -42,7 +42,7 @@ impl Checker {
         // nominal prelude `Optional` owns its full method surface below.
         if obj_ty
             .kind()
-            .as_non_simd_struct()
+            .as_non_pointer_struct()
             .is_some_and(|(name, args)| {
                 name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(ty)] if ty.is_int())
             })

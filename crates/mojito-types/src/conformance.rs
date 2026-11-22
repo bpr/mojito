@@ -191,7 +191,7 @@ pub fn leaf_conformance(
     trait_name: &str,
     element: &mut dyn FnMut(&Ty, &str) -> Conformance,
 ) -> Option<Conformance> {
-    if ty.kind().is_non_simd_struct()
+    if ty.kind().is_non_pointer_struct()
         || matches!(
             ty.kind(),
             TyKind::Param { .. }

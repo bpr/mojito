@@ -44,7 +44,7 @@ pub(super) fn unify(
         // parameters (`Pair[T]` against `Pair[Int]` solves `T = Int`). Value
         // arguments contribute no type solution. A structural mismatch is left
         // for the caller's coercion check to report.
-        struct_ty if let Some((pn, pargs)) = struct_ty.as_non_simd_struct() => {
+        struct_ty if let Some((pn, pargs)) = struct_ty.as_non_pointer_struct() => {
             // A spread of a pack against a closed element list is a whole
             // argument list, which `solve_value_args` binds: its one slot is
             // no element pattern. Against another spread it forwards that
@@ -52,14 +52,14 @@ pub(super) fn unify(
             if mojito_types::types::pack_spread_argument(pargs).is_some()
                 && !actual
                     .kind()
-                    .as_non_simd_struct()
+                    .as_non_pointer_struct()
                     .is_some_and(|(_, aargs)| {
                         mojito_types::types::pack_spread_argument(aargs).is_some()
                     })
             {
                 return Ok(());
             }
-            if let Some((an, aargs)) = actual.kind().as_non_simd_struct()
+            if let Some((an, aargs)) = actual.kind().as_non_pointer_struct()
                 && pn == an
                 && pargs.len() == aargs.len()
             {
@@ -609,7 +609,7 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
                 .map(|bound| substitute_self(bound, replacement)),
         }
         .into(),
-        struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
+        struct_ty if let Some((name, args)) = struct_ty.as_non_pointer_struct() => {
             ty.reusing(TyKind::Struct(
                 name.clone(),
                 map_tyargs(args, |t| substitute_self(t, replacement)),
@@ -808,7 +808,7 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
             .collect()
     };
     match ty.kind() {
-        struct_ty if let Some((name, args)) = struct_ty.as_non_simd_struct() => {
+        struct_ty if let Some((name, args)) = struct_ty.as_non_pointer_struct() => {
             TyKind::Struct(name.clone(), map_args(args)).into()
         }
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
@@ -1896,7 +1896,7 @@ impl Checker {
                 _ => set_element(&pattern).is_some(),
             },
         };
-        let Some((name, arguments)) = pattern.kind().as_non_simd_struct() else {
+        let Some((name, arguments)) = pattern.kind().as_non_pointer_struct() else {
             return self.infer(expression);
         };
         if !shaped {

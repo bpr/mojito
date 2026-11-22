@@ -34,7 +34,7 @@ pub(super) fn contextual_root_span(expression: &Expr) -> Option<mojito_common::t
 pub(super) fn contextual_parameter_base(ty: &Ty, expr: &Expr) -> Result<String, TypeError> {
     match ty.kind() {
         struct_ty
-            if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+            if let Some((name, arguments)) = struct_ty.as_non_pointer_struct()
                 && arguments.is_empty() =>
         {
             Ok(name.clone())
@@ -624,7 +624,7 @@ impl Checker {
             },
             ExprKind::Member { object, field } => {
                 let object_ty = self.infer(object).ok()?;
-                let (name, _) = object_ty.kind().as_non_simd_struct()?;
+                let (name, _) = object_ty.kind().as_non_pointer_struct()?;
                 self.structs
                     .get(name)?
                     .fields
@@ -1064,7 +1064,7 @@ impl Checker {
                 // are a subscript of the member value, not parameter
                 // application on a callable — the member-base mirror of the
                 // identifier-base re-dispatch in `infer_call`.
-                if let Some((struct_name, _)) = callable.kind().as_non_simd_struct()
+                if let Some((struct_name, _)) = callable.kind().as_non_pointer_struct()
                     && !param_args.is_empty()
                     && param_args
                         .iter()
@@ -1116,7 +1116,7 @@ impl Checker {
                         &TySubst::new(),
                     )?;
                 }
-                if let Some((struct_name, _)) = callable.kind().as_non_simd_struct() {
+                if let Some((struct_name, _)) = callable.kind().as_non_pointer_struct() {
                     let method_key = format!("{struct_name}.__call__");
                     let effect_key = target.as_deref().unwrap_or(&method_key);
                     self.apply_transfer_effects(
@@ -1659,7 +1659,7 @@ impl Checker {
     pub(super) fn type_keyed_accessor_receiver(&self, name: &str) -> bool {
         let Some((sname, _)) = self
             .lookup(name)
-            .and_then(|ty| ty.kind().as_non_simd_struct())
+            .and_then(|ty| ty.kind().as_non_pointer_struct())
         else {
             return false;
         };
@@ -2050,7 +2050,9 @@ impl Checker {
         // the base name physically during syntax renaming.
         if let Some(root_span) = contextual_root_span(expression) {
             let base = match expected.kind() {
-                struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => name.clone(),
+                struct_ty if let Some((name, _)) = struct_ty.as_non_pointer_struct() => {
+                    name.clone()
+                }
                 TyKind::Param { .. } => {
                     return Err(TypeError::ContextualMember {
                         member: contextual_member_name(expression),
@@ -2073,7 +2075,7 @@ impl Checker {
             // member call binds them as the spelled form does.
             let root = match expected.kind() {
                 struct_ty
-                    if let Some((_, arguments)) = struct_ty.as_non_simd_struct()
+                    if let Some((_, arguments)) = struct_ty.as_non_pointer_struct()
                         && !arguments.is_empty() =>
                 {
                     arguments
@@ -2523,7 +2525,7 @@ impl Checker {
         // itself a struct, which merges through `findCommonType` as a
         // conditional's arms do (`[1, 2.5]` is ambiguous).
         let defaults_arguments =
-            |ty: &Ty| ty.kind().is_non_simd_struct() && !ty.is_numeric_literal();
+            |ty: &Ty| ty.kind().is_non_pointer_struct() && !ty.is_numeric_literal();
         for ty in rest {
             let (left, right) =
                 if element != *ty && defaults_arguments(&element) && defaults_arguments(ty) {
@@ -2607,7 +2609,7 @@ impl Checker {
         target: &Ty,
         record: bool,
     ) -> Result<(), TypeError> {
-        let Some((name, _)) = target.kind().as_non_simd_struct() else {
+        let Some((name, _)) = target.kind().as_non_pointer_struct() else {
             return Ok(());
         };
         let empty = match &display.kind {
@@ -2675,7 +2677,7 @@ impl Checker {
         span: SourceSpan,
         target: &Ty,
     ) -> Result<(), TypeError> {
-        let Some((name, _)) = target.kind().as_non_simd_struct() else {
+        let Some((name, _)) = target.kind().as_non_pointer_struct() else {
             return Ok(());
         };
         let insert = if list_element(target).is_some() {
@@ -2702,7 +2704,7 @@ impl Checker {
         target: &Ty,
         is_literal: fn(&[String], bool) -> bool,
     ) -> Option<(String, Result<(), TypeError>)> {
-        let (name, arguments) = target.kind().as_non_simd_struct()?;
+        let (name, arguments) = target.kind().as_non_pointer_struct()?;
         let info = self.structs.get(name)?;
         let sig = info
             .methods
@@ -2733,7 +2735,7 @@ impl Checker {
             return false;
         }
         let name = match ty.kind() {
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => name.as_str(),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_pointer_struct() => name.as_str(),
             kind if kind.is_simd() => "SIMD",
             _ => return false,
         };
@@ -2855,7 +2857,7 @@ impl Checker {
         span: SourceSpan,
         target: &Ty,
     ) -> Result<(), TypeError> {
-        let Some((name, _)) = target.kind().as_non_simd_struct() else {
+        let Some((name, _)) = target.kind().as_non_pointer_struct() else {
             return Ok(());
         };
         let constructor = self

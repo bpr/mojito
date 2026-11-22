@@ -301,7 +301,12 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         {
             closed_literal(ty, value, bindings)
         }
-        struct_ty if let Some((name, original)) = struct_ty.as_non_simd_struct() => {
+        // A pointer's provenance substitutes by its own arm below: its
+        // origin binding is still the compiler's rule (R2501).
+        struct_ty
+            if let Some((name, original)) = struct_ty.as_non_simd_struct()
+                && !struct_ty.is_pointer() =>
+        {
             if original.is_empty() {
                 // `Tuple` applied to no element is the empty tuple's
                 // instance, not the template.
@@ -906,7 +911,7 @@ fn owner_origin_mutability(
 fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
     fn names_outside_structs(ty: &Ty, removed: &[ParamRef]) -> bool {
         match ty.kind() {
-            pointer if let Some(element) = pointer.pointer_element() => {
+            pointer if let Some((element, _)) = pointer.pointer_layout() => {
                 names_outside_structs(element, removed)
             }
             struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => false,

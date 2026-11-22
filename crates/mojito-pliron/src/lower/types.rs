@@ -147,7 +147,7 @@ pub fn lower_ty(
     if ty.is_numeric_literal() || ty.is_string_literal() {
         return Ok(LowerTy::ZeroSized);
     }
-    if matches!(ty.kind(), TyKind::Struct(..)) && !ty.is_pointer() {
+    if matches!(ty.kind(), TyKind::Struct(..)) {
         let translated = declarations.translated_type(ty);
         if translated != *ty {
             return lower_ty(function, &translated, layout, declarations, location);

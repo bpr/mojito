@@ -3788,9 +3788,20 @@ and the accessors (`TyKind::pointer_parts`) decode it losslessly; an
 application no provenance decodes stays the nominal struct. A pointer is a
 declared struct for member lookup, associated members, conformance, and
 reflection, read through `nominal_struct`, never through a kind test, and
-a scalar for layout, copies, loans, and the runtime:
-`TyKind::as_non_simd_struct` excludes it, as it does `SIMD`, so no struct
-rule treats it as a one-field aggregate (R2486). Its parameters (`p.origin`, `type_of(p).T`), `comptime`
+below the MIR waist for layout, default and copy construction, and the
+runtime too: `TyKind::as_non_simd_struct` answers it, so the MIR, the
+elaborator, the VM, and Pliron treat it as the one-field
+`TrivialRegisterPassable` struct it is, held as its `!kgen.pointer` field
+(`translated_type`, the VM's `held_field`). Its elaborated instance erases
+a `mut` argument its layout does not read (`_REMOVED_ARG`), as any
+struct's does, so readers below the waist read the pointee and address
+space off its arguments without decoding provenance
+(`TyKind::pointer_layout`, `is_pointer_layout`; `address_parts` reads it).
+Above the waist the checker, symbol, and comptime crates read the staging
+accessor `TyKind::as_non_pointer_struct`, which excludes a decoded pointer,
+since its copies, loans, and origin binding are still the compiler's rules
+there (R2501); so do the elaborator's operator receivers and its
+provenance substitution. Its parameters (`p.origin`, `type_of(p).T`), `comptime`
 members (`_mlir_type`, `_mlir_lit_ref`), and conformances (`Intable`,
 `Writable`) are the declaration's, in the checker and the elaborator
 alike. The checker's rules still win for every member

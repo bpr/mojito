@@ -949,7 +949,7 @@ pub(super) fn place_crosses_reference(place: &MirPlace) -> bool {
         .iter()
         .rev()
         .skip(1)
-        .any(|ty| ty.is_pointer() || matches!(ty.kind(), TyKind::Ref(_)))
+        .any(|ty| ty.is_pointer_layout() || matches!(ty.kind(), TyKind::Ref(_)))
 }
 
 /// Whether a place designates one element slot of multi-element raw pointer

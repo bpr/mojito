@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2501**.
+Next free ID: **R2503**.
 
 ## Ordered Work
 
@@ -11128,25 +11128,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2370.
   - Model: Fable, Not Planned.
 
-- [ ] **R2486 A pointer's copies, loans, and layout are still the
-  compiler's rules, not the declared `Pointer` struct's**
+- [ ] **R2501 Above the MIR waist a pointer's copies, loans, and origin
+  binding are still the compiler's rules, not the declared `Pointer`
+  struct's**
 
-  A pointer type is the declared struct's application, but every struct
-  rule still excludes it, as `SIMD`'s do (R1575).
-  - The exclusion is `TyKind::as_non_simd_struct` (`mojito-types`), which
-    answers `None` for a pointer, so its 380-odd callers keep the
-    compiler's pointer rules.
-  - Raw `TyKind::Struct` matches carry an explicit `is_pointer()` guard
-    for the same reason: `MirDeclarations::{default_initializer,
-    copy_initializer, struct_instance}` (`mir/mir.rs`), `default_construction`
-    (`mir/type_construction.rs`), the copy and fieldwise construction in
-    `lower_expr/expr_call.rs`, `declared_operator_receiver`
-    (`mono/specializer.rs`), and `witness_operator_receiver`
-    (`mono/instances.rs`).
-  - Checker guards of the same kind: `reconcile_origins`
-    (`origins/solve.rs`), `defer_bound_mutability`,
-    `conversion_instantiation`, and `direct_conversion_constructor`
-    (`checker.rs`), `constructed_unification` and the copy construction
+  Below the waist a pointer is the declared struct, but the checker,
+  symbol, and comptime crates read it through the staging accessor
+  `TyKind::as_non_pointer_struct` (`mojito-types`), which answers `None`
+  for a decoded pointer.
+  - Retire `as_non_pointer_struct`: every caller in `mojito-checker`,
+    `mojito-types`, `mojito-symbol`, and `mojito-comptime` goes back to
+    `as_non_simd_struct`.
+  - Checker guards to drop: `reconcile_origins` (`origins/solve.rs`),
+    `defer_bound_mutability`, `conversion_instantiation`, and
+    `direct_conversion_constructor` (`checker.rs`),
+    `constructed_unification` and the copy construction
     (`declarations.rs`), the slice subscript (`indexing.rs`),
     `bind_unbound_tails` (`type_resolution.rs`), and the comptime lifting
     and `parameter_value_type` (`comptime_validation.rs`).
@@ -11154,11 +11150,52 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `closed_kind`, and `unqualified_type_name` (`types.rs`),
     `MetaTy::is_unresolved_struct` (`param_expr.rs`), and `source_type`
     (`ct.rs`).
-  - Go sites-first, as R1575 does for `SIMD`: drop the exclusion, run
-    `scripts/smoke --suites` and `scripts/focused`, and fix or file every
-    site as one list.
-  - Depends on nothing.
-  - Model: Fable, Planned.
+  - Elaborator sites that wait on the checker: `declared_operator_receiver`
+    and `witness_operator_receiver` keep a pointer's `+`/comparisons as
+    builtin operators, since the checker lowers pointer arithmetic over a
+    normalized index; `substitute_ty`'s pointer-provenance arm runs ahead
+    of its struct arm (`mono/substitute.rs`), since the struct arm rebinds a
+    pointer's `mut` and the pipeline-off path then fails "MakeRef
+    destination recovers permission"; `unify`'s
+    `pattern.is_pointer() != actual.is_pointer()` (`mono/unify.rs`); and
+    `infer_call`'s pointer self-instance (`mono/infer.rs`).
+  - Probe: dropping only the staging exclusion stops the bundled library
+    from packaging: `coerces`'s pointer arm compares two deferred `mut`
+    placeholders exactly ("cannot implicitly convert
+    'Pointer[mut, T, origin_of(self)._get_owned_interior["element"], …]'").
+  - Probe: past that, `Span[Byte](unsafe_ptr=data, length=n)`
+    (`std/hash/_ahash.mojo`) finds no overload, because the struct arms of
+    `origins/subst.rs` bind a pointer before its pointer arms (R2487).
+  - Probe: past that, `Span.__init__(ref [Self.origin] array: Array[…])`
+    fails, since `rebase_self_place_pointer` reads `as_pointer()`, which the
+    struct substitution already rewrote (R2493).
+  - Decide whether pointer instance symbols change (`mojito-symbol`), and
+    plan the package bump if they do.
+  - The mut-to-imm coercion is `coerces`'s pointer arm today; the struct
+    arm rejects it without the declared implicit `__init__` (R2443).
+  - Depends on R2487, R2493, R2443.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2502 Pointer arms beside a struct arm answer what the struct arm
+  already answers**
+
+  Once both halves read the declared `Pointer`, these arms give the
+  struct rule's answer and should go.
+  - `drop_runs_no_code_within` (`mir.rs`): `Pointer` declares no `__del__`.
+  - `carries_references` (`mir/facts.rs`): the struct arm sees the
+    `Origin` argument.
+  - `member_parts` (`mir/struct_reads.rs`).
+  - `copy_is_identity`'s `|| ty.is_pointer()` (`types.rs`).
+  - `modelled_trivial_register_passable` and the `Writable` row
+    (`conformance.rs`).
+  - The conformance bridges in `traits.rs` and `availability.rs`.
+  - The pointer disjuncts in `type_resolution.rs` and the pointer
+    construction arm of `call_inference.rs`, dead once the struct arm sees
+    a pointer.
+  - Keep the arms that are pointer semantics: address, place projection,
+    FFI `CType`, provenance decode, and diagnostics.
+  - Depends on R2501.
+  - Model: Opus, Planned.
 
 - [ ] **R2487 A pointer's origin and `mut` arguments bind by passes of
   their own, not as a struct's origin arguments**

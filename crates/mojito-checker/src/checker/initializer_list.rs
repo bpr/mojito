@@ -999,7 +999,7 @@ impl Checker {
         ty: &Ty,
     ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
         use mojito_ast::ast::ParamArg;
-        let (target, arguments) = ty.kind().as_non_simd_struct()?;
+        let (target, arguments) = ty.kind().as_non_pointer_struct()?;
         let info = self.structs.get(target)?;
         let decls = &info.decls();
         let arguments = &*info.view_arguments(arguments);
@@ -1115,7 +1115,7 @@ impl Checker {
             // An origin argument has no source spelling of its own: the
             // construction binds it against the instance.
             struct_ty
-                if let Some((_, arguments)) = struct_ty.as_non_simd_struct()
+                if let Some((_, arguments)) = struct_ty.as_non_pointer_struct()
                     && arguments
                         .iter()
                         .any(|argument| matches!(argument, TyArg::Origin(_))) =>
@@ -1186,7 +1186,7 @@ impl Checker {
         kwargs: Vec<KwArg>,
     ) -> Option<Expr> {
         let name = match instance.kind() {
-            struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => name.clone(),
+            struct_ty if let Some((name, _)) = struct_ty.as_non_pointer_struct() => name.clone(),
             kind if kind.is_simd() => mojito_types::types::SIMD_TYPE_NAME.to_string(),
             kind if kind.string_literal_value().is_some() => {
                 mojito_types::types::STRING_LITERAL_TYPE_NAME.to_string()

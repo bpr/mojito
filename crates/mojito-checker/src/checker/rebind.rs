@@ -237,7 +237,7 @@ impl Checker {
                 },
             )
         });
-        while let Some((name, args)) = translated.kind().as_non_simd_struct()
+        while let Some((name, args)) = translated.kind().as_non_pointer_struct()
             && let Some(info) = self.structs.get(name)
             && let [(_, field)] = info.fields.as_slice()
             && self.is_trivial_register_passable(&translated)

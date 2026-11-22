@@ -131,9 +131,10 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // a pointer without any runtime operation (lowering forwards the
     // receiver register), so ABI compatibility compares elements only. The
     // checker and ownership analysis own origin discipline.
-    if let (Some(found_element), Some(expected_element)) =
-        (found.pointer_element(), expected.pointer_element())
-    {
+    if let (Some(found_element), Some(expected_element)) = (
+        found.pointer_layout().map(|(element, _)| element),
+        expected.pointer_layout().map(|(element, _)| element),
+    ) {
         return types_compatible(found_element, expected_element);
     }
     if let (TyKind::LitRef(found_reference), TyKind::LitRef(expected_reference)) =
@@ -291,9 +292,8 @@ fn erased_struct_agrees(found: &Ty, expected: &Ty) -> bool {
             .collect()
     };
     let (found_args, expected_args) = (kept(found_args), kept(expected_args));
-    found_name != expected_name
-        && mojito_types::types::struct_template(found_name)
-            == mojito_types::types::struct_template(expected_name)
+    mojito_types::types::struct_template(found_name)
+        == mojito_types::types::struct_template(expected_name)
         && found_args.len() == expected_args.len()
         && (mojito_types::types::erases_an_argument(found)
             || mojito_types::types::erases_an_argument(expected))
@@ -368,7 +368,7 @@ pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
         | TyKind::LitRef(mojito_types::origin::RefTy {
             referent: inner, ..
         }) => contains_runtime_pack(inner),
-        pointer if let Some(inner) = pointer.pointer_element() => contains_runtime_pack(inner),
+        pointer if let Some((inner, _)) = pointer.pointer_layout() => contains_runtime_pack(inner),
         TyKind::Tuple(elements)
         | TyKind::Variant(elements)
         | TyKind::Overload(elements)
@@ -739,7 +739,7 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         | TyKind::LitRef(mojito_types::origin::RefTy {
             referent: inner, ..
         }) => contains_type_param(inner),
-        pointer if let Some(inner) = pointer.pointer_element() => contains_type_param(inner),
+        pointer if let Some((inner, _)) = pointer.pointer_layout() => contains_type_param(inner),
         TyKind::Tuple(elements)
         | TyKind::RuntimePack(elements)
         | TyKind::Variant(elements)

@@ -273,22 +273,20 @@ fn default_construction(
         return Ok(vec![MirInstr::Const { dest, k }]);
     }
     match ty.kind() {
-        TyKind::Struct(..) if !ty.is_pointer() => {
-            Ok(vec![declarations.default_initializer(ty).map_or_else(
-                || MirInstr::ConstructType {
+        TyKind::Struct(..) => Ok(vec![declarations.default_initializer(ty).map_or_else(
+            || MirInstr::ConstructType {
+                dest,
+                ty: ty.clone(),
+            },
+            |initializer| {
+                initializer_call(
                     dest,
-                    ty: ty.clone(),
-                },
-                |initializer| {
-                    initializer_call(
-                        dest,
-                        initializer,
-                        struct_arguments(ty, initializer, declarations),
-                        Vec::new(),
-                    )
-                },
-            )])
-        }
+                    initializer,
+                    struct_arguments(ty, initializer, declarations),
+                    Vec::new(),
+                )
+            },
+        )]),
         _ => Err(TypeConstructionError::NotAStruct(ty.clone())),
     }
 }

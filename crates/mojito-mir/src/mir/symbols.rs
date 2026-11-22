@@ -127,7 +127,7 @@ impl<'t> SymbolTable<'t> {
                 values: Const::Value(CtValue::Tuple(items)),
             } = instruction
                 && reg_types.get(&dest.0).is_some_and(|ty| {
-                    ty.pointer_element().is_some_and(|element| {
+                    ty.pointer_layout().is_some_and(|(element, _)| {
                         matches!(element.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
                     })
                 })

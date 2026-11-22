@@ -395,9 +395,6 @@ impl MirDeclarations {
         let TyKind::Struct(name, _) = ty.kind() else {
             return None;
         };
-        if ty.is_pointer() {
-            return None;
-        }
         let requirement = self
             .trait_declaration("Defaultable")?
             .requirements
@@ -413,7 +410,7 @@ impl MirDeclarations {
     /// trivial fieldwise copy, and any other type.
     pub fn copy_initializer(&self, ty: &Ty) -> Option<&str> {
         match ty.kind() {
-            TyKind::Struct(name, _) if !ty.is_pointer() => {
+            TyKind::Struct(name, _) => {
                 self.lifecycle_member(mojito_types::types::struct_template(name), "__copyinit__")
             }
             _ => None,
@@ -482,9 +479,6 @@ impl MirDeclarations {
         let TyKind::Struct(name, arguments) = ty.kind() else {
             return None;
         };
-        if ty.is_pointer() {
-            return None;
-        }
         mojito_symbol::symbol::member_table_name(ty)
             .filter(|instance| instance != name)
             .and_then(|instance| self.structure(&instance))
@@ -5122,7 +5116,7 @@ fn close_register_types(
                         .cloned()
                         .map(|ty| match ty.kind() {
                             TyKind::Ref(reference) => reference.referent.clone(),
-                            pointer if let Some(element) = pointer.pointer_element() => {
+                            pointer if let Some((element, _)) = pointer.pointer_layout() => {
                                 element.clone()
                             }
                             _ => ty,
@@ -5170,7 +5164,7 @@ fn close_register_types(
                 } => Some((
                     dest,
                     reg_types.get(&base.0).and_then(|base| match base.kind() {
-                        pointer if let Some(element) = pointer.pointer_element() => {
+                        pointer if let Some((element, _)) = pointer.pointer_layout() => {
                             Some(element.clone())
                         }
                         kind if let Some((dtype, _)) = kind.as_simd() => {

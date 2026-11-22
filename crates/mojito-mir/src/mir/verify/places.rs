@@ -119,7 +119,7 @@ pub fn place_base_ty(place: &MirPlace) -> Option<&Ty> {
         Some(pointer)
             if through_handle
                 && place.through == Some(place.root)
-                && let Some(element) = pointer.pointer_element() =>
+                && let Some((element, _)) = pointer.pointer_layout() =>
         {
             Some(element)
         }

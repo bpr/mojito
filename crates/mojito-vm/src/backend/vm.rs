@@ -673,7 +673,13 @@ impl VmBackend {
                 value => crate::crossing::vm_to_ct(value),
             };
         }
-        let value = prog.boxed(value, ty);
+        // A pointer freezes as the address its held `!kgen.pointer` field
+        // is, at the pointee its own type reads.
+        let value = if ty.is_some_and(|ty| ty.kind().is_pointer_layout()) {
+            prog.unboxed(value, ty)
+        } else {
+            prog.boxed(value, ty)
+        };
         if let Some(text) = self.nominal_string_text(&value) {
             return Ok(CtValue::Str(text));
         }
@@ -685,7 +691,8 @@ impl VmBackend {
             pointer @ Value::Pointer { .. }
                 if ty.is_some_and(|ty| {
                     matches!(ty.kind(), TyKind::Ref(_))
-                        || !(ty.is_pointer() || matches!(ty.kind(), TyKind::KgenPointer { .. }))
+                        || !(ty.kind().is_pointer_layout()
+                            || matches!(ty.kind(), TyKind::KgenPointer { .. }))
                 }) =>
             {
                 let referent_ty = match ty.map(Ty::kind) {
@@ -721,7 +728,9 @@ impl VmBackend {
                             "cannot freeze cyclic pointer memory".to_string(),
                         ));
                     }
-                    let element = ty.and_then(Ty::pointer_element);
+                    let element = ty
+                        .and_then(|ty| ty.kind().address_parts())
+                        .map(|(element, _)| element);
                     let slots = region
                         .slots
                         .iter()
@@ -1017,7 +1026,7 @@ fn simd_instance<'s>(
 fn pointer_valued(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
     use mojito_types::types::TyKind;
     let is_pointer = |ty: &Ty| {
-        ty.is_pointer()
+        ty.is_pointer_layout()
             || matches!(
                 ty.kind(),
                 TyKind::KgenPointer { .. } | TyKind::LitRef { .. }
@@ -1226,7 +1235,7 @@ impl Prog {
         // the VM holds it as.
         initializes
             .then(|| {
-                if receiver.is_pointer() {
+                if receiver.is_pointer_layout() {
                     Some(Value::None)
                 } else {
                     VmBackend::uninitialized_value(self, receiver)

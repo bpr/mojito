@@ -1355,7 +1355,7 @@ pub(in crate::checker) fn names_origin_binder_in(
             matches!(origin, PointerOrigin::Param { id, .. } if among(id))
         }
         TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(id) if among(id)),
-        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments
+        struct_ty if let Some((_, arguments)) = struct_ty.as_non_pointer_struct() => arguments
             .iter()
             .any(|argument| matches!(argument, TyArg::Origin(Origin::Param(id)) if among(*id))),
         _ => false,

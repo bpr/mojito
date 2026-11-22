@@ -2327,6 +2327,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Below the MIR waist a pointer is the declared `Pointer` struct: its
+  default and copy constructions, its layout reads, and its native type are
+  the struct rules, so Pliron lowers it as its one `!kgen.pointer` field and
+  the VM holds it as that field, as for any one-field register-passable
+  struct, as upstream's `LowerKGENToLLVM` does. Its elaborated instance
+  erases a `mut` argument its layout does not read (`_REMOVED_ARG`), and
+  every reader below the waist reads its pointee and address space off its
+  arguments without decoding provenance. Above the waist its copies, loans,
+  and origin binding stay the checker's rules (R2501). No accepted or
+  rejected program changes.
 - A returned pointer subscript (`return p[]`, `return self.p[0]`) takes
   its origin from the selected `Pointer.__getitem__`'s `ref[Self.origin]`
   reference result, as upstream reads it off the called getter, instead of

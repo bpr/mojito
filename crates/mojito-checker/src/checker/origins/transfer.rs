@@ -328,7 +328,7 @@ impl Checker {
         name: &str,
     ) -> Vec<mojito_checked::checked::TransferEffect> {
         let key = match self.lookup(name).map(Ty::kind) {
-            Some(struct_ty) if let Some((struct_name, _)) = struct_ty.as_non_simd_struct() => {
+            Some(struct_ty) if let Some((struct_name, _)) = struct_ty.as_non_pointer_struct() => {
                 format!("{struct_name}.__call__")
             }
             _ => name.to_string(),
@@ -848,7 +848,7 @@ impl Checker {
             .infer_reference_value(receiver)
             .map(|reference| reference.referent)
             .or_else(|| self.infer(receiver).ok())?;
-        let (name, arguments) = receiver.kind().as_non_simd_struct()?;
+        let (name, arguments) = receiver.kind().as_non_pointer_struct()?;
         let info = self.structs.get(name)?;
         Some(struct_subst(&info.params, arguments))
     }
@@ -884,7 +884,7 @@ fn named_place_origins(ty: &Ty) -> Vec<mojito_types::origin::Origin> {
                     places(&origin, &mut found);
                 }
             }
-            struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
+            struct_ty if let Some((_, arguments)) = struct_ty.as_non_pointer_struct() => {
                 for argument in arguments {
                     if let mojito_types::types::TyArg::Origin(origin) = argument {
                         places(origin, &mut found);

@@ -289,7 +289,7 @@ impl Checker {
         let Ok(inferred) = self.infer(expression) else {
             return HashMap::new();
         };
-        let Some((name, _)) = inferred.kind().as_non_simd_struct() else {
+        let Some((name, _)) = inferred.kind().as_non_pointer_struct() else {
             return HashMap::new();
         };
         let Some(info) = self.structs.get(name) else {
@@ -326,7 +326,7 @@ impl Checker {
             return false;
         };
         ty.kind()
-            .as_non_simd_struct()
+            .as_non_pointer_struct()
             .and_then(|(name, arguments)| {
                 self.structs
                     .get(name)

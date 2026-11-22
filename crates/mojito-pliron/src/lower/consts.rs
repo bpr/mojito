@@ -424,7 +424,7 @@ impl FnLowering<'_> {
                 return Ok(());
             }
             (CtValue::Pointer { memory, offset }, pointer)
-                if let Some(element) = pointer.pointer_element() =>
+                if let Some((element, _)) = pointer.address_parts() =>
             {
                 let layout = self.layout.layout_of(element).map_err(|error| {
                     self.unsupported_reg(format!("frozen pointer element layout ({error})"), dest)

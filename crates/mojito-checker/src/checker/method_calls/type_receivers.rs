@@ -725,7 +725,7 @@ impl Checker {
         }
         if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
             && let Some(instance) = self.self_ty.clone()
-            && let Some((_, arguments)) = instance.kind().as_non_simd_struct()
+            && let Some((_, arguments)) = instance.kind().as_non_pointer_struct()
         {
             let arguments = arguments.clone();
             if record {

@@ -392,7 +392,7 @@ pub(crate) fn builtin_stub(name: &str) -> String {
 /// closure's declaration ([`mojito_symbol::symbol::nested_closure_storage_name`]).
 pub(crate) fn is_closure_storage(ty: &Ty) -> bool {
     ty.kind()
-        .as_non_simd_struct()
+        .as_non_pointer_struct()
         .is_some_and(|(name, _)| mojito_symbol::symbol::is_closure_storage_name(name))
 }
 
@@ -1463,7 +1463,7 @@ impl Checker {
     /// closure's storage.
     fn is_callable_struct(&self, ty: &Ty) -> bool {
         ty.kind()
-            .as_non_simd_struct()
+            .as_non_pointer_struct()
             .and_then(|(name, _)| self.structs.get(name))
             .is_some_and(|info| info.callable_conformance.is_some())
     }
@@ -1704,7 +1704,7 @@ impl Checker {
     /// The signature of the function the type `to` inflates
     /// ([`Self::register_inflated_function`]); `None` for any other type.
     fn inflated_signature(&self, to: &Ty) -> Option<Ty> {
-        let (name, _) = to.kind().as_non_simd_struct()?;
+        let (name, _) = to.kind().as_non_pointer_struct()?;
         if !mojito_symbol::symbol::is_inflated_function_name(name) {
             return None;
         }
@@ -1878,7 +1878,7 @@ impl Checker {
     /// `def(...)` value. Runtime retargeting uses the latter only when the value
     /// is a callable struct.
     fn indirect_callable_target(&self, callable: &Ty) -> Option<String> {
-        if let Some((name, _)) = callable.kind().as_non_simd_struct() {
+        if let Some((name, _)) = callable.kind().as_non_pointer_struct() {
             return self
                 .structs
                 .get(name)
@@ -1909,7 +1909,7 @@ impl Checker {
                 callable_bound: Some(bound),
                 ..
             } => Some((*bound).clone()),
-            struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+            struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
                 let info = self.structs.get(name)?;
                 let contract = info.callable_conformance.as_ref()?;
                 Some(substitute(contract, &struct_subst(&info.params, arguments)))
@@ -3467,7 +3467,7 @@ impl StructInfo {
         fallback: &[mojito_types::origin::Origin],
     ) -> Vec<mojito_types::origin::Origin> {
         instance
-            .and_then(|instance| instance.kind().as_non_simd_struct())
+            .and_then(|instance| instance.kind().as_non_pointer_struct())
             .map_or_else(
                 || fallback.to_vec(),
                 |(_, arguments)| ParamDecl::origin_arguments(arguments).cloned().collect(),
@@ -3525,7 +3525,8 @@ fn explicit_destroy_types(
                             .iter()
                             .filter_map(|(field, ty)| match ty.kind() {
                                 struct_ty
-                                    if let Some((field_ty, _)) = struct_ty.as_non_simd_struct()
+                                    if let Some((field_ty, _)) =
+                                        struct_ty.as_non_pointer_struct()
                                         && !checker.is_deinitable(ty) =>
                                 {
                                     Some((field.clone(), field_ty.clone()))

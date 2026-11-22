@@ -435,7 +435,7 @@ impl Checker {
             || !self
                 .infer(object)?
                 .kind()
-                .as_non_simd_struct()
+                .as_non_pointer_struct()
                 .is_some_and(|(name, _)| self.structs.contains_key(name))
         {
             return Ok(());

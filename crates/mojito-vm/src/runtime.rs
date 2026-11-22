@@ -845,7 +845,7 @@ pub fn pointer_bitcast_preserves_pointee(
     let pointee = |ty: Option<&mojito_types::types::Ty>| {
         ty.and_then(|ty| match ty.kind() {
             mojito_types::types::TyKind::KgenPointer { element, .. } => Some(element),
-            _ => ty.pointer_element(),
+            _ => ty.pointer_layout().map(|(element, _)| element),
         })
         .map(|pointee| held_address(&erase_origins(&held_pointee(pointee))))
     };

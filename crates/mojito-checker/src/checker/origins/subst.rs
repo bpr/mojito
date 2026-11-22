@@ -555,7 +555,7 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
             }
             .into()
         }
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
             ty.reusing(TyKind::Struct(
                 name.clone(),
                 arguments
@@ -663,7 +663,7 @@ pub(in crate::checker) fn bind_pointer_origins(
             }
             .into()
         }
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
             ty.reusing(TyKind::Struct(
                 name.clone(),
                 arguments
@@ -701,7 +701,7 @@ pub(in crate::checker) fn substitute_struct_origins(
     }
     let recur = |ty: &Ty| substitute_struct_origins(ty, bindings);
     match ty.kind() {
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
             ty.reusing(TyKind::Struct(
                 name.clone(),
                 arguments
@@ -786,7 +786,7 @@ pub(in crate::checker) fn bind_self_origin_arguments(
         TyArg::Val(_) => argument.clone(),
     };
     match ty.kind() {
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => ty.reusing(
+        struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => ty.reusing(
             TyKind::Struct(name.clone(), arguments.iter().map(bind).collect()),
         ),
         TyKind::Assoc { base, name, args } => ty.reusing(TyKind::Assoc {

@@ -205,7 +205,7 @@ impl Checker {
                     // spelling.
                     kind if kind.is_string_literal() => Ok(Ty::never()),
                     struct_ty
-                        if let Some((name, targs)) = struct_ty.as_non_simd_struct()
+                        if let Some((name, targs)) = struct_ty.as_non_pointer_struct()
                             && targs.is_empty()
                             && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
                     {
@@ -258,7 +258,7 @@ impl Checker {
             }
             "Tuple" => {
                 let tuple = self.infer_tuple_construction(&span, param_args, args)?;
-                if let Some((target, _)) = tuple.kind().as_non_simd_struct()
+                if let Some((target, _)) = tuple.kind().as_non_pointer_struct()
                     && target != mojito_types::types::TUPLE_TYPE_NAME
                 {
                     self.record_at(span).overload_target = Some(target.clone());
@@ -298,11 +298,11 @@ impl Checker {
                 kwargs,
             ),
             // An origin slot the arguments leave open is the instance's.
-            struct_ty if let Some((name, expected)) = struct_ty.as_non_simd_struct() => self
+            struct_ty if let Some((name, expected)) = struct_ty.as_non_pointer_struct() => self
                 .infer_construction_of(span, name, Some(instance), &[], args, kwargs)
                 .map(|constructed| match constructed.kind() {
                     struct_ty
-                        if let Some((name, arguments)) = struct_ty.as_non_simd_struct()
+                        if let Some((name, arguments)) = struct_ty.as_non_pointer_struct()
                             && arguments.len() == expected.len() =>
                     {
                         let arguments = arguments
@@ -762,7 +762,7 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Result<Ty, TypeError>> {
-        let (struct_name, _) = ty.kind().as_non_simd_struct()?;
+        let (struct_name, _) = ty.kind().as_non_pointer_struct()?;
         let info = self.structs.get(struct_name)?;
         if !info.methods.contains_key("__call__")
             || ["__getitem__", "__setitem__", "__getattr__"]
@@ -815,7 +815,7 @@ impl Checker {
                 _ => None,
             })
             .collect::<Option<Vec<_>>>()?;
-        let (struct_name, _) = base_ty.kind().as_non_simd_struct()?;
+        let (struct_name, _) = base_ty.kind().as_non_pointer_struct()?;
         if self.declared_callable_contract(base_ty).is_some()
             || !self
                 .structs
@@ -863,7 +863,7 @@ impl Checker {
             _ => self
                 .member_type_operand(object)
                 .and_then(|ty| {
-                    let (struct_name, _) = ty.kind().as_non_simd_struct()?;
+                    let (struct_name, _) = ty.kind().as_non_pointer_struct()?;
                     self.structs
                         .get(struct_name)
                         .map(|info| declares(&info.decls()))
@@ -925,7 +925,7 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Result<Ty, TypeError>> {
         let object_ty = self.infer(object).ok()?;
-        let (struct_name, arguments) = object_ty.kind().as_non_simd_struct()?;
+        let (struct_name, arguments) = object_ty.kind().as_non_pointer_struct()?;
         let info = self.structs.get(struct_name)?;
         let (_, field_ty) = info.fields.iter().find(|(name, _)| name == field)?;
         let field_ty = substitute_at(field_ty, info, arguments);
@@ -964,7 +964,7 @@ impl Checker {
         );
         let declared = ty
             .kind()
-            .as_non_simd_struct()
+            .as_non_pointer_struct()
             .is_some_and(|(struct_name, _)| {
                 self.structs
                     .get(struct_name)
@@ -1196,14 +1196,13 @@ impl Checker {
                             && param_args.is_empty()
                             && kwargs.is_empty()
                             && candidates.iter().filter_map(Ty::as_func).any(|func| {
-                                func.ret
-                                    .kind()
-                                    .as_non_simd_struct()
-                                    .is_some_and(|(target, _)| {
+                                func.ret.kind().as_non_pointer_struct().is_some_and(
+                                    |(target, _)| {
                                         mojito_types::types::SCALAR_RANGE_FAMILY
                                             .iter()
                                             .any(|family| target.contains(family))
-                                    })
+                                    },
+                                )
                             })
                             && let Some(ty) = self.infer_scalar_range(&span, args)?
                         {
@@ -1238,7 +1237,7 @@ impl Checker {
         // carrying its own callable contract keeps parameter application
         // (specialized callable values), and non-value bracket forms keep the
         // parenthesization hint in `infer_callable_ty`.
-        if let Some((struct_name, _)) = ty.kind().as_non_simd_struct()
+        if let Some((struct_name, _)) = ty.kind().as_non_pointer_struct()
             && !param_args.is_empty()
             && param_args
                 .iter()
@@ -1266,7 +1265,7 @@ impl Checker {
         }
         reject_unavailable(origin_signatures.first())?;
         let indirect_target = match ty.kind() {
-            struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => {
+            struct_ty if let Some(_) = struct_ty.as_non_pointer_struct() => {
                 self.indirect_callable_target(&ty)
             }
             _ if callable_contract_ty(&ty).is_some()
@@ -1319,7 +1318,7 @@ impl Checker {
         }
         // A callable struct value dispatches `Struct.__call__`; replay its
         // effects with the callee binding as the receiver actual.
-        if let Some((struct_name, _)) = ty.kind().as_non_simd_struct() {
+        if let Some((struct_name, _)) = ty.kind().as_non_pointer_struct() {
             let callee_value = Expr {
                 kind: ExprKind::Identifier(name.to_string()),
                 span: span.span,
@@ -1455,7 +1454,7 @@ impl Checker {
     fn record_view_result_borrow(&self, span: &SourceSpan, ret: &Ty) {
         // Reference fields and origin-bearing pointer fields (upstream's
         // `Pointer[T, Self.o]` iterator storage) both borrow.
-        if ret.kind().is_non_simd_struct() && self.type_carries_loans(ret) {
+        if ret.kind().is_non_pointer_struct() && self.type_carries_loans(ret) {
             self.record_at(span.clone())
                 .adjustment
                 .get_or_insert_with(|| {
@@ -1593,7 +1592,7 @@ impl Checker {
         if !carried.is_empty() {
             self.replay_transfer_effects(carried, None, args, &span, &TySubst::new())?;
         }
-        if let Some((struct_name, _)) = element_ty.kind().as_non_simd_struct() {
+        if let Some((struct_name, _)) = element_ty.kind().as_non_pointer_struct() {
             let method_key = format!("{struct_name}.__call__");
             let effect_key = target.as_deref().unwrap_or(&method_key);
             self.apply_transfer_effects(effect_key, Some(receiver), args, &span, &TySubst::new())?;
@@ -2420,7 +2419,7 @@ impl Checker {
         let found = self.infer(&argument.value)?;
         match found.kind() {
             struct_ty
-                if let Some((name, args)) = struct_ty.as_non_simd_struct()
+                if let Some((name, args)) = struct_ty.as_non_pointer_struct()
                     && name == "StringDict" =>
             {
                 match args.as_slice() {

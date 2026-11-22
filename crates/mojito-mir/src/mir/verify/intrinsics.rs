@@ -104,7 +104,7 @@ pub(super) fn indexed_place_element_types(base: &Ty) -> Option<Vec<Ty>> {
         TyKind::VariadicPack(element) | TyKind::ComptimeList(element) => {
             Some(vec![element.clone()])
         }
-        pointer if let Some(element) = pointer.pointer_element() => Some(vec![element.clone()]),
+        pointer if let Some((element, _)) = pointer.pointer_layout() => Some(vec![element.clone()]),
         other => tuple_elements(other).map(|elements| elements.into_iter().cloned().collect()),
     }
 }

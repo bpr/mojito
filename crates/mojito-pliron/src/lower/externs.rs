@@ -109,7 +109,7 @@ impl FnLowering<'_> {
     ) -> Result<Value, PlironError> {
         let ty = self.func.reg_types.get(&reg.0).cloned();
         match ty.as_ref() {
-            Some(ty) if ty.is_pointer() => {
+            Some(ty) if ty.is_pointer_layout() => {
                 let pointer = self.reg_value(ctx, reg, ScalarTy::PTR)?;
                 self.require_generic_at_boundary(
                     ctx,
@@ -125,7 +125,7 @@ impl FnLowering<'_> {
                 let field = self.struct_decls.get(name.as_str()).and_then(|decl| {
                     decl.fields
                         .iter()
-                        .find(|(_, field_ty)| field_ty.is_pointer())
+                        .find(|(_, field_ty)| field_ty.is_pointer_layout())
                         .cloned()
                 });
                 let Some((field, field_ty)) = field else {

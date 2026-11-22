@@ -101,7 +101,7 @@ impl Checker {
         self.bind_read_builtin_argument(&span, &args[0], &tys[0]);
         let nominal_prompt = (tys[0])
             .kind()
-            .as_non_simd_struct()
+            .as_non_pointer_struct()
             .is_some_and(|(name, args)| {
                 args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
             });
@@ -179,7 +179,7 @@ impl Checker {
     pub(super) fn borrow_nominal_place_argument(&self, argument: &Expr, ty: &Ty) {
         let nominal = ty
             .kind()
-            .as_non_simd_struct()
+            .as_non_pointer_struct()
             .is_some_and(|(name, _)| self.structs.contains_key(name));
         if matches!(argument.kind, ExprKind::Identifier(_)) && nominal {
             self.record_at(argument.source_span())
@@ -301,7 +301,7 @@ impl Checker {
         ) {
             return Ok(Some(Ty::int()));
         }
-        if let Some((name, _)) = ty.kind().as_non_simd_struct()
+        if let Some((name, _)) = ty.kind().as_non_pointer_struct()
             && !self.structs.contains_key(name)
             && (list_element(ty).is_some()
                 || set_element(ty).is_some()
@@ -516,7 +516,7 @@ impl Checker {
         method: &str,
         args: &[&Ty],
     ) -> Option<Result<Ty, TypeError>> {
-        if !ty.kind().is_non_simd_struct() {
+        if !ty.kind().is_non_pointer_struct() {
             return None;
         }
         if !self.conforms_to(ty, trait_name) {

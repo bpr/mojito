@@ -635,7 +635,7 @@ impl<'a> Flatten<'a> {
         self.allow_argument_anchors = saved_anchor_permission;
         let copy_construction = args.is_empty()
             && node.ty.as_ref().is_some_and(
-                |ty| matches!(ty.kind(), TyKind::Struct(constructed, _) if *constructed == *name && !ty.is_pointer()),
+                |ty| matches!(ty.kind(), TyKind::Struct(constructed, _) if *constructed == *name),
             );
         let (kw, kwarg_places) = copy_construction
             .then(|| self.copy_construction_keywords(kwargs))
@@ -647,15 +647,12 @@ impl<'a> Flatten<'a> {
         let conventions = call.argument_conventions();
         let ((regs, arg_places, kw, _), conventions) = match node.ty.clone().as_ref().map(Ty::kind)
         {
-            Some(TyKind::Struct(constructed, _))
-                if *constructed == *name && !node.ty.as_ref().is_some_and(Ty::is_pointer) =>
-            {
-                self.fieldwise_keywords_positional(
+            Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
+                .fieldwise_keywords_positional(
                     constructed,
                     (regs, arg_places, kw, kwarg_places),
                     conventions,
-                )
-            }
+                ),
             _ => ((regs, arg_places, kw, kwarg_places), conventions),
         };
         let target = callable_target(&node.adjustments)
