@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2523**.
+Next free ID: **R2524**.
 
 ## Ordered Work
 
@@ -856,6 +856,19 @@ How much generic instantiation multiplies a program, and proof that a pass
 which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
+
+- [ ] **R2523 Concrete instructions grew by 306273 instructions (+5.48%) over batch 4**
+
+  The elaborated corpus grew past `scripts/run-batches`' `--max-growth`, and the growth was accepted into the baseline.
+  - Concrete instructions went from 5588998 to 5895271.
+  - Largest per-fixture growth: `benchmarks/compile/collections_many.mojo` +10117, `assets/ok/nested_operands_type_once.mojo` +4345, `assets/ok/for_destructuring_targets.mojo` +2519, `assets/ok/simd_reductions_int.mojo` +1786, `assets/ok/simd_reductions_float.mojo` +1748, `assets/ok/iterator_bounds.mojo` +1741, `assets/ok/template_method_subscripted_receiver.mojo` +1728, `assets/ok/comptime_for_tuple_elements.mojo` +1669, `assets/ok/comptime_for_display_over_binder.mojo` +1454, `assets/ok/comptime_for_named_collection.mojo` +1410.
+  - Batch entries: R2024 R2207 R2208 R2210 R2211.
+  - Commits since the last baseline refresh: `c84a82bf3..HEAD`.
+  - Ratchet log: `target/run-batches/20261120-073546/batch4-ratchet-repair2.log`.
+  - Accepted into the baseline by `scripts/run-batches`; fix it in a regressions pass (fix the pass that stopped folding, not the lowering).
+  - Filed by `scripts/run-batches` (2026-11-22).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2522 1 fixture stopped elaborating after batch 4**
 
