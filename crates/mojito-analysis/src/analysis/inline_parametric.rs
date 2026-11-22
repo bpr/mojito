@@ -3088,8 +3088,9 @@ fn argument_mutabilities(bindings: &[Binding]) -> HashMap<OriginParamId, Mutabil
 
 /// The `mut` binder each pointer-typed parameter of `callee` spells its
 /// origin's mutability as, bound to the mutability of the pointer the call
-/// passes or constructs there: the result's for an `out` parameter, as
-/// upstream's call binds a struct's `mut` parameter from its application.
+/// passes or constructs there, a caller binder's symbolic one included:
+/// the result's for an `out` parameter, as upstream's call binds a
+/// struct's `mut` parameter from its application.
 fn pointer_mutabilities(
     caller: &MirFunction,
     callee: &MirFunction,
@@ -3121,8 +3122,17 @@ fn pointer_mutabilities(
             else {
                 return None;
             };
-            let mutability = actual.as_pointer()?.1.statically_mutable()?;
-            Some((id, Mutability::of(mutability)))
+            let actual = actual.as_pointer()?.1;
+            let mutability = match (actual.statically_mutable(), &actual) {
+                (Some(mutable), _) => Mutability::of(mutable),
+                (
+                    None,
+                    PointerOrigin::Param { mutability, .. }
+                    | PointerOrigin::SelfPlace { mutability, .. },
+                ) if *mutability != Mutability::Param(id) => *mutability,
+                (None, _) => return None,
+            };
+            Some((id, mutability))
         })
         .collect()
 }

@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A generic body passing a reference whose mutability is a binder's
+  (`Pointer(to=self.get())` under `o: Origin[mut=m]`) no longer fails MIR
+  verification after `inline-parametric`: inlining binds the initializer's
+  own `mut` binder to the caller's symbolic one, as it already did a
+  decided one.
 - An explicit `p.__getitem__()`, `p.__getitem__(unsafe_offset=i)`, or
   deprecated positional `p.__getitem__(i)` call runs upstream's declared
   `Pointer` getters, where it found no method: a read, store, `+=`, and

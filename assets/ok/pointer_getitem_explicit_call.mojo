@@ -4,7 +4,9 @@
 # through the reference each returns, over a place pointer and over heap
 # pointers. A `ref[Self.o]` result over an `o: Origin[mut=m]` binder takes
 # the receiver instance's `mut`, so a read method of a holder whose origin
-# is mutable mutates through it, for `Pointer` and a user struct alike.
+# is mutable mutates through it, for `Pointer` and a user struct alike, and
+# a generic body's `Pointer(to=self.get())` over such a result keeps the
+# binder's `mut` through the inlined initializer.
 from std.memory.alloc import unsafe_alloc
 
 
@@ -45,6 +47,9 @@ struct MyPtr[mut: Bool, //, T: AnyType, o: Origin[mut=mut]](
 
     def get(self) -> ref[Self.o] Self.T:
         return self.p[]
+
+    def repoint(self) -> Pointer[Self.T, Self.o]:
+        return Pointer(to=self.get())
 
 
 struct MyHolder[o: Origin[mut=True]]:
@@ -102,6 +107,8 @@ def holders():
     m.go()
     m.go()
     print(b.n)
+    var y = 3
+    print(MyPtr(Pointer(to=y)).repoint()[])
 
 
 def main():
