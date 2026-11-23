@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `comptime` bound to a conditional whose arms are types is the type its
+  condition selects, as at the pin (R2542): `comptime T = Int if True else
+  String` then `var x: T = 3` runs, at module scope, as a struct member, and
+  in a body (`assets/ok/comptime_conditional_type_alias.mojo`).
+
 - An annotation is one whole expression evaluated in its type context, as
   upstream evaluates it (R2137): `def g(x: Int if True else Int) -> Int if
   True else Int`, `var y: Int if True else Int`, `def f[n: Int if True else

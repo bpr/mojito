@@ -7719,25 +7719,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2542 A compile-time conditional whose arms are types is not a type**
-
-  A conditional of type values evaluates as an ordinary value expression,
-  so it is no type where it is not itself an annotation, where the pin
-  evaluates it to the selected type.
-  - Probe: `comptime T = Int if True else Int` then `var x: T = 3` is
-    "unknown type 'T'"; the pin prints 3.
-  - Probe: `comptime T = Int if True else String` is "value of type
-    'AnyStruct[Int]' is not compatible with value of type
-    'AnyStruct[String]'"; the pin prints 3 with `var x: T = 3`.
-  - The same conditional as an annotation (`var x: Int if True else Int`)
-    is a type since R2137, through `denoted_type`.
-  - Lever: `constraints.rs::may_denote_type` classifies by spelling and
-    has no `IfExpr` arm, and the checker's `IfExpr` typing unifies the arm
-    types instead of folding the constant condition over type values.
-  - Found while landing R2137 (2026-11-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2543 An annotation that evaluates to no type reports "not a compile-time Int constant"**
 
   `build_ct` reports any annotation expression it cannot evaluate as a

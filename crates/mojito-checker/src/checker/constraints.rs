@@ -3749,13 +3749,19 @@ impl Checker {
     }
 
     /// Whether `expr` is spelled as something that may denote a type: a
-    /// name, an application, a type value, or a member or subscript rooted
-    /// at a name, none of them a runtime binding.
+    /// name, an application, a type value, a member or subscript rooted at a
+    /// name, none of them a runtime binding, or a conditional over two such
+    /// arms (`Int if c else String`).
     fn may_denote_type(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Identifier(name) => self.lookup(name).is_none(),
             ExprKind::TypeValue(_) => true,
             ExprKind::Call { name, .. } => name == "type_of",
+            ExprKind::IfExpr {
+                then_branch,
+                else_branch,
+                ..
+            } => self.may_denote_type(then_branch) && self.may_denote_type(else_branch),
             ExprKind::Member { object, .. }
             | ExprKind::Index { object, .. }
             | ExprKind::MultiIndex { object, .. } => self.may_denote_type(object),
