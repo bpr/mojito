@@ -1422,6 +1422,12 @@ own expression nodes, as upstream parses them, with their parameter
 types and results held as annotation expressions. The MIR schema does
 not change.
 
+The package format moves to `mojito-package 268` (R2537): a result's
+and a direct `ref` field's `ref[...]` in the checker residue is the
+slot's convention (`ret_reference`, `Param::reference`) beside the
+referent annotation, as upstream reads a result convention, rather than
+a reference type. The MIR schema does not change.
+
 Schema 1.229 completes a trait requirement's function type after its
 `variadic_convention`, as upstream's trait declares it:
 `receiver_convention`, its receiver's declared convention (`present(var)`

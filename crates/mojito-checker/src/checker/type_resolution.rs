@@ -616,6 +616,75 @@ impl Checker {
     /// scopes already open; `decls` is the classified list its origin
     /// reference signatures (`ref[o] T`) read, its own followed by any
     /// context.
+    /// The type a struct field stores: its annotation's type, or for a kept
+    /// direct `ref` field ([`mojito_ast::ast::Param::reference`]) the
+    /// reference to it ([`Self::reference_field_ty`]).
+    pub(super) fn field_ty(&self, field: &mojito_ast::ast::Param) -> Result<Ty, TypeError> {
+        let referent = self.ty_from_anno(&field.ty)?;
+        match &field.reference {
+            Some(spec) => self.reference_field_ty(spec, referent),
+            None => Ok(referent),
+        }
+    }
+
+    /// The reference a direct `ref[spec]` field stores to `referent`: one
+    /// named origin parameter of the struct (or an untracked immutable
+    /// origin), plus at most one address space. An `UnsafeAnyOrigin` cannot
+    /// hide in a stored field.
+    pub(super) fn reference_field_ty(
+        &self,
+        spec: &mojito_ast::ast::OriginSpec,
+        referent: Ty,
+    ) -> Result<Ty, TypeError> {
+        let (origins, address_space) =
+            super::origins::split_ref_clause(spec, &self.enclosing_param_decls, self)?;
+        let [origin_expr] = &*origins else {
+            return Err(TypeError::Unsupported(
+                "reference-valued fields currently require one origin parameter".to_string(),
+            ));
+        };
+        let Some(origin_name) = super::origins::origin_binder_name(origin_expr) else {
+            return Err(TypeError::Unsupported(
+                "reference-valued fields require a named origin parameter".to_string(),
+            ));
+        };
+        let origin_name = origin_name.to_string();
+        let declared = self
+            .origin_binder(&self.enclosing_type_params, &origin_name)
+            .is_none()
+            .then(|| super::origins::OriginDecls::value(self, origin_expr))
+            .flatten();
+        match declared {
+            Some((mojito_types::origin::Origin::UnsafeAny { .. }, _)) => {
+                return Err(TypeError::Unsupported(
+                    "an UnsafeAnyOrigin reference cannot be hidden in a stored reference field"
+                        .to_string(),
+                ));
+            }
+            Some((origin @ mojito_types::origin::Origin::Untracked { mutable: false }, _)) => {
+                return Ok(TyKind::Ref(mojito_types::origin::RefTy {
+                    referent,
+                    origin,
+                    mutability: mojito_types::origin::Mutability::Immutable,
+                    address_space,
+                })
+                .into());
+            }
+            _ => {}
+        }
+        let (decl, id) = self
+            .origin_binder(&self.enclosing_type_params, &origin_name)
+            .filter(|(decl, _)| !decl.is_origin_set())
+            .ok_or_else(|| TypeError::UndefinedVariable(origin_name.clone()))?;
+        Ok(TyKind::Ref(mojito_types::origin::RefTy {
+            referent,
+            origin: mojito_types::origin::Origin::Param(id),
+            mutability: super::generics::origin_binder_mutability(&decl, id),
+            address_space,
+        })
+        .into())
+    }
+
     pub(super) fn function_signature_type(
         &self,
         callable: &FunctionTypeExpr,
@@ -624,6 +693,7 @@ impl Checker {
         let FunctionTypeExpr {
             params,
             ret,
+            ret_reference,
             thin,
             raises,
             raises_type,
@@ -667,18 +737,14 @@ impl Checker {
             .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::KwVariadic)
             .map(|parameter| self.ty_from_anno(&parameter.ty))
             .transpose()?;
-        let (return_type, ref_return) = match annotation_spelling(ret)? {
-            SourceType::Ref { referent, origin } => (
-                self.resolve_ty_from_anno(&referent)?,
-                Some(Box::new(self.lower_callable_ref_sig(
-                    origin.as_ref().ok_or_else(|| {
-                        TypeError::Unsupported("reference return requires an origin".to_string())
-                    })?,
-                    decls,
-                    &regular,
-                )?)),
+        let (return_type, ref_return) = match ret_reference {
+            Some(origin) => (
+                self.resolve_ty_from_anno(&annotation_spelling(ret)?)?,
+                Some(Box::new(
+                    self.lower_callable_ref_sig(origin, decls, &regular)?,
+                )),
             ),
-            _ => (self.ty_from_anno(ret)?, None),
+            None => (self.ty_from_anno(ret)?, None),
         };
         Ok(TyKind::Func(Box::new(FuncTy {
             environment,
@@ -1118,65 +1184,6 @@ impl Checker {
         Ok(match ty {
             SourceType::TypeOf(operand) => self.type_of_operand(operand)?,
             SourceType::None => Ty::none(),
-            SourceType::Ref { referent, origin } => {
-                let spec = origin.as_ref().ok_or_else(|| {
-                    TypeError::Unsupported(
-                        "reference-valued fields require an explicit origin".to_string(),
-                    )
-                })?;
-                let (origins, address_space) =
-                    super::origins::split_ref_clause(spec, &self.enclosing_param_decls, self)?;
-                let [origin_expr] = &*origins else {
-                    return Err(TypeError::Unsupported(
-                        "reference-valued fields currently require one origin parameter"
-                            .to_string(),
-                    ));
-                };
-                let Some(origin_name) = super::origins::origin_binder_name(origin_expr) else {
-                    return Err(TypeError::Unsupported(
-                        "reference-valued fields require a named origin parameter".to_string(),
-                    ));
-                };
-                let origin_name = origin_name.to_string();
-                let declared = self
-                    .origin_binder(&self.enclosing_type_params, &origin_name)
-                    .is_none()
-                    .then(|| super::origins::OriginDecls::value(self, origin_expr))
-                    .flatten();
-                match declared {
-                    Some((mojito_types::origin::Origin::UnsafeAny { .. }, _)) => {
-                        return Err(TypeError::Unsupported(
-                            "an UnsafeAnyOrigin reference cannot be hidden in a stored reference \
-                             field"
-                                .to_string(),
-                        ));
-                    }
-                    Some((
-                        origin @ mojito_types::origin::Origin::Untracked { mutable: false },
-                        _,
-                    )) => {
-                        return Ok(TyKind::Ref(mojito_types::origin::RefTy {
-                            referent: self.resolve_ty_from_anno(referent)?,
-                            origin,
-                            mutability: mojito_types::origin::Mutability::Immutable,
-                            address_space,
-                        })
-                        .into());
-                    }
-                    _ => {}
-                }
-                let (decl, id) = self
-                    .origin_binder(&self.enclosing_type_params, &origin_name)
-                    .filter(|(decl, _)| !decl.is_origin_set())
-                    .ok_or_else(|| TypeError::UndefinedVariable(origin_name.clone()))?;
-                TyKind::Ref(mojito_types::origin::RefTy {
-                    referent: self.resolve_ty_from_anno(referent)?,
-                    origin: mojito_types::origin::Origin::Param(id),
-                    mutability: super::generics::origin_binder_mutability(&decl, id),
-                    address_space,
-                })
-                .into()
-            }
             // A bare name may be an in-scope type parameter (a generic `def`'s
             // `T`) or a struct type, optionally applied to parameter arguments.
             // A head that names no type may name a compile-time value, whose

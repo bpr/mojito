@@ -481,6 +481,9 @@ fn rewrite_expr(
                 }
             }
             rewrite_expr(&mut callable.ret, names, namespaces);
+            for origin in callable.ret_reference.iter_mut().flatten() {
+                rewrite_expr(origin, names, namespaces);
+            }
             if let Some(error) = &mut callable.raises_type {
                 rewrite_expr(error, names, namespaces);
             }
@@ -541,14 +544,6 @@ fn rewrite_type(
                 *ty = Type::Named(target, std::mem::take(args));
             } else {
                 rewrite_type(base, names, namespaces);
-            }
-        }
-        Type::Ref { referent, origin } => {
-            rewrite_type(referent, names, namespaces);
-            if let Some(origin) = origin {
-                for expr in origin {
-                    rewrite_expr(expr, names, namespaces);
-                }
             }
         }
         Type::IndexedProjection { base, index } => {
@@ -2554,6 +2549,7 @@ fn rewrite_stmt(
             params,
             raises_type,
             ret,
+            ret_reference,
             where_clauses,
             body,
             decorators,
@@ -2580,6 +2576,9 @@ fn rewrite_stmt(
             }
             if let Some(ret) = ret {
                 rewrite_expr(ret, names, namespaces);
+            }
+            for origin in ret_reference.iter_mut().flatten() {
+                rewrite_expr(origin, names, namespaces);
             }
             for condition in where_clauses {
                 rewrite_expr(condition, names, namespaces);
@@ -2632,6 +2631,9 @@ fn rewrite_stmt(
             }
             for f in fields {
                 rewrite_expr(&mut f.ty, names, namespaces);
+                for origin in f.reference.iter_mut().flatten() {
+                    rewrite_expr(origin, names, namespaces);
+                }
             }
             for case in enum_cases.iter_mut().flatten() {
                 for ty in &mut case.payload {
@@ -2667,6 +2669,9 @@ fn rewrite_stmt(
                 }
                 if let Some(ret) = &mut m.ret {
                     rewrite_expr(ret, names, namespaces);
+                }
+                for origin in m.ret_reference.iter_mut().flatten() {
+                    rewrite_expr(origin, names, namespaces);
                 }
                 if let Some(receiver) = &mut m.self_type {
                     rewrite_expr(receiver, names, namespaces);
@@ -2848,6 +2853,9 @@ fn rewrite_trait_method(
     }
     if let Some(ret) = &mut m.ret {
         rewrite_expr(ret, names, namespaces);
+    }
+    for origin in m.ret_reference.iter_mut().flatten() {
+        rewrite_expr(origin, names, namespaces);
     }
     if let Some(receiver) = &mut m.self_type {
         rewrite_expr(receiver, names, namespaces);

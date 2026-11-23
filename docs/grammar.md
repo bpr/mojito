@@ -289,7 +289,7 @@ artifacts and imports from stdin remain unsupported.
 ### function_def
 
 ```
-function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' type] where_clause* ':' block
+function_def: decorators 'def' NAME [params_decl] '(' [params] ')' function_effect* [capture_list] ['->' result_type] where_clause* ':' block
 decorators: decorator*
 decorator: '@' dotted_name ['(' [args] ')'] NEWLINE   # general — any name; the checker validates each site (see Decorators below)
 dotted_name: NAME ('.' NAME)*
@@ -598,10 +598,10 @@ member chain (`Self.l.doubled()`) calls a method of that member, and an applied 
 subscript expression like any other (`Grid[n]`), which a member continues as
 the postfix chain it starts (`Grid[n].cells()`).
 
-A `param_arg`'s `type` is never an origin-bearing reference type: upstream
-reads `ref[o] T` there as the expression `ref[o]` followed by a stray type,
-so `Tuple[ref[o] Int]` and `List[ref[o] Int]` are rejected with "expected
-']' in call argument list" at the referent. A reference inside a bracketed
+`ref` is never a type: upstream reads `ref[o] T` in a bracket as the
+expression `ref[o]` followed by a stray type, so `Tuple[ref[o] Int]`,
+`List[ref[o] Int]`, and `List[ref Int]` are rejected with "expected ']' in
+call argument list" at the referent. A reference inside a bracketed
 function type (`f: def(ref[o] Int) -> ref[o] Int`) is part of that function
 type and stays accepted.
 
@@ -651,9 +651,10 @@ trait_composition: '&'.trait_term+
 trait_term: NAME | '(' trait_composition ')'
 struct_block: NEWLINE INDENT struct_member+ DEDENT
 struct_member: field | struct_comptime | method
-field: 'var' NAME ':' type NEWLINE
+field: 'var' NAME ':' field_type NEWLINE
+field_type: 'ref' origin_spec type | type   # the kept direct `ref` field (docs/non-goals.md)
 struct_comptime: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression NEWLINE
-method: decorators 'def' NAME [params_decl] '(' [receiver [',' params] | params] ')' ['raises' [type]] ['->' type] where_clause* ':' block
+method: decorators 'def' NAME [params_decl] '(' [receiver [',' params] | params] ')' ['raises' [type]] ['->' result_type] where_clause* ':' block
 receiver: [convention] 'self' [':' type]    # instance method or any __init__; absent ⇒ a @staticmethod (no self)
                                             # an __init__'s params may hold 'out' 'self' [':' type] after other parameters
 ```
@@ -737,7 +738,7 @@ compiler generates from its cases (see `docs/notes/enums.md`).
 trait_def: 'trait' NAME [conformance] ':' trait_block         # conformance here = super-traits (refinement)
 trait_block: NEWLINE INDENT trait_member+ DEDENT
 trait_member: trait_method | trait_comptime | 'pass' NEWLINE  # `pass` declares nothing (`trait Named(Sized): pass`)
-trait_method: decorators 'def' NAME [params_decl] '(' receiver [',' params] ')' ['raises' [type]] ['->' type] where_clause* ':' NEWLINE INDENT (trait_req | block) DEDENT
+trait_method: decorators 'def' NAME [params_decl] '(' receiver [',' params] ')' ['raises' [type]] ['->' result_type] where_clause* ':' NEWLINE INDENT (trait_req | block) DEDENT
 trait_req: [STRING NEWLINE] '...' NEWLINE                    # a pure requirement; the STRING is a triple-quoted docstring
 trait_comptime: 'comptime' NAME [params_decl] ':' type where_clause* ['=' expr] NEWLINE
                                                               # a compile-time member requirement, optionally defaulted
@@ -1018,7 +1019,7 @@ expression:
     | lambda_expr
     | conditional
 lambda_expr:
-    | 'lambda' [params_decl] ['(' [params] ')'] function_effect* [capture_list] ['->' type] ':' conditional
+    | 'lambda' [params_decl] ['(' [params] ')'] function_effect* [capture_list] ['->' result_type] ':' conditional
 conditional:
     | disjunction 'if' disjunction 'else' expression   # ternary `a if c else b` (implemented)
     | disjunction
@@ -1278,13 +1279,12 @@ Notes:
 ```
 type:
     | annotation_expression       # any expression read as a type
-    | 'ref' [origin_spec] type    # an origin-checked reference type `ref[origin] T` (a direct field, a result; never a type argument)
     | '*' NAME | '*' 'Self' '.' NAME  # a variadic type-pack reference
 annotation_expression:            # the expression grammar at ternary level, including
     | expression                  # a function_type, a generator_type, and `( expression )`
 generator_type: '__generator_type' [params_decl] expression   # result read at ternary level
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* ['->' result_type]
-result_type: 'ref' [origin_spec] type | expression            # read at ternary level
+result_type: 'ref' origin_spec type | type    # `ref` is the result's convention; type read at ternary level
 function_type_param:
     | 'var' '**' NAME ':' type
     | [convention] [NAME ':'] type
@@ -1404,12 +1404,21 @@ argument. A construction alone is a checker error ("expected a type, not a
 value" at the pin). In a bracket list, a construction continues the postfix
 chain it starts, so `rebind[TypeList[Ts.values]()[i]](x)` passes the
 subscript as its argument.
-A **reference type** `ref[origin] T` parses into `Type::Ref` with its origin
-specifier retained; the specifier's operands classify as a parameter's do (an
-`AddressSpace` operand is the result's address space, upstream's
-`ref[Self.origin, Self.address_space] Self.T`). Signature checking substitutes parameter/receiver origins at calls and
-rejects invalid escapes. `ref` is contextual here — it is the reference form only
-when a type-starting token follows.
+A **`ref` result** `-> ref[origin] T` is the result slot's convention, as
+upstream reads it, not a type: the declaration keeps the specifier
+(`ret_reference`) beside the referent annotation `T`, one whole expression.
+The specifier's operands classify as a parameter's do (an `AddressSpace`
+operand is the result's address space, upstream's `ref[Self.origin,
+Self.address_space] Self.T`). Signature checking substitutes
+parameter/receiver origins at calls and rejects invalid escapes. The origin
+is required: `-> ref T` is a parse error ("'ref' result requires an origin
+specifier"), as at the pin. A kept direct `ref` field (`var f: ref[o] T`)
+stores its specifier as the field's convention the same way, and an
+origin-less one is a parse error too. `ref` is contextual only after `->`
+and after a field's `:`, and only when a `[` or a type-starting token
+follows; anywhere else (a local's or parameter's annotation, a bracket
+argument) `ref[o] T` is the expression `ref[o]` and a stray referent, which
+fails to parse, as at the pin.
 
 A `NAME` is also a **SIMD type** when it is `SIMD[DType.<dt>, <width>]`,
 `Scalar[DType.<dt>]`, or one of the

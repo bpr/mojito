@@ -645,7 +645,6 @@ impl Checker {
             let all_types = this.param_tys(&m.params)?;
             let ret_view = m.ret.as_ref().map(annotation_spelling).transpose()?;
             let ret = match &ret_view {
-                Some(SourceType::Ref { referent, .. }) => this.ty_from_spelling(referent)?,
                 Some(t) => this.ty_from_spelling(t)?,
                 None => Ty::none(),
             };
@@ -658,18 +657,11 @@ impl Checker {
             }
             // The `ref` clauses read the method's value binders
             // (`ref[_, a] self`), in scope only here.
-            let ref_return = match &ret_view {
-                Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
-                    origin.as_ref().ok_or_else(|| {
-                        TypeError::Unsupported("reference return requires an origin".to_string())
-                    })?,
-                    &declared,
-                    &regular_params,
-                    0,
-                    this,
-                )?),
-                _ => None,
-            };
+            let ref_return = m
+                .ret_reference
+                .as_ref()
+                .map(|origin| lower_ref_sig(origin, &declared, &regular_params, 0, this))
+                .transpose()?;
             let ref_params = lower_ref_param_sigs(&declared, &regular_params, 0, this)?;
             let self_ref = lower_ref_convention_sig(
                 m.self_convention,
@@ -693,6 +685,7 @@ impl Checker {
         let (defaults, all_types, ret, error, (self_ref, ref_params, ref_return)) = signature?;
         self.check_result_origins(
             m.ret.as_ref(),
+            m.ret_reference.as_ref(),
             &m.params,
             &all_types,
             Some((m.self_convention, &Ty::self_type())),
@@ -739,7 +732,10 @@ impl Checker {
             self_ref,
             ref_params,
             ref_return,
-            view_return_interior: view_return_interior_tags(m.ret.as_ref()),
+            view_return_interior: view_return_interior_tags(value_result(
+                m.ret.as_ref(),
+                m.ret_reference.as_ref(),
+            )),
             view_return: Vec::new(),
             implicit: false,
             origin_binders: vec![None; regular_params.len()],
@@ -861,15 +857,16 @@ impl Checker {
                 ref_fields: declaration
                     .fields
                     .iter()
-                    .filter(|field| {
-                        matches!(field.ty.annotation_type(), Some(SourceType::Ref { .. }))
-                    })
+                    .filter(|field| field.reference.is_some())
                     .map(|field| field.name.clone())
                     .collect(),
                 declared_field_types: declaration
                     .fields
                     .iter()
-                    .map(|field| annotation_spelling(&field.ty))
+                    .map(|field| {
+                        annotation_spelling(&field.ty)
+                            .map(|spelling| (spelling, field.reference.clone()))
+                    })
                     .collect::<Result<_, _>>()?,
                 field_origin_arguments: HashMap::new(),
                 associated: HashMap::new(),
@@ -1278,6 +1275,10 @@ impl Checker {
             } else {
                 self.resolve_storage_annotation(&spelling, super::StorageStrictness::Full)
             }
+            .and_then(|referent| match &f.reference {
+                Some(spec) => self.reference_field_ty(spec, referent),
+                None => Ok(referent),
+            })
             .map_err(|error| match error {
                 TypeError::NoSuchAssociatedType {
                     object_type,
@@ -1836,6 +1837,7 @@ impl Checker {
         }
         self.check_result_origins(
             m.ret.as_ref(),
+            m.ret_reference.as_ref(),
             &m.params,
             all_types,
             receiver.map(|ty| (m.self_convention, ty)),

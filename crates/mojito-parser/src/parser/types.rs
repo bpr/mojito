@@ -4,79 +4,85 @@
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
-    /// Parses a type annotation and converts it in the annotation's type
-    /// context ([`Expr::annotation_type`]), for a slot that still stores the
-    /// converted type: a `ref` referent and a bracket's type operand.
-    pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
-        let annotation = self.parse_annotation()?;
-        annotation_type(&annotation)
-    }
-
     /// Parses a type annotation as the expression upstream keeps: one whole
     /// expression at ternary level (`Bool`, `Self.T`, `Pair[Int]`,
     /// `type_of(x).T`, `def(Int) -> Int`, `__generator_type[T: AnyType] T`,
     /// `Int if c else Float64`), which converts in the annotation's type
     /// context ([`Expr::annotation_type`]); the checker evaluates one no
-    /// spelling converts. Only a `*` pack and a contextual `ref` reference
-    /// type keep their own forms, each stored as the
-    /// [`ExprKind::TypeValue`] of its type.
+    /// spelling converts. Only a `*` pack keeps its own form, stored as the
+    /// [`ExprKind::TypeValue`] of its type; `ref` is no annotation, only a
+    /// result's or a field's convention ([`Self::parse_result`],
+    /// [`Self::parse_reference_slot`]).
     pub(super) fn parse_annotation(&mut self) -> Result<Expr, ParseError> {
         let start = self.peek_start();
+        if !matches!(self.peek_token()?, Some(Token::Star)) {
+            let head = self.parse_prefix()?;
+            return self.annotation_from(head);
+        }
+        // A variadic type-pack reference in `*args: *ArgTypes`. Inside a
+        // struct, current Mojo spells the struct's own pack `*Self.Ts`; the
+        // qualified spread keeps its own node so the elaborator can tell it
+        // from a bare `*Ts`, which a struct member may not use.
+        self.next_token()?;
+        if !matches!(self.peek_token()?, Some(Token::Identifier(_))) {
+            let name = self.expect_identifier("Expected a type-pack name after '*'")?;
+            let ty = Type::Named(format!("*{name}"), Vec::new());
+            return Ok(self.node(ExprKind::TypeValue(ty), start));
+        }
+        let mut operand = self.parse_prefix()?;
+        let message = if matches!(&operand.kind, ExprKind::Identifier(id) if id == "Self")
+            && matches!(self.peek_token()?, Some(Token::Dot))
+        {
+            operand = self.parse_infix(operand)?;
+            "Expected a type-pack name after '*Self.'"
+        } else {
+            "Expected a type-pack name after '*'"
+        };
+        let ty =
+            pack_spread_type(&operand).ok_or_else(|| ParseError::Message(message.to_string()))?;
+        Ok(self.node(ExprKind::TypeValue(ty), start))
+    }
+
+    /// Parses a result after its `->`, as upstream's result reads a leading
+    /// `ref[...]` as the result slot's convention: the referent annotation
+    /// and, for a `ref` result, its origin specifier. An origin-less `ref`
+    /// result is an error, as at the pin.
+    pub(super) fn parse_result(
+        &mut self,
+    ) -> Result<(Expr, Option<mojito_ast::ast::OriginSpec>), ParseError> {
+        self.parse_reference_slot("'ref' result requires an origin specifier")
+    }
+
+    /// Parses an annotation slot that may carry a leading `ref[...]`
+    /// convention (a result, or a kept direct `ref` field): the annotation,
+    /// with the convention's origins when `ref` is followed by `[`. `ref`
+    /// stays an ordinary name unless a `[` or a referent follows it; a
+    /// referent without `[` fails with `missing_origin`.
+    pub(super) fn parse_reference_slot(
+        &mut self,
+        missing_origin: &str,
+    ) -> Result<(Expr, Option<mojito_ast::ast::OriginSpec>), ParseError> {
+        let start = self.peek_start();
+        if !matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "ref") {
+            return Ok((self.parse_annotation()?, None));
+        }
+        self.next_token()?;
+        let ref_span = self.last_span;
         match self.peek_token()? {
-            // A variadic type-pack reference in `*args: *ArgTypes`. Inside a
-            // struct, current Mojo spells the struct's own pack `*Self.Ts`;
-            // the qualified spread keeps its own node so the elaborator can
-            // tell it from a bare `*Ts`, which a struct member may not use.
-            Some(Token::Star) => {
-                self.next_token()?;
-                if !matches!(self.peek_token()?, Some(Token::Identifier(_))) {
-                    let name = self.expect_identifier("Expected a type-pack name after '*'")?;
-                    let ty = Type::Named(format!("*{name}"), Vec::new());
-                    return Ok(self.node(ExprKind::TypeValue(ty), start));
-                }
-                let mut operand = self.parse_prefix()?;
-                let message = if matches!(&operand.kind, ExprKind::Identifier(id) if id == "Self")
-                    && matches!(self.peek_token()?, Some(Token::Dot))
-                {
-                    operand = self.parse_infix(operand)?;
-                    "Expected a type-pack name after '*Self.'"
-                } else {
-                    "Expected a type-pack name after '*'"
-                };
-                let ty = pack_spread_type(&operand)
-                    .ok_or_else(|| ParseError::Message(message.to_string()))?;
-                Ok(self.node(ExprKind::TypeValue(ty), start))
-            }
-            Some(Token::Identifier(id)) if id == "ref" => {
-                self.next_token()?;
-                // `ref` is contextual: a following `[` or referent makes a
-                // reference type; otherwise it is an ordinary name.
-                if !matches!(
-                    self.peek_token()?,
-                    Some(
-                        Token::LBracket
-                            | Token::Identifier(_)
-                            | Token::Def
-                            | Token::GeneratorType
-                            | Token::None
-                            | Token::LParen
-                    )
-                ) {
-                    let head = self.node(ExprKind::Identifier("ref".to_string()), start);
-                    return self.annotation_from(head);
-                }
-                // `ref [origin] T` — a reference type (parametric
-                // mutability); the referent follows the origin specifier.
+            Some(Token::LBracket) => {
                 let origin = self.parse_optional_origin_specifier()?;
-                let ty = Type::Ref {
-                    referent: Box::new(self.parse_type()?),
-                    origin,
-                };
-                Ok(self.node(ExprKind::TypeValue(ty), start))
+                Ok((self.parse_annotation()?, origin))
             }
+            Some(
+                Token::Identifier(_)
+                | Token::Def
+                | Token::GeneratorType
+                | Token::None
+                | Token::LParen,
+            ) => Err(ParseError::Message(missing_origin.to_string()).at(ref_span)),
             _ => {
-                let head = self.parse_prefix()?;
-                self.annotation_from(head)
+                let head = self.node(ExprKind::Identifier("ref".to_string()), start);
+                Ok((self.annotation_from(head)?, None))
             }
         }
     }
@@ -264,12 +270,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
 
         // The result is one whole expression, as upstream reads it.
-        let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
+        let (ret, ret_reference) = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
-            self.parse_annotation()?
+            self.parse_result()?
         } else {
             let end = self.last_span.1;
-            self.node(ExprKind::None, end)
+            (self.node(ExprKind::None, end), None)
         };
         // Trailing `where` clauses bind to the innermost function type: a
         // function-type result that is itself a function type consumes them
@@ -281,6 +287,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             type_params,
             params,
             ret,
+            ret_reference,
             thin,
             raises,
             raises_type,
@@ -335,12 +342,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 break;
             }
         }
-        self.expect(&Token::RBracket, "Expected ']' after parameter arguments")?;
+        self.expect(&Token::RBracket, "expected ']' in call argument list")?;
         Ok(args)
     }
 
     /// Parses a single parameter argument. An operand only the type grammar
-    /// spells (`ref`, a `*` pack) is a `Type`. Every other operand is one
+    /// spells (a `*` pack) is a `Type`. Every other operand is one
     /// expression (`Int`, `Foo[Int]`, `L[0] * 2`, `Self.T`, a `def` function
     /// type, and `None`, which is the `None` value), which the checker
     /// classifies as a type or a value by what it denotes.
@@ -362,34 +369,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 None => ParamArg::Value(self.node(ExprKind::Spread(Box::new(operand)), start)),
             });
         }
-        if self.peek_starts_type()? {
-            let ty = self.parse_type()?;
-            // Upstream reads `ref[o]` here as an expression followed by a stray
-            // type: an origin-bearing reference is never a type argument.
-            if matches!(
-                ty,
-                Type::Ref {
-                    origin: Some(_),
-                    ..
-                }
-            ) {
-                return Err(ParseError::Message(
-                    "expected ']' in call argument list".to_string(),
-                ));
-            }
-            return Ok(ParamArg::Type(ty));
-        }
         Ok(ParamArg::Value(self.parse_expression(Precedence::Lowest)?))
-    }
-
-    /// Whether the next token begins an operand only the type grammar
-    /// parses (`ref` or a `*` pack) — used to classify a parameter argument.
-    pub(super) fn peek_starts_type(&mut self) -> Result<bool, ParseError> {
-        Ok(match self.peek_token()? {
-            Some(Token::Star) => true,
-            Some(Token::Identifier(id)) => id == "ref",
-            _ => false,
-        })
     }
 
     /// Parses an optional type-parameter list `'[' type_param (',' type_param)* ']'`

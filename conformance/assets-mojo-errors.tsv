@@ -199,6 +199,7 @@ assets/parse_error/assert_statement_extra_message.mojo	compile-reject	agree	erro
 assets/parse_error/assert_statement_module_scope.mojo	compile-reject	agree	error: 'assert' must be inside a function; move this into a function body
 assets/parse_error/assert_statement_struct_body.mojo	compile-reject	agree	error: 'assert' must be inside a function; move this into a function body
 assets/parse_error/bare_kwargs_requires_var.mojo	compile-reject	agree	error: variadic keyword arguments only support the 'var' convention; add 'var' before '**'
+assets/parse_error/bare_reference_list_parameter.mojo	compile-reject	agree	error: cannot declare 'Int' without a contextual type from its initializer
 assets/parse_error/capturing_effect_compile_time_parameter.mojo	compile-reject	agree	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/parse_error/capturing_effect_declaration.mojo	compile-reject	agree	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
 assets/parse_error/capturing_effect_field.mojo	compile-reject	agree	error: the 'capturing' function effect is no longer supported; use a closure capture list like '{var}' or '{mut x}' instead
@@ -347,7 +348,6 @@ assets/type_error/bare_move_initializer.mojo	compile-reject	agree	error: 'move' 
 assets/type_error/bare_parametric_comptime_annotation.mojo	compile-reject	agree	error: cannot construct a value with parametric type: 'W[_]'
 assets/type_error/bare_parametric_named_result.mojo	compile-reject	agree	error: 'W[_]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/bare_parametric_result.mojo	compile-reject	agree	error: 'W[_]' is not concrete, use '[]' to bind missing parameters
-assets/type_error/bare_reference_list_parameter.mojo	compile-reject	agree	error: cannot declare 'Int' without a contextual type from its initializer
 assets/type_error/bare_scalar_argument_type_mismatch.mojo	compile-reject	agree	error: invalid call to 'add': value passed to 'y' cannot be converted from 'Float64' to 'Int32'
 assets/type_error/boolable_required_for_bool.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/bool_conversion_undeclared_boolable.mojo	compile-reject	agree	error: no matching function in initialization

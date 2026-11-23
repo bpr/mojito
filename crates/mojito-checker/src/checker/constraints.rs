@@ -4278,7 +4278,14 @@ impl Checker {
                 .iter()
                 .cloned()
                 .zip(&info.declared_field_types)
-                .map(|(field, ty)| self.ty_from_spelling(ty).map(|ty| (field, ty)))
+                .map(|(field, (ty, reference))| {
+                    let referent = self.ty_from_spelling(ty)?;
+                    let ty = match reference {
+                        Some(spec) => self.reference_field_ty(spec, referent)?,
+                        None => referent,
+                    };
+                    Ok((field, ty))
+                })
                 .collect::<Result<Vec<_>, _>>()?
         };
         let fields = field_tys

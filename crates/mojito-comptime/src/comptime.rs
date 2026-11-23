@@ -257,9 +257,6 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
         Type::IndexedProjection { base, .. } => {
             substitute_source_type_bindings(base, subs);
         }
-        Type::Ref { referent, .. } => {
-            substitute_source_type_bindings(referent, subs);
-        }
         // The operand of `type_of` is an expression, which names no type
         // binder.
         Type::TypeOf(_) => {}

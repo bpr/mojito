@@ -6955,10 +6955,7 @@ impl<'a> ArenaBuilder<'a> {
                     .enumerate()
                     .map(|(field, declared)| CheckedField {
                         name: declared.name.clone(),
-                        reference: matches!(
-                            declared.ty.annotation_type(),
-                            Some(mojito_ast::ast::SourceType::Ref { .. })
-                        ),
+                        reference: declared.reference.is_some(),
                         fieldwise_convention: conventions
                             .and_then(|conventions| conventions.get(field).copied().flatten()),
                         fieldwise_ref: ref_params

@@ -472,11 +472,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         let (raises, raises_type) = self.parse_callable_effects()?;
         let captures = self.parse_capture_list()?;
-        let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
+        let (ret, ret_reference) = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?; // consume '->'
-            Some(self.parse_annotation()?)
+            let (ret, reference) = self.parse_result()?;
+            (Some(ret), reference)
         } else {
-            None
+            (None, None)
         };
 
         if matches!(self.peek_token()?, Some(Token::LBrace)) {
@@ -503,6 +504,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             raises,
             raises_type,
             ret,
+            ret_reference,
             where_clauses,
             body,
         })

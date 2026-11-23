@@ -123,7 +123,8 @@ impl Checker {
                 .filter(|member| {
                     methods.iter().any(|method| {
                         matches!(
-                            method.ret.as_ref().and_then(Expr::annotation_type),
+                            value_result(method.ret.as_ref(), method.ret_reference.as_ref())
+                                .and_then(Expr::annotation_type),
                             Some(SourceType::SelfParam(read)) if read == member.name
                         ) && InlineLevel::of(&method.decorators)
                             .is_ok_and(|level| level == InlineLevel::Builtin)
@@ -443,7 +444,7 @@ impl Checker {
             if let Some(Some(types)) = self.in_struct_scope(statement, |checker| {
                 fields
                     .iter()
-                    .map(|field| Some((field.name.clone(), checker.ty_from_anno(&field.ty).ok()?)))
+                    .map(|field| Some((field.name.clone(), checker.field_ty(field).ok()?)))
                     .collect::<Option<Vec<_>>>()
             }) {
                 resolved.insert(name.clone(), types);
@@ -955,7 +956,7 @@ impl Checker {
         };
         fields
             .iter()
-            .map(|field| Some((field.name.clone(), self.ty_from_anno(&field.ty).ok()?)))
+            .map(|field| Some((field.name.clone(), self.field_ty(field).ok()?)))
             .collect()
     }
 

@@ -4501,6 +4501,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Ranking already decides such a pair: the place costs the `var` candidate
     a copy, and an owned argument selects it at the tie.
   - Pinned by `conformance/probes/overload_convention_only_method.mojo`.
+  - Probe: a struct conforming to a trait requiring `def total(self, by:
+    Int) -> Int` that also declares the rival `def total[o:
+    Origin[mut=False]](self, ref[o] by: Int) -> Int`; the generic
+    `self.entry.total(self.step)` over the conformer prints `4` at the pin.
+    Its old test spelled the rival `by: ref[o] Int`, which no longer parses.
   - The plan must say what the lowered name gains, and whether trait
     requirements compare conventions the same way.
   - Depends on nothing.
@@ -11254,8 +11259,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `ty_raw_in` (`symbol.rs`) keys a callable bound through that display,
     so `def(ref a: Int) -> ref[a] Int` and `def(ref a: Int) -> Int` bounds
     key alike (`apply$ov$F$Callable$def$Int$$$$$Int…`).
-  - The declaration side spells it: `annotation_display`'s `Type::Ref`
-    arm writes `ref T` for a `def(...)` annotation key.
+  - The declaration side keeps it as `FunctionTypeExpr::ret_reference`
+    beside the referent annotation.
   - Probe: two overloads of one function whose callable bounds differ
     only in a `ref` result.
   - Found while landing R2491 (2026-11-22).
@@ -13126,7 +13131,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Problem: the checker, MIR, VM, and native backend keep paths for an element whose type is itself `ref[o] T`, though `List[ref[o] T]` and `Tuple[ref[o] T]` are now rejected at parse, as at the pin.
   - Sites: `infer_list_construction` and the `Tuple` arm of `infer_storage_value` in the checker, the element-slot comments in `crates/mojito-mir/src/mir/lower_stmt.rs` and `mir/verify/instr.rs`, `MirInstr`'s element-handle note in `mir.rs`, and `lower_make_ref` in `crates/mojito-pliron/src/lower/ctors.rs`.
   - Most of these also serve a struct with a direct `ref` field as an element, so delete only a branch whose sole trigger is a top-level reference element.
-  - A bare `List[ref Int]` still parses and is rejected by the checker, so a `Ty::Ref` element type can still be formed until it is rejected.
+  - A bare `List[ref Int]` is a parse error too since R2537, so no source spelling forms a `Ty::Ref` element type.
   - Probe: the checker's element peels over an aggregate element type (`indexing.rs`'s element arms, `infer_reference_value`'s `Index` arm, `statements.rs`'s element read) fire on no corpus fixture. Once `!lit.ref` merges into `TyKind::Ref` (R2511) they would read through a `!lit.ref` alias element.
   - Depends on nothing.
   - Model: Opus, Planned.
@@ -13385,18 +13390,6 @@ follow-ups the landed producer stages filed come last.
   - Needs a MIR text and package format bump.
   - Found while landing R1365 (2026-10-27).
   - Depends on R1495.
-  - Model: Fable, Not Planned.
-
-- [ ] **R2537 A `ref` result and a `ref` field are a `Type::Ref`, not a slot convention**
-
-  `-> ref [o] T` and the kept `var f: ref[o] T` extension parse to a
-  `Type::Ref` wrapping the referent, where upstream reads `ref` as the
-  slot's convention.
-  - Slice 5 of the R2137 plan: a result carries
-    `ret_reference: Option<Option<OriginSpec>>` beside its expression, and a
-    field carries `Param::reference`, as `FnParam` carries its convention.
-  - Delete `Type::Ref` (24 crate sites, `rg 'Type::Ref'`).
-  - Depends on R2535.
   - Model: Fable, Not Planned.
 
 - [ ] **R2538 A pack-spread annotation is a magic type name, not a spread expression**

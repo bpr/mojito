@@ -84,6 +84,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
             params,
             raises_type,
             ret,
+            ret_reference,
             where_clauses,
             body,
             ..
@@ -101,6 +102,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
             walk_fn_params(visitor, params);
             walk_optional_annotation(visitor, raises_type.as_ref());
             walk_optional_annotation(visitor, ret.as_ref());
+            walk_exprs(visitor, ret_reference.as_deref().unwrap_or_default());
             walk_exprs(visitor, where_clauses);
             walk_block(visitor, body);
         }
@@ -527,6 +529,10 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
                 walk_function_type_param(visitor, parameter);
             }
             walk_annotation(visitor, &callable.ret);
+            walk_exprs(
+                visitor,
+                callable.ret_reference.as_deref().unwrap_or_default(),
+            );
             walk_optional_annotation(visitor, callable.raises_type.as_ref());
             walk_exprs(visitor, &callable.where_clauses);
         }
@@ -573,10 +579,6 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
             walk_expr(visitor, index);
         }
         Type::TypeOf(operand) | Type::Value(operand) => walk_expr(visitor, operand),
-        Type::Ref { referent, origin } => {
-            walk_type(visitor, referent);
-            walk_exprs(visitor, origin.as_deref().unwrap_or_default());
-        }
         Type::None | Type::SelfParam(_) | Type::SelfType => {}
     }
 }
@@ -620,6 +622,7 @@ pub fn walk_decorators<V: Visitor>(visitor: &mut V, decorators: &[Decorator]) {
 /// A struct field declaration.
 pub fn walk_field<V: Visitor>(visitor: &mut V, field: &Param) {
     walk_annotation(visitor, &field.ty);
+    walk_exprs(visitor, field.reference.as_deref().unwrap_or_default());
 }
 
 /// A struct's `comptime` member, inside the scope of its own parameters.
@@ -661,6 +664,7 @@ pub fn walk_method<V: Visitor>(visitor: &mut V, method: &Method) {
     walk_fn_params(visitor, &method.params);
     walk_optional_annotation(visitor, method.raises_type.as_ref());
     walk_optional_annotation(visitor, method.ret.as_ref());
+    walk_exprs(visitor, method.ret_reference.as_deref().unwrap_or_default());
     walk_optional_annotation(visitor, method.self_type.as_ref());
     walk_exprs(visitor, &method.where_clauses);
     walk_block(visitor, &method.body);
@@ -689,6 +693,7 @@ pub fn walk_trait_method<V: Visitor>(visitor: &mut V, method: &TraitMethod) {
     walk_fn_params(visitor, &method.params);
     walk_optional_annotation(visitor, method.raises_type.as_ref());
     walk_optional_annotation(visitor, method.ret.as_ref());
+    walk_exprs(visitor, method.ret_reference.as_deref().unwrap_or_default());
     walk_optional_annotation(visitor, method.self_type.as_ref());
     walk_exprs(visitor, &method.where_clauses);
     walk_optional_block(visitor, method.default_body.as_deref());
@@ -1009,6 +1014,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             params,
             raises_type,
             ret,
+            ret_reference,
             where_clauses,
             body,
             decorators,
@@ -1023,6 +1029,9 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             }
             if let Some(ret) = ret {
                 walk_annotation_mut(visitor, ret);
+            }
+            for origin in ret_reference.iter_mut().flatten() {
+                walk_expr_mut(visitor, origin);
             }
             for condition in where_clauses {
                 walk_expr_mut(visitor, condition);
@@ -1054,6 +1063,9 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             }
             for field in fields {
                 walk_annotation_mut(visitor, &mut field.ty);
+                for origin in field.reference.iter_mut().flatten() {
+                    walk_expr_mut(visitor, origin);
+                }
             }
             walk_enum_cases_mut(visitor, enum_cases.as_deref_mut());
             for member in associated {
@@ -1341,6 +1353,9 @@ pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
                 }
             }
             walk_annotation_mut(visitor, &mut callable.ret);
+            for origin in callable.ret_reference.iter_mut().flatten() {
+                walk_expr_mut(visitor, origin);
+            }
             for clause in &mut callable.where_clauses {
                 walk_expr_mut(visitor, clause);
             }
@@ -1391,14 +1406,6 @@ fn walk_type_children_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
             walk_expr_mut(visitor, index);
         }
         Type::TypeOf(operand) | Type::Value(operand) => walk_expr_mut(visitor, operand),
-        Type::Ref { referent, origin } => {
-            walk_type_mut(visitor, referent);
-            if let Some(origins) = origin {
-                for expression in origins {
-                    walk_expr_mut(visitor, expression);
-                }
-            }
-        }
         Type::None | Type::SelfParam(_) | Type::SelfType => {}
     }
 }
@@ -1473,6 +1480,9 @@ fn walk_method_mut<V: MutVisitor>(visitor: &mut V, method: &mut Method) {
     {
         walk_annotation_mut(visitor, ty);
     }
+    for origin in method.ret_reference.iter_mut().flatten() {
+        walk_expr_mut(visitor, origin);
+    }
     for condition in &mut method.where_clauses {
         walk_expr_mut(visitor, condition);
     }
@@ -1498,6 +1508,9 @@ fn walk_trait_method_mut<V: MutVisitor>(visitor: &mut V, method: &mut TraitMetho
     .flatten()
     {
         walk_annotation_mut(visitor, ty);
+    }
+    for origin in method.ret_reference.iter_mut().flatten() {
+        walk_expr_mut(visitor, origin);
     }
     for condition in &mut method.where_clauses {
         walk_expr_mut(visitor, condition);

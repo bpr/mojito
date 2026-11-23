@@ -173,6 +173,16 @@ pub(in crate::checker) fn interior_origin_syntax(expr: &Expr) -> Option<(&Expr, 
     (field == "_get_owned_interior").then_some((base, name.as_str()))
 }
 
+/// A declaration's value result: its result annotation, or `None` for a
+/// `ref` result, whose annotation is the referent of a reference rather than
+/// the type of a returned value.
+pub(in crate::checker) fn value_result<'a>(
+    ret: Option<&'a Expr>,
+    reference: Option<&mojito_ast::ast::OriginSpec>,
+) -> Option<&'a Expr> {
+    ret.filter(|_| reference.is_none())
+}
+
 /// The owned-interior tags a struct-typed return annotation projects on its
 /// receiver origin, innermost first:
 /// `StringSpan[origin_of(self)._get_owned_interior["bytes"]]` gives
@@ -517,8 +527,9 @@ pub(in crate::checker) fn lower_ref_convention_sig(
 
 impl Checker {
     /// Reject a result that names the origin of a value with no memory to
-    /// borrow, as upstream does: every `origin_of(p)` in the result
-    /// annotation (`ret`, else the named `out` result's) judges its root `p`
+    /// borrow, as upstream does: every `origin_of(p)` in the result's
+    /// `reference` convention and annotation (`ret`, else the named `out`
+    /// result's) judges its root `p`
     /// — a parameter of `params`, typed by `param_tys`, or the `receiver` —
     /// by convention and type. A `ref` place always has memory. Any other
     /// may not name a type that is, or might expand to, `RegisterPassable`,
@@ -528,6 +539,7 @@ impl Checker {
     pub(in crate::checker) fn check_result_origins(
         &self,
         ret: Option<&Expr>,
+        reference: Option<&mojito_ast::ast::OriginSpec>,
         params: &[FnParam],
         param_tys: &[Ty],
         receiver: Option<(Option<ArgConvention>, &Ty)>,
@@ -540,6 +552,9 @@ impl Checker {
         };
         let annotation = annotation_spelling(annotation)?;
         let mut roots = Vec::new();
+        for expression in reference.into_iter().flatten() {
+            origin_roots(expression, &mut roots);
+        }
         result_origin_roots(&annotation, &mut roots);
         for root in roots {
             let (convention, ty) = if root == "self" {
@@ -1017,7 +1032,7 @@ pub(in crate::checker) fn sig_origin_for_binder(
 }
 
 /// The root of every `origin_of(...)` place a result annotation names, in
-/// source order: in a `ref [...]` clause, in a struct or associated-type
+/// source order: in a struct or associated-type
 /// application's arguments, at any depth. A function type's own origins
 /// are its contract's, not the result's.
 fn result_origin_roots<'a>(annotation: &'a SourceType, roots: &mut Vec<&'a str>) {
@@ -1029,12 +1044,6 @@ fn result_origin_roots<'a>(annotation: &'a SourceType, roots: &mut Vec<&'a str>)
         }
     }
     match annotation {
-        SourceType::Ref { referent, origin } => {
-            for expression in origin.iter().flatten() {
-                origin_roots(expression, roots);
-            }
-            result_origin_roots(referent, roots);
-        }
         SourceType::Named(_, arguments) => {
             for argument in arguments {
                 argument_roots(argument, roots);

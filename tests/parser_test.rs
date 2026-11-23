@@ -290,11 +290,13 @@ fn parses_struct_with_field_and_method() {
             conformance_conditions: vec![],
             where_clauses: Vec::new(),
             fields: vec![Param {
+                reference: None,
                 name: "x".into(),
                 ty: *ident("Int")
             }],
             associated: vec![],
             methods: vec![Method {
+                ret_reference: None,
                 where_clauses: Vec::new(),
                 type_params: vec![],
                 name: "get".into(),
@@ -485,11 +487,9 @@ fn annotation_slots_store_the_annotation_expression() {
     else {
         panic!("expected a struct");
     };
-    assert!(matches!(
-        &fields[0].ty.kind,
-        ExprKind::TypeValue(Type::Ref { referent, .. })
-            if **referent == Type::Named("Int".into(), vec![])
-    ));
+    assert_eq!(fields[0].ty.kind, ExprKind::Identifier("Int".into()));
+    assert!(matches!(fields[0].reference.as_deref(), Some([_])));
+    assert_eq!(fields[1].reference, None);
     assert!(matches!(fields[1].ty.kind, ExprKind::Index { .. }));
 }
 
@@ -522,13 +522,17 @@ fn signature_annotation_slots_store_the_annotation_expression() {
         raises_type.as_ref().map(|error| &error.kind),
         Some(&ExprKind::Identifier("E".into()))
     );
-    let StmtKind::Def { ret, .. } = &statements[1].kind else {
+    let StmtKind::Def {
+        ret, ret_reference, ..
+    } = &statements[1].kind
+    else {
         panic!("expected a def");
     };
-    assert!(matches!(
+    assert_eq!(
         ret.as_ref().map(|ret| &ret.kind),
-        Some(ExprKind::TypeValue(Type::Ref { .. }))
-    ));
+        Some(&ExprKind::Identifier("Int".into()))
+    );
+    assert!(matches!(ret_reference.as_deref(), Some([_])));
     let StmtKind::Def { type_params, .. } = &statements[2].kind else {
         panic!("expected a def");
     };
@@ -599,6 +603,7 @@ fn parses_def_signature_and_body() {
     assert_eq!(
         stmts[0],
         Stmt::from(StmtKind::Def {
+            ret_reference: None,
             where_clauses: Vec::new(),
             name: "add".into(),
             decorators: vec![],
@@ -936,6 +941,7 @@ fn parses_generic_struct_header_and_self_param_field() {
             where_clauses: Vec::new(),
             fields: vec![
                 Param {
+                    reference: None,
                     name: "left".into(),
                     ty: Expr::from(ExprKind::Member {
                         object: ident("Self"),
@@ -943,6 +949,7 @@ fn parses_generic_struct_header_and_self_param_field() {
                     })
                 },
                 Param {
+                    reference: None,
                     name: "right".into(),
                     ty: Expr::from(ExprKind::Member {
                         object: ident("Self"),
@@ -964,6 +971,7 @@ fn parses_generic_def_with_type_param_signature() {
     assert_eq!(
         stmts[0],
         Stmt::from(StmtKind::Def {
+            ret_reference: None,
             where_clauses: Vec::new(),
             name: "id".into(),
             decorators: vec![],
@@ -1047,6 +1055,7 @@ fn parses_trait_with_method_requirements() {
             refines: vec![],
             methods: vec![
                 TraitMethod {
+                    ret_reference: None,
                     where_clauses: Vec::new(),
                     decorators: Vec::new(),
                     type_params: vec![],
@@ -1063,6 +1072,7 @@ fn parses_trait_with_method_requirements() {
                     default_body: None,
                 },
                 TraitMethod {
+                    ret_reference: None,
                     where_clauses: Vec::new(),
                     decorators: Vec::new(),
                     type_params: vec![],
@@ -1368,7 +1378,11 @@ fn parses_a_subscript_of_a_construction_as_a_type_projection() {
          return rebind[TypeList[Ts.values]()[1]](y)\n",
     );
     let StmtKind::Def {
-        params, ret, body, ..
+        params,
+        ret,
+        ret_reference,
+        body,
+        ..
     } = &statements[0].kind
     else {
         panic!("expected def");
@@ -1382,9 +1396,8 @@ fn parses_a_subscript_of_a_construction_as_a_type_projection() {
             if matches!(base.as_ref(), Type::Value(value) if is_construction(value)))
     };
     assert!(is_projection(&view(&params[0].ty)));
-    assert!(
-        matches!(ret.as_ref().map(view), Some(Type::Ref { referent, .. }) if is_projection(&referent))
-    );
+    assert!(ret_reference.is_some());
+    assert!(ret.as_ref().map(view).is_some_and(|ty| is_projection(&ty)));
     let StmtKind::VarDecl { ty: Some(ty), .. } = &body[0].kind else {
         panic!("expected a var declaration");
     };
@@ -2411,7 +2424,7 @@ fn reference_type_argument_reports_the_unclosed_argument_list() {
         let error = mojito::parse(source).expect_err("a `ref` type argument must reject");
         let rendered = error.to_string();
         assert!(
-            rendered.starts_with("expected ']' in call argument list"),
+            rendered.contains("expected ']' in call argument list"),
             "{rendered}"
         );
     }
@@ -4021,6 +4034,7 @@ fn parses_origin_unions_parameters_and_reference_bindings() {
         type_params,
         params,
         ret,
+        ret_reference,
         body,
         ..
     } = &stmts[0].kind
@@ -4035,11 +4049,11 @@ fn parses_origin_unions_parameters_and_reference_bindings() {
     assert!(type_params[1].origin_mutability.is_some());
     assert_eq!(params[0].convention, Some(ArgConvention::Ref));
     assert_eq!(params[1].convention, Some(ArgConvention::Ref));
-    assert!(matches!(
+    assert_eq!(
         ret.as_ref().map(view),
-        Some(Type::Ref { referent, origin: Some(origins) })
-            if *referent == Type::Named("String".into(), vec![]) && origins.len() == 2
-    ));
+        Some(Type::Named("String".into(), vec![]))
+    );
+    assert_eq!(ret_reference.as_ref().map(Vec::len), Some(2));
     assert!(matches!(
         &body[0].kind,
         StmtKind::RefDecl { name, .. } if name == "selected"
@@ -4180,17 +4194,75 @@ fn rejects_a_receiver_annotation_without_a_type() {
 
 #[test]
 fn parses_ref_return_type() {
-    // `-> ref[origin] T` retains both the referent and origin expression.
+    // `-> ref[origin] T` is the result's `ref` convention over the
+    // referent annotation, as upstream reads a result.
     let stmts = parse("def f(x: Int) -> ref[origin_of(x)] Int:\n    return x\n");
     match &stmts[0].kind {
-        StmtKind::Def { ret, .. } => {
-            assert!(matches!(
+        StmtKind::Def {
+            ret, ret_reference, ..
+        } => {
+            assert_eq!(
                 ret.as_ref().map(view),
-                Some(Type::Ref { referent, origin: Some(origins) })
-                    if *referent == Type::Named("Int".into(), vec![]) && origins.len() == 1
-            ));
+                Some(Type::Named("Int".into(), vec![]))
+            );
+            assert_eq!(ret_reference.as_ref().map(Vec::len), Some(1));
         }
         other => panic!("expected a def, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_ref_result_conventions_as_upstream() {
+    // The referent is one whole annotation expression.
+    let stmts = parse("def f(ref x: Int) -> ref[x] Int if True else Int:\n    return x\n");
+    let StmtKind::Def {
+        ret, ret_reference, ..
+    } = &stmts[0].kind
+    else {
+        panic!("expected a def");
+    };
+    assert!(ret_reference.is_some());
+    assert!(matches!(
+        ret.as_ref().map(|ret| &ret.kind),
+        Some(ExprKind::IfExpr { .. })
+    ));
+    // A function type's result carries the convention too.
+    let stmts = parse("def g(h: def(ref x: Int) -> ref[x] Int):\n    pass\n");
+    let StmtKind::Def { params, .. } = &stmts[0].kind else {
+        panic!("expected a def");
+    };
+    let ExprKind::FunctionType(callable) = &params[0].ty.kind else {
+        panic!("expected a function type");
+    };
+    assert!(callable.ret_reference.is_some());
+    assert_eq!(callable.ret.kind, ExprKind::Identifier("Int".into()));
+}
+
+#[test]
+fn rejects_ref_outside_a_result_or_field_convention() {
+    for (source, message) in [
+        (
+            "def f(ref x: Int) -> ref Int:\n    return x\n",
+            Some("'ref' result requires an origin specifier"),
+        ),
+        (
+            "var g: def() thin -> ref Int\n",
+            Some("'ref' result requires an origin specifier"),
+        ),
+        (
+            "struct S[o: Origin[mut=False]]:\n    var f: ref Int\n",
+            Some("a 'ref' field requires an origin specifier"),
+        ),
+        ("def f(a: Int):\n    var x: ref[a] Int = a\n", None),
+        ("def f(x: ref[MutAnyOrigin] Int):\n    pass\n", None),
+    ] {
+        let error = Parser::new(Lexer::new(source))
+            .parse_program()
+            .expect_err(source)
+            .to_string();
+        if let Some(message) = message {
+            assert!(error.contains(message), "{source}: {error}");
+        }
     }
 }
 
@@ -4589,6 +4661,7 @@ fn generator_type(expr: &Expr) -> (Vec<TypeParam>, Expr) {
 /// A plain function type over unnamed regular parameters.
 fn function_type_of(params: &[&str], ret: Expr, thin: bool, raises: bool) -> FunctionTypeExpr {
     FunctionTypeExpr {
+        ret_reference: None,
         type_params: vec![],
         params: params
             .iter()
@@ -5259,6 +5332,7 @@ fn lambda_expr(
 ) -> Expr {
     Expr::from(ExprKind::Lambda {
         def: Box::new(Stmt::from(StmtKind::Def {
+            ret_reference: None,
             name: format!("$lambda${start}"),
             decorators: vec![],
             type_params,

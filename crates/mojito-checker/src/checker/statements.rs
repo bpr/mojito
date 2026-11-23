@@ -3267,6 +3267,7 @@ impl Checker {
             params,
             captures,
             ret: ret_anno,
+            ret_reference,
             body,
             decorators,
             ..
@@ -3648,8 +3649,11 @@ impl Checker {
                     .push((self.handled_raise_depth, false));
                 self.return_ref_contracts
                     .push(ref_return.map(|signature| (signature, owners, None)));
-                self.return_annotations
-                    .push(Self::body_return_annotation(ret_anno.as_ref(), name));
+                self.return_annotations.push(Self::body_return_annotation(
+                    ret_anno.as_ref(),
+                    ret_reference.as_ref(),
+                    name,
+                ));
                 self.named_result_context.push(if named_result.is_some() {
                     super::BodyResult::Named
                 } else {
@@ -4110,6 +4114,7 @@ impl Checker {
             positional_only,
             keyword_only,
             ret: ret_anno,
+            ret_reference,
             raises,
             raises_type,
             where_clauses,
@@ -4141,7 +4146,9 @@ impl Checker {
             this.generated_declaration.set(generated);
             let param_tys = param_tys?;
             let ret_ty = match (&ret, named_result) {
-                (Some(SourceType::Ref { referent, .. }), _) => this.ty_from_spelling(referent)?,
+                (Some(referent), _) if ret_reference.is_some() => {
+                    this.ty_from_spelling(referent)?
+                }
                 // A compiler-generated specialization (`$`-mangled) rebinds
                 // already-checked annotations whose origin identity is
                 // legitimately erased; signature concreteness applies to
@@ -4154,7 +4161,13 @@ impl Checker {
                 (None, None) => Ty::none(),
             };
             if !name.contains('$') {
-                this.check_result_origins(ret_anno.as_ref(), params, &param_tys, None)?;
+                this.check_result_origins(
+                    ret_anno.as_ref(),
+                    ret_reference.as_ref(),
+                    params,
+                    &param_tys,
+                    None,
+                )?;
             }
             // Upstream's `Signatures.cpp` emits the `where` clauses after the
             // arguments, so a clause reads them (`where base.dtype ==
@@ -4188,18 +4201,18 @@ impl Checker {
             decls.clone(),
         );
         let ref_params = lower_ref_param_sigs(&decls, caller_regular, 0, self)?;
-        let ref_return = match &ret {
-            Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
-                origin.as_ref().ok_or_else(|| {
-                    TypeError::Unsupported("reference return requires an origin".to_string())
-                })?,
-                &decls,
-                regular,
-                0,
-                super::origins::pack_collector(params),
-            )?),
-            _ => None,
-        };
+        let ref_return = ret_reference
+            .as_ref()
+            .map(|origin| {
+                self.lower_ref_sig_resolved(
+                    origin,
+                    &decls,
+                    regular,
+                    0,
+                    super::origins::pack_collector(params),
+                )
+            })
+            .transpose()?;
         for (param, ty) in param_tys.iter().enumerate() {
             self.declaration_types.borrow_mut().insert(
                 mojito_checked::checked::AnnotationSite::FunctionParam {
@@ -4287,7 +4300,7 @@ impl Checker {
             ParamDecl::mutability_binders(&decls).all(|binder| binder.constraints().is_empty());
         let origin_signature = CallableOriginSignature {
             view_return: self.view_return_origins(
-                ret_anno.as_ref(),
+                value_result(ret_anno.as_ref(), ret_reference.as_ref()),
                 &decls,
                 regular,
                 0,

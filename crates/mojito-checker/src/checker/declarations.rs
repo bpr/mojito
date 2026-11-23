@@ -801,7 +801,9 @@ impl Checker {
             keyword_only: collectors.keyword_only,
             conventions: regular.iter().map(|(_, p)| p.convention).collect(),
             ret: match &ret {
-                Some(SourceType::Ref { referent, .. }) => self.ty_from_spelling(referent)?,
+                Some(referent) if method.ret_reference.is_some() => {
+                    self.ty_from_spelling(referent)?
+                }
                 // `$`-mangled generated methods rebind already-checked
                 // annotations with origins legitimately erased.
                 Some(ret) if method.name.contains('$') => {
@@ -824,21 +826,25 @@ impl Checker {
                 self.enclosing_struct_type_params.get(),
                 self,
             )?,
-            ref_return: match &ret {
-                Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
-                    origin.as_ref().ok_or_else(|| {
-                        TypeError::Unsupported("reference return requires an origin".to_string())
-                    })?,
-                    &self.enclosing_param_decls,
-                    &regular_params,
-                    self.enclosing_struct_type_params.get(),
-                    super::origins::pack_collector(&method.params),
-                )?),
-                _ => None,
-            },
-            view_return_interior: view_return_interior_tags(method.ret.as_ref()),
-            view_return: self.view_return_origins(
+            ref_return: method
+                .ret_reference
+                .as_ref()
+                .map(|origin| {
+                    self.lower_ref_sig_resolved(
+                        origin,
+                        &self.enclosing_param_decls,
+                        &regular_params,
+                        self.enclosing_struct_type_params.get(),
+                        super::origins::pack_collector(&method.params),
+                    )
+                })
+                .transpose()?,
+            view_return_interior: view_return_interior_tags(value_result(
                 method.ret.as_ref(),
+                method.ret_reference.as_ref(),
+            )),
+            view_return: self.view_return_origins(
+                value_result(method.ret.as_ref(), method.ret_reference.as_ref()),
                 &self.enclosing_param_decls,
                 &regular_params,
                 self.enclosing_struct_type_params.get(),
@@ -2285,7 +2291,7 @@ impl Checker {
             this.generated_declaration.set(generated);
             params?;
             match &ret {
-                Some(SourceType::Ref { referent, .. }) => this.ty_from_spelling(referent),
+                Some(referent) if m.ret_reference.is_some() => this.ty_from_spelling(referent),
                 // `$`-mangled generated methods rebind already-checked
                 // annotations with origins legitimately erased.
                 Some(t) if m.name.contains('$') => this.resolve_generated_return_annotation(t),
@@ -2301,18 +2307,19 @@ impl Checker {
                 param.kind == mojito_ast::ast::ParamKind::Regular && !param.is_named_result()
             })
             .collect();
-        let ref_return = match &ret {
-            Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
-                origin.as_ref().ok_or_else(|| {
-                    TypeError::Unsupported("reference return requires an origin".to_string())
-                })?,
-                &self.enclosing_param_decls,
-                &regular,
-                self.enclosing_struct_type_params.get(),
-                super::origins::pack_collector(&m.params),
-            )?),
-            _ => None,
-        };
+        let ref_return = m
+            .ret_reference
+            .as_ref()
+            .map(|origin| {
+                self.lower_ref_sig_resolved(
+                    origin,
+                    &self.enclosing_param_decls,
+                    &regular,
+                    self.enclosing_struct_type_params.get(),
+                    super::origins::pack_collector(&m.params),
+                )
+            })
+            .transpose()?;
         // The body judges a returned reference against its own parameters,
         // each binder the contract names standing for the parameters bound
         // through it.
@@ -2543,7 +2550,11 @@ impl Checker {
             effect_key,
             method_decls: &method_decls,
             ref_return,
-            return_annotation: Self::body_return_annotation(m.ret.as_ref(), &m.name),
+            return_annotation: Self::body_return_annotation(
+                m.ret.as_ref(),
+                m.ret_reference.as_ref(),
+                &m.name,
+            ),
             generic: !m.type_params.is_empty(),
             ret_ty,
             body: &m.body,

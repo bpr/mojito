@@ -116,7 +116,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 break;
             }
         }
-        self.expect(&Token::RBracket, "Expected ']' after a subscript")?;
+        self.expect(&Token::RBracket, "expected ']' in call argument list")?;
 
         let contains_slice = items.iter().any(|item| {
             matches!(

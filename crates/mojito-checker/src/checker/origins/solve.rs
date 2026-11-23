@@ -123,20 +123,16 @@ impl Checker {
         Ok(reconciled)
     }
 
-    /// The return annotation a body's `return` re-resolves — a value return,
-    /// not a reference return — flagged when it is the rebound annotation of
-    /// a compiler-generated (`$`-mangled) specialization.
+    /// The return annotation a body's `return` re-resolves — a value
+    /// return, not a `ref` result's referent — flagged when it is the
+    /// rebound annotation of a compiler-generated (`$`-mangled)
+    /// specialization.
     pub(in crate::checker) fn body_return_annotation(
         annotation: Option<&Expr>,
+        reference: Option<&mojito_ast::ast::OriginSpec>,
         name: &str,
     ) -> Option<(Expr, bool)> {
-        annotation
-            .filter(|annotation| {
-                !matches!(
-                    annotation.kind,
-                    ExprKind::TypeValue(mojito_ast::ast::SourceType::Ref { .. })
-                )
-            })
+        value_result(annotation, reference)
             .map(|annotation| (annotation.clone(), name.contains('$')))
     }
 

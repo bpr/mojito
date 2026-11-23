@@ -1046,10 +1046,7 @@ fn unforwardable(method: &TraitMethod) -> Option<String> {
     }
     let names_origin = method.self_origin.is_some()
         || method.params.iter().any(|param| param.origin.is_some())
-        || matches!(
-            method.ret.as_ref().map(|ret| &ret.kind),
-            Some(ExprKind::TypeValue(Type::Ref { .. }))
-        );
+        || method.ret_reference.is_some();
     names_origin.then(|| names_origin_reason(name))
 }
 
@@ -1164,6 +1161,7 @@ fn member_method(method: &TraitMethod) -> Option<Method> {
         raises: method.raises,
         raises_type: method.raises_type.clone(),
         ret: method.ret.clone(),
+        ret_reference: method.ret_reference.clone(),
         where_clauses: method.where_clauses.clone(),
         body,
         provenance: MethodProvenance::Source,

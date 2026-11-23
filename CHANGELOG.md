@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `ref` after `->` and after a field's `:` is the slot's convention, as
+  upstream reads a result, instead of a reference type (R2537): a result
+  keeps `ret_reference` beside its referent annotation and a kept direct
+  `ref` field keeps `Param::reference`. An origin-less `-> ref T` or `var
+  f: ref T` is now a parse error ("'ref' result requires an origin
+  specifier"), as at the pin, and `ref[o] T` in a local, parameter, or
+  bracket annotation no longer parses (`List[ref Int]` moves to
+  `assets/parse_error/`). An unclosed subscript reports upstream's
+  "expected ']' in call argument list". The cached package format moves to
+  `mojito-package 268`.
+
 - A `def` function type and a `__generator_type` parse as their own
   expression nodes, as upstream parses them, instead of `Type` variants
   (R2536): their parameter types and results are annotation expressions,

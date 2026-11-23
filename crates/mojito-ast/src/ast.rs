@@ -254,15 +254,6 @@ pub enum Type {
     /// Bare `Self` — the enclosing struct type (in a struct method) or the
     /// conforming type (in a trait method requirement).
     SelfType,
-    /// A **reference type** `ref [origin] T` (Mojo's parametric-mutability
-    /// reference: a `ref[origin]` result, or a direct `ref` field). The
-    /// specifier's operands are the reference's origins plus at most one
-    /// `AddressSpace`, which the checker tells apart by type; `referent` is
-    /// the referent type.
-    Ref {
-        referent: Box<Self>,
-        origin: Option<OriginSpec>,
-    },
     /// Upstream's `type_of(x)`: the type of a compile-time expression. The
     /// parser accepts any operand; the checker accepts a trait or a `&`
     /// composition of traits, whose type is the trait metatype
@@ -315,6 +306,10 @@ pub struct FunctionTypeExpr {
     pub params: Vec<FunctionTypeParam>,
     /// The result annotation; [`ExprKind::None`] when `->` is omitted.
     pub ret: Expr,
+    /// The result's `ref[...]` convention: `Some` makes the result a
+    /// reference to `ret`'s referent under these origins, as upstream reads
+    /// `ref` after `->`.
+    pub ret_reference: Option<OriginSpec>,
     pub thin: bool,
     pub raises: bool,
     pub raises_type: Option<Expr>,
@@ -954,8 +949,12 @@ pub const DTYPE_INTEGER_MASK: u8 = 128;
 pub struct Param {
     pub name: String,
     /// The field's annotation expression, which the checker converts in the
-    /// type context ([`Expr::annotation_type`]).
+    /// type context ([`Expr::annotation_type`]); a `ref` field's referent.
     pub ty: Expr,
+    /// The kept direct-`ref`-field extension's `ref[...]` convention
+    /// (`docs/non-goals.md`): `Some` stores a reference to `ty` under these
+    /// origins.
+    pub reference: Option<OriginSpec>,
 }
 
 /// A function/method parameter, e.g. `a: Int`, `b: Int = 2`, `*rest: Int`,
@@ -1203,6 +1202,9 @@ pub struct Method {
     /// The result's annotation expression, which the checker converts in its
     /// type context.
     pub ret: Option<Expr>,
+    /// The result's `ref[...]` convention: `Some` makes the result a
+    /// reference to `ret`'s referent under these origins.
+    pub ret_reference: Option<OriginSpec>,
     pub where_clauses: Vec<Expr>,
     pub body: Vec<Stmt>,
     /// Where the method came from, when not from source. The parser never
@@ -1257,6 +1259,9 @@ pub struct TraitMethod {
     /// The result's annotation expression, which the checker converts in its
     /// type context.
     pub ret: Option<Expr>,
+    /// The result's `ref[...]` convention: `Some` makes the result a
+    /// reference to `ret`'s referent under these origins.
+    pub ret_reference: Option<OriginSpec>,
     pub where_clauses: Vec<Expr>,
     /// The method body. `None` for a pure requirement (`...`); `Some(body)` for a
     /// **default implementation**, which is the trait's member `Trait.method`,
@@ -2020,6 +2025,9 @@ pub enum StmtKind {
         raises_type: Option<Expr>,
         /// The result's annotation expression.
         ret: Option<Expr>,
+        /// The result's `ref[...]` convention: `Some` makes the result a
+        /// reference to `ret`'s referent under these origins.
+        ret_reference: Option<OriginSpec>,
         where_clauses: Vec<Expr>,
         body: Vec<Stmt>,
     },
@@ -3611,6 +3619,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                         }
                     }
                     self.expr(&mut callable.ret);
+                    self.origins(&mut callable.ret_reference);
                     if let Some(error) = &mut callable.raises_type {
                         self.expr(error);
                     }
@@ -3694,16 +3703,14 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                     self.ty(base);
                     self.expr(index);
                 }
-                Type::Ref { referent, origin } => {
-                    self.ty(referent);
-                    if let Some(origins) = origin {
-                        for expression in origins {
-                            self.expr(expression);
-                        }
-                    }
-                }
                 Type::TypeOf(operand) | Type::Value(operand) => self.expr(operand),
                 Type::None | Type::SelfParam(_) | Type::SelfType => {}
+            }
+        }
+
+        fn origins(&mut self, origins: &mut Option<OriginSpec>) {
+            for origin in origins.iter_mut().flatten() {
+                self.expr(origin);
             }
         }
 
@@ -3841,6 +3848,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                     params,
                     raises_type,
                     ret,
+                    ret_reference,
                     body,
                     decorators,
                     where_clauses,
@@ -3856,6 +3864,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                     if let Some(ret) = ret {
                         self.expr(ret);
                     }
+                    self.origins(ret_reference);
                     self.decorators(decorators);
                     for condition in where_clauses {
                         self.expr(condition);
@@ -3883,6 +3892,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                     }
                     for field in fields {
                         self.expr(&mut field.ty);
+                        self.origins(&mut field.reference);
                     }
                     for ty in enum_cases
                         .iter_mut()
@@ -3907,11 +3917,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                     self.decorators(decorators);
                     for method in methods {
                         self.type_params(&mut method.type_params);
-                        if let Some(origins) = &mut method.self_origin {
-                            for origin in origins {
-                                self.expr(origin);
-                            }
-                        }
+                        self.origins(&mut method.self_origin);
                         for param in &mut method.params {
                             self.param(param);
                         }
@@ -3925,6 +3931,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                         {
                             self.expr(ty);
                         }
+                        self.origins(&mut method.ret_reference);
                         self.decorators(&mut method.decorators);
                         for condition in &mut method.where_clauses {
                             self.expr(condition);
@@ -3939,11 +3946,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                 } => {
                     for method in methods {
                         self.type_params(&mut method.type_params);
-                        if let Some(origins) = &mut method.self_origin {
-                            for origin in origins {
-                                self.expr(origin);
-                            }
-                        }
+                        self.origins(&mut method.self_origin);
                         for param in &mut method.params {
                             self.param(param);
                         }
@@ -3957,6 +3960,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                         {
                             self.expr(ty);
                         }
+                        self.origins(&mut method.ret_reference);
                         for condition in &mut method.where_clauses {
                             self.expr(condition);
                         }

@@ -3278,11 +3278,11 @@ struct StructInfo {
     /// fieldwise parameter is `ref`, as upstream's `ref` declaration decides,
     /// never the field's type (a `!lit.ref` field holds a reference value).
     ref_fields: std::collections::BTreeSet<String>,
-    /// The declared fields' source annotations, in order, which a
-    /// compile-time read of the fields resolves on demand before the typed
-    /// `fields` arrive (a `#lit.struct` attribute in a module alias).
+    /// The declared fields' source annotations and `ref` conventions, in
+    /// order, which a compile-time read of the fields resolves on demand
+    /// before the typed `fields` arrive (a `#lit.struct` attribute in a module alias).
     #[serde(skip)]
-    declared_field_types: Vec<mojito_ast::ast::Type>,
+    declared_field_types: Vec<(mojito_ast::ast::Type, Option<mojito_ast::ast::OriginSpec>)>,
     /// For each field whose SOURCE annotation applied origin-binder
     /// arguments (`var iter: EntryIter[Self.o2]`), the (callee origin-param
     /// index, enclosing origin-param index) pairs the application bound —

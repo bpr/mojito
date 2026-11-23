@@ -82,7 +82,10 @@ stdlib's six `ref`-field structs stay as they are). The extension is the
 field declaration alone: a `ref` type argument (`Tuple[ref[o] Int]`,
 `List[ref[o] Int]`) is rejected at parse with the pin's own "expected ']' in
 call argument list", and reference-valued elements are spelled
-`Pointer[T, origin]`, as upstream spells them.
+`Pointer[T, origin]`, as upstream spells them. The field's `ref[...]` is
+stored as the field's convention (`Param::reference`) beside its referent,
+the way a result's `ref` is the result's convention, never as a type, and
+its origin is required at parse.
 
 ### `Origin._subtree` casts stay under `assets/extensions/`
 

@@ -204,13 +204,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     let fname = self.expect_identifier("Expected a field name")?;
                     reject_parameter_redefinition(&type_params, &fname, self.last_span)?;
                     self.expect(&Token::Colon, "Fields require a type annotation")?;
-                    let ty = self.parse_annotation()?;
+                    let (ty, reference) =
+                        self.parse_reference_slot("a 'ref' field requires an origin specifier")?;
                     if matches!(self.peek_token()?, Some(Token::Assign)) {
                         self.next_token()?;
                         self.parse_expression(Precedence::Lowest)?;
                     }
                     self.expect_stmt_end()?;
-                    fields.push(Param { name: fname, ty });
+                    fields.push(Param {
+                        name: fname,
+                        ty,
+                        reference,
+                    });
                 }
                 Token::Case if kind == Some(SumKind::Enum) => {
                     cases.extend(self.parse_enum_cases()?);
@@ -687,11 +692,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.expect(&Token::RParen, "Expected ')' after the parameters")?;
 
         let (raises, raises_type) = self.parse_callable_effects()?;
-        let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
+        let (ret, ret_reference) = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
-            Some(self.parse_annotation()?)
+            let (ret, reference) = self.parse_result()?;
+            (Some(ret), reference)
         } else {
-            None
+            (None, None)
         };
 
         if matches!(self.peek_token()?, Some(Token::LBrace)) {
@@ -720,6 +726,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             raises,
             raises_type,
             ret,
+            ret_reference,
             where_clauses,
             default_body,
         })
@@ -817,12 +824,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.expect(&Token::RParen, "Expected ')' after the parameters")?;
 
         let (raises, raises_type) = self.parse_callable_effects()?;
-        let mut ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
+        let (mut ret, ret_reference) = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
-            Some(self.parse_annotation()?)
+            let (ret, reference) = self.parse_result()?;
+            (Some(ret), reference)
         } else {
-            None
+            (None, None)
         };
+        if is_initializer && receiver.is_none() && ret_reference.is_some() {
+            return Err(ParseError::Message(
+                "an initializer's result cannot be a 'ref' result".to_string(),
+            )
+            .at(self.last_span));
+        }
         // An initializer's declared result is its `out self`, following
         // every parameter: `def __init__(x: W[_]) -> W[x.n + 1]` is `def
         // __init__(x: W[_], out self: W[x.n + 1])`, as upstream's result is
@@ -867,6 +881,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             raises,
             raises_type,
             ret,
+            ret_reference,
             where_clauses,
             body,
             provenance: mojito_ast::ast::MethodProvenance::Source,

@@ -3330,17 +3330,6 @@ fn template_method_requirement_witness_outranks_a_better_rival() {
 }
 
 #[test]
-fn template_method_requirement_witness_beside_reference_rival_runs() {
-    // A rival with a reference parameter (the `ref` type extension) would
-    // rank by the argument's place and origin, which no recorded type
-    // holds; beside the requirement's witness it does not compete.
-    assert_entry_output(
-        "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total[o: Origin[mut=False]](self, by: ref[o] Int) -> Int:\n        return -1\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).plain())\n",
-        "4\n",
-    );
-}
-
-#[test]
 fn template_method_builtin_requirement_witness_beside_generic_rival_runs() {
     // `Hashable`'s requirement names its witness: the `[H: Hasher]` member, never
     // the rival whose own binder sits inside `List[U]`, which the recorded

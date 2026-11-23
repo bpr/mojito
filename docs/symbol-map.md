@@ -2870,11 +2870,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `G[n].w()` and a capitalized `L[0] * 2` included, is the one expression
   the bracket suffix parses, which the checker classifies as a type or a
   value by what it denotes (`Checker::denoted_type`). An annotation
-  other than a `ref` or `*` pack parses as one whole expression at
-  ternary level in `Parser::parse_annotation` (a `ref` or `*` pack is the
-  `TypeValue` of its type there), which every annotation slot stores;
-  `Parser::parse_type`, for a `ref` referent and a bracket's type
-  operand, converts it
+  other than a `*` pack parses as one whole expression at ternary level
+  in `Parser::parse_annotation` (a `*` pack is the `TypeValue` of its type
+  there), which every annotation slot stores. A result's or a direct
+  field's leading `ref[...]` is the slot's convention, parsed by
+  `Parser::parse_result` / `Parser::parse_reference_slot` into
+  `ret_reference` (`StmtKind::Def`, `Method`, `TraitMethod`,
+  `FunctionTypeExpr`) or `Param::reference`, never a type; the checker
+  lowers a result's through `lower_ref_sig_resolved` and a field's through
+  `Checker::reference_field_ty` (`Checker::field_ty`,
+  `checker/type_resolution.rs`). The checker converts an annotation
   through `Expr::annotation_type`, the annotation's type context, which
   alone maps the `None` value to `Type::None`, reads any name,
   `type_of(x)`, a member, and a subscript as a `Type`, and keeps any other

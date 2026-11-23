@@ -1207,6 +1207,7 @@ pub(super) fn applicable_declarations<'a>(
                 captures: None,
                 raises,
                 ret,
+                ret_reference,
                 where_clauses,
                 body,
                 ..
@@ -1223,6 +1224,7 @@ pub(super) fn applicable_declarations<'a>(
                         .as_ref()
                         .and_then(Expr::annotation_type)
                         .unwrap_or(SourceType::None),
+                    reference: ret_reference.is_some(),
                     where_clauses,
                     gate: None,
                 };
@@ -1282,8 +1284,8 @@ pub(super) fn applicable_declarations<'a>(
                             ty: field.ty.clone(),
                             default: None,
                             kind: mojito_ast::ast::ParamKind::Regular,
-                            convention: None,
-                            origin: None,
+                            convention: field.reference.as_ref().map(|_| ArgConvention::Ref),
+                            origin: field.reference.clone(),
                         })
                         .collect();
                     let shape = ApplicableShape {
@@ -1294,6 +1296,7 @@ pub(super) fn applicable_declarations<'a>(
                         keyword_only: None,
                         raises: false,
                         ret: constructed.clone(),
+                        reference: false,
                         where_clauses: &[],
                         gate: None,
                     };
@@ -1342,6 +1345,7 @@ pub(super) fn applicable_declarations<'a>(
                             keyword_only: method.keyword_only,
                             raises: method.raises,
                             ret: constructed.clone(),
+                            reference: false,
                             where_clauses: &method.where_clauses,
                             gate: synthesized_gate(method),
                         };
@@ -1392,6 +1396,7 @@ pub(super) fn applicable_declarations<'a>(
                         keyword_only: method.keyword_only,
                         raises: method.raises,
                         ret,
+                        reference: method.ret_reference.is_some(),
                         where_clauses: &method.where_clauses,
                         gate: synthesized_gate(method),
                     };
@@ -7568,8 +7573,11 @@ struct ApplicableShape<'a> {
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
     raises: bool,
-    /// The `->` result converted in its type context.
+    /// The `->` result converted in its type context: a `ref` result's
+    /// referent when `reference` is set.
     ret: SourceType,
+    /// Whether the result is a `ref` result ([`ResultConvention::Reference`]).
+    reference: bool,
     where_clauses: &'a [Expr],
     gate: Option<&'a String>,
 }
@@ -7675,20 +7683,18 @@ impl ApplicableShape<'_> {
                 variadic,
             ),
             result: match ret {
-                SourceType::None | SourceType::SelfType | SourceType::Named(..) => ret.clone(),
                 // A reference result is its referent's application, which
                 // the call reads ([`ResultConvention::Reference`]).
-                SourceType::Ref { referent, .. }
-                    if matches!(
-                        **referent,
-                        SourceType::SelfType
-                            | SourceType::Named(..)
-                            | SourceType::SelfParam(_)
-                            | SourceType::IndexedProjection { .. }
-                    ) =>
+                SourceType::SelfType
+                | SourceType::Named(..)
+                | SourceType::SelfParam(_)
+                | SourceType::IndexedProjection { .. }
+                    if self.reference =>
                 {
-                    (**referent).clone()
+                    ret.clone()
                 }
+                _ if self.reference => return None,
+                SourceType::None | SourceType::SelfType | SourceType::Named(..) => ret.clone(),
                 // A `comptime` member type of `Self` (`SIMD.eq`'s
                 // `Self._Mask`), or a parametric one applied
                 // (`SIMD.reduce_max`'s `Self._T[size_out]`), resolved in its
@@ -7706,7 +7712,7 @@ impl ApplicableShape<'_> {
                 }
                 _ => return None,
             },
-            returns: if matches!(ret, SourceType::Ref { .. }) {
+            returns: if self.reference {
                 ResultConvention::Reference
             } else {
                 ResultConvention::Value
