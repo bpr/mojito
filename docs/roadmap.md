@@ -3204,22 +3204,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2528 A transfer out of a `ref` field is rejected by the move
-  analysis, not by the checker**
-
-  `take(h.r^)` and `take(MH(s).r^)` over `var r: ref[Self.o] String`
-  report `field 'h.r' destroyed out of the middle of a value`, as though
-  the hole were in the holder's storage. The transfer moves out of the
-  referent through a reference, which upstream rejects as it rejects a
-  transfer out of a `ref` binding.
-  - The checker should reject a `^` whose operand reads through a
-    declared `ref` field, as it rejects one of a `ref` binding (today
-    `expression does not designate a value with an origin`).
-  - Probe: both forms above, with `take(var s: String)`.
-  - Found while landing R2524 (2026-11-22).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
 Track: `calls`.

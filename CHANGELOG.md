@@ -1462,6 +1462,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `^` through a declared `ref` field (`take(h.r^)`, `take(Holder(s).r^)`,
+  `take(h.r.name^)`) is rejected by the checker with `expression does not
+  designate a value with an origin`, as a transfer out of a `ref` binding
+  is, since the field reaches its referent rather than the holder's
+  storage (`assets/extensions/type_error/ref_field_transfer.mojo`,
+  `ref_field_temporary_transfer.mojo`,
+  `ref_field_projection_transfer.mojo`). The move analysis reported it as
+  a field destroyed out of the middle of the holder.
 - A conditional expression, or a value-returning `and`/`or`, building a
   struct with a `ref` field keeps the referent's owner live while the
   result is: each arm puts its loans on the result slot it moves into, and

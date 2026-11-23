@@ -501,10 +501,15 @@ impl Checker {
 
     /// What `source`'s field projections reach: a named binding, or a
     /// temporary (a call result, a by-value subscript). Any other subscript
-    /// yields a reference, which reaches no tracked root.
+    /// yields a reference, which reaches no tracked root, as does a declared
+    /// `ref` field: a projection through it reaches the referent, not the
+    /// holder's storage.
     fn transfer_root<'e>(&self, source: &'e Expr) -> Result<TransferRoot<'e>, TypeError> {
         match &source.kind {
             ExprKind::Identifier(name) => Ok(TransferRoot::Binding(name)),
+            ExprKind::Member { .. } if self.place_reference_storage(source).is_some() => {
+                Err(TypeError::UntrackedTransfer)
+            }
             ExprKind::Member { object, .. } => self.transfer_root(object),
             _ if let Some(target) = self.walrus_place(source) => self.transfer_root(target),
             _ if self.designates_place(source) && !self.is_variant_projection(source) => {
