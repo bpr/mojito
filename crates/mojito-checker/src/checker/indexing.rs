@@ -2219,7 +2219,7 @@ impl Checker {
             return None;
         }
         let source = super::constraints::assoc_body_source_type(object).ok()?;
-        Some(self.ty_from_anno(&source))
+        Some(self.ty_from_spelling(&source))
     }
 }
 

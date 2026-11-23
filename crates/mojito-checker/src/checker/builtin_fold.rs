@@ -138,7 +138,7 @@ impl Checker {
                         .filter_map(|member| {
                             let spelling =
                                 super::constraints::assoc_body_source_type(&member.value).ok()?;
-                            let ty = checker.ty_from_anno(&spelling).ok()?;
+                            let ty = checker.ty_from_spelling(&spelling).ok()?;
                             Some((member.name.clone(), ty, spelling))
                         })
                         .collect::<Vec<_>>()
@@ -509,7 +509,7 @@ impl Checker {
         let slots = declaration.function.argument_slots(self.self_ty.as_ref())?;
         let result = match declaration.function.result() {
             SourceType::SelfType => self.self_ty.clone(),
-            result => self.ty_from_anno(result).ok(),
+            result => self.ty_from_spelling(result).ok(),
         };
         let runtime = slots.len() - declaration.function.runtime_slot_count();
         let by_value = slots[runtime..]
@@ -863,7 +863,7 @@ impl Checker {
             }
             let result = match declaration.function.result() {
                 SourceType::SelfType => self_ty?,
-                result => checker.ty_from_anno(result).ok()?,
+                result => checker.ty_from_spelling(result).ok()?,
             };
             checker
                 .folded_statements(declaration.body, level, &result)
@@ -924,7 +924,7 @@ impl Checker {
         let Some(refined) = declaration.function.refined_self() else {
             return Some((self.self_ty.clone()?, declared));
         };
-        let refined = self.ty_from_anno(refined).ok()?;
+        let refined = self.ty_from_spelling(refined).ok()?;
         if let Some(storage) = mojito_types::types::simd_storage(&refined) {
             let fields = declared
                 .into_iter()

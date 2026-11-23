@@ -4,14 +4,23 @@
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
-    /// Parses a type annotation. As upstream parses an annotation, it is one
-    /// whole expression at ternary level (`Bool`, `Self.T`, `Pair[Int]`,
-    /// `type_of(x).T`, `def(Int) -> Int`, `__generator_type[T: AnyType] T`,
-    /// `Int if c else Float64`), converted in the annotation's type context
-    /// ([`Expr::annotation_type`]); the checker evaluates one no spelling
-    /// converts. Only a `*` pack and a contextual `ref` reference type keep
-    /// their own forms.
+    /// Parses a type annotation and converts it in the annotation's type
+    /// context ([`Expr::annotation_type`]), for a slot that stores the
+    /// converted type.
     pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
+        let annotation = self.parse_annotation()?;
+        annotation_type(&annotation)
+    }
+
+    /// Parses a type annotation as the expression upstream keeps: one whole
+    /// expression at ternary level (`Bool`, `Self.T`, `Pair[Int]`,
+    /// `type_of(x).T`, `def(Int) -> Int`, `__generator_type[T: AnyType] T`,
+    /// `Int if c else Float64`), which converts in the annotation's type
+    /// context ([`Expr::annotation_type`]); the checker evaluates one no
+    /// spelling converts. Only a `*` pack and a contextual `ref` reference
+    /// type keep their own forms, each stored as the
+    /// [`ExprKind::TypeValue`] of its type.
+    pub(super) fn parse_annotation(&mut self) -> Result<Expr, ParseError> {
         let start = self.peek_start();
         match self.peek_token()? {
             // A variadic type-pack reference in `*args: *ArgTypes`. Inside a
@@ -22,20 +31,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 self.next_token()?;
                 if !matches!(self.peek_token()?, Some(Token::Identifier(_))) {
                     let name = self.expect_identifier("Expected a type-pack name after '*'")?;
-                    return Ok(Type::Named(format!("*{name}"), Vec::new()));
+                    let ty = Type::Named(format!("*{name}"), Vec::new());
+                    return Ok(self.node(ExprKind::TypeValue(ty), start));
                 }
                 let mut operand = self.parse_prefix()?;
-                if matches!(&operand.kind, ExprKind::Identifier(id) if id == "Self")
+                let message = if matches!(&operand.kind, ExprKind::Identifier(id) if id == "Self")
                     && matches!(self.peek_token()?, Some(Token::Dot))
                 {
                     operand = self.parse_infix(operand)?;
-                    return pack_spread_type(&operand).ok_or_else(|| {
-                        ParseError::Message("Expected a type-pack name after '*Self.'".to_string())
-                    });
-                }
-                pack_spread_type(&operand).ok_or_else(|| {
-                    ParseError::Message("Expected a type-pack name after '*'".to_string())
-                })
+                    "Expected a type-pack name after '*Self.'"
+                } else {
+                    "Expected a type-pack name after '*'"
+                };
+                let ty = pack_spread_type(&operand)
+                    .ok_or_else(|| ParseError::Message(message.to_string()))?;
+                Ok(self.node(ExprKind::TypeValue(ty), start))
             }
             Some(Token::Identifier(id)) if id == "ref" => {
                 self.next_token()?;
@@ -58,10 +68,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 // `ref [origin] T` — a reference type (parametric
                 // mutability); the referent follows the origin specifier.
                 let origin = self.parse_optional_origin_specifier()?;
-                Ok(Type::Ref {
+                let ty = Type::Ref {
                     referent: Box::new(self.parse_type()?),
                     origin,
-                })
+                };
+                Ok(self.node(ExprKind::TypeValue(ty), start))
             }
             _ => {
                 let head = self.parse_prefix()?;
@@ -496,15 +507,23 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// Reads the rest of an annotation, one whole expression, from the head
-    /// just parsed, and converts it in the annotation's type context.
-    fn annotation_from(&mut self, head: Expr) -> Result<Type, ParseError> {
+    /// just parsed, rejecting one that converts to no type in the
+    /// annotation's type context.
+    fn annotation_from(&mut self, head: Expr) -> Result<Expr, ParseError> {
         let expr = self.parse_expression_from(head, Precedence::Walrus)?;
-        expr.annotation_type().ok_or_else(|| {
-            ParseError::Message("expected a type, found an expression".to_string()).at(expr.span)
-        })
+        annotation_type(&expr)?;
+        Ok(expr)
     }
 
     // --- Expressions (Pratt parser) ---
+}
+
+/// An annotation's type, converted in its type context; the `...` and
+/// contextual sentinels are no annotation.
+fn annotation_type(annotation: &Expr) -> Result<Type, ParseError> {
+    annotation.annotation_type().ok_or_else(|| {
+        ParseError::Message("expected a type, found an expression".to_string()).at(annotation.span)
+    })
 }
 
 /// The pack type a `*` spread's operand names: a bare pack (`*Ts`) or the

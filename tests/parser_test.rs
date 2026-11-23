@@ -80,6 +80,13 @@ fn ident(name: &str) -> Box<Expr> {
     bx(ExprKind::Identifier(name.into()))
 }
 
+/// The type an annotation slot's expression converts to.
+fn view(annotation: &Expr) -> Type {
+    annotation
+        .annotation_type()
+        .expect("a parsed annotation converts")
+}
+
 #[test]
 fn product_binds_tighter_than_sum() {
     // 1 + 2 * 3  ==  1 + (2 * 3)
@@ -279,7 +286,7 @@ fn parses_struct_with_field_and_method() {
             where_clauses: Vec::new(),
             fields: vec![Param {
                 name: "x".into(),
-                ty: Type::Named("Int".into(), vec![])
+                ty: *ident("Int")
             }],
             associated: vec![],
             methods: vec![Method {
@@ -408,7 +415,7 @@ fn parses_uint_and_float64_annotations() {
         parse("var u: UInt = UInt(0)")[0],
         Stmt::from(StmtKind::VarDecl {
             name: "u".into(),
-            ty: Some(Type::Named("UInt".into(), vec![])),
+            ty: Some(*ident("UInt")),
             value: Expr::from(ExprKind::Call {
                 name: "UInt".into(),
                 param_args: vec![],
@@ -421,7 +428,7 @@ fn parses_uint_and_float64_annotations() {
         parse("var f: Float64 = 3.5")[0],
         Stmt::from(StmtKind::VarDecl {
             name: "f".into(),
-            ty: Some(Type::Named("Float64".into(), vec![])),
+            ty: Some(*ident("Float64")),
             value: Expr::from(ExprKind::Float(float_literal(3.5))),
         })
     );
@@ -431,9 +438,68 @@ fn parses_uint_and_float64_annotations() {
 fn parses_empty_parameter_list_annotation() {
     assert!(matches!(
         &parse("var t: Tuple[] = ()")[0].kind,
-        StmtKind::VarDecl { ty: Some(Type::Named(name, args)), .. }
-            if name == "Tuple" && args.is_empty()
+        StmtKind::VarDecl { ty: Some(ty), .. }
+            if matches!(view(ty), Type::Named(name, args) if name == "Tuple" && args.is_empty())
     ));
+}
+
+#[test]
+fn annotation_slots_store_the_annotation_expression() {
+    let kind = |stmt: &Stmt| match &stmt.kind {
+        StmtKind::VarDecl { ty: Some(ty), .. } | StmtKind::Comptime { ty: Some(ty), .. } => {
+            ty.kind.clone()
+        }
+        other => panic!("expected an annotated declaration, got {other:?}"),
+    };
+    let statements = parse("var x: Int = 1\ncomptime N: Int = 2\n");
+    assert_eq!(kind(&statements[0]), ExprKind::Identifier("Int".into()));
+    assert_eq!(kind(&statements[1]), ExprKind::Identifier("Int".into()));
+    let StmtKind::Trait {
+        comptime_members, ..
+    } = &parse("trait Holder:\n    comptime Element: Copyable & Movable\n")[0].kind
+    else {
+        panic!("expected a trait");
+    };
+    assert!(matches!(
+        comptime_members[0].ty.kind,
+        ExprKind::Infix(InfixOp::BitAnd, ..)
+    ));
+    let StmtKind::Struct {
+        fields, enum_cases, ..
+    } = &parse("union Shape:\n    case circle(Float64)\n")[0].kind
+    else {
+        panic!("expected a union");
+    };
+    assert!(fields.is_empty());
+    let payload = &enum_cases.as_ref().expect("cases")[0].payload;
+    assert_eq!(payload[0].kind, ExprKind::Identifier("Float64".into()));
+    let StmtKind::Struct { fields, .. } = &parse(
+        "struct S[*Ts: AnyType]:\n    var t: ref[ImmutAnyOrigin] Int\n    var u: Tuple[*Self.Ts]\n",
+    )[0]
+    .kind
+    else {
+        panic!("expected a struct");
+    };
+    assert!(matches!(
+        &fields[0].ty.kind,
+        ExprKind::TypeValue(Type::Ref { referent, .. })
+            if **referent == Type::Named("Int".into(), vec![])
+    ));
+    assert!(matches!(fields[1].ty.kind, ExprKind::Index { .. }));
+}
+
+#[test]
+fn a_sentinel_is_no_annotation() {
+    for source in ["var x: ... = 1\n", "comptime N: ... = 1\n"] {
+        let mut parser = Parser::new(Lexer::new(source));
+        let error = parser.parse_program().expect_err(source);
+        assert!(
+            error
+                .to_string()
+                .contains("expected a type, found an expression"),
+            "{source}: {error}"
+        );
+    }
 }
 
 #[test]
@@ -442,7 +508,7 @@ fn parses_typed_var_decl() {
         parse("var x: Int = 1 + 2")[0],
         Stmt::from(StmtKind::VarDecl {
             name: "x".into(),
-            ty: Some(Type::Named("Int".into(), vec![])),
+            ty: Some(*ident("Int")),
             value: Expr::from(ExprKind::Infix(InfixOp::Add, int(1), int(2))),
         })
     );
@@ -792,11 +858,17 @@ fn parses_generic_struct_header_and_self_param_field() {
             fields: vec![
                 Param {
                     name: "left".into(),
-                    ty: Type::SelfParam("T".into())
+                    ty: Expr::from(ExprKind::Member {
+                        object: ident("Self"),
+                        field: "T".into(),
+                    })
                 },
                 Param {
                     name: "right".into(),
-                    ty: Type::SelfParam("T".into())
+                    ty: Expr::from(ExprKind::Member {
+                        object: ident("Self"),
+                        field: "T".into(),
+                    })
                 },
             ],
             associated: vec![],
@@ -848,7 +920,7 @@ fn parses_parameterized_type_annotation() {
     match &stmts[0].kind {
         StmtKind::VarDecl { ty: Some(ty), .. } => {
             assert_eq!(
-                *ty,
+                view(ty),
                 Type::Named("Pair".into(), vec![ParamArg::Value(*ident("Int"))])
             );
         }
@@ -862,7 +934,7 @@ fn string_literal_application_is_a_named_type() {
     // it names the struct's application.
     let stmts = parse("var a: StringLiteral = q\nvar b: StringLiteral[v] = q\n");
     let annotation = |stmt: &Stmt| match &stmt.kind {
-        StmtKind::VarDecl { ty: Some(ty), .. } => Some(ty.clone()),
+        StmtKind::VarDecl { ty: Some(ty), .. } => Some(view(ty)),
         _ => None,
     };
     assert_eq!(
@@ -1137,7 +1209,7 @@ fn parses_a_member_application_in_type_position() {
     let StmtKind::VarDecl { ty: Some(ty), .. } = &body[0].kind else {
         panic!("expected a var declaration");
     };
-    assert!(matches!(ty, Type::IndexedProjection { base, .. }
+    assert!(matches!(view(ty), Type::IndexedProjection { base, .. }
         if matches!(base.as_ref(), Type::Value(value)
             if matches!(&value.kind, ExprKind::Invoke { callee, param_args, args, .. }
                 if args.is_empty()
@@ -1229,7 +1301,7 @@ fn parses_a_subscript_of_a_construction_as_a_type_projection() {
     let StmtKind::VarDecl { ty: Some(ty), .. } = &body[0].kind else {
         panic!("expected a var declaration");
     };
-    assert!(is_projection(ty));
+    assert!(is_projection(&view(ty)));
     let StmtKind::Return(Some(value)) = &body[1].kind else {
         panic!("expected a return");
     };
@@ -1276,7 +1348,7 @@ fn parses_trait_valued_parameters_spelled_type_of() {
     let StmtKind::VarDecl { ty, .. } = &body[0].kind else {
         panic!("expected a var declaration");
     };
-    assert_eq!(ty.as_ref(), Some(&Type::TypeOf(ident("x"))));
+    assert_eq!(ty.as_ref().map(view), Some(Type::TypeOf(ident("x"))));
 }
 
 #[test]
@@ -1549,8 +1621,14 @@ fn a_trait_comptime_member_composition_is_one_expression() {
     else {
         panic!("expected a trait");
     };
+    assert!(matches!(
+        comptime_members[0].ty.kind,
+        ExprKind::Infix(InfixOp::BitAnd, ..)
+    ));
     assert_eq!(
-        comptime_members[0].ty,
+        comptime_members[0]
+            .annotation_type()
+            .expect("a composition"),
         Type::Named(
             "$trait_composition".into(),
             vec![
@@ -1573,7 +1651,7 @@ fn parses_trait_comptime_member() {
                 &vec![TraitComptime {
                     name: "count".into(),
                     params: vec![],
-                    ty: Type::Named("Int".into(), vec![]),
+                    ty: *ident("Int"),
                     where_clauses: Vec::new(),
                     default: None,
                 }]
@@ -1700,7 +1778,7 @@ fn parses_annotated_comptime_constant() {
         Stmt::from(StmtKind::Comptime {
             name: "counter".into(),
             type_params: vec![],
-            ty: Some(Type::Named("Int".into(), vec![])),
+            ty: Some(*ident("Int")),
             where_clauses: Vec::new(),
             value: int_expr(1),
         })
@@ -1723,7 +1801,7 @@ fn retains_where_messages_on_struct_and_comptime_declarations() {
     };
     assert_eq!(where_clauses.len(), 1);
     assert_eq!(
-        associated[0].ty,
+        associated[0].ty.as_ref().map(view),
         Some(Type::Named("AnyType".into(), vec![]))
     );
     assert_eq!(associated[0].where_clauses.len(), 1);
@@ -1746,7 +1824,10 @@ fn retains_where_messages_on_struct_and_comptime_declarations() {
         panic!("expected comptime declaration");
     };
     assert_eq!(type_params.len(), 1);
-    assert_eq!(ty, &Some(Type::Named("AnyType".into(), vec![])));
+    assert_eq!(
+        ty.as_ref().map(view),
+        Some(Type::Named("AnyType".into(), vec![]))
+    );
     assert_eq!(where_clauses.len(), 1);
 }
 
@@ -1898,7 +1979,7 @@ fn parses_explicit_value_argument_in_annotation_and_call() {
             ..
         } => {
             assert_eq!(
-                *ty,
+                view(ty),
                 Type::Named(
                     "FixedBuffer".into(),
                     vec![ParamArg::Value(Expr::from(ExprKind::Infix(
@@ -2362,7 +2443,7 @@ fn parses_simd_type_and_construction() {
             ..
         } => {
             assert_eq!(
-                *ty,
+                view(ty),
                 Type::Named(
                     "SIMD".into(),
                     vec![
@@ -2521,7 +2602,7 @@ fn parses_nested_type_argument() {
     match &stmts[0].kind {
         StmtKind::VarDecl { ty: Some(ty), .. } => {
             assert_eq!(
-                *ty,
+                view(ty),
                 Type::Named(
                     "Box".into(),
                     vec![ParamArg::Value(Expr::from(ExprKind::Index {
@@ -3455,10 +3536,8 @@ fn parses_inferred_var_decl() {
 #[test]
 fn annotated_var_still_parses_with_some_ty() {
     match &parse("var x: Int = 5")[0].kind {
-        StmtKind::VarDecl {
-            ty: Some(Type::Named(name, args)),
-            ..
-        } if name == "Int" && args.is_empty() => {}
+        StmtKind::VarDecl { ty: Some(ty), .. } if matches!(&ty.kind, ExprKind::Identifier(name) if name == "Int") =>
+            {}
         other => panic!("expected an annotated var decl, got {other:?}"),
     }
 }
@@ -3602,7 +3681,7 @@ fn keeps_the_qualified_pack_spread_apart_from_the_bare_one() {
     };
     let spread = ParamArg::Type(Type::SelfParam("*Ts".into()));
     assert_eq!(
-        fields[0].ty,
+        view(&fields[0].ty),
         Type::Named("Tuple".into(), vec![spread.clone()])
     );
     assert_eq!(methods[0].params[0].ty, Type::SelfParam("*Ts".into()));
@@ -4386,7 +4465,7 @@ fn parses_dunder_method_names() {
 /// Extract the annotated type from `var NAME: TYPE = expr`.
 fn var_anno_type(src: &str) -> Type {
     match parse(src).into_iter().next().unwrap().kind {
-        StmtKind::VarDecl { ty: Some(ty), .. } => ty,
+        StmtKind::VarDecl { ty: Some(ty), .. } => view(&ty),
         other => panic!("expected an annotated var decl, got {other:?}"),
     }
 }
@@ -4742,7 +4821,7 @@ fn an_annotation_reads_a_whole_conditional_expression() {
     let StmtKind::VarDecl { ty: Some(ty), .. } = &body[0].kind else {
         panic!("expected an annotated var, found {:?}", body[0].kind);
     };
-    assert!(conditional(ty), "{ty:?}");
+    assert!(conditional(&view(ty)), "{ty:?}");
 }
 
 #[test]
@@ -5763,7 +5842,7 @@ fn self_and_none_in_a_bracket_are_expressions() {
         panic!("expected struct declaration")
     };
     assert_eq!(
-        fields[0].ty,
+        view(&fields[0].ty),
         Type::Named("List".into(), vec![self_member()])
     );
     assert_eq!(
@@ -5886,15 +5965,11 @@ fn an_applied_member_construction_in_an_annotation_keeps_its_source_spans() {
     let StmtKind::Def { body, .. } = &statements[0].kind else {
         panic!("expected def");
     };
-    let StmtKind::VarDecl {
-        ty: Some(Type::IndexedProjection { base, .. }),
-        ..
-    } = &body[0].kind
-    else {
-        panic!(
-            "expected a projected var annotation, got {:?}",
-            body[0].kind
-        );
+    let StmtKind::VarDecl { ty: Some(ty), .. } = &body[0].kind else {
+        panic!("expected an annotated var, got {:?}", body[0].kind);
+    };
+    let Type::IndexedProjection { base, .. } = view(ty) else {
+        panic!("expected a projected var annotation, got {ty:?}");
     };
     let Type::Value(construction) = base.as_ref() else {
         panic!("expected a construction, got {base:?}");

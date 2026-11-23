@@ -356,8 +356,9 @@ impl Checker {
         object: &Expr,
     ) -> Option<Result<Ty, TypeError>> {
         let (name, targs) = object.bracket_application()?;
-        self.generic_type_alias(name)
-            .then(|| self.ty_from_anno(&SourceType::Named(name.to_string(), targs.into_owned())))
+        self.generic_type_alias(name).then(|| {
+            self.ty_from_spelling(&SourceType::Named(name.to_string(), targs.into_owned()))
+        })
     }
 
     /// Type a call through `object`, a receiver bound to the type `instance`

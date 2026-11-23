@@ -800,7 +800,7 @@ impl Checker {
             keyword_only: collectors.keyword_only,
             conventions: regular.iter().map(|(_, p)| p.convention).collect(),
             ret: match &method.ret {
-                Some(SourceType::Ref { referent, .. }) => self.ty_from_anno(referent)?,
+                Some(SourceType::Ref { referent, .. }) => self.ty_from_spelling(referent)?,
                 // `$`-mangled generated methods rebind already-checked
                 // annotations with origins legitimately erased.
                 Some(ret) if method.name.contains('$') => {
@@ -808,7 +808,7 @@ impl Checker {
                 }
                 Some(ret) => self.resolve_return_annotation(ret)?,
                 None => match named_result {
-                    Some(result) => self.ty_from_anno(&result.ty)?,
+                    Some(result) => self.ty_from_spelling(&result.ty)?,
                     None => Ty::none(),
                 },
             },
@@ -881,7 +881,7 @@ impl Checker {
         // An annotation may name an earlier argument's place only the body
         // can resolve (`origin_of(iterable)`), as a return annotation may.
         let saved = self.signature_origin_leniency.replace(true);
-        let refined = self.ty_from_anno(annotation);
+        let refined = self.ty_from_spelling(annotation);
         self.signature_origin_leniency.set(saved);
         let refined = refined?;
         if refined == *self_ty {
@@ -1082,7 +1082,7 @@ impl Checker {
                 continue;
             }
             if let Some(value_type) = &tp.value_type {
-                let ty = self.ty_from_anno(value_type)?;
+                let ty = self.ty_from_spelling(value_type)?;
                 let decl = self.value_param_decl(tp, binder_id(decls.len()), ty)?;
                 self.push_value_param(&mut decls, decl);
                 continue;
@@ -1358,7 +1358,7 @@ impl Checker {
         {
             return None;
         }
-        self.ty_from_anno(&SourceType::Named(only.clone(), Vec::new()))
+        self.ty_from_spelling(&SourceType::Named(only.clone(), Vec::new()))
             .ok()
             .filter(|ty| !matches!(ty.kind(), TyKind::Trait(_) | TyKind::AnyTrait(_)))
     }
@@ -1425,7 +1425,7 @@ impl Checker {
                 binder,
             ))));
         }
-        let mutability = match self.ty_from_anno(annotation) {
+        let mutability = match self.ty_from_spelling(annotation) {
             Ok(ty) => {
                 let (name, args) = match ty.kind() {
                     TyKind::Struct(name, args) => (name, args),
@@ -1786,7 +1786,7 @@ impl Checker {
                 if let Some(ty) = scalar_type_name(name) {
                     Ok(ty)
                 } else {
-                    self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))
+                    self.ty_from_spelling(&SourceType::Named(name.clone(), Vec::new()))
                 }
             }
             ExprKind::TypeValue(ty) => self.type_value(value, ty),
@@ -2288,13 +2288,15 @@ impl Checker {
             this.generated_declaration.set(generated);
             params?;
             match &m.ret {
-                Some(SourceType::Ref { referent, .. }) => this.ty_from_anno(referent),
+                Some(SourceType::Ref { referent, .. }) => this.ty_from_spelling(referent),
                 // `$`-mangled generated methods rebind already-checked
                 // annotations with origins legitimately erased.
                 Some(t) if m.name.contains('$') => this.resolve_generated_return_annotation(t),
                 Some(t) => this.resolve_return_annotation(t),
-                None => named_result
-                    .map_or_else(|| Ok(Ty::none()), |result| this.ty_from_anno(&result.ty)),
+                None => named_result.map_or_else(
+                    || Ok(Ty::none()),
+                    |result| this.ty_from_spelling(&result.ty),
+                ),
             }
         })?;
         let regular: Vec<&FnParam> = m
@@ -2866,7 +2868,7 @@ impl Checker {
         }
         let receiver = match &m.self_type {
             Some(annotation) if m.self_convention == Some(ArgConvention::Out) => {
-                self.ty_from_anno(annotation)?
+                self.ty_from_spelling(annotation)?
             }
             _ => self.custom_receiver(m)?.unwrap_or_else(|| self_ty.clone()),
         };
@@ -3040,7 +3042,7 @@ impl Checker {
             let Some(default) = &param.default else {
                 continue;
             };
-            self.check_parameter_default(&param.name, default, &self.ty_from_anno(&param.ty)?)?;
+            self.check_parameter_default(&param.name, default, &self.ty_from_spelling(&param.ty)?)?;
         }
         Ok(())
     }

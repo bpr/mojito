@@ -262,7 +262,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // An optional `: Type`; omitting it infers the type from `value`.
         let ty = if matches!(self.peek_token()?, Some(Token::Colon)) {
             self.next_token()?; // consume ':'
-            Some(self.parse_type()?)
+            Some(self.parse_annotation()?)
         } else {
             None
         };
@@ -397,7 +397,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 // generic-alias expansion never need to reconstruct source syntax.
                 let ty = if matches!(self.peek_token()?, Some(Token::Colon)) {
                     self.next_token()?; // consume ':'
-                    Some(self.parse_type()?)
+                    Some(self.parse_annotation()?)
                 } else {
                     None
                 };

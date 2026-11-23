@@ -449,6 +449,7 @@ impl Checker {
         if self.lookup(name).is_some() {
             return Ok(true);
         }
+        let ty = ty.as_ref().map(annotation_spelling).transpose()?;
         let _position = self.comptime_position();
         let expression = match self.binderless_comptime_expression(
             name,
@@ -459,7 +460,7 @@ impl Checker {
             Ok(None) | Err(TypeError::UndefinedVariable(_)) => return Ok(false),
             Err(error) => return Err(error),
         };
-        let declared = match ty {
+        let declared = match &ty {
             Some(annotation) => {
                 self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
             }
@@ -498,6 +499,7 @@ impl Checker {
         if !type_params.is_empty() {
             return Ok(());
         }
+        let ty = ty.as_ref().map(annotation_spelling).transpose()?;
         if !where_clauses.is_empty() {
             self.constrained_module_constants
                 .insert(name.clone(), where_clauses.clone());
@@ -507,7 +509,7 @@ impl Checker {
         let vector = ty
             .as_ref()
             .filter(|_| matches!(self.module_values.get(name), Some(CtValue::Simd { .. })))
-            .and_then(|annotation| self.ty_from_anno(annotation).ok());
+            .and_then(|annotation| self.ty_from_spelling(annotation).ok());
         // An annotation converting the value through its struct's
         // `@implicit` constructor binds the conversion's application
         // (`comptime W: L = 4` is `L(4)`), never the folded literal.
@@ -540,7 +542,7 @@ impl Checker {
             // declaration: every read is the `String`.
             self.comptime_literals.remove(name);
             ty.as_ref()
-                .and_then(|annotation| self.ty_from_anno(annotation).ok())
+                .and_then(|annotation| self.ty_from_spelling(annotation).ok())
         } else if super::traits::literal_default(value) {
             self.comptime_literals.insert(name.clone(), value.clone());
             self.infer(value).ok()
@@ -971,6 +973,7 @@ impl Checker {
                 continue;
             }
             self.module_trait_constants.insert(name.clone());
+            let ty = ty.as_ref().map(annotation_spelling).transpose()?;
             match self.bind_trait_constant(name, ty.as_ref(), value, 0) {
                 Err(error) if report => return Err(error),
                 _ => {}
@@ -1024,6 +1027,7 @@ impl Checker {
         {
             return Ok(());
         }
+        let ty = ty.as_ref().map(annotation_spelling).transpose()?;
         self.check_generic_comptime_alias(name, type_params, ty.as_ref(), where_clauses, value)
     }
 
@@ -1057,7 +1061,7 @@ impl Checker {
     /// same way (`DType.int16`) is not.
     fn denotes_type(&self, value: &Expr) -> bool {
         super::constraints::assoc_body_source_type(value)
-            .is_ok_and(|source| self.ty_from_anno(&source).is_ok())
+            .is_ok_and(|source| self.ty_from_spelling(&source).is_ok())
     }
 
     /// Check the statements of a block in the current scope. `ret` is the
@@ -1570,10 +1574,11 @@ impl Checker {
                 Ok(())
             }
             StmtKind::VarDecl { name, ty, value } => {
+                let ty = ty.as_ref().map(annotation_spelling).transpose()?;
                 // Current Mojo reads a bare `def(...)` local annotation as
                 // trait-typed storage, like fields and collection elements;
                 // a stored callable spells `def(...) thin`.
-                if let Some(mojito_ast::ast::Type::Func { thin: false, .. }) = ty {
+                if let Some(mojito_ast::ast::Type::Func { thin: false, .. }) = &ty {
                     return Err(TypeError::Unsupported(format!(
                         "a 'def(...)' type names a trait in the annotation of variable \
                          '{name}' in current Mojo, not a storable callable value; spell \
@@ -1582,7 +1587,7 @@ impl Checker {
                     )));
                 }
                 if matches!(value.kind, ExprKind::Uninitialized) {
-                    let Some(annotation) = ty else {
+                    let Some(annotation) = &ty else {
                         return Err(TypeError::Unsupported(
                             "an uninitialized variable requires a type annotation".to_string(),
                         ));
@@ -1655,7 +1660,7 @@ impl Checker {
                 if !conversion_borrows_source {
                     self.check_consuming(value, &found, &format!("variable '{name}'"))?;
                 }
-                let declared = match ty {
+                let declared = match &ty {
                     // Annotated: the value must coerce to the annotation.
                     Some(anno) => {
                         let expected = contextual.unwrap_or(self.resolve_storage_annotation(
@@ -2301,6 +2306,7 @@ impl Checker {
                 if at_module && self.module_trait_constants.contains(name) {
                     return Ok(());
                 }
+                let ty = ty.as_ref().map(annotation_spelling).transpose()?;
                 if !at_module
                     && type_params.is_empty()
                     && self.bind_trait_constant(
@@ -4132,7 +4138,7 @@ impl Checker {
             this.generated_declaration.set(generated);
             let param_tys = param_tys?;
             let ret_ty = match (ret_anno, named_result) {
-                (Some(SourceType::Ref { referent, .. }), _) => this.ty_from_anno(referent)?,
+                (Some(SourceType::Ref { referent, .. }), _) => this.ty_from_spelling(referent)?,
                 // A compiler-generated specialization (`$`-mangled) rebinds
                 // already-checked annotations whose origin identity is
                 // legitimately erased; signature concreteness applies to
@@ -4141,7 +4147,7 @@ impl Checker {
                     this.resolve_generated_return_annotation(t)?
                 }
                 (Some(t), _) => this.resolve_return_annotation(t)?,
-                (None, Some(result)) => this.ty_from_anno(&result.ty)?,
+                (None, Some(result)) => this.ty_from_spelling(&result.ty)?,
                 (None, None) => Ty::none(),
             };
             if !name.contains('$') {

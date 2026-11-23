@@ -266,10 +266,8 @@ fn check_case_payloads(
     }
     for case in cases {
         let error = |message: String| Err(ParseError::Message(message).at(case.span));
-        if case.payload.iter().any(|payload| match payload {
-            Type::SelfType => true,
-            Type::Named(payload, args) => payload == name && args.is_empty(),
-            _ => false,
+        if case.payload.iter().any(|payload| {
+            matches!(&payload.kind, ExprKind::Identifier(payload) if payload == "Self" || payload == name)
         }) {
             return error(format!(
                 "case '{}' has recursive payload type '{name}'",

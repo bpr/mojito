@@ -2632,11 +2632,11 @@ fn rewrite_stmt(
                 rewrite_expr(condition, names, namespaces);
             }
             for f in fields {
-                rewrite_type(&mut f.ty, names, namespaces);
+                rewrite_expr(&mut f.ty, names, namespaces);
             }
             for case in enum_cases.iter_mut().flatten() {
                 for ty in &mut case.payload {
-                    rewrite_type(ty, names, namespaces);
+                    rewrite_expr(ty, names, namespaces);
                 }
             }
             for a in associated {
@@ -2644,7 +2644,7 @@ fn rewrite_stmt(
                     rewrite_type_param(parameter, names, namespaces);
                 }
                 if let Some(ty) = &mut a.ty {
-                    rewrite_type(ty, names, namespaces);
+                    rewrite_expr(ty, names, namespaces);
                 }
                 for condition in &mut a.where_clauses {
                     rewrite_expr(condition, names, namespaces);
@@ -2705,7 +2705,7 @@ fn rewrite_stmt(
                 for parameter in &mut c.params {
                     rewrite_type_param(parameter, names, namespaces);
                 }
-                rewrite_type(&mut c.ty, names, namespaces);
+                rewrite_expr(&mut c.ty, names, namespaces);
                 for condition in &mut c.where_clauses {
                     rewrite_expr(condition, names, namespaces);
                 }
@@ -2716,7 +2716,7 @@ fn rewrite_stmt(
         }
         StmtKind::VarDecl { ty, value, .. } => {
             if let Some(ty) = ty {
-                rewrite_type(ty, names, namespaces);
+                rewrite_expr(ty, names, namespaces);
             }
             rewrite_expr(value, names, namespaces);
         }
@@ -2732,7 +2732,7 @@ fn rewrite_stmt(
                 rewrite_type_param(parameter, names, namespaces);
             }
             if let Some(ty) = ty {
-                rewrite_type(ty, names, namespaces);
+                rewrite_expr(ty, names, namespaces);
             }
             for condition in where_clauses {
                 rewrite_expr(condition, names, namespaces);

@@ -5825,7 +5825,13 @@ explicitly. `SourceType` is parser-owned syntax; `Ty`, `binding_ty`, and MIR
 expression, and a `SourceType` is only its conversion: an expression no type
 spelling covers stays `SourceType::Value`, which the checker evaluates in the
 type context (`denoted_type`), so the parser rejects no annotation for its
-shape. `AnnotationSite` keys declaration
+shape. A statement or member annotation slot (`var` and `comptime`
+annotations, struct and trait `comptime` members, struct fields, and union
+payloads) stores the annotation expression itself, as upstream keeps it, and
+the checker converts it when it reads it (`Checker::ty_from_anno`,
+`TraitComptime::annotation_type` for a trait member's `&` composition);
+signature and type-parameter slots still store the conversion.
+`AnnotationSite` keys declaration
 annotations at the checked boundary, after which HIR, MIR, and the VM carry only
 the resolved `Ty`. In particular, variable initialization and function-entry
 coercion no longer reinterpret source annotations in the backend. Missing checked

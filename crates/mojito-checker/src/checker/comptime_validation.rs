@@ -1271,18 +1271,20 @@ pub(super) fn applicable_declarations<'a>(
                 if mojito_checked::unit::synthesizes_fieldwise_constructor(
                     *fieldwise_init,
                     methods.iter().map(super::calls::lifecycle_method_name),
-                ) {
-                    let params: Vec<_> = fields
-                        .iter()
-                        .map(|field| mojito_ast::ast::FnParam {
+                ) && let Some(params) = fields
+                    .iter()
+                    .map(|field| {
+                        Some(mojito_ast::ast::FnParam {
                             name: field.name.clone(),
-                            ty: field.ty.clone(),
+                            ty: field.ty.annotation_type()?,
                             default: None,
                             kind: mojito_ast::ast::ParamKind::Regular,
                             convention: None,
                             origin: None,
                         })
-                        .collect();
+                    })
+                    .collect::<Option<Vec<_>>>()
+                {
                     let shape = ApplicableShape {
                         decorators: &[],
                         type_params: &[],
@@ -3289,7 +3291,7 @@ impl Checker {
                     .map(|collector| &collector.element),
             )
             .map(|slot| match slot {
-                SlotType::Declared(Some(source), _) => self.ty_from_anno(source).ok().map(Some),
+                SlotType::Declared(Some(source), _) => self.ty_from_spelling(source).ok().map(Some),
                 SlotType::Declared(None, ty) => Some(ty.clone()),
                 SlotType::Scalar(_) | SlotType::Owner => Some(None),
             })
@@ -3326,13 +3328,13 @@ impl Checker {
                             mojito_types::types::variadic_collector_type(element.clone(), None),
                         )?;
                     }
-                    checker.ty_from_anno(result)
+                    checker.ty_from_spelling(result)
                 })
                 .ok()
                 .map(Some),
         };
         let refined_self = match &function.refined_self {
-            Some(refined) => self.ty_from_anno(refined).ok().map(Some),
+            Some(refined) => self.ty_from_spelling(refined).ok().map(Some),
             None => Some(None),
         };
         self.pop_param_scope();
@@ -3627,7 +3629,7 @@ impl Checker {
                             if struct_args.is_empty() {
                                 run_time_type()
                             } else {
-                                self.ty_from_anno(&SourceType::Named(
+                                self.ty_from_spelling(&SourceType::Named(
                                     name.clone(),
                                     struct_args.clone(),
                                 ))
@@ -3636,7 +3638,7 @@ impl Checker {
                             param_args,
                         ),
                         (true, true) if !param_args.is_empty() => (
-                            self.ty_from_anno(&SourceType::Named(
+                            self.ty_from_spelling(&SourceType::Named(
                                 name.clone(),
                                 param_args.to_vec(),
                             ))
@@ -3663,7 +3665,7 @@ impl Checker {
                         function
                             .constructs()
                             .then(|| {
-                                self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))
+                                self.ty_from_spelling(&SourceType::Named(name.clone(), Vec::new()))
                                     .ok()
                             })
                             .flatten()
@@ -4012,7 +4014,7 @@ impl Checker {
             Some(instance) if function.constructs() || function.result == SourceType::SelfType => {
                 Some(instance.clone())
             }
-            _ => result.or_else(|| self.ty_from_anno(&function.result).ok()),
+            _ => result.or_else(|| self.ty_from_spelling(&function.result).ok()),
         }
         .filter(|ty| {
             ty.is_simd()
@@ -4271,7 +4273,7 @@ impl Checker {
         let named = |name: &str, args: Vec<ParamArg>| {
             (self.binding_scope(name).is_none() && applicable(name))
                 .then(|| {
-                    self.ty_from_anno(&SourceType::Named(name.to_string(), args))
+                    self.ty_from_spelling(&SourceType::Named(name.to_string(), args))
                         .ok()
                 })
                 .flatten()
@@ -4788,6 +4790,10 @@ impl Checker {
         struct Types(bool);
         impl mojito_ast::visit::Visitor for Types {
             fn visit_type(&mut self, _ty: &SourceType) {
+                self.0 = true;
+            }
+
+            fn visit_annotation(&mut self, _annotation: &Expr) {
                 self.0 = true;
             }
         }
@@ -6088,7 +6094,7 @@ impl Checker {
             )
         };
         Some(
-            self.ty_from_anno(&SourceType::IndexedProjection {
+            self.ty_from_spelling(&SourceType::IndexedProjection {
                 base: Box::new(base),
                 index: Box::new(index.clone()),
             })
@@ -6951,7 +6957,7 @@ impl Checker {
             return Some(Ok(constructed));
         }
         Some(
-            self.ty_from_anno(&SourceType::Named(name.to_string(), param_args.to_vec()))
+            self.ty_from_spelling(&SourceType::Named(name.to_string(), param_args.to_vec()))
                 .and_then(|declared| {
                     if declared == constructed {
                         Ok(constructed)
@@ -8108,6 +8114,27 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
         fn visit_type(&mut self, ty: &SourceType) {
             if let SourceType::TypeOf(operand) = ty {
                 self.type_operand(operand);
+            }
+        }
+
+        /// An annotation's spelled names (`T`, `M.T`, the head of `L[..]`)
+        /// are type reads; its bracket operands and any value it evaluates
+        /// stay value reads.
+        fn visit_annotation(&mut self, annotation: &Expr) {
+            if matches!(
+                annotation.annotation_type(),
+                None | Some(SourceType::Value(_))
+            ) {
+                return;
+            }
+            match &annotation.kind {
+                ExprKind::Identifier(_) => {
+                    self.typed.insert(std::ptr::from_ref(annotation));
+                }
+                ExprKind::Member { object, .. }
+                | ExprKind::Index { object, .. }
+                | ExprKind::MultiIndex { object, .. } => self.visit_annotation(object),
+                _ => {}
             }
         }
     }

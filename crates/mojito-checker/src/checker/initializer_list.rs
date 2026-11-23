@@ -170,7 +170,7 @@ impl Checker {
                 args,
                 kwargs,
             } if self.generic_type_alias(name) => Some(
-                self.ty_from_anno(&SourceType::Named(name.clone(), param_args.clone()))
+                self.ty_from_spelling(&SourceType::Named(name.clone(), param_args.clone()))
                     .and_then(|ty| {
                         let applied =
                             mojito_ast::ast::named_subscript(name, param_args, expression.span);
@@ -589,7 +589,7 @@ impl Checker {
         if !self.generic_type_alias(name) {
             return None;
         }
-        let ty = match self.ty_from_anno(&SourceType::Named(
+        let ty = match self.ty_from_spelling(&SourceType::Named(
             name.to_string(),
             param_args.into_owned(),
         )) {
@@ -665,7 +665,7 @@ impl Checker {
         if matches!(spelling, SourceType::SelfParam(_)) {
             return member?.expression_spelling(object.span);
         }
-        let ty = self.ty_from_anno(&spelling).ok()?;
+        let ty = self.ty_from_spelling(&spelling).ok()?;
         if let Some(spelled) = mojito_types::ct::source_type(&ty, object.span) {
             return self
                 .keyword_spelling(spelled)
@@ -727,7 +727,7 @@ impl Checker {
         );
         let (spelling, _) = self.type_member_read(&read)?;
         Some((
-            self.ty_from_anno(&spelling).ok()?,
+            self.ty_from_spelling(&spelling).ok()?,
             self.type_member_spelling(&read)?,
         ))
     }
@@ -875,7 +875,7 @@ impl Checker {
         };
         let applied = member_application(callee, param_args);
         let construction = self
-            .ty_from_anno(&member)
+            .ty_from_spelling(&member)
             .and_then(|ty| self.type_construction(expression, applied.as_ref(), &ty, args, kwargs));
         Some(construction.and_then(|construction| self.infer_spelled(expression, construction)))
     }

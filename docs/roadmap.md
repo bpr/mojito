@@ -253,7 +253,7 @@ which names the upstream pass each one follows. Each is measured by the
     and the check's (`f`, or `symbol::declaration_owner`'s `f@decl1` for
     an overload); after the entry's classification is deleted, one owner
     remains.
-  - The obstacle: the demand chain is `&self` (`ty_from_anno` →
+  - The obstacle: the demand chain is `&self` (`ty_from_spelling` →
     `applied_call` / `violated_application_constraint` →
     `selected_application_at`), and emitting a signature pushes onto the
     `&mut self` scope stacks (`push_param_scope`, `in_owner_scope`,
@@ -5214,7 +5214,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   L[1], found Bool", where the pin reads the local and prints `True`.
   - A name resolves through the innermost scope at the pin, so the local
     binding hides the module struct in every position.
-  - `Checker::ty_from_anno`'s `SourceType::Named` arm
+  - `Checker::ty_from_spelling`'s `SourceType::Named` arm
     (`checker/type_resolution.rs`) asks `applied_type_at_depth` first and
     reads the name as a compile-time value (`value_headed_type`) only
     when no type has that name, so a module type wins over a local value.
@@ -5412,7 +5412,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     nothing. A run-time call through the alias already constructs
     (`infer_type_alias_read`).
   - Lever: resolve a callee naming a type alias to its struct template
-    and spelled instance (`ty_from_anno`), as the `on_instance` arm does
+    and spelled instance (`ty_from_spelling`), as the `on_instance` arm does
     for `G[2](n)`.
   - Probe: `comptime t = StaticString("lit")` then `name[t]()`, and
     `name[StaticString("lit")]()`, over `def name[s: StaticString]() ->
@@ -13365,29 +13365,6 @@ follow-ups the landed producer stages filed come last.
   - Found while landing R1365 (2026-10-27).
   - Depends on R1495.
   - Model: Fable, Not Planned.
-
-- [ ] **R2534 Statement and member annotation slots store a parsed type**
-
-  `VarDecl` and `Comptime` annotations, struct and trait comptime members,
-  enum case payloads, and struct fields (`Param::ty`) hold the `Type` the
-  parser converted, where upstream keeps the annotation expression and
-  evaluates it in a type context.
-  - First slice of the plan at `R2137-the-ast-stores-an-annotation-as-plan.md`
-    (Slice 2): the slots become `Expr`, and `Checker::ty_from_anno(&Expr)`
-    converts with `Expr::annotation_type` before resolving.
-  - Keep a `&SourceType` overload (`ty_from_spelling`) for the slots later
-    entries switch.
-  - Add `Visitor::visit_annotation` and `MutVisitor::visit_annotation_mut`,
-    called at every annotation slot, with counterparts for the
-    `visit_type` overrides that are sensitive to type position.
-  - The linker's `rewrite_stmt` rewrites the switched slots through
-    `rewrite_expr`.
-  - Comptime needs a position-aware `rewrite.rs::retype_annotation`:
-    `retype_expr` does not substitute a bare identifier.
-  - Stop condition: `emit-mir` on fixtures exercising the slots is
-    byte-identical to the base.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R2535 Signature annotation slots store a parsed type**
 

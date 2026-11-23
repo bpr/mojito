@@ -204,7 +204,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     let fname = self.expect_identifier("Expected a field name")?;
                     reject_parameter_redefinition(&type_params, &fname, self.last_span)?;
                     self.expect(&Token::Colon, "Fields require a type annotation")?;
-                    let ty = self.parse_type()?;
+                    let ty = self.parse_annotation()?;
                     if matches!(self.peek_token()?, Some(Token::Assign)) {
                         self.next_token()?;
                         self.parse_expression(Precedence::Lowest)?;
@@ -322,7 +322,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         };
         let ty = if matches!(self.peek_token()?, Some(Token::Colon)) {
             self.next_token()?;
-            Some(self.parse_type()?)
+            Some(self.parse_annotation()?)
         } else {
             None
         };
@@ -595,9 +595,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         };
         self.expect(&Token::Colon, "Expected ':' after the comptime member name")?;
         // The annotation is one expression; a trait composition is its `&`.
-        let expr = self.parse_expression(Precedence::Walrus)?;
-        let ty = expr.composition_type().ok_or_else(|| {
-            ParseError::Message("expected a type, found an expression".to_string()).at(expr.span)
+        let ty = self.parse_expression(Precedence::Walrus)?;
+        ty.composition_type().ok_or_else(|| {
+            ParseError::Message("expected a type, found an expression".to_string()).at(ty.span)
         })?;
         let where_clauses = self.parse_where_clauses()?;
         let default = if matches!(self.peek_token()?, Some(Token::Assign)) {
@@ -1189,7 +1189,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.next_token()?;
         let mut payload = Vec::new();
         while !matches!(self.peek_token()?, Some(Token::RParen)) {
-            payload.push(self.parse_type()?);
+            payload.push(self.parse_annotation()?);
             match self.peek_token()? {
                 Some(Token::Colon | Token::Assign) => {
                     return Err(ParseError::Message(

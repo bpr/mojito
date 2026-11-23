@@ -951,7 +951,9 @@ pub const DTYPE_INTEGER_MASK: u8 = 128;
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Param {
     pub name: String,
-    pub ty: Type,
+    /// The field's annotation expression, which the checker converts in the
+    /// type context ([`Expr::annotation_type`]).
+    pub ty: Expr,
 }
 
 /// A function/method parameter, e.g. `a: Int`, `b: Int = 2`, `*rest: Int`,
@@ -1264,12 +1266,22 @@ pub struct TraitComptime {
     /// (`comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
     /// Origin[mut=iterable_mut]]: Iterator`); empty for a monomorphic member.
     pub params: Vec<TypeParam>,
-    pub ty: Type,
+    /// The member's annotation expression, where an `&` chain composes
+    /// traits ([`Self::annotation_type`]).
+    pub ty: Expr,
     /// Optional availability constraint, including the diagnostic tuple form.
     pub where_clauses: Vec<Expr>,
     /// The member a conformer that omits it takes, read with `Self` as
     /// the conformer.
     pub default: Option<Expr>,
+}
+
+impl TraitComptime {
+    /// The member's annotation converted in its type context, where an `&`
+    /// chain is a trait composition ([`Expr::composition_type`]).
+    pub fn annotation_type(&self) -> Option<Type> {
+        self.ty.composition_type()
+    }
 }
 
 /// Whether a declaration of cases is an `enum`, whose cases carry no
@@ -1338,7 +1350,9 @@ impl<'a> IntoIterator for &'a mut SumCases {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EnumCase {
     pub name: String,
-    pub payload: Vec<Type>,
+    /// The payload annotation expressions, each converted in the type
+    /// context ([`Expr::annotation_type`]).
+    pub payload: Vec<Expr>,
     /// The `case` declaration's source span, where each member it generates
     /// is located.
     pub span: Span,
@@ -1352,9 +1366,10 @@ pub struct StructComptime {
     /// Parameter declarations when this defines a parameterized associated type
     /// (`comptime IteratorType[params] = ...`); empty for a monomorphic member.
     pub params: Vec<TypeParam>,
-    /// Optional declared result/value type. Associated aliases use `AnyType` or
-    /// a trait bound; value members commonly use a scalar type.
-    pub ty: Option<Type>,
+    /// Optional declared result/value type's annotation expression. Associated
+    /// aliases use `AnyType` or a trait bound; value members commonly use a
+    /// scalar type.
+    pub ty: Option<Expr>,
     /// Optional availability constraint, including the diagnostic tuple form.
     pub where_clauses: Vec<Expr>,
     pub value: Expr,
@@ -1935,7 +1950,8 @@ pub enum StmtKind {
     /// comes from `value`, materializing a literal to its default kind).
     VarDecl {
         name: String,
-        ty: Option<Type>,
+        /// The annotation expression, converted in the type context.
+        ty: Option<Expr>,
         value: Expr,
     },
     /// `ref name = place` — a local reference binding. It aliases the source
@@ -2048,8 +2064,8 @@ pub enum StmtKind {
         /// Retained for generic compile-time aliases. Ordinary constants leave
         /// this empty.
         type_params: Vec<TypeParam>,
-        /// Optional declared result/value type.
-        ty: Option<Type>,
+        /// Optional declared result/value type's annotation expression.
+        ty: Option<Expr>,
         /// Optional availability constraint, including its diagnostic message.
         where_clauses: Vec<Expr>,
         value: Expr,
@@ -3646,7 +3662,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
             match kind {
                 StmtKind::VarDecl { ty, value, .. } => {
                     if let Some(ty) = ty {
-                        self.ty(ty);
+                        self.expr(ty);
                     }
                     self.expr(value);
                 }
@@ -3668,7 +3684,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                 } => {
                     self.type_params(type_params);
                     if let Some(ty) = ty {
-                        self.ty(ty);
+                        self.expr(ty);
                     }
                     for condition in where_clauses {
                         self.expr(condition);
@@ -3799,19 +3815,19 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                         self.expr(condition);
                     }
                     for field in fields {
-                        self.ty(&mut field.ty);
+                        self.expr(&mut field.ty);
                     }
                     for ty in enum_cases
                         .iter_mut()
                         .flatten()
                         .flat_map(|case| &mut case.payload)
                     {
-                        self.ty(ty);
+                        self.expr(ty);
                     }
                     for member in associated {
                         self.type_params(&mut member.params);
                         if let Some(ty) = &mut member.ty {
-                            self.ty(ty);
+                            self.expr(ty);
                         }
                         for condition in &mut member.where_clauses {
                             self.expr(condition);
@@ -3884,7 +3900,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                     }
                     for member in comptime_members {
                         self.type_params(&mut member.params);
-                        self.ty(&mut member.ty);
+                        self.expr(&mut member.ty);
                         for condition in &mut member.where_clauses {
                             self.expr(condition);
                         }

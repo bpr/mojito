@@ -62,7 +62,10 @@ pub(super) fn comptime_defaults(members: &[TraitComptime]) -> Vec<StructComptime
             Some(StructComptime {
                 name: member.name.clone(),
                 params: member.params.clone(),
-                ty: Some(member.ty.clone()),
+                ty: Some(Expr::new(
+                    ExprKind::TypeValue(member.annotation_type()?),
+                    member.ty.span,
+                )),
                 where_clauses: member.where_clauses.clone(),
                 value: member.default.clone()?,
             })
@@ -90,18 +93,18 @@ impl Checker {
     /// or a compile-time generic.
     pub(super) fn reject_trait_typed_storage(
         &self,
-        ty: &mojito_ast::ast::Type,
+        annotation: &Expr,
         storage: &'static str,
     ) -> Result<(), TypeError> {
-        match ty {
+        match annotation_spelling(annotation)? {
             mojito_ast::ast::Type::Named(name, arguments)
                 if arguments.is_empty()
-                    && !self.structs.contains_key(name)
-                    && self.check_trait_name(name).is_ok() =>
+                    && !self.structs.contains_key(&name)
+                    && self.check_trait_name(&name).is_ok() =>
             {
                 Err(TypeError::TraitTypedStorage {
                     storage,
-                    trait_name: name.rsplit('$').next().unwrap_or(name).to_string(),
+                    trait_name: name.rsplit('$').next().unwrap_or(&name).to_string(),
                 })
             }
             _ => Ok(()),
@@ -180,7 +183,7 @@ impl Checker {
         let found = found?;
         let declared = match annotation {
             None => found.ty,
-            Some(annotation) => match self.ty_from_anno(annotation)?.kind() {
+            Some(annotation) => match self.ty_from_spelling(annotation)?.kind() {
                 TyKind::AnyTrait(declared) if self.traits_satisfy(&found.ty, declared) => {
                     declared.clone()
                 }
@@ -356,7 +359,12 @@ impl Checker {
                 self.classify_params(&owner, &member.params)?
             };
             let declared = self.in_param_scope(&decls, |checker| {
-                checker.ct_member_req_from_anno(&member.params, &member.ty)
+                let annotation = member.annotation_type().ok_or_else(|| {
+                    TypeError::InvariantViolation(
+                        "a trait member's annotation holds no annotation".to_string(),
+                    )
+                })?;
+                checker.ct_member_req_from_anno(&member.params, &annotation)
             })?;
             let (requirement, constraints) = match declared {
                 CtMemberReq::Value(result) if !member.params.is_empty() => {
@@ -620,7 +628,7 @@ impl Checker {
         self.enclosing_param_decls.extend(declared.iter().cloned());
         let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
             if let Some(annotation) = &m.self_type {
-                let ty = this.ty_from_anno(annotation)?;
+                let ty = this.ty_from_spelling(annotation)?;
                 if ty != Ty::self_type() {
                     return Err(TypeError::InvalidReceiver(format!(
                         "'self' argument must have type 'Self' in trait method declaration, but actually has type '{ty}'"
@@ -636,8 +644,8 @@ impl Checker {
                 .collect::<Vec<_>>();
             let all_types = this.param_tys(&m.params)?;
             let ret = match &m.ret {
-                Some(SourceType::Ref { referent, .. }) => this.ty_from_anno(referent)?,
-                Some(t) => this.ty_from_anno(t)?,
+                Some(SourceType::Ref { referent, .. }) => this.ty_from_spelling(referent)?,
+                Some(t) => this.ty_from_spelling(t)?,
                 None => Ty::none(),
             };
             let error = this.declared_error(m.raises, m.raises_type.as_ref())?;
@@ -852,14 +860,16 @@ impl Checker {
                 ref_fields: declaration
                     .fields
                     .iter()
-                    .filter(|field| matches!(field.ty, SourceType::Ref { .. }))
+                    .filter(|field| {
+                        matches!(field.ty.annotation_type(), Some(SourceType::Ref { .. }))
+                    })
                     .map(|field| field.name.clone())
                     .collect(),
                 declared_field_types: declaration
                     .fields
                     .iter()
-                    .map(|field| field.ty.clone())
-                    .collect(),
+                    .map(|field| annotation_spelling(&field.ty))
+                    .collect::<Result<_, _>>()?,
                 field_origin_arguments: HashMap::new(),
                 associated: HashMap::new(),
                 associated_value_types: HashMap::new(),
@@ -1254,6 +1264,7 @@ impl Checker {
                 return Err(TypeError::Redeclaration(f.name.clone()));
             }
             self.reject_trait_typed_storage(&f.ty, "struct fields")?;
+            let spelling = annotation_spelling(&f.ty)?;
             // A field's `Self.name` resolves declared parameters and (now
             // pre-installed) associated members; a residual miss on `Self`
             // itself still reports an unknown parameter. Field annotations are
@@ -1262,9 +1273,9 @@ impl Checker {
             // whose annotations reconstruct already-checked types with the
             // origin identity legitimately erased.
             let ty = if declaration.name.contains('$') {
-                self.ty_from_anno(&f.ty)
+                self.ty_from_spelling(&spelling)
             } else {
-                self.resolve_storage_annotation(&f.ty, super::StorageStrictness::Full)
+                self.resolve_storage_annotation(&spelling, super::StorageStrictness::Full)
             }
             .map_err(|error| match error {
                 TypeError::NoSuchAssociatedType {
@@ -1332,7 +1343,7 @@ impl Checker {
                 ty.clone(),
             );
             if let Some(bindings) =
-                self.field_origin_binder_arguments(&f.ty, declaration.associated)
+                self.field_origin_binder_arguments(&spelling, declaration.associated)
             {
                 field_origin_arguments.insert(f.name.clone(), bindings);
             }
@@ -1351,7 +1362,7 @@ impl Checker {
                         annotation,
                         declaration.type_params,
                     ),
-                _ => self.ty_from_anno(annotation),
+                _ => self.ty_from_spelling(annotation),
             })
             .transpose()?;
         Ok((

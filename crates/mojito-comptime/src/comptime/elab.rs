@@ -274,14 +274,17 @@ fn self_qualified(name: &str) -> String {
 /// `var`, with that type spelled; `None` for any other statement.
 fn contextual_comptime(stmt: &Stmt) -> Option<Stmt> {
     let StmtKind::Comptime {
-        ty: Some(Type::Named(base, args)),
+        ty: Some(annotation),
         value,
         ..
     } = &stmt.kind
     else {
         return None;
     };
-    let resolved = with_contextual_base(value, base, args)?;
+    let Some(Type::Named(base, args)) = annotation.annotation_type() else {
+        return None;
+    };
+    let resolved = with_contextual_base(value, &base, &args)?;
     let mut rewritten = stmt.clone();
     if let StmtKind::Comptime { value, .. } = &mut rewritten.kind {
         *value = resolved;

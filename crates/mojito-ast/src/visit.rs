@@ -28,6 +28,10 @@ pub trait Visitor {
     /// A type annotation, reported before its children.
     fn visit_type(&mut self, _ty: &Type) {}
 
+    /// An annotation slot's expression, reported before it is walked as an
+    /// expression.
+    fn visit_annotation(&mut self, _annotation: &Expr) {}
+
     /// A `case` pattern, reported before its children.
     fn visit_pattern(&mut self, _pattern: &MatchPattern) {}
 
@@ -52,9 +56,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
     visitor.visit_stmt(statement);
     match &statement.kind {
         StmtKind::VarDecl { ty, value, .. } => {
-            if let Some(ty) = ty {
-                walk_type(visitor, ty);
-            }
+            walk_optional_annotation(visitor, ty.as_ref());
             walk_expr(visitor, value);
         }
         StmtKind::RefDecl { value, .. }
@@ -166,7 +168,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
                 return;
             }
             walk_type_params(visitor, type_params);
-            walk_optional_type(visitor, ty.as_ref());
+            walk_optional_annotation(visitor, ty.as_ref());
             walk_exprs(visitor, where_clauses);
             walk_expr(visitor, value);
         }
@@ -517,6 +519,13 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
     }
 }
 
+/// An annotation slot's expression: reported to
+/// [`Visitor::visit_annotation`], then walked as an expression.
+pub fn walk_annotation<V: Visitor>(visitor: &mut V, annotation: &Expr) {
+    visitor.visit_annotation(annotation);
+    walk_expr(visitor, annotation);
+}
+
 pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
     visitor.visit_type(ty);
     match ty {
@@ -615,7 +624,7 @@ pub fn walk_decorators<V: Visitor>(visitor: &mut V, decorators: &[Decorator]) {
 
 /// A struct field declaration.
 pub fn walk_field<V: Visitor>(visitor: &mut V, field: &Param) {
-    walk_type(visitor, &field.ty);
+    walk_annotation(visitor, &field.ty);
 }
 
 /// A struct's `comptime` member, inside the scope of its own parameters.
@@ -629,7 +638,7 @@ pub fn walk_struct_comptime<V: Visitor>(visitor: &mut V, member: &StructComptime
         return;
     }
     walk_type_params(visitor, &member.params);
-    walk_optional_type(visitor, member.ty.as_ref());
+    walk_optional_annotation(visitor, member.ty.as_ref());
     walk_exprs(visitor, &member.where_clauses);
     walk_expr(visitor, &member.value);
 }
@@ -700,7 +709,7 @@ pub fn walk_trait_comptime<V: Visitor>(visitor: &mut V, member: &TraitComptime) 
         return;
     }
     walk_type_params(visitor, &member.params);
-    walk_type(visitor, &member.ty);
+    walk_annotation(visitor, &member.ty);
     walk_exprs(visitor, &member.where_clauses);
     if let Some(default) = &member.default {
         walk_expr(visitor, default);
@@ -818,6 +827,12 @@ fn walk_function_type_param<V: Visitor>(visitor: &mut V, parameter: &FunctionTyp
     walk_exprs(visitor, parameter.origin.as_deref().unwrap_or_default());
 }
 
+fn walk_optional_annotation<V: Visitor>(visitor: &mut V, annotation: Option<&Expr>) {
+    if let Some(annotation) = annotation {
+        walk_annotation(visitor, annotation);
+    }
+}
+
 fn walk_optional_type<V: Visitor>(visitor: &mut V, ty: Option<&Type>) {
     if let Some(ty) = ty {
         walk_type(visitor, ty);
@@ -860,6 +875,10 @@ pub trait MutVisitor {
     /// A type annotation, reported after its children.
     fn visit_type_mut(&mut self, _ty: &mut Type) {}
 
+    /// An annotation slot's expression, reported after it is walked as an
+    /// expression.
+    fn visit_annotation_mut(&mut self, _annotation: &mut Expr) {}
+
     /// A `case` pattern, reported after its children.
     fn visit_pattern_mut(&mut self, _pattern: &mut MatchPattern) {}
 
@@ -884,7 +903,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
     match &mut statement.kind {
         StmtKind::VarDecl { ty, value, .. } => {
             if let Some(ty) = ty {
-                walk_type_mut(visitor, ty);
+                walk_annotation_mut(visitor, ty);
             }
             walk_expr_mut(visitor, value);
         }
@@ -906,7 +925,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
         } => {
             walk_type_params_mut(visitor, type_params);
             if let Some(ty) = ty {
-                walk_type_mut(visitor, ty);
+                walk_annotation_mut(visitor, ty);
             }
             for condition in where_clauses {
                 walk_expr_mut(visitor, condition);
@@ -1033,13 +1052,13 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
                 walk_expr_mut(visitor, condition);
             }
             for field in fields {
-                walk_type_mut(visitor, &mut field.ty);
+                walk_annotation_mut(visitor, &mut field.ty);
             }
             walk_enum_cases_mut(visitor, enum_cases.as_deref_mut());
             for member in associated {
                 walk_type_params_mut(visitor, &mut member.params);
                 if let Some(ty) = &mut member.ty {
-                    walk_type_mut(visitor, ty);
+                    walk_annotation_mut(visitor, ty);
                 }
                 for condition in &mut member.where_clauses {
                     walk_expr_mut(visitor, condition);
@@ -1061,7 +1080,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             }
             for member in comptime_members {
                 walk_type_params_mut(visitor, &mut member.params);
-                walk_type_mut(visitor, &mut member.ty);
+                walk_annotation_mut(visitor, &mut member.ty);
                 for condition in &mut member.where_clauses {
                     walk_expr_mut(visitor, condition);
                 }
@@ -1325,6 +1344,13 @@ pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
 }
 
 /// Walk a type annotation's embedded expressions and nested types in place.
+/// [`walk_annotation`] in place: the expression's walk, then
+/// [`MutVisitor::visit_annotation_mut`].
+pub fn walk_annotation_mut<V: MutVisitor>(visitor: &mut V, annotation: &mut Expr) {
+    walk_expr_mut(visitor, annotation);
+    visitor.visit_annotation_mut(annotation);
+}
+
 pub fn walk_type_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
     walk_type_children_mut(visitor, ty);
     visitor.visit_type_mut(ty);
@@ -1490,18 +1516,18 @@ fn walk_decorators_mut<V: MutVisitor>(visitor: &mut V, decorators: &mut [Decorat
 
 /// The payload types of an `enum`'s cases; nothing for a `struct`.
 fn walk_enum_cases<V: Visitor>(visitor: &mut V, cases: Option<&[EnumCase]>) {
-    for ty in cases.into_iter().flatten().flat_map(|case| &case.payload) {
-        walk_type(visitor, ty);
+    for payload in cases.into_iter().flatten().flat_map(|case| &case.payload) {
+        walk_annotation(visitor, payload);
     }
 }
 
 /// [`walk_enum_cases`] in place.
 fn walk_enum_cases_mut<V: MutVisitor>(visitor: &mut V, cases: Option<&mut [EnumCase]>) {
-    for ty in cases
+    for payload in cases
         .into_iter()
         .flatten()
         .flat_map(|case| &mut case.payload)
     {
-        walk_type_mut(visitor, ty);
+        walk_annotation_mut(visitor, payload);
     }
 }

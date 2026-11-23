@@ -309,7 +309,7 @@ impl Checker {
 
     fn rebind_target_ty(&self, target: &ParamArg) -> Result<Ty, TypeError> {
         match target {
-            ParamArg::Type(annotation) => self.ty_from_anno(annotation),
+            ParamArg::Type(annotation) => self.ty_from_spelling(annotation),
             // `Dest` is a type parameter, so a value argument (`List[T]`,
             // `type_of(x)`) is the type its expression denotes.
             ParamArg::Value(expr) => self.denoted_type(expr, "rebind's type parameter 'dest_type'"),

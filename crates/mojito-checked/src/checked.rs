@@ -6716,6 +6716,11 @@ impl<'a> ArenaBuilder<'a> {
         self.applications(|applied| mojito_ast::visit::walk_type(applied, ty))
     }
 
+    /// [`Self::type_applications`] for an annotation slot's expression.
+    fn annotation_applications(&mut self, annotation: &Expr) -> Vec<CheckedNodeId> {
+        self.applications(|applied| mojito_ast::visit::walk_annotation(applied, annotation))
+    }
+
     /// [`Self::type_applications`] for a bracket argument written as a
     /// value that the check bound to a type or an origin: the argument is
     /// an attribute, and only its lifted applications are nodes.
@@ -6946,7 +6951,10 @@ impl<'a> ArenaBuilder<'a> {
                     .enumerate()
                     .map(|(field, declared)| CheckedField {
                         name: declared.name.clone(),
-                        reference: matches!(declared.ty, mojito_ast::ast::SourceType::Ref { .. }),
+                        reference: matches!(
+                            declared.ty.annotation_type(),
+                            Some(mojito_ast::ast::SourceType::Ref { .. })
+                        ),
                         fieldwise_convention: conventions
                             .and_then(|conventions| conventions.get(field).copied().flatten()),
                         fieldwise_ref: ref_params
@@ -7081,7 +7089,7 @@ impl<'a> ArenaBuilder<'a> {
                 name: name.clone(),
                 applications: ty
                     .as_ref()
-                    .map(|ty| self.type_applications(ty))
+                    .map(|ty| self.annotation_applications(ty))
                     .unwrap_or_default(),
                 value: self.expr(value),
             },

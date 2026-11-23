@@ -117,11 +117,12 @@ impl Checker {
             if !type_params.is_empty() || self.module_trait_constants.contains(name) {
                 continue;
             }
+            let ty = ty.as_ref().and_then(Expr::annotation_type);
             // A `SIMD` annotation converts a scalar initializer to its
             // dtype, splatting it across the lanes, as `SIMD`'s implicit
             // scalar constructor does: `comptime Q: UInt8 = 5` is the
             // `UInt8`, whose operators wrap to its width.
-            if let Some(annotation) = ty
+            if let Some(annotation) = &ty
                 && let Some(vector) = self
                     .closed_module_constant(value)
                     .and_then(|scalar| self.splat_at_annotation(&scalar, annotation))
@@ -169,7 +170,7 @@ impl Checker {
     /// [`has_host_scalar_value`]: mojito_types::types::has_host_scalar_value
     fn splat_at_annotation(&self, scalar: &CtValue, annotation: &SourceType) -> Option<CtValue> {
         let ty = self
-            .ty_from_anno(annotation)
+            .ty_from_spelling(annotation)
             .ok()
             .filter(|ty| !mojito_types::types::has_host_scalar_value(ty.kind()))?;
         let (dtype, width) = mojito_types::types::simd_shape(ty.kind())?;
@@ -182,14 +183,14 @@ impl Checker {
     /// Whether `annotation` declares a constant `Int`.
     pub(super) fn annotates_int(&self, annotation: Option<&SourceType>) -> bool {
         annotation
-            .and_then(|annotation| self.ty_from_anno(annotation).ok())
+            .and_then(|annotation| self.ty_from_spelling(annotation).ok())
             .is_some_and(|declared| declared.is_int())
     }
 
     /// Whether `annotation` declares a constant `String`.
     pub(super) fn annotates_string(&self, annotation: Option<&SourceType>) -> bool {
         annotation
-            .and_then(|annotation| self.ty_from_anno(annotation).ok())
+            .and_then(|annotation| self.ty_from_spelling(annotation).ok())
             .is_some_and(|declared| mojito_types::types::is_nominal_string(&declared))
     }
 
@@ -199,7 +200,7 @@ impl Checker {
         &self,
         annotation: &SourceType,
     ) -> Option<(mojito_ast::ast::Dtype, usize)> {
-        let ty = self.ty_from_anno(annotation).ok()?;
+        let ty = self.ty_from_spelling(annotation).ok()?;
         let (dtype, width) = mojito_types::types::simd_shape(ty.kind())?;
         usize::try_from(width)
             .ok()
@@ -274,7 +275,7 @@ impl Checker {
                 params: params.to_vec(),
             });
         }
-        Ok(CtMemberReq::Value(self.ty_from_anno(ty)?))
+        Ok(CtMemberReq::Value(self.ty_from_spelling(ty)?))
     }
 
     /// `conformance_conditions` are the struct's conditional conformances: a
@@ -338,7 +339,9 @@ impl Checker {
             let requirement = member
                 .ty
                 .as_ref()
-                .map(|annotation| self.ct_member_req_from_anno(&member.params, annotation))
+                .map(|annotation| {
+                    self.ct_member_req_from_anno(&member.params, &annotation_spelling(annotation)?)
+                })
                 .transpose();
             self.pop_param_scope();
             let requirement = requirement?;
@@ -833,7 +836,7 @@ impl Checker {
             (_, SourceType::Func { type_params, .. }) if !type_params.is_empty() => {
                 self.lower_anonymous_callable_type(&format!("$callable:{owner}"), source_ty, params)
             }
-            _ => self.ty_from_anno(source_ty),
+            _ => self.ty_from_spelling(source_ty),
         };
         if let (Ok(template), ExprKind::TypeValue(_)) = (&template, &body.kind) {
             self.record_at(body.source_span()).type_operand = Some(template.clone());
@@ -1831,7 +1834,7 @@ impl Checker {
                     return None;
                 }
                 let result = self.module_def_results.get(name)?;
-                let meta = MetaTy::value(self.ty_from_anno(result).ok()?);
+                let meta = MetaTy::value(self.ty_from_spelling(result).ok()?);
                 let args = args
                     .iter()
                     .map(|argument| self.applied_constant_expr(argument))
@@ -2195,7 +2198,7 @@ impl Checker {
                 let ty = if record {
                     self.type_value(expr, ty)?
                 } else {
-                    self.ty_from_anno(ty)?
+                    self.ty_from_spelling(ty)?
                 };
                 Ok(context.type_shape(ty))
             }
@@ -3348,7 +3351,7 @@ impl Checker {
     ) -> Option<Result<ParamExpr, TypeError>> {
         let symbol = self.function_value(value)?;
         let Some(expected) = annotation
-            .and_then(|annotation| self.ty_from_anno(annotation).ok())
+            .and_then(|annotation| self.ty_from_spelling(annotation).ok())
             .filter(|expected| matches!(expected.kind(), TyKind::Func(_)))
         else {
             return Some(symbol);
@@ -3501,7 +3504,7 @@ impl Checker {
         if matches!(expr.kind, ExprKind::Member { .. })
             && let Some(member) = member_source_type(expr)
                 .filter(|member| !matches!(member, SourceType::SelfParam(_)))
-            && let Ok(ty) = self.ty_from_anno(&member)
+            && let Ok(ty) = self.ty_from_spelling(&member)
         {
             return Ok(self.param_context.type_shape(ty));
         }
@@ -3630,7 +3633,7 @@ impl Checker {
         let kind = mojito_types::types::trivial_predicate_name(name)
             .filter(|_| self.lookup(name).is_none())?;
         let subject = match &*args {
-            [mojito_ast::ast::ParamArg::Type(ty)] => self.ty_from_anno(ty).map(Some),
+            [mojito_ast::ast::ParamArg::Type(ty)] => self.ty_from_spelling(ty).map(Some),
             [mojito_ast::ast::ParamArg::Value(value)] => self.comptime_type_operand(value),
             _ => Err(TypeError::Unsupported(format!(
                 "{name}[T] takes exactly one type argument"
@@ -4215,7 +4218,7 @@ impl Checker {
             }
             ParamArg::Type(ty) => self
                 .trait_type_arg(operand)
-                .unwrap_or_else(|| self.ty_from_anno(ty))
+                .unwrap_or_else(|| self.ty_from_spelling(ty))
                 .map(|ty| self.param_context.type_shape(ty)),
             ParamArg::Named { name, .. } => Err(TypeError::Unsupported(format!(
                 "a keyword operand '{name}=' of a bracketed '__mlir_attr' is not supported"
@@ -4272,7 +4275,7 @@ impl Checker {
                 .iter()
                 .cloned()
                 .zip(&info.declared_field_types)
-                .map(|(field, ty)| self.ty_from_anno(ty).map(|ty| (field, ty)))
+                .map(|(field, ty)| self.ty_from_spelling(ty).map(|ty| (field, ty)))
                 .collect::<Result<Vec<_>, _>>()?
         };
         let fields = field_tys
@@ -5593,7 +5596,7 @@ impl Checker {
                 let Some(SourceType::Assoc { base, name, .. }) = member_source_type(callee) else {
                     return Ok(None);
                 };
-                let ty = self.ty_from_anno(&SourceType::Assoc {
+                let ty = self.ty_from_spelling(&SourceType::Assoc {
                     base,
                     name,
                     args: param_args.clone(),
@@ -5878,7 +5881,9 @@ impl Checker {
                 let attribute = self.lookup_tparam(name).map(TyArg::Ty);
                 return Ok((ConstraintOperand::Param(binder), attribute));
             }
-            mojito_ast::ast::ParamArg::Type(ty) => ConstraintOperand::Type(self.ty_from_anno(ty)?),
+            mojito_ast::ast::ParamArg::Type(ty) => {
+                ConstraintOperand::Type(self.ty_from_spelling(ty)?)
+            }
             mojito_ast::ast::ParamArg::Named { .. } => {
                 return Err(TypeError::Unsupported(
                     "a comptime predicate takes positional arguments".to_string(),

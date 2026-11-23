@@ -29,6 +29,155 @@ pub(super) fn substitute_type_bindings_in_expr(e: &mut Expr, subs: TypeSubs) {
     retype_expr(e, subs);
 }
 
+/// Substitutes the type occurrences of dropped bindings in an annotation
+/// slot's expression, position by position as the substitution of the type
+/// it converts to ([`substitute_type_bindings_in_type`]) does: a bare
+/// binder, `Self.binder`, or bracket operand naming one becomes the bound
+/// type, while a bracket's head and any expression the annotation evaluates
+/// keep their own spelling.
+fn retype_annotation(e: &mut Expr, subs: TypeSubs) {
+    let binder = match &e.kind {
+        ExprKind::Identifier(name) if name != "Self" => Some(name.as_str()),
+        _ => e.self_member(),
+    };
+    if let Some(replacement) = binder.and_then(subs) {
+        e.kind = ExprKind::TypeValue(replacement);
+        return;
+    }
+    if e.self_member().is_some() {
+        return;
+    }
+    let applied_name = e.bracket_operands().map(|(object, args)| {
+        (
+            matches!(&object.kind, ExprKind::Identifier(name) if name != "Self"),
+            args,
+        )
+    });
+    let evaluated = match &mut e.kind {
+        ExprKind::Identifier(_) | ExprKind::None => false,
+        ExprKind::TypeValue(ty) => {
+            substitute_type_bindings_in_type(ty, subs);
+            false
+        }
+        ExprKind::Member { object, .. } if object.annotation_type().is_some() => {
+            retype_annotation(object, subs);
+            false
+        }
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } if name == "type_of" && param_args.is_empty() && args.len() == 1 && kwargs.is_empty() => {
+            false
+        }
+        ExprKind::Index { object, index } if let Some((applied, args)) = applied_name => {
+            if applied {
+                // `Named(name, [])` for the empty subscript `T[]`.
+                if args.is_empty() {
+                    if let ExprKind::Identifier(name) = &object.kind
+                        && let Some(replacement) = subs(name)
+                    {
+                        e.kind = ExprKind::TypeValue(replacement);
+                    }
+                    return;
+                }
+                retype_annotation_operand(index, subs);
+                false
+            } else {
+                !retype_projection(object, &mut [index], args.len() == 1, subs)
+            }
+        }
+        ExprKind::MultiIndex { object, args } if let Some((applied, operands)) = applied_name => {
+            let mut indices: Vec<&mut Expr> = args
+                .iter_mut()
+                .filter_map(|argument| match argument {
+                    mojito_ast::ast::SubscriptArg::Index(value)
+                    | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => Some(value),
+                    _ => None,
+                })
+                .collect();
+            if applied {
+                for index in indices {
+                    retype_annotation_operand(index, subs);
+                }
+                false
+            } else {
+                let projection = operands.len() == 1 && matches!(operands[0], ParamArg::Value(_));
+                !retype_projection(object, &mut indices, projection, subs)
+            }
+        }
+        _ => true,
+    };
+    if evaluated {
+        retype_expr(e, subs);
+    }
+}
+
+/// A bracket on a base other than a plain name: one value operand projects
+/// the base (`Self[0]`), whose index keeps its spelling; any other list
+/// applies an argument-less member (`M.A[T]`), whose base and operands
+/// substitute as an applied type's do. `false` for any other bracket, the
+/// value it evaluates to.
+fn retype_projection(
+    object: &mut Expr,
+    indices: &mut [&mut Expr],
+    projection: bool,
+    subs: TypeSubs,
+) -> bool {
+    let Some(base) = object.annotation_type() else {
+        return false;
+    };
+    if projection && indices.len() == 1 && !matches!(indices[0].kind, ExprKind::TypeValue(_)) {
+        retype_annotation(object, subs);
+        return true;
+    }
+    let ExprKind::Member {
+        object: base_object,
+        ..
+    } = &mut object.kind
+    else {
+        return false;
+    };
+    if !matches!(&base, Type::Assoc { args, .. } if args.is_empty()) {
+        return false;
+    }
+    retype_annotation(base_object, subs);
+    for index in indices {
+        retype_annotation_operand(index, subs);
+    }
+    true
+}
+
+/// A bracket operand of an applied annotation, as
+/// [`substitute_type_bindings_in_type`] substitutes the argument it spells:
+/// a type argument substitutes inside, and a bare or `Self.` binder becomes
+/// the bound type; any other value operand keeps its spelling.
+fn retype_annotation_operand(operand: &mut Expr, subs: TypeSubs) {
+    if let ExprKind::TypeValue(ty) = &mut operand.kind {
+        substitute_type_bindings_in_type(ty, subs);
+        return;
+    }
+    let binder = match &operand.kind {
+        ExprKind::Identifier(name) => Some(name.as_str()),
+        _ => operand.self_member(),
+    };
+    if let Some(replacement) = binder.and_then(subs) {
+        operand.kind = ExprKind::TypeValue(replacement);
+    }
+}
+
+/// [`retype_annotation`] for a trait member's annotation, where an `&`
+/// chain composes traits: each member substitutes as an annotation.
+fn retype_composition(e: &mut Expr, subs: TypeSubs) {
+    if let ExprKind::Infix(mojito_ast::ast::InfixOp::BitAnd, left, right) = &mut e.kind {
+        retype_composition(left, subs);
+        retype_composition(right, subs);
+        return;
+    }
+    retype_annotation(e, subs);
+}
+
 fn retype_condition(condition: &mut mojito_ast::ast::Condition, subs: TypeSubs) {
     if let Some(pattern) = condition.pattern_mut() {
         for value in pattern.expressions_mut() {
@@ -87,7 +236,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
     match &mut s.kind {
         StmtKind::VarDecl { ty, value, .. } => {
             if let Some(ty) = ty {
-                substitute_type_bindings_in_type(ty, subs);
+                retype_annotation(ty, subs);
             }
             retype_expr(value, subs);
         }
@@ -107,7 +256,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 retype_type_parameter(parameter, &inner);
             }
             if let Some(ty) = ty {
-                substitute_type_bindings_in_type(ty, &inner);
+                retype_annotation(ty, &inner);
             }
             for condition in where_clauses {
                 retype_expr(condition, &inner);
@@ -257,14 +406,14 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 retype_expr(condition, &inner);
             }
             for field in fields {
-                substitute_type_bindings_in_type(&mut field.ty, &inner);
+                retype_annotation(&mut field.ty, &inner);
             }
             for ty in enum_cases
                 .iter_mut()
                 .flatten()
                 .flat_map(|case| &mut case.payload)
             {
-                substitute_type_bindings_in_type(ty, &inner);
+                retype_annotation(ty, &inner);
             }
             for member in associated {
                 let member_inner = without_shadowed(&inner, &member.params);
@@ -272,7 +421,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                     retype_type_parameter(parameter, &member_inner);
                 }
                 if let Some(ty) = &mut member.ty {
-                    substitute_type_bindings_in_type(ty, &member_inner);
+                    retype_annotation(ty, &member_inner);
                 }
                 for condition in &mut member.where_clauses {
                     retype_expr(condition, &member_inner);
@@ -321,7 +470,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 for parameter in &mut member.params {
                     retype_type_parameter(parameter, &inner);
                 }
-                substitute_type_bindings_in_type(&mut member.ty, &inner);
+                retype_composition(&mut member.ty, &inner);
                 for condition in &mut member.where_clauses {
                     retype_expr(condition, &inner);
                 }
@@ -669,5 +818,112 @@ fn without_shadowed<'a>(
         } else {
             subs(name)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{retype_annotation, retype_composition, substitute_type_bindings_in_type};
+    use mojito_ast::ast::{Expr, ExprKind, InfixOp, ParamArg, SubscriptArg, Type};
+
+    fn name(spelling: &str) -> Box<Expr> {
+        Box::new(Expr::from(ExprKind::Identifier(spelling.to_string())))
+    }
+
+    fn member(object: Box<Expr>, field: &str) -> Box<Expr> {
+        Box::new(Expr::from(ExprKind::Member {
+            object,
+            field: field.to_string(),
+        }))
+    }
+
+    fn index(object: Box<Expr>, index: Box<Expr>) -> Box<Expr> {
+        Box::new(Expr::from(ExprKind::Index { object, index }))
+    }
+
+    fn list_of_int() -> Type {
+        Type::Named(
+            "List".to_string(),
+            vec![ParamArg::Type(Type::Named("Int".to_string(), Vec::new()))],
+        )
+    }
+
+    fn subs(binder: &str) -> Option<Type> {
+        matches!(binder, "T" | "U" | "M").then(list_of_int)
+    }
+
+    /// The substitution of an annotation's expression converts to the
+    /// substitution of the type it converted to.
+    fn assert_contract(mut annotation: Expr) {
+        let expected = annotation.annotation_type().map(|mut ty| {
+            substitute_type_bindings_in_type(&mut ty, &subs);
+            ty
+        });
+        retype_annotation(&mut annotation, &subs);
+        assert_eq!(annotation.annotation_type(), expected, "{annotation:?}");
+    }
+
+    #[test]
+    fn an_annotation_substitutes_as_the_type_it_converts_to() {
+        // `T`, `Self.T`, `Self`, `None`.
+        assert_contract(*name("T"));
+        assert_contract(*member(name("Self"), "T"));
+        assert_contract(*name("Self"));
+        assert_contract(Expr::from(ExprKind::None));
+        // `List[T]`, `T[Int]` (a head keeps its spelling), `Dict[T, Self.U]`,
+        // `List[f(T)]` (a value operand keeps its spelling).
+        assert_contract(*index(name("List"), name("T")));
+        assert_contract(*index(name("T"), name("Int")));
+        assert_contract(Expr::from(ExprKind::MultiIndex {
+            object: name("Dict"),
+            args: vec![
+                SubscriptArg::Index(*name("T")),
+                SubscriptArg::Keyword {
+                    name: "V".to_string(),
+                    value: *member(name("Self"), "U"),
+                },
+            ],
+        }));
+        assert_contract(*index(
+            name("List"),
+            Box::new(Expr::from(ExprKind::Call {
+                name: "f".to_string(),
+                param_args: Vec::new(),
+                args: vec![*name("T")],
+                kwargs: Vec::new(),
+            })),
+        ));
+        // `M.A` (a namespace base substitutes), `Self.A[T]`, `Self.T[0]`.
+        assert_contract(*member(name("M"), "A"));
+        assert_contract(*index(member(name("Self"), "A"), name("T")));
+        assert_contract(*index(
+            member(name("Self"), "T"),
+            Box::new(Expr::from(ExprKind::Int(0.into()))),
+        ));
+        // `type_of(T)` reads no binder; `T if c else U` evaluates.
+        assert_contract(Expr::from(ExprKind::Call {
+            name: "type_of".to_string(),
+            param_args: Vec::new(),
+            args: vec![*name("T")],
+            kwargs: Vec::new(),
+        }));
+        assert_contract(Expr::from(ExprKind::IfExpr {
+            cond: name("c"),
+            then_branch: name("T"),
+            else_branch: name("U"),
+        }));
+    }
+
+    #[test]
+    fn a_composition_substitutes_each_member() {
+        let mut composition = Expr::from(ExprKind::Infix(
+            InfixOp::BitAnd,
+            name("Copyable"),
+            index(name("Sized"), name("T")),
+        ));
+        let mut expected = composition.composition_type().expect("a composition");
+        substitute_type_bindings_in_type(&mut expected, &subs);
+        retype_composition(&mut composition, &subs);
+        assert_eq!(composition.composition_type(), Some(expected));
     }
 }

@@ -6,6 +6,14 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Changed
+
+- A `var` or `comptime` annotation, a struct or trait `comptime` member's
+  annotation, a struct field's type, and a union case's payload are stored
+  as the annotation expression, which the checker converts in its type
+  context when it reads it, as upstream keeps an annotation (R2534). No
+  program's behavior changes.
+
 ### Added
 
 - A `comptime` bound to a conditional whose arms are types is the type its

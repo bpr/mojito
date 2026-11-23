@@ -102,7 +102,7 @@ impl Checker {
                 };
                 (
                     SigOrigin::Param(index),
-                    self.ty_from_anno(&params[index].ty)?,
+                    self.ty_from_spelling(&params[index].ty)?,
                 )
             }
             _ => {
@@ -301,7 +301,7 @@ impl Checker {
         }
         // The bare struct (`Origin(o)`) leaves its parameters to the
         // conversion: the struct at its own binders.
-        let callee = match self.ty_from_anno(&mojito_ast::ast::Type::Named(
+        let callee = match self.ty_from_spelling(&mojito_ast::ast::Type::Named(
             name.clone(),
             param_args.clone(),
         )) {

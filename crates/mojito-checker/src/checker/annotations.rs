@@ -68,7 +68,7 @@ impl Checker {
             && name == "dtype"
             && args.is_empty()
             && let Some(dtype) = self
-                .ty_from_anno(base)
+                .ty_from_spelling(base)
                 .ok()
                 .as_ref()
                 .and_then(super::indexing::simd_dtype)

@@ -1546,7 +1546,7 @@ impl Checker {
             return Ok(None);
         }
         Ok(Some(match raises_type {
-            Some(error) => self.ty_from_anno(error)?,
+            Some(error) => self.ty_from_spelling(error)?,
             None => Ty::error(),
         }))
     }
@@ -4386,7 +4386,8 @@ mod type_resolution;
 use type_resolution::{
     BoundMutability, BoundOrigin, BoundParameters, BracketOrigins, BracketUse, DeclaredAttributes,
     DependentValues, EXTERNAL_CALL_PARAMS, ExplicitTypes, T_PARAMS, TYPE_PARAMS, VALUE_PACK_PARAMS,
-    VARIANT_REPLACE_PARAMS, bracket_attribute, tyarg_is_symbolic, types_attributes,
+    VARIANT_REPLACE_PARAMS, annotation_spelling, bracket_attribute, tyarg_is_symbolic,
+    types_attributes,
 };
 
 mod constraints;

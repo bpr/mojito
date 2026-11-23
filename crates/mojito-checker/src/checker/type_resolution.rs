@@ -24,6 +24,15 @@ pub(super) fn reject_stored_callable_type(ty: &Ty, position: &str) -> Result<(),
     Ok(())
 }
 
+/// The type an annotation slot's expression spells, converted in the type
+/// context as upstream evaluates it ([`Expr::annotation_type`]). The parser
+/// stores only annotations that convert.
+pub(super) fn annotation_spelling(annotation: &Expr) -> Result<SourceType, TypeError> {
+    annotation.annotation_type().ok_or_else(|| {
+        TypeError::InvariantViolation("an annotation slot holds no annotation".to_string())
+    })
+}
+
 /// Reject invoking a value whose type is a non-`thin` `def(...)`: that
 /// spelling names a trait, so the value has upstream's
 /// `AnyTrait[def(...)]` type, which its `__call__` requirement's `Self`
@@ -590,9 +599,15 @@ impl StructBracket {
 }
 
 impl Checker {
+    /// The type an annotation slot's expression denotes, converted in the
+    /// type context ([`Self::annotation_spelling`]) and resolved.
+    pub(super) fn ty_from_anno(&self, annotation: &Expr) -> Result<Ty, TypeError> {
+        self.ty_from_spelling(&annotation_spelling(annotation)?)
+    }
+
     /// The type denoted by a source annotation; resolves type parameters and
     /// validates struct names and type-argument counts.
-    pub(super) fn ty_from_anno(&self, ty: &SourceType) -> Result<Ty, TypeError> {
+    pub(super) fn ty_from_spelling(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         self.resolve_ty_from_anno(ty)
     }
 
@@ -1459,7 +1474,7 @@ impl Checker {
         {
             return Ok((generator, Some(name)));
         }
-        self.ty_from_anno(base)
+        self.ty_from_spelling(base)
             .or_else(|error| self.value_base_type(base).ok_or(error))
             .map(|ty| (ty, None))
     }
@@ -1614,7 +1629,7 @@ impl Checker {
                     context: format!("associated value parameter '{}'", param.name),
                 });
             }
-            ParamArg::Type(ty) => return self.ty_from_anno(ty).map(TyArg::Ty),
+            ParamArg::Type(ty) => return self.ty_from_spelling(ty).map(TyArg::Ty),
             ParamArg::Named { name, .. } => {
                 return Err(TypeError::Unsupported(format!(
                     "the keyword argument '{name}=' of an associated member application"
@@ -1636,10 +1651,10 @@ impl Checker {
         // evaluate to a compile-time type value.
         let ty = match &arg.kind {
             ExprKind::Identifier(id) => {
-                self.ty_from_anno(&SourceType::Named(id.clone(), Vec::new()))?
+                self.ty_from_spelling(&SourceType::Named(id.clone(), Vec::new()))?
             }
             ExprKind::Member { .. } if let Some(spelled) = arg.type_spelling() => {
-                self.ty_from_anno(&spelled)?
+                self.ty_from_spelling(&spelled)?
             }
             _ => match self.eval_associated_ct(arg)? {
                 CtValue::Type(ty) => ty,
@@ -1738,7 +1753,7 @@ impl Checker {
         // spelling names the enclosing struct's pack.
         if args.is_empty() && name.starts_with('*') && self.self_ty.is_some() {
             return self
-                .ty_from_anno(&SourceType::SelfParam(name.to_string()))
+                .ty_from_spelling(&SourceType::SelfParam(name.to_string()))
                 .map(|ty| (ty, DeclaredAttributes::default()));
         }
         // A `def`'s own `Ts[index]` while the pack is still a
@@ -2030,11 +2045,11 @@ impl Checker {
     fn mlir_type_operand(&self, element: &mojito_ast::ast::ParamArg) -> Result<Ty, TypeError> {
         use mojito_ast::ast::ParamArg;
         match element {
-            ParamArg::Type(ty) => self.ty_from_anno(ty),
+            ParamArg::Type(ty) => self.ty_from_spelling(ty),
             ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(name),
                 ..
-            }) => self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new())),
+            }) => self.ty_from_spelling(&SourceType::Named(name.clone(), Vec::new())),
             ParamArg::Value(Expr {
                 kind: ExprKind::Member { object, field },
                 ..
@@ -2042,7 +2057,7 @@ impl Checker {
                 mojito_types::types::mlir_type_named(field).ok_or_else(unsupported_mlir_type)
             }
             ParamArg::Value(expr) if expr.self_member().is_some() => {
-                self.ty_from_anno(&expr.type_spelling().ok_or_else(unsupported_mlir_type)?)
+                self.ty_from_spelling(&expr.type_spelling().ok_or_else(unsupported_mlir_type)?)
             }
             _ => Err(unsupported_mlir_type()),
         }
@@ -2484,7 +2499,7 @@ impl Checker {
         strictness: super::StorageStrictness,
     ) -> Result<Ty, TypeError> {
         let saved = self.strict_storage_annotation.replace(strictness);
-        let result = self.ty_from_anno(annotation);
+        let result = self.ty_from_spelling(annotation);
         self.strict_storage_annotation.set(saved);
         result
     }
@@ -2610,8 +2625,8 @@ impl Checker {
             SourceType::Named(binding, arguments) if arguments.is_empty() => self
                 .lookup(binding)
                 .cloned()
-                .map_or_else(|| self.ty_from_anno(base), Ok)?,
-            _ => self.ty_from_anno(base)?,
+                .map_or_else(|| self.ty_from_spelling(base), Ok)?,
+            _ => self.ty_from_spelling(base)?,
         };
 
         // Public Tuple exposes its concrete element pack as `element_types`.
@@ -3661,7 +3676,7 @@ impl Checker {
                 // A bare or parameterized type argument the parser encoded as a
                 // value expression binds the type, which is its attribute.
                 let ty = match arg {
-                    ParamArg::Type(t) => self.ty_from_anno(t)?,
+                    ParamArg::Type(t) => self.ty_from_spelling(t)?,
                     // A reflected field type (`reflect[Q].field_at[0].T`,
                     // or a name bound to one) is an `AnyType` value, which
                     // binds only a binder that asks nothing more of it.
@@ -4010,7 +4025,7 @@ impl Checker {
     /// Resolve the type in value position `expr`, `ty`, recording the type
     /// at it ([`mojito_checked::checked::NodeFacts::type_operand`]).
     pub(super) fn type_value(&self, expr: &Expr, ty: &SourceType) -> Result<Ty, TypeError> {
-        let resolved = self.ty_from_anno(ty)?;
+        let resolved = self.ty_from_spelling(ty)?;
         self.record_at(expr.source_span()).type_operand = Some(resolved.clone());
         Ok(resolved)
     }
@@ -4068,7 +4083,7 @@ impl Checker {
         argument: &mojito_ast::ast::ParamArg,
     ) -> Result<Ty, TypeError> {
         let resolved = match argument {
-            mojito_ast::ast::ParamArg::Type(ty) => self.ty_from_anno(ty),
+            mojito_ast::ast::ParamArg::Type(ty) => self.ty_from_spelling(ty),
             mojito_ast::ast::ParamArg::Value(expression) => {
                 self.denoted_type(expression, &format!("{collection} type argument"))
             }
@@ -4330,11 +4345,11 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         use mojito_ast::ast::ParamArg;
         match argument {
-            ParamArg::Type(t) => self.ty_from_anno(t),
+            ParamArg::Type(t) => self.ty_from_spelling(t),
             ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(id),
                 ..
-            }) => self.ty_from_anno(&SourceType::Named(id.clone(), vec![])),
+            }) => self.ty_from_spelling(&SourceType::Named(id.clone(), vec![])),
             ParamArg::Value(element) => self.denoted_type(element, &format!("{name} element type")),
             ParamArg::Named { value, .. } => self.pointer_element_arg(name, value),
         }
@@ -4534,12 +4549,12 @@ impl Checker {
                 continue;
             }
             let element = match arg {
-                mojito_ast::ast::ParamArg::Type(t) => self.ty_from_anno(t)?,
+                mojito_ast::ast::ParamArg::Type(t) => self.ty_from_spelling(t)?,
                 // A bare-identifier arg is reinterpreted as a type (as elsewhere).
                 mojito_ast::ast::ParamArg::Value(Expr {
                     kind: ExprKind::Identifier(id),
                     ..
-                }) => self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?,
+                }) => self.ty_from_spelling(&SourceType::Named(id.clone(), vec![]))?,
                 mojito_ast::ast::ParamArg::Value(element) => {
                     self.denoted_type(element, "Tuple element type")?
                 }
@@ -4564,7 +4579,7 @@ impl Checker {
             SourceType::SelfParam(name) => {
                 let starred = format!("*{}", name.trim_start_matches('*'));
                 ParamDecl::type_pack_list(&self.self_decls, name)
-                    .and_then(|_| self.ty_from_anno(&SourceType::SelfParam(starred)).ok())
+                    .and_then(|_| self.ty_from_spelling(&SourceType::SelfParam(starred)).ok())
                     .filter(|ty| matches!(ty.kind(), TyKind::Param { .. }))
             }
             SourceType::Named(name, arguments) if arguments.is_empty() => {
@@ -4625,7 +4640,7 @@ impl Checker {
                     name: field.clone(),
                     args: param_args.clone(),
                 };
-                let ty = self.ty_from_anno(&member)?;
+                let ty = self.ty_from_spelling(&member)?;
                 let Some((name, _)) = ty.kind().as_non_pointer_struct() else {
                     return Err(not_construction());
                 };
@@ -4716,7 +4731,7 @@ impl Checker {
             found,
         };
         let type_argument = |source: &SourceType| {
-            self.ty_from_anno(source)
+            self.ty_from_spelling(source)
                 .map(|ty| mismatch(format!("AnyStruct[{ty}]")))
         };
         let value = match arg {
@@ -4811,14 +4826,14 @@ impl Checker {
                     return Err(TypeError::UnknownType(name.clone()));
                 }
                 self.lookup_tparam(name).map_or_else(
-                    || self.ty_from_anno(&SourceType::SelfParam(name.clone())),
+                    || self.ty_from_spelling(&SourceType::SelfParam(name.clone())),
                     Ok,
                 )
             })
         };
         match arg {
             ParamArg::Type(anno @ SourceType::SelfParam(name)) if name.starts_with('*') => {
-                Some(self.ty_from_anno(anno))
+                Some(self.ty_from_spelling(anno))
             }
             ParamArg::Type(SourceType::Named(name, arguments)) if arguments.is_empty() => {
                 pack(name)
@@ -5168,7 +5183,7 @@ impl Checker {
         context: &str,
     ) -> Result<Ty, TypeError> {
         match arg {
-            mojito_ast::ast::ParamArg::Type(ty) => self.ty_from_anno(ty),
+            mojito_ast::ast::ParamArg::Type(ty) => self.ty_from_spelling(ty),
             mojito_ast::ast::ParamArg::Value(expression)
                 if let Some(reflected) = self.reflected_type_operand(expression).transpose() =>
             {
@@ -5177,7 +5192,7 @@ impl Checker {
             mojito_ast::ast::ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(name),
                 ..
-            }) => self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new())),
+            }) => self.ty_from_spelling(&SourceType::Named(name.clone(), Vec::new())),
             mojito_ast::ast::ParamArg::Value(expression) => self.denoted_type(expression, context),
             mojito_ast::ast::ParamArg::Named { .. } => Err(TypeError::Unsupported(format!(
                 "named arguments are not supported in {context}"
