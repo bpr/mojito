@@ -35,6 +35,7 @@ pub(super) fn refine_receiver_drops(
     let mut ends: HashMap<*const MirInstr, Vec<MirInstr>> = HashMap::new();
     let observed = observe_move_states(
         f,
+        declarations,
         entry_move_states(f, Some(receiver)),
         &mut |state, instr| {
             if matches!(instr, MirInstr::DropVar { var: 0, .. }) {

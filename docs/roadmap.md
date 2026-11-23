@@ -11386,31 +11386,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2525 `OperandAddresses` keeps a `ref.make` by its `TyKind::Ref`
-  destination type, not by the call operand it forms**
-
-  Upstream's by-address operand is a `!lit.ref<P>` argument at a `P`
-  parameter, never any value of reference type. `call_operands.rs`'s
-  `collect` (behind `operand_addresses` and `OperandAddresses::extend`)
-  keeps a `ref.make` only when its destination is typed `TyKind::Ref`.
-  That is how it skips the `!lit.ref` `ref.make` `__get_mvalue_as_litref`
-  lowers to, and a merged type cannot tell them apart.
-  - Keep the `ref.make`s a call passes as by-address operands
-    (`mir::call_by_address_operands`, or `mir::addressed_operand` per
-    operand), and those a `ref` binding or a stored handle forms.
-  - Consumers to recheck: `drops.rs`, `inline_parametric.rs` (binding
-    places), `unused_params.rs`, `loans.rs`, `moves.rs`, `sroa.rs`,
-    `register_loans.rs` (receiver seeds), `copy_elision.rs`,
-    `interior.rs`, `scan.rs`, `callable_values.rs`, `register_ends.rs`,
-    and `verify/drops.rs`.
-  - `register_loans.rs`'s `origin_operands`: its `constructs_pointer`
-    operand test (a `Ref` operand of `Untracked` origin) becomes "the
-    operand is a by-address operand". `RegisterLoanStep` needs the call's
-    by-address list precomputed by the scan that owns the `MirFunction`.
-  - Found while landing R2509 (2026-11-22).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2511 `TyKind::LitRef` is a second reference type beside
   `TyKind::Ref`, where upstream's `!lit.ref` is the one reference type**
 
@@ -11448,7 +11423,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     reference: `mir::addressed_receiver`/`receiver_value_ty` callers,
     `function_signature` (`call_addresses.rs`), `bound_calls.rs`'s and
     mono `specializer.rs`'s `peel_refs`, `generic_callable_contract`
-    (`lower_expr/calls.rs`), and `verify/calls.rs`'s `owner_arguments`.
+    (`lower_expr/calls.rs`), `verify/calls.rs`'s `owner_arguments`,
+    `verify/drops.rs`'s `deinit`-receiver `TyKind::Ref` test,
+    `unused_params.rs`'s `receiver_forwarded_owner_params`, and
+    `loans.rs`'s closure `__call__` receiver peel.
+  - `mir::addressed_registers`' type fallback (a receiver, a collector
+    operand, an operand of a call no contract binds) is also what
+    `mir::operand_addresses` keeps, since it reads that set.
   - Audit the type-level reference reads R2509 left in place:
     `inline_parametric.rs`'s `peel_refs` (existential binders),
     `BoundMutabilities::ty`'s separate `LitRef` arm, and

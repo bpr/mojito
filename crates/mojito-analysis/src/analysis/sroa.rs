@@ -162,7 +162,7 @@ pub fn splittable_parameters(
     params: &BTreeSet<VarId>,
 ) -> BTreeSet<VarId> {
     let fields = judged_slots(function, declarations, |var| params.contains(&var));
-    unkept_census(function, &fields)
+    unkept_census(function, declarations, &fields)
         .into_keys()
         .filter(|var| fields.contains_key(var))
         .collect()
@@ -318,7 +318,7 @@ fn splittable_slots(function: &MirFunction, declarations: &MirDeclarations) -> V
                     .is_none_or(|ty| Some(ty) == slot)
             })
     };
-    let mut slots: Vec<Candidate> = unkept_census(function, &fields)
+    let mut slots: Vec<Candidate> = unkept_census(function, declarations, &fields)
         .into_iter()
         .filter(|(var, entry)| entry.defined && typed_wholes(*var, entry))
         .filter_map(|(var, entry)| {
@@ -361,13 +361,14 @@ fn judged_slots<'a>(
 /// ([`keep_address_users`]).
 fn unkept_census(
     function: &MirFunction,
+    declarations: &MirDeclarations,
     fields: &HashMap<VarId, Judged<'_>>,
 ) -> HashMap<VarId, Census> {
     if fields.is_empty() {
         return HashMap::new();
     }
     let mut census = HashMap::new();
-    let addresses = operand_addresses(&function.body, &function.reg_types);
+    let addresses = operand_addresses(function, declarations);
     take_census(&function.body, fields, &addresses, &mut census);
     let collectors: Vec<VarId> = census
         .keys()

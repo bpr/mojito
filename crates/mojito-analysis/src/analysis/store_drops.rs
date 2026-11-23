@@ -37,7 +37,7 @@ pub(super) fn elaborate_store_drops(
     let entry = entry_move_states(f, initializer_receiver_entry(f, name, declarations));
     let handles = make_ref_places(&f.body);
     let mut overwrites: HashMap<*const MirInstr, MirPlace> = HashMap::new();
-    let observed = observe_move_states(f, entry, &mut |state, instr| {
+    let observed = observe_move_states(f, declarations, entry, &mut |state, instr| {
         if let Some(place) = replaced_place(instr, state, f, &handles)
             && !walked(place)
         {
@@ -57,19 +57,27 @@ pub(super) fn elaborate_store_drops(
 /// decided drop can destroy, and module scope has no drop walk to destroy it
 /// on the paths that hold it. Upstream rejects every executable statement at
 /// file scope.
-pub(super) fn module_scope_maybe_moved_refill(f: &MirFunction) -> Result<(), OwnershipError> {
+pub(super) fn module_scope_maybe_moved_refill(
+    f: &MirFunction,
+    declarations: &MirDeclarations,
+) -> Result<(), OwnershipError> {
     let mut refill = None;
-    observe_move_states(f, entry_move_states(f, None), &mut |state, instr| {
-        if let MirInstr::Store { place, src } = instr
-            && refill.is_none()
-            && refills_maybe_moved(state, place)
-        {
-            refill = Some(OwnershipError::ConditionallyMoved {
-                var: place_display(&f.var_names[place.root as usize], &place_path(place)),
-                span: use_span(f, *src),
-            });
-        }
-    })?;
+    observe_move_states(
+        f,
+        declarations,
+        entry_move_states(f, None),
+        &mut |state, instr| {
+            if let MirInstr::Store { place, src } = instr
+                && refill.is_none()
+                && refills_maybe_moved(state, place)
+            {
+                refill = Some(OwnershipError::ConditionallyMoved {
+                    var: place_display(&f.var_names[place.root as usize], &place_path(place)),
+                    span: use_span(f, *src),
+                });
+            }
+        },
+    )?;
     refill.map_or(Ok(()), Err)
 }
 

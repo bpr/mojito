@@ -10,7 +10,7 @@
 
 use crate::mir::{
     Const, MirBlock, MirFunction, MirInstr, MirPlace, OperandSlot, Reg, call_operands,
-    instruction_regions, operand_addresses,
+    instruction_regions,
 };
 use mojito_types::origin::Mutability;
 use mojito_types::types::TyKind;
@@ -146,13 +146,20 @@ fn visit_callables(
 }
 
 /// The variables whose value is not fixed by their definitions: written
-/// whole through a store, a reference, a mutable call operand's address,
-/// or a callable environment, as upstream treats a mutable `!lit.ref` a
-/// call takes as an escape whichever operand it is. A `read` operand's
+/// whole through a store, a reference, a mutable reference handle a call
+/// takes, or a callable environment, as upstream treats a mutable
+/// `!lit.ref` a call takes as an escape whichever operand it is — a
+/// by-address operand or a `!lit.ref` value alike. A `read` operand's
 /// immutable reference cannot rebind its referent.
 fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
     let instructions = nested_instructions(&function.body);
-    let addresses = operand_addresses(&function.body, &function.reg_types);
+    let handles: HashMap<u32, &MirPlace> = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MakeRef { dest, place } => Some((dest.0, place)),
+            _ => None,
+        })
+        .collect();
     let written_references: HashSet<u32> = instructions
         .iter()
         .filter_map(|instruction| match instruction {
@@ -182,7 +189,7 @@ fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
                         .iter()
                         .filter(|operand| operand.slot != OperandSlot::Callee)
                         .filter(|operand| !immutable_reference(function, operand.reg))
-                        .filter_map(|operand| addresses.made(operand.reg))
+                        .filter_map(|operand| handles.get(&operand.reg.0).copied())
                         .filter_map(whole),
                 );
                 rebound.extend(
@@ -201,13 +208,16 @@ fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
     rebound
 }
 
-/// Whether `register` of `function` holds an immutable reference.
+/// Whether `register` of `function` holds an immutable reference, a
+/// `ref` handle or a `!lit.ref` value.
 fn immutable_reference(function: &MirFunction, register: Reg) -> bool {
     function
         .reg_types
         .get(&register.0)
         .is_some_and(|ty| match ty.kind() {
-            TyKind::Ref(reference) => reference.mutability == Mutability::Immutable,
+            TyKind::Ref(reference) | TyKind::LitRef(reference) => {
+                reference.mutability == Mutability::Immutable
+            }
             _ => false,
         })
 }

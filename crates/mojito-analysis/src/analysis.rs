@@ -136,14 +136,14 @@ pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> 
     for (name, f) in functions {
         {
             let _lifetimes = timing::span("lifetimes");
-            analyze_lifetimes(f)?;
+            analyze_lifetimes(f, declarations)?;
             if name == "__toplevel__" {
-                module_scope_maybe_moved_refill(f)?;
+                module_scope_maybe_moved_refill(f, declarations)?;
             }
         }
         {
             let _loans = timing::span("loans");
-            analyze_loans(f, &callees)?;
+            analyze_loans(f, declarations, &callees)?;
         }
     }
     Ok(())
@@ -593,7 +593,7 @@ mod interior_origin_tests {
             ),
             &[(1, (10, 20)), (2, (30, 35))],
         );
-        match analyze_lifetimes(&f) {
+        match analyze_lifetimes(&f, &MirDeclarations::default()) {
             Err(OwnershipError::InvalidatedInteriorReference {
                 reference,
                 origin,
@@ -623,7 +623,7 @@ mod interior_origin_tests {
             &[(1, (10, 20)), (2, (30, 35))],
         );
         assert!(matches!(
-            analyze_lifetimes(&f),
+            analyze_lifetimes(&f, &MirDeclarations::default()),
             Err(OwnershipError::InvalidatedInteriorReference { .. })
         ));
     }
@@ -643,7 +643,7 @@ mod interior_origin_tests {
             &[(1, (10, 20)), (2, (30, 35))],
         );
         assert!(matches!(
-            analyze_lifetimes(&f),
+            analyze_lifetimes(&f, &MirDeclarations::default()),
             Err(OwnershipError::InvalidatedInteriorReference { .. })
         ));
     }
@@ -672,7 +672,7 @@ mod interior_origin_tests {
             &[(1, (10, 20)), (2, (30, 35))],
         );
         assert!(matches!(
-            analyze_lifetimes(&f),
+            analyze_lifetimes(&f, &MirDeclarations::default()),
             Err(OwnershipError::InvalidatedInteriorReference { .. })
         ));
     }
@@ -696,7 +696,7 @@ mod interior_origin_tests {
             ),
             &[(1, (10, 20)), (2, (30, 35))],
         );
-        match analyze_lifetimes(&f) {
+        match analyze_lifetimes(&f, &MirDeclarations::default()) {
             Err(OwnershipError::UseAfterMove { var, span }) => {
                 assert_eq!(var, "values");
                 assert_eq!(span.span, (30, 35));
@@ -719,7 +719,7 @@ mod interior_origin_tests {
             ),
             &[],
         );
-        assert!(analyze_lifetimes(&f).is_ok());
+        assert!(analyze_lifetimes(&f, &MirDeclarations::default()).is_ok());
     }
 
     #[test]
@@ -736,7 +736,7 @@ mod interior_origin_tests {
             ),
             &[],
         );
-        assert!(analyze_lifetimes(&f).is_ok());
+        assert!(analyze_lifetimes(&f, &MirDeclarations::default()).is_ok());
     }
 
     #[test]
@@ -755,7 +755,7 @@ mod interior_origin_tests {
             ),
             &[],
         );
-        assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
+        assert!(analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()).is_ok());
     }
 
     #[test]
@@ -781,7 +781,7 @@ mod interior_origin_tests {
                 &[],
             );
             assert!(matches!(
-                analyze_loans(&f, &CalleeRefParams::new()),
+                analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()),
                 Err(OwnershipError::LoanConflict { .. })
             ));
         }
@@ -802,7 +802,7 @@ mod interior_origin_tests {
             ),
             &[],
         );
-        assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
+        assert!(analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()).is_ok());
     }
 
     fn through_reference(reference: VarId) -> MirPlace {
@@ -857,7 +857,7 @@ mod interior_origin_tests {
             })
             .into(),
         );
-        assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
+        assert!(analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()).is_ok());
     }
 
     #[test]
@@ -878,7 +878,7 @@ mod interior_origin_tests {
             &[],
         );
         assert!(matches!(
-            analyze_loans(&f, &CalleeRefParams::new()),
+            analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()),
             Err(OwnershipError::LoanConflict { .. })
         ));
     }
@@ -898,7 +898,7 @@ mod interior_origin_tests {
             &[],
         );
         assert!(matches!(
-            analyze_loans(&f, &CalleeRefParams::new()),
+            analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()),
             Err(OwnershipError::LoanConflict { .. })
         ));
     }
@@ -921,7 +921,7 @@ mod interior_origin_tests {
             &[],
         );
         assert!(matches!(
-            analyze_loans(&f, &CalleeRefParams::new()),
+            analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()),
             Err(OwnershipError::LoanConflict { .. })
         ));
     }
@@ -949,7 +949,7 @@ mod interior_origin_tests {
             ),
             &[],
         );
-        assert!(analyze_loans(&f, &CalleeRefParams::new()).is_ok());
+        assert!(analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()).is_ok());
     }
 
     #[test]
@@ -981,7 +981,7 @@ mod interior_origin_tests {
             &[(1, (10, 20)), (3, (30, 35))],
         );
         assert!(matches!(
-            analyze_lifetimes(&f),
+            analyze_lifetimes(&f, &MirDeclarations::default()),
             Err(OwnershipError::InvalidatedInteriorReference { .. })
         ));
     }
@@ -1152,7 +1152,7 @@ mod structured_move_tests {
             MirTerm::Return(None),
         );
         assert!(matches!(
-            analyze_lifetimes(&f),
+            analyze_lifetimes(&f, &MirDeclarations::default()),
             Err(OwnershipError::ConditionallyMoved { .. })
         ));
     }
@@ -1168,7 +1168,7 @@ mod structured_move_tests {
             MirTerm::Return(None),
         );
         assert!(matches!(
-            analyze_lifetimes(&f),
+            analyze_lifetimes(&f, &MirDeclarations::default()),
             Err(OwnershipError::ConditionallyMoved { .. })
         ));
     }
@@ -1181,7 +1181,7 @@ mod structured_move_tests {
             MirTerm::Return(None),
         );
         assert!(matches!(
-            analyze_lifetimes(&f),
+            analyze_lifetimes(&f, &MirDeclarations::default()),
             Err(OwnershipError::UseAfterMove { .. })
         ));
     }
@@ -1201,7 +1201,7 @@ mod structured_move_tests {
             vec![labelled(block(vec![body], CONTINUE)), store, read(X, 3)],
             MirTerm::Return(None),
         );
-        assert!(analyze_lifetimes(&f).is_ok());
+        assert!(analyze_lifetimes(&f, &MirDeclarations::default()).is_ok());
     }
 
     #[test]
@@ -1211,7 +1211,7 @@ mod structured_move_tests {
             vec![labelled(block(vec![body], CONTINUE)), read(X, 3)],
             MirTerm::Return(None),
         );
-        assert!(analyze_lifetimes(&f).is_ok());
+        assert!(analyze_lifetimes(&f, &MirDeclarations::default()).is_ok());
     }
 
     #[test]
@@ -1239,7 +1239,7 @@ mod structured_move_tests {
             MirTerm::Return(None),
         );
         assert!(matches!(
-            analyze_lifetimes(&f),
+            analyze_lifetimes(&f, &MirDeclarations::default()),
             Err(OwnershipError::UseAfterMove { .. })
         ));
     }
@@ -1249,10 +1249,10 @@ mod structured_move_tests {
         let mut f = function(vec![take(S, 1)], MirTerm::Unreachable);
         f.ref_params = vec![false, true];
         f.n_params = 2;
-        assert!(analyze_lifetimes(&f).is_ok());
+        assert!(analyze_lifetimes(&f, &MirDeclarations::default()).is_ok());
         f.body.term = MirTerm::Return(None);
         assert!(matches!(
-            analyze_lifetimes(&f),
+            analyze_lifetimes(&f, &MirDeclarations::default()),
             Err(OwnershipError::ReferenceParameterLeftUninitialized { .. })
         ));
     }

@@ -74,7 +74,7 @@ pub(super) fn elaborate_drops(
     );
     let mut plan = DropPlan::default();
     // Drop elaboration splices only drops, so the map stays the body's.
-    let addresses = operand_addresses(&function.body, &function.reg_types);
+    let addresses = operand_addresses(&function, declarations);
     let liveness = DropLiveness {
         f: &function,
         addresses: &addresses,

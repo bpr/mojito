@@ -2625,9 +2625,11 @@ Backends read the operand: the VM binds the reference, and Pliron passes
 its pointer as upstream's LLVM lowering passes a `!lit.ref`, loading it at
 a slot its lowered signature takes as a scalar (`call_operand_value`,
 `by_address_operand`, `lower/abi.rs`). So do the analyses that place a
-call's accesses and the inliner: `mir::operand_addresses` maps each `ref.make` of a function
-forming a `ref` handle to the place it addresses (one typed a `!lit.ref`
-is a value the program spells, passed by value), `mir::call_operands`
+call's accesses and the inliner: `mir::operand_addresses` maps each `ref.make` a call of a function
+passes as a by-address operand, read off the call's contract
+(`mir::addressed_registers`), to the place it addresses (a `!lit.ref`
+value at a `!lit.ref` parameter is passed by value and names none),
+`mir::call_operands`
 lists a call-shaped instruction's operands, and
 `OperandAddresses::address` gives the storage an operand addresses, none
 for an operand that is no `ref.make`. A pass or verifier

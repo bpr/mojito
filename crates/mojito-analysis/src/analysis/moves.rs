@@ -608,10 +608,13 @@ pub(super) fn join_states(a: &[Node], b: &[Node]) -> Vec<Node> {
 /// of the value is used, before the variable is redefined, and before the
 /// function exits; a `deinit` parameter's direct fields are exempt because
 /// each is destroyed on its own.
-pub(super) fn analyze_lifetimes(f: &MirFunction) -> Result<(), OwnershipError> {
+pub(super) fn analyze_lifetimes(
+    f: &MirFunction,
+    declarations: &MirDeclarations,
+) -> Result<(), OwnershipError> {
     let scan = LifetimeScan {
         f,
-        context: move_context(f),
+        context: move_context(f, declarations),
         interior: collect_interior_generations(&f.body),
     };
     // The entry starts every variable `Owned` — the checker guarantees definite
@@ -624,7 +627,12 @@ pub(super) fn analyze_lifetimes(f: &MirFunction) -> Result<(), OwnershipError> {
     let mut check = |state: &LifetimeState, instr: &MirInstr| -> Result<(), OwnershipError> {
         check_instruction_uses(&state.moves, instr, f, &scan.context)?;
         if let MirInstr::DefVar { var, .. } = instr {
-            check_whole_destruction(&state.moves[*var as usize], *var, f)?;
+            check_whole_destruction(
+                &state.moves[*var as usize],
+                *var,
+                f,
+                &scan.context.addresses,
+            )?;
         }
         if !scan.interior.is_empty() {
             check_interior_instruction_uses(&state.interior, instr, f, &scan.context.addresses)?;
@@ -642,7 +650,14 @@ pub(super) fn analyze_lifetimes(f: &MirFunction) -> Result<(), OwnershipError> {
         for (var, node) in (0..).zip(state.iter().flat_map(|state| &state.moves)) {
             let caller_storage =
                 is_reference_parameter(f, var) || scan.context.caller_aliases.contains(&var);
-            check_reference_parameter_refilled(node, var, f, raising, caller_storage)?;
+            check_reference_parameter_refilled(
+                node,
+                var,
+                f,
+                &scan.context.addresses,
+                raising,
+                caller_storage,
+            )?;
         }
     }
     // Every variable dies at the function's exit, on each channel that
@@ -653,7 +668,7 @@ pub(super) fn analyze_lifetimes(f: &MirFunction) -> Result<(), OwnershipError> {
         .flatten()
     {
         for (var, node) in (0..).zip(&state.moves) {
-            check_whole_destruction(node, var, f)?;
+            check_whole_destruction(node, var, f, &scan.context.addresses)?;
         }
     }
     Ok(())
@@ -664,12 +679,13 @@ pub(super) fn analyze_lifetimes(f: &MirFunction) -> Result<(), OwnershipError> {
 /// A `finally` body is observed from the join of every channel entering it.
 pub(super) fn observe_move_states(
     f: &MirFunction,
+    declarations: &MirDeclarations,
     entry: Vec<Node>,
     observer: &mut impl FnMut(&[Node], &MirInstr),
 ) -> Result<(), OwnershipError> {
     let scan = LifetimeScan {
         f,
-        context: move_context(f),
+        context: move_context(f, declarations),
         interior: BTreeMap::new(),
     };
     let entry = LifetimeState {
@@ -794,13 +810,13 @@ fn check_instruction_uses(
 /// The whole-referent handles of `f`'s reference parameters, the owners
 /// of its setup reference slots, and its locals aliasing a borrowed
 /// parameter's place.
-fn move_context(f: &MirFunction) -> MoveContext {
+fn move_context(f: &MirFunction, declarations: &MirDeclarations) -> MoveContext {
     let mut context = MoveContext {
         refills: HashMap::new(),
         setup_owners: HashMap::new(),
         caller_aliases: HashSet::new(),
         call_operands: HashSet::new(),
-        addresses: operand_addresses(&f.body, &f.reg_types),
+        addresses: operand_addresses(f, declarations),
     };
     let mut parameter_references = HashSet::new();
     for_each_instr_deep(&f.body, &mut |instr| match instr {
@@ -911,6 +927,7 @@ fn check_reference_parameter_refilled(
     node: &Node,
     var: VarId,
     f: &MirFunction,
+    addresses: &OperandAddresses,
     raising: bool,
     caller_storage: bool,
 ) -> Result<(), OwnershipError> {
@@ -922,7 +939,7 @@ fn check_reference_parameter_refilled(
         return Ok(());
     }
     let var_name = place_display(&f.var_names[var as usize], &path);
-    let span = partial_move_span(f, var, &path);
+    let span = partial_move_span(f, addresses, var, &path);
     Err(if raising {
         OwnershipError::UseAfterMove {
             var: var_name,
@@ -946,7 +963,12 @@ fn is_deinit_root(f: &MirFunction, var: VarId) -> bool {
 /// Reject a whole destruction or redefinition of `var` while a field of it
 /// (or, for a `deinit` parameter, a field of one of its direct fields) is
 /// moved out and not reinitialized.
-fn check_whole_destruction(node: &Node, var: VarId, f: &MirFunction) -> Result<(), OwnershipError> {
+fn check_whole_destruction(
+    node: &Node,
+    var: VarId,
+    f: &MirFunction,
+    addresses: &OperandAddresses,
+) -> Result<(), OwnershipError> {
     let hole = if is_deinit_root(f, var) {
         node.children.iter().find_map(|(key, child)| {
             child.field_hole().map(|sub| {
@@ -961,7 +983,7 @@ fn check_whole_destruction(node: &Node, var: VarId, f: &MirFunction) -> Result<(
     hole.map_or(Ok(()), |path| {
         Err(OwnershipError::FieldDestroyedOutOfTheMiddle {
             field: place_display(&f.var_names[var as usize], &path),
-            span: partial_move_span(f, var, &path),
+            span: partial_move_span(f, addresses, var, &path),
         })
     })
 }
@@ -970,16 +992,16 @@ fn check_whole_destruction(node: &Node, var: VarId, f: &MirFunction) -> Result<(
 /// blamed hole's own `^`.
 fn partial_move_span(
     f: &MirFunction,
+    addresses: &OperandAddresses,
     var: VarId,
     path: &[Key],
 ) -> mojito_common::token::SourceSpan {
     let mut reg = None;
-    let addresses = mojito_mir::mir::operand_addresses(&f.body, &f.reg_types);
     for_each_instr_deep(&f.body, &mut |instr| {
         let moved = match instr {
             MirInstr::MovePlace { dest, place } => Some((*dest, place)),
             MirInstr::MethodCall { recv, .. } => instr
-                .consumed_receiver(&addresses)
+                .consumed_receiver(addresses)
                 .map(|place| (*recv, place)),
             _ => None,
         };

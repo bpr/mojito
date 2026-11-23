@@ -1,21 +1,27 @@
 //! The storage each call operand addresses.
 //!
 //! Upstream's `lit.call` takes an argument its callee receives by address as
-//! a `!lit.ref` SSA value, and every later reader — origin and exclusivity
-//! checking, liveness, the inliner — works from that operand. MIR lowering
-//! forms the same operand, a `ref.make` of the operand's place
-//! (`Flatten::address_operand`), so a reader after lowering asks
-//! [`OperandAddresses::address`] for the storage an operand addresses; the
-//! instruction keeps no other record of it.
+//! a `!lit.ref<P>` SSA value at a parameter that takes `P`, and every later
+//! reader — origin and exclusivity checking, liveness, the inliner — works
+//! from that operand. MIR lowering forms the same operand, a `ref.make` of
+//! the operand's place (`Flatten::address_operand`), so a reader after
+//! lowering asks [`OperandAddresses::address`] for the storage an operand
+//! addresses; the instruction keeps no other record of it. Which operands
+//! are by address is read off each call's contract, as `LowerArgConventions`
+//! reads it ([`crate::mir::addressed_registers`]): a `!lit.ref` value a
+//! callee takes at a `!lit.ref` parameter (`__get_mvalue_as_litref`, a
+//! parameter list's address) is passed by value and addresses no storage.
 //!
 //! Registers are function-wide unique and defined once, so one map over a
 //! function serves every call in it, wherever CSE or hoisting moved the
 //! `ref.make` an operand is.
 
-use crate::mir::{MirBlock, MirInstr, MirPlace, MirSubscriptArg, Reg, VarId, instruction_regions};
-use mojito_types::types::{Ty, TyKind};
-use std::collections::HashMap;
-use std::hash::BuildHasher;
+use crate::mir::call_addresses::addressed_registers_in;
+use crate::mir::{
+    MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirSubscriptArg, Reg, VarId,
+    instruction_regions,
+};
+use std::collections::{HashMap, HashSet};
 
 /// Which of a call-shaped instruction's operands a [`CallOperand`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +54,8 @@ impl CallOperand {
     }
 }
 
-/// The place each `ref.make` of a function defines its register to address.
+/// The place each `ref.make` a call of a function passes as a by-address
+/// operand addresses, by the register the `ref.make` defines.
 #[derive(Debug, Default)]
 pub struct OperandAddresses(HashMap<u32, MirPlace>);
 
@@ -67,15 +74,18 @@ impl OperandAddresses {
         self.0.get(&reg.0)
     }
 
-    /// Add every `ref.make` of `body` that forms a reference handle, as
-    /// [`operand_addresses`] collects them: the ones a pass introduced
-    /// after the map was built, such as a body the inliner spliced.
-    pub fn extend<S: BuildHasher>(
+    /// Add every by-address `ref.make` operand of a call in `body`, whose
+    /// registers `function` types, as [`operand_addresses`] collects them:
+    /// the ones a pass introduced after the map was built, such as a body
+    /// the inliner spliced into `function`.
+    pub fn extend(
         &mut self,
         body: &MirBlock,
-        register_types: &HashMap<u32, Ty, S>,
+        function: &MirFunction,
+        declarations: &MirDeclarations,
     ) {
-        collect(body, register_types, &mut self.0);
+        let addressed = addressed_registers_in(body, &function.reg_types, declarations);
+        collect(body, &addressed, &mut self.0);
     }
 
     /// The storage each operand of `instruction` addresses, by slot.
@@ -109,19 +119,18 @@ pub struct AddressedOperands<'a> {
     pub value: Option<&'a MirPlace>,
 }
 
-/// Every `ref.make` of `body`, its regions included, that forms a
-/// reference handle (`register_types` types its register a `ref`), by the
-/// register it defines.
+/// Every `ref.make` of `function`, its regions included, that a call passes
+/// as a by-address operand, by the register it defines.
 ///
-/// One typed a `!lit.ref` is a value the program spells
-/// (`__get_mvalue_as_litref`), which its callee receives by value.
+/// A by-address operand is a `ref<P>` at a parameter taking `P`, read off
+/// the call's contract ([`crate::mir::addressed_registers`]).
 #[must_use]
-pub fn operand_addresses<S: BuildHasher>(
-    body: &MirBlock,
-    register_types: &HashMap<u32, Ty, S>,
+pub fn operand_addresses(
+    function: &MirFunction,
+    declarations: &MirDeclarations,
 ) -> OperandAddresses {
     let mut addresses = OperandAddresses::default();
-    addresses.extend(body, register_types);
+    addresses.extend(&function.body, function, declarations);
     addresses
 }
 
@@ -278,30 +287,121 @@ fn whole_slot(place: &MirPlace) -> bool {
     place.is_whole_root() && place.through.is_none()
 }
 
-fn collect<S: BuildHasher>(
-    block: &MirBlock,
-    register_types: &HashMap<u32, Ty, S>,
-    addresses: &mut HashMap<u32, MirPlace>,
-) {
+fn collect(block: &MirBlock, addressed: &HashSet<u32>, addresses: &mut HashMap<u32, MirPlace>) {
     for instruction in &block.instrs {
         if let MirInstr::MakeRef { dest, place } = instruction
-            && register_types
-                .get(&dest.0)
-                .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)))
+            && addressed.contains(&dest.0)
         {
             addresses.insert(dest.0, place.clone());
         }
         for region in instruction_regions(instruction) {
-            collect(region, register_types, addresses);
+            collect(region, addressed, addresses);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::callee_slots;
-    use crate::mir::{MirBlock, MirInstr, MirPlace, MirTerm, Reg, UseMode};
-    use mojito_types::types::Ty;
+    use super::{callee_slots, operand_addresses};
+    use crate::mir::{
+        FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
+        MirPlace, MirTerm, Reg, UseMode,
+    };
+    use mojito_ast::ast::ArgConvention;
+    use mojito_types::origin::{Mutability, Origin, RefTy};
+    use mojito_types::types::{AddressSpaceSlot, Ty, TyKind};
+
+    fn reference(referent: Ty) -> Ty {
+        TyKind::Ref(RefTy {
+            referent,
+            origin: Origin::Static,
+            mutability: Mutability::Mutable,
+            address_space: AddressSpaceSlot::GENERIC,
+        })
+        .into()
+    }
+
+    /// `take(mut by_address: Int, by_value: ref Int)`.
+    fn take_declarations() -> MirDeclarations {
+        let declaration = MirFunctionDeclaration {
+            lowered_name: "take".into(),
+            param_names: vec!["by_address".into(), "by_value".into()],
+            param_types: vec![Ty::int(), reference(Ty::int())],
+            defaults: vec![None; 2],
+            required: vec![true; 2],
+            variadic: None,
+            variadic_convention: None,
+            variadic_index: None,
+            kw_variadic: None,
+            kw_variadic_convention: None,
+            kw_variadic_index: None,
+            positional_only: None,
+            keyword_only: None,
+            param_decls: Vec::new(),
+            has_receiver: false,
+            receiver_convention: None,
+            param_conventions: vec![Some(ArgConvention::Mut), None],
+            ret_ty: Ty::none(),
+            returns_reference: false,
+            raises: false,
+            error_ty: None,
+            ref_params: vec![true, false],
+            param_writes: vec![true, false],
+            availability: Vec::new(),
+            enclosing: None,
+            region_binders: Vec::new(),
+            inline: mojito_checked::declaration::InlineLevel::NoDebug,
+            provenance: mojito_checked::declaration::FunctionProvenance::Synthesized,
+        };
+        MirDeclarations {
+            functions: vec![declaration],
+            ..MirDeclarations::default()
+        }
+    }
+
+    /// Two `ref.make`s of the same reference type: the one `take` takes by
+    /// address at its `Int` parameter addresses its place, and the one it
+    /// takes as a reference value at its reference parameter addresses
+    /// none, as `LowerArgConventions` reads the call.
+    #[test]
+    fn only_a_by_address_operand_addresses_its_place() {
+        let block = MirBlock {
+            instrs: vec![
+                MirInstr::MakeRef {
+                    dest: Reg(0),
+                    place: MirPlace::root(0, Some(Ty::int())),
+                },
+                MirInstr::MakeRef {
+                    dest: Reg(1),
+                    place: MirPlace::root(1, Some(Ty::int())),
+                },
+                MirInstr::Call {
+                    conventions: crate::mir::MirArgConventions::default(),
+                    dest: Reg(2),
+                    func: FuncRef("take".into()),
+                    raises: None,
+                    args: vec![Reg(0), Reg(1)],
+                    kwargs: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    receiver: None,
+                    instantiated_args: Vec::new(),
+                    spread: None,
+                },
+            ],
+            term: MirTerm::Return(None),
+        };
+        let function = MirFunction {
+            body: block,
+            reg_types: [(0, reference(Ty::int())), (1, reference(Ty::int()))]
+                .into_iter()
+                .collect(),
+            ..MirFunction::default()
+        };
+        let addresses = operand_addresses(&function, &take_declarations());
+        assert_eq!(addresses.made(Reg(0)).map(|place| place.root), Some(0));
+        assert!(addresses.made(Reg(1)).is_none());
+    }
 
     /// A callee read by a shared borrow of its slot, and one a lambda
     /// temporary's whole-root load reads, each resolve to their slot; a

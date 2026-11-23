@@ -75,7 +75,7 @@ pub(super) fn elide_dying_copies(function: &mut MirFunction, declarations: &MirD
     let mut uses = HashMap::new();
     count_operand_uses(&function.body, &mut uses);
     let forwarded = forwarded_registers(function, declarations);
-    let addresses = operand_addresses(&function.body, &function.reg_types);
+    let addresses = operand_addresses(function, declarations);
     let elision = Elision {
         var_names: &function.var_names,
         var_tys: &function.var_tys,

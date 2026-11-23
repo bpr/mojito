@@ -544,36 +544,7 @@ pub fn call_by_address_operands(
 /// backend keys its by-address operand passing on the register's number.
 #[must_use]
 pub fn addressed_registers(function: &MirFunction, declarations: &MirDeclarations) -> HashSet<u32> {
-    let reg_types = &function.reg_types;
-    let callees = Callees::of(declarations);
-    let mut addressed = HashSet::new();
-    for instruction in crate::mir::nested_instructions(&function.body) {
-        let operands = crate::mir::call_operands(instruction);
-        if operands.is_empty() {
-            continue;
-        }
-        addressed.extend(
-            operands
-                .iter()
-                .map(|operand| operand.reg.0)
-                .filter(|reg| reg_types.get(reg).and_then(addressed_receiver).is_some()),
-        );
-        let Some(bound) = bound_call(instruction, &callees, reg_types) else {
-            continue;
-        };
-        for (register, parameter) in bound.operands {
-            let value = parameter.and_then(|parameter| bound.contract.parameter_ty(parameter));
-            if let Some(value) = value
-                && reg_types
-                    .get(&register.0)
-                    .and_then(|operand| addressed_operand(operand, value))
-                    .is_none()
-            {
-                addressed.remove(&register.0);
-            }
-        }
-    }
-    addressed
+    addressed_registers_in(&function.body, &function.reg_types, declarations)
 }
 
 /// Whether two places name the same storage, whatever local reference
@@ -694,6 +665,45 @@ pub fn upgrade_stored_handles(
     legacy: &LegacyOperandTables,
 ) {
     address_call_operands(functions, declarations, legacy, Operands::StoredHandles);
+}
+
+/// [`addressed_registers`] over one body, its regions included, whose
+/// registers `reg_types` types: a function's, or a body a pass spliced
+/// into one.
+pub fn addressed_registers_in(
+    body: &MirBlock,
+    reg_types: &HashMap<u32, Ty>,
+    declarations: &MirDeclarations,
+) -> HashSet<u32> {
+    let callees = Callees::of(declarations);
+    let mut addressed = HashSet::new();
+    for instruction in crate::mir::nested_instructions(body) {
+        let operands = crate::mir::call_operands(instruction);
+        if operands.is_empty() {
+            continue;
+        }
+        addressed.extend(
+            operands
+                .iter()
+                .map(|operand| operand.reg.0)
+                .filter(|reg| reg_types.get(reg).and_then(addressed_receiver).is_some()),
+        );
+        let Some(bound) = bound_call(instruction, &callees, reg_types) else {
+            continue;
+        };
+        for (register, parameter) in bound.operands {
+            let value = parameter.and_then(|parameter| bound.contract.parameter_ty(parameter));
+            if let Some(value) = value
+                && reg_types
+                    .get(&register.0)
+                    .and_then(|operand| addressed_operand(operand, value))
+                    .is_none()
+            {
+                addressed.remove(&register.0);
+            }
+        }
+    }
+    addressed
 }
 
 /// The declarations of the functions a program calls, by lowered name:

@@ -199,6 +199,7 @@ pub(super) enum LoanAccess {
 /// the pin's acceptance.
 pub(super) fn analyze_loans(
     f: &MirFunction,
+    declarations: &MirDeclarations,
     callees: &CalleeRefParams<'_>,
 ) -> Result<(), OwnershipError> {
     let mut generations: BTreeMap<u32, Vec<Loan>> = BTreeMap::new();
@@ -234,7 +235,7 @@ pub(super) fn analyze_loans(
     if generations.is_empty() {
         return Ok(());
     }
-    let addresses = mojito_mir::mir::operand_addresses(&f.body, &f.reg_types);
+    let addresses = mojito_mir::mir::operand_addresses(f, declarations);
     let callee_slots = mojito_mir::mir::callee_slots(&f.body);
     // The references live just before each instruction, in declaration
     // order, so a conflict names the same one on every run; keyed by the

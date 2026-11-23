@@ -50,7 +50,7 @@ impl<'f> RegisterEnds<'f> {
             declarations,
             owned: HashSet::new(),
             borrowed_packs: HashSet::new(),
-            addresses: super::operand_addresses(&function.body, &function.reg_types),
+            addresses: super::operand_addresses(function, declarations),
         };
         let mut parameters = HashSet::new();
         ends.collect(&function.body, &mut parameters);

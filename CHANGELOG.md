@@ -2363,6 +2363,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The analyses after MIR lowering (liveness, moves, loans, drops, copy
+  elision, SROA, unused-parameter removal, the inliner, and the drop
+  verifier) find the storage a call operand addresses only for an operand
+  the call's contract passes by address, a `ref<P>` at a `P` parameter as
+  upstream's `LowerArgConventions` reads it, instead of for every
+  `ref.make` typed a `ref`. A `!lit.ref` value at a `!lit.ref` parameter
+  stays a value once `!lit.ref` merges into `ref`; a mutable `!lit.ref`
+  handle a call takes now counts as rebinding the callable it names.
+  Accepted programs and their output are unchanged (R2525).
+
 - The VM and the Pliron backend decide a read-through, a write-through,
   and a forwarded stored handle from declarations, never from a
   `TyKind::Ref` place type: a `ref` binding, a by-address parameter's slot

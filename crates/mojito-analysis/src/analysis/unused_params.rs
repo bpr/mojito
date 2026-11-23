@@ -309,7 +309,7 @@ fn self_forwarded_parameters(
     function: &MirFunction,
     declarations: &MirDeclarations,
 ) -> Vec<ParamId> {
-    let addresses = operand_addresses(&function.body, &function.reg_types);
+    let addresses = operand_addresses(function, declarations);
     let mut forwarded = None;
     self_forwards(
         name,
@@ -336,7 +336,7 @@ fn self_forwarded_arguments(
     };
     let mut reads = HashMap::new();
     whole_slot_reads(&function.body, &mut reads);
-    let addresses = operand_addresses(&function.body, &function.reg_types);
+    let addresses = operand_addresses(function, declarations);
     let mut forwarded = None;
     self_argument_forwards(
         name,

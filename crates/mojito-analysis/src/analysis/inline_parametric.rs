@@ -361,9 +361,9 @@ pub fn inline_calls(
         .into_iter()
         .map(|reg| reg.0)
         .collect();
+    let addresses = operand_addresses(function, declarations);
     let mut blocks = std::mem::take(&mut function.body);
     let closures = Closures::of(&blocks);
-    let addresses = operand_addresses(&blocks, &function.reg_types);
     let mut inliner = Inliner {
         function,
         declarations,
@@ -2170,7 +2170,7 @@ impl<'c> Inliner<'_, 'c> {
         // The body's `ref.make`s are the operands of the calls it holds,
         // and its whole-slot reads their callees' defining loads, which the
         // scan reaches next.
-        self.addresses.extend(&blocks, &function.reg_types);
+        self.addresses.extend(&blocks, function, self.declarations);
         self.closures.loads.extend(callee_slots(&blocks));
         splice_region(function, caller, blocks, resumed, &exit)
     }
