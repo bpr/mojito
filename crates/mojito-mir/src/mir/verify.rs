@@ -189,6 +189,18 @@ impl ReferencePermission {
     }
 }
 
+/// The reference record of a source `ref` or a `!lit.ref`, which upstream
+/// spells as the one `!lit.ref` type: every verifier rule over a reference
+/// type reads this record, and whether a slot binds a reference from its
+/// declaration ([`MirFunction::binds_reference`]), never from the tag.
+fn reference_record(ty: &Ty) -> Option<&mojito_types::origin::RefTy> {
+    match ty.kind() {
+        mojito_types::types::TyKind::Ref(reference)
+        | mojito_types::types::TyKind::LitRef(reference) => Some(reference),
+        _ => None,
+    }
+}
+
 /// Where a block sits: the function's top level, or one region of a region
 /// op (with its handler-protection status).
 #[derive(Clone)]

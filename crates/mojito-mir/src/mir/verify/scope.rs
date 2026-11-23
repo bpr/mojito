@@ -472,7 +472,7 @@ impl ScopeCx<'_> {
                 element,
                 address_space,
             } => self.address_in(role, element, address_space, nested),
-            TyKind::LitRef(reference) => {
+            TyKind::LitRef(reference) | TyKind::Ref(reference) => {
                 self.address_in(role, &reference.referent, &reference.address_space, nested);
             }
             TyKind::LitRefPack { elements, .. } => {
@@ -492,7 +492,6 @@ impl ScopeCx<'_> {
                 }
                 self.walk_in(role, element, nested);
             }
-            TyKind::Ref(reference) => self.walk_in(role, &reference.referent, nested),
             TyKind::AnyStruct(ty) => self.walk_in(role, ty, nested),
             TyKind::None
             | TyKind::Never
@@ -513,7 +512,7 @@ impl ScopeCx<'_> {
         }
     }
 
-    /// A pointer's, `!kgen.pointer`'s, or `!lit.ref`'s symbolic address
+    /// A pointer's, `!kgen.pointer`'s, or reference's symbolic address
     /// space and pointee.
     fn address_in(
         &mut self,

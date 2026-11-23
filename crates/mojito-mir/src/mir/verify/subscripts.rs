@@ -137,36 +137,34 @@ pub(super) fn verify_subscript_instruction(
     }
 }
 
-/// Runtime frame/slot capabilities are represented by a source-level
-/// `ref T`, an origin-bearing `Pointer[T, origin]`, or the `!lit.ref`
-/// a `Pointer` is built from. Raw/static/
-/// untracked pointer values use allocation arithmetic and are not valid
-/// operands for `ReadRef`/`WriteRef`.
+/// Runtime frame/slot capabilities are represented by a reference (a
+/// source-level `ref T` or a `!lit.ref`, read off its record alone, with the
+/// record's own mutability) or an origin-bearing `Pointer[T, origin]`. Static
+/// pointer values use allocation arithmetic and are not valid operands for
+/// `ReadRef`/`WriteRef`; a reference of static origin (a comptime value's
+/// materialized storage) still addresses its referent.
 pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
-    let (element, reference) = match ty.kind() {
-        TyKind::Ref(reference) => {
-            return Some(ReferenceCapability {
-                target: &reference.referent,
-                permission: ReferencePermission::from_mutability(reference.mutability),
-            });
-        }
-        TyKind::LitRef(reference) => (&reference.referent, ty.kind().pointer_or_lit_ref()?),
-        pointer => (pointer.pointer_element()?, pointer.pointer_lit_ref()?),
-    };
+    if let Some(reference) = reference_record(ty) {
+        return Some(ReferenceCapability {
+            target: &reference.referent,
+            permission: ReferencePermission::from_mutability(reference.mutability),
+        });
+    }
+    let element = ty.kind().pointer_element()?;
+    let reference = ty.kind().pointer_lit_ref()?;
     // Static storage holds no frame/slot handle. Every other origin,
     // untracked and unsafe-any ones included (a `VariadicList`'s element
-    // pointer, `Pointer[T, MutAnyOrigin](to=x)`'s `!lit.ref`), addresses its
-    // pointee with the permission its `mut` argument declares.
+    // pointer, `Pointer[T, MutAnyOrigin](to=x)`), addresses its pointee
+    // with the permission its `mut` argument declares.
     if matches!(
         reference.origin.uncast(),
         mojito_types::origin::Origin::Static
     ) {
         return None;
     }
-    let permission = ReferencePermission::from_mutability(reference.mutability);
     Some(ReferenceCapability {
         target: element,
-        permission,
+        permission: ReferencePermission::from_mutability(reference.mutability),
     })
 }
 

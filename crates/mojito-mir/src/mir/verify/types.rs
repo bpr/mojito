@@ -137,11 +137,6 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     ) {
         return types_compatible(found_element, expected_element);
     }
-    if let (TyKind::LitRef(found_reference), TyKind::LitRef(expected_reference)) =
-        (found.kind(), expected.kind())
-    {
-        return types_compatible(&found_reference.referent, &expected_reference.referent);
-    }
     // So do a callable's signature origins: a function value specialized at
     // a caller's origin (`borrow[origin_of(x)]`) and one relative to its
     // argument slots are one runtime value.
@@ -161,10 +156,17 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     }
     // So does a reference's: a specialized instance erases the origins of
     // its type arguments, so a `ref T` element slot holds a reference of any
-    // origin with the same mutability.
-    if let (TyKind::Ref(found_reference), TyKind::Ref(expected_reference)) =
-        (found.kind(), expected.kind())
-        && found_reference.mutability == expected_reference.mutability
+    // origin in the same address space at no more than the permission held.
+    // A symbolic `mut` binder on either side is the instance's to bind, as
+    // an origin is. The rule reads the reference record alone, as
+    // upstream's one `!lit.ref` type has no second spelling to distinguish.
+    if let (Some(found_reference), Some(expected_reference)) =
+        (reference_record(found), reference_record(expected))
+        && matches!(
+            (found.kind(), expected.kind()),
+            (TyKind::Ref(_), TyKind::Ref(_)) | (TyKind::LitRef(_), TyKind::LitRef(_))
+        )
+        && mutability_weakens(found_reference.mutability, expected_reference.mutability)
         && found_reference.address_space == expected_reference.address_space
     {
         return types_compatible(&found_reference.referent, &expected_reference.referent);
@@ -254,6 +256,16 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
 /// a type or a list of them (a `VariadicPack`'s element types) that agrees
 /// by [`types_compatible`], so the origins it erases inside a struct's
 /// argument erase inside a type-valued one too.
+/// Whether a reference held at `found` mutability may stand where one at
+/// `expected` is declared: a mutable one weakens to an immutable one, and a
+/// symbolic binder on either side is an instance's to bind.
+const fn mutability_weakens(found: Mutability, expected: Mutability) -> bool {
+    !matches!(
+        (found, expected),
+        (Mutability::Immutable, Mutability::Mutable)
+    )
+}
+
 fn values_compatible(found: &CtValue, expected: &CtValue) -> bool {
     match (found, expected) {
         (CtValue::Type(found), CtValue::Type(expected)) => types_compatible(found, expected),

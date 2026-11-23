@@ -787,13 +787,14 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
         }
         MirInstr::Rebind { dest, value } => verify_rebind(cx, *dest, *value, errors),
         MirInstr::DefVar {
+            var,
             src,
             binding_ty: Some(expected),
             ..
         } => {
             if let Some(found) = cx.reg_ty(*src)
                 && !types_compatible(found, expected)
-                && !same_address(found, expected)
+                && (cx.function.binds_reference(*var) || !same_address(found, expected))
             {
                 errors.push(format!(
                     "{prefix}: binding of {found} to a slot of type {expected}"
@@ -1805,6 +1806,8 @@ fn verify_tuple_elements(
 /// `Pointer` or a reference and a `!lit.ref` to the same element in the
 /// same address space, which `lit.ref.to_pointer` retypes without changing
 /// it (a pack element's address bound to a `!lit.ref` parameter slot).
+/// A `ref` binding's slot is never such a target: a binding keeps its
+/// declared mutability, which this retyping would erase.
 /// The elements compare with their origins erased ([`erase_origins`]): an
 /// inlined instance's slot spells its element as the instance does, while
 /// the caller's register keeps the origins its own types name.

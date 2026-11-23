@@ -947,7 +947,9 @@ pub(super) fn make_ref_target<'p>(
 /// Whether `place`'s pointer-typed root is the pointer itself rather than
 /// its pointee: true unless the place reads a local through its own slot
 /// (`through` naming the root). A `mut`/`ref` parameter's handle addresses
-/// the caller's pointer, so through itself it is still the pointer.
+/// the caller's pointer, so through itself it is still the pointer. A `ref`
+/// binding's slot ([`MirFunction::binds_reference`]) holds a handle, never
+/// a pointer value, whatever its reference type is spelled.
 pub(super) fn pointer_root_is_value(place: &MirPlace, function: &MirFunction) -> bool {
     let reference_parameter = function
         .ref_params
@@ -955,6 +957,7 @@ pub(super) fn pointer_root_is_value(place: &MirPlace, function: &MirFunction) ->
         .copied()
         .unwrap_or(false);
     (place.through != Some(place.root) || reference_parameter)
+        && !function.binds_reference(place.root)
         && place
             .root_ty
             .as_ref()

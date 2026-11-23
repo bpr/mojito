@@ -2353,6 +2353,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier reads a `ref` binding from the slot's declaration
+  (`MirFunction::binds_reference`), never from a `TyKind::Ref` slot type:
+  the reference-read rule, a pointer root's value test, and a `DefVar`'s
+  address retyping, which a binding slot no longer takes. Its reference
+  rules read the `RefTy` record alone: two references are compatible when
+  their referents and address spaces agree and the found mutability
+  weakens to the expected one (a symbolic `mut` binder is the instance's
+  to bind), a reference's address space is scoped, and either spelling is
+  a capability with its record's own mutability. Accepted programs and
+  their output are unchanged.
+
 - MIR lowering, the passes after it, the elaborator, and the verifier
   recognize a by-address call operand as upstream's `LowerArgConventions`
   does: a `ref<P>` argument against the value `P` its parameter takes

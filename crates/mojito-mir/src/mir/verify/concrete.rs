@@ -418,10 +418,12 @@ fn reference_read(
     errors: &mut Vec<String>,
 ) {
     let referent_of = |slot: &VarId| {
-        function.var_tys.get(slot).and_then(|ty| match ty.kind() {
-            TyKind::Ref(reference) => Some(reference.referent.clone()),
-            _ => None,
-        })
+        function
+            .var_tys
+            .get(slot)
+            .filter(|_| function.binds_reference(*slot))
+            .and_then(reference_record)
+            .map(|reference| reference.referent.clone())
     };
     match instruction {
         MirInstr::LoadPlace { dest, place }

@@ -11342,26 +11342,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2508 MIR verifier rules read a `ref` binding from a slot's
-  type**
-
-  A merged `!lit.ref` slot would pass for a binding in each rule.
-  - `verify/concrete.rs`'s `reference_read` (`referent_of`) should ask
-    `binds_reference(slot)`.
-  - `pointer_root_is_value` (`verify/calls.rs`) adds
-    `!binds_reference(root)`.
-  - `same_address` (`verify/instr.rs`) is gated on the `DefVar`'s slot not
-    binding. Merged, it would accept `Ref`↔`Ref` with mutability erased at
-    every binding.
-  - Decide the merged rule now, as a function of the `RefTy` record, so
-    R2511 only deletes arms: `types_compatible` (referent and address
-    space agree, mutability may weaken), `verify/scope.rs`'s two arms
-    (`address_in`), and `reference_capability` (the record's own
-    mutability).
-  - Found while landing R2492 (2026-11-22).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2509 Inline-parametric and mono decide a handle binding or a
   by-address receiver from a `TyKind::Ref` type**
 
@@ -11438,6 +11418,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     the schema and package format bump (`docs/mir-text-format.md`).
   - `verify_function` (`verify/calls.rs`) keeps only "a binding is typed
     as a reference".
+  - MIR verifier (R2508 left one rule per record): delete
+    `types_compatible`'s tag-equality guard on its reference arm,
+    `verify::reference_record`'s `LitRef` alternative, and
+    `same_address`'s `LitRef` arm, whose `lit` flag becomes "either side
+    is a reference".
   - Audit the receiver and callee peels R2507 left on the outer
     reference, merge-safe only while no method is declared on a
     reference: `mir::addressed_receiver`/`receiver_value_ty` callers,
