@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use mojito_ast::ast::{
     ArgConvention, DeclaredParam, Expr, ExprKind, KwArg, Method, MethodProvenance, ParamArg,
-    ParamKind, Stmt, StmtKind, TraitMethod, Type, TypeParam,
+    ParamKind, Stmt, StmtKind, TraitMethod, TypeParam,
 };
 use mojito_ast::call::CompileTimeParam;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
@@ -1029,8 +1029,7 @@ fn defaults_for(
 fn unforwardable(method: &TraitMethod) -> Option<String> {
     let name = &method.name;
     if let Some(param) = method.params.iter().find(|param| {
-        param.kind == ParamKind::Variadic
-            && !matches!(&param.ty.kind, ExprKind::TypeValue(Type::Named(pack, _)) if pack.starts_with('*'))
+        param.kind == ParamKind::Variadic && !matches!(&param.ty.kind, ExprKind::Spread(_))
     }) {
         return Some(format!(
             "forwarding the homogeneous variadic '*{}' of trait default '{name}' to a \

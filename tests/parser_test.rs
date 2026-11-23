@@ -512,7 +512,7 @@ fn signature_annotation_slots_store_the_annotation_expression() {
     assert_eq!(params[0].ty.kind, ExprKind::Identifier("Int".into()));
     assert_eq!(
         params[1].ty.kind,
-        ExprKind::TypeValue(Type::Named("*Ts".into(), vec![]))
+        ExprKind::Spread(Box::new(ExprKind::Identifier("Ts".into()).into()))
     );
     assert!(matches!(
         ret.as_ref().map(|ret| &ret.kind),
@@ -3783,6 +3783,11 @@ fn keeps_the_qualified_pack_spread_apart_from_the_bare_one() {
     assert_eq!(
         view(&methods[0].params[0].ty),
         Type::SelfParam("*Ts".into())
+    );
+    assert!(
+        matches!(&methods[0].params[0].ty.kind, ExprKind::Spread(operand)
+            if operand.self_member() == Some("Ts")),
+        "the annotation is the spread expression"
     );
     let StmtKind::SetPlace { value, .. } = &methods[0].body[0].kind else {
         panic!("expected the field store")

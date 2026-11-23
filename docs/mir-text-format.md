@@ -1428,6 +1428,11 @@ slot's convention (`ret_reference`, `Param::reference`) beside the
 referent annotation, as upstream reads a result convention, rather than
 a reference type. The MIR schema does not change.
 
+The package format moves to `mojito-package 269` (R2538): a pack-spread
+annotation (`*Ts`, `*Self.Ts`) in the checker residue is the spread
+expression upstream parses, rather than a `*`-prefixed type name. The
+MIR schema does not change.
+
 Schema 1.229 completes a trait requirement's function type after its
 `variadic_convention`, as upstream's trait declares it:
 `receiver_convention`, its receiver's declared convention (`present(var)`

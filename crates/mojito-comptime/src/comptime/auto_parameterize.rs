@@ -574,6 +574,15 @@ struct Substitute<'a> {
 
 impl MutVisitor for Substitute<'_> {
     fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        // A spread pack's operand has already read the argument pack's
+        // `*`-prefixed type name; the spread names the pack itself.
+        if let ExprKind::Spread(operand) = &mut expr.kind
+            && let ExprKind::Identifier(name) = &mut operand.kind
+            && let Some(pack) = name.strip_prefix('*')
+        {
+            *name = pack.to_string();
+            return;
+        }
         let ExprKind::Identifier(name) = &expr.kind else {
             return;
         };

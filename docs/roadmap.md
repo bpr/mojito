@@ -13392,18 +13392,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2538 A pack-spread annotation is a magic type name, not a spread expression**
-
-  `*Ts` and `*Self.Ts` in an annotation parse to `Type::Named("*Ts")` and
-  `SelfParam("*Ts")`, where upstream parses a spread expression.
-  - Slice 6 of the R2137 plan: they become `ExprKind::Spread`, and the
-    checker maps a spread to the `*`-prefixed name it uses internally, so
-    the type-parameter name tests do not move.
-  - Changes `parser/types.rs::pack_spread_type`,
-    `comptime/pack_qualification.rs`, `auto_parameterize.rs`, and `elab.rs`.
-  - Depends on R2535.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2539 A bracket operand can be a parsed type instead of an expression**
 
   `ParamArg::Type` holds a `Type` operand, which the checker and the
@@ -13416,6 +13404,11 @@ follow-ups the landed producer stages filed come last.
     and `initializer_list.rs::keyword_spelling`.
   - If it does not fit a session, land the synthesizers first and file the
     matches.
+  - Includes a bracket's pack operand (`Tuple[*Ts]`, `Tuple[*Self.Ts]`),
+    which `parse_param_arg` still makes `ParamArg::Type(Named("*Ts"))` or
+    `SelfParam("*Ts")`; it becomes the `ExprKind::Spread` an annotation's
+    pack already is, and `pack_spread_argument` and
+    `type_list_operand`'s pack spelling read it.
   - Depends on R2535.
   - Model: Fable, Not Planned.
 

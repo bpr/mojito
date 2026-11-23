@@ -716,7 +716,7 @@ pub(in crate::checker) fn pack_collector(params: &[FnParam]) -> Option<&str> {
         .find(|param| {
             param.kind == mojito_ast::ast::ParamKind::Variadic
                 && matches!(param.convention, None | Some(ArgConvention::Imm))
-                && matches!(&param.ty.kind, ExprKind::TypeValue(mojito_ast::ast::Type::Named(name, _)) if name.starts_with('*'))
+                && matches!(&param.ty.kind, ExprKind::Spread(_))
         })
         .map(|param| param.name.as_str())
 }

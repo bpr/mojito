@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pack-spread annotation (`*args: *Ts`, `var *args: *Self.Ts`) parses
+  to the spread expression upstream parses, instead of a `*`-prefixed type
+  name (R2538); the checker reads the spread as the pack it names, so no
+  program's behavior changes. The cached package format moves to
+  `mojito-package 269`.
+
 - `ref` after `->` and after a field's `:` is the slot's convention, as
   upstream reads a result, instead of a reference type (R2537): a result
   keeps `ret_reference` beside its referent annotation and a kept direct

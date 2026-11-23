@@ -9,10 +9,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// `type_of(x).T`, `def(Int) -> Int`, `__generator_type[T: AnyType] T`,
     /// `Int if c else Float64`), which converts in the annotation's type
     /// context ([`Expr::annotation_type`]); the checker evaluates one no
-    /// spelling converts. Only a `*` pack keeps its own form, stored as the
-    /// [`ExprKind::TypeValue`] of its type; `ref` is no annotation, only a
-    /// result's or a field's convention ([`Self::parse_result`],
-    /// [`Self::parse_reference_slot`]).
+    /// spelling converts. A `*` pack is the [`ExprKind::Spread`] of the pack
+    /// it names (`*Ts`, `*Self.Ts`), as upstream parses it; `ref` is no
+    /// annotation, only a result's or a field's convention
+    /// ([`Self::parse_result`], [`Self::parse_reference_slot`]).
     pub(super) fn parse_annotation(&mut self) -> Result<Expr, ParseError> {
         let start = self.peek_start();
         if !matches!(self.peek_token()?, Some(Token::Star)) {
@@ -21,13 +21,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         }
         // A variadic type-pack reference in `*args: *ArgTypes`. Inside a
         // struct, current Mojo spells the struct's own pack `*Self.Ts`; the
-        // qualified spread keeps its own node so the elaborator can tell it
+        // qualified spread keeps its operand so the elaborator can tell it
         // from a bare `*Ts`, which a struct member may not use.
         self.next_token()?;
         if !matches!(self.peek_token()?, Some(Token::Identifier(_))) {
+            let name_start = self.peek_start();
             let name = self.expect_identifier("Expected a type-pack name after '*'")?;
-            let ty = Type::Named(format!("*{name}"), Vec::new());
-            return Ok(self.node(ExprKind::TypeValue(ty), start));
+            let operand = self.node(ExprKind::Identifier(name), name_start);
+            return Ok(self.node(ExprKind::Spread(Box::new(operand)), start));
         }
         let mut operand = self.parse_prefix()?;
         let message = if matches!(&operand.kind, ExprKind::Identifier(id) if id == "Self")
@@ -38,9 +39,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             "Expected a type-pack name after '*'"
         };
-        let ty =
-            pack_spread_type(&operand).ok_or_else(|| ParseError::Message(message.to_string()))?;
-        Ok(self.node(ExprKind::TypeValue(ty), start))
+        if operand.pack_spread_type().is_none() {
+            return Err(ParseError::Message(message.to_string()));
+        }
+        Ok(self.node(ExprKind::Spread(Box::new(operand)), start))
     }
 
     /// Parses a result after its `->`, as upstream's result reads a leading
@@ -364,7 +366,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 return Ok(ParamArg::Type(Type::Named(format!("*{name}"), Vec::new())));
             }
             let operand = self.parse_expression(Precedence::Lowest)?;
-            return Ok(match pack_spread_type(&operand) {
+            return Ok(match operand.pack_spread_type() {
                 Some(ty) => ParamArg::Type(ty),
                 None => ParamArg::Value(self.node(ExprKind::Spread(Box::new(operand)), start)),
             });
@@ -504,18 +506,6 @@ fn annotation_type(annotation: &Expr) -> Result<Type, ParseError> {
     annotation.annotation_type().ok_or_else(|| {
         ParseError::Message("expected a type, found an expression".to_string()).at(annotation.span)
     })
-}
-
-/// The pack type a `*` spread's operand names: a bare pack (`*Ts`) or the
-/// enclosing struct's own pack (`*Self.Ts`). `None` for any other type-list
-/// expression, which spreads as a value.
-fn pack_spread_type(operand: &Expr) -> Option<Type> {
-    match &operand.kind {
-        ExprKind::Identifier(name) => Some(Type::Named(format!("*{name}"), Vec::new())),
-        _ => operand
-            .self_member()
-            .map(|field| Type::SelfParam(format!("*{field}"))),
-    }
 }
 
 /// A type-parameter bound's expression, classified into the fields of

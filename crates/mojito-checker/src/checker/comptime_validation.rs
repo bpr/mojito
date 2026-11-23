@@ -8146,7 +8146,8 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
                 }
                 ExprKind::Member { object, .. }
                 | ExprKind::Index { object, .. }
-                | ExprKind::MultiIndex { object, .. } => self.visit_annotation(object),
+                | ExprKind::MultiIndex { object, .. }
+                | ExprKind::Spread(object) => self.visit_annotation(object),
                 _ => {}
             }
         }

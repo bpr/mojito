@@ -225,10 +225,10 @@ pub enum Type {
     /// from inside its body (Mojo spelling; a bare `T` is not in scope there).
     /// The checker also accepts it as a shorthand for a type-valued associated
     /// member when there is no struct parameter by that name. The qualified
-    /// pack spread `*Self.Ts` keeps the leading `*` in the name
+    /// pack spread `*Self.Ts` converts with the leading `*` in the name
     /// (`SelfParam("*Ts")`); the elaborator's pack-qualification pass folds
-    /// it onto the bare `Named("*Ts")` spread once a struct's members are
-    /// known to qualify every use.
+    /// it onto the bare `*Ts` spread once a struct's members are known to
+    /// qualify every use.
     SelfParam(String),
     /// `Base.Member` in type position — an associated type/comptime member lookup
     /// on a type parameter, `Self`, or a concrete type. `args` is the parameter
@@ -2281,15 +2281,16 @@ impl Expr {
     }
 
     /// The annotation expression a synthesized slot stores for `ty`: the
-    /// expression spelling source would write ([`Type::expression_spelling`])
-    /// when it converts back to exactly `ty`, else `ty` as a type value.
+    /// expression spelling source would write (the spread of a pack, else
+    /// [`Type::expression_spelling`]) when it converts back to exactly `ty`,
+    /// else `ty` as a type value.
     /// A [`Type::Value`] view re-spells as its own expression.
     pub fn annotation_of(ty: Type, span: Span) -> Self {
         match ty {
             Type::Value(value) if matches!(value.annotation_type(), Some(Type::Value(view)) if view == value) => {
                 *value
             }
-            ty => match ty.expression_spelling(span) {
+            ty => match pack_spread_spelling(&ty, span).or_else(|| ty.expression_spelling(span)) {
                 Some(spelled) if spelled.annotation_type().as_ref() == Some(&ty) => spelled,
                 _ => Self::new(ExprKind::TypeValue(ty), span),
             },
@@ -2440,6 +2441,20 @@ impl Expr {
         }
     }
 
+    /// The pack type a `*` spread of this operand names, under the
+    /// `*`-prefixed name the checker binds a pack by: a bare pack (`*Ts` is
+    /// `Named("*Ts")`) or the enclosing struct's own pack (`*Self.Ts` is
+    /// `SelfParam("*Ts")`). `None` for any other type-list expression, which
+    /// spreads as a value.
+    pub fn pack_spread_type(&self) -> Option<Type> {
+        match &self.kind {
+            ExprKind::Identifier(name) => Some(Type::Named(format!("*{name}"), Vec::new())),
+            _ => self
+                .self_member()
+                .map(|field| Type::SelfParam(format!("*{field}"))),
+        }
+    }
+
     /// The type a type-shaped expression spells: a capitalized name, `Self`,
     /// a parameter application (`S[Int]`, or the one-operand subscript
     /// `S[1]`), or a member chain rooted at one (`M.Inner`, `Self.T`). `None`
@@ -2482,6 +2497,8 @@ impl Expr {
     ///   [`Type::IndexedProjection`] (`Self[0]`, `values.element_types[i]`)
     ///   and any other list applies an argument-less member (`M.A[1, 2]`);
     /// - `type_of(x)` is [`Type::TypeOf`];
+    /// - a pack spread (`*Ts`, `*Self.Ts`) is the pack's `*`-prefixed name
+    ///   ([`Self::pack_spread_type`]);
     /// - any other expression (a call, a construction, a conditional, an
     ///   operator, a `def` function type, a `__generator_type`) is the
     ///   compile-time value it evaluates to
@@ -2507,6 +2524,7 @@ impl Expr {
     fn spelled_annotation_type(&self) -> Option<Type> {
         match &self.kind {
             ExprKind::TypeValue(ty) => Some(ty.clone()),
+            ExprKind::Spread(operand) => operand.pack_spread_type(),
             ExprKind::None => Some(Type::None),
             ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
             ExprKind::Identifier(name) if name != "..." && name != CONTEXTUAL_SENTINEL => {
@@ -4038,6 +4056,22 @@ thread_local! {
 
 fn decoded_source() -> Option<String> {
     DECODING_SOURCE.with_borrow(Clone::clone)
+}
+
+/// The spread source writes for a pack type ([`Expr::pack_spread_type`]'s
+/// inverse): `*Ts` for `Named("*Ts")`, `*Self.Ts` for `SelfParam("*Ts")`.
+fn pack_spread_spelling(ty: &Type, span: Span) -> Option<Expr> {
+    let operand = match ty {
+        Type::Named(name, args) if args.is_empty() => Expr::new(
+            ExprKind::Identifier(name.strip_prefix('*')?.to_string()),
+            span,
+        ),
+        Type::SelfParam(name) => {
+            Type::SelfParam(name.strip_prefix('*')?.to_string()).expression_spelling(span)?
+        }
+        _ => return None,
+    };
+    Some(Expr::new(ExprKind::Spread(Box::new(operand)), span))
 }
 
 /// [`Stmt::module`] as its encoding carries it.

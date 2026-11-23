@@ -34,8 +34,19 @@ pub(super) fn substitute_type_bindings_in_expr(e: &mut Expr, subs: TypeSubs) {
 /// it converts to ([`substitute_type_bindings_in_type`]) does: a bare
 /// binder, `Self.binder`, or bracket operand naming one becomes the bound
 /// type, while a bracket's head and any expression the annotation evaluates
-/// keep their own spelling.
+/// keep their own spelling. A pack spread (`*Ts`, `*Self.Ts`) substitutes
+/// under the pack's `*`-prefixed name.
 pub(super) fn retype_annotation(e: &mut Expr, subs: TypeSubs) {
+    if let ExprKind::Spread(operand) = &e.kind {
+        let replacement = operand.pack_spread_type().and_then(|pack| match pack {
+            Type::Named(name, _) | Type::SelfParam(name) => subs(&name),
+            _ => None,
+        });
+        if let Some(replacement) = replacement {
+            *e = Expr::annotation_of(replacement, e.span);
+        }
+        return;
+    }
     let binder = match &e.kind {
         ExprKind::Identifier(name) if name != "Self" => Some(name.as_str()),
         _ => e.self_member(),

@@ -4,8 +4,8 @@
 //! the pack is `Self.Ts`; the bare name belongs to the header (its parameter
 //! list, conformance clauses, and trailing `where`), where `Self` is not
 //! available. A member spelling it bare is rejected with upstream's text, and
-//! the qualified spread `*Self.Ts` the parser keeps apart is then folded onto
-//! the bare `*Ts` node every later fold expands. A method or nested scope
+//! the qualified spread `*Self.Ts` (the spread of `Self.Ts`) is then folded
+//! onto the bare spread `*Ts` every later fold expands. A method or nested scope
 //! that binds the same name owns it, so its bare uses are its own.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]

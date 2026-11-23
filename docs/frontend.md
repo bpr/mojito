@@ -553,8 +553,10 @@ Postfix forms bind at `Call`, the highest level.
 - a `def` function type (`ExprKind::FunctionType`) or a
   `__generator_type [params] Result` generator type
   (`ExprKind::GeneratorType`), each its own expression node, as upstream
-  parses them; a `*` pack spelled in expression position is the
-  `ExprKind::TypeValue` of its type. `ref` is never a type: after `->`
+  parses them; a `*` pack annotation (`*Ts`, `*Self.Ts`) is the
+  `ExprKind::Spread` of the pack, as upstream parses a spread, which
+  `Expr::annotation_type` converts to the pack's `*`-prefixed name
+  (`Expr::pack_spread_type`). `ref` is never a type: after `->`
   (`Parser::parse_result`) and after a field's `:`
   (`Parser::parse_reference_slot`) a `ref[...]` is the slot's convention,
   kept as `ret_reference` / `Param::reference` beside the referent
