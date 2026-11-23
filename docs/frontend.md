@@ -451,10 +451,11 @@ identifier `Self`, a synthesized `SIMD[dt, w]` bound the subscript
 expression too: automatic parameterization rebinds a bare or applied struct
 annotation to its bound application, and a binder's annotation substitutes
 along its type positions (`visit::walk_annotation_names_mut`, which skips a
-bracket's head and a pack spread). The checker converts the expression when
-it reads it (`Expr::annotation_type`, `Expr::composition_type` for an
-associated `comptime` member, struct or trait, where an `&` chain composes
-traits).
+bracket's head and a pack spread). The parser and the elaborator match an
+annotation's expression shape and never convert it; only the checker
+converts the expression when it reads it (`Expr::annotation_type`,
+`Expr::composition_type` for an associated `comptime` member, struct or
+trait, where an `&` chain composes traits).
 
 This is an intentional parser/checker split: the parser handles syntax, while
 the checker knows which parameter positions expect types versus comptime values.

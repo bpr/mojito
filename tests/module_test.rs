@@ -107,9 +107,12 @@ fn explicit_core_imports_and_aliases_reuse_prelude_declarations() {
         .expect("entry function");
     let type_names: Vec<_> = consume
         .iter()
-        .map(|parameter| match parameter.ty.annotation_type() {
-            Some(mojito::Type::Named(name, _)) => name,
-            other => panic!("expected a named core type, got {other:?}"),
+        .map(|parameter| match &parameter.ty.kind {
+            mojito::ast::ExprKind::Identifier(name) => name.clone(),
+            _ => match parameter.ty.bracket_application() {
+                Some((name, _)) => name.to_string(),
+                None => panic!("expected a named core type, got {:?}", parameter.ty),
+            },
         })
         .collect();
     assert_eq!(type_names, ["List", "Tuple"]);

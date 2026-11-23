@@ -22,7 +22,7 @@
 //!   for`.
 
 use mojito_ast::ast::{
-    Expr, ExprKind, InfixOp, ParamArg, PrefixOp, Stmt, StmtKind, Type, TypeParam, WithItem,
+    Expr, ExprKind, InfixOp, ParamArg, PrefixOp, Stmt, StmtKind, TypeParam, WithItem,
 };
 pub use mojito_symbol::symbol::mangle;
 use mojito_types::types::TyKind;
@@ -32,6 +32,7 @@ use mojito_common::token::Span;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamContext, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, list_type, tuple_type};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 /// An error from compile-time elaboration.
@@ -151,6 +152,22 @@ const fn rebuilt(source: &Stmt, kind: StmtKind) -> Stmt {
     }
 }
 
+/// The name an annotation applies and its bracket operands: a bare name
+/// other than `Self` (no operands) or a bracket on one (`Pair[Int]`,
+/// `List[]`), as the checker reads the annotation's head.
+fn applied_name(annotation: &Expr) -> Option<(&str, Cow<'_, [ParamArg]>)> {
+    match &annotation.kind {
+        ExprKind::Identifier(name)
+            if !annotation.is_self_annotation() && !annotation.is_sentinel() =>
+        {
+            Some((name, Cow::Borrowed(&[][..])))
+        }
+        _ => annotation
+            .bracket_application()
+            .filter(|(name, _)| *name != "Self"),
+    }
+}
+
 fn mk(kind: StmtKind, span: Span) -> Stmt {
     Stmt {
         kind,
@@ -238,7 +255,7 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
         ExprKind::Identifier(name) => {
             let sibling = siblings.iter().find(|sibling| sibling.name == *name)?;
             let ty = match (&sibling.value_type, sibling.bounds.as_slice()) {
-                (Some(source), _) => ct_param_source_type(&source.annotation_type()?)?,
+                (Some(source), _) => ct_param_source_type(source)?,
                 (None, [only]) => ct_value_param_type(only)?,
                 _ => return None,
             };
@@ -272,24 +289,43 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
     }
 }
 
-fn ct_param_source_type(source: &Type) -> Option<Ty> {
-    match source {
-        Type::None => Some(Ty::none()),
+/// The type a value parameter's annotation names: `None`, a trait-valued
+/// `type_of(...)`, or an applied name ([`ct_param_applied_type`]).
+fn ct_param_source_type(source: &Expr) -> Option<Ty> {
+    match &source.kind {
+        ExprKind::None => Some(Ty::none()),
         // A trait-valued parameter (`Tr: type_of(AnyType)`).
-        Type::TypeOf(operand) => any_trait_source_type(operand),
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } if name == "type_of" && param_args.is_empty() && kwargs.is_empty() => {
+            match args.as_slice() {
+                [operand] => any_trait_source_type(operand),
+                _ => None,
+            }
+        }
+        _ => ct_param_applied_type(source),
+    }
+}
+
+/// The type an applied name names: a scalar alias, or a `List`, `Tuple`,
+/// or `SIMD` application.
+fn ct_param_applied_type(source: &Expr) -> Option<Ty> {
+    let (name, args) = applied_name(source)?;
+    match (name, args.as_ref()) {
         // A scalar alias (`Int`, `Float64`, `Int8`): after linking, a bare
         // alias name is std's, since a program's own declaration is renamed.
-        Type::Named(name, args) if args.is_empty() => scalar_type_name(name),
-        Type::Named(name, args) if name == "List" && args.len() == 1 => {
-            Some(list_type(ct_param_argument_type(&args[0])?))
-        }
-        Type::Named(name, args) if name == "Tuple" => args
+        (name, []) => scalar_type_name(name),
+        ("List", [element]) => Some(list_type(ct_param_argument_type(element)?)),
+        ("Tuple", args) => args
             .iter()
             .map(ct_param_argument_type)
             .collect::<Option<Vec<_>>>()
             .map(tuple_type),
         // A vector-typed value parameter (`[key: SIMD[DType.uint64, 4]]`).
-        Type::Named(name, args) if name == "SIMD" => simd_source_dims(args)
+        ("SIMD", args) => simd_source_dims(args)
             .map(|(dtype, width)| mojito_types::types::canonical_simd_ty(dtype, width)),
         _ => None,
     }
@@ -300,7 +336,7 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
 /// which parses as an expression) by the type it spells.
 fn ct_param_argument_type(argument: &ParamArg) -> Option<Ty> {
     match argument {
-        ParamArg::Value(value) => ct_param_source_type(&value.type_spelling()?),
+        ParamArg::Value(value) => ct_param_applied_type(value),
         ParamArg::Named { .. } => None,
     }
 }

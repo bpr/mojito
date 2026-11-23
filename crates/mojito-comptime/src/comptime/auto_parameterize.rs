@@ -3,8 +3,6 @@
 //! leaves unbound becomes an infer-only parameter of the declaration that
 //! takes the argument.
 
-use std::borrow::Cow;
-
 use mojito_ast::ast::{DeclaredParam, FnParam, ParamArg, auto_binder_name};
 use mojito_ast::call::Unbound;
 use mojito_ast::visit::MutVisitor;
@@ -259,11 +257,8 @@ impl<'a> Declared<'a> {
         binders: &mut Vec<TypeParam>,
         span: Span,
     ) -> Option<Expr> {
-        let (name, args) = match &annotation.kind {
-            ExprKind::Identifier(name) => (name.as_str(), Cow::Borrowed(&[][..])),
-            _ => annotation.bracket_application()?,
-        };
-        if name == "Self" || annotation.annotation_type().is_none() || in_scope.contains(name) {
+        let (name, args) = applied_name(annotation)?;
+        if in_scope.contains(name) {
             return None;
         }
         let args = args.as_ref();
@@ -604,7 +599,7 @@ impl Substitute<'_> {
         };
         if let Some(ParamArg::Value(argument)) = self.arguments.get(parameter)
             && (matches!(argument.kind, ExprKind::Spread(_) | ExprKind::Identifier(_))
-                || argument.type_spelling().is_some())
+                || spells_type(argument))
         {
             let span = name.span;
             *name = argument.clone();
@@ -630,5 +625,23 @@ impl MutVisitor for Substitute<'_> {
         if let Some(ParamArg::Value(value)) = self.arguments.get(name) {
             *expr = value.clone();
         }
+    }
+}
+
+/// Whether an expression spells a type rather than a value: `Self` or a
+/// name that is not lowercase, a bracket applying such a name (`S[Int]`),
+/// or a member chain rooted at one (`M.Inner`, `Self.T`).
+fn spells_type(expr: &Expr) -> bool {
+    let type_name = |name: &str| {
+        name.chars()
+            .next()
+            .is_some_and(|first| !first.is_lowercase())
+    };
+    match &expr.kind {
+        ExprKind::Identifier(name) => name == "Self" || type_name(name),
+        ExprKind::Member { object, .. } => spells_type(object),
+        _ => expr
+            .bracket_application()
+            .is_some_and(|(name, _)| type_name(name)),
     }
 }

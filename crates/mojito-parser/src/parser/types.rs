@@ -7,9 +7,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// Parses a type annotation as the expression upstream keeps: one whole
     /// expression at ternary level (`Bool`, `Self.T`, `Pair[Int]`,
     /// `type_of(x).T`, `def(Int) -> Int`, `__generator_type[T: AnyType] T`,
-    /// `Int if c else Float64`), which converts in the annotation's type
-    /// context ([`Expr::annotation_type`]); the checker evaluates one no
-    /// spelling converts. A `*` pack is the [`ExprKind::Spread`] of the pack
+    /// `Int if c else Float64`), never classified here: the checker reads
+    /// it in the annotation's type context. A `*` pack is the [`ExprKind::Spread`] of the pack
     /// it names (`*Ts`, `*Self.Ts`), as upstream parses it; `ref` is no
     /// annotation, only a result's or a field's convention
     /// ([`Self::parse_result`], [`Self::parse_reference_slot`]).
@@ -39,7 +38,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         } else {
             "Expected a type-pack name after '*'"
         };
-        if operand.pack_spread_type().is_none() {
+        if operand.spread_pack_name().is_none() {
             return Err(ParseError::Message(message.to_string()));
         }
         Ok(self.node(ExprKind::Spread(Box::new(operand)), start))
@@ -93,8 +92,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// consumed, as upstream's `parseGeneratorType` does: an optional
     /// parameter list, then the result, one whole expression. A trait
     /// composition (`__generator_type[T: Copyable] Copyable & Defaultable`)
-    /// is the `&` the expression grammar parses, converted by
-    /// [`Expr::composition_type`].
+    /// is the `&` the expression grammar parses, which the checker reads
+    /// as the composition of its members.
     pub(super) fn parse_generator_type_tail(
         &mut self,
     ) -> Result<(Vec<mojito_ast::ast::TypeParam>, Expr), ParseError> {
@@ -104,12 +103,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Vec::new()
         };
         let result = self.parse_expression(Precedence::Walrus)?;
-        if result.composition_type().is_none() {
-            return Err(
-                ParseError::Message("expected a type, found an expression".to_string())
-                    .at(result.span),
-            );
-        }
+        reject_sentinel_member(&result)?;
         Ok((params, result))
     }
 
@@ -489,23 +483,37 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// Reads the rest of an annotation, one whole expression, from the head
-    /// just parsed, rejecting one that converts to no type in the
-    /// annotation's type context.
+    /// just parsed, rejecting a sentinel, which is no annotation.
     fn annotation_from(&mut self, head: Expr) -> Result<Expr, ParseError> {
         let expr = self.parse_expression_from(head, Precedence::Walrus)?;
-        annotation_type(&expr)?;
+        reject_sentinel(&expr)?;
         Ok(expr)
     }
 
     // --- Expressions (Pratt parser) ---
 }
 
-/// An annotation's type, converted in its type context; the `...` and
-/// contextual sentinels are no annotation.
-fn annotation_type(annotation: &Expr) -> Result<Type, ParseError> {
-    annotation.annotation_type().ok_or_else(|| {
-        ParseError::Message("expected a type, found an expression".to_string()).at(annotation.span)
-    })
+/// Rejects an `&` composition with a sentinel member (or a sentinel
+/// standing alone), which is no annotation, at the whole expression.
+pub(super) fn reject_sentinel_member(expr: &Expr) -> Result<(), ParseError> {
+    let mut members = Vec::new();
+    bound_members(expr, &mut members);
+    if members.iter().any(|member| member.is_sentinel()) {
+        return Err(sentinel_error(expr));
+    }
+    Ok(())
+}
+
+/// Rejects the `...` and contextual sentinels, which are no annotation.
+fn reject_sentinel(annotation: &Expr) -> Result<(), ParseError> {
+    if annotation.is_sentinel() {
+        return Err(sentinel_error(annotation));
+    }
+    Ok(())
+}
+
+fn sentinel_error(at: &Expr) -> ParseError {
+    ParseError::Message("expected a type, found an expression".to_string()).at(at.span)
 }
 
 /// A type-parameter bound's expression, classified into the fields of
@@ -517,8 +525,7 @@ struct TypeParamBound {
     origin_mutability: Option<Expr>,
 }
 
-/// Classifies a type-parameter bound's expression, converted in the type
-/// context:
+/// Classifies a type-parameter bound by its expression shape:
 ///
 /// - an `&` composition is a list of trait names with at most one function
 ///   type (the callable bound), in any position;
@@ -542,24 +549,17 @@ fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
             bound.callable_bound = Some((*member).clone());
             return Ok(bound);
         }
-        let ty = bound_member_type(member)?;
-        match &ty {
-            Type::Named(name, args) if args.is_empty() => bound.bounds.push(name.clone()),
-            Type::SelfType => bound.bounds.push("Self".to_string()),
-            Type::Named(name, args)
-                if name == "Origin"
-                    && let [mojito_ast::ast::ParamArg::Named { name: key, value }] =
-                        args.as_slice()
-                    && key == "mut"
-                    && let mojito_ast::ast::ParamArg::Value(mutability) = value.as_ref() =>
-            {
-                bound.bounds.push(name.clone());
-                bound.origin_mutability = Some(mutability.clone());
-            }
-            _ => {
-                bound.bounds.push(bound_spelling(member));
-                bound.value_type = Some((*member).clone());
-            }
+        reject_sentinel(member)?;
+        if let ExprKind::Identifier(name) = &member.kind {
+            bound.bounds.push(name.clone());
+        } else if let Some(mutability) = origin_binder_mutability(member) {
+            bound.bounds.push("Origin".to_string());
+            bound.origin_mutability = Some(mutability);
+        } else if let Some(name) = empty_application(member) {
+            bound.bounds.push(name.to_string());
+        } else {
+            bound.bounds.push(bound_spelling(member));
+            bound.value_type = Some((*member).clone());
         }
         return Ok(bound);
     }
@@ -575,15 +575,18 @@ fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
             bound.callable_bound = Some(member.clone());
             continue;
         }
-        match bound_member_type(member)? {
-            Type::Named(name, args) if args.is_empty() => bound.bounds.push(name),
-            _ => {
-                return Err(ParseError::Message(
-                    "expected a trait name in a type-parameter bound composition".to_string(),
-                )
-                .at(member.span));
-            }
-        }
+        reject_sentinel(member)?;
+        let name = match &member.kind {
+            ExprKind::Identifier(name) if name != "Self" => Some(name.as_str()),
+            _ => empty_application(member),
+        };
+        let Some(name) = name else {
+            return Err(ParseError::Message(
+                "expected a trait name in a type-parameter bound composition".to_string(),
+            )
+            .at(member.span));
+        };
+        bound.bounds.push(name.to_string());
     }
     Ok(bound)
 }
@@ -599,11 +602,28 @@ fn bound_members<'a>(expr: &'a Expr, members: &mut Vec<&'a Expr>) {
     }
 }
 
-/// One bound member converted in the type context.
-fn bound_member_type(member: &Expr) -> Result<Type, ParseError> {
-    member.annotation_type().ok_or_else(|| {
-        ParseError::Message("expected a type, found an expression".to_string()).at(member.span)
-    })
+/// The name an empty bracket applies (`Name[]`), a bound naming `Name`
+/// itself; `Self[]` is no name.
+fn empty_application(member: &Expr) -> Option<&str> {
+    let (object, args) = member.bracket_operands()?;
+    match &object.kind {
+        ExprKind::Identifier(name) if name != "Self" && args.is_empty() => Some(name),
+        _ => None,
+    }
+}
+
+/// The mutability `e` of an origin binder bound `Origin[mut=e]`.
+fn origin_binder_mutability(member: &Expr) -> Option<Expr> {
+    let (head, args) = member.bracket_application()?;
+    match (head, args.as_ref()) {
+        ("Origin", [mojito_ast::ast::ParamArg::Named { name, value }]) if name == "mut" => {
+            match value.as_ref() {
+                mojito_ast::ast::ParamArg::Value(mutability) => Some(mutability.clone()),
+                mojito_ast::ast::ParamArg::Named { .. } => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// The spelled head recorded beside a value type: `Self.NAME`, the root

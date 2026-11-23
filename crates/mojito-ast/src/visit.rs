@@ -14,7 +14,7 @@ use crate::ast::{
     ComprehensionClause, Condition, Decorator, DestructureTarget, DestructureTargetKind, EnumCase,
     Expr, ExprKind, FnParam, FunctionTypeParam, MatchCase, MatchPattern, MatchPatternKind, Method,
     Param, ParamArg, SequenceTarget, Stmt, StmtKind, StructComptime, SubscriptArg, TStringPart,
-    TraitComptime, TraitMethod, Type, TypeParam,
+    TraitComptime, TraitMethod, TypeParam,
 };
 
 /// Callbacks for a read-only walk. Every method has a no-op default.
@@ -1363,7 +1363,11 @@ pub fn walk_annotation_mut<V: MutVisitor>(visitor: &mut V, annotation: &mut Expr
 }
 
 /// Walk an annotation's expression in place along the spine its type
-/// context reads ([`Expr::annotation_type`]).
+/// context reads.
+///
+/// The spine is a name, `Self.NAME`, a member chain, `type_of(x)`, a pack
+/// spread, and a bracket that applies a name, projects one value index, or
+/// applies an argument-less member.
 ///
 /// Each name it spells as a type (a bare name other than `Self`, or
 /// `Self.NAME`) goes to `at_name`, and every expression the annotation holds
@@ -1375,21 +1379,13 @@ pub fn walk_annotation_names_mut<V: MutVisitor>(
     annotation: &mut Expr,
     at_name: &mut impl FnMut(&mut V, &mut Expr),
 ) {
-    let spelled_bracket = matches!(
-        annotation.kind,
-        ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
-    ) && matches!(
-        annotation.annotation_type(),
-        Some(Type::Named(..) | Type::Assoc { .. } | Type::IndexedProjection { .. })
-    );
+    let spelled_bracket = spelled_bracket(annotation);
+    let unnamed = annotation.is_self_annotation() || annotation.is_sentinel();
     match &mut annotation.kind {
-        ExprKind::Identifier(name)
-            if name == "Self" || name == "..." || name == crate::ast::CONTEXTUAL_SENTINEL => {}
+        ExprKind::Identifier(_) if unnamed => {}
         ExprKind::Identifier(_) => at_name(visitor, annotation),
         ExprKind::None => {}
-        ExprKind::Spread(operand)
-            if matches!(operand.kind, ExprKind::Identifier(_))
-                || operand.self_member().is_some() => {}
+        ExprKind::Spread(operand) if operand.spread_pack_name().is_some() => {}
         ExprKind::Member { object, .. } if object.is_self_annotation() => {
             at_name(visitor, annotation);
         }
@@ -1434,6 +1430,31 @@ pub fn walk_param_arg_mut<V: MutVisitor>(visitor: &mut V, argument: &mut ParamAr
     match argument {
         ParamArg::Value(value) => walk_expr_mut(visitor, value),
         ParamArg::Named { value, .. } => walk_param_arg_mut(visitor, value),
+    }
+}
+
+/// Whether an annotation is a bracket its type context reads along its
+/// spine: one applying a name other than `Self` (`Pair[Int]`), one value
+/// index projected from another annotation (`Self[0]`), or a bracket on an
+/// argument-less member (`M.A[1, 2]`).
+fn spelled_bracket(annotation: &Expr) -> bool {
+    let Some((object, operands)) = annotation.bracket_operands() else {
+        return false;
+    };
+    match &object.kind {
+        ExprKind::Identifier(name) if name != "Self" => true,
+        _ => matches!(operands.as_slice(), [ParamArg::Value(_)]) || bare_member(object),
+    }
+}
+
+/// Whether an annotation is a member applied to no operands (`M.A`,
+/// `M.A[]`) on a base other than `Self` or a sentinel.
+fn bare_member(annotation: &Expr) -> bool {
+    match &annotation.kind {
+        ExprKind::Member { object, .. } => !object.is_self_annotation() && !object.is_sentinel(),
+        _ => annotation
+            .bracket_operands()
+            .is_some_and(|(object, operands)| operands.is_empty() && bare_member(object)),
     }
 }
 

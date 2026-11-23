@@ -601,9 +601,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         self.expect(&Token::Colon, "Expected ':' after the comptime member name")?;
         // The annotation is one expression; a trait composition is its `&`.
         let ty = self.parse_expression(Precedence::Walrus)?;
-        ty.composition_type().ok_or_else(|| {
-            ParseError::Message("expected a type, found an expression".to_string()).at(ty.span)
-        })?;
+        reject_sentinel_member(&ty)?;
         let where_clauses = self.parse_where_clauses()?;
         let default = if matches!(self.peek_token()?, Some(Token::Assign)) {
             self.next_token()?;

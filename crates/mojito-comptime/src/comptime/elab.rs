@@ -275,10 +275,8 @@ fn contextual_comptime(stmt: &Stmt) -> Option<Stmt> {
     else {
         return None;
     };
-    let Some(Type::Named(base, args)) = annotation.annotation_type() else {
-        return None;
-    };
-    let resolved = with_contextual_base(value, &base, &args)?;
+    let (base, args) = applied_name(annotation)?;
+    let resolved = with_contextual_base(value, base, &args)?;
     let mut rewritten = stmt.clone();
     if let StmtKind::Comptime { value, .. } = &mut rewritten.kind {
         *value = resolved;

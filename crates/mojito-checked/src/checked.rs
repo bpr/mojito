@@ -5157,8 +5157,8 @@ impl ExplicitDestroyInfo {
     }
 }
 
-/// The declaration-owned location of a source annotation. Unlike `SourceType`
-/// syntax itself, this identity preserves the scope in which syntax such as a
+/// The declaration-owned location of a source annotation. Unlike the
+/// annotation expression itself, this identity preserves the scope in which syntax such as a
 /// bare `T` was resolved.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum AnnotationSite {

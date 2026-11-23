@@ -13372,31 +13372,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2545 Annotation readers outside the checker classify a `Type`
-  view**
-
-  The parser, the linker's tests, the elaborator, and the AST's own
-  annotation walk read an annotation through `Expr::annotation_type`'s
-  `Type` view, where upstream's parser and elaborator keep the expression
-  and never classify it.
-  - Slice 2 of the R2540 plan (`R2540-type-is-an-ast-node-plan.md`): each
-    site matches the expression shape it needs.
-  - Parser sites: `parser/types.rs` (`pack_spread_type` on a spread
-    operand, the sentinel checks, `type_param_bound`,
-    `bound_member_type`) and `parser/items.rs`'s sentinel check.
-  - Elaborator sites: `comptime/elab.rs`, `comptime/synth.rs`,
-    `comptime.rs::{ct_param_source_type, ct_param_argument_type}`,
-    `comptime/params.rs::param_list_element`, `comptime/rewrite.rs`
-    (`retype_spread`, `retype_annotation`, `retype_projection`), and
-    `auto_parameterize.rs::bind`'s `annotation_type` guard.
-  - AST site: `visit::walk_annotation_names_mut` decides a bracket's
-    spine through `annotation_type`.
-  - Test sites: `tests/parser_test.rs`'s view assertions move to the
-    checker with R2546, and `tests/module_test.rs` and
-    `tests/comptime_test.rs` match expressions.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2546 The annotation view is an AST type, not the checker's**
 
   `mojito_ast::ast::Type`, the `SourceType` alias, and the view functions
@@ -13415,6 +13390,9 @@ follow-ups the landed producer stages filed come last.
     `type_spelling`, goes with the view.
   - Every `SourceType` site in the checker becomes `AnnotationView`, and
     `src/lib.rs` drops `Type` and `SourceType` from its re-export.
+  - `tests/parser_test.rs`'s 43 view tests (and its `view` helper) move
+    to checker tests of the view, and the parser tests keep
+    expression-shape assertions.
   - Depends on R2545.
   - Model: Fable, Planned.
 

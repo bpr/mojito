@@ -2377,6 +2377,24 @@ impl Expr {
         }
     }
 
+    /// Whether this expression is one of the two sentinels an annotation
+    /// slot may hold in place of an annotation: the `...` ellipsis, or the
+    /// contextual marker of a leading-dot member.
+    pub fn is_sentinel(&self) -> bool {
+        matches!(&self.kind, ExprKind::Identifier(name) if name == "..." || name == CONTEXTUAL_SENTINEL)
+    }
+
+    /// The pack a `*` spread of this operand names: the identifier of a
+    /// bare pack (`Ts` in `*Ts`) or the enclosing struct's own member (`Ts`
+    /// in `*Self.Ts`). `None` for any other operand, which spreads as a
+    /// value.
+    pub fn spread_pack_name(&self) -> Option<&str> {
+        match &self.kind {
+            ExprKind::Identifier(name) => Some(name),
+            _ => self.self_member(),
+        }
+    }
+
     /// The pack type a `*` spread of this operand names, under the
     /// `*`-prefixed name the checker binds a pack by: a bare pack (`*Ts` is
     /// `Named("*Ts")`) or the enclosing struct's own pack (`*Self.Ts` is
@@ -2444,9 +2462,7 @@ impl Expr {
     /// Only the `...` and contextual sentinels, which are no annotation,
     /// convert to nothing.
     pub fn annotation_type(&self) -> Option<Type> {
-        if let ExprKind::Identifier(name) = &self.kind
-            && (name == "..." || name == CONTEXTUAL_SENTINEL)
-        {
+        if self.is_sentinel() {
             return None;
         }
         Some(
@@ -2462,7 +2478,7 @@ impl Expr {
             ExprKind::Spread(operand) => operand.pack_spread_type(),
             ExprKind::None => Some(Type::None),
             ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
-            ExprKind::Identifier(name) if name != "..." && name != CONTEXTUAL_SENTINEL => {
+            ExprKind::Identifier(name) if !self.is_sentinel() => {
                 Some(Type::Named(name.clone(), Vec::new()))
             }
             ExprKind::Member { object, field } => Some(match object.annotation_type()? {

@@ -44,10 +44,9 @@ pub(super) fn retype_spread(e: &mut Expr, subs: TypeSubs) -> bool {
     let ExprKind::Spread(operand) = &e.kind else {
         return false;
     };
-    let replacement = operand.pack_spread_type().and_then(|pack| match pack {
-        Type::Named(name, _) | Type::SelfParam(name) => subs(&name),
-        _ => None,
-    });
+    let replacement = operand
+        .spread_pack_name()
+        .and_then(|name| subs(&format!("*{name}")));
     replacement.is_some_and(|replacement| {
         put_replacement(e, replacement);
         true
@@ -84,7 +83,7 @@ pub(super) fn retype_annotation(e: &mut Expr, subs: TypeSubs) {
     });
     let evaluated = match &mut e.kind {
         ExprKind::Identifier(_) | ExprKind::None => false,
-        ExprKind::Member { object, .. } if object.annotation_type().is_some() => {
+        ExprKind::Member { object, .. } if !object.is_sentinel() => {
             retype_annotation(object, subs);
             false
         }
@@ -150,9 +149,9 @@ fn retype_projection(
     projection: bool,
     subs: TypeSubs,
 ) -> bool {
-    let Some(base) = object.annotation_type() else {
+    if object.is_sentinel() {
         return false;
-    };
+    }
     if projection && indices.len() == 1 && !indices[0].is_type_expression() {
         retype_annotation(object, subs);
         return true;
@@ -164,7 +163,7 @@ fn retype_projection(
     else {
         return false;
     };
-    if !matches!(&base, Type::Assoc { args, .. } if args.is_empty()) {
+    if base_object.is_self_annotation() || base_object.is_sentinel() {
         return false;
     }
     retype_annotation(base_object, subs);

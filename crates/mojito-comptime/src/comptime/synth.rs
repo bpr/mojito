@@ -271,7 +271,7 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
             matches!(
                 method.params.as_slice(),
                 [parameter] if parameter.ty.is_self_annotation()
-                    || matches!(parameter.ty.annotation_type(), Some(Type::Named(named, _)) if named == *name)
+                    || applied_name(&parameter.ty).is_some_and(|(named, _)| named == *name)
             )
         };
         if !conforms.iter().any(|conformance| equatable(conformance))
@@ -616,23 +616,22 @@ struct KgenTypeFold<'a> {
 impl KgenTypeFold<'_> {
     /// The KGEN type `parameter`'s type spelling denotes, if any.
     fn denoted(&self, parameter: &TypeParam) -> Option<Ty> {
-        match parameter
-            .value_type
-            .as_ref()
-            .and_then(Expr::annotation_type)
-        {
-            Some(Type::Assoc { base, name, args }) if args.is_empty() => match *base {
-                Type::Named(base, base_args) if base_args.is_empty() => {
-                    if base == "__mlir_type" {
-                        mojito_types::types::mlir_type_named(&name)
-                    } else {
-                        self.members.get(&base)?.get(&name).cloned()
+        match parameter.value_type.as_ref() {
+            Some(annotation) if let Some(name) = annotation.self_member() => {
+                self.own?.get(name).cloned()
+            }
+            Some(annotation) => {
+                let ExprKind::Member { object, field } = &unapplied(annotation).kind else {
+                    return None;
+                };
+                match applied_name(object)? {
+                    ("__mlir_type", args) if args.is_empty() => {
+                        mojito_types::types::mlir_type_named(field)
                     }
+                    (base, args) if args.is_empty() => self.members.get(base)?.get(field).cloned(),
+                    _ => None,
                 }
-                _ => None,
-            },
-            Some(Type::SelfParam(name)) => self.own?.get(&name).cloned(),
-            Some(_) => None,
+            }
             None => match parameter.bounds.as_slice() {
                 [only] => self.module_aliases.get(only).cloned().or_else(|| {
                     self.installed?
@@ -676,5 +675,18 @@ impl mojito_ast::visit::MutVisitor for KgenTypeFold<'_> {
             }
             _ => {}
         }
+    }
+}
+
+/// An annotation with its empty brackets on a member removed (`M.A` for
+/// `M.A[]`): the member they apply no operands to.
+fn unapplied(annotation: &Expr) -> &Expr {
+    match annotation.bracket_operands() {
+        Some((object, operands))
+            if operands.is_empty() && !matches!(object.kind, ExprKind::Identifier(_)) =>
+        {
+            unapplied(object)
+        }
+        _ => annotation,
     }
 }

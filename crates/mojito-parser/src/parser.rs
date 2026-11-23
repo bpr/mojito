@@ -11,7 +11,7 @@ use mojito_ast::ast::{
     ArgConvention, BindingMode, Capture, CaptureKind, CaptureList, Condition, Decorator,
     DestructureTarget, DestructureTargetKind, EnumCase, Expr, ExprKind, FnParam, FunctionTypeExpr,
     FunctionTypeParam, InfixOp, KwArg, Method, Param, ParamKind, PrefixOp, Stmt, StmtKind,
-    SubscriptArg, SumCases, SumKind, TStringPart, Type, WithItem,
+    SubscriptArg, SumCases, SumKind, TStringPart, WithItem,
 };
 use mojito_common::error::{LexError, ParseError};
 use mojito_common::token::{Span, TStringChunk, Token};
@@ -35,6 +35,7 @@ mod suffix;
 mod types;
 
 use patterns::{TargetItem, expr_to_target, item_to_target};
+use types::reject_sentinel_member;
 
 /// Binding-power levels, lowest to highest. Mirrors Python/Mojo expression
 /// precedence for the implemented operator set.

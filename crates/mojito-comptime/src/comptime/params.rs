@@ -50,13 +50,12 @@ pub(super) fn classify_ct_param(
         variadic: tp.name.starts_with('*'),
         constraints: Vec::new(),
     };
-    let value_type = tp.value_type.as_ref().and_then(Expr::annotation_type);
-    if let Some(ty) = value_type.as_ref().and_then(ct_param_source_type) {
+    let value_type = tp.value_type.as_ref();
+    if let Some(ty) = value_type.and_then(ct_param_source_type) {
         return Some(value(ty));
     }
-    if let Some(element) = value_type
-        .as_ref()
-        .and_then(|source| param_list_element(tp, source, siblings, owner))
+    if let Some(element) =
+        value_type.and_then(|source| param_list_element(tp, source, siblings, owner))
     {
         return Some(value(TyKind::ParamList(element).into()));
     }
@@ -198,14 +197,22 @@ fn sibling_trait_binder(
 /// type binder or scalar type.
 fn param_list_element(
     tp: &TypeParam,
-    source: &Type,
+    source: &Expr,
     siblings: &[TypeParam],
     owner: &str,
 ) -> Option<Ty> {
-    let Type::IndexedProjection { base, index } = source else {
+    let (object, operands) = source.bracket_operands()?;
+    let [ParamArg::Value(index)] = operands.as_slice() else {
         return None;
     };
-    if !matches!(&**base, Type::Assoc { name, .. } if name == "KGENParamListType") {
+    let ExprKind::Member {
+        object: base,
+        field,
+    } = &object.kind
+    else {
+        return None;
+    };
+    if field != "KGENParamListType" || base.is_self_annotation() || base.is_sentinel() {
         return None;
     }
     let ExprKind::Identifier(element) = &index.kind else {

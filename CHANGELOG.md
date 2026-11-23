@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Only the checker classifies an annotation (R2545): the parser, the
+  elaborator, and `visit::walk_annotation_names_mut` match an annotation's
+  expression shape instead of reading `Expr::annotation_type`'s `Type`
+  view, as upstream's parser and elaborator keep the expression. New AST
+  readers `Expr::{is_sentinel, spread_pack_name}` name a sentinel and a
+  spread's pack. No program's behavior changes.
+
 - The AST stores no type node (R2540): `ExprKind::TypeValue`,
   `Expr::annotation_of`, `Expr::retype_view`, `Type::expression_spelling`,
   and the `visit_type` walks are gone. A synthesized annotation is built as
