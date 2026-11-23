@@ -3112,17 +3112,12 @@ fn lambdas_in_param_args<'a>(args: &'a [ParamArg], out: &mut Vec<&'a Expr>) {
 /// Already-unique parser IDs are retained so source-oriented public lookups
 /// remain compatible with the input AST; a repeated ID is never trusted and
 /// receives a deterministic final-tree identity here.
-///
-/// The returned [`SyntaxOrigins`] keeps the identity each re-keyed occurrence
-/// had before: a clone's node carries the identity of the template node it
-/// was copied from, which is the occurrence-level expansion trace.
 #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
-pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
+pub fn rekey_syntax(statements: &mut [Stmt]) {
     struct Rekey {
         next: u64,
         used: std::collections::HashSet<mojito_common::token::SyntaxId>,
         lambda_names: std::collections::HashSet<String>,
-        origins: SyntaxOrigins,
     }
 
     impl Rekey {
@@ -3137,7 +3132,6 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                 let id = mojito_common::token::SyntaxId(self.next);
                 self.next += 1;
                 if self.used.insert(id) {
-                    self.origins.replaced.insert(id, current);
                     return id;
                 }
             }
@@ -3773,33 +3767,8 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
         next: 1,
         used: std::collections::HashSet::new(),
         lambda_names: std::collections::HashSet::new(),
-        origins: SyntaxOrigins::default(),
     };
     rekey.block(statements);
-    rekey.origins
-}
-
-/// The identity each occurrence [`rekey_syntax`] re-keyed had before it.
-#[derive(Debug, Clone, Default)]
-pub struct SyntaxOrigins {
-    replaced:
-        std::collections::HashMap<mojito_common::token::SyntaxId, mojito_common::token::SyntaxId>,
-}
-
-impl SyntaxOrigins {
-    /// The identity `id` was copied with: itself unless it was re-keyed. A
-    /// node synthesized from another ([`SyntaxId::derived`]) was copied with
-    /// the identity synthesized at the same ordinal from its parent's origin.
-    ///
-    /// [`SyntaxId::derived`]: mojito_common::token::SyntaxId::derived
-    pub fn origin(&self, id: mojito_common::token::SyntaxId) -> mojito_common::token::SyntaxId {
-        if let Some(original) = self.replaced.get(&id) {
-            return *original;
-        }
-        id.derivation().map_or(id, |(parent, ordinal)| {
-            mojito_common::token::SyntaxId::derived(self.origin(parent), ordinal)
-        })
-    }
 }
 
 /// Decode with `decode`, stamping every expression it decodes with
@@ -3908,24 +3877,15 @@ mod expression_source {
 #[cfg(test)]
 mod tests {
     use super::{Dtype, Stmt, StmtKind, rekey_syntax};
-    use mojito_common::token::SyntaxId;
 
     #[test]
-    fn a_node_derived_from_a_rekeyed_copy_traces_to_the_original() {
+    fn a_rekeyed_copy_takes_a_fresh_identity() {
         let original = Stmt::new(StmtKind::Pass, (0, 4));
         let mut statements = vec![original.clone(), original.clone()];
-        let origins = rekey_syntax(&mut statements);
+        rekey_syntax(&mut statements);
         let (kept, copy) = (statements[0].syntax_id, statements[1].syntax_id);
         assert_eq!(kept, original.syntax_id);
         assert_ne!(copy, kept);
-        assert_eq!(
-            origins.origin(SyntaxId::derived(copy, 2)),
-            SyntaxId::derived(kept, 2)
-        );
-        assert_eq!(
-            origins.origin(SyntaxId::derived(SyntaxId::derived(copy, 0), 1)),
-            SyntaxId::derived(SyntaxId::derived(kept, 0), 1)
-        );
     }
 
     #[test]

@@ -3193,6 +3193,10 @@ pub struct CheckedTrait {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitMethod {
     pub name: String,
+    /// The trait function it declares (`Trait.method`, or an overload's
+    /// symbol), as upstream names every trait function: a default's member
+    /// lowers to it, and a requirement's parameter defaults lift under it.
+    pub symbol: String,
     /// Its checked signature at its trait's method sites, as upstream's
     /// trait declares each requirement's function type: over the abstract
     /// `Self` for a requirement, over the trait's `_Self` binder (the one
@@ -3237,11 +3241,10 @@ impl CheckedTraitMethod {
     }
 }
 
-/// A trait default as its trait's method: the member symbol it lowers to
-/// and its body; its signature is its method's.
+/// A trait default as its trait's method: its body; its signature and
+/// symbol are its method's.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitDefault {
-    pub symbol: String,
     pub body: Vec<CheckedStmtId>,
     /// The level its inline decorator names.
     pub inline: crate::declaration::InlineLevel,
@@ -5815,7 +5818,7 @@ pub(crate) enum StructShell {
     /// constructor, or move constructor), which has no checked body: its
     /// lowering reads the struct's fields alone.
     Synthesized,
-    /// A trait's default, its trait's member, at its position among the
+    /// A trait's method, its trait's member, at its position among the
     /// trait's node's methods: the trait's shell holds that method alone.
     TraitDefault(usize),
 }
@@ -6981,6 +6984,7 @@ impl<'a> ArenaBuilder<'a> {
                     .enumerate()
                     .map(|(index, method)| CheckedTraitMethod {
                         name: method.name.clone(),
+                        symbol: self.method_symbol(statement, name, index, &method.name),
                         signature: self.signatures.method(
                             statement.module.as_ref(),
                             name,
@@ -6997,7 +7001,6 @@ impl<'a> ArenaBuilder<'a> {
                             .default_body
                             .as_ref()
                             .map(|body| CheckedTraitDefault {
-                                symbol: self.method_symbol(statement, name, index, &method.name),
                                 body: self.function_body(body),
                                 inline: crate::declaration::InlineLevel::of(&method.decorators)
                                     .unwrap_or_default(),

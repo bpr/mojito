@@ -9549,24 +9549,29 @@ scope, records no `Cfg::slots` entry and MIR resolves it by its binding.
 
 A call through a trait bound that leaves out a requirement's default runs
 the requirement's default, as in current Mojo, even though an instance clone
-reaches the witness nominally. The check records each such call's omitted
-defaults that some witness declares otherwise (`checker/bound_defaults.rs`),
-keyed by the call's origin, and spells them as literal keyword arguments of
-the call and of every clone of it; a pass that finds a new one is followed by
-another over the spelled tree, and the template catalog carries them so a
-later pass binds them before it starts. The spelled
-nodes' identities are derived from the call's, so a clone's traces to the
-template's. Every checked signature holds a default as an attribute
-(`SignatureDefault`), as the lowered declaration does: a literal constant,
-an evaluated default, or, for a trait requirement only, a parameter
-expression. The trait's declaration makes each requirement default one
-(`requirement_default` in `checker/traits.rs`): a module constant, or a
-compile-time `Int` expression over them, becomes the constant it names in
-the trait's scope, and a default reading the method's own value parameters
-becomes a `ParamExpr` over them with its module constants folded. The call
-evaluates that expression with its solved binding of the parameters
-(explicit, defaulted, or inferred) and spells the value in the caller's
-scope, which means the same in each clone; any other default is rejected.
+reaches the witness nominally: the requirement's declaration carries the
+default attribute, as upstream's requirement function type does, and the
+call materializes it. The check types each bodiless requirement's defaults
+at its trait (`Checker::check_requirement_defaults`), against its parameter
+types with `Self` abstract and its own binders in scope, so a conversion
+(`None` into `Optional[Int]`) is recorded at the trait. A trait method
+declaring a parameter default is a lowering unit (`LoweringUnit::TraitMember`)
+whether or not it has a body, and MIR lowers a bodiless one's defaults
+(`lower_requirement_defaults`) into `TraitRequirement::defaults`: a literal
+or a conversion of one as its constant, any other default as the lifted
+`$default$Trait.method$param` function over the binders it reads.
+`mir::fill_omitted_arguments` then fills a call of a trait-dispatch symbol,
+a method call or a subscript, from the trait member's declaration when the
+requirement has a body, else from the requirement the bound declares
+(`DefaultedCallee`), binding the requirement's own binders to the
+compile-time arguments the call passes (the recorded expression over the
+caller's binders, else the constant its register holds, else the binder's
+default) and a trait member's `_Self` to the receiver. Every checked
+signature holds a default as an attribute (`SignatureDefault`), a literal
+constant or an evaluated default, as the lowered declaration does; the
+trait's declaration rejects a requirement default reading `Self` or one
+of the method's type parameters, which a call through the bound binds
+nothing for (`requirement_default` in `checker/traits.rs`).
 
 Keeping value-level behavior in `runtime` prevents the VM from baking every
 operation directly into the backend. The VM should be a consumer of checked MIR

@@ -4345,7 +4345,7 @@ impl Checker {
     /// A default value must fit its parameter's type. A default may name a
     /// compile-time value parameter (`value: Int = n`), so the value
     /// parameters are bound around the defaults as they are in the body.
-    fn check_parameter_defaults(
+    pub(super) fn check_parameter_defaults(
         &mut self,
         params: &[FnParam],
         param_tys: &[Ty],

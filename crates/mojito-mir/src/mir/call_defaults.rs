@@ -25,6 +25,7 @@
 //! `_insert` per collected keyword, and the filled collector passed as the
 //! call's one `**` operand.
 
+use crate::mir::call_addresses::requirement_by_address_parameter;
 use crate::mir::type_construction::storage_construction;
 use crate::mir::variadics::{
     FrameTables, ListElement, build_variadic_list, build_variadic_pack, element_lit_ref_type,
@@ -32,22 +33,24 @@ use crate::mir::variadics::{
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
     CALL_RESULT_SLOT, Const, FuncRef, LoweredCall, MirArgConventions, MirBlock, MirDeclarations,
-    MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, Proj, Reg, UseMode,
-    by_address_parameter, callable_targets, calls::literal_materializes_to, fresh_register,
-    instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
-    mir_place_handle_ty, terminator_regs_mut,
+    MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirSubscriptArg, Proj,
+    Reg, UseMode, by_address_parameter, callable_targets, calls::literal_materializes_to,
+    fresh_register, instruction_regions, instruction_regions_mut, instruction_regs_mut,
+    instruction_slots, mir_place_handle_ty, nested_instructions, terminator_regs_mut,
 };
 use mojito_ast::ast::{ArgConvention, FORWARDED_KWARGS_NAME};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::{CheckedArgumentConvention, CheckedCallArgumentSource, CheckedConst};
+use mojito_checked::declaration::TraitRequirement;
 use mojito_common::token::SourceSpan;
 use mojito_hir::hir::VarId;
 use mojito_symbol::symbol::{LiftedOwner, lifted_owner};
+use mojito_types::ct::CtValue;
 use mojito_types::origin::Mutability;
 use mojito_types::param_expr::{MetaTy, ParamBindings, ParamContext, ParamExpr, ParamKind};
 use mojito_types::types::{
-    ParamDecl, Ty, TyArg, TyKind, default_literal, names_binder, replace_argument_parameters,
-    replace_parameters,
+    ParamDecl, Ty, TyArg, TyKind, default_literal, mentions, names_binder,
+    replace_argument_parameters, replace_parameters,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -99,6 +102,7 @@ pub fn fill_omitted_arguments(
             name,
             declarations,
             targets,
+            constants: register_constants(function),
         };
         let mut blocks = std::mem::take(&mut function.body);
         fill_blocks(
@@ -184,6 +188,9 @@ struct Caller<'a> {
     name: &'a str,
     declarations: &'a MirDeclarations,
     targets: HashMap<u32, (String, bool)>,
+    /// The closed scalar each register the body defines as a constant
+    /// holds ([`register_constants`]).
+    constants: HashMap<u32, CtValue>,
 }
 
 /// The call being filled: its operand lists, taken from the instruction
@@ -319,28 +326,27 @@ fn fill_call(
     (prelude, postlude): (&mut Vec<MirInstr>, &mut Vec<MirInstr>),
     invariant_errors: &mut Vec<String>,
 ) -> MirInstr {
-    if let MirInstr::Index { .. } = &instruction {
-        let Some(callee) = record
-            .callee
-            .as_deref()
-            .and_then(|callee| caller.declarations.function(callee))
-        else {
+    if let MirInstr::Index { base, call, .. } = &instruction {
+        let Some((_, callee)) = record.callee.as_deref().and_then(|callee| {
+            resolve_callee(
+                callee,
+                function.reg_types.get(&base.0),
+                call.as_ref().and_then(|call| call.refined_bound.as_deref()),
+                caller.declarations,
+            )
+        }) else {
             return instruction;
         };
-        if !omits_any(callee, 1, &[]) && callee.variadic.is_none() {
+        if !omits_any(callee, 1, &[]) && callee.variadic().is_none() {
             return instruction;
         }
         instruction = widen_index(instruction);
     }
-    let Some(mut site) = Site::of(&instruction, record, function, caller) else {
-        collect_through_requirement(&mut instruction, function, caller, (prelude, postlude));
+    let Some((mut site, callee)) = Site::of(&instruction, record, function, caller) else {
         collect_through_contract(&mut instruction, function, caller.declarations, prelude);
         return instruction;
     };
     let declarations = caller.declarations;
-    let Some(callee) = declarations.function(&site.callee) else {
-        return instruction;
-    };
     let location = function
         .spans
         .0
@@ -357,10 +363,8 @@ fn fill_call(
         }
     };
     let leading = site.leading;
-    let positional_limit = callee
-        .keyword_only
-        .unwrap_or(callee.param_names.len())
-        .min(callee.param_names.len());
+    let declared = callee.param_names().len();
+    let positional_limit = callee.keyword_only().unwrap_or(declared).min(declared);
     let passes_operands = !(site.args.is_empty() && site.kwargs.is_empty());
     let mut sources = Vec::new();
     let mut conventions = Vec::new();
@@ -368,7 +372,7 @@ fn fill_call(
         let positional = default.slot == leading + site.args.len()
             && default.slot < positional_limit
             && callee
-                .variadic_index
+                .variadic_index()
                 .is_none_or(|collector| default.slot < collector);
         let value = evaluate_default(function, &default, location.as_ref(), declarations, prelude);
         let argument = if declarations.register_passable(&default.ty) && !default.by_address {
@@ -398,7 +402,7 @@ fn fill_call(
     if !matches!(instruction, MirInstr::MultiIndex { .. })
         && let Err(error) = build_keyword_collector(
             &mut site,
-            &CallShape::from(callee),
+            &callee.shape(),
             function,
             declarations,
             location.as_ref(),
@@ -412,7 +416,7 @@ fn fill_call(
     }
     build_collector(
         &mut site,
-        &CallShape::from(callee),
+        &callee.shape(),
         matches!(instruction, MirInstr::MultiIndex { .. }),
         function,
         location.as_ref(),
@@ -481,7 +485,13 @@ fn collect_subscript_store(
             .map(|(name, MirSubscriptArg::Index(register))| (name.clone(), *register))
             .chain(std::iter::once((value_keyword.clone(), *value)))
             .collect(),
-        bound: bindings_of(&call.target, callee, &[], receiver_ty.as_ref(), caller),
+        bound: bindings_of(
+            &call.target,
+            callee,
+            (&[], &call.param_arg_regs),
+            receiver_ty.as_ref(),
+            caller,
+        ),
         spread: None,
         receiver: None,
     };
@@ -500,7 +510,13 @@ fn collect_subscript_store(
     };
     let collector = site.args[position];
     *args = site.args.into_iter().map(MirSubscriptArg::Index).collect();
-    collect_contract_arguments(call, position, callee, function, collector);
+    collect_contract_arguments(
+        call,
+        position,
+        DefaultedCallee::Declared(callee),
+        function,
+        collector,
+    );
 }
 
 /// Name the collector a subscript builds at `position` in its contract
@@ -510,7 +526,7 @@ fn collect_subscript_store(
 fn collect_contract_arguments(
     call: &mut crate::mir::MirSubscriptCall,
     position: usize,
-    callee: &MirFunctionDeclaration,
+    callee: DefaultedCallee<'_>,
     function: &MirFunction,
     collector: Reg,
 ) {
@@ -520,17 +536,17 @@ fn collect_contract_arguments(
     call.arguments.retain(|argument| {
         !matches!(argument.source, CheckedCallArgumentSource::Positional(index) if index >= position)
     });
-    let at = callee.param_types.len().min(call.arguments.len());
+    let at = callee.param_types().len().min(call.arguments.len());
     call.arguments.insert(
         at,
         mojito_checked::checked::CheckedCallArgument {
             source: CheckedCallArgumentSource::Positional(position),
             parameter_ty: ty.clone(),
             requires_place: false,
-            convention: callee.variadic_convention,
+            convention: callee.variadic_convention(),
             by_address: false,
             writes: matches!(
-                callee.variadic_convention,
+                callee.variadic_convention(),
                 Some(ArgConvention::Var | ArgConvention::Deinit)
             ),
         },
@@ -567,86 +583,134 @@ impl<'a> From<&'a MirFunctionDeclaration> for CallShape<'a> {
     }
 }
 
-/// Build the positional and keyword collectors of a method call through a
-/// bound whose requirement has no body, which no declaration describes, from
-/// the requirement's call shape
-/// ([`mojito_checked::declaration::TraitRequirement`]), as [`build_collector`]
-/// and [`build_keyword_collector`] build a declared callee's.
-fn collect_through_requirement(
-    instruction: &mut MirInstr,
-    function: &mut MirFunction,
-    caller: &Caller<'_>,
-    (prelude, postlude): (&mut Vec<MirInstr>, &mut Vec<MirInstr>),
-) {
-    let MirInstr::MethodCall {
-        dest,
-        resolved: Some(dispatch),
-        args,
-        kwargs,
-        param_decls,
-        instantiated_args,
-        spread: None,
-        ..
-    } = &*instruction
-    else {
-        return;
-    };
-    let Some(requirement) = caller
-        .declarations
-        .trait_declarations()
-        .flat_map(|declaration| &declaration.requirements)
-        .find(|requirement| requirement.dispatch == *dispatch)
-    else {
-        return;
-    };
-    if requirement.variadic.is_none() && requirement.kw_variadic.is_none() {
-        return;
+/// The declaration a call binds its arguments against and takes each
+/// omitted one's default from: its callee's, or, for a call through a bound
+/// whose requirement has no body, the requirement's, as upstream's
+/// requirement function type declares its parameters and their default
+/// attributes.
+#[derive(Clone, Copy)]
+enum DefaultedCallee<'a> {
+    Declared(&'a MirFunctionDeclaration),
+    Required(&'a TraitRequirement),
+}
+
+impl<'a> DefaultedCallee<'a> {
+    fn shape(self) -> CallShape<'a> {
+        match self {
+            Self::Declared(declaration) => CallShape::from(declaration),
+            Self::Required(requirement) => CallShape {
+                param_names: &requirement.param_names,
+                required: &requirement.required,
+                positional_only: requirement.positional_only,
+                keyword_only: requirement.keyword_only,
+                variadic: requirement.variadic.as_ref(),
+                variadic_convention: requirement.variadic_convention,
+                kw_variadic: requirement.kw_variadic.as_ref(),
+                param_decls: ParamDecl::argument_view(&requirement.param_decls),
+            },
+        }
     }
-    let shape = CallShape {
-        param_names: &requirement.param_names,
-        required: &requirement.required,
-        positional_only: requirement.positional_only,
-        keyword_only: requirement.keyword_only,
-        variadic: requirement.variadic.as_ref(),
-        variadic_convention: requirement.variadic_convention,
-        kw_variadic: requirement.kw_variadic.as_ref(),
-        param_decls: ParamDecl::argument_view(param_decls),
-    };
-    let mut site = Site {
-        dest: *dest,
-        callee: dispatch.clone(),
-        leading: 0,
-        args: args.clone(),
-        kwargs: kwargs.clone(),
-        bound: param_decls
-            .iter()
-            .cloned()
-            .zip(instantiated_args.iter().cloned())
-            .collect(),
-        spread: None,
-        receiver: None,
-    };
-    let location = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
-    let collected = build_keyword_collector(
-        &mut site,
-        &shape,
-        function,
-        caller.declarations,
-        location.as_ref(),
-        prelude,
-    )
-    .is_ok_and(|built| built);
-    build_collector(
-        &mut site,
-        &shape,
-        false,
-        function,
-        location.as_ref(),
-        prelude,
-        postlude,
-    );
-    if collected || site.spread.is_some() {
-        site.store(instruction, &[]);
+
+    fn param_names(self) -> &'a [String] {
+        match self {
+            Self::Declared(declaration) => &declaration.param_names,
+            Self::Required(requirement) => &requirement.param_names,
+        }
+    }
+
+    fn required(self) -> &'a [bool] {
+        match self {
+            Self::Declared(declaration) => &declaration.required,
+            Self::Required(requirement) => &requirement.required,
+        }
+    }
+
+    fn param_types(self) -> &'a [Ty] {
+        match self {
+            Self::Declared(declaration) => &declaration.param_types,
+            Self::Required(requirement) => &requirement.param_types,
+        }
+    }
+
+    fn defaults(self) -> &'a [Option<CheckedConst>] {
+        match self {
+            Self::Declared(declaration) => &declaration.defaults,
+            Self::Required(requirement) => &requirement.defaults,
+        }
+    }
+
+    fn param_conventions(self) -> &'a [Option<ArgConvention>] {
+        match self {
+            Self::Declared(declaration) => &declaration.param_conventions,
+            Self::Required(requirement) => &requirement.param_conventions,
+        }
+    }
+
+    const fn positional_only(self) -> Option<usize> {
+        match self {
+            Self::Declared(declaration) => declaration.positional_only,
+            Self::Required(requirement) => requirement.positional_only,
+        }
+    }
+
+    const fn keyword_only(self) -> Option<usize> {
+        match self {
+            Self::Declared(declaration) => declaration.keyword_only,
+            Self::Required(requirement) => requirement.keyword_only,
+        }
+    }
+
+    const fn variadic(self) -> Option<&'a Ty> {
+        match self {
+            Self::Declared(declaration) => declaration.variadic.as_ref(),
+            Self::Required(requirement) => requirement.variadic.as_ref(),
+        }
+    }
+
+    const fn kw_variadic(self) -> Option<&'a Ty> {
+        match self {
+            Self::Declared(declaration) => declaration.kw_variadic.as_ref(),
+            Self::Required(requirement) => requirement.kw_variadic.as_ref(),
+        }
+    }
+
+    const fn variadic_index(self) -> Option<usize> {
+        match self {
+            Self::Declared(declaration) => declaration.variadic_index,
+            Self::Required(requirement) => requirement.variadic_index,
+        }
+    }
+
+    const fn variadic_convention(self) -> Option<ArgConvention> {
+        match self {
+            Self::Declared(declaration) => declaration.variadic_convention,
+            Self::Required(requirement) => requirement.variadic_convention,
+        }
+    }
+
+    /// Whether the parameter at `slot` writes through its argument's place
+    /// ([`MirFunctionDeclaration::param_writes`]); a requirement's
+    /// reference parameter takes no default.
+    fn param_writes(self, slot: usize) -> bool {
+        match self {
+            Self::Declared(declaration) => {
+                declaration.param_writes.get(slot).copied().unwrap_or(false)
+            }
+            Self::Required(_) => false,
+        }
+    }
+
+    /// Whether the parameter at `slot` takes its argument's storage, the
+    /// value of type `ty` at the call ([`by_address_parameter`]).
+    fn by_address(self, slot: usize, ty: &Ty, declarations: &MirDeclarations) -> bool {
+        match self {
+            Self::Declared(declaration) => {
+                by_address_parameter(declaration, declarations, slot).is_some()
+            }
+            Self::Required(requirement) => {
+                requirement_by_address_parameter(requirement, slot, ty, declarations).is_some()
+            }
+        }
     }
 }
 
@@ -1568,17 +1632,17 @@ fn collector_type(
 
 /// Whether a call of `callee` passing `positional` arguments and the
 /// `keywords` leaves a slot out.
-fn omits_any(callee: &MirFunctionDeclaration, positional: usize, keywords: &[&str]) -> bool {
+fn omits_any(callee: DefaultedCallee<'_>, positional: usize, keywords: &[&str]) -> bool {
     match_call_slots(
-        &callee.param_names,
-        &callee.required,
-        callee.positional_only,
-        callee.keyword_only,
+        callee.param_names(),
+        callee.required(),
+        callee.positional_only(),
+        callee.keyword_only(),
         positional,
         keywords,
         CallVariadics {
-            positional: callee.variadic.is_some(),
-            keyword: callee.kw_variadic.is_some(),
+            positional: callee.variadic().is_some(),
+            keyword: callee.kw_variadic().is_some(),
         },
     )
     .is_ok_and(|matched| {
@@ -1612,16 +1676,18 @@ fn widen_index(instruction: MirInstr) -> MirInstr {
 }
 
 impl Site {
-    fn of(
+    /// The call `instruction` as its fill binds it, and the callee it
+    /// binds against.
+    fn of<'a>(
         instruction: &MirInstr,
         record: &LoweredCall,
         function: &MirFunction,
-        caller: &Caller<'_>,
-    ) -> Option<Self> {
+        caller: &Caller<'a>,
+    ) -> Option<(Self, DefaultedCallee<'a>)> {
         let declarations = caller.declarations;
         let mut leading = record.leading;
         let mut passed_receiver = None;
-        let (callee, receiver, instantiated, args, kwargs, spread) = match instruction {
+        let (callee, receiver, (instantiated, passed), args, kwargs, spread) = match instruction {
             MirInstr::Call {
                 func,
                 args,
@@ -1633,40 +1699,57 @@ impl Site {
             } => (
                 record.callee.clone().unwrap_or_else(|| func.0.clone()),
                 receiver.clone(),
-                instantiated_args,
+                (instantiated_args, &[][..]),
                 args.clone(),
                 kwargs.clone(),
                 *spread,
             ),
             MirInstr::MethodCall {
+                dest,
                 recv,
                 resolved,
                 args,
                 kwargs,
                 instantiated_args,
+                param_arg_regs,
                 spread,
+                refined_bound,
                 ..
             } => {
                 let named = record.callee.clone().or_else(|| resolved.clone())?;
-                // A call through a trait bound names the requirement's
-                // dispatch symbol; its defaults are the requirement's,
-                // which the trait member, its trait's method, declares.
-                let callee = if declarations.function(&named).is_some() {
-                    named
-                } else {
-                    requirement_member(&named, declarations)?
-                };
+                let receiver = function.reg_types.get(&recv.0)?;
+                let (callee, resolved) = resolve_callee(
+                    &named,
+                    Some(receiver),
+                    refined_bound.as_ref().map(|bound| bound.traits.as_slice()),
+                    declarations,
+                )?;
+                if let DefaultedCallee::Required(requirement) = resolved {
+                    return Some((
+                        Self {
+                            dest: *dest,
+                            callee,
+                            leading: 0,
+                            args: args.clone(),
+                            kwargs: kwargs.clone(),
+                            bound: passed_bindings(
+                                &requirement.param_decls,
+                                instantiated_args,
+                                param_arg_regs,
+                                &caller.constants,
+                            ),
+                            spread: *spread,
+                            receiver: None,
+                        },
+                        resolved,
+                    ));
+                }
                 (
                     callee,
                     // An addressed receiver is a reference to the
                     // value whose type binds the callee's parameters.
-                    Some(
-                        crate::mir::call_addresses::receiver_value_ty(
-                            function.reg_types.get(&recv.0)?,
-                        )
-                        .clone(),
-                    ),
-                    instantiated_args,
+                    Some(crate::mir::call_addresses::receiver_value_ty(receiver).clone()),
+                    (instantiated_args, &param_arg_regs[..]),
                     args.clone(),
                     kwargs.clone(),
                     *spread,
@@ -1720,7 +1803,7 @@ impl Site {
                 (
                     target,
                     receiver_type,
-                    instantiated_args,
+                    (instantiated_args, &[][..]),
                     args,
                     kwargs.clone(),
                     spread,
@@ -1739,22 +1822,44 @@ impl Site {
                     MirSubscriptArg::Index(register) => Some(*register),
                 };
                 let receiver = function.reg_types.get(&object.0)?.clone();
-                let callee = record.callee.clone().unwrap_or_else(|| call.target.clone());
-                let declaration = declarations.function(&callee)?;
-                let bound = bindings_of(&callee, declaration, &[], Some(&receiver), caller);
-                return Some(Self {
-                    dest: *dest,
-                    callee,
-                    leading: 0,
-                    args: args.iter().map(register).collect::<Option<Vec<_>>>()?,
-                    kwargs: kwargs
-                        .iter()
-                        .map(|(name, argument)| Some((name.clone(), register(argument)?)))
-                        .collect::<Option<Vec<_>>>()?,
-                    bound,
-                    spread: None,
-                    receiver: None,
-                });
+                let named = record.callee.clone().unwrap_or_else(|| call.target.clone());
+                let (callee, resolved) = resolve_callee(
+                    &named,
+                    Some(&receiver),
+                    call.refined_bound.as_deref(),
+                    declarations,
+                )?;
+                let bound = match resolved {
+                    DefaultedCallee::Declared(declaration) => bindings_of(
+                        &callee,
+                        declaration,
+                        (&[], &call.param_arg_regs),
+                        Some(&receiver),
+                        caller,
+                    ),
+                    DefaultedCallee::Required(requirement) => passed_bindings(
+                        &requirement.param_decls,
+                        &[],
+                        &call.param_arg_regs,
+                        &caller.constants,
+                    ),
+                };
+                return Some((
+                    Self {
+                        dest: *dest,
+                        callee,
+                        leading: 0,
+                        args: args.iter().map(register).collect::<Option<Vec<_>>>()?,
+                        kwargs: kwargs
+                            .iter()
+                            .map(|(name, argument)| Some((name.clone(), register(argument)?)))
+                            .collect::<Option<Vec<_>>>()?,
+                        bound,
+                        spread: None,
+                        receiver: None,
+                    },
+                    resolved,
+                ));
             }
             _ => return None,
         };
@@ -1762,20 +1867,23 @@ impl Site {
         let bound = bindings_of(
             &callee,
             declaration,
-            instantiated,
+            (instantiated, passed),
             receiver.as_ref(),
             caller,
         );
-        Some(Self {
-            dest: result_register(instruction)?,
-            callee,
-            leading,
-            args,
-            kwargs,
-            bound,
-            spread,
-            receiver: passed_receiver,
-        })
+        Some((
+            Self {
+                dest: result_register(instruction)?,
+                callee,
+                leading,
+                args,
+                kwargs,
+                bound,
+                spread,
+                receiver: passed_receiver,
+            },
+            DefaultedCallee::Declared(declaration),
+        ))
     }
 
     /// Store the filled operand lists back into `instruction`; a subscript
@@ -1828,6 +1936,113 @@ impl Site {
     }
 }
 
+/// The callee a call of `name` over a receiver of type `receiver` binds
+/// its omitted arguments against, and the name it fills them as: `name`'s
+/// declaration; for a call through a trait bound (`__trait_dispatch.…`),
+/// its trait's member when the requirement has a body
+/// ([`requirement_member`]), else the requirement the bound declares
+/// ([`MirDeclarations::call_requirement`]), whose defaults run whatever the
+/// witness declares.
+fn resolve_callee<'a>(
+    name: &str,
+    receiver: Option<&Ty>,
+    refined_bound: Option<&[String]>,
+    declarations: &'a MirDeclarations,
+) -> Option<(String, DefaultedCallee<'a>)> {
+    if let Some(declaration) = declarations.function(name) {
+        return Some((name.to_string(), DefaultedCallee::Declared(declaration)));
+    }
+    if let Some(member) = requirement_member(name, declarations) {
+        let declaration = declarations.function(&member)?;
+        return Some((member, DefaultedCallee::Declared(declaration)));
+    }
+    declarations
+        .call_requirement(name, receiver, refined_bound)
+        .map(|requirement| (name.to_string(), DefaultedCallee::Required(requirement)))
+}
+
+/// The arguments a call binds the callee's own binders `decls` to: its
+/// `instantiated` arguments when it records them, else, as a call through
+/// a bound does, each compile-time argument it `passed`, as the expression
+/// over the caller's binders the call records or the constant its register
+/// holds (`constants`), else the binder's own default.
+fn passed_bindings(
+    decls: &[ParamDecl],
+    instantiated: &[TyArg],
+    passed: &[MirParamArg],
+    constants: &HashMap<u32, CtValue>,
+) -> Vec<(ParamDecl, TyArg)> {
+    if !instantiated.is_empty() {
+        return decls
+            .iter()
+            .cloned()
+            .zip(instantiated.iter().cloned())
+            .collect();
+    }
+    let mut bound: Vec<(ParamDecl, TyArg)> = Vec::new();
+    for (index, decl) in decls.iter().enumerate() {
+        let argument = passed
+            .iter()
+            .find(|argument| argument.declaration_index(decls) == Some(index))
+            .and_then(|argument| {
+                argument
+                    .expr
+                    .clone()
+                    .map(CtValue::Expr)
+                    .or_else(|| constants.get(&argument.value?.0).cloned())
+            })
+            .map(TyArg::Val)
+            .or_else(|| match decl {
+                ParamDecl::Value {
+                    default: Some(default),
+                    ..
+                } => substitute_argument(&TyArg::Val(CtValue::Expr(default.clone())), &bound).ok(),
+                _ => None,
+            });
+        if let Some(argument) = argument {
+            bound.push((decl.clone(), argument));
+        }
+    }
+    bound
+}
+
+/// The closed scalar each register `function`'s body defines as a
+/// constant holds, a literal materialized or built into its storage as
+/// the literal: the value a compile-time argument's register carries when
+/// the call records no expression for it.
+fn register_constants(function: &MirFunction) -> HashMap<u32, CtValue> {
+    let mut constants = HashMap::new();
+    let instructions = nested_instructions(&function.body);
+    // A literal's storage construction follows its definition, so one pass
+    // in order resolves each chain.
+    for instruction in instructions {
+        let (dest, value) = match instruction {
+            MirInstr::Const { dest, k } => (
+                dest,
+                match k {
+                    Const::Int(value) => Some(CtValue::Int(*value)),
+                    Const::IntLiteral(literal) => literal.to_i64().map(CtValue::Int),
+                    Const::Bool(value) => Some(CtValue::Bool(*value)),
+                    Const::Str(text) => Some(CtValue::Str(text.clone())),
+                    Const::Value(value) if k.is_folded_scalar() => Some(value.clone()),
+                    _ => None,
+                },
+            ),
+            MirInstr::MaterializeLiteral { dest, value, .. } => {
+                (dest, constants.get(&value.0).cloned())
+            }
+            MirInstr::MakeStruct { dest, fields } if fields.len() == 1 => {
+                (dest, constants.get(&fields[0].0).cloned())
+            }
+            _ => continue,
+        };
+        if let Some(value) = value {
+            constants.insert(dest.0, value);
+        }
+    }
+    constants
+}
+
 /// The lowered body of the trait member whose requirement dispatches as
 /// `dispatch` (`__trait_dispatch.f$…`), when the member has one: the
 /// trait's method `Trait.member`.
@@ -1846,25 +2061,26 @@ fn requirement_member(dispatch: &str, declarations: &MirDeclarations) -> Option<
     })
 }
 
-/// The arguments the call binds `callee`'s binders to, then those of the
-/// scopes around it: a method's struct's from `receiver`, the receiver
-/// instance's type (`Self`'s binders standing for themselves), and a
-/// nested body's enclosing declarations', standing for themselves inside
-/// the function declaring them.
+/// The arguments the call binds `callee`'s binders to
+/// ([`passed_bindings`]), then those of the scopes around it: a method's
+/// struct's from `receiver`, the receiver instance's type (`Self`'s
+/// binders standing for themselves), a trait member's trait's `_Self` from
+/// it, and a nested body's enclosing declarations', standing for
+/// themselves inside the function declaring them.
 fn bindings_of(
     callee: &str,
     declaration: &MirFunctionDeclaration,
-    instantiated: &[TyArg],
+    (instantiated, passed): (&[TyArg], &[MirParamArg]),
     receiver: Option<&Ty>,
     caller: &Caller<'_>,
 ) -> Vec<(ParamDecl, TyArg)> {
     let declarations = caller.declarations;
-    let mut bound: Vec<(ParamDecl, TyArg)> = declaration
-        .param_decls
-        .iter()
-        .cloned()
-        .zip(instantiated.iter().cloned())
-        .collect();
+    let mut bound = passed_bindings(
+        &declaration.param_decls,
+        instantiated,
+        passed,
+        &caller.constants,
+    );
     if let Some(enclosing) = declaration.enclosing.as_deref()
         && declared_within(caller.name, enclosing, declarations)
     {
@@ -1885,6 +2101,19 @@ fn bindings_of(
             ParamDecl::aligned_pairs(&view, &owner.view_arguments(arguments))
                 .map(|(decl, argument)| (decl.clone(), argument.clone())),
         );
+    }
+    // A trait member's receiver binds its trait's `_Self`, which its
+    // defaults read as a method's read its struct's binders.
+    if let Some(receiver) = receiver
+        && let Some(owner) = mojito_symbol::symbol::split_method_symbol(callee)
+            .and_then(|(owner, _)| declarations.trait_declaration(owner))
+    {
+        bound.extend(owner.param_decls.iter().map(|decl| {
+            (
+                decl.clone(),
+                TyArg::Ty(crate::mir::call_addresses::receiver_value_ty(receiver).clone()),
+            )
+        }));
     }
     bound
 }
@@ -1937,25 +2166,25 @@ fn declared_within(caller: &str, enclosing: &str, declarations: &MirDeclarations
 /// fill.
 fn omitted_arguments(
     site: &Site,
-    callee: &MirFunctionDeclaration,
+    callee: DefaultedCallee<'_>,
     declarations: &MirDeclarations,
 ) -> Result<Vec<Omitted>, String> {
     let skip = site.leading;
     let keywords: Vec<&str> = site.kwargs.iter().map(|(name, _)| name.as_str()).collect();
     let matched = match_call_slots(
-        callee.param_names.get(skip..).unwrap_or_default(),
-        callee.required.get(skip..).unwrap_or_default(),
+        callee.param_names().get(skip..).unwrap_or_default(),
+        callee.required().get(skip..).unwrap_or_default(),
         callee
-            .positional_only
+            .positional_only()
             .and_then(|limit| limit.checked_sub(skip)),
         callee
-            .keyword_only
+            .keyword_only()
             .and_then(|limit| limit.checked_sub(skip)),
         site.args.len(),
         &keywords,
         CallVariadics {
-            positional: callee.variadic.is_some(),
-            keyword: callee.kw_variadic.is_some(),
+            positional: callee.variadic().is_some(),
+            keyword: callee.kw_variadic().is_some(),
         },
     )
     .map_err(|error| format!("{error:?}"))?;
@@ -1971,19 +2200,19 @@ fn omitted_arguments(
 /// The default `callee` declares at `slot`, bound by `site`.
 fn omitted_argument(
     site: &Site,
-    callee: &MirFunctionDeclaration,
+    callee: DefaultedCallee<'_>,
     slot: usize,
     declarations: &MirDeclarations,
 ) -> Result<Omitted, String> {
     let name = callee
-        .param_names
+        .param_names()
         .get(slot)
         .cloned()
         .ok_or_else(|| format!("slot {slot} names no parameter"))?;
-    let Some(Some(default)) = callee.defaults.get(slot) else {
+    let Some(Some(default)) = callee.defaults().get(slot) else {
         return Err(format!("parameter '{name}' declares no lowered default"));
     };
-    let convention = callee.param_conventions.get(slot).copied().flatten();
+    let convention = callee.param_conventions().get(slot).copied().flatten();
     if ArgConvention::is_reference(convention) || matches!(convention, Some(ArgConvention::Out)) {
         return Err(format!(
             "parameter '{name}' is passed by reference, which no default fills"
@@ -2023,7 +2252,7 @@ fn omitted_argument(
                     .collect::<Result<Vec<_>, _>>()?
             };
             let ty = callee
-                .param_types
+                .param_types()
                 .get(slot)
                 .and_then(|ty| close_parameter_type(ty, &site.bound))
                 .ok_or_else(|| {
@@ -2054,7 +2283,7 @@ fn omitted_argument(
         default => OmittedDefault::Constant(default.clone()),
     };
     let ty = callee
-        .param_types
+        .param_types()
         .get(slot)
         .ok_or_else(|| format!("parameter '{name}' has no type"))
         .and_then(|ty| {
@@ -2062,14 +2291,19 @@ fn omitted_argument(
                 format!("the type of '{name}' names a binder the call binds no argument for")
             })
         })?;
+    // A requirement spells its parameters over the abstract `Self`, which
+    // no binding of the call closes.
+    if mentions(&ty, &|inner| matches!(inner.kind(), TyKind::SelfType)) {
+        return Err(format!("the type of '{name}' names `Self`"));
+    }
     Ok(Omitted {
         slot,
         name,
-        ty,
         owned: matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit)),
-        by_address: by_address_parameter(callee, declarations, slot).is_some(),
+        by_address: callee.by_address(slot, &ty, declarations),
+        ty,
         convention,
-        writes: callee.param_writes.get(slot).copied().unwrap_or(false),
+        writes: callee.param_writes(slot),
         default,
     })
 }

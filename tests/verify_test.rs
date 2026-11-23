@@ -3201,6 +3201,7 @@ fn verifier_rejects_a_drop_of_an_argument_a_bound_call_took() {
                 dispatch: dispatch.into(),
                 param_names: vec!["t".into()],
                 param_types: vec![Ty::new(TyKind::Struct("S".into(), Vec::new()))],
+                defaults: vec![None],
                 param_conventions: vec![Some(mojito::ast::ArgConvention::Var)],
                 variadic_index: None,
                 required: vec![true],

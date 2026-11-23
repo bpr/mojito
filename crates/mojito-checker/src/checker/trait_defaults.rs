@@ -495,6 +495,13 @@ impl Checker {
             };
             for (index, method) in methods.iter().enumerate() {
                 let Some(member) = member_method(method) else {
+                    if method.params.iter().any(|param| param.default.is_some()) {
+                        self.check_requirement_defaults(
+                            stmt.module.as_ref(),
+                            (name, index),
+                            method,
+                        )?;
+                    }
                     continue;
                 };
                 let symbol = self

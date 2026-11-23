@@ -981,6 +981,7 @@ mod tests {
                     dispatch: dispatch.into(),
                     param_names: vec!["t".into()],
                     param_types: vec![struct_ty()],
+                    defaults: vec![None],
                     param_conventions: vec![Some(ArgConvention::Var)],
                     variadic_index: None,
                     required: vec![true],

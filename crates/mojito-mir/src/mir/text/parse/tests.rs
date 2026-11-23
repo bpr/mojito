@@ -2139,6 +2139,7 @@ fn metadata_traits() -> Vec<TraitDeclaration> {
                     dispatch: format!("__trait_dispatch.area{OV_SEP}"),
                     param_names: Vec::new(),
                     param_types: Vec::new(),
+                    defaults: Vec::new(),
                     param_conventions: Vec::new(),
                     variadic_index: None,
                     required: Vec::new(),
@@ -2157,6 +2158,13 @@ fn metadata_traits() -> Vec<TraitDeclaration> {
                     dispatch: format!("__trait_dispatch.area{OV_SEP}Int$Self"),
                     param_names: vec!["scale".into(), "other".into()],
                     param_types: vec![Ty::int(), Ty::self_type()],
+                    defaults: vec![
+                        None,
+                        Some(CheckedConst::Evaluate {
+                            function: "$default$Shape.area$other".into(),
+                            arguments: Vec::new(),
+                        }),
+                    ],
                     param_conventions: vec![Some(ArgConvention::Mut), None],
                     variadic_index: Some(2),
                     required: vec![true, false],

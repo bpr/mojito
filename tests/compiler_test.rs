@@ -1466,8 +1466,8 @@ fn trait_default_body_is_one_member_node() {
             _ => None,
         })
         .expect("the trait's checked node");
-    let default = methods[0].default.as_ref().expect("`d` holds its member");
-    assert_eq!(default.symbol, checked.trait_members()[0].symbol);
+    assert!(methods[0].default.is_some(), "`d` holds its member");
+    assert_eq!(methods[0].symbol, checked.trait_members()[0].symbol);
     let signature = &methods[0].signature;
     assert!(
         signature.receiver.is_none(),
@@ -3872,7 +3872,8 @@ fn template_bound_value_argument_runs() {
     // A string literal or a named value of a closed non-scalar type handed
     // by value through a bound is a temporary or a place read where it
     // lies, whatever the witness; so is a string requirement default the
-    // check spells at the call for a witness declaring another.
+    // call takes from the requirement's declaration for a witness declaring
+    // another.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_bound_value_argument.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");

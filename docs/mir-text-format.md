@@ -1398,6 +1398,18 @@ for it. A reader of an older record, or of a bare trait name, gives the
 trait that one binder. The package format moves to `mojito-package 262`
 (R2216): a trait member's recorded signature no longer holds `_Self`.
 
+Schema 1.230 gives a trait `requirement` record its parameters'
+`defaults` after `param_types`, encoded as a `decl`'s are: the attribute a
+call through the bound that leaves the slot out materializes, whatever the
+witness declares, as upstream's requirement function type carries it. A
+literal is its constant, a recorded conversion its `checked_construct`, and
+any other default the `checked_evaluate` of its lifted
+`$default$Trait.method$param` function. A requirement with a body holds
+none, since its member's `decl` declares them; an older record reads every
+slot as `absent`. The package format moves to `mojito-package 265` (R769):
+a trait method op names its symbol, and a requirement declaring a
+parameter default is a lowering unit of its own.
+
 Schema 1.229 completes a trait requirement's function type after its
 `variadic_convention`, as upstream's trait declares it:
 `receiver_convention`, its receiver's declared convention (`present(var)`

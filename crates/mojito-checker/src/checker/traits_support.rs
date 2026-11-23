@@ -183,8 +183,8 @@ fn parameter_packs(sig: &MethodSig) -> impl Iterator<Item = bool> + '_ {
 /// error. `raises Never` is already normalized to a non-raising signature when
 /// `MethodSig` is built.
 ///
-/// Defaults are the witness's own: a call through the bound binds each slot
-/// it leaves out from the requirement's default (`bound_default_arguments`),
+/// Defaults are the witness's own: a call through the bound fills each slot
+/// it leaves out from the requirement's declaration (`TraitRequirement::defaults`),
 /// so a witness may default differently, or not at all. So is its
 /// positional-only marker: the pin lets `__lt__(self, rhs: Self, /)`
 /// witness `Comparable.__lt__(self, rhs: Self)`, and the reverse.

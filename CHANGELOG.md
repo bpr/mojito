@@ -1462,6 +1462,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A call through a trait bound that leaves out a defaulted parameter takes
+  the requirement's default from the requirement's declaration, as
+  upstream's requirement function type carries it, instead of the check
+  spelling it into the call and checking the program again: a subscript
+  through the bound (`x[1]` over `def __getitem__(self, i: Int, j: Int = 3)`)
+  now runs the requirement's default, where it ran the witness's
+  (`assets/ok/bound_requirement_default_at_call.mojo`). A requirement's
+  defaults are typed at its trait and lifted like any other, so one may
+  call a function or read an imported name (`String("abc").byte_length()`),
+  where it was rejected; one reading `Self` or a type parameter still is
+  (R2530). A trait method's parameter default now reads the importing
+  module's names, which the linker left unrewritten, and a lifted default
+  declares only the binders it reads. MIR text moves to schema 1.230 (a
+  trait `requirement` records its `defaults`) and the package format to
+  `mojito-package 265` (R769).
+
 - A parameter annotated with an alias of an existential parameter's type
   (`comptime W = type_of(writer)` over `mut writer: Some[Writer]`, then a
   nested `def f(mut writer: W)`) names that parameter's binder, as at the

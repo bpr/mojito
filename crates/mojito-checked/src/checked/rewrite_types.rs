@@ -1439,6 +1439,7 @@ impl RewriteTypes for TraitRequirement {
             dispatch: _,
             param_names: _,
             param_types,
+            defaults: _,
             param_conventions: _,
             variadic_index: _,
             required: _,

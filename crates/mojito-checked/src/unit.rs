@@ -1,10 +1,10 @@
 //! Lowering units: the pieces of a checked program that lower on their own.
 //!
 //! A unit is one declaration's checked syntax: a module `def`, one method a
-//! struct spells, the wrapper of a trait default a struct inherits, a trait
-//! default as its trait's member, or a module `comptime` constant whose
-//! applications are lifted. It lowers to one function (none for a
-//! constant) and every function lifted from it.
+//! struct spells, the wrapper of a trait default a struct inherits, a
+//! trait's method as its trait's member, or a module `comptime` constant
+//! whose applications are lifted. It lowers to one function (none for a
+//! constant or a requirement) and every function lifted from it.
 
 use crate::checked::{
     AnnotationSite, CheckedDefaultWrapper, CheckedProgram, CheckedStmtId, CheckedStmtOp,
@@ -53,9 +53,10 @@ pub enum LoweringUnit<'a> {
         wrapper: &'a CheckedDefaultWrapper,
         index: usize,
     },
-    /// The default of the method at `index` among the methods of the
-    /// trait whose statement node is `root`, its trait's member; `member`
-    /// is the method's position among its node's methods.
+    /// The method at `index` among the methods of the trait whose
+    /// statement node is `root`, its trait's member: a default's body, or
+    /// a requirement's parameter defaults; `member` is the method's
+    /// position among its node's methods.
     TraitMember {
         index: usize,
         root: CheckedStmtId,
@@ -248,7 +249,10 @@ impl CheckedProgram {
                         .methods
                         .iter()
                         .enumerate()
-                        .filter(|(_, method)| method.default.is_some())
+                        .filter(|(_, method)| {
+                            method.default.is_some()
+                                || method.params.iter().any(|param| param.default.is_some())
+                        })
                         .map(|(index, _)| LoweringUnit::TraitMember {
                             index,
                             root,
@@ -346,7 +350,8 @@ pub enum UnitKind {
         index: usize,
     },
     Wrapper,
-    /// A trait's default, at its position among the trait's methods.
+    /// A trait's method, a default or a requirement declaring parameter
+    /// defaults, at its position among the trait's methods.
     TraitMember {
         index: usize,
     },
@@ -569,7 +574,7 @@ impl UnitProgram {
                 let CheckedStmtOp::Trait(declaration) = &tables.statement(root)?.op else {
                     return None;
                 };
-                declaration.methods.first()?.default.as_ref()?;
+                declaration.methods.first()?;
                 LoweringUnit::TraitMember {
                     index: *index,
                     root,

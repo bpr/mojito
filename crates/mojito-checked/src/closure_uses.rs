@@ -469,13 +469,14 @@ impl CheckedProgram {
                 let Some(method) = declaration.methods.get(member) else {
                     return;
                 };
-                let Some(default) = &method.default else {
-                    return;
-                };
+                let body = method
+                    .default
+                    .as_ref()
+                    .map_or(&[][..], |default| &default.body[..]);
                 collector.declaration(
-                    &default.body,
+                    body,
                     defaults(&method.params),
-                    &default.symbol,
+                    &method.symbol,
                     &BinderScope::of(method.signature.argument_binders()),
                     &HashMap::new(),
                 );

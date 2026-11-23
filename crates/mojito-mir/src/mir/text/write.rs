@@ -220,6 +220,15 @@ fn write_artifact_head(
                                         list(requirement.param_types.iter().map(ty_value)),
                                     ),
                                     (
+                                        "defaults",
+                                        list(
+                                            requirement
+                                                .defaults
+                                                .iter()
+                                                .map(|v| option(v.as_ref().map(checked_const))),
+                                        ),
+                                    ),
+                                    (
                                         "param_conventions",
                                         list(
                                             requirement

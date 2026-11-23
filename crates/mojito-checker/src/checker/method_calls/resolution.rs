@@ -500,7 +500,7 @@ impl Checker {
         availability_failure: &mut Option<String>,
     ) -> Result<MethodSelection, TypeError> {
         let MethodCallSite {
-            span,
+            span: _,
             object,
             method,
             call,
@@ -698,7 +698,7 @@ impl Checker {
                 bracket_attributes,
                 refined_bound: refined_bound.clone(),
             });
-            requirements.push((sig, method_arguments));
+            requirements.push(sig);
         }
         let selected = select_method_overload(
             method,
@@ -706,24 +706,75 @@ impl Checker {
             Some(matches!(object.kind, ExprKind::Transfer(_))),
         );
         if let Ok(selected) = &selected
-            && let Some((requirement, solved)) = requirements.iter().find(|(sig, _)| {
+            && let Some(requirement) = requirements.iter().find(|sig| {
                 selected.lowered_name.as_deref()
                     == Some(&method_lowered_name("__trait_dispatch", method, sig, None))
             })
         {
-            self.record_bound_default_arguments(
-                &bound_defaults::BoundCall {
-                    span,
-                    slots: &selected.slots,
-                    positional: args.len(),
-                    solved,
-                },
+            self.reject_renamed_bound_keywords(
+                &selected.slots,
                 &effective_bounds,
                 method,
                 requirement,
             )?;
         }
         Ok(selected.map(Some))
+    }
+
+    /// Reject a call through `bounds` binding by name a parameter of
+    /// `requirement` that some conformer's witness names otherwise, which
+    /// the call binds by the requirement's name and the witness's body
+    /// reads by its own.
+    fn reject_renamed_bound_keywords(
+        &self,
+        slots: &[ArgSlot],
+        bounds: &[String],
+        method: &str,
+        requirement: &MethodSig,
+    ) -> Result<(), TypeError> {
+        let renamed =
+            slots
+                .iter()
+                .zip(&requirement.names)
+                .enumerate()
+                .find(|(index, (slot, name))| {
+                    !matches!(slot, ArgSlot::Positional(_))
+                        && self.witness_renames(bounds, method, requirement, *index, name)
+                });
+        match renamed {
+            Some((_, (_, name))) => Err(TypeError::Unsupported(format!(
+                "binding '{name}' of '{method}' by name through a trait bound whose \
+                 conformer renames it"
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether some conformer to `bounds` declares a witness for
+    /// `requirement` naming its regular parameter at `index` other than
+    /// `name`.
+    fn witness_renames(
+        &self,
+        bounds: &[String],
+        method: &str,
+        requirement: &MethodSig,
+        index: usize,
+        name: &str,
+    ) -> bool {
+        self.structs_declaring(method)
+            .filter_map(|(struct_name, info)| Some((struct_name, info, info.methods.get(method)?)))
+            .filter(|(struct_name, info, _)| {
+                let implementation = Ty::new(TyKind::Struct(
+                    (*struct_name).clone(),
+                    info.self_arguments(),
+                ));
+                bounds
+                    .iter()
+                    .all(|bound| self.conforms_to(&implementation, bound))
+            })
+            .flat_map(|(_, _, signatures)| signatures)
+            .filter(|signature| signature.names.len() == requirement.names.len())
+            .any(|signature| signature.names.get(index).is_some_and(|got| got != name))
     }
 
     /// The methods a built-in value answers with no callee: `copy` and

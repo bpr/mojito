@@ -1256,8 +1256,13 @@ pub fn lower_unit(
         }
         // A trait's requirements have no body (`...`); each default is
         // the trait's member, its trait's method, whose receiver is its
-        // `_Self` binder's.
-        LoweringUnit::TraitMember { root, member, .. } => {
+        // `_Self` binder's. A requirement's parameter defaults are its
+        // declaration's attributes.
+        LoweringUnit::TraitMember {
+            index,
+            root,
+            member,
+        } => {
             let _other = timing::span("other");
             let Some(node) = checked.tables().statement(root) else {
                 return;
@@ -1269,13 +1274,20 @@ pub fn lower_unit(
                 return;
             };
             let Some(default) = &m.default else {
+                lower_requirement_defaults(
+                    (checked, &declaration.name, index),
+                    m,
+                    functions,
+                    declarations,
+                    invariant_errors,
+                );
                 return;
             };
             lower_struct_member(
                 &StructLowering::of_trait(checked, node.module.as_ref(), &declaration.name),
                 StructMember {
                     name: &m.name,
-                    lowered: default.symbol.clone(),
+                    lowered: m.symbol.clone(),
                     signature: &m.signature,
                     params: &m.params,
                     has_self: true,
@@ -2857,6 +2869,78 @@ struct StructMember<'a, P> {
 /// A declaration parameter whose default [`lower_default`] lowers: `default`
 /// is its default's checked node, `ty` its checked type, and `binders` the
 /// binders in scope at the declaration, which the default function lacks.
+/// Lower the parameter defaults of `m`, the bodiless `index`-th method of
+/// the trait `name`, onto its requirement's declaration
+/// ([`TraitRequirement::defaults`]), as upstream's requirement function type
+/// carries each default attribute: a literal or a conversion of one as its
+/// constant, any other default as the lifted `$default$Trait.method$param`
+/// function over the requirement's binders it reads, which a call through
+/// the bound leaving the slot out applies.
+fn lower_requirement_defaults(
+    (checked, name, index): (&CheckedProgram, &str, usize),
+    m: &mojito_checked::checked::CheckedTraitMethod,
+    functions: &mut Vec<(String, MirFunction)>,
+    declarations: &mut MirDeclarations,
+    invariant_errors: &mut Vec<String>,
+) {
+    let overloads = checked.overloads();
+    let binders = EnclosingBinders::of(m.signature.argument_binders());
+    let regular: Vec<(usize, &mojito_checked::checked::CheckedFnParam)> = m
+        .params
+        .iter()
+        .enumerate()
+        .filter(|(_, param)| {
+            param.kind == ParamKind::Regular
+                && !matches!(param.convention, Some(ArgConvention::Out))
+        })
+        .collect();
+    let defaults: Vec<Option<CheckedConst>> = regular
+        .iter()
+        .map(|(position, param)| {
+            lower_default(
+                DefaultLowering {
+                    checked,
+                    overloads,
+                    owner: &m.symbol,
+                    parameter: *param,
+                    default: param.default,
+                    binders: &binders,
+                    ty: m.signature.param(*position),
+                },
+                functions,
+                declarations,
+                invariant_errors,
+            )
+        })
+        .collect();
+    // A package's unit lowers apart from its trait's declaration, which
+    // already holds the defaults the package's lowering gave it.
+    let Some(declaration) = declarations
+        .traits
+        .iter_mut()
+        .find(|declaration| declaration.name == name)
+    else {
+        return;
+    };
+    let requirement = declaration
+        .requirements
+        .get_mut(index)
+        .filter(|requirement| {
+            requirement.name == m.name
+                && requirement
+                    .param_names
+                    .iter()
+                    .eq(regular.iter().map(|(_, param)| &param.name))
+        });
+    match requirement {
+        Some(requirement) => requirement.defaults = defaults,
+        None => invariant_errors.push(format!(
+            "trait '{name}' declares no requirement '{}' at method {index} for its defaults",
+            m.name
+        )),
+    }
+}
+
 struct DefaultLowering<'a, P> {
     checked: &'a CheckedProgram,
     overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
@@ -2902,11 +2986,7 @@ fn lower_default<P: DeclaredParam>(
         return Some(constant);
     }
     let ty = ty?;
-    let binders = if binders.named_by(checked.tables(), node) {
-        binders.clone()
-    } else {
-        EnclosingBinders::default()
-    };
+    let binders = binders.read_by(checked.tables(), node);
     let function = mojito_symbol::symbol::lifted_default_name(owner, parameter.name());
     lower_expression_thunk(
         ExpressionThunk {
@@ -6033,6 +6113,38 @@ impl EnclosingBinders {
                 .filter_map(|index| Some((index.binding?, index.declaration.binder()))),
         );
         binders
+    }
+
+    /// The binders checked node `node` of `tables` reads
+    /// ([`Self::named_by`]), with each binder a read one's type names: what
+    /// a function lifted from the node declares, as upstream's default
+    /// attribute is a parameter expression over the binders it reads, so a
+    /// call binding only those applies it.
+    fn read_by(
+        &self,
+        tables: &mojito_checked::checked::CheckedTables,
+        node: CheckedNodeId,
+    ) -> Self {
+        let read: Vec<&ParamDecl> = self
+            .declarations
+            .iter()
+            .filter(|decl| Self::of([*decl]).named_by(tables, node))
+            .collect();
+        if read.is_empty() {
+            return Self::default();
+        }
+        let kept = self.declarations.iter().filter(|decl| {
+            read.contains(decl)
+                || read.iter().any(|reader| {
+                    reader
+                        .value_element_ty()
+                        .is_some_and(|ty| mojito_types::types::names_binder(ty, &decl.binder()))
+                })
+        });
+        Self {
+            callables: self.callables.clone(),
+            ..Self::of(kept)
+        }
     }
 
     /// Whether checked node `node` of `tables` spells `Self` or one of these

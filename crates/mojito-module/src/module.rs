@@ -2699,27 +2699,7 @@ fn rewrite_stmt(
                 rename(r, names);
             }
             for m in methods {
-                for parameter in &mut m.type_params {
-                    rewrite_type_param(parameter, names, namespaces);
-                }
-                for p in &mut m.params {
-                    rewrite_type(&mut p.ty, names, namespaces);
-                }
-                if let Some(error) = &mut m.raises_type {
-                    rewrite_type(error, names, namespaces);
-                }
-                if let Some(ret) = &mut m.ret {
-                    rewrite_type(ret, names, namespaces);
-                }
-                if let Some(receiver) = &mut m.self_type {
-                    rewrite_type(receiver, names, namespaces);
-                }
-                for condition in &mut m.where_clauses {
-                    rewrite_expr(condition, names, namespaces);
-                }
-                if let Some(body) = &mut m.default_body {
-                    rewrite_program(body, names, namespaces);
-                }
+                rewrite_trait_method(m, names, namespaces);
             }
             for c in comptime_members {
                 for parameter in &mut c.params {
@@ -2842,6 +2822,42 @@ fn rewrite_stmt(
             rewrite_program(body, names, namespaces);
         }
         _ => {}
+    }
+}
+
+/// Rewrite trait method `m`'s signature, parameter defaults, and default
+/// body to the linked names.
+fn rewrite_trait_method(
+    m: &mut mojito_ast::ast::TraitMethod,
+    names: &HashMap<String, String>,
+    namespaces: &HashMap<String, HashMap<String, String>>,
+) {
+    for parameter in &mut m.type_params {
+        rewrite_type_param(parameter, names, namespaces);
+    }
+    // A parameter default may read the method's own binders, which shadow
+    // a module item of the same name.
+    let (own_names, own_namespaces) = &without_parameter_names(names, namespaces, &m.type_params);
+    for p in &mut m.params {
+        rewrite_type(&mut p.ty, names, namespaces);
+        if let Some(v) = &mut p.default {
+            rewrite_expr(v, own_names, own_namespaces);
+        }
+    }
+    if let Some(error) = &mut m.raises_type {
+        rewrite_type(error, names, namespaces);
+    }
+    if let Some(ret) = &mut m.ret {
+        rewrite_type(ret, names, namespaces);
+    }
+    if let Some(receiver) = &mut m.self_type {
+        rewrite_type(receiver, names, namespaces);
+    }
+    for condition in &mut m.where_clauses {
+        rewrite_expr(condition, names, namespaces);
+    }
+    if let Some(body) = &mut m.default_body {
+        rewrite_program(body, names, namespaces);
     }
 }
 

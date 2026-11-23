@@ -1921,8 +1921,8 @@ fn trait_method_conformance_may_narrow_but_not_widen_effects() {
 #[test]
 fn a_witness_defaults_apart_from_its_requirement() {
     // A call through the bound runs the requirement's default in current
-    // Mojo, which the checker spells at the call, so a witness may default
-    // differently, or not at all, and still conform.
+    // Mojo, which the call takes from the requirement's declaration, so a
+    // witness may default differently, or not at all, and still conform.
     let requirement = "trait Scaler:\n    def scale(self, value: Int, factor: Int = -2) -> Int: ...\n\n@fieldwise_init\nstruct Twice(Scaler):\n    var base: Int\n";
     for witness in ["factor: Int = -2", "factor: Int = 7", "factor: Int"] {
         ok_std(&format!(
@@ -1943,20 +1943,24 @@ fn a_witness_defaults_apart_from_its_requirement() {
     }
 
     // A default may read the method's own value parameters, beside module
-    // constants: a call through the bound spells its compile-time
-    // arguments in their place.
+    // constants, and call a function, as an ordinary default may: the
+    // requirement's declaration lifts it.
     ok_std(
         "comptime TWO = 2\n\ntrait Scaler:\n    def scale[n: Int](self, value: Int, factor: Int = n * TWO - 1) -> Int: ...\n",
     );
+    ok_std(
+        "def triple(x: Int) -> Int:\n    return x * 3\n\ntrait Scaler:\n    def scale(self, value: Int, factor: Int = triple(2) + String(\"ab\").byte_length()) -> Int: ...\n",
+    );
 
-    // A call, or a type parameter, is not folded.
-    for default in ["len(\"ab\")", "T"] {
+    // `Self` and a type parameter, which a call through the bound binds
+    // nothing for, are not read.
+    for (default, name) in [("T.K", "T"), ("Self.K", "Self")] {
         let error = err_std(&format!(
-            "trait Scaler:\n    def scale[T: AnyType](self, value: Int, factor: Int = {default}) -> Int: ...\n"
+            "trait HasK:\n    comptime K: Int\n\ntrait Scaler(HasK):\n    def scale[T: HasK](self, value: Int, factor: Int = {default}) -> Int: ...\n"
         ));
         assert!(
-            matches!(error, TypeError::Unsupported(feature) if feature.contains("other than an expression over literals")),
-            "{default}"
+            matches!(&error, TypeError::Unsupported(feature) if feature.contains(&format!("default reading '{name}'"))),
+            "{default}: {error:?}"
         );
     }
 }

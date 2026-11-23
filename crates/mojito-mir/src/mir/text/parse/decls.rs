@@ -1032,6 +1032,23 @@ impl Decoder {
                             .ok()
                             .and_then(|value| self.ty(value))
                             .unwrap_or_else(Ty::none);
+                        // A record before schema 1.230 spells no default.
+                        let defaults = self
+                            .field(row_fields, "defaults")
+                            .ok()
+                            .and_then(|value| self.list(value).ok())
+                            .map_or_else(
+                                || vec![None; param_names.len()],
+                                |values| {
+                                    values
+                                        .iter()
+                                        .map(|value| {
+                                            self.option_value(Some(value))
+                                                .and_then(|value| self.checked_const(value))
+                                        })
+                                        .collect()
+                                },
+                            );
                         self.unknown(
                             row_fields,
                             &[
@@ -1040,6 +1057,7 @@ impl Decoder {
                                 "dispatch",
                                 "param_names",
                                 "param_types",
+                                "defaults",
                                 "param_conventions",
                                 "variadic_index",
                                 "required",
@@ -1059,6 +1077,7 @@ impl Decoder {
                             dispatch,
                             param_names,
                             param_types,
+                            defaults,
                             param_conventions,
                             variadic_index,
                             required,

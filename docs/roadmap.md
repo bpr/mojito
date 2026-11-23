@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2530**.
+Next free ID: **R2532**.
 
 ## Ordered Work
 
@@ -4845,15 +4845,38 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   names and passes the values to the witness by position.
   - Probe: `conformance/probes/keyword_through_bound_renamed_witness.mojo`
     (the pin prints `312`).
-  - The rejection is `Checker::record_bound_default_arguments`
-    (`checker/bound_defaults.rs`). It also covers a requirement default the
-    check would spell by a renamed name.
+  - The rejection is `Checker::reject_renamed_bound_keywords`
+    (`checker/method_calls/resolution.rs`).
   - The cause: MIR keeps the call's keywords by name on its `call.method`
     to `__trait_dispatch.f$ov$Int$Int`, and `native::mono` binds them
     against the witness `S.f` it resolves the dispatch to. Without the
     rejection the probe prints `321`.
   - The lever: lower a call through a bound positionally, in the
     requirement's parameter order the checked call binding already records.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2530 A requirement default reading `Self` or a type parameter is
+  rejected**
+
+  `def scale(self, value: Int, factor: Int = Self.K)` and
+  `def scale2[T: HasK](self, t: T, value: Int, factor: Int = T.K)` in a
+  trait fail with "a trait requirement's default reading 'Self'", where the
+  pin runs each requirement's default through the bound.
+  - The gate is `requirement_default` (`checker/traits.rs`). Every other
+    requirement default is typed at the trait and lifted like an ordinary
+    one (`TraitRequirement::defaults`).
+  - The cause: a requirement's lifted default has no `Self` binder, since
+    the requirement is spelled over the abstract `Self`, and a call
+    through the bound records no argument for the method's type binders
+    (`MirParamArg::value` is absent for a type argument), so
+    `mir::fill_omitted_arguments` cannot close either.
+  - The lever: lift the default over the trait's `_Self`, which the fill
+    binds to the receiver as it does a trait member's, and record a
+    bound call's type arguments for its requirement's binders.
+  - Probe: `conformance/probes/requirement_default_reads_self_and_type_parameter.mojo`
+    (the pin prints `1514`).
+  - Found while landing R769 (2026-11-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5633,8 +5656,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Record a default that is an application (`Checker::called_application`)
     as that `ParamExpr` in a reshaped `CheckedConst`, keeping the lifted
     function only for an expression that must lift; carry it through
-    `bound_defaults.rs`, the trait wrapper default rewrite in `mir.rs`, and
-    package serialization.
+    a requirement's declaration (`TraitRequirement::defaults`), the trait
+    wrapper default rewrite in `mir.rs`, and package serialization.
   - Probe: the two callees above print `init` once.
   - Depends on R2172.
   - Model: Opus, Not Planned.
@@ -10156,6 +10179,20 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R2531 A binary operator method may declare a defaulted extra
+  parameter**
+
+  `def __add__(self, other: Int, k: Int = 50)` in a trait or a struct is
+  accepted, and `x + 1` through a bound runs it with `k` defaulted, where
+  the pin rejects the declaration with "'__add__' requires 2 operands".
+  - The cause: the check has no declaration rule for an operator method's
+    parameter count, so only a call that binds no slot fails.
+  - Probe: the declaration above, called as `x + 1` over `T: Idx`
+    (Mojito prints `51`).
+  - Found while landing R769 (2026-11-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -11843,35 +11880,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     the masks and the residue's `ref_params`/`ref_return` derive from it.
   - Related: R581 drops the mask the directory row restates.
   - Found while landing R574 (2026-10-10).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R769 A call through a bound runs a requirement default by
-  rewriting its syntax**
-
-  The check completes such a call by spelling the requirement's default
-  as keyword syntax and checking the program again, while upstream
-  materializes the callee signature's default attribute at the call.
-  - The rewrite is `bind_bound_default_arguments`
-    (`checker/bound_defaults.rs`) and the extra pass in
-    `check_program_carrying`.
-  - The signature already holds the attribute (`SignatureDefault`); a
-    non-constant parameter value is spelled back from its `ParamExpr`
-    (`spelled_parameter_value`) only to feed the rewrite.
-  - The lever: the checked call node records each omitted slot's
-    requirement default, evaluated at the call, and HIR/MIR lower it as an
-    argument (a constant, or a parameter value).
-  - A requirement default must then be typed against its parameter at the
-    trait, so its conversion (`None` into `Optional`) is known there.
-  - This spans the checked call node, HIR, MIR, the VM, and Pliron: the
-    planning session should split it into chained entries.
-  - Probe: `go(a)` in `assets/ok/evaluated_default_argument.mojo`, over
-    `trait Shows: def show(self, x: Optional[Int] = None)`: the
-    requirement's `None` is still the conformer's to bind, since a bodiless
-    requirement has no lowered declaration for `mir::fill_omitted_arguments`
-    to read, where a trait default's body is filled through its dispatch
-    symbol (`u.f()` in `assets/ok/trait_default_parameter_defaults.mojo`).
-  - Found while landing R590 (2026-10-13).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

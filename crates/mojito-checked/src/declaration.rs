@@ -485,7 +485,7 @@ pub struct Witness {
 /// A trait declaration as a conformance decision and an overload lookup
 /// read it: its name, its compile-time parameters, the traits it refines,
 /// and its own requirements.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TraitDeclaration {
     /// A package record leaves it to its declaration's directory row, so
     /// no other encoding may rely on it.
@@ -564,6 +564,7 @@ impl TraitDeclaration {
                             ),
                             param_names: Vec::new(),
                             param_types: Vec::new(),
+                            defaults: Vec::new(),
                             param_conventions: Vec::new(),
                             variadic_index: None,
                             required: Vec::new(),
@@ -592,7 +593,7 @@ impl TraitDeclaration {
 /// Upstream's trait declares each, so a call through a bound passes its
 /// arguments by the requirement's conventions as a concrete call does by
 /// its callee's.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TraitRequirement {
     pub name: String,
     /// How many parameters it spells, its receiver aside, as the overload
@@ -604,6 +605,12 @@ pub struct TraitRequirement {
     pub param_names: Vec<String>,
     /// Its parameter types, `Self` spelled `TyKind::SelfType`.
     pub param_types: Vec<Ty>,
+    /// Each parameter's default attribute, as a function declaration's
+    /// ([`FunctionDeclaration::defaults`]): what a call through a bound
+    /// leaving the slot out materializes, whatever the witness declares.
+    /// A requirement with a body holds none here; its member function
+    /// declares them.
+    pub defaults: Vec<Option<CheckedConst>>,
     pub param_conventions: Vec<Option<ArgConvention>>,
     pub variadic_index: Option<usize>,
     /// Its call shape beside the parameters: which of them a call must

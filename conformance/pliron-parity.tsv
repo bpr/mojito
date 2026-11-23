@@ -91,6 +91,7 @@ assets/ok/bound_call_storage_receiver_address.mojo	main	exe-differential	sanitiz
 assets/ok/bound_generic_write_to.mojo	main	exe-differential	sanitized
 assets/ok/bound_member_list_generic_conformer.mojo	main	exe-differential	sanitized
 assets/ok/bound_operator_requirement_call.mojo	main	exe-differential	sanitized
+assets/ok/bound_requirement_default_at_call.mojo	main	exe-differential	sanitized
 assets/ok/bound_value_member_in_signature.mojo	main	exe-differential	sanitized
 assets/ok/bracket_capitalized_display_element.mojo	main	exe-differential	sanitized
 assets/ok/bracket_capitalized_module_constant.mojo	main	exe-differential	sanitized

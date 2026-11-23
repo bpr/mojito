@@ -51,7 +51,6 @@ use traits_support::*;
 use mojito_common::timing;
 use mojito_types::conformance::COMPILER_TRAITS;
 
-use bound_defaults::BoundDefaultArguments;
 use mojito_ast::ast::{
     ArgConvention, Dtype, Expr, ExprKind, FnParam, InfixOp, Method, PrefixOp, Stmt, StmtKind,
     StructComptime, SubscriptArg, TStringPart, TraitComptime, Type as SourceType,
@@ -108,9 +107,6 @@ pub struct CheckContext {
     /// Carry an unchanged body's raw facts from one checker pass to the
     /// next instead of inferring it again (`checker/body_carry.rs`).
     body_fact_reuse: bool,
-    /// Per call through a bound, by the syntax identity the call keeps across
-    /// passes, the requirement defaults it binds (`bound_defaults.rs`).
-    bound_default_arguments: HashMap<SyntaxId, BoundDefaultArguments>,
     /// The declaration interfaces of the package modules the program's link
     /// reached, attached to every pass in place of their statements.
     installed: Option<InstalledInterfaces>,
@@ -127,7 +123,6 @@ impl CheckContext {
         Self {
             param_context: ParamContext::new(),
             body_fact_reuse: true,
-            bound_default_arguments: HashMap::new(),
             installed: None,
             record_interfaces: false,
             interfaces: None,
@@ -172,25 +167,6 @@ impl CheckContext {
     pub const fn set_body_fact_reuse(&mut self, reuse: bool) {
         self.body_fact_reuse = reuse;
     }
-
-    const fn bound_default_arguments(&self) -> &HashMap<SyntaxId, BoundDefaultArguments> {
-        &self.bound_default_arguments
-    }
-
-    /// Keep the requirement defaults a pass found calls through a bound
-    /// leaving out; whether any call was new.
-    fn record_bound_default_arguments(
-        &mut self,
-        found: HashMap<SyntaxId, BoundDefaultArguments>,
-    ) -> bool {
-        let before = self.bound_default_arguments.len();
-        for (call, arguments) in found {
-            self.bound_default_arguments
-                .entry(call)
-                .or_insert(arguments);
-        }
-        self.bound_default_arguments.len() != before
-    }
 }
 
 impl Default for CheckContext {
@@ -234,15 +210,10 @@ fn check_program_carrying(
     // Source locations survive elaboration clones and therefore cannot identify
     // semantic occurrences. Re-key the final checked tree after the last
     // checker-side cloning transform, before any fact table is populated.
-    let syntax_origins = {
+    {
         let _rekey = timing::span("syntax_rekey");
-        mojito_ast::ast::rekey_syntax(&mut expanded)
-    };
-    bound_defaults::bind_bound_default_arguments(
-        &mut expanded,
-        &syntax_origins,
-        context.bound_default_arguments(),
-    );
+        mojito_ast::ast::rekey_syntax(&mut expanded);
+    }
     let rebind_targets = erase_rebinds(&mut expanded);
     // The previous pass: none for the first, then each stale pass for the
     // next. Its committed maps seed the pass and its records serve the
@@ -263,7 +234,6 @@ fn check_program_carrying(
         }
         checker.previous = previous.take();
         checker.rebind_targets.clone_from(&rebind_targets);
-        checker.syntax_origins.clone_from(&syntax_origins);
         checker.param_context = context.param_context().clone();
         checker.context.replace(std::mem::take(context));
         let body_check = {
@@ -271,18 +241,6 @@ fn check_program_carrying(
             checker.check_program(&expanded)
         };
         *context = checker.context.take();
-        // A call through a bound leaving out a requirement default binds it
-        // (`bound_defaults.rs`); a pass that found a new one checks again
-        // with it spelled, whatever its verdict without it.
-        if context.record_bound_default_arguments(checker.bound_default_arguments.take())
-            && bound_defaults::bind_bound_default_arguments(
-                &mut expanded,
-                &syntax_origins,
-                context.bound_default_arguments(),
-            )
-        {
-            continue;
-        }
         body_check?;
         // The previous pass has served every site it could.
         checker.previous = None;
@@ -1067,12 +1025,6 @@ pub struct Checker {
     /// The compilation's check context. The driver lends it for one check
     /// and takes it back; every other entry point checks in a default one.
     context: RefCell<CheckContext>,
-    /// The identity each occurrence had before the final re-key, which the
-    /// bound-default binding keys by.
-    syntax_origins: mojito_ast::ast::SyntaxOrigins,
-    /// The requirement defaults each call through a bound leaves out, by the
-    /// call's origin (`bound_defaults.rs`).
-    bound_default_arguments: RefCell<HashMap<SyntaxId, BoundDefaultArguments>>,
     /// The module and name of the struct whose method is being checked, for
     /// the method's display name.
     method_site: Option<(Option<String>, String)>,
@@ -1312,8 +1264,6 @@ impl Checker {
             handled_raise_types: RefCell::new(Vec::new()),
             uninitialized: RefCell::new(HashSet::new()),
             context: RefCell::new(CheckContext::default()),
-            syntax_origins: mojito_ast::ast::SyntaxOrigins::default(),
-            bound_default_arguments: RefCell::new(HashMap::new()),
             top_level_callables: RefCell::new(HashSet::new()),
             method_site: None,
             previous: None,
@@ -3128,8 +3078,8 @@ struct MethodSig {
     required: Vec<bool>,
     /// Per regular parameter, its declared default attribute. A conforming
     /// method may declare its own: a call through the bound leaving one out
-    /// runs the requirement's, which the check binds at the call where some
-    /// witness differs (`bound_defaults.rs`).
+    /// runs the requirement's, which the requirement's declaration carries
+    /// to the call (`TraitRequirement::defaults`).
     defaults: Vec<Option<SignatureDefault>>,
     variadic: Option<Ty>,
     variadic_index: Option<usize>,
@@ -3271,10 +3221,6 @@ enum SignatureDefault {
     /// A literal, as its lowered declaration's constant before any
     /// conversion to the parameter type.
     Constant(mojito_checked::checked::CheckedConst),
-    /// A compile-time expression over the method's own value parameters
-    /// (`factor: Int = n * TWO - m`), module constants folded at the
-    /// declaration; only a trait requirement holds one.
-    Parameter(ParamExpr),
     /// Any other default, which the lowered declaration runs as code.
     Evaluated,
 }
@@ -3287,11 +3233,6 @@ impl SignatureDefault {
             mojito_checked::checked::CheckedConst::Evaluate { .. } => Self::Evaluated,
             declared => Self::Constant(declared.unconverted().clone()),
         }
-    }
-
-    /// Whether the default is the literal `literal`.
-    fn is_literal(&self, literal: &mojito_checked::checked::CheckedConst) -> bool {
-        matches!(self, Self::Constant(constant) if constant == literal)
     }
 }
 
@@ -4490,7 +4431,6 @@ fn count_body_inference(generic: bool, name: impl FnOnce() -> String) {
 mod call_inference;
 mod ffi_calls;
 
-mod bound_defaults;
 mod clusters;
 mod coverage;
 mod destructure;
