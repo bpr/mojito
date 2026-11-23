@@ -101,17 +101,16 @@ impl<'a> Flatten<'a> {
         self.constant_at(location, ty, k)
     }
 
-    /// `value`, the lowered `e`, as a value: a direct `ref` field's load,
+    /// `value`, a lowered expression, as a value: a direct `ref` field's load,
     /// which [`Self::member_expr`] leaves holding its handle, reads
     /// through to the referent, as a value use of a `ref` binding does.
-    pub(in crate::mir) fn field_referent(&mut self, e: Node<'a>, value: Reg) -> Reg {
+    pub(in crate::mir) fn field_referent(&mut self, value: Reg) -> Reg {
         let loads_field = matches!(
             self.f.body.instrs.last(),
             Some(MirInstr::LoadPlace { dest, place })
                 if *dest == value && self.place_holds_reference(place)
         );
         if loads_field
-            && !matches!(e.ty().as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
             && let Some(TyKind::Ref(reference)) = self.f.reg_types.get(&value.0).map(Ty::kind)
         {
             let referent = reference.referent.clone();
@@ -181,12 +180,11 @@ impl<'a> Flatten<'a> {
         // no storage holds keeps the register-based `GetField`.
         if let Some(place) = self.pure_field_place(e) {
             let place_root = place.root;
-            let place_ty = place.ty.clone();
-            let holds_reference = self.place_holds_reference(&place);
             let loaded = self.fresh_typed(
                 e.location(),
                 Some(place_root),
-                place_ty
+                place
+                    .ty
                     .clone()
                     .or_else(|| node.ty.clone())
                     .unwrap_or_else(Ty::error),
@@ -204,22 +202,8 @@ impl<'a> Flatten<'a> {
             // visible here so a nested lifecycle field runs its
             // `__copyinit__` instead of merely duplicating an owning
             // Pointer.
-            //
-            // A direct `ref` field's load reads through to its referent,
-            // whose handle a method receiver or a place operation keeps. A
-            // value use, a copy or a read argument, is the referent, as a
-            // `ref` binding's is.
-            if holds_reference && let Some(TyKind::Ref(reference)) = place_ty.as_ref().map(Ty::kind)
-            {
-                if (copies_place_value(node) || reads_argument(node))
-                    && !matches!(node.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                {
-                    self.f
-                        .reg_types
-                        .insert(loaded.0, reference.referent.clone());
-                } else {
-                    return loaded;
-                }
+            if self.keeps_field_handle(node, loaded) {
+                return loaded;
             }
             if copies_place_value(node) {
                 // The copy has the loaded register's exact type (a
@@ -245,9 +229,7 @@ impl<'a> Flatten<'a> {
         } else {
             let d = if let Some(loaded) = self.load_temporary_field(e, object, field) {
                 loaded
-            } else if !matches!(node.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                && let Some(place) = self.lower_projected_reference_place(e)
-            {
+            } else if let Some(place) = self.lower_projected_reference_place(e) {
                 // A field of a reference result, or of a materialized
                 // temporary, is a projection of that reference, as
                 // upstream's `!lit.ref` field of one is: the load and any
@@ -277,15 +259,16 @@ impl<'a> Flatten<'a> {
                 });
                 d
             };
+            if self.keeps_field_handle(node, d) {
+                return d;
+            }
             // The same checked value-copy boundary as the place-read
             // branch above: a field selected for a consuming value
             // context must run its `__copyinit__` even when the base is
             // a temporary or reference-projected call result, or the
             // register copy aliases the base's heap storage past its
             // lifetime.
-            if !matches!(node.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                && copies_place_value(node)
-            {
+            if copies_place_value(node) {
                 // Type the loaded register from the checked expression
                 // rather than leaving it to `GetField` instruction
                 // typing: in a generic body the declaration's raw field
@@ -356,26 +339,6 @@ impl<'a> Flatten<'a> {
 
     /// Read subscript node `e`, `object[index]`.
     pub(super) fn index_expr(&mut self, e: Node<'a>, object: Node<'a>, index: Node<'a>) -> Reg {
-        // An indexed reference-bearing aggregate element is a storage
-        // place whose checked type is `ref T`; load through the stored
-        // handle exactly like a direct reference field.  Ordinary
-        // indexing remains the register-based operation below. A
-        // checker-selected nominal accessor must stay on that dispatch
-        // path: projecting the nominal struct as raw indexed storage
-        // would lose its concrete `__getitem__$N` target.
-        if matches!(e.place_ty().as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-            && e.resolved_callable().is_none()
-            && !object
-                .ty()
-                .as_ref()
-                .is_some_and(|ty| ty.kind().is_non_simd_struct())
-            && let Some(place) = self.try_place(e)
-        {
-            let d = self.fresh(e.location(), Some(place.root));
-            self.emit_interior_invalidations(e, None);
-            self.emit(MirInstr::LoadPlace { dest: d, place });
-            return d;
-        }
         // A field of a call result the checker materialized
         // (`make(b).t[0]`) is indexed through the temporary's hidden
         // slot, so the viewed storage outlives the read.
@@ -660,6 +623,33 @@ impl<'a> Flatten<'a> {
     /// The checked value-copy boundary of place read `e`, whose borrowed
     /// value is `loaded`: a read selected for a consuming value context
     /// runs its `__copyinit__`; any other read stays the borrow.
+    /// Whether `loaded`, a member read `node`'s load, stays the handle a
+    /// declared `ref` field stores: a method receiver or a place operation
+    /// keeps it. A value use, a copy or a read argument, reads through to
+    /// the referent, as a `ref` binding's does, so its register is retyped
+    /// to the referent and the read goes on as any field's. False for a
+    /// load of any other storage, off a named local or a temporary alike.
+    fn keeps_field_handle(&mut self, node: &CheckedExpr, loaded: Reg) -> bool {
+        let loads_reference = matches!(
+            self.f.body.instrs.last(),
+            Some(MirInstr::LoadPlace { dest, place })
+                if *dest == loaded && self.place_holds_reference(place)
+        );
+        let Some(TyKind::Ref(reference)) = self.f.reg_types.get(&loaded.0).map(Ty::kind) else {
+            return false;
+        };
+        if !loads_reference {
+            return false;
+        }
+        if copies_place_value(node) || reads_argument(node) {
+            let referent = reference.referent.clone();
+            self.f.reg_types.insert(loaded.0, referent);
+            false
+        } else {
+            true
+        }
+    }
+
     fn copy_boundary(&mut self, e: Node<'a>, loaded: Reg, root: Option<VarId>) -> Reg {
         let node = e.checked;
         if !copies_place_value(node) {

@@ -1955,6 +1955,7 @@ assets/extensions/ok/ref_field_operand_origin_argument.mojo	main	exe-differentia
 assets/extensions/ok/ref_field_operand_passes_stored_handle.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_reborrow_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_template_method_construction.mojo	main	exe-differential	sanitized
+assets/extensions/ok/ref_field_temporary_value_read.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_truth_test.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_view_for_temporary.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_view_free_function.mojo	main	exe-differential	sanitized

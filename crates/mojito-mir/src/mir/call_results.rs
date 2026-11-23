@@ -11,7 +11,6 @@ use mojito_ast::ast::ArgConvention;
 use mojito_checked::checked::{
     CheckedCallArgumentSource, CheckedCallContract, CheckedOp, SemanticAdjustment,
 };
-use mojito_types::types::TyKind;
 
 /// A lowered expression's value, as upstream's `CValue` is an rvalue or an
 /// lvalue: a register, or the call-result slot
@@ -401,7 +400,7 @@ impl<'a> Flatten<'a> {
     pub(super) fn condition_value(&mut self, condition: Node<'a>) -> Reg {
         if !condition.is_truthiness_test() {
             let value = self.expr(condition);
-            return self.field_referent(condition, value);
+            return self.field_referent(value);
         }
         let value = self.truthiness_operand(condition);
         self.truthiness_test(condition, value)
@@ -489,7 +488,7 @@ impl<'a> Flatten<'a> {
         if adjusted || e.register_passable_result() {
             return None;
         }
-        let ty = e.ty().filter(|ty| !matches!(ty.kind(), TyKind::Ref(_)))?;
+        let ty = e.ty()?;
         let slot = self.conditional_into_slot(
             e,
             e.operand_of(*cond)?,

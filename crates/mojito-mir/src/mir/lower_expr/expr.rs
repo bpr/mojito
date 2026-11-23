@@ -165,8 +165,7 @@ impl<'a> Flatten<'a> {
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
             )
-        }) && !matches!(node.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-        {
+        }) {
             // The copy has the read register's exact type: the
             // variable's recorded type can keep a literal element
             // (`var t = 4, "four"` binds `Tuple[IntLiteral, ...]`)
@@ -910,7 +909,7 @@ impl<'a> Flatten<'a> {
         }
         self.bind_call_operands(node, 0, &[value], &[]);
         let ra = self.lower_operator_operand(node, value);
-        let ra = self.field_referent(value, ra);
+        let ra = self.field_referent(ra);
         let d = self.fresh(node.location(), None);
         let raises = self.call_raises(node, node.raises());
         self.emit(MirInstr::UnOp {

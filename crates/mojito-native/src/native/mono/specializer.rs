@@ -1103,9 +1103,11 @@ impl<'a> Specializer<'a> {
         mojito_mir::mir::lower_drops(&mut function, &|_| true, &|ty| {
             self.source.declarations.register_passable(ty)
         });
-        mojito_mir::mir::lower_copies_and_moves(&mut function, &|instance| {
-            self.template_declaration(instance)
-        });
+        mojito_mir::mir::lower_copies_and_moves(
+            &mut function,
+            &|instance| self.template_declaration(instance),
+            &|ty, field| self.source.declarations.declares_ref_field(ty, field),
+        );
         ensure_concrete_function(&key.template, &name, &function)?;
         self.output_positions
             .insert(name.clone(), self.output_functions.len());

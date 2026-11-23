@@ -400,7 +400,11 @@ pub fn inline_calls(
         fresh.clean.extend(clean);
         name_constructors(function, declarations);
         super::name_destructors(function, declarations);
-        lower_copies_and_moves(function, &|name| declarations.function(name));
+        lower_copies_and_moves(
+            function,
+            &|name| declarations.function(name),
+            &|ty, field| declarations.declares_ref_field(ty, field),
+        );
         record_lowered_callees(function, callees);
     }
     changed

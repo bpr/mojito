@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2527**.
+Next free ID: **R2529**.
 
 ## Ordered Work
 
@@ -1511,6 +1511,26 @@ change that needs a new `MJRT_ABI_VERSION`.
 Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R2527 A conditional expression building a struct with a `ref`
+  field ends the referent's owner before the result's last use**
+
+  `var h = Holder(x) if c else Holder(x)` over `var r: ref[Self.o] Int`
+  drops `x` right after the branch's construction, so `h.r` reads a dead
+  slot; the same construction outside a conditional keeps `x` live.
+  - The branch result's loan on the referent's owner is lost when the
+    branch value moves into the conditional's result slot (`$sc` in
+    `conditional_into_slot`); a `Pointer(to=s)` branch keeps its loan.
+  - Probe: `print(h.r + 1)` after the binding above fails in the VM with
+    `operator Add is not defined for None and Int`.
+  - Probe: the `String` form `var h = H(s) if c else H(s);
+    print(h.r.byte_length())` fails with `invalid reference projection
+    Field("size") on <moved>`.
+  - Probe: the temporary receiver `(H(s) if c else H(s)).r.byte_length()`
+    fails with `field access on non-struct <moved>`.
+  - Found while landing R2524 (2026-11-22).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2379 A subscript through a `ref` field read off a collection
   element passes the VM a value where it wants a reference**
@@ -3197,6 +3217,22 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R2344 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2528 A transfer out of a `ref` field is rejected by the move
+  analysis, not by the checker**
+
+  `take(h.r^)` and `take(MH(s).r^)` over `var r: ref[Self.o] String`
+  report `field 'h.r' destroyed out of the middle of a value`, as though
+  the hole were in the holder's storage. The transfer moves out of the
+  referent through a reference, which upstream rejects as it rejects a
+  transfer out of a `ref` binding.
+  - The checker should reject a `^` whose operand reads through a
+    declared `ref` field, as it rejects one of a `ref` binding (today
+    `expression does not designate a value with an origin`).
+  - Probe: both forms above, with `take(var s: String)`.
+  - Found while landing R2524 (2026-11-22).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
@@ -11321,27 +11357,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2524 MIR lowering reads a reference from a checked
-  expression's `TyKind::Ref` type**
-
-  Since R2489–R2491 the checker types a `ref` binding, a `ref` field, and a
-  `ref` result by its referent, so a `Ref`-typed checked expression is a
-  `!lit.ref` value. These guards still treat it as a reference to read
-  through or keep, which a merged `!lit.ref` would trip.
-  - Probe each guard with an `eprintln!` over the smoke list, delete the
-    ones that never fire, and move any that fires onto the fact behind it
-    (`ReferenceResult`, `place_holds_reference`, `binds_reference`), as
-    commit `592e27a91` did in the checker.
-  - `lower_expr/expr_access.rs`: `field_referent`'s `e.ty()` test, the
-    three `node.ty` tests in `member_expr`, and `index_expr`'s
-    `e.place_ty()` arm (no element holds a reference by declaration).
-  - `lower_expr/expr.rs`: `read_slot`'s `CopyPlaceValue` guard.
-  - `calls.rs`: the `e.ty()` test near the reference-result receiver.
-  - `call_results.rs`: the `e.ty()` filter of the call-result slot.
-  - Found while landing R2506 (2026-11-22).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2526 The VM holds a `!lit.ref` value as a `Value::PlacePointer`
   unless its type is `TyKind::Ref`**
 
@@ -11454,8 +11469,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Plan: `R2492-tykind-litref-is-a-second-reference-plan.md`, section E7.
   - Go sites-first: `scripts/smoke --suites`, then `scripts/focused`.
   - Found while landing R2211 (2026-11-21).
-  - Depends on R2505, R2506, R2507, R2508, R2509, R2510, R2524, R2525,
-    R2526.
+  - Depends on R2505, R2506, R2507, R2508, R2509, R2510, R2525, R2526.
   - Model: Fable, Planned.
 
 - [ ] **R2512 Pointer readers below the checker read the `PointerOrigin`

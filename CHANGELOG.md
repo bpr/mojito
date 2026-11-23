@@ -1462,6 +1462,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A value read of a declared `ref` field off an expression temporary reads
+  through the stored handle, as off a named local: `Holder(x).r + 1`
+  printed garbage or failed in the VM with `operator Add is not defined for
+  ref and Int`, and `var t = Named(s).r` over a `String` referent failed MIR
+  verification. A copy of a memory-only value read through a `ref` field,
+  off a named local as well, passes the field's stored handle to its copy
+  initializer (`assets/extensions/ok/ref_field_temporary_value_read.mojo`).
+  MIR lowering no longer reads any checked expression's `TyKind::Ref` type
+  (R2524).
+
 - Four fixtures that stopped elaborating after batch 4 run again (R2519).
   A member whose `mut=` reads its struct's binder (`StringSpan.codepoints`
   passing `self` where `StringSpan[ImmOrigin(Self.origin)]` is declared)

@@ -231,7 +231,11 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
                 let mut f = f;
                 elaborate_store_drops(&mut f, &name, &prog.declarations, &|_| false);
                 name_destructors(&mut f, &prog.declarations);
-                lower_copies_and_moves(&mut f, &|name| prog.declarations.function(name));
+                lower_copies_and_moves(
+                    &mut f,
+                    &|name| prog.declarations.function(name),
+                    &|ty, field| prog.declarations.declares_ref_field(ty, field),
+                );
                 f
             } else {
                 elaborate_drops_function(&name, f, &prog.declarations)
@@ -294,7 +298,11 @@ pub fn elaborate_drops_function(
     drop_registers_through_storage(&mut elaborated, declarations);
     name_destructors(&mut elaborated, declarations);
     mojito_mir::mir::name_constructors(&mut elaborated, declarations);
-    lower_copies_and_moves(&mut elaborated, &|name| declarations.function(name));
+    lower_copies_and_moves(
+        &mut elaborated,
+        &|name| declarations.function(name),
+        &|ty, field| declarations.declares_ref_field(ty, field),
+    );
     elaborated
 }
 

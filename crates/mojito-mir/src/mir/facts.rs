@@ -237,9 +237,15 @@ impl<'a> Node<'a> {
     }
 
     /// Project `place`, the place of this member node's object, to the
-    /// member `field`.
+    /// member `field`, typed by the slot's stored type: HIR's place, else
+    /// the checked place type (a declared `ref` field's handle off an
+    /// expression temporary, which HIR gives no place), else the read.
     pub(super) fn project_member(self, place: &mut MirPlace, field: &str) {
-        match self.place_ty().or_else(|| self.ty()) {
+        match self
+            .place_ty()
+            .or_else(|| self.checked.place_ty.clone())
+            .or_else(|| self.ty())
+        {
             Some(ty) => place.project(Proj::Field(field.to_string()), ty),
             None => place.proj.push(Proj::Field(field.to_string())),
         }
@@ -357,7 +363,7 @@ impl<'a> Node<'a> {
     }
 
     /// The places this node's reference value may point into: its interior
-    /// references, its reference result's origin, and its reference type's.
+    /// references and its reference result's origin.
     pub(super) fn reference_places(self) -> Vec<mojito_types::origin::OriginPlace> {
         fn collect(
             origin: &mojito_types::origin::Origin,
@@ -386,9 +392,6 @@ impl<'a> Node<'a> {
                 }
                 _ => {}
             }
-        }
-        if let Some(TyKind::Ref(reference)) = self.checked.ty.as_ref().map(Ty::kind) {
-            collect(&reference.origin, &mut places);
         }
         places.sort();
         places.dedup();

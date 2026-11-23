@@ -88,7 +88,7 @@ pub use constructor_calls::{
 mod copies;
 pub use copies::{Relocated, StructDeclarations, relocated_structs};
 mod copy_calls;
-pub use copy_calls::{FunctionDeclarations, lower_copies_and_moves};
+pub use copy_calls::{DeclaresRefField, FunctionDeclarations, lower_copies_and_moves};
 mod teardown_calls;
 pub use teardown_calls::name_teardown_destructors;
 mod destroys;

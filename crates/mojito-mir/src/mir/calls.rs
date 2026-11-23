@@ -2482,25 +2482,24 @@ impl<'a> Flatten<'a> {
     /// each field ([`Self::temporary_field_place`]). `None`, leaving the
     /// base to the caller, when the chain's root is not a fresh temporary,
     /// is a reference result, or a materialized borrow source (which the
-    /// caller projects through [`Self::lower_projected_reference_place`]),
-    /// or when the field is a reference.
+    /// caller projects through [`Self::lower_projected_reference_place`]).
+    /// A declared `ref` field projects its stored handle, which the caller
+    /// reads through as it does off a named local.
     pub(super) fn load_temporary_field(
         &mut self,
         expression: Node<'a>,
         object: Node<'a>,
         field: &str,
     ) -> Option<Reg> {
-        let field_ty = expression.ty()?;
-        if matches!(field_ty.kind(), TyKind::Ref(_)) {
-            return None;
-        }
+        expression.ty()?;
         let mut place = if object.is_fresh_temporary() {
             self.temporary_root_place(object)?
         } else {
             self.temporary_field_place(object)?
         };
-        place.project(Proj::Field(field.to_string()), field_ty.clone());
-        let loaded = self.fresh_typed(expression.location(), Some(place.root), field_ty);
+        expression.project_member(&mut place, field);
+        let ty = place.ty.clone().unwrap_or_else(Ty::error);
+        let loaded = self.fresh_typed(expression.location(), Some(place.root), ty);
         self.emit(MirInstr::LoadPlace {
             dest: loaded,
             place,
@@ -2523,7 +2522,6 @@ impl<'a> Flatten<'a> {
             || e.simd_length().is_some()
             || e.recorded_value().is_some()
             || e.is_pointer_mlir_value_read()
-            || e.ty().is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)))
         {
             return None;
         }

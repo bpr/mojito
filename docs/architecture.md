@@ -6726,10 +6726,12 @@ the call alone over its register, or, where its block read the register
 through a reference with nothing written since, over that reference, or,
 where its block loaded the register from a place with nothing written
 since, over a `ref.make` of that place, as upstream's `copy: Self` takes
-the source's `!lit.ref`. Ending a reference binding writes nothing: drop
-elaboration may end the binding a loaded place goes through at the load,
-its last use, and the call then ends it after itself instead, since the
-call's reference now reaches the referent through it. A copy of a register
+the source's `!lit.ref`; a place holding a declared `ref` field's handle,
+read through to its referent, passes the handle itself, loaded again. Ending
+a reference binding, or any slot that runs no destructor, writes nothing:
+drop elaboration may end the slot a loaded place lies in or goes through
+at the load, its last use, and the call then ends it after itself instead,
+since the call's reference now reaches the value through it. A copy of a register
 loaded before an instruction that may write passes the value, so lowering
 reads a copy's source where the copy runs: a chained comparison's first
 middle is loaded again from its place after the first link's call, as
@@ -6996,8 +6998,11 @@ current Mojo:
   `load_temporary_field` leaves alone, projects that reference's place
   (`lower_projected_reference_place`, from `Flatten::member_expr`), so its
   copy passes the field's place as upstream's copy of a `!lit.ref` field
-  does. A reference-typed field, or a base no storage holds, keeps the
-  register `GetField`.
+  does. A declared `ref` field projects its stored handle and reads
+  through it, off a temporary as off a named local
+  (`Flatten::keeps_field_handle`): a value use is the referent, and a
+  method receiver or a place operation keeps the handle. Only a base no
+  storage holds keeps the register `GetField`.
 - A scalar `LoadPlace` borrows its owner for the one instruction consuming
   the loaded register (the register-loan dataflow's single-hop retention).
   A scalar read through a reference — a `ReadRef`, or a `LoadPlace` through

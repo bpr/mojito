@@ -11,7 +11,8 @@
 //! a copy of a value read through a reference passes the reference, and a
 //! copy of a value loaded from a place with nothing written since passes a
 //! reference to the place, as upstream's `copy: Self` takes the source's
-//! `!lit.ref`; a reference binding the place goes through then ends after
+//! `!lit.ref` (the handle a declared `ref` field stores, for a value read
+//! through one); a reference binding the place goes through then ends after
 //! the call rather than at the load. Any other register copy passes its
 //! register. A move forwards the slot, which ends it and hands its storage
 //! to the callee as Mojo's owned argument convention does, and passes it
@@ -35,15 +36,25 @@ use std::collections::{HashMap, HashSet};
 /// A function's declaration, by the function's name.
 pub type FunctionDeclarations<'d> = dyn Fn(&str) -> Option<&'d MirFunctionDeclaration> + 'd;
 
+/// Whether a struct type declares a field `ref`, by the type and the
+/// field's name.
+pub type DeclaresRefField<'d> = dyn Fn(&Ty, &str) -> bool + 'd;
+
 /// Lower every copy and move of `function` naming its constructor to a
 /// call of that constructor.
 ///
 /// Regions are lowered too. The constructor's declaration, which
 /// `declarations` answers, decides how the call passes the value: a read
 /// of the source and the call, or the call alone for a register copy.
-pub fn lower_copies_and_moves(function: &mut MirFunction, declarations: &FunctionDeclarations<'_>) {
+/// `declares_ref_field` names the fields whose storage is a reference, so
+/// a copy of a value loaded through one passes the stored handle.
+pub fn lower_copies_and_moves(
+    function: &mut MirFunction,
+    declarations: &FunctionDeclarations<'_>,
+    declares_ref_field: &DeclaresRefField<'_>,
+) {
     let mut blocks = std::mem::take(&mut function.body);
-    lower_blocks(&mut blocks, function, declarations);
+    lower_blocks(&mut blocks, function, declarations, declares_ref_field);
     function.body = blocks;
 }
 
@@ -51,6 +62,7 @@ fn lower_blocks(
     block: &mut MirBlock,
     function: &mut MirFunction,
     declarations: &FunctionDeclarations<'_>,
+    declares_ref_field: &DeclaresRefField<'_>,
 ) {
     let spread: HashSet<u32> = block
         .instrs
@@ -74,13 +86,14 @@ fn lower_blocks(
     let mut loaded = HashMap::new();
     for mut instruction in std::mem::take(&mut block.instrs) {
         for region in instruction_regions_mut(&mut instruction) {
-            lower_blocks(region, function, declarations);
+            lower_blocks(region, function, declarations, declares_ref_field);
         }
         let kept = matches!(&instruction,
             MirInstr::UseVar { dest, .. } if spread.contains(&dest.0));
         let sources = Sources {
             read_through: &read_through,
             loaded: &loaded,
+            declares_ref_field,
         };
         let call = (!kept)
             .then(|| call_of(&instruction, function, declarations, &sources))
@@ -99,6 +112,16 @@ fn lower_blocks(
             }
             MirInstr::LoadPlace { dest, place } => {
                 loaded.insert(dest.0, (place.clone(), lowered.len()));
+            }
+            // The end of a slot that runs no destructor keeps the places
+            // loaded from it: a copy of one ends the slot after the call
+            // instead ([`end_after_call`]).
+            MirInstr::DropVar {
+                var,
+                destructor: None,
+            } if !writes_nothing(&instruction, function) => {
+                read_through.clear();
+                loaded.retain(|_, (place, _)| place.root == *var);
             }
             instruction if !writes_nothing(instruction, function) => {
                 read_through.clear();
@@ -185,25 +208,51 @@ fn call_of(
             let argument =
                 constructor_argument(constructor, declarations, function.reg_types.get(&value.0)?)?;
             if let Some((place, load)) = sources.loaded.get(&value.0)
-                && place.ty.is_some()
-                && place.ty.as_ref() == function.reg_types.get(&value.0)
+                && let Some(storage) = place.ty.clone()
             {
-                let handle = crate::mir::mir_place_handle_ty(
+                let binds_root = function.binds_reference(place.root);
+                let stored_handle = crate::mir::place_holds_reference(
                     place,
-                    function.binds_reference(place.root),
-                    Some(mojito_types::origin::Mutability::Immutable),
-                )?;
-                let span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
-                let source = fresh_register(function, handle, span.as_ref());
-                return Some(Lowered::Loaded(
-                    *load,
-                    place.root,
-                    MirInstr::MakeRef {
-                        dest: source,
-                        place: place.clone(),
-                    },
-                    constructor_call(*dest, constructor, source, argument),
-                ));
+                    binds_root,
+                    sources.declares_ref_field,
+                );
+                let value_ty = if stored_handle {
+                    crate::mir::place_value_ty(place, binds_root, sources.declares_ref_field)
+                } else {
+                    Some(&storage)
+                };
+                if value_ty.is_some() && value_ty == function.reg_types.get(&value.0) {
+                    let span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
+                    // A value read through a declared `ref` field is copied
+                    // from the handle the field stores, which a load typed
+                    // as the handle keeps; any other place lends its own.
+                    let (source, reference) = if stored_handle {
+                        let source = fresh_register(function, storage, span.as_ref());
+                        let load = MirInstr::LoadPlace {
+                            dest: source,
+                            place: place.clone(),
+                        };
+                        (source, load)
+                    } else {
+                        let handle = crate::mir::mir_place_handle_ty(
+                            place,
+                            binds_root,
+                            Some(mojito_types::origin::Mutability::Immutable),
+                        )?;
+                        let source = fresh_register(function, handle, span.as_ref());
+                        let make = MirInstr::MakeRef {
+                            dest: source,
+                            place: place.clone(),
+                        };
+                        (source, make)
+                    };
+                    return Some(Lowered::Loaded(
+                        *load,
+                        place.root,
+                        reference,
+                        constructor_call(*dest, constructor, source, argument),
+                    ));
+                }
             }
             let source = sources
                 .read_through
@@ -348,10 +397,11 @@ struct ConstructorArgument {
     struct_arguments: Vec<TyArg>,
 }
 
-/// Take out of `lowered`, after the load at `load`, the end of the
-/// reference binding `binding`, which drop elaboration placed at the
-/// load as the binding's last use: the copy's reference to the place
-/// through it is now that use, so the binding ends after the call.
+/// Take out of `lowered`, after the load at `load`, the end of the slot
+/// `binding` (a reference binding, or a slot running no destructor), which
+/// drop elaboration placed at the load as the slot's last use: the copy's
+/// reference to the place in or through it is now that use, so the slot
+/// ends after the call.
 fn end_after_call(lowered: &mut Vec<MirInstr>, load: usize, binding: VarId) -> Vec<MirInstr> {
     let (ended, kept): (Vec<_>, Vec<_>) = lowered.split_off(load + 1).into_iter().partition(
         |instruction| matches!(instruction, MirInstr::DropVar { var, .. } if *var == binding),
@@ -367,6 +417,7 @@ fn end_after_call(lowered: &mut Vec<MirInstr>, load: usize, binding: VarId) -> V
 struct Sources<'s> {
     read_through: &'s HashMap<u32, Reg>,
     loaded: &'s HashMap<u32, (MirPlace, usize)>,
+    declares_ref_field: &'s DeclaresRefField<'s>,
 }
 
 /// A use lowered to its constructor's call: after the source's read, if
