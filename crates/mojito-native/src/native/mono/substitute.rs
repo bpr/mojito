@@ -128,9 +128,8 @@ pub(super) fn copy_builtin_receivers(block: &mut MirBlock, reg_types: &HashMap<u
                 && resolved
                     .as_deref()
                     .is_none_or(|target| target.starts_with("__trait_dispatch."))
-                && let Some(by_reference) = reg_types
-                    .get(&recv.0)
-                    .and_then(|ty| builtin_copy_receiver(ty.kind())) =>
+                && let Some(by_reference) =
+                    reg_types.get(&recv.0).and_then(builtin_copy_receiver) =>
             {
                 copied.insert(dest.0);
                 *instruction = if by_reference {
@@ -1466,16 +1465,13 @@ fn unsupported_param(error: &mojito_types::param_expr::ParamError) -> MonoError 
     }
 }
 
-/// How a dispatched `copy()` reaches a receiver of type `ty` whose copy is
-/// a value read: `Some(false)` for the value itself, `Some(true)` for a
-/// reference to it, as `Copyable.copy`'s `read self` passes the receiver
-/// by address; `None` for any other receiver.
-fn builtin_copy_receiver(ty: &TyKind) -> Option<bool> {
-    match ty {
-        TyKind::Ref(reference) => {
-            mojito_types::types::builtin_copy_is_value_read(reference.referent.kind())
-                .then_some(true)
-        }
-        ty => mojito_types::types::builtin_copy_is_value_read(ty).then_some(false),
-    }
+/// How a dispatched `copy()` reaches a receiver operand of type `ty` whose
+/// copy is a value read: `Some(false)` for the value itself, `Some(true)`
+/// for a receiver passed by address, as upstream's `read self` operand
+/// `!lit.ref<Self>` ([`mojito_mir::mir::addressed_receiver`]); `None` for
+/// any other receiver.
+fn builtin_copy_receiver(ty: &Ty) -> Option<bool> {
+    let addressed = mojito_mir::mir::addressed_receiver(ty);
+    let value = addressed.map_or(ty, |reference| &reference.referent);
+    mojito_types::types::builtin_copy_is_value_read(value.kind()).then_some(addressed.is_some())
 }

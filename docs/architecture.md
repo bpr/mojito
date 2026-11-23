@@ -7796,8 +7796,11 @@ point where a slot declared in a loop is uninitialized again.
   returned reference, or each one so merged, is made to a place-bound
   parameter's place, to a pointee (an index of a pointer at any depth of
   the place), is the `pointer.convert` of a `!lit.ref` or pointer to a
-  `ref` (`__get_litref_as_mvalue`), or is of static origin
-  (`returns_bound_place`). The
+  `ref` (`__get_litref_as_mvalue`), or is the reference a subscript or
+  method of a static-origin pointer returns (a pointer whose origin the
+  instance erased included; `returns_bound_place`'s private
+  `pointee_results`), never by reading the returned reference's own
+  origin. The
   body's registers and slots move past the caller's
   (`mir::renumber_block_slots`), regions included, and its slot names gain
   `$inline{n}`, so no binder name or `self` matches them. The call's block binds each owned
@@ -9101,7 +9104,14 @@ concrete verifier rejects a reference slot read as its handle.
   constructor of a zero-size result never reaches a backend as a call
   (R2158). A `read` argument an instance of a generic caller still passes
   by address (`ref.make`) to a parameter of a value type binds the place,
-  not the address (`passes_address`).
+  not the address (`passes_address`: the call's `ref<P>` operand at a `P`
+  parameter, `mir::addressed_operand`). A parameter bound to a handle
+  (`Binding::Handle`) takes it from a field declared `ref`
+  (`mir::place_holds_reference` against the struct's `ref_fields`) or from
+  such a by-address register, never from a place's or register's
+  `TyKind::Ref` type, and a bound place is a caller's reference, for the
+  inferred `mut` binder and for a store in place, when its root is a `ref`
+  binding (`MirFunction::binds_reference`).
 
 ## Stage 8: Register VM
 

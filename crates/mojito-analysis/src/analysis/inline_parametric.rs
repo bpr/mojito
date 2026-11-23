@@ -198,12 +198,13 @@ use mojito_mir::mir::{
     MirBlock, MirCaptureAccess, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirSubscriptArg, MirSubscriptCall,
     MirTerm, OperandAddresses, Proj, Raises, Reg, RegionFrame, RegisterEnds, RegisterTable,
-    TypeConstructionError, UseMode, callable_targets, callee_slots, construct_type_parameters,
-    count_register_reads, dunder_method_call, erase_removed_operands, fresh_register,
-    has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
-    instruction_slots, instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
-    loop_continues_mut, lower_copies_and_moves, member_receiver_ty, name_constructors,
-    operand_addresses, operator_method, region_exit, removed_argument_operands,
+    TypeConstructionError, UseMode, addressed_operand, addressed_receiver, callable_targets,
+    callee_slots, construct_type_parameters, count_register_reads, dunder_method_call,
+    erase_removed_operands, fresh_register, has_no_destructor, instruction_regions,
+    instruction_regions_mut, instruction_regs_mut, instruction_slots, instruction_subscript_call,
+    instruction_subscript_call_mut, loop_breaks_mut, loop_continues_mut, lower_copies_and_moves,
+    member_receiver_ty, name_constructors, operand_addresses, operator_method,
+    place_holds_reference, receiver_value_ty, region_exit, removed_argument_operands,
     renumber_block_slots, storage_construction, subscript_store_call, terminator_regs,
     terminator_regs_mut, with_removed_argument_forwards_erased, without_removed_arguments,
 };
@@ -548,10 +549,9 @@ enum Binding {
         argument: Option<Reg>,
     },
     /// A `mut` or `ref` parameter whose caller's place is a `ref` field,
-    /// or a `read` one read through a reference or pointer register: a
-    /// fresh slot of the handle's type initialized with it, the address the
-    /// call passes, and every body place on the parameter goes through the
-    /// slot
+    /// or a `read` one the call passes a reference register for: a fresh
+    /// slot of the handle's type initialized with it, the address the call
+    /// passes, and every body place on the parameter goes through the slot
     /// ([`handle_place`]).
     Handle(HandleSource),
     /// A constructor's `out self`: a fresh slot the body initializes and
@@ -563,21 +563,27 @@ enum Binding {
     Default { value: DefaultValue, dropped: bool },
 }
 
-/// Where a [`Binding::Handle`] parameter's handle comes from.
+/// Where a [`Binding::Handle`] parameter's handle comes from, with the
+/// reference it is, as the declaration that makes it one says: a field
+/// declared `ref`, or a call's by-address operand.
 enum HandleSource {
     /// The `ref` field storing it.
-    Field(MirPlace),
-    /// A register of the caller holding it, of its `ref` or pointer type.
-    Register(Reg, Ty),
+    Field(MirPlace, RefTy),
+    /// A register of the caller holding it, the call's by-address operand.
+    Register(Reg, RefTy),
 }
 
 impl HandleSource {
-    /// The handle's `ref` or pointer type.
-    const fn ty(&self) -> Option<&Ty> {
+    /// The reference the handle is.
+    const fn reference(&self) -> &RefTy {
         match self {
-            Self::Field(field) => field.ty.as_ref(),
-            Self::Register(_, ty) => Some(ty),
+            Self::Field(_, reference) | Self::Register(_, reference) => reference,
         }
+    }
+
+    /// The handle's `ref` type.
+    fn handle_ty(&self) -> Ty {
+        TyKind::Ref(self.reference().clone()).into()
     }
 }
 
@@ -1568,7 +1574,7 @@ impl<'c> Inliner<'_, 'c> {
             // of the temporary its caller materializes.
             let bind = |argument: Reg, place: Option<&MirPlace>, consumed: Option<&MirPlace>| {
                 argument_binding(
-                    self.function,
+                    (self.function, self.declarations),
                     callee,
                     block,
                     (index, param),
@@ -1594,7 +1600,12 @@ impl<'c> Inliner<'_, 'c> {
                         recv,
                         site.receiver_place.filter(|_| {
                             is_reference_parameter(callee, param)
-                                || passes_address(self.function, callee, param, recv)
+                                || self
+                                    .function
+                                    .reg_types
+                                    .get(&recv.0)
+                                    .and_then(addressed_receiver)
+                                    .is_some()
                         }),
                         site.receiver_place,
                     )?,
@@ -1801,9 +1812,9 @@ impl<'c> Inliner<'_, 'c> {
             .iter()
             .enumerate()
             .map(|(param, binding)| match binding {
-                Binding::Handle(source) => source
-                    .ty()
-                    .map(|ty| handle_place(base + param as VarId, ty)),
+                Binding::Handle(source) => {
+                    Some(handle_place(base + param as VarId, source.reference()))
+                }
                 _ => None,
             })
             .collect();
@@ -1830,7 +1841,7 @@ impl<'c> Inliner<'_, 'c> {
         copy_bound_parameters(&mut blocks, callee, &bound);
         let mut reads = vec![0; callee.n_regs as usize];
         count_register_reads(&mut blocks, &mut reads);
-        access_bound_parameters_in_place(&mut blocks, callee, &reads, &bound);
+        access_bound_parameters_in_place(&mut blocks, callee, self.function, &reads, &bound);
         rebind_blocks(&mut blocks, &Registers::new(self.function), &bound)?;
         Some(blocks)
     }
@@ -1920,7 +1931,7 @@ impl<'c> Inliner<'_, 'c> {
                 })
                 .unwrap_or_default(),
         );
-        for (id, mutability) in argument_mutabilities(bindings)
+        for (id, mutability) in argument_mutabilities(function, bindings)
             .into_iter()
             .chain(pointer_mutabilities(function, callee, bindings, dest))
         {
@@ -2091,32 +2102,22 @@ impl<'c> Inliner<'_, 'c> {
                     });
                 }
                 // A reference register is the handle itself.
-                Binding::Handle(HandleSource::Register(reference, handle_ty)) => {
+                Binding::Handle(source @ HandleSource::Register(reference, _)) => {
+                    let handle_ty = source.handle_ty();
                     function.var_tys.insert(var + var_base, handle_ty.clone());
-                    // A pointer the caller passes is a value the slot
-                    // holds, not a reference it binds.
-                    if matches!(handle_ty.kind(), TyKind::Ref(_)) {
-                        function.ref_bindings.insert(var + var_base);
-                    } else {
-                        function.ref_bindings.remove(&(var + var_base));
-                    }
+                    function.ref_bindings.insert(var + var_base);
                     caller.instrs.push(MirInstr::DefVar {
                         var: var + var_base,
                         src: *reference,
-                        binding_ty: Some(handle_ty.clone()),
+                        binding_ty: Some(handle_ty),
                         in_place: false,
                     });
                 }
                 // The handle the field stores, read through a reference to
                 // the field, as the synthesized copy of a `ref` field reads
                 // it, since a load of the field reads through the handle.
-                Binding::Handle(HandleSource::Field(field)) => {
-                    let Some(handle_ty) = field.ty.clone() else {
-                        continue;
-                    };
-                    let TyKind::Ref(reference) = handle_ty.kind() else {
-                        continue;
-                    };
+                Binding::Handle(source @ HandleSource::Field(field, reference)) => {
+                    let handle_ty = source.handle_ty();
                     let field_ref = TyKind::Ref(mojito_types::origin::RefTy {
                         referent: handle_ty.clone(),
                         ..reference.clone()
@@ -2481,7 +2482,7 @@ fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
 /// retains no place for a `mut` or `ref` one, or a `read` one of a
 /// droppable type is a value no place holds.
 fn argument_binding(
-    caller: &MirFunction,
+    (caller, declarations): (&MirFunction, &MirDeclarations),
     callee: &MirFunction,
     block: &MirBlock,
     (index, param): (usize, usize),
@@ -2495,7 +2496,7 @@ fn argument_binding(
     if (reference || (callee.returns_reference && !owned && !deinit))
         && let Some(place) = place
     {
-        return Some(place_binding(place));
+        return Some(place_binding(place, declarations));
     }
     if deinit && let Some(place) = place {
         return if place.is_whole_root()
@@ -2543,12 +2544,11 @@ fn argument_binding(
     // argument to the caller's value.
     if !owned
         && place.is_none()
-        && passes_address(caller, callee, param, argument)
-        && let Some(ty) = caller.reg_types.get(&argument.0)
+        && let Some(reference) = addressed_argument(caller, callee, param, argument)
     {
         return Some(Binding::Handle(HandleSource::Register(
             argument,
-            ty.clone(),
+            reference.clone(),
         )));
     }
     // A `read` argument an instance of a generic caller still passes by
@@ -2563,7 +2563,7 @@ fn argument_binding(
         return Some(Binding::Value(argument));
     }
     if by_address && let Some(place) = place {
-        return Some(place_binding(place));
+        return Some(place_binding(place, declarations));
     }
     place
         .cloned()
@@ -2573,58 +2573,72 @@ fn argument_binding(
 }
 
 /// Whether the call passes `argument` for the `read` parameter `param` as
-/// the address of its place: a reference register to a parameter whose
-/// own type is no reference.
+/// the address of its place ([`addressed_argument`]).
 fn passes_address(caller: &MirFunction, callee: &MirFunction, param: usize, argument: Reg) -> bool {
-    let is_reference = |ty: &Ty| matches!(ty.kind(), TyKind::Ref(_));
-    caller.reg_types.get(&argument.0).is_some_and(is_reference)
-        && callee
-            .param_types
-            .get(param)
-            .is_some_and(|ty| !is_reference(ty))
+    addressed_argument(caller, callee, param, argument).is_some()
+}
+
+/// The reference the call passes as `argument` for the parameter `param`
+/// where it passes the address of the value the parameter takes, as
+/// upstream's `ref<P>` operand at a `P` parameter
+/// ([`mojito_mir::mir::addressed_operand`]): an instance of a generic
+/// caller included, which still passes the address its template passed.
+fn addressed_argument<'f>(
+    caller: &'f MirFunction,
+    callee: &MirFunction,
+    param: usize,
+    argument: Reg,
+) -> Option<&'f RefTy> {
+    addressed_operand(
+        caller.reg_types.get(&argument.0)?,
+        callee.param_types.get(param)?,
+    )
 }
 
 /// The binding of a parameter to the caller's `place`: the handle a `ref`
-/// field stores ([`stores_handle`]), as the call forwards it, else the
-/// place itself.
-fn place_binding(place: &MirPlace) -> Binding {
-    if stores_handle(place) {
-        Binding::Handle(HandleSource::Field(place.clone()))
-    } else {
-        Binding::Place(place.clone())
+/// field stores ([`stored_field_handle`]), as the call forwards it, else
+/// the place itself.
+fn place_binding(place: &MirPlace, declarations: &MirDeclarations) -> Binding {
+    stored_field_handle(place, declarations).map_or_else(
+        || Binding::Place(place.clone()),
+        |reference| Binding::Handle(HandleSource::Field(place.clone(), reference.clone())),
+    )
+}
+
+/// The reference `place` stores when it is a field declared `ref`
+/// ([`mojito_mir::mir::place_holds_reference`]) reached directly, which
+/// designates the field's referent: a reference to it is the handle the
+/// field stores, not the field's own storage. A place reached through a
+/// local reference (`through`) already designates the referent behind
+/// that reference's handle.
+fn stored_field_handle<'p>(
+    place: &'p MirPlace,
+    declarations: &MirDeclarations,
+) -> Option<&'p RefTy> {
+    if place.through.is_some()
+        || place.proj.is_empty()
+        || !place_holds_reference(place, false, |ty, field| {
+            declarations.declares_ref_field(ty, field)
+        })
+    {
+        return None;
+    }
+    match place.ty.as_ref()?.kind() {
+        TyKind::Ref(reference) => Some(reference),
+        _ => None,
     }
 }
 
-/// Whether `place` is a `ref` field, a projected place of a `ref` type
-/// reached directly, which designates the field's referent: a reference to
-/// it is the handle the field stores, not the field's own storage. A place
-/// reached through a local reference (`through`) already designates the
-/// referent behind that reference's handle.
-fn stores_handle(place: &MirPlace) -> bool {
-    place.through.is_none()
-        && !place.proj.is_empty()
-        && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-}
-
-/// The place a [`Binding::Handle`] parameter's slot `slot`, holding a
-/// handle of type `handle_ty`, binds the body's places to: the referent of
-/// the handle, read through it, as a `ref` binding's place is, or the
-/// pointee of a pointer handle, which a pointer root read through itself
-/// designates.
-fn handle_place(slot: VarId, handle_ty: &Ty) -> MirPlace {
-    let referent = match handle_ty.kind() {
-        TyKind::Ref(reference) => Some(reference.referent.clone()),
-        pointer => pointer
-            .pointer_layout()
-            .map(|(element, _)| element)
-            .cloned(),
-    };
+/// The place a [`Binding::Handle`] parameter's slot `slot`, holding the
+/// handle `reference`, binds the body's places to: the referent of the
+/// handle, read through it, as a `ref` binding's place is.
+fn handle_place(slot: VarId, reference: &RefTy) -> MirPlace {
     MirPlace {
         root: slot,
-        root_ty: Some(handle_ty.clone()),
+        root_ty: Some(TyKind::Ref(reference.clone()).into()),
         proj: Vec::new(),
         projection_tys: Vec::new(),
-        ty: referent,
+        ty: Some(reference.referent.clone()),
         through: Some(slot),
     }
 }
@@ -2858,8 +2872,9 @@ fn is_owned_parameter(callee: &MirFunction, param: usize) -> bool {
 /// place, not that slot. A reference to a pointee, an element a pointer
 /// addresses (`elements[unsafe_offset=i][]`, `self._data[idx]`), the
 /// reference a `!lit.ref` or pointer converts to
-/// (`__get_litref_as_mvalue(r)`, upstream's `lit.ref.from_pointer`), and one
-/// of static origin name no slot of the body at all. A reference made
+/// (`__get_litref_as_mvalue(r)`, upstream's `lit.ref.from_pointer`), and a
+/// reference a static-origin pointer's subscript or method returns
+/// ([`pointee_results`]) name no slot of the body at all. A reference made
 /// through a local `ref` slot (`self.entries[i].value`) names what the
 /// slot's one whole store holds, so that stored reference is checked in
 /// its place.
@@ -2883,21 +2898,13 @@ fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
                 && prefix.is_some_and(Ty::is_pointer)
         })
     };
-    let is_static = |value: &Reg| {
-        matches!(
-            callee.reg_types.get(&value.0).map(Ty::kind),
-            Some(TyKind::Ref(RefTy {
-                origin: Origin::Static,
-                ..
-            }))
-        )
-    };
     let mut blocks = callee.body.clone();
     let mut made = HashMap::new();
     let mut returned = Vec::new();
     references_and_returns(&callee.body, &mut made, &mut returned);
     let mut converted = HashSet::new();
     converted_references(&callee.body, &callee.reg_types, &mut converted);
+    pointee_results(&callee.body, &callee.reg_types, &mut converted);
     let mut stores = HashMap::new();
     whole_stores(&callee.body, &mut stores);
     let held = |value: &Reg| {
@@ -2927,7 +2934,6 @@ fn returns_bound_place(callee: &MirFunction, bindings: &[Binding]) -> bool {
     returned.iter().all(|value| {
         merged.contains(&value.0)
             || converted.contains(&value.0)
-            || is_static(value)
             || held(value).is_some()
             || made.get(&value.0).is_some_and(|place: &&MirPlace| {
                 pointee(place)
@@ -2990,6 +2996,50 @@ fn converted_references(
         }
         for region in instruction_regions(instruction) {
             converted_references(region, reg_types, converted);
+        }
+    }
+}
+
+/// Add to `pointees` each register `block` and its regions define as the
+/// reference a call on a pointer receiver of static origin returns, a
+/// subscript's (`Pointer.__getitem__`) or a method's: a reference to static
+/// storage, or to the pointee of a pointer whose origin the instance
+/// erased, which names no slot of the body, its origin being the
+/// pointer's.
+fn pointee_results(block: &MirBlock, reg_types: &HashMap<u32, Ty>, pointees: &mut HashSet<u32>) {
+    for instruction in &block.instrs {
+        let returned = match instruction {
+            MirInstr::Index {
+                dest,
+                base: recv,
+                call: Some(call),
+                ..
+            }
+            | MirInstr::MultiIndex {
+                dest,
+                object: recv,
+                call: Some(call),
+                ..
+            } => call.reference_result.is_some().then_some((dest, recv)),
+            MirInstr::MethodCall {
+                dest,
+                recv,
+                reference_result: Some(_),
+                ..
+            } => Some((dest, recv)),
+            _ => None,
+        };
+        if let Some((dest, recv)) = returned
+            && reg_types.get(&recv.0).is_some_and(|ty| {
+                receiver_value_ty(ty)
+                    .pointer_lit_ref()
+                    .is_some_and(|pointer| pointer.origin == Origin::Static)
+            })
+        {
+            pointees.insert(dest.0);
+        }
+        for region in instruction_regions(instruction) {
+            pointee_results(region, reg_types, pointees);
         }
     }
 }
@@ -3111,19 +3161,28 @@ fn bound_mutabilities<'t>(
 /// ([`OriginParamId::reference_binder`]) bound to the mutability of the
 /// reference its argument is reached through, as upstream infers
 /// `Origin[mut=m]` from the argument: a body reference reached through the
-/// parameter that its returned references do not spell still binds.
-fn argument_mutabilities(bindings: &[Binding]) -> HashMap<OriginParamId, Mutability> {
+/// parameter that its returned references do not spell still binds. A
+/// place is reached through a reference when its root is one of `caller`'s
+/// `ref` bindings, and a handle always is.
+fn argument_mutabilities(
+    caller: &MirFunction,
+    bindings: &[Binding],
+) -> HashMap<OriginParamId, Mutability> {
     bindings
         .iter()
         .enumerate()
         .filter_map(|(slot, binding)| {
-            let reached = match binding {
-                Binding::Place(place) | Binding::Part { place, .. } => place.root_ty.as_ref(),
-                Binding::Handle(source) => source.ty(),
-                _ => None,
-            };
-            let TyKind::Ref(reference) = reached?.kind() else {
-                return None;
+            let reference = match binding {
+                Binding::Place(place) | Binding::Part { place, .. }
+                    if caller.binds_reference(place.root) =>
+                {
+                    match place.root_ty.as_ref()?.kind() {
+                        TyKind::Ref(reference) => reference,
+                        _ => return None,
+                    }
+                }
+                Binding::Handle(source) => source.reference(),
+                _ => return None,
             };
             let id = OriginParamId::reference_binder(u32::try_from(slot).ok()?);
             (reference.mutability != Mutability::Param(id)).then_some((id, reference.mutability))
@@ -3497,13 +3556,14 @@ fn bound_places(addresses: &[Option<&MirPlace>], caller: &MirFunction) -> Vec<Op
 /// The place a by-address operand addressing `address` binds its
 /// parameter to, which names a slot holding a handle directly where the
 /// operand reaches it through itself: a `ref` binding's slot for the
-/// handle it holds, forwarded (`stored_handle`), as a body's places through
-/// a `ref` binding are rebased on the slot, and the caller's `mut` or `ref`
-/// parameter, whose slot is its handle.
+/// handle it holds, forwarded (`stored_handle`, the slot itself rather
+/// than its referent, by declaration: [`place_holds_reference`]), as a
+/// body's places through a `ref` binding are rebased on the slot, and the
+/// caller's `mut` or `ref` parameter, whose slot is its handle.
 fn bound_place(address: &MirPlace, caller: &MirFunction) -> MirPlace {
     let mut place = address.clone();
-    let stored_handle =
-        place.is_whole_root() && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
+    let stored_handle = place.is_whole_root()
+        && place_holds_reference(&place, caller.binds_reference(place.root), |_, _| false);
     if place.through == Some(place.root)
         && (stored_handle || is_reference_parameter(caller, place.root as usize))
     {
@@ -3663,11 +3723,12 @@ fn copy_bound_parameters<'b>(
 fn access_bound_parameters_in_place<'b>(
     block: &mut MirBlock,
     callee: &mut MirFunction,
+    caller: &MirFunction,
     reads: &[u32],
     bound: &dyn Fn(VarId) -> Option<&'b MirPlace>,
 ) {
     for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
-        access_bound_parameters_in_place(region, callee, reads, bound);
+        access_bound_parameters_in_place(region, callee, caller, reads, bound);
     }
     let mut rewritten = Vec::with_capacity(block.instrs.len());
     let mut instructions = std::mem::take(&mut block.instrs).into_iter().peekable();
@@ -3685,9 +3746,11 @@ fn access_bound_parameters_in_place<'b>(
             (Some(outer), Some(MirInstr::WriteRef { reference, value })) if reference == dest => {
                 let slot = outer.is_whole_root()
                     && outer.through.is_none()
-                    && !outer.root_ty.as_ref().is_some_and(|ty| {
-                        ty.is_pointer_layout() || matches!(ty.kind(), TyKind::Ref(_))
-                    });
+                    && !caller.binds_reference(outer.root)
+                    && !outer
+                        .root_ty
+                        .as_ref()
+                        .is_some_and(|ty| ty.is_pointer_layout());
                 Some(if slot {
                     MirInstr::DefVar {
                         var: outer.root,

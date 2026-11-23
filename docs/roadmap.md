@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2525**.
+Next free ID: **R2526**.
 
 ## Ordered Work
 
@@ -11342,29 +11342,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2509 Inline-parametric and mono decide a handle binding or a
-  by-address receiver from a `TyKind::Ref` type**
-
-  Each site tells a `ref` handle from a pointer by its type, which a merged
-  type cannot.
-  - `inline_parametric.rs`'s `passes_address` feeds
-    `HandleSource::Register` and `handle_place`. Use the call's by-address
-    operands (`mir::call_by_address_operands`) and the callee's
-    `ref_params`.
-  - `stores_handle` and `HandleSource::Field`: the field's `ref` marker.
-  - `bound_place` and `access_bound_parameters_in_place`:
-    `caller.binds_reference(root)`.
-  - `argument_mutabilities`: `binds_reference` and `ref_params`.
-  - `returns_bound_place`'s `is_static`: decide beside R2511's
-    `erase_origins` choice.
-  - mono: `builtin_copy_receiver` (`substitute.rs`) asks whether the
-    receiver operand is by-address (`mir::call_by_address_operands`).
-  - `register_loans.rs`'s subscript arm: the call's `reference_result`, as
-    its `MethodCall` arm does.
-  - Found while landing R2492 (2026-11-22).
-  - Depends on R2507 (its by-address operand list).
-  - Model: Fable, Not Planned.
-
 - [ ] **R2510 The VM and the Pliron backend choose a handle or a
   read-through from a `TyKind::Ref` type**
 
@@ -11389,6 +11366,31 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     this track: it is internal structure, not a language divergence.
   - Found while landing R2492 (2026-11-22).
   - Depends on R2506, R2507.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2525 `OperandAddresses` keeps a `ref.make` by its `TyKind::Ref`
+  destination type, not by the call operand it forms**
+
+  Upstream's by-address operand is a `!lit.ref<P>` argument at a `P`
+  parameter, never any value of reference type. `call_operands.rs`'s
+  `collect` (behind `operand_addresses` and `OperandAddresses::extend`)
+  keeps a `ref.make` only when its destination is typed `TyKind::Ref`.
+  That is how it skips the `!lit.ref` `ref.make` `__get_mvalue_as_litref`
+  lowers to, and a merged type cannot tell them apart.
+  - Keep the `ref.make`s a call passes as by-address operands
+    (`mir::call_by_address_operands`, or `mir::addressed_operand` per
+    operand), and those a `ref` binding or a stored handle forms.
+  - Consumers to recheck: `drops.rs`, `inline_parametric.rs` (binding
+    places), `unused_params.rs`, `loans.rs`, `moves.rs`, `sroa.rs`,
+    `register_loans.rs` (receiver seeds), `copy_elision.rs`,
+    `interior.rs`, `scan.rs`, `callable_values.rs`, `register_ends.rs`,
+    and `verify/drops.rs`.
+  - `register_loans.rs`'s `origin_operands`: its `constructs_pointer`
+    operand test (a `Ref` operand of `Untracked` origin) becomes "the
+    operand is a by-address operand". `RegisterLoanStep` needs the call's
+    by-address list precomputed by the scan that owns the `MirFunction`.
+  - Found while landing R2509 (2026-11-22).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2511 `TyKind::LitRef` is a second reference type beside
@@ -11429,13 +11431,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `function_signature` (`call_addresses.rs`), `bound_calls.rs`'s and
     mono `specializer.rs`'s `peel_refs`, `generic_callable_contract`
     (`lower_expr/calls.rs`), and `verify/calls.rs`'s `owner_arguments`.
+  - Audit the type-level reference reads R2509 left in place:
+    `inline_parametric.rs`'s `peel_refs` (existential binders),
+    `BoundMutabilities::ty`'s separate `LitRef` arm, and
+    `register_loans.rs`' `origin_operands` `Ref`-destination guard, which
+    then covers a `!lit.ref` result too, as upstream's origin liveness
+    does.
   - Docs: `docs/architecture.md` and `docs/mir-text-format.md`'s "until
     `!lit.ref` folds into `ref`" sentences, `docs/symbol-map.md`'s
     `!lit.ref` row.
   - Plan: `R2492-tykind-litref-is-a-second-reference-plan.md`, section E7.
   - Go sites-first: `scripts/smoke --suites`, then `scripts/focused`.
   - Found while landing R2211 (2026-11-21).
-  - Depends on R2505, R2506, R2507, R2508, R2509, R2510, R2524.
+  - Depends on R2505, R2506, R2507, R2508, R2509, R2510, R2524, R2525.
   - Model: Fable, Planned.
 
 - [ ] **R2512 Pointer readers below the checker read the `PointerOrigin`

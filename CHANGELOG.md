@@ -2374,6 +2374,19 @@ to evolve under the `0.x` compatibility rules.
   `mir::call_by_address_operands`. Accepted programs and their output are
   unchanged.
 
+- The pre-elaboration inliner, the elaborator's built-in `copy()`
+  rewrite, and the register-loan scan tell a reference from any other
+  value by the declaration that makes it one, as upstream does: a
+  parameter binds a handle from a field declared `ref` or from the call's
+  `ref<P>` operand at a `P` parameter (`mir::addressed_operand`), a bound
+  place is a caller's reference when its root is a `ref` binding, a
+  dispatched `copy()` reads through a by-address receiver, and a reference
+  subscript seeds its receiver's loan from the call's `reference_result`.
+  A reference-returning callee's static result is now recognized as a
+  static-origin pointer's subscript or method result rather than by the
+  reference's own origin. Accepted programs, their output, and inlining
+  decisions are unchanged (R2509).
+
 - MIR lowering decides whether a place holds a reference — whether a read
   goes through it and a borrow forwards its stored handle — from
   declarations, as upstream does: a whole slot when it is a `ref` binding,

@@ -755,16 +755,12 @@ impl RegisterLoanStep {
         // actually been consumed.
         let receiver = || ends.addresses().operands(instruction).receiver;
         let reference_subscript_place = match instruction {
-            MirInstr::Index { dest, .. } | MirInstr::MultiIndex { dest, .. }
-                if matches!(
-                    register_types
-                        .get(&dest.0)
-                        .map(mojito_types::types::Ty::kind),
-                    Some(mojito_types::types::TyKind::Ref(_))
-                ) =>
-            {
-                receiver()
+            MirInstr::Index {
+                call: Some(call), ..
             }
+            | MirInstr::MultiIndex {
+                call: Some(call), ..
+            } if call.reference_result.is_some() => receiver(),
             // A direct method call returning `ref T` (no adapter) is the same
             // callee-produced transient handle as a reference subscript: the
             // result register borrows the receiver's storage, which must outlive
