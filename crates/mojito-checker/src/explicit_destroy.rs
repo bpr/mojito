@@ -1,9 +1,7 @@
 //! Checked explicit-destruction obligations over structured source CFGs.
 
 use crate::checker::DeclarationTable;
-use mojito_ast::ast::{
-    ArgConvention, Condition, Expr, ExprKind, SourceType, Stmt, StmtKind, TStringPart,
-};
+use mojito_ast::ast::{ArgConvention, Condition, Expr, ExprKind, Stmt, StmtKind, TStringPart};
 use mojito_checked::checked::{AnnotationSite, ExplicitDestroyInfo, NodeFacts};
 use mojito_checked::fact_store::FactMap;
 use mojito_common::error::TypeError;
@@ -931,15 +929,6 @@ impl mojito_ast::visit::Visitor for ParamMention<'_> {
             ExprKind::Member { object, field } => {
                 matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
                     && self.params.contains(field)
-            }
-            _ => false,
-        };
-    }
-
-    fn visit_type(&mut self, ty: &SourceType) {
-        self.found |= match ty {
-            SourceType::Named(name, _) | SourceType::SelfParam(name) => {
-                self.params.contains(name.trim_start_matches('*'))
             }
             _ => false,
         };

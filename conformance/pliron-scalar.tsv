@@ -1443,6 +1443,7 @@ assets/ok/struct_bracket_pack_then_keyword_origin.mojo	-	ineligible	no-scalar-en
 assets/ok/struct_callable_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_comptime_member_names_own_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_comptime_member_read_order.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_comptime_member_trait_composition.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_conformance_composition.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_conformance_repeated_same_constraint.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_construction_parameter_application.mojo	-	ineligible	no-scalar-entry-shape

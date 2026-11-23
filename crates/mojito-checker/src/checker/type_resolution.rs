@@ -25,11 +25,43 @@ pub(super) fn reject_stored_callable_type(ty: &Ty, position: &str) -> Result<(),
     Ok(())
 }
 
+/// The expression a type view denotes, the inverse of
+/// [`Expr::type_spelling`]: `TypeList.of` as the receiver of the qualified
+/// construction `TypeList.of[...]()`, or `Self.n` as the read of a member a
+/// bracket value slot spells as a type. `None` for a view no expression
+/// denotes.
+pub(super) fn view_expression(ty: &SourceType, span: mojito_common::token::Span) -> Option<Expr> {
+    let kind = match ty {
+        SourceType::SelfType => ExprKind::Identifier("Self".to_string()),
+        SourceType::Named(name, args) if args.is_empty() => ExprKind::Identifier(name.clone()),
+        SourceType::Named(name, args) => return mojito_ast::ast::named_subscript(name, args, span),
+        SourceType::SelfParam(name) if !name.starts_with('*') => ExprKind::Member {
+            object: Box::new(Expr::new(ExprKind::Identifier("Self".to_string()), span)),
+            field: name.clone(),
+        },
+        SourceType::Assoc { base, name, args } if args.is_empty() => ExprKind::Member {
+            object: Box::new(view_expression(base, span)?),
+            field: name.clone(),
+        },
+        _ => return None,
+    };
+    Some(Expr::new(kind, span))
+}
+
 /// The type an annotation slot's expression spells, converted in the type
 /// context as upstream evaluates it ([`Expr::annotation_type`]). The parser
 /// stores only annotations that convert.
 pub(super) fn annotation_spelling(annotation: &Expr) -> Result<SourceType, TypeError> {
     annotation.annotation_type().ok_or_else(|| {
+        TypeError::InvariantViolation("an annotation slot holds no annotation".to_string())
+    })
+}
+
+/// [`annotation_spelling`] where upstream composes traits as a type (an
+/// associated `comptime` member's annotation): an `&` chain is a trait
+/// composition ([`Expr::composition_type`]).
+pub(super) fn composition_spelling(annotation: &Expr) -> Result<SourceType, TypeError> {
+    annotation.composition_type().ok_or_else(|| {
         TypeError::InvariantViolation("an annotation slot holds no annotation".to_string())
     })
 }
@@ -2028,10 +2060,6 @@ impl Checker {
             ParamArg::Value(expr) if expr.self_member().is_some() => {
                 self.ty_from_spelling(&expr.type_spelling().ok_or_else(unsupported_mlir_type)?)
             }
-            ParamArg::Value(Expr {
-                kind: ExprKind::TypeValue(ty),
-                ..
-            }) => self.ty_from_spelling(ty),
             ParamArg::Value(expr) if let Some(spelled) = expr.type_spelling() => {
                 self.ty_from_spelling(&spelled)
             }
@@ -5419,7 +5447,7 @@ impl Checker {
     /// construction (`comptime L = TypeList.of[Trait=AnyType, Int]()`); a
     /// run-time local or argument types as its declared type (`var z: p.T`).
     fn value_base_type(&self, base: &SourceType) -> Option<Ty> {
-        let expr = base.expression_spelling(mojito_common::token::Span::default())?;
+        let expr = view_expression(base, mojito_common::token::Span::default())?;
         if let Some(ty) = self
             .compile_dependent_ct_expr(&expr)
             .ok()

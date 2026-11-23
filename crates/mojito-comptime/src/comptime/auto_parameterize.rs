@@ -3,6 +3,8 @@
 //! leaves unbound becomes an infer-only parameter of the declaration that
 //! takes the argument.
 
+use std::borrow::Cow;
+
 use mojito_ast::ast::{DeclaredParam, FnParam, ParamArg, auto_binder_name};
 use mojito_ast::call::Unbound;
 use mojito_ast::visit::MutVisitor;
@@ -200,30 +202,19 @@ impl<'a> Declared<'a> {
                 continue;
             }
             match (&mut parameter.value_type, parameter.bounds.as_slice()) {
-                (Some(annotation), _) => annotation.retype_view(|ty| {
-                    if let Some(bound) =
-                        self.bind(ty, &parameter.name, &in_scope, &mut binders, span)
-                    {
-                        *ty = bound;
-                    }
-                }),
+                (Some(annotation), _) => {
+                    self.rebind(annotation, &parameter.name, &in_scope, &mut binders);
+                }
                 (None, [only]) => {
-                    let spelled = Type::Named(only.clone(), Vec::new());
-                    if let Some(bound) =
-                        self.bind(&spelled, &parameter.name, &in_scope, &mut binders, span)
-                    {
-                        parameter.value_type = Some(Expr::annotation_of(bound, span));
-                    }
+                    let spelled = Expr::new(ExprKind::Identifier(only.clone()), span);
+                    parameter.value_type =
+                        self.bind(&spelled, &parameter.name, &in_scope, &mut binders, span);
                 }
                 _ => {}
             }
         }
         if let Some(receiver) = receiver {
-            receiver.retype_view(|ty| {
-                if let Some(bound) = self.bind(ty, "self", &in_scope, &mut binders, span) {
-                    *ty = bound;
-                }
-            });
+            self.rebind(receiver, "self", &in_scope, &mut binders);
         }
         // A named `out` result is the declaration's result, not an
         // argument: its type is never parameterized.
@@ -231,11 +222,7 @@ impl<'a> Declared<'a> {
             .iter_mut()
             .filter(|parameter| !parameter.is_named_result())
         {
-            parameter.ty.retype_view(|ty| {
-                if let Some(bound) = self.bind(ty, &parameter.name, &in_scope, &mut binders, span) {
-                    *ty = bound;
-                }
-            });
+            self.rebind(&mut parameter.ty, &parameter.name, &in_scope, &mut binders);
         }
         let at = type_params
             .iter()
@@ -244,31 +231,52 @@ impl<'a> Declared<'a> {
         type_params.splice(at..at, binders);
     }
 
-    /// The type `ty`, the type of `owner`, with each parameter it leaves
-    /// unbound bound to a binder pushed onto `binders`; `None` when it
-    /// leaves none unbound or names no struct.
+    /// [`Self::bind`] in place: `annotation`, keeping its source, is
+    /// replaced by its bound application when it leaves a parameter
+    /// unbound.
+    fn rebind(
+        &self,
+        annotation: &mut Expr,
+        owner: &str,
+        in_scope: &HashSet<String>,
+        binders: &mut Vec<TypeParam>,
+    ) {
+        if let Some(mut bound) = self.bind(annotation, owner, in_scope, binders, annotation.span) {
+            bound.source = annotation.source.take();
+            *annotation = bound;
+        }
+    }
+
+    /// The annotation `annotation`, the type of `owner`, applied with each
+    /// parameter it leaves unbound bound to a binder pushed onto `binders`:
+    /// a struct named bare (`List`) or applied (`Pair[Int, _]`). `None`
+    /// when it leaves none unbound or names no struct.
     fn bind(
         &self,
-        ty: &Type,
+        annotation: &Expr,
         owner: &str,
         in_scope: &HashSet<String>,
         binders: &mut Vec<TypeParam>,
         span: Span,
-    ) -> Option<Type> {
-        let Type::Named(name, args) = ty else {
-            return None;
+    ) -> Option<Expr> {
+        let (name, args) = match &annotation.kind {
+            ExprKind::Identifier(name) => (name.as_str(), Cow::Borrowed(&[][..])),
+            _ => annotation.bracket_application()?,
         };
-        if in_scope.contains(name) {
+        if name == "Self" || annotation.annotation_type().is_none() || in_scope.contains(name) {
             return None;
         }
+        let args = args.as_ref();
         let generator = self.generator_alias(name);
-        let name = generator.as_ref().unwrap_or(name);
+        let name = generator.as_deref().unwrap_or(name);
         let alias = self
             .partial_alias(name)
             .and_then(|(applied, alias_args)| Some((applied, fill_holes(&alias_args, args)?)));
         let (name, args) = alias
             .as_ref()
-            .map_or((name, args), |(applied, alias_args)| (applied, alias_args));
+            .map_or((name, args), |(applied, alias_args)| {
+                (applied.as_str(), alias_args.as_slice())
+            });
         let declared = match self.parametric_aliases.get(name) {
             Some(parameters) if args.is_empty() => parameters,
             _ => self.parameters(name)?,
@@ -361,7 +369,7 @@ impl<'a> Declared<'a> {
             return None;
         }
         positional.extend(keyword);
-        Some(Type::Named(name.clone(), positional))
+        mojito_ast::ast::named_subscript(name, &positional, span)
     }
 }
 
@@ -539,7 +547,11 @@ fn binder_for(
     let mut substitute = Substitute { arguments, span };
     let mut read = |annotation: &Expr| {
         let mut annotation = annotation.clone();
-        annotation.retype_view(|ty| mojito_ast::visit::walk_type_mut(&mut substitute, ty));
+        mojito_ast::visit::walk_annotation_names_mut(
+            &mut substitute,
+            &mut annotation,
+            &mut Substitute::at_name,
+        );
         annotation
     };
     let value_type = parameter.value_type.as_ref().map(&mut read);
@@ -578,6 +590,29 @@ struct Substitute<'a> {
     span: Span,
 }
 
+impl Substitute<'_> {
+    /// A name a binder's annotation spells as a type (`T`, `Self.T`), read
+    /// as the argument of the parameter it names when that argument spells
+    /// a type: a spread pack, a name, or a type spelling.
+    fn at_name(&mut self, name: &mut Expr) {
+        let parameter = match &name.kind {
+            ExprKind::Identifier(parameter) => parameter.as_str(),
+            _ => match name.self_member() {
+                Some(parameter) => parameter,
+                None => return,
+            },
+        };
+        if let Some(ParamArg::Value(argument)) = self.arguments.get(parameter)
+            && (matches!(argument.kind, ExprKind::Spread(_) | ExprKind::Identifier(_))
+                || argument.type_spelling().is_some())
+        {
+            let span = name.span;
+            *name = argument.clone();
+            name.span = span;
+        }
+    }
+}
+
 impl MutVisitor for Substitute<'_> {
     fn visit_expr_mut(&mut self, expr: &mut Expr) {
         // A spread pack's operand has already read the argument pack's own
@@ -594,31 +629,6 @@ impl MutVisitor for Substitute<'_> {
         };
         if let Some(ParamArg::Value(value)) = self.arguments.get(name) {
             *expr = value.clone();
-        }
-    }
-
-    fn visit_type_mut(&mut self, ty: &mut Type) {
-        let name = match ty {
-            Type::Named(name, args) if args.is_empty() => name,
-            Type::SelfParam(name) => name,
-            _ => return,
-        };
-        let replacement = match self.arguments.get(name.as_str()) {
-            Some(ParamArg::Value(
-                spread @ Expr {
-                    kind: ExprKind::Spread(_),
-                    ..
-                },
-            )) => spread.annotation_type(),
-            Some(ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(argument),
-                ..
-            })) => Some(Type::Named(argument.clone(), Vec::new())),
-            Some(ParamArg::Value(value)) => value.type_spelling(),
-            _ => None,
-        };
-        if let Some(replacement) = replacement {
-            *ty = replacement;
         }
     }
 }

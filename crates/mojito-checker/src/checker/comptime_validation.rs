@@ -4797,10 +4797,6 @@ impl Checker {
     ) -> Option<HashSet<mojito_types::param_expr::ParamId>> {
         struct Types(bool);
         impl mojito_ast::visit::Visitor for Types {
-            fn visit_type(&mut self, _ty: &SourceType) {
-                self.0 = true;
-            }
-
             fn visit_annotation(&mut self, _annotation: &Expr) {
                 self.0 = true;
             }
@@ -8120,11 +8116,6 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
                     }
                 }
                 _ => {}
-            }
-        }
-        fn visit_type(&mut self, ty: &SourceType) {
-            if let SourceType::TypeOf(operand) = ty {
-                self.type_operand(operand);
             }
         }
 

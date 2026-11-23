@@ -95,7 +95,7 @@ pub(super) fn synthesize_copyable_copy(
             keyword_only: None,
             raises,
             raises_type,
-            ret: Some(Expr::annotation_of(Type::SelfType, span)),
+            ret: Some(Expr::new(ExprKind::Identifier("Self".to_string()), span)),
             ret_reference: None,
             where_clauses: Vec::new(),
             body,
@@ -350,7 +350,7 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
             decorators: Vec::new(),
             params: vec![mojito_ast::ast::FnParam {
                 name: "other".to_string(),
-                ty: Expr::annotation_of(Type::SelfType, span),
+                ty: Expr::new(ExprKind::Identifier("Self".to_string()), span),
                 default: None,
                 kind: mojito_ast::ast::ParamKind::Regular,
                 convention: None,
@@ -360,10 +360,7 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
             keyword_only: None,
             raises: false,
             raises_type: None,
-            ret: Some(Expr::annotation_of(
-                Type::Named("Bool".to_string(), Vec::new()),
-                span,
-            )),
+            ret: Some(Expr::new(ExprKind::Identifier("Bool".to_string()), span)),
             ret_reference: None,
             where_clauses: Vec::new(),
             body,
@@ -450,11 +447,9 @@ pub(super) fn fold_simd_alias_bounds(
             if parameter.value_type.is_none()
                 && let [only] = parameter.bounds.as_slice()
                 && let Some(args) = own.get(only).cloned().or_else(|| imported(only))
+                && let Some(annotation) = mojito_ast::ast::named_subscript("SIMD", &args, span)
             {
-                parameter.value_type = Some(Expr::annotation_of(
-                    Type::Named("SIMD".to_string(), args),
-                    span,
-                ));
+                parameter.value_type = Some(annotation);
                 parameter.bounds = vec!["SIMD".to_string()];
             }
         }

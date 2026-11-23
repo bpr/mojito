@@ -1,7 +1,7 @@
 //! Lane-width scans: whether a struct method constructs a vector at a lane
 //! its own parameters spell.
 
-use crate::ast::{Expr, ExprKind, Method, Type, TypeParam};
+use crate::ast::{Expr, ExprKind, Method, TypeParam};
 
 /// Whether a struct method's template body constructs a vector at a lane its
 /// own parameters spell (`Scalar[dt](x)`, `SIMD[DType.int32, w](v)`).
@@ -22,14 +22,6 @@ pub fn method_constructs_at_own_lane(method: &Method) -> bool {
     impl crate::visit::Visitor for Names<'_> {
         fn visit_expr(&mut self, expr: &Expr) {
             if let ExprKind::Identifier(name) = &expr.kind {
-                self.found |= self.own.iter().any(|parameter| &parameter.name == name);
-            }
-        }
-
-        fn visit_type(&mut self, ty: &Type) {
-            if let Type::Named(name, arguments) = ty
-                && arguments.is_empty()
-            {
                 self.found |= self.own.iter().any(|parameter| &parameter.name == name);
             }
         }

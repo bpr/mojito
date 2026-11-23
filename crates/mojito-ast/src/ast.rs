@@ -256,31 +256,6 @@ pub enum Type {
     Value(Box<Expr>),
 }
 
-impl Type {
-    /// The expression this type spelling denotes, the inverse of
-    /// [`Expr::type_spelling`]: `TypeList.of` as the receiver of the
-    /// qualified construction `TypeList.of[...]()`, or `Self.n` as the read
-    /// of a member a bracket value slot spells as a type. `None` for a
-    /// spelling no expression denotes.
-    pub fn expression_spelling(&self, span: Span) -> Option<Expr> {
-        let kind = match self {
-            Self::SelfType => ExprKind::Identifier("Self".to_string()),
-            Self::Named(name, args) if args.is_empty() => ExprKind::Identifier(name.clone()),
-            Self::Named(name, args) => return named_subscript(name, args, span),
-            Self::SelfParam(name) if !name.starts_with('*') => ExprKind::Member {
-                object: Box::new(Expr::new(ExprKind::Identifier("Self".to_string()), span)),
-                field: name.clone(),
-            },
-            Self::Assoc { base, name, args } if args.is_empty() => ExprKind::Member {
-                object: Box::new(base.expression_spelling(span)?),
-                field: name.clone(),
-            },
-            _ => return None,
-        };
-        Some(Expr::new(kind, span))
-    }
-}
-
 /// A function type `def[params](T1, mut T2, …) [thin] [raises [E]] [-> R]
 /// [where …]`, upstream's function-type expression node.
 ///
@@ -2279,56 +2254,18 @@ impl Expr {
         }
     }
 
-    /// The annotation expression a synthesized slot stores for `ty`: the
-    /// expression spelling source would write (the spread of a pack, else
-    /// [`Type::expression_spelling`]) when it converts back to exactly `ty`,
-    /// else `ty` as a type value.
-    /// A [`Type::Value`] view re-spells as its own expression.
-    pub fn annotation_of(ty: Type, span: Span) -> Self {
-        match ty {
-            Type::Value(value) if matches!(value.annotation_type(), Some(Type::Value(view)) if view == value) => {
-                *value
-            }
-            ty => match pack_spread_spelling(&ty, span).or_else(|| ty.expression_spelling(span)) {
-                Some(spelled) if spelled.annotation_type().as_ref() == Some(&ty) => spelled,
-                _ => Self::new(ExprKind::TypeValue(ty), span),
-            },
-        }
-    }
-
     /// Whether this expression is a type spelled in expression position: a
-    /// [`ExprKind::TypeValue`], a function type, or a generator type.
+    /// function type or a generator type.
     pub const fn is_type_expression(&self) -> bool {
         matches!(
             self.kind,
-            ExprKind::TypeValue(_) | ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. }
+            ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. }
         )
     }
 
-    /// Rewrite this annotation through its type-context view: `f` edits
-    /// [`Self::annotation_type`], and only a changed view replaces the
-    /// expression, by [`Self::annotation_of`] at the same span and source.
-    pub fn retype_view(&mut self, f: impl FnOnce(&mut Type)) {
-        let Some(before) = self.annotation_type() else {
-            return;
-        };
-        let mut view = before.clone();
-        f(&mut view);
-        if view != before {
-            let source = self.source.take();
-            *self = Self::annotation_of(view, self.span);
-            self.source = source;
-        }
-    }
-
-    /// Whether this annotation is the enclosing type `Self`, spelled or
-    /// synthesized.
+    /// Whether this annotation is the enclosing type `Self`.
     pub fn is_self_annotation(&self) -> bool {
-        match &self.kind {
-            ExprKind::Identifier(name) => name == "Self",
-            ExprKind::TypeValue(ty) => matches!(ty, Type::SelfType),
-            _ => false,
-        }
+        matches!(&self.kind, ExprKind::Identifier(name) if name == "Self")
     }
 
     pub fn source_span(&self) -> mojito_common::token::SourceSpan {
@@ -2522,7 +2459,6 @@ impl Expr {
     /// [`Self::annotation_type`]'s compile-time-value fallback.
     fn spelled_annotation_type(&self) -> Option<Type> {
         match &self.kind {
-            ExprKind::TypeValue(ty) => Some(ty.clone()),
             ExprKind::Spread(operand) => operand.pack_spread_type(),
             ExprKind::None => Some(Type::None),
             ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
@@ -2639,9 +2575,6 @@ pub enum ExprKind {
     /// compiled program — a run-time value, never folded before a backend
     /// reads it (upstream's `kgen.is_run_in_comptime_interpreter`).
     IsRunInComptimeInterpreter,
-    /// A type spelling in expression position that no expression node
-    /// covers: a `ref` reference type, a `*` pack, or a synthesized type.
-    TypeValue(Type),
     /// Upstream's function-type expression `def(...) -> R`.
     FunctionType(Box<FunctionTypeExpr>),
     /// Upstream's generator type `__generator_type[params] Result`: the type
@@ -2692,8 +2625,8 @@ pub enum ExprKind {
     /// A subscript `object[index]` with one positional operand, upstream's
     /// `SubscriptNode`: the checker classifies it by its base as a parameter
     /// application (`S[Int]`), a callable's binding (`f[4]`), or a
-    /// `__getitem__` call (`xs[0]`). A type operand is the [`ExprKind::TypeValue`]
-    /// it spells.
+    /// `__getitem__` call (`xs[0]`). A type operand is the expression that
+    /// spells it.
     Index {
         object: Box<Expr>,
         index: Box<Expr>,
@@ -3247,8 +3180,7 @@ pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
                 }
             }
         }
-        ExprKind::TypeValue(_)
-        | ExprKind::FunctionType(_)
+        ExprKind::FunctionType(_)
         | ExprKind::GeneratorType { .. }
         | ExprKind::Int(_)
         | ExprKind::Float(_)
@@ -3624,7 +3556,6 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                         }
                     }
                 }
-                ExprKind::TypeValue(ty) => self.ty(ty),
                 ExprKind::FunctionType(callable) => {
                     self.type_params(&mut callable.type_params);
                     for param in &mut callable.params {
@@ -3705,22 +3636,6 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                 if let Some(value) = &mut param.default {
                     self.expr(value);
                 }
-            }
-        }
-
-        fn ty(&mut self, ty: &mut Type) {
-            match ty {
-                Type::Named(_, args) => self.param_args(args),
-                Type::Assoc { base, args, .. } => {
-                    self.ty(base);
-                    self.param_args(args);
-                }
-                Type::IndexedProjection { base, index } => {
-                    self.ty(base);
-                    self.expr(index);
-                }
-                Type::TypeOf(operand) | Type::Value(operand) => self.expr(operand),
-                Type::None | Type::SelfParam(_) | Type::SelfType => {}
             }
         }
 
@@ -4054,22 +3969,6 @@ thread_local! {
 
 fn decoded_source() -> Option<String> {
     DECODING_SOURCE.with_borrow(Clone::clone)
-}
-
-/// The spread source writes for a pack type ([`Expr::pack_spread_type`]'s
-/// inverse): `*Ts` for `Named("*Ts")`, `*Self.Ts` for `SelfParam("*Ts")`.
-fn pack_spread_spelling(ty: &Type, span: Span) -> Option<Expr> {
-    let operand = match ty {
-        Type::Named(name, args) if args.is_empty() => Expr::new(
-            ExprKind::Identifier(name.strip_prefix('*')?.to_string()),
-            span,
-        ),
-        Type::SelfParam(name) => {
-            Type::SelfParam(name.strip_prefix('*')?.to_string()).expression_spelling(span)?
-        }
-        _ => return None,
-    };
-    Some(Expr::new(ExprKind::Spread(Box::new(operand)), span))
 }
 
 /// [`Stmt::module`] as its encoding carries it.

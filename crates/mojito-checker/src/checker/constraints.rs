@@ -346,7 +346,7 @@ impl Checker {
                 .ty
                 .as_ref()
                 .map(|annotation| {
-                    self.ct_member_req_from_anno(&member.params, &annotation_spelling(annotation)?)
+                    self.ct_member_req_from_anno(&member.params, &composition_spelling(annotation)?)
                 })
                 .transpose();
             self.pop_param_scope();
@@ -2201,7 +2201,7 @@ impl Checker {
             ExprKind::Bool(b) => self.ct_param(CtValue::Bool(*b)),
             ExprKind::None => self.ct_param(CtValue::None),
             ExprKind::Str(s) => self.ct_param(CtValue::Str(s.clone())),
-            ExprKind::TypeValue(_) | ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
+            ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
                 let spelling = annotation_spelling(expr)?;
                 let ty = if record {
                     self.type_value(expr, &spelling)?
@@ -7388,11 +7388,10 @@ pub(super) enum TypeListReceiver {
 
 /// The type a parameterized associated type's body denotes. The body parses as
 /// an ordinary compile-time expression; the type-valued forms are a bare name
-/// (`Element`), a type application (`List[T]`, `Fixed[n]`), an explicit type
-/// value, or a `Self.` member.
+/// (`Element`), a type application (`List[T]`, `Fixed[n]`), a function or
+/// generator type, or a `Self.` member.
 pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeError> {
     match &value.kind {
-        ExprKind::TypeValue(ty) => Ok(ty.clone()),
         ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
             Ok(SourceType::Value(Box::new(value.clone())))
         }
@@ -7730,18 +7729,6 @@ fn self_reads(member: &StructComptime) -> HashSet<String> {
                 self.0.insert(field.clone());
             }
         }
-
-        fn visit_type(&mut self, ty: &SourceType) {
-            match ty {
-                SourceType::SelfParam(name) => {
-                    self.0.insert(name.trim_start_matches('*').to_string());
-                }
-                SourceType::Assoc { base, name, .. } if matches!(**base, SourceType::SelfType) => {
-                    self.0.insert(name.clone());
-                }
-                _ => {}
-            }
-        }
     }
     let mut reads = Reads(HashSet::new());
     mojito_ast::visit::walk_struct_comptime(&mut reads, member);
@@ -7887,12 +7874,16 @@ impl BoundSiblings {
     /// the parameters they bind. The annotations substitute through their
     /// type-context view, where an applied head is no bound sibling.
     fn substitute(&self, param: &mut mojito_ast::ast::TypeParam) {
-        use mojito_ast::visit::{walk_expr_mut, walk_type_mut};
+        use mojito_ast::visit::{MutVisitor, walk_annotation_names_mut, walk_expr_mut};
         for annotation in [&mut param.value_type, &mut param.callable_bound]
             .into_iter()
             .flatten()
         {
-            annotation.retype_view(|ty| walk_type_mut(&mut &*self, ty));
+            walk_annotation_names_mut(&mut &*self, annotation, &mut |siblings, name| {
+                if let ExprKind::Identifier(_) = name.kind {
+                    siblings.visit_expr_mut(name);
+                }
+            });
         }
         for value in [&mut param.origin_mutability, &mut param.default]
             .into_iter()
@@ -7912,20 +7903,6 @@ impl mojito_ast::visit::MutVisitor for &BoundSiblings {
             *expr = value.clone();
         }
     }
-
-    fn visit_type_mut(&mut self, ty: &mut SourceType) {
-        let SourceType::Named(name, args) = ty else {
-            return;
-        };
-        if !args.is_empty() {
-            return;
-        }
-        if let Some(ParamArg::Value(value)) = self.0.get(name.as_str()) {
-            *ty = value
-                .type_spelling()
-                .unwrap_or_else(|| SourceType::Value(Box::new(value.clone())));
-        }
-    }
 }
 
 struct NamesSpelled(HashSet<String>);
@@ -7933,12 +7910,6 @@ struct NamesSpelled(HashSet<String>);
 impl mojito_ast::visit::Visitor for NamesSpelled {
     fn visit_expr(&mut self, expr: &Expr) {
         if let ExprKind::Identifier(name) = &expr.kind {
-            self.0.insert(name.clone());
-        }
-    }
-
-    fn visit_type(&mut self, ty: &SourceType) {
-        if let SourceType::Named(name, _) = ty {
             self.0.insert(name.clone());
         }
     }

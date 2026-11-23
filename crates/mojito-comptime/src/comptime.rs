@@ -207,59 +207,6 @@ pub(super) fn any_trait_source_type(operand: &Expr) -> Option<Ty> {
     })
 }
 
-/// Substitute every now-concrete type binder `subs` answers in a source
-/// annotation, wherever it appears unshadowed.
-fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
-    match ty {
-        Type::Named(name, arguments) if arguments.is_empty() => {
-            if let Some(replacement) = rewrite::substituted_type(name, subs) {
-                *ty = replacement;
-            }
-        }
-        // A `$trait_composition`'s members are annotations of their own.
-        Type::Named(name, arguments) if name == "$trait_composition" => {
-            for argument in arguments {
-                if let ParamArg::Value(member) = argument {
-                    rewrite::retype_annotation(member, subs);
-                }
-            }
-        }
-        Type::Named(_, arguments) => {
-            for argument in arguments {
-                substitute_source_param_arg_bindings(argument, subs);
-            }
-        }
-        // `Self.T` — the enclosing struct's own parameter spelled through
-        // `Self`, the dominant spelling inside struct bodies.
-        Type::SelfParam(name) => {
-            if let Some(replacement) = rewrite::substituted_type(name, subs) {
-                *ty = replacement;
-            }
-        }
-        Type::Assoc { base, name, args }
-            if args.is_empty() && matches!(base.as_ref(), Type::SelfType) =>
-        {
-            if let Some(replacement) = rewrite::substituted_type(name, subs) {
-                *ty = replacement;
-            }
-        }
-        Type::Assoc { base, args, .. } => {
-            substitute_source_type_bindings(base, subs);
-            for argument in args {
-                substitute_source_param_arg_bindings(argument, subs);
-            }
-        }
-        Type::IndexedProjection { base, .. } => {
-            substitute_source_type_bindings(base, subs);
-        }
-        // The operand of `type_of` is an expression, which names no type
-        // binder.
-        Type::TypeOf(_) => {}
-        Type::Value(value) => rewrite::substitute_type_bindings_in_expr(value, subs),
-        Type::None | Type::SelfType => {}
-    }
-}
-
 fn literal_ct_value(expr: &Expr) -> Option<CtValue> {
     match &expr.kind {
         ExprKind::Int(value) => Some(CtValue::IntLiteral(value.clone())),
@@ -353,35 +300,8 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
 /// which parses as an expression) by the type it spells.
 fn ct_param_argument_type(argument: &ParamArg) -> Option<Ty> {
     match argument {
-        ParamArg::Value(Expr {
-            kind: ExprKind::TypeValue(ty),
-            ..
-        }) => ct_param_source_type(ty),
         ParamArg::Value(value) => ct_param_source_type(&value.type_spelling()?),
         ParamArg::Named { .. } => None,
-    }
-}
-
-fn substitute_source_param_arg_bindings(argument: &mut ParamArg, subs: rewrite::TypeSubs) {
-    match argument {
-        ParamArg::Named { value, .. } => substitute_source_param_arg_bindings(value, subs),
-        // A bracket operand is an expression (`Tuple[T, T]`, `List[Self.T]`,
-        // `Tuple[*Ts]`); once a binder it names is concrete it is the bound
-        // type's spelling.
-        ParamArg::Value(expr) => {
-            let binder = match &expr.kind {
-                ExprKind::Identifier(name) => Some(name.as_str()),
-                _ => expr.self_member(),
-            };
-            if let Some(replacement) = binder.and_then(subs) {
-                rewrite::put_replacement(expr, replacement);
-            } else if matches!(
-                expr.kind,
-                ExprKind::Spread(_) | ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. }
-            ) {
-                rewrite::substitute_type_bindings_in_expr(expr, subs);
-            }
-        }
     }
 }
 

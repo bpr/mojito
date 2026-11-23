@@ -5110,11 +5110,6 @@ fn alias_dependency_order(stmts: &[Stmt]) -> Vec<usize> {
                 _ => {}
             }
         }
-        fn visit_type(&mut self, ty: &SourceType) {
-            if let SourceType::Named(name, _) = ty {
-                self.0.push(name.clone());
-            }
-        }
     }
     fn visit(
         index: usize,

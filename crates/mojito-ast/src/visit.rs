@@ -1,7 +1,7 @@
 //! Read-only traversal of the source AST.
 //!
 //! The `walk_*` functions visit every child of a node in source order and
-//! report each statement, expression, and type to a [`Visitor`] before descending into
+//! report each statement and expression to a [`Visitor`] before descending into
 //! it. A construct that binds names — a `def`, method, lambda, or callable
 //! type with its own parameters, a struct or generic alias with parameters, a
 //! loop, comprehension, `except`, or `with` binder — asks
@@ -24,9 +24,6 @@ pub trait Visitor {
 
     /// An expression, reported before its children.
     fn visit_expr(&mut self, _expr: &Expr) {}
-
-    /// A type annotation, reported before its children.
-    fn visit_type(&mut self, _ty: &Type) {}
 
     /// An annotation slot's expression, reported before it is walked as an
     /// expression.
@@ -508,7 +505,6 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
                 }
             }
         }
-        ExprKind::TypeValue(ty) => walk_type(visitor, ty),
         ExprKind::FunctionType(callable) => {
             let names = callable
                 .type_params
@@ -564,23 +560,6 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
 pub fn walk_annotation<V: Visitor>(visitor: &mut V, annotation: &Expr) {
     visitor.visit_annotation(annotation);
     walk_expr(visitor, annotation);
-}
-
-pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
-    visitor.visit_type(ty);
-    match ty {
-        Type::Named(_, arguments) => walk_param_args(visitor, arguments),
-        Type::Assoc { base, args, .. } => {
-            walk_type(visitor, base);
-            walk_param_args(visitor, args);
-        }
-        Type::IndexedProjection { base, index } => {
-            walk_type(visitor, base);
-            walk_expr(visitor, index);
-        }
-        Type::TypeOf(operand) | Type::Value(operand) => walk_expr(visitor, operand),
-        Type::None | Type::SelfParam(_) | Type::SelfType => {}
-    }
 }
 
 pub fn walk_param_arg<V: Visitor>(visitor: &mut V, argument: &ParamArg) {
@@ -876,9 +855,6 @@ pub trait MutVisitor {
 
     /// An expression, reported after its children.
     fn visit_expr_mut(&mut self, _expr: &mut Expr) {}
-
-    /// A type annotation, reported after its children.
-    fn visit_type_mut(&mut self, _ty: &mut Type) {}
 
     /// An annotation slot's expression, reported after it is walked as an
     /// expression.
@@ -1340,7 +1316,6 @@ pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
                 }
             }
         }
-        ExprKind::TypeValue(ty) => walk_type_mut(visitor, ty),
         ExprKind::FunctionType(callable) => {
             walk_type_params_mut(visitor, &mut callable.type_params);
             for param in &mut callable.params {
@@ -1387,25 +1362,70 @@ pub fn walk_annotation_mut<V: MutVisitor>(visitor: &mut V, annotation: &mut Expr
     visitor.visit_annotation_mut(annotation);
 }
 
-/// Walk a type annotation's embedded expressions and nested types in place.
-pub fn walk_type_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
-    walk_type_children_mut(visitor, ty);
-    visitor.visit_type_mut(ty);
-}
-
-fn walk_type_children_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
-    match ty {
-        Type::Named(_, args) => walk_param_args_mut(visitor, args),
-        Type::Assoc { base, args, .. } => {
-            walk_type_mut(visitor, base);
-            walk_param_args_mut(visitor, args);
+/// Walk an annotation's expression in place along the spine its type
+/// context reads ([`Expr::annotation_type`]).
+///
+/// Each name it spells as a type (a bare name other than `Self`, or
+/// `Self.NAME`) goes to `at_name`, and every expression the annotation holds
+/// as a value (a bracket's operands, a projection's index, `type_of`'s
+/// operand, an evaluated value) is walked with [`walk_expr_mut`]. A
+/// bracket's head name is no site, and a pack spread has none.
+pub fn walk_annotation_names_mut<V: MutVisitor>(
+    visitor: &mut V,
+    annotation: &mut Expr,
+    at_name: &mut impl FnMut(&mut V, &mut Expr),
+) {
+    let spelled_bracket = matches!(
+        annotation.kind,
+        ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
+    ) && matches!(
+        annotation.annotation_type(),
+        Some(Type::Named(..) | Type::Assoc { .. } | Type::IndexedProjection { .. })
+    );
+    match &mut annotation.kind {
+        ExprKind::Identifier(name)
+            if name == "Self" || name == "..." || name == crate::ast::CONTEXTUAL_SENTINEL => {}
+        ExprKind::Identifier(_) => at_name(visitor, annotation),
+        ExprKind::None => {}
+        ExprKind::Spread(operand)
+            if matches!(operand.kind, ExprKind::Identifier(_))
+                || operand.self_member().is_some() => {}
+        ExprKind::Member { object, .. } if object.is_self_annotation() => {
+            at_name(visitor, annotation);
         }
-        Type::IndexedProjection { base, index } => {
-            walk_type_mut(visitor, base);
-            walk_expr_mut(visitor, index);
+        ExprKind::Member { object, .. } => walk_annotation_names_mut(visitor, object, at_name),
+        ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } if name == "type_of" && param_args.is_empty() && kwargs.is_empty() && args.len() == 1 => {
+            walk_expr_mut(visitor, &mut args[0]);
         }
-        Type::TypeOf(operand) | Type::Value(operand) => walk_expr_mut(visitor, operand),
-        Type::None | Type::SelfParam(_) | Type::SelfType => {}
+        ExprKind::Index { .. } | ExprKind::MultiIndex { .. } if spelled_bracket => {
+            let (object, operands): (&mut Expr, Vec<&mut Expr>) = match &mut annotation.kind {
+                ExprKind::Index { object, index } => (object, vec![&mut **index]),
+                ExprKind::MultiIndex { object, args } => (
+                    object,
+                    args.iter_mut()
+                        .filter_map(|argument| match argument {
+                            SubscriptArg::Index(value) | SubscriptArg::Keyword { value, .. } => {
+                                Some(value)
+                            }
+                            SubscriptArg::Slice { .. } | SubscriptArg::KeywordSlice { .. } => None,
+                        })
+                        .collect(),
+                ),
+                _ => return,
+            };
+            if !matches!(&object.kind, ExprKind::Identifier(name) if name != "Self") {
+                walk_annotation_names_mut(visitor, object, at_name);
+            }
+            for operand in operands {
+                walk_expr_mut(visitor, operand);
+            }
+        }
+        _ => walk_expr_mut(visitor, annotation),
     }
 }
 

@@ -1624,9 +1624,9 @@ pub enum CheckedOp {
     /// `__is_run_in_comptime_interpreter`, a run-time `Bool`.
     IsRunInComptimeInterpreter,
     Identifier(String),
-    /// A type in value position, as the check resolved it (`None` where
+    /// A function or generator type in value position, as the check resolved it (`None` where
     /// the check resolved none), with the nodes of the applications the
-    /// check lifted out of it ([`CheckedArenaBuilder::type_applications`]).
+    /// check lifted out of it ([`CheckedArenaBuilder::expression_applications`]).
     TypeValue {
         ty: Option<Ty>,
         applications: Vec<CheckedNodeId>,
@@ -6211,7 +6211,7 @@ impl<'a> ArenaBuilder<'a> {
     }
 
     fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
-        use ExprKind::{Identifier, Index, Member, MultiIndex, TypeValue};
+        use ExprKind::{Identifier, Index, Member, MultiIndex};
         if let Some(node) = self.spelled_construction(expression) {
             return node;
         }
@@ -6240,7 +6240,6 @@ impl<'a> ArenaBuilder<'a> {
         let category = match expression.kind {
             Index { .. } | MultiIndex { .. } if variant_projection => ValueCategory::Place,
             Index { .. } | MultiIndex { .. } if resolved_callable_value => ValueCategory::Value,
-            TypeValue(_) => ValueCategory::Type,
             Index { .. } | MultiIndex { .. } if type_application => ValueCategory::Type,
             // Expressions retained only inside constraints, reflection, and
             // other erased parameter metadata are deliberately absent from
@@ -6393,10 +6392,6 @@ impl<'a> ArenaBuilder<'a> {
             ExprKind::EmptySubscript => CheckedOp::EmptySubscript,
             ExprKind::IsRunInComptimeInterpreter => CheckedOp::IsRunInComptimeInterpreter,
             ExprKind::Identifier(name) => CheckedOp::Identifier(name.clone()),
-            ExprKind::TypeValue(ty) => CheckedOp::TypeValue {
-                ty: self.facts(&expression.source_span()).type_operand.clone(),
-                applications: self.type_applications(ty),
-            },
             ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => CheckedOp::TypeValue {
                 ty: self.facts(&expression.source_span()).type_operand.clone(),
                 applications: self.expression_applications(expression),
@@ -6705,20 +6700,16 @@ impl<'a> ArenaBuilder<'a> {
         }
     }
 
-    /// Build the node of each expression inside `ty` the check named a
-    /// lifted function for ([`SemanticAdjustment::ComptimeApplication`]):
-    /// MIR lowers it in that function, away from the annotation that
-    /// spells it. Any other expression of an annotation has no node.
-    fn type_applications(&mut self, ty: &mojito_ast::ast::Type) -> Vec<CheckedNodeId> {
-        self.applications(|applied| mojito_ast::visit::walk_type(applied, ty))
-    }
-
-    /// [`Self::type_applications`] for an annotation slot's expression.
+    /// Build the node of each expression inside an annotation slot's
+    /// expression the check named a lifted function for
+    /// ([`SemanticAdjustment::ComptimeApplication`]): MIR lowers it in that
+    /// function, away from the annotation that spells it. Any other
+    /// expression of an annotation has no node.
     fn annotation_applications(&mut self, annotation: &Expr) -> Vec<CheckedNodeId> {
         self.applications(|applied| mojito_ast::visit::walk_annotation(applied, annotation))
     }
 
-    /// [`Self::type_applications`] for a bracket argument written as a
+    /// [`Self::annotation_applications`] for a bracket argument written as a
     /// value that the check bound to a type or an origin: the argument is
     /// an attribute, and only its lifted applications are nodes.
     fn expression_applications(&mut self, value: &Expr) -> Vec<CheckedNodeId> {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2545**.
+Next free ID: **R2547**.
 
 ## Ordered Work
 
@@ -13372,21 +13372,50 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2540 `Type` is an AST node**
+- [ ] **R2545 Annotation readers outside the checker classify a `Type`
+  view**
 
-  `mojito_ast::ast::Type`, `ExprKind::TypeValue`, and the `SourceType`
-  alias remain after every annotation slot holds an expression, so the AST
-  keeps a second representation of a type that upstream's has not.
-  - Slice 8 of the R2137 plan: delete them and
-    `Type::expression_spelling`.
-  - Every parsed annotation and bracket operand is already an expression:
-    only `Expr::annotation_of`'s fallback still makes a `TypeValue`.
-  - The resolver's classification of an annotation expression moves into
-    `type_resolution.rs` as a private borrowed view over `&Expr`, with
-    `annotation_type`, `composition_type`, `type_spelling`, and
-    `constraints.rs::{assoc_body_source_type, member_source_type}`.
-  - Updates `docs/frontend.md`'s annotation section.
-  - Depends on R2536, R2537, R2538, R2539.
+  The parser, the linker's tests, the elaborator, and the AST's own
+  annotation walk read an annotation through `Expr::annotation_type`'s
+  `Type` view, where upstream's parser and elaborator keep the expression
+  and never classify it.
+  - Slice 2 of the R2540 plan (`R2540-type-is-an-ast-node-plan.md`): each
+    site matches the expression shape it needs.
+  - Parser sites: `parser/types.rs` (`pack_spread_type` on a spread
+    operand, the sentinel checks, `type_param_bound`,
+    `bound_member_type`) and `parser/items.rs`'s sentinel check.
+  - Elaborator sites: `comptime/elab.rs`, `comptime/synth.rs`,
+    `comptime.rs::{ct_param_source_type, ct_param_argument_type}`,
+    `comptime/params.rs::param_list_element`, `comptime/rewrite.rs`
+    (`retype_spread`, `retype_annotation`, `retype_projection`), and
+    `auto_parameterize.rs::bind`'s `annotation_type` guard.
+  - AST site: `visit::walk_annotation_names_mut` decides a bracket's
+    spine through `annotation_type`.
+  - Test sites: `tests/parser_test.rs`'s view assertions move to the
+    checker with R2546, and `tests/module_test.rs` and
+    `tests/comptime_test.rs` match expressions.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2546 The annotation view is an AST type, not the checker's**
+
+  `mojito_ast::ast::Type`, the `SourceType` alias, and the view functions
+  (`annotation_type`, `composition_type`, `type_spelling`,
+  `pack_spread_type`, `ParamArg::spread_pack`,
+  `TypeParam::annotation_type`, `TraitComptime::annotation_type`) live in
+  the AST, so the AST still exports a second representation of a type that
+  upstream's has not.
+  - Slice 3 of the R2540 plan: the view becomes the checker's borrowed
+    `AnnotationView<'a>` in `type_resolution.rs`, where R2541 retires it.
+  - The checker stores owned views that must become the annotation
+    expression: `comptime_validation.rs`'s `result`, `refined_self`,
+    `Declared`, `ret`, and `ConstantScope::Module`, and
+    `StructInfo::associated_spellings`.
+  - `type_resolution.rs::view_expression`, the checker's inverse of
+    `type_spelling`, goes with the view.
+  - Every `SourceType` site in the checker becomes `AnnotationView`, and
+    `src/lib.rs` drops `Type` and `SourceType` from its re-export.
+  - Depends on R2545.
   - Model: Fable, Planned.
 
 - [ ] **R2541 The checker types an annotation with a second evaluator**
@@ -13399,7 +13428,7 @@ follow-ups the landed producer stages filed come last.
     classifies.
   - The resolver is about 5,000 lines of `type_resolution.rs`, so this
     needs a plan that splits it.
-  - Depends on R2540.
+  - Depends on R2546.
   - Model: Fable, Planned.
 
 - [ ] **R2533 A module-qualified trait bound is a value type**

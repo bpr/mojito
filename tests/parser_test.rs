@@ -23,10 +23,10 @@ fn fieldwise_deco() -> Decorator {
 }
 
 /// A plain (regular, no-default, no-convention) function parameter.
-fn fnparam(name: &str, ty: Type) -> FnParam {
+fn fnparam(name: &str, ty: &str) -> FnParam {
     FnParam {
         name: name.into(),
-        ty: anno(ty),
+        ty: *ident(ty),
         default: None,
         kind: ParamKind::Regular,
         convention: None,
@@ -78,11 +78,6 @@ fn float_literal(n: f64) -> FloatLiteral {
 
 fn ident(name: &str) -> Box<Expr> {
     bx(ExprKind::Identifier(name.into()))
-}
-
-/// The expression a constructed annotation slot holds for `ty`.
-fn anno(ty: Type) -> Expr {
-    Expr::annotation_of(ty, (0, 0))
 }
 
 /// The type an annotation slot's expression converts to.
@@ -311,7 +306,7 @@ fn parses_struct_with_field_and_method() {
                 keyword_only: None,
                 raises: false,
                 raises_type: None,
-                ret: Some(anno(Type::Named("Int".into(), vec![]))),
+                ret: Some(*ident("Int")),
                 body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                     ExprKind::Member {
                         object: ident("self"),
@@ -608,16 +603,13 @@ fn parses_def_signature_and_body() {
             name: "add".into(),
             decorators: vec![],
             type_params: vec![],
-            params: vec![
-                fnparam("a", Type::Named("Int".into(), vec![])),
-                fnparam("b", Type::Named("Int".into(), vec![]))
-            ],
+            params: vec![fnparam("a", "Int"), fnparam("b", "Int")],
             positional_only: None,
             keyword_only: None,
             captures: None,
             raises: false,
             raises_type: None,
-            ret: Some(anno(Type::Named("Int".into(), vec![]))),
+            ret: Some(*ident("Int")),
             body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                 ExprKind::Infix(InfixOp::Add, ident("a"), ident("b"))
             ))))],
@@ -985,13 +977,13 @@ fn parses_generic_def_with_type_param_signature() {
                 keyword_only: false,
                 default: None,
             }],
-            params: vec![fnparam("x", Type::Named("T".into(), vec![]))],
+            params: vec![fnparam("x", "T")],
             positional_only: None,
             keyword_only: None,
             captures: None,
             raises: false,
             raises_type: None,
-            ret: Some(anno(Type::Named("T".into(), vec![]))),
+            ret: Some(*ident("T")),
             body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                 ExprKind::Identifier("x".into())
             ))))],
@@ -1068,7 +1060,7 @@ fn parses_trait_with_method_requirements() {
                     keyword_only: None,
                     raises: false,
                     raises_type: None,
-                    ret: Some(anno(Type::Named("String".into(), vec![]))),
+                    ret: Some(*ident("String")),
                     default_body: None,
                 },
                 TraitMethod {
@@ -1080,12 +1072,12 @@ fn parses_trait_with_method_requirements() {
                     self_convention: None,
                     self_origin: None,
                     self_type: None,
-                    params: vec![fnparam("loud", Type::Named("Bool".into(), vec![]))],
+                    params: vec![fnparam("loud", "Bool")],
                     positional_only: None,
                     keyword_only: None,
                     raises: false,
                     raises_type: None,
-                    ret: Some(anno(Type::Named("Int".into(), vec![]))),
+                    ret: Some(*ident("Int")),
                     default_body: None,
                 },
             ],
@@ -5337,7 +5329,7 @@ fn lambda_expr(
     params: Vec<FnParam>,
     captures: Option<mojito::ast::CaptureList>,
     raises: bool,
-    ret: Option<Type>,
+    ret: Option<&str>,
     body: ExprKind,
 ) -> Expr {
     Expr::from(ExprKind::Lambda {
@@ -5352,7 +5344,7 @@ fn lambda_expr(
             captures,
             raises,
             raises_type: None,
-            ret: ret.map(anno),
+            ret: ret.map(|name| *ident(name)),
             where_clauses: vec![],
             body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(body))))],
         })),
@@ -5387,7 +5379,7 @@ fn parses_fully_explicit_lambda() {
                 keyword_only: false,
                 default: None,
             }],
-            vec![fnparam("x", Type::Named("Int".into(), vec![]))],
+            vec![fnparam("x", "Int")],
             Some(mojito::ast::CaptureList {
                 entries: vec![Capture {
                     name: "y".into(),
@@ -5396,7 +5388,7 @@ fn parses_fully_explicit_lambda() {
                 default: None,
             }),
             true,
-            Some(Type::Named("Int".into(), vec![])),
+            Some("Int"),
             ExprKind::Identifier("x".into()),
         )
     );
@@ -5413,7 +5405,7 @@ fn parses_lambda_omission_forms() {
             vec![],
             None,
             false,
-            Some(Type::Named("Int".into(), vec![])),
+            Some("Int"),
             ExprKind::Int(42.into())
         )
     );
@@ -5423,7 +5415,7 @@ fn parses_lambda_omission_forms() {
         lambda_expr(
             0,
             vec![],
-            vec![fnparam("x", Type::Named("Int".into(), vec![]))],
+            vec![fnparam("x", "Int")],
             None,
             false,
             None,
@@ -5455,13 +5447,13 @@ fn parses_lambda_omission_forms() {
         lambda_expr(
             0,
             vec![],
-            vec![fnparam("x", Type::Named("Int".into(), vec![]))],
+            vec![fnparam("x", "Int")],
             Some(mojito::ast::CaptureList {
                 entries: vec![],
                 default: None,
             }),
             false,
-            Some(Type::Named("Int".into(), vec![])),
+            Some("Int"),
             ExprKind::Infix(InfixOp::Add, ident("x"), int(1)),
         )
     );
@@ -5471,10 +5463,10 @@ fn parses_lambda_omission_forms() {
         lambda_expr(
             0,
             vec![],
-            vec![fnparam("x", Type::Named("Int".into(), vec![]))],
+            vec![fnparam("x", "Int")],
             None,
             false,
-            Some(Type::Named("Int".into(), vec![])),
+            Some("Int"),
             ExprKind::Identifier("x".into()),
         )
     );
@@ -5489,10 +5481,10 @@ fn lambda_body_extends_through_ternary() {
         lambda_expr(
             0,
             vec![],
-            vec![fnparam("x", Type::Named("Bool".into(), vec![]))],
+            vec![fnparam("x", "Bool")],
             None,
             false,
-            Some(Type::Named("Int".into(), vec![])),
+            Some("Int"),
             ExprKind::IfExpr {
                 cond: ident("x"),
                 then_branch: int(1),

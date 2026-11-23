@@ -1444,6 +1444,7 @@ assets/ok/struct_bracket_pack_then_keyword_origin.mojo	main	exe-differential	san
 assets/ok/struct_callable_parameter.mojo	main	exe-differential	sanitized
 assets/ok/struct_comptime_member_names_own_struct.mojo	main	exe-differential	sanitized
 assets/ok/struct_comptime_member_read_order.mojo	main	exe-differential	sanitized
+assets/ok/struct_comptime_member_trait_composition.mojo	main	exe-differential	sanitized
 assets/ok/struct_conformance_composition.mojo	main	exe-differential	sanitized
 assets/ok/struct_conformance_repeated_same_constraint.mojo	main	exe-differential	sanitized
 assets/ok/struct_construction_parameter_application.mojo	main	exe-differential	sanitized

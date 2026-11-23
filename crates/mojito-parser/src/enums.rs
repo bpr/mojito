@@ -27,7 +27,7 @@
 
 use std::fmt::Write;
 
-use mojito_ast::ast::{EnumCase, Expr, ExprKind, Stmt, StmtKind, SumCases, SumKind, Type};
+use mojito_ast::ast::{EnumCase, Expr, ExprKind, Stmt, StmtKind, SumCases, SumKind};
 use mojito_ast::visit::{MutVisitor, walk_annotation_mut, walk_block_mut};
 use mojito_common::error::ParseError;
 use mojito_common::token::Span;
@@ -523,14 +523,6 @@ impl MutVisitor for Relocate {
 struct LinkHasher;
 
 impl MutVisitor for LinkHasher {
-    fn visit_type_mut(&mut self, ty: &mut Type) {
-        if let Type::Named(name, _) = ty
-            && name == "Hasher"
-        {
-            *name = HASHER_TRAIT.to_string();
-        }
-    }
-
     fn visit_expr_mut(&mut self, expr: &mut Expr) {
         if let ExprKind::Identifier(name) = &mut expr.kind
             && name == "Hasher"

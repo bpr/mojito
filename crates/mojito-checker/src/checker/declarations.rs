@@ -1789,7 +1789,7 @@ impl Checker {
                     self.ty_from_spelling(&SourceType::Named(name.clone(), Vec::new()))
                 }
             }
-            ExprKind::TypeValue(_) | ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
+            ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
                 self.type_value(value, &annotation_spelling(value)?)
             }
             _ if let Some((name, args)) = self.parameter_application(value) => {

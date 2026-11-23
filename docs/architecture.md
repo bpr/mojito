@@ -5830,16 +5830,16 @@ trait `comptime` members, struct fields, union payloads, a parameter's type,
 a result, a `raises` type, a receiver's annotation, a callable conformance,
 and a type parameter's value type and callable bound) stores the annotation
 expression itself, as upstream keeps it, and the checker converts it when it
-reads it (`Checker::ty_from_anno`, `TraitComptime::annotation_type` for a
-trait member's `&` composition, `TypeParam::annotation_type` for a binder).
-A synthesized slot stores the expression source would spell
-(`Expr::annotation_of`). A `def` function type and a `__generator_type`
-are their own expression nodes (`ExprKind::FunctionType`,
-`ExprKind::GeneratorType`), whose parameter types and results are
-annotation expressions, and every bracket operand is an expression. The
-one `SourceType` left inside the AST is the `ExprKind::TypeValue` a
-synthesized slot holds when no expression spells its type
-(`Expr::annotation_of`'s fallback).
+reads it (`Checker::ty_from_anno`, `Expr::composition_type` for a struct
+or trait `comptime` member's `&` composition, `TypeParam::annotation_type`
+for a binder). A synthesized slot is built as the expression source would
+spell, and an elaborator rewrite of an annotation edits the expression
+(`visit::walk_annotation_names_mut`), never a `SourceType`. A `def`
+function type and a `__generator_type` are their own expression nodes
+(`ExprKind::FunctionType`, `ExprKind::GeneratorType`), whose parameter
+types and results are annotation expressions, and every bracket operand is
+an expression. No `SourceType` is stored in the AST: it is only the view
+the checker and a few elaborator readers take of an annotation expression.
 `AnnotationSite` keys declaration
 annotations at the checked boundary, after which HIR, MIR, and the VM carry only
 the resolved `Ty`. In particular, variable initialization and function-entry

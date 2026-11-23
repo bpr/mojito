@@ -82,12 +82,6 @@ impl Visitor for BarePackUse<'_> {
         }
     }
 
-    fn visit_type(&mut self, ty: &Type) {
-        if matches!(ty, Type::Named(name, _) if name.trim_start_matches('*') == self.pack) {
-            self.found = true;
-        }
-    }
-
     fn enter_scope(&mut self, names: &[&str]) -> bool {
         !names
             .iter()

@@ -660,7 +660,7 @@ impl Checker {
     fn type_member_spelling(&self, object: &Expr) -> Option<Expr> {
         let (spelling, member) = self.type_member_read(object)?;
         if matches!(spelling, SourceType::SelfParam(_)) {
-            return member?.expression_spelling(object.span);
+            return view_expression(member?, object.span);
         }
         let ty = self.ty_from_spelling(&spelling).ok()?;
         if let Some(spelled) = mojito_types::ct::source_expr(&ty, object.span) {
@@ -670,7 +670,7 @@ impl Checker {
         // (`T[n=f()]`), or one still a parameter expression (`T[t]`) — is
         // the member's own spelling with `Self` bound to the receiver, as
         // upstream substitutes the member's value at the instance.
-        let spelled = member?.expression_spelling(object.span)?;
+        let spelled = view_expression(member?, object.span)?;
         if !reads_self(&spelled) {
             return Some(spelled);
         }
@@ -1151,7 +1151,13 @@ impl Checker {
             .iter()
             .any(|declaration| matches!(declaration, ParamDecl::Type { id, .. } if binds(id)))
         {
-            return SourceType::SelfParam(name).expression_spelling(at);
+            return Some(Expr::new(
+                ExprKind::Member {
+                    object: Box::new(Expr::new(ExprKind::Identifier("Self".to_string()), at)),
+                    field: name,
+                },
+                at,
+            ));
         }
         self.param_scopes
             .borrow()
@@ -1427,7 +1433,6 @@ fn is_type_of(expression: &Expr) -> bool {
 fn self_at_receiver(mut spelled: Expr, receiver: &Expr) -> Option<Expr> {
     struct SelfAt<'r> {
         expression: &'r Expr,
-        ty: SourceType,
     }
     impl mojito_ast::visit::MutVisitor for SelfAt<'_> {
         fn visit_expr_mut(&mut self, expr: &mut Expr) {
@@ -1435,26 +1440,11 @@ fn self_at_receiver(mut spelled: Expr, receiver: &Expr) -> Option<Expr> {
                 expr.kind = self.expression.kind.clone();
             }
         }
-
-        fn visit_type_mut(&mut self, ty: &mut SourceType) {
-            match ty {
-                SourceType::SelfType => *ty = self.ty.clone(),
-                SourceType::SelfParam(name) if !name.starts_with('*') => {
-                    *ty = SourceType::Assoc {
-                        base: Box::new(self.ty.clone()),
-                        name: std::mem::take(name),
-                        args: Vec::new(),
-                    };
-                }
-                _ => {}
-            }
-        }
     }
-    let ty = receiver.type_spelling()?;
+    receiver.type_spelling()?;
     mojito_ast::visit::walk_expr_mut(
         &mut SelfAt {
             expression: receiver,
-            ty,
         },
         &mut spelled,
     );
@@ -1468,14 +1458,6 @@ fn reads_self(expr: &Expr) -> bool {
         fn visit_expr(&mut self, expr: &Expr) {
             if matches!(&expr.kind, ExprKind::Identifier(name) | ExprKind::Call { name, .. }
                 if name == "Self")
-            {
-                self.0 = true;
-            }
-        }
-
-        fn visit_type(&mut self, ty: &SourceType) {
-            if matches!(ty, SourceType::SelfParam(_) | SourceType::SelfType)
-                || matches!(ty, SourceType::Named(name, _) if name == "Self")
             {
                 self.0 = true;
             }

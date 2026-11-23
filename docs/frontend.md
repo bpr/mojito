@@ -443,6 +443,19 @@ node a call argument's `*values` uses, whether it spreads a pack (`*Ts`,
 `*Self.Ts`, which `ParamArg::spread_pack` names) or any other type-list
 expression (`*Ts.reverse()`, `*TypeList._concat[A.values, B.values]()`).
 
+An annotation is its expression and nothing else, as upstream's is: the AST
+holds no type node, and every annotation slot, a synthesized one included,
+stores the expression source would spell (a synthesized `Self` result is the
+identifier `Self`, a synthesized `SIMD[dt, w]` bound the subscript
+`named_subscript` builds). The elaborator rewrites an annotation as an
+expression too: automatic parameterization rebinds a bare or applied struct
+annotation to its bound application, and a binder's annotation substitutes
+along its type positions (`visit::walk_annotation_names_mut`, which skips a
+bracket's head and a pack spread). The checker converts the expression when
+it reads it (`Expr::annotation_type`, `Expr::composition_type` for an
+associated `comptime` member, struct or trait, where an `&` chain composes
+traits).
+
 This is an intentional parser/checker split: the parser handles syntax, while
 the checker knows which parameter positions expect types versus comptime values.
 

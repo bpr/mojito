@@ -875,11 +875,9 @@ impl Checker {
                  non-pointer subscript requires an index argument"
                     .to_string(),
             )),
-            ExprKind::TypeValue(_) | ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
-                Err(TypeError::Unsupported(
-                    "function types as compile-time values".to_string(),
-                ))
-            }
+            ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => Err(
+                TypeError::Unsupported("function types as compile-time values".to_string()),
+            ),
             ExprKind::Lambda { .. } => self
                 .fact(&expr.source_span(), |facts| facts.ty.as_ref())
                 .ok_or_else(|| {
@@ -1578,12 +1576,6 @@ impl Checker {
                     || (scalar_type_name(name).is_some() && self.lookup(name).is_none())
                     || (self.lookup_tparam(name).is_some() && !self.is_local_binding(name)) =>
             {
-                Some(mojito_ast::ast::ParamArg::Value(index.clone()))
-            }
-            // The accessor resolves the argument; the type value records
-            // the type it names at its own occurrence.
-            ExprKind::TypeValue(ty) => {
-                self.type_value(index, ty).ok();
                 Some(mojito_ast::ast::ParamArg::Value(index.clone()))
             }
             ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {

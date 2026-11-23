@@ -59,13 +59,11 @@ pub(super) fn comptime_defaults(members: &[TraitComptime]) -> Vec<StructComptime
     members
         .iter()
         .filter_map(|member| {
+            member.annotation_type()?;
             Some(StructComptime {
                 name: member.name.clone(),
                 params: member.params.clone(),
-                ty: Some(Expr::annotation_of(
-                    member.annotation_type()?,
-                    member.ty.span,
-                )),
+                ty: Some(member.ty.clone()),
                 where_clauses: member.where_clauses.clone(),
                 value: member.default.clone()?,
             })

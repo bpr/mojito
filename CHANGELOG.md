@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The AST stores no type node (R2540): `ExprKind::TypeValue`,
+  `Expr::annotation_of`, `Expr::retype_view`, `Type::expression_spelling`,
+  and the `visit_type` walks are gone. A synthesized annotation is built as
+  the expression source would spell, and the elaborator rewrites an
+  annotation as an expression (`visit::walk_annotation_names_mut`). The
+  cached package format moves to `mojito-package 271`.
+
 - Every bracket operand is an expression, as upstream's are (R2539):
   `ParamArg::Type` is gone, a bracket's pack operand (`Tuple[*Ts]`,
   `Tuple[*Self.Ts]`) is the spread expression, and the checker and the
@@ -1537,6 +1544,11 @@ to evolve under the `0.x` compatibility rules.
   script helpers moved to `scripts/tierlib.py`.
 
 ### Fixed
+
+- A struct's `comptime` member annotated with a trait composition
+  (`comptime Element: Copyable & Movable = Int`) declares a type member, as
+  at the pin, instead of failing with "not a compile-time Int constant:
+  Copyable" (R2540).
 
 - The linker renames a module's names inside a generator type, as the pin
   does (R2536): `comptime Gen = __generator_type[n: Int] m.S` after

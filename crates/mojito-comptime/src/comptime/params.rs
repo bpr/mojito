@@ -90,7 +90,6 @@ pub(super) fn classify_ct_param(
         callable_bound: None,
         default: tp.default.as_ref().and_then(|value| match &value.kind {
             ExprKind::Identifier(name) => scalar_type_name(name),
-            ExprKind::TypeValue(ty) => ct_param_source_type(ty),
             _ => None,
         }),
         infer_only: tp.infer_only,

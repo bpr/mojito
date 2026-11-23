@@ -12,7 +12,7 @@ use crate::package::{
     ModuleIdentity, ModuleRecords, PackageModule, PackageModules, PackagedModule,
 };
 use mojito_ast::ast::{
-    ComprehensionClause, Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type,
+    ComprehensionClause, Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart,
 };
 use mojito_ast::visit::{Visitor, walk_block};
 use mojito_common::error::ParseError;
@@ -467,7 +467,6 @@ fn rewrite_expr(
                 }
             }
         }
-        ExprKind::TypeValue(ty) => rewrite_type(ty, names, namespaces),
         ExprKind::FunctionType(callable) => {
             for parameter in &mut callable.type_params {
                 rewrite_type_param(parameter, names, namespaces);
@@ -518,39 +517,6 @@ fn rewrite_expr(
             }
             rewrite_expr(value, names, namespaces);
         }
-        _ => {}
-    }
-}
-
-fn rewrite_type(
-    ty: &mut Type,
-    names: &HashMap<String, String>,
-    namespaces: &HashMap<String, HashMap<String, String>>,
-) {
-    match ty {
-        Type::Named(name, args) => {
-            rename(name, names);
-            rewrite_args(args, names, namespaces);
-        }
-        Type::Assoc { base, name, args } => {
-            let target = type_path(base).and_then(|namespace| {
-                namespaces
-                    .get(&namespace)
-                    .and_then(|exports| exports.get(name))
-                    .cloned()
-            });
-            rewrite_args(args, names, namespaces);
-            if let Some(target) = target {
-                *ty = Type::Named(target, std::mem::take(args));
-            } else {
-                rewrite_type(base, names, namespaces);
-            }
-        }
-        Type::IndexedProjection { base, index } => {
-            rewrite_type(base, names, namespaces);
-            rewrite_expr(index, names, namespaces);
-        }
-        Type::TypeOf(operand) | Type::Value(operand) => rewrite_expr(operand, names, namespaces),
         _ => {}
     }
 }
@@ -2474,14 +2440,6 @@ impl Visitor for NamespaceUses {
             self.0.push((namespace, member.clone()));
         }
     }
-
-    fn visit_type(&mut self, ty: &Type) {
-        if let Type::Assoc { base, name, .. } = ty
-            && let Some(namespace) = type_path(base)
-        {
-            self.0.push((namespace, name.clone()));
-        }
-    }
 }
 
 fn namespace_member(
@@ -2493,14 +2451,6 @@ fn namespace_member(
         .get(&expression_path(object)?)
         .and_then(|exports| exports.get(member))
         .cloned()
-}
-
-fn type_path(ty: &Type) -> Option<String> {
-    match ty {
-        Type::Named(name, args) if args.is_empty() => Some(name.clone()),
-        Type::Assoc { base, name, .. } => Some(format!("{}.{}", type_path(base)?, name)),
-        _ => None,
-    }
 }
 
 /// Replace an `assert cond[, message]` statement with the expression
