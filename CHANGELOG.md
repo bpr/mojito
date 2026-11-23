@@ -2426,6 +2426,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A type annotation led by a name or `None` parses as one expression at
+  `**` precedence, as upstream parses an annotation, and converts in the
+  annotation's type context (`Expr::annotation_type`): named types, members,
+  subscripts, `type_of(x)`, and constructions (`Pair[Int](1, 2)[0]`,
+  `M.Of[Int]()`) no longer have a grammar of their own, and an applied
+  member's construction now carries its real source spans. A malformed
+  annotation (`x: M.f()`) is now "expected a type, found an expression" at
+  the annotation (R2134).
+
 - A trait's checked op holds each requirement's checked signature, recorded
   at its trait's method sites, as upstream's trait declares each
   requirement's function type, and a trait requirement's declaration

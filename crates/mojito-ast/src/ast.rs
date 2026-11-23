@@ -2379,14 +2379,81 @@ impl Expr {
         }
     }
 
-    /// The type an annotation's expression spells (`x: Self.T`, `-> None`):
-    /// the annotation's type context, where upstream turns the `None` value
-    /// into the none type. A bracket operand is no such context (`List[None]`
-    /// keeps a `None` value), so [`Self::type_spelling`] leaves `None` alone.
+    /// The type an annotation's expression spells, read in the annotation's
+    /// type context as upstream evaluates it:
+    ///
+    /// - `None` is the none type (a bracket operand is no type context, so
+    ///   `List[None]` keeps a `None` value and [`Self::type_spelling`] leaves
+    ///   it alone);
+    /// - `Self` is the enclosing type, and any other name, whatever its case,
+    ///   is [`Type::Named`] (the checker decides what it denotes);
+    /// - `B.NAME` is [`Type::SelfParam`] on `Self` and [`Type::Assoc`] on any
+    ///   other base;
+    /// - a bracket on a name other than `Self` applies it (`Pair[Int]`,
+    ///   `tl[1]`); on any other base, one value operand is an
+    ///   [`Type::IndexedProjection`] (`Self[0]`, `values.element_types[i]`)
+    ///   and any other list applies an argument-less member (`M.A[1, 2]`);
+    /// - `type_of(x)` is [`Type::TypeOf`];
+    /// - any other call, or an applied member's construction
+    ///   (`Pair[Int](1, 2)`, `M.Of[Int]()`), is the compile-time value it
+    ///   builds ([`Type::Value`]).
+    ///
+    /// Anything else (a method call, a slice, an operator) is no type.
     pub fn annotation_type(&self) -> Option<Type> {
         match &self.kind {
             ExprKind::None => Some(Type::None),
-            _ => self.type_spelling(),
+            ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
+            ExprKind::Identifier(name) if name != "..." && name != CONTEXTUAL_SENTINEL => {
+                Some(Type::Named(name.clone(), Vec::new()))
+            }
+            ExprKind::Member { object, field } => Some(match object.annotation_type()? {
+                Type::SelfType => Type::SelfParam(field.clone()),
+                base => Type::Assoc {
+                    base: Box::new(base),
+                    name: field.clone(),
+                    args: Vec::new(),
+                },
+            }),
+            ExprKind::Index { .. } | ExprKind::MultiIndex { .. } => {
+                let (object, args) = self.bracket_operands()?;
+                if let ExprKind::Identifier(name) = &object.kind
+                    && name != "Self"
+                {
+                    return Some(Type::Named(name.clone(), args));
+                }
+                match object.annotation_type()? {
+                    base if let [ParamArg::Value(index)] = args.as_slice() => {
+                        Some(Type::IndexedProjection {
+                            base: Box::new(base),
+                            index: Box::new(index.clone()),
+                        })
+                    }
+                    Type::Assoc {
+                        base,
+                        name,
+                        args: own,
+                    } if own.is_empty() => Some(Type::Assoc { base, name, args }),
+                    _ => None,
+                }
+            }
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "type_of" => match (param_args.as_slice(), args.as_slice()) {
+                ([], [operand]) if kwargs.is_empty() => {
+                    Some(Type::TypeOf(Box::new(operand.clone())))
+                }
+                _ => None,
+            },
+            ExprKind::Call { .. } => Some(Type::Value(Box::new(self.clone()))),
+            ExprKind::Invoke {
+                callee, param_args, ..
+            } if !param_args.is_empty() && matches!(callee.kind, ExprKind::Member { .. }) => {
+                Some(Type::Value(Box::new(self.clone())))
+            }
+            _ => None,
         }
     }
 }

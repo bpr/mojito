@@ -1400,14 +1400,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   binders, which `type_resolution.rs:resolve_parameterized_member` binds by
   identity through `generics::AssocBindings::ids`). A member application
   read through a type (`S[Int].Of[Bool]`) is `Type::Assoc` with arguments
-  in type position (`parse_type_assoc_tail`), which
+  in type position (the bracket node `parser/suffix.rs:parse_bracket_suffix`
+  builds, converted by `ast::Expr::annotation_type`), which
   `type_resolution.rs:member_application` binds through
   `resolve_use_params`, and a subscript of the member in an expression
   (the ordinary bracket node `parser/suffix.rs:parse_bracket_suffix`
-  builds, whose base `ast::Expr::type_spelling` reads as a type, and whose
-  inverse
-  `ast::Type::expression_spelling` respells a type-shaped receiver or
-  bracket argument as the expression it denotes); `constraints.rs:
+  builds, whose base `ast::Expr::type_spelling` reads as a type); `constraints.rs:
   member_source_type` reads that subscript as the type it spells, and
   `ast::subscript_param_args` reads a type-valued index as a type argument. A
   bare parameterized struct as a member's base (`S.n`, `S.Of[Bool]`) is
@@ -2871,11 +2869,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `parse_param_arg` (`parser/types.rs`); every other bracket operand,
   `G[n].w()` and a capitalized `L[0] * 2` included, is the one expression
   the bracket suffix parses, which the checker classifies as a type or a
-  value by what it denotes (`Checker::denoted_type`). An annotation's
-  `None`, `Self`, and `Self.<member>` atoms parse as expressions in
-  `Parser::parse_type` and convert through `Expr::annotation_type`, the
-  annotation's type context, which alone maps the `None` value to
-  `Type::None`.
+  value by what it denotes (`Checker::denoted_type`). An annotation
+  other than a `def`, `ref`, `*` pack, or `__generator_type` parses as one
+  expression at `**` precedence in `Parser::parse_type` (and a value
+  bound's `x: M.A[...]` in `parse_type_params`) and converts through
+  `Expr::annotation_type`, the annotation's type context, which alone maps
+  the `None` value to `Type::None` and reads any name, `type_of(x)`, a
+  member, a subscript, and a construction as a `Type`.
   A callable bound (`F: def[width: SIMDLength](...) -> ...`) keys as its
   checked contract displays (`write_callable`/`write_param_decls`), its own
   binders included; no overload key embeds a span or source path.

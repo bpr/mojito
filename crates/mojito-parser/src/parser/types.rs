@@ -4,25 +4,24 @@
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
-    /// Parses a type annotation: `Bool`, `None`, `Self.T`, associated lookups
-    /// like `C.Element`, or a named type optionally applied to type arguments
-    /// (`Pair[Int]`). The atoms `None`, `Self`, and `Self.<member>` are read
-    /// by the expression grammar and converted in the annotation's type
-    /// context ([`Expr::annotation_type`]), as upstream parses an annotation.
+    /// Parses a type annotation. As upstream parses an annotation, one led by
+    /// a name or `None` (`Bool`, `Self.T`, `C.Element`, `Pair[Int]`,
+    /// `type_of(x).T`, `M.Of[Int]()[0]`) is one expression at `**`
+    /// precedence, converted in the annotation's type context
+    /// ([`Expr::annotation_type`]). A `*` pack, a `def` function type, a
+    /// `__generator_type`, and a contextual `ref` reference type keep their
+    /// own forms.
     pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
-        if matches!(self.peek_token()?, Some(Token::None))
-            || matches!(self.peek_token()?, Some(Token::Identifier(id)) if id == "Self")
-        {
-            let start = self.peek_start();
-            let atom = self.parse_member_chain()?;
-            let ty = atom.annotation_type().ok_or_else(|| {
-                ParseError::Message("expected a type, found an expression".to_string())
-            })?;
-            return self.parse_type_assoc_tail(ty, start);
+        let expression_led = match self.peek_token()? {
+            Some(Token::None) => true,
+            Some(Token::Identifier(id)) => id != "ref",
+            _ => false,
+        };
+        if expression_led {
+            let head = self.parse_prefix()?;
+            return self.annotation_from(head);
         }
-        let token = self.next_token()?;
-        let start = self.last_span.0;
-        let ty = match token {
+        match self.next_token()? {
             // A variadic type-pack reference in `*args: *ArgTypes`. Inside a
             // struct, current Mojo spells the struct's own pack `*Self.Ts`;
             // the qualified spread keeps its own node so the elaborator can
@@ -49,158 +48,32 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Token::Def => self.parse_function_type_tail(),
             // A generator type: `__generator_type [params] result`.
             Token::GeneratorType => self.parse_generator_type_tail(),
-            Token::Identifier(id) => match id.as_str() {
-                // Upstream's `type_of(x)`: the type of a compile-time
-                // expression, retained as its operand.
-                "type_of" if matches!(self.peek_token()?, Some(Token::LParen)) => {
-                    self.parse_type_of_operand()
-                }
-                // `ref [origin] T` — a reference type (parametric mutability). The
-                // origin specifier is parsed and discarded; the referent follows.
-                // (`ref` is contextual — a following `[` or type token, not `.`/end.)
-                "ref"
-                    if matches!(
+            // `ref [origin] T` — a reference type (parametric mutability). The
+            // origin specifier is parsed and discarded; the referent follows.
+            // (`ref` is contextual — a following `[` or type token, not `.`/end.)
+            Token::Identifier(id)
+                if id == "ref"
+                    && matches!(
                         self.peek_token()?,
                         Some(Token::LBracket | Token::Identifier(_) | Token::Def | Token::None)
                     ) =>
-                {
-                    let origin = self.parse_optional_origin_specifier()?;
-                    Ok(Type::Ref {
-                        referent: Box::new(self.parse_type()?),
-                        origin,
-                    })
-                }
-                // Any other identifier names a struct type or an in-scope type
-                // parameter (the checker decides), optionally with parameter args.
-                _ => self.parse_named_type(id, start),
-            },
+            {
+                let origin = self.parse_optional_origin_specifier()?;
+                Ok(Type::Ref {
+                    referent: Box::new(self.parse_type()?),
+                    origin,
+                })
+            }
+            // A `ref` no referent follows is an ordinary name.
+            Token::Identifier(id) => {
+                let head = self.node(ExprKind::Identifier(id), self.last_span.0);
+                self.annotation_from(head)
+            }
             token => Err(ParseError::UnexpectedToken(
                 token,
                 "Expected a type name".into(),
             )),
-        }?;
-
-        self.parse_type_assoc_tail(ty, start)
-    }
-
-    /// Parses an annotation atom through the expression grammar: a primary
-    /// followed by its `.NAME` members, leaving a following `[` or `(` to the
-    /// annotation's projection tail.
-    fn parse_member_chain(&mut self) -> Result<Expr, ParseError> {
-        let mut atom = self.parse_prefix()?;
-        while matches!(self.peek_token()?, Some(Token::Dot)) {
-            atom = self.parse_infix(atom)?;
         }
-        Ok(atom)
-    }
-
-    /// Parses the rest of a named type whose name `id` (starting at `start`)
-    /// was consumed: its optional parameter arguments, and a following
-    /// argument list, which makes it a compile-time value (`Pair[Int](1, 2)`).
-    fn parse_named_type(&mut self, id: String, start: usize) -> Result<Type, ParseError> {
-        let args = if matches!(self.peek_token()?, Some(Token::LBracket)) {
-            self.parse_param_args()?
-        } else {
-            Vec::new()
-        };
-        if !matches!(self.peek_token()?, Some(Token::LParen)) {
-            return Ok(Type::Named(id, args));
-        }
-        self.next_token()?;
-        let (call_args, kwargs) = self.parse_call_args()?;
-        self.expect(&Token::RParen, "Expected ')' after arguments")?;
-        Ok(Type::Value(Box::new(Expr::new(
-            ExprKind::Call {
-                name: id,
-                param_args: args,
-                args: call_args,
-                kwargs,
-            },
-            (start, self.last_span.1),
-        ))))
-    }
-
-    /// Parse zero or more structured projections after a type atom. Associated
-    /// lookup and dependent indexing deliberately remain distinct AST nodes so
-    /// later phases never have to recover either operation from a flattened
-    /// source spelling.
-    pub(super) fn parse_type_assoc_tail(
-        &mut self,
-        mut ty: Type,
-        start: usize,
-    ) -> Result<Type, ParseError> {
-        loop {
-            if matches!(self.peek_token()?, Some(Token::Dot)) {
-                self.next_token()?; // consume '.'
-                let name = self.expect_identifier("Expected an associated type name after '.'")?;
-                ty = Type::Assoc {
-                    base: Box::new(ty),
-                    name,
-                    args: Vec::new(),
-                };
-                continue;
-            }
-            if matches!(self.peek_token()?, Some(Token::LBracket)) {
-                let arguments = self.parse_param_args()?;
-                // A member's bracket list a call follows is its application
-                // (`M.Of[Int]()`), whatever its one operand parsed as.
-                let applied = matches!(self.peek_token()?, Some(Token::LParen))
-                    && matches!(&ty, Type::Assoc { args, .. } if args.is_empty());
-                let index = match (arguments.as_slice(), &mut ty) {
-                    ([mojito_ast::ast::ParamArg::Value(index)], _) if !applied => index,
-                    // A parameterized member applied to its bracket list
-                    // (`S[Int].Of[Bool]`, `M.Pair[1, 2]`).
-                    (_, Type::Assoc { args, .. }) if args.is_empty() => {
-                        *args = arguments;
-                        continue;
-                    }
-                    _ => {
-                        return Err(ParseError::UnexpectedToken(
-                            Token::RBracket,
-                            "a dependent type projection requires exactly one compile-time \
-                             value index"
-                                .to_string(),
-                        ));
-                    }
-                };
-                ty = Type::IndexedProjection {
-                    base: Box::new(ty),
-                    index: Box::new(index.clone()),
-                };
-                continue;
-            }
-            // A construction through an applied member (`TypeList.of[Trait=
-            // AnyType, Bool, Int]()`), the value a following subscript reads.
-            if let Type::Assoc { base, name, args } = &ty
-                && !args.is_empty()
-                && matches!(self.peek_token()?, Some(Token::LParen))
-                && let Some(receiver) = base.expression_spelling((start, self.last_span.1))
-            {
-                let callee = Expr::new(
-                    ExprKind::Member {
-                        object: Box::new(receiver),
-                        field: name.clone(),
-                    },
-                    (start, self.last_span.1),
-                );
-                let param_args = args.clone();
-                self.next_token()?;
-                let (call_args, kwargs) = self.parse_call_args()?;
-                self.expect(&Token::RParen, "Expected ')' after arguments")?;
-                ty = Type::Value(Box::new(Expr::new(
-                    ExprKind::Invoke {
-                        callee: Box::new(callee),
-                        param_args,
-                        args: call_args,
-                        kwargs,
-                    },
-                    (start, self.last_span.1),
-                )));
-                continue;
-            }
-            break;
-        }
-        Ok(ty)
     }
 
     /// Parses a generator type after its leading `__generator_type` has been
@@ -616,9 +489,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             } else if callable_bound.is_none() && matches!(self.peek_token()?, Some(Token::Dot)) {
                 // `x: M.A` or `raw: _MLIR.KGENParamListType[t]` is a value
                 // parameter typed by a qualified type.
-                let start = self.last_span.0;
-                let qualified = self
-                    .parse_type_assoc_tail(Type::Named(spelled_bound.clone(), Vec::new()), start)?;
+                let head = self.node(
+                    ExprKind::Identifier(spelled_bound.clone()),
+                    self.last_span.0,
+                );
+                let qualified = self.annotation_from(head)?;
                 value_type = Some(qualified);
                 spelled_bound
             } else {
@@ -738,6 +613,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
         }
         Ok(true)
+    }
+
+    /// Reads the rest of an annotation whose head was just parsed as one
+    /// expression at `**` precedence, and converts it in the annotation's
+    /// type context.
+    fn annotation_from(&mut self, head: Expr) -> Result<Type, ParseError> {
+        let expr = self.parse_expression_from(head, Precedence::Power)?;
+        expr.annotation_type().ok_or_else(|| {
+            ParseError::Message("expected a type, found an expression".to_string()).at(expr.span)
+        })
     }
 
     /// The parenthesized operand of `type_of`, whose name was just read.

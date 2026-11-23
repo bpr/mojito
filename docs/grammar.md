@@ -1259,19 +1259,14 @@ Notes:
 
 ```
 type:
-    | 'None'
-    | 'Self' '.' NAME              # a struct's own type parameter, inside its body
-    | 'Self'                       # the enclosing struct/trait type
+    | annotation_expression       # a name-led or `None`-led expression read as a type
     | function_type               # a checked function/closure contract or value type
     | 'ref' [origin_spec] type    # an origin-checked reference type `ref[origin] T` (a direct field, a result; never a type argument)
-    | NAME [param_args]            # struct type, optionally with type/value arguments
-    | '__mlir_type' '.' 'index'    # the Indexer requirement's return spelling (the only `__mlir_type` form accepted)
-    | 'type_of' '(' expression ')' # the type of a compile-time expression (`type_of(AnyType)`, the trait metatype)
+    | '*' NAME | '*' 'Self' '.' NAME  # a variadic type-pack reference
     | generator_type               # the type of a parameterized compile-time declaration
-    | NAME [param_args] '(' [call_args] ')'  # a compile-time value (a struct construction); a type only through a subscript
-    | type '.' NAME param_args '(' [call_args] ')'  # a construction through a type's parameterized member
-    | type type_projection        # a member or a subscript of a type, or of a construction
-type_projection: '.' NAME | '.' NAME param_args | '[' expression ']'
+annotation_expression:            # the expression grammar at `**` precedence
+    | (NAME | 'None') annotation_postfix*
+annotation_postfix: '.' NAME | '[' subscript ']' | '(' [call_args] ')'
 generator_type: '__generator_type' [params_decl] '&'.type+
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type
 function_type_param:
@@ -1280,11 +1275,27 @@ function_type_param:
 fn_effect: 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 ```
 
-An annotation's `None`, `Self`, and `Self.NAME` atoms are read by the
-expression grammar (the `None` literal, a name, a member access) and
-converted in the annotation's type context, where the `None` value is the
-none type; a bracket operand reads the same expression but keeps `None` a
-value. The `type:` productions describe the shapes an annotation accepts.
+As upstream parses an annotation, one led by a name or `None` is one
+expression (the expression grammar's postfix chain at `**` precedence),
+converted in the annotation's type context (`Expr::annotation_type`):
+
+- `None` is the none type (a bracket operand reads the same expression but
+  keeps `None` a value); `Self` is the enclosing type; any other `NAME`,
+  whatever its case, is a named type the checker resolves.
+- `B.NAME` is the enclosing struct's own parameter or member on `Self`
+  (`Self.T`) and an associated member on any other base (`C.Element`,
+  `__mlir_type.index` — the Indexer requirement's return spelling —
+  and `` __mlir_type.`!kgen.none` ``).
+- A subscript of a `NAME` other than `Self` applies it (`Pair[Int]`,
+  `tl[1]`). On any other base, one compile-time value is a dependent
+  projection (`Self[0]`, `M.Buf[3]`, `values.element_types[i]`), and any
+  other list applies a member (`M.A[1, 2]`).
+- `type_of(expression)` is the type of its operand.
+- Any other call, and a call of an applied member, is a compile-time value
+  (a construction, `Pair[Int](1, 2)`, `M.Of[Int]()`), a type only as the
+  base of a subscript.
+- Anything else (a method call, a slice, an operator, `M.f()`) is "expected
+  a type, found an expression".
 
 `None` is a reserved keyword. `Bool` is a plain `NAME`, the prelude's
 `std.builtin.bool.Bool` struct, which a program's own `struct Bool` shadows.
@@ -1350,7 +1361,7 @@ parameterized `comptime` member (`S[Int].Of[Bool]`, `M.Pair[A, B]`,
 `_MLIR.KGENParamListType[Int]`) and parses into `Type::Assoc` with the
 bracket list as its arguments, which the checker binds as an alias
 application binds its list. A single compile-time value after a member
-(`M.Buf[3]`, `Self.Ts[i]`) stays a `type_projection` subscript, which the
+(`M.Buf[3]`, `Self.Ts[i]`) stays a projection subscript, which the
 checker reads as the member's application when the member is
 parameterized and as a dependent index otherwise.
 A struct **construction** in type position (`TypeList[Trait=AnyType,

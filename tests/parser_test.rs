@@ -5622,6 +5622,102 @@ fn annotation_atoms_parse_through_the_expression_grammar() {
 }
 
 #[test]
+fn annotations_with_named_heads_and_projections_parse_as_expressions() {
+    let named = |name: &str, args: Vec<ParamArg>| Type::Named(name.into(), args);
+    let value = |n: i64| ParamArg::Value(int_expr(n));
+    let statements = parse(
+        "def f[k: M.A[1, 2]](x: tl[1], y: Self[0], z: type_of(v).T[0], w: M.A[1, 2][3]):\n    pass\n",
+    );
+    let StmtKind::Def {
+        type_params,
+        params,
+        ..
+    } = &statements[0].kind
+    else {
+        panic!("expected def");
+    };
+    let applied_member = |args: Vec<ParamArg>| Type::Assoc {
+        base: Box::new(named("M", vec![])),
+        name: "A".into(),
+        args,
+    };
+    assert_eq!(
+        type_params[0].value_type,
+        Some(applied_member(vec![value(1), value(2)]))
+    );
+    let types: Vec<_> = params.iter().map(|param| param.ty.clone()).collect();
+    assert_eq!(
+        types,
+        vec![
+            named("tl", vec![value(1)]),
+            Type::IndexedProjection {
+                base: Box::new(Type::SelfType),
+                index: int(0),
+            },
+            Type::IndexedProjection {
+                base: Box::new(Type::Assoc {
+                    base: Box::new(Type::TypeOf(Box::new(Expr::from(ExprKind::Identifier(
+                        "v".into()
+                    ))))),
+                    name: "T".into(),
+                    args: vec![],
+                }),
+                index: int(0),
+            },
+            Type::IndexedProjection {
+                base: Box::new(applied_member(vec![value(1), value(2)])),
+                index: int(3),
+            },
+        ]
+    );
+}
+
+#[test]
+fn an_applied_member_construction_in_an_annotation_keeps_its_source_spans() {
+    let source = "def f():\n    var z: M.Of[Int]()[0] = 1\n";
+    let statements = parse(source);
+    let StmtKind::Def { body, .. } = &statements[0].kind else {
+        panic!("expected def");
+    };
+    let StmtKind::VarDecl {
+        ty: Some(Type::IndexedProjection { base, .. }),
+        ..
+    } = &body[0].kind
+    else {
+        panic!(
+            "expected a projected var annotation, got {:?}",
+            body[0].kind
+        );
+    };
+    let Type::Value(construction) = base.as_ref() else {
+        panic!("expected a construction, got {base:?}");
+    };
+    let ExprKind::Invoke { callee, .. } = &construction.kind else {
+        panic!("expected an applied-member construction");
+    };
+    let ExprKind::Member { object, .. } = &callee.kind else {
+        panic!("expected a member callee");
+    };
+    let member_start = source.find("M.Of").expect("member spelled");
+    assert_eq!(callee.span, (member_start, member_start + "M.Of".len()));
+    assert_eq!(object.span, (member_start, member_start + 1));
+}
+
+#[test]
+fn annotation_expressions_that_are_no_type_are_rejected() {
+    for annotation in ["M.f()", "Pair[Int](1)(2)", "type_of(a, b)"] {
+        let source = format!("def f(x: {annotation}):\n    pass\n");
+        let error = mojito::parse(&source).expect_err("no annotation");
+        assert!(
+            error
+                .to_string()
+                .starts_with("expected a type, found an expression"),
+            "{annotation}: {error}"
+        );
+    }
+}
+
+#[test]
 fn annotation_method_call_is_not_a_type() {
     let error = mojito::parse("struct S:\n    def f(self) -> Self.make():\n        pass\n")
         .expect_err("a method call is no annotation");

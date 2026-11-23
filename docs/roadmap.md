@@ -13362,29 +13362,11 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2134 An annotation's named heads and projections bypass the expression grammar**
+- [ ] **R2135 Function and generator annotations bypass the expression grammar**
 
-  `parse_type` still reads `NAME`, `NAME[args]`, `T.NAME[args]`,
-  `T[expr]`, and constructions (`Pair[Int](1, 2)`) with its own grammar
-  (`parse_named_type`, `parse_type_assoc_tail`), where upstream parses the
-  annotation as one postfix expression.
-  - Parse them with `parse_expression(Precedence::Power)` and grow
-    `Expr::annotation_type` to convert a bracket application on any base,
-    a lowercase-rooted chain (`values.element_types[i]`, `tl[1]`), and a
-    call (`Type::Value`).
-  - Deletes `parse_named_type`, the tail's dot/bracket/construction arms
-    (whose `.NAME` uses `expect_identifier`, not `expect_member_name`),
-    and the parser's use of `Type::expression_spelling`.
-  - Stop condition: a parse dump of every `assets/` and `stdlib/` file
-    differs from the base binary only in `SyntaxId` lines.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R2135 `type_of`, function, and generator annotations bypass the expression grammar**
-
-  `parse_type` reads `type_of(...)`, `def(...)`, and `__generator_type`
-  with its own arms, where the expression grammar already yields a `Call`
-  and `ExprKind::TypeValue` for them.
+  `parse_type` reads `def(...)` and `__generator_type` with its own arms,
+  where the expression grammar already yields `ExprKind::TypeValue` for
+  them.
   - `Expr::annotation_type` unwraps them, and a generator result's `&`
     composition becomes the `Infix(BitAnd)` upstream parses, converted to
     `$trait_composition`.
