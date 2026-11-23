@@ -1009,12 +1009,8 @@ impl RewriteTypes for CheckedStmtOp {
                 f0.rewrite_types(rewrite);
             }
             Self::Trait(declaration) => {
-                for default in declaration
-                    .methods
-                    .iter_mut()
-                    .filter_map(|method| method.default.as_mut())
-                {
-                    default.signature.rewrite_types(rewrite);
+                for method in &mut declaration.methods {
+                    method.signature.rewrite_types(rewrite);
                 }
             }
             Self::Comptime {
@@ -1451,10 +1447,15 @@ impl RewriteTypes for TraitRequirement {
             variadic,
             kw_variadic,
             variadic_convention: _,
+            receiver_convention: _,
+            param_decls,
+            return_type,
         } = self;
         param_types.rewrite_types(rewrite);
         variadic.rewrite_types(rewrite);
         kw_variadic.rewrite_types(rewrite);
+        param_decls.rewrite_types(rewrite);
+        return_type.rewrite_types(rewrite);
     }
 }
 

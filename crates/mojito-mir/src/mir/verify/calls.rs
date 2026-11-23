@@ -275,11 +275,7 @@ pub(super) fn verify_call_instruction(
                                 )
                                 .collect::<Vec<_>>()
                         });
-                // A call that writes its receiver but records no convention
-                // for it leaves the receiver to its place, as lowering does.
-                let receiver = (!(*recv_writes && receiver_convention.is_none()))
-                    .then_some((*recv, *receiver_convention));
-                verify_requirement_call(cx, requirement, receiver, operands.as_deref(), errors);
+                verify_requirement_call(cx, requirement, *recv, operands.as_deref(), errors);
             }
         }
         // A spread names the collector of the method the checker selected;
@@ -535,23 +531,23 @@ pub(super) fn verify_by_address_operands(
 /// `@Trait::method` is verified against the requirement's signature.
 ///
 /// `requirement` is the one the call binds
-/// ([`MirDeclarations::call_requirement`]). `receiver` is the receiver
-/// beside the convention the call records for it (a requirement records
-/// none), `None` when the call leaves it to its place. `operands` lists
+/// ([`MirDeclarations::call_requirement`]), whose receiver convention
+/// `receiver` is checked against, as upstream's call of a requirement
+/// reads its signature. `operands` lists
 /// each regular operand, positional then keyword, with the parameter it
 /// binds, `None` when they do not bind the requirement's shape.
 pub(super) fn verify_requirement_call(
     cx: &InstrCx<'_>,
     requirement: &crate::mir::TraitRequirement,
-    receiver: Option<(Reg, Option<mojito_ast::ast::ArgConvention>)>,
+    receiver: Reg,
     operands: Option<&[crate::mir::BoundOperand<'_>]>,
     errors: &mut Vec<String>,
 ) {
     let dispatch = &requirement.dispatch;
-    if let Some((receiver, convention)) = receiver
-        && let Some(found) = cx.reg_ty(receiver)
+    if let Some(found) = cx.reg_ty(receiver)
         && crate::mir::addressed_receiver(found).is_none()
-        && crate::mir::requirement_by_address_receiver(convention, found, cx.declarations).is_some()
+        && crate::mir::requirement_by_address_receiver(requirement, found, cx.declarations)
+            .is_some()
     {
         errors.push(format!(
             "{}: receiver of '{dispatch}' is received by address but passes a {found} value",

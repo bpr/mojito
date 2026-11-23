@@ -441,12 +441,13 @@ impl<'a> Callee<'a> {
         }
     }
 
-    /// The receiver convention a declaration records; a requirement records
-    /// none.
+    /// The receiver convention a declaration or a requirement declares; a
+    /// function type's callee is no receiver.
     pub const fn receiver_convention(self) -> Option<ArgConvention> {
         match self {
             Self::Declared(declaration) => declaration.receiver_convention,
-            Self::Required(_) | Self::Contract(_) => None,
+            Self::Required(requirement) => requirement.receiver_convention,
+            Self::Contract(_) => None,
         }
     }
 }
@@ -988,6 +989,9 @@ mod tests {
                     variadic: None,
                     kw_variadic: None,
                     variadic_convention: None,
+                    receiver_convention: None,
+                    param_decls: Vec::new(),
+                    return_type: Ty::none(),
                 }],
             }],
             ..MirDeclarations::default()
@@ -1093,6 +1097,37 @@ mod tests {
         let call = method_call(Reg(0), dispatch, vec![Reg(1)], None);
         let function = function_of(Vec::new(), vec![(0, bound)]);
         assert_eq!(consumed_in(&call, &function, &declarations), vec![Reg(1)]);
+    }
+
+    /// A binary operator through a bound reads its requirement's receiver
+    /// convention, as upstream's call of a requirement reads its
+    /// signature: a `var self` one consumes the left operand.
+    #[test]
+    fn a_binary_operator_through_a_bound_consumes_a_var_self_receiver() {
+        let dispatch = "__trait_dispatch.absorb";
+        let mut declarations = absorber(dispatch);
+        declarations.traits[0].requirements[0].receiver_convention = Some(ArgConvention::Var);
+        declarations.traits[0].requirements[0].param_conventions = vec![None];
+        let bound = Ty::new(TyKind::Param {
+            binder: ParamRef {
+                id: ParamId::new("f", 0),
+                name: "T".into(),
+            },
+            bounds: vec!["Absorber".into()],
+            callable_bound: None,
+        });
+        let add = MirInstr::BinOp {
+            op: mojito_ast::ast::InfixOp::Add,
+            dest: Reg(9),
+            a: Reg(0),
+            b: Reg(1),
+            resolved: Some(dispatch.into()),
+            raises: None,
+            refined_bound: None,
+            fastmath: None,
+        };
+        let function = function_of(Vec::new(), vec![(0, bound.clone()), (1, bound)]);
+        assert_eq!(consumed_in(&add, &function, &declarations), vec![Reg(0)]);
     }
 
     #[test]

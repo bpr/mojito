@@ -11441,31 +11441,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R758 A trait method op holds no checked signature, where
-  upstream's trait declares each requirement's function type**
-
-  `CheckedTraitMethod` holds its parameters' names, conventions, and
-  defaults, but no type, result type, or compile-time parameter list.
-  - The check records no declaration site for a trait method, so the
-    arena builder has nothing to read.
-  - `TraitRequirement` (`declaration.rs`) holds parameter types and
-    conventions, but no result type, no `ParamDecl`s, and no receiver
-    convention.
-  - Probe: so a `binary` operator through a bound whose requirement takes
-    `var self` is read as borrowing its left operand
-    (`Callee::receiver_convention`, `mir/register_ends.rs`), which R1329's
-    register drops would destroy a second time.
-  - The lever: record a requirement's checked signature where
-    `checker/traits.rs` builds its `MethodSig`, and have the trait op hold
-    a `CheckedSignature`, as `CheckedMethod` does.
-  - Then `verify_requirement_call` and lowering's `Contract::Required`
-    read the requirement's receiver convention instead of the call's
-    recorded one, and the exception for a receiver-writing call that
-    records none goes.
-  - Found while landing R630 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R759 A `comptime` declaration op holds no compile-time parameter
   list, where upstream's parametric alias declares one**
 

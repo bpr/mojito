@@ -291,14 +291,15 @@ pub fn requirement_operand_parameters(
 }
 
 /// How a call through a trait bound receives a receiver of type
-/// `receiver_ty` by address, under the receiver convention the call
-/// records (a requirement records none).
+/// `receiver_ty` by address, under `requirement`'s receiver convention, as
+/// upstream's call of a requirement reads its signature.
 #[must_use]
 pub fn requirement_by_address_receiver(
-    convention: Option<ArgConvention>,
+    requirement: &TraitRequirement,
     receiver_ty: &Ty,
     declarations: &MirDeclarations,
 ) -> Option<Mutability> {
+    let convention = requirement.receiver_convention;
     by_address(
         convention,
         is_reference(convention),
@@ -783,17 +784,13 @@ impl<'a> Callees<'a> {
 }
 
 /// The contract a resolved call binds its operands by: its callee's
-/// declaration, the requirement a call through a trait bound selects,
-/// beside the receiver convention the call records for it, the function
-/// type a call through a function value or a `def(...)` bound reads, or
-/// the copy initializer `T(copy=x)` calls.
+/// declaration, the requirement a call through a trait bound selects, the
+/// function type a call through a function value or a `def(...)` bound
+/// reads, or the copy initializer `T(copy=x)` calls.
 #[derive(Clone, Copy)]
 enum Contract<'a> {
     Declared(&'a MirFunctionDeclaration),
-    Required {
-        requirement: &'a TraitRequirement,
-        receiver: Option<ArgConvention>,
-    },
+    Required(&'a TraitRequirement),
     Signature(&'a FuncTy),
     /// `Copyable`'s `__init__(out self, *, copy: Self)`, whose one
     /// parameter is the `read` `copy=` source.
@@ -807,7 +804,7 @@ impl<'a> Contract<'a> {
         Some(match self {
             Self::Declared(declaration) => CallShape::declared(declaration),
             Self::Copy => return None,
-            Self::Required { requirement, .. } => CallShape::required(requirement),
+            Self::Required(requirement) => CallShape::required(requirement),
             Self::Signature(signature) => CallShape {
                 names: &signature.names,
                 required: &signature.required,
@@ -825,8 +822,8 @@ impl<'a> Contract<'a> {
     fn receiver(self, ty: &Ty, declarations: &MirDeclarations) -> Option<Mutability> {
         match self {
             Self::Declared(declaration) => by_address_receiver(declaration, ty, declarations),
-            Self::Required { receiver, .. } => {
-                requirement_by_address_receiver(receiver, ty, declarations)
+            Self::Required(requirement) => {
+                requirement_by_address_receiver(requirement, ty, declarations)
             }
             Self::Signature(_) | Self::Copy => None,
         }
@@ -846,7 +843,7 @@ impl<'a> Contract<'a> {
             Self::Declared(declaration) => {
                 by_address_parameter(declaration, declarations, parameter)
             }
-            Self::Required { requirement, .. } => {
+            Self::Required(requirement) => {
                 requirement_by_address_parameter(requirement, parameter, operand_ty, declarations)
             }
             Self::Copy => by_address(None, false, operand_ty, declarations),
@@ -863,7 +860,7 @@ impl<'a> Contract<'a> {
     fn parameter_ty(self, parameter: usize) -> Option<&'a Ty> {
         match self {
             Self::Declared(declaration) => declaration.param_types.get(parameter),
-            Self::Required { requirement, .. } => requirement.param_types.get(parameter),
+            Self::Required(requirement) => requirement.param_types.get(parameter),
             Self::Signature(signature) => signature.params.get(parameter),
             Self::Copy => None,
         }
@@ -882,7 +879,7 @@ impl<'a> Contract<'a> {
     ) -> Option<&'a Ty> {
         match self {
             Self::Declared(declaration) => by_value_parameter(declaration, declarations, parameter),
-            Self::Required { .. } | Self::Copy => None,
+            Self::Required(_) | Self::Copy => None,
             Self::Signature(signature) => signature_parameter(signature, parameter)
                 .filter(|(convention, reference, ty)| {
                     !reference && by_address(*convention, false, ty, declarations).is_none()
@@ -1096,8 +1093,6 @@ fn bound_call<'i>(
             args,
             kwargs,
             spread: None,
-            recv_writes,
-            receiver_convention,
             refined_bound,
             ..
         } => {
@@ -1110,27 +1105,21 @@ fn bound_call<'i>(
                 .map(Contract::Declared)
                 .or(callable_bound)
                 .or_else(|| {
-                    let requirement = callees.requirement(
-                        callee,
-                        receiver_ty,
-                        refined_bound.as_ref().map(|bound| bound.traits.as_slice()),
-                    )?;
-                    Some(Contract::Required {
-                        requirement,
-                        receiver: *receiver_convention,
-                    })
+                    callees
+                        .requirement(
+                            callee,
+                            receiver_ty,
+                            refined_bound.as_ref().map(|bound| bound.traits.as_slice()),
+                        )
+                        .map(Contract::Required)
                 })?;
             let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
             let parameters = operand_parameters(&contract.shape()?, args.len(), None, &keywords)?;
-            // A requirement call whose receiver convention went unrecorded
-            // but which writes its receiver is left to its place, and a
-            // `def(...)` bound's callee is the address lowering formed.
-            let unrecorded = matches!(contract, Contract::Required { receiver: None, .. })
-                && *recv_writes
-                || matches!(contract, Contract::Signature(_));
+            // A `def(...)` bound's callee is the address lowering formed.
+            let formed = matches!(contract, Contract::Signature(_));
             Some(BoundCall {
                 contract,
-                receiver: (!unrecorded).then_some(*recv),
+                receiver: (!formed).then_some(*recv),
                 operands: operand_list(args, kwargs, &parameters),
             })
         }
@@ -2008,7 +1997,7 @@ fn load_in_blocks(
         let mut loads = Vec::new();
         let by_value =
             bound_call(&block.instrs[index], context.callees, reg_types).and_then(|bound| {
-                if matches!(bound.contract, Contract::Required { .. }) {
+                if matches!(bound.contract, Contract::Required(_)) {
                     return None;
                 }
                 let receiver = bound.receiver.is_some_and(|register| {

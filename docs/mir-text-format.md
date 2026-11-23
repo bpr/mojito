@@ -1398,6 +1398,19 @@ for it. A reader of an older record, or of a bare trait name, gives the
 trait that one binder. The package format moves to `mojito-package 262`
 (R2216): a trait member's recorded signature no longer holds `_Self`.
 
+Schema 1.229 completes a trait requirement's function type after its
+`variadic_convention`, as upstream's trait declares it:
+`receiver_convention`, its receiver's declared convention (`present(var)`
+for `var self`, `present(mut)` for `mut self`, `absent` for a `read`
+one), by which a call through the bound passes, borrows, or consumes its
+receiver as a concrete call does by its callee's declaration;
+`param_decls`, its own compile-time parameters as a `decl` spells them;
+and `return_type`, its result over `Self`. An older requirement reads
+them as `absent`, `[]`, and `NoneType`. The package format moves to
+`mojito-package 264` (R758): a trait's checked method op holds its
+requirement's checked signature, recorded at the trait's method sites,
+and a default no longer holds its own.
+
 Schema 1.228 gives a `struct` record its optional `provided_defaults`, the
 inherited defaults an own member provides, which its methods' overload
 sets count: every inherited default is a stub of its conformer in the

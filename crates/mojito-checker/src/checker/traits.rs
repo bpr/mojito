@@ -431,7 +431,12 @@ impl Checker {
                 if ct_members.contains_key(&m.name) {
                     return Err(TypeError::Redeclaration(m.name.clone()));
                 }
-                let (sig, member) = self.requirement_signature(name, m, index)?;
+                let (sig, member, all_types) = self.requirement_signature(name, m, index)?;
+                // A default records its signature as its trait's member.
+                if m.default_body.is_none() {
+                    let module = module.map(str::to_string);
+                    self.record_method_sites((module.as_ref(), name, index), &all_types, &sig);
+                }
                 let overloads = sigs.entry(m.name.clone()).or_default();
                 if overloads.iter().any(|existing| {
                     same_method_shape(existing, &sig)
@@ -475,9 +480,10 @@ impl Checker {
         Ok(())
     }
 
-    /// Requirement `m` of trait `name`, its `index`-th method, typed, and
-    /// the member symbol it is named by: `Trait.method`, or, when the trait
-    /// overloads the name, the symbol its typed signature spells. An
+    /// Requirement `m` of trait `name`, its `index`-th method, typed, the
+    /// member symbol it is named by — `Trait.method`, or, when the trait
+    /// overloads the name, the symbol its typed signature spells — and each
+    /// declared parameter's type, its collectors' included. An
     /// overload's binders are owned by its declaration-relative owner, so
     /// two overloads whose slots agree still bind distinct parameters, as
     /// [`Self::declared_method_signature`] owns a struct's method's.
@@ -486,30 +492,31 @@ impl Checker {
         name: &str,
         m: &mojito_ast::ast::TraitMethod,
         index: usize,
-    ) -> Result<(MethodSig, String), TypeError> {
+    ) -> Result<(MethodSig, String, Vec<Ty>), TypeError> {
         let (owner_name, method_name) = (binder_owner(name), binder_owner(&m.name));
         let source = format!("{owner_name}.{method_name}");
         if !self
             .overload_sets
             .method_is_overloaded(&source, m.params.len())
         {
-            let sig = self.requirement_signature_owned_by(name, m, &source)?;
-            return Ok((sig, source));
+            let (sig, all_types) = self.requirement_signature_owned_by(name, m, &source)?;
+            return Ok((sig, source, all_types));
         }
         let owner = mojito_symbol::symbol::declaration_owner(&source, index);
-        let sig = self.requirement_signature_owned_by(name, m, &owner)?;
+        let (sig, all_types) = self.requirement_signature_owned_by(name, m, &owner)?;
         let symbol = method_lowered_name(&owner_name, &method_name, &sig, None);
-        Ok((sig, symbol))
+        Ok((sig, symbol, all_types))
     }
 
     /// Requirement `m` of trait `name` typed with `Self` the abstract
-    /// conforming type, its own binders owned by `owner`.
+    /// conforming type, its own binders owned by `owner`, and each declared
+    /// parameter's type.
     fn requirement_signature_owned_by(
         &mut self,
         name: &str,
         m: &mojito_ast::ast::TraitMethod,
         owner: &str,
-    ) -> Result<MethodSig, TypeError> {
+    ) -> Result<(MethodSig, Vec<Ty>), TypeError> {
         let declared = self.classify_param_list(owner, &m.type_params)?;
         super::origins::validate_origin_signature(
             &declared,
@@ -655,7 +662,7 @@ impl Checker {
             nested_origins: NestedOrigins::AsDeclared,
             overload: None,
         };
-        Ok(sig)
+        Ok((sig, all_types))
     }
 
     /// Register a struct and check its method bodies. A generic struct's type
@@ -2885,6 +2892,9 @@ impl Checker {
                                 variadic: sig.variadic.clone(),
                                 kw_variadic: sig.kw_variadic.clone(),
                                 variadic_convention: sig.variadic_convention,
+                                receiver_convention: sig.self_convention,
+                                param_decls: sig.declared.clone(),
+                                return_type: sig.ret.clone(),
                             }
                         })
                         .collect(),

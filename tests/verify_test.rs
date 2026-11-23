@@ -3209,6 +3209,9 @@ fn verifier_rejects_a_drop_of_an_argument_a_bound_call_took() {
                 variadic: None,
                 kw_variadic: None,
                 variadic_convention: None,
+                receiver_convention: None,
+                param_decls: Vec::new(),
+                return_type: Ty::none(),
             }],
         }],
         ..MirDeclarations::default()

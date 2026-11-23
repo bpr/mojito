@@ -2387,6 +2387,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait's checked op holds each requirement's checked signature, recorded
+  at its trait's method sites, as upstream's trait declares each
+  requirement's function type, and a trait requirement's declaration
+  carries its receiver convention, compile-time parameters, and result.
+  A call through a bound now passes, borrows, or consumes its receiver by
+  the requirement's convention in lowering, register ends, and the
+  verifier, so a `var self` operator requirement consumes its left
+  operand instead of being read as borrowing it (R758; MIR schema 1.229,
+  package 264).
+
 - A trait default wrapper adopts its member's evaluated parameter defaults
   from its checked forwarding-call node's instantiated arguments, as
   upstream's wrapper reads its member's signature, instead of matching the

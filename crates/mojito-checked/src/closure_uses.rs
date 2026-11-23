@@ -476,7 +476,7 @@ impl CheckedProgram {
                     &default.body,
                     defaults(&method.params),
                     &default.symbol,
-                    &BinderScope::of(default.signature.argument_binders()),
+                    &BinderScope::of(method.signature.argument_binders()),
                     &HashMap::new(),
                 );
             }

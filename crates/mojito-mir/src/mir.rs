@@ -1276,7 +1276,7 @@ pub fn lower_unit(
                 StructMember {
                     name: &m.name,
                     lowered: default.symbol.clone(),
-                    signature: &default.signature,
+                    signature: &m.signature,
                     params: &m.params,
                     has_self: true,
                     self_convention: m.self_convention,

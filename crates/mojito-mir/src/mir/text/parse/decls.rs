@@ -1016,6 +1016,22 @@ impl Decoder {
                             .ok()
                             .and_then(|value| self.option_value(Some(value)))
                             .and_then(|value| self.convention(value));
+                        // A record before schema 1.229 spells no receiver
+                        // convention, compile-time parameters, or result.
+                        let receiver_convention = self
+                            .field(row_fields, "receiver_convention")
+                            .ok()
+                            .and_then(|value| self.option_value(Some(value)))
+                            .and_then(|value| self.convention(value));
+                        let requirement_decls = self
+                            .field(row_fields, "param_decls")
+                            .map(|value| self.param_decls(value))
+                            .unwrap_or_default();
+                        let return_type = self
+                            .field(row_fields, "return_type")
+                            .ok()
+                            .and_then(|value| self.ty(value))
+                            .unwrap_or_else(Ty::none);
                         self.unknown(
                             row_fields,
                             &[
@@ -1032,6 +1048,9 @@ impl Decoder {
                                 "variadic",
                                 "kw_variadic",
                                 "variadic_convention",
+                                "receiver_convention",
+                                "param_decls",
+                                "return_type",
                             ],
                         );
                         Some(TraitRequirement {
@@ -1048,6 +1067,9 @@ impl Decoder {
                             variadic,
                             kw_variadic,
                             variadic_convention,
+                            receiver_convention,
+                            param_decls: requirement_decls,
+                            return_type,
                         })
                     })
                     .collect()

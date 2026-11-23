@@ -2711,9 +2711,10 @@ else the receiver type parameter's bounds, the one resolver lowering's
 `Callees::requirement` and `register_ends::Callee::resolve` also use, as
 upstream's `lit.call` of `@Trait::method` is verified against the
 requirement's signature: `verify_requirement_call` rejects a value at the
-receiver (`mir::requirement_by_address_receiver`, under the call's recorded
-receiver convention until R758, a receiver-writing call recording none
-left to its place) and at every operand
+receiver (`mir::requirement_by_address_receiver`, under the requirement's
+own `TraitRequirement::receiver_convention`, as lowering's
+`Contract::Required` and `register_ends::Callee::receiver_convention` read
+it) and at every operand
 `mir::requirement_operand_parameters` binds to a parameter
 `mir::requirement_by_address_parameter` takes by address, and operands that
 do not bind the requirement's shape. A generic `for` loop's `__iter__` and
@@ -3333,8 +3334,11 @@ the same `Checker::check_member` as a struct's method, so its body calls any
 module function wherever declared (as at the pin). Its signature is
 recorded at its trait's method sites (`GenericSite::Method`,
 `AnnotationSite::MethodParam`/`MethodReturn`, keyed by the
-trait's name and the method's position), its trait's checked op holds it
-(`CheckedTraitMethod::default`, a `CheckedTraitDefault`), and MIR lowers it
+trait's name and the method's position), where `check_trait` records a
+bodyless requirement's over the abstract `Self`, as upstream's trait
+declares each requirement's function type; its trait's checked op holds
+each as `CheckedTraitMethod::signature` and a default's body as
+`CheckedTraitMethod::default` (a `CheckedTraitDefault`), and MIR lowers it
 through `lower_struct_member` as a method with a receiver
 (`LoweringUnit::TraitMember`, `StructLowering::of_trait`), its receiver
 typed by the trait's binder and its calls on `self` dispatching through the

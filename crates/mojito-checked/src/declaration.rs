@@ -572,6 +572,9 @@ impl TraitDeclaration {
                             variadic: None,
                             kw_variadic: None,
                             variadic_convention: None,
+                            receiver_convention: None,
+                            param_decls: Vec::new(),
+                            return_type: Ty::self_type(),
                         })
                         .into_iter()
                         .collect(),
@@ -615,6 +618,14 @@ pub struct TraitRequirement {
     /// The positional collector's convention, which makes it an owned
     /// `VariadicList` when `var`.
     pub variadic_convention: Option<ArgConvention>,
+    /// Its receiver's declared convention (`var self`, `mut self`), `None`
+    /// for a `read` one, by which a call through a bound passes, borrows,
+    /// or consumes its receiver as a concrete call does by its callee's.
+    pub receiver_convention: Option<ArgConvention>,
+    /// Its own compile-time parameters, the whole declared list.
+    pub param_decls: Vec<ParamDecl>,
+    /// Its result type, `Self` spelled `TyKind::SelfType`.
+    pub return_type: Ty,
 }
 
 /// A struct's explicit-destruction obligation, apart from its destructors,

@@ -777,12 +777,6 @@ fn verify_accessor_operands(
     ) {
         let operands =
             crate::mir::subscript_requirement_operand_parameters(instruction, requirement);
-        verify_requirement_call(
-            cx,
-            requirement,
-            Some((receiver, call.receiver_convention)),
-            operands.as_deref(),
-            errors,
-        );
+        verify_requirement_call(cx, requirement, receiver, operands.as_deref(), errors);
     }
 }

@@ -256,6 +256,15 @@ fn write_artifact_head(
                                         "variadic_convention",
                                         option(requirement.variadic_convention.map(convention)),
                                     ),
+                                    (
+                                        "receiver_convention",
+                                        option(requirement.receiver_convention.map(convention)),
+                                    ),
+                                    (
+                                        "param_decls",
+                                        list(requirement.param_decls.iter().map(param_decl)),
+                                    ),
+                                    ("return_type", ty_value(&requirement.return_type)),
                                 ],
                             )
                         })),

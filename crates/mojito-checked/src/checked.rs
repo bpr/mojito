@@ -3193,6 +3193,11 @@ pub struct CheckedTrait {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitMethod {
     pub name: String,
+    /// Its checked signature at its trait's method sites, as upstream's
+    /// trait declares each requirement's function type: over the abstract
+    /// `Self` for a requirement, over the trait's `_Self` binder (the one
+    /// its receiver binds) for a default.
+    pub signature: CheckedSignature,
     pub self_convention: Option<ArgConvention>,
     pub params: Vec<CheckedFnParam>,
     pub positional_only: Option<usize>,
@@ -3232,13 +3237,11 @@ impl CheckedTraitMethod {
     }
 }
 
-/// A trait default as its trait's method: the member symbol it lowers to,
-/// its signature at its trait's method sites, over the trait's `Self` (the
-/// `_Self` binder its receiver binds), and its body.
+/// A trait default as its trait's method: the member symbol it lowers to
+/// and its body; its signature is its method's.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitDefault {
     pub symbol: String,
-    pub signature: CheckedSignature,
     pub body: Vec<CheckedStmtId>,
     /// The level its inline decorator names.
     pub inline: crate::declaration::InlineLevel,
@@ -6978,6 +6981,12 @@ impl<'a> ArenaBuilder<'a> {
                     .enumerate()
                     .map(|(index, method)| CheckedTraitMethod {
                         name: method.name.clone(),
+                        signature: self.signatures.method(
+                            statement.module.as_ref(),
+                            name,
+                            index,
+                            method.params.len(),
+                        ),
                         self_convention: method.self_convention,
                         params: self.fn_params(&method.params),
                         positional_only: method.positional_only,
@@ -6989,12 +6998,6 @@ impl<'a> ArenaBuilder<'a> {
                             .as_ref()
                             .map(|body| CheckedTraitDefault {
                                 symbol: self.method_symbol(statement, name, index, &method.name),
-                                signature: self.signatures.method(
-                                    statement.module.as_ref(),
-                                    name,
-                                    index,
-                                    method.params.len(),
-                                ),
                                 body: self.function_body(body),
                                 inline: crate::declaration::InlineLevel::of(&method.decorators)
                                     .unwrap_or_default(),
