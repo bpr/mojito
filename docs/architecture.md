@@ -3377,8 +3377,8 @@ defaults are its member's, held once by the member's lowered declaration,
 as upstream's wrapper takes them from `getTraitFunctionSignature`: MIR's
 `adopt_member_defaults` copies them onto the wrapper's declaration once the
 package is attached, an evaluated default applied to the wrapper's
-instantiation of the member (`CheckedConst::Evaluate::arguments`, which its
-forwarding call records), so the elaborator binds the member's default
+instantiation of the member (`CheckedConst::Evaluate::arguments`, read off its
+checked forwarding-call node's `InstantiatedArguments` adjustment), so the elaborator binds the member's default
 function from the wrapper's binders. Defaults are
 inherited per overload; an explicit struct method suppresses the default of
 its own parameter shape (upstream suppresses only by satisfaction, R570), and

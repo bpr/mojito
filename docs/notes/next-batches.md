@@ -164,7 +164,6 @@ defaults and forwarding calls by syntax.
 - R758 gives a requirement its checked signature. That fixes a
   convention misread that R1329's register drops would turn into a
   double destroy.
-- R640 reads the wrapper's call node instead of a span-keyed lookup.
 - R769 plans materializing a requirement's default at the call, which
   replaces a syntax rewrite and a second check pass.
 

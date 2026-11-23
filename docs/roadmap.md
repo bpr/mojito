@@ -10762,22 +10762,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R640 A trait default wrapper's forwarding call is found by its
-  syntax and its instantiation by span**
-
-  `member_defaults` (`mir.rs`) matches the wrapper body's `Return`/`Expr`
-  syntax for the forwarding call, then looks its
-  `GenericInstantiation` up in the span-keyed
-  `CheckedProgram::generic_instantiations()`.
-  - Upstream's wrapper reads its member's signature; the call's
-    instantiated arguments are its node's `InstantiatedArguments`
-    adjustment, reachable through the wrapper's checked statement.
-  - Done when `member_defaults` reads the call node and no MIR code calls
-    `generic_instantiations()`.
-  - Found while landing R619 (2026-10-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2197 An owned heterogeneous collector is the tuple of its
   elements' values, where upstream's is an owned `VariadicPack` of their
   references**

@@ -2387,6 +2387,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait default wrapper adopts its member's evaluated parameter defaults
+  from its checked forwarding-call node's instantiated arguments, as
+  upstream's wrapper reads its member's signature, instead of matching the
+  wrapper's body syntax and a span-keyed instantiation table.
+
 - Whether a conformer's own method suppresses an inherited trait default,
   and whether two inherited defaults conflict, is decided from resolved
   signatures when the struct's signatures register, as upstream filters its

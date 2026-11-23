@@ -20,7 +20,7 @@
 //! `xs[i] += e` lower uniformly (indices evaluated once).
 
 use mojito_ast::ast::DeclaredParam;
-use mojito_ast::ast::{ArgConvention, Dtype, InfixOp, ParamKind, PrefixOp, StmtKind};
+use mojito_ast::ast::{ArgConvention, Dtype, InfixOp, ParamKind, PrefixOp};
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
 use mojito_checked::checked::{
@@ -5814,8 +5814,8 @@ fn adopt_member_defaults(
     declarations: &mut MirDeclarations,
     invariant_errors: &mut Vec<String>,
 ) {
-    for wrapper in checked.default_wrappers() {
-        match member_defaults(checked, declarations, wrapper) {
+    for (index, wrapper) in checked.default_wrappers().iter().enumerate() {
+        match member_defaults(checked, declarations, wrapper, index) {
             Ok((defaults, required)) => {
                 if let Some(declaration) = declarations
                     .functions
@@ -5835,11 +5835,14 @@ fn adopt_member_defaults(
 }
 
 /// The defaults and required flags `wrapper` adopts from its member's
-/// declaration, its trait's method over the same parameters.
+/// declaration, its trait's method over the same parameters. The member's
+/// instantiation is its forwarding call node's `InstantiatedArguments`, the
+/// call wrapper `index`'s first checked statement makes.
 fn member_defaults(
     checked: &CheckedProgram,
     declarations: &MirDeclarations,
     wrapper: &mojito_checked::checked::CheckedDefaultWrapper,
+    index: usize,
 ) -> Result<(Vec<Option<CheckedConst>>, Vec<bool>), String> {
     let own = declarations
         .function(&wrapper.lowered_name)
@@ -5856,18 +5859,28 @@ fn member_defaults(
             own.param_names, member.param_names
         ));
     }
-    let call = wrapper
-        .body
+    let tables = checked.tables();
+    let call = tables
+        .wrapper_roots(index)
         .first()
-        .and_then(|statement| match &statement.kind {
-            StmtKind::Return(Some(call)) | StmtKind::Expr(call) => Some(call),
+        .and_then(|&root| tables.statement(root))
+        .and_then(|statement| match statement.op {
+            CheckedStmtOp::Return(Some(call)) | CheckedStmtOp::Expr(call) => {
+                tables.expression(call)
+            }
             _ => None,
         })
         .ok_or("its body is not one forwarding call")?;
-    let instantiation = checked
-        .method_instantiations()
-        .get(&call.source_span())
-        .map_or(&[][..], |instantiation| &instantiation.arguments[..]);
+    let instantiation = call
+        .adjustments
+        .iter()
+        .find_map(|adjustment| match adjustment {
+            mojito_checked::checked::SemanticAdjustment::InstantiatedArguments(arguments) => {
+                Some(&arguments[..])
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
     // The trait's `_Self` is the wrapper's struct, whose `Self` its
     // receiver is.
     let trait_self = mojito_symbol::symbol::split_method_symbol(&wrapper.member)
