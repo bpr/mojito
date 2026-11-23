@@ -31,6 +31,9 @@ impl Checker {
         // An importer's own statements add to its own sets, which a name
         // they miss falls through to the package's.
         std::sync::Arc::make_mut(&mut self.overload_sets).scan_more(stmts);
+        // Every inherited default is a stub of its conformer from here on,
+        // ahead of every declaration a name's overload set decides.
+        self.default_wrappers = self.plan_default_wrappers(stmts)?;
         for statement in stmts {
             if let StmtKind::Def { name, .. } = &statement.kind {
                 self.module_def_owner(name, statement.source_span());
@@ -44,7 +47,6 @@ impl Checker {
         // A module integer constant folds once, ahead of every declaration
         // whose symbol spells it.
         self.fold_module_constants(stmts);
-        self.default_wrappers = self.plan_default_wrappers(stmts)?;
         let applicable =
             super::comptime_validation::applicable_functions(stmts, &*self.overload_sets);
         self.applicable_functions.extend(applicable);
@@ -4491,6 +4493,7 @@ impl Checker {
                 fieldwise_init: false,
                 explicit_destroy_message: None,
                 explicit_destructors: HashMap::new(),
+                provided_defaults: Vec::new(),
                 materializes_to: None,
             },
         );
@@ -4544,6 +4547,7 @@ impl Checker {
             fieldwise_init: false,
             explicit_destroy_message: None,
             explicit_destructors: HashMap::new(),
+            provided_defaults: Vec::new(),
             materializes_to: None,
         });
         name

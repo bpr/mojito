@@ -586,10 +586,9 @@ impl Checker {
                             .and_then(|target| {
                                 let instance = self.self_instance_ty(name);
                                 signatures.iter().find(|signature| {
-                                    super::super::overload_support::constructor_symbol(
+                                    super::super::overload_support::selected_method_symbol(
                                         name,
                                         "__init__",
-                                        signatures.len() > 1,
                                         signature,
                                         instance.as_ref(),
                                     ) == target

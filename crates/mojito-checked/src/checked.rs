@@ -5001,6 +5001,11 @@ pub struct DiscoveryResult {
     /// Each struct's named destructors (`deinit self` methods), by struct,
     /// beside whether each raises; a struct declaring none has no entry.
     pub struct_destructors: HashMap<String, HashMap<String, bool>>,
+    /// Each struct's inherited trait defaults one of its own members
+    /// provides, by struct, each method name and declared arity
+    /// ([`crate::declaration::StructDeclaration::provided_defaults`]); a
+    /// struct with none has no entry.
+    pub provided_defaults: HashMap<String, Vec<(String, usize)>>,
     /// Each of the program's own structs' declaring module path, by struct.
     pub struct_modules: HashMap<String, String>,
     pub conformances: ConformanceFacts,
@@ -5045,6 +5050,7 @@ pub struct CheckedProgram {
     tables: Arc<CheckedTables>,
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     struct_destructors: HashMap<String, HashMap<String, bool>>,
+    provided_defaults: HashMap<String, Vec<(String, usize)>>,
     struct_modules: HashMap<String, String>,
     conformances: ConformanceFacts,
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
@@ -5451,6 +5457,7 @@ impl CheckedProgram {
             declaration_effects,
             explicit_destroy_types,
             struct_destructors,
+            provided_defaults,
             struct_modules,
             conformances,
             overloads,
@@ -5526,6 +5533,7 @@ impl CheckedProgram {
             tables: Arc::new(tables),
             explicit_destroy_types,
             struct_destructors,
+            provided_defaults,
             struct_modules,
             conformances,
             declaration_effects,
@@ -5595,6 +5603,7 @@ impl CheckedProgram {
             tables: Arc::new(tables),
             explicit_destroy_types: HashMap::new(),
             struct_destructors: HashMap::new(),
+            provided_defaults: HashMap::new(),
             struct_modules: HashMap::new(),
             conformances: ConformanceFacts::default(),
             declaration_effects,
@@ -5742,6 +5751,12 @@ impl CheckedProgram {
     /// Each struct's named destructors, beside whether each raises.
     pub const fn struct_destructors(&self) -> &HashMap<String, HashMap<String, bool>> {
         &self.struct_destructors
+    }
+
+    /// Each struct's inherited trait defaults one of its own members
+    /// provides, each method name and declared arity.
+    pub const fn provided_defaults(&self) -> &HashMap<String, Vec<(String, usize)>> {
+        &self.provided_defaults
     }
 
     /// Each of the program's own structs' declaring module path

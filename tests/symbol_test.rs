@@ -809,38 +809,6 @@ fn collector_position_is_part_of_callable_identity() {
     );
 }
 
-#[test]
-fn variadic_key_spells_a_collectors_position_and_pack_bounds() {
-    use mojito::ast::StmtKind;
-    use mojito::symbol::VariadicKey;
-
-    let program = parse(
-        "def f[*Ts: Writable](a: Int, *rest: *Ts):\n    pass\n\n\
-         def f[*Ts: Writable](*rest: *Ts, a: Int):\n    pass\n\n\
-         def f[*Ts: Intable](a: Int, *rest: *Ts):\n    pass\n\n\
-         def f[*Ts: Writable](b: Int, var *others: *Ts):\n    pass\n\n\
-         def f(a: Int):\n    pass\n",
-    )
-    .expect("parse error");
-    let keys: Vec<_> = program
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            StmtKind::Def {
-                params,
-                type_params,
-                ..
-            } => Some(VariadicKey::from_ast_params(params, type_params)),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(keys[0].as_ref().map(VariadicKey::position), Some(1));
-    assert_eq!(keys[1].as_ref().map(VariadicKey::position), Some(0));
-    assert_ne!(keys[0], keys[1], "position");
-    assert_ne!(keys[0], keys[2], "pack bounds");
-    assert_eq!(keys[0], keys[3], "name and convention are not identity");
-    assert_eq!(keys[4], None);
-}
-
 /// Every concrete specialization value keeps its encoding byte for byte, the
 /// erased-origin marker is an explicit key part, and a residual or deferred
 /// value anywhere in a key's input refuses the key instead of being dropped
@@ -1250,28 +1218,10 @@ fn a_package_answers_a_function_name_prefix_from_its_by_name_table() {
 }
 
 #[test]
-fn an_applied_type_operand_mangles_as_the_type_it_spells() {
-    // A bracket operand parses as an expression; `List[Pair[Int]]` keys the
-    // same as the type argument it spells.
-    use mojito::ast::{Expr, ExprKind, ParamArg, Type};
+fn an_applied_type_argument_mangles_as_the_type_it_names() {
     use mojito::symbol::TypeKey;
-    let pair = || {
-        ParamArg::Type(Type::Named(
-            "Pair".into(),
-            vec![ParamArg::Type(Type::Named("Int".into(), vec![]))],
-        ))
-    };
-    let spelled = Type::Named("List".into(), vec![pair()]);
-    let parsed = Type::Named(
-        "List".into(),
-        vec![ParamArg::Value(Expr::from(ExprKind::Index {
-            object: Box::new(Expr::from(ExprKind::Identifier("Pair".into()))),
-            index: Box::new(Expr::from(ExprKind::TypeValue(Type::Named(
-                "Int".into(),
-                vec![],
-            )))),
-        }))],
-    );
-    assert_eq!(TypeKey::from_ast(&parsed), TypeKey::from_ast(&spelled));
-    assert_eq!(TypeKey::from_ast(&parsed).as_str(), "List$Pair$Int");
+    use mojito::{Ty, TyArg, TyKind};
+    let pair = Ty::new(TyKind::Struct("Pair".into(), vec![TyArg::Ty(Ty::int())]));
+    let list = Ty::new(TyKind::Struct("List".into(), vec![TyArg::Ty(pair)]));
+    assert_eq!(TypeKey::from_ty(&list).as_str(), "List$Pair$Int");
 }

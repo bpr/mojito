@@ -507,7 +507,7 @@ impl Checker {
                     }),
                     mutates_receiver: false,
                     consumes_receiver: false,
-                    lowered_name: if signatures.len() > 1 {
+                    lowered_name: if sig.overload.is_some() {
                         Some(method_lowered_name(
                             sname,
                             method,

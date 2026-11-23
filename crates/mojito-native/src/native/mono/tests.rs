@@ -3264,8 +3264,10 @@ fn a_printed_member_is_one_reduced_instance() {
     );
     let instances = functions_naming(&specialized, "W.write_to");
     assert_eq!(instances.len(), 1, "{instances:?}");
+    // `write_to` is overloaded with the stub of `Writable`'s default it
+    // provides, so its symbol spells its signature before the reduction.
     assert!(
-        instances[0].starts_with("W.write_to$REMOVED$ARG$mono"),
+        instances[0].starts_with("W.write_to$ov$") && instances[0].contains("$REMOVED$ARG$mono"),
         "{instances:?}"
     );
 }

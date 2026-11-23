@@ -2387,6 +2387,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Whether a conformer's own method suppresses an inherited trait default,
+  and whether two inherited defaults conflict, is decided from resolved
+  signatures when the struct's signatures register, as upstream filters its
+  default stubs, instead of from the annotations' spelling: every inherited
+  default is a stub of its conformer in the overload prescan, a stub an own
+  member provides drops (binders compared by position, `Some[Trait]` as its
+  anonymous binder), and the struct's declaration records it
+  (`StructDeclaration::provided_defaults`) so a package's overload sets
+  count it. A method sharing a default's name is therefore an overload and
+  its symbol spells its signature (`S.write_to$ov$…`), and every call names
+  a method from its registered overload qualifier. The AST overload-key
+  family (`TypeKey::from_ast`, `SignatureKey::from_ast_params`,
+  `symbol::ModuleNames`) is gone with the module type-alias spellings that
+  fed it (R2217). MIR schema 1.228; the package format moves to
+  `mojito-package 263`.
+
 - A trait's `_Self` is the trait's own compile-time parameter, as upstream
   declares it, not each default's: `TraitDeclaration::param_decls` holds
   `_Self` (owner the trait, slot 0), a trait member's declaration lists no

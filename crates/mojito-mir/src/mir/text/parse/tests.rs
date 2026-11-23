@@ -1864,6 +1864,7 @@ fn declaration_metadata_reprints_byte_identically() {
             constraints: Vec::new(),
         }],
         explicit_destructors: HashMap::from([("_finish".into(), true), ("__del__".into(), false)]),
+        provided_defaults: Vec::new(),
         explicit_destroy: Some(mojito_checked::declaration::ExplicitDestroyObligation {
             message: "explicit destroy required".into(),
             declared: true,
@@ -1984,6 +1985,7 @@ fn declaration_metadata_reprints_byte_identically() {
         fieldwise_init: false,
         param_decls: Vec::new(),
         explicit_destructors: HashMap::new(),
+        provided_defaults: Vec::new(),
         explicit_destroy: None,
         conformances: Vec::new(),
         declared: Vec::new(),
@@ -3127,6 +3129,7 @@ fn older_struct_instances_gain_their_mutability_arguments() {
         fieldwise_init: false,
         param_decls: vec![mutability.clone(), origin],
         explicit_destructors: HashMap::new(),
+        provided_defaults: Vec::new(),
         explicit_destroy: None,
         conformances: Vec::new(),
         declared: Vec::new(),
@@ -5551,6 +5554,7 @@ fn an_artifact_older_than_1_214_declares_its_closure_storage_origins() {
         fieldwise_init: true,
         param_decls: vec![binder.clone()],
         explicit_destructors: HashMap::new(),
+        provided_defaults: Vec::new(),
         explicit_destroy: None,
         conformances: Vec::new(),
         declared: Vec::new(),
@@ -5591,6 +5595,7 @@ fn ref_field_program() -> MirProgram {
         fieldwise_init: false,
         param_decls: Vec::new(),
         explicit_destructors: HashMap::new(),
+        provided_defaults: Vec::new(),
         explicit_destroy: None,
         conformances: Vec::new(),
         declared: Vec::new(),
@@ -5619,6 +5624,29 @@ fn struct_ref_fields_name_only_the_declared_ref_field() {
         .structure("Holder")
         .expect("Holder");
     assert_eq!(holder.ref_fields, vec!["view".to_string()]);
+    assert_reprints(&program);
+}
+
+#[test]
+fn struct_provided_defaults_round_trip() {
+    let mut program = ref_field_program();
+    program.declarations.structs[0].provided_defaults =
+        vec![("write_to".into(), 1), ("__ne__".into(), 1)];
+    let text = write::program(&program);
+    assert!(
+        text.contains("provided_defaults: [provided_default { name: write_to, arity: 1 }"),
+        "{text}"
+    );
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let holder = parsed
+        .program
+        .declarations
+        .structure("Holder")
+        .expect("Holder");
+    assert_eq!(
+        holder.provided_defaults,
+        vec![("write_to".to_string(), 1), ("__ne__".to_string(), 1)]
+    );
     assert_reprints(&program);
 }
 

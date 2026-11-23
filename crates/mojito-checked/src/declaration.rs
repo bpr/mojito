@@ -44,6 +44,13 @@ pub struct StructDeclaration {
     /// whether each raises.
     #[serde(serialize_with = "sorted_map")]
     pub explicit_destructors: HashMap<String, bool>,
+    /// The inherited trait defaults one of the struct's own members
+    /// provides, each method name and declared arity, in the order they
+    /// are reached: the stubs upstream's struct declares for its defaults
+    /// and drops once its signatures resolve, which its methods' overload
+    /// sets count ([`declared_overloads`]).
+    #[serde(default)]
+    pub provided_defaults: Vec<(String, usize)>,
     /// The struct's explicit-destruction obligation, when it is not
     /// `Deinitable`.
     pub explicit_destroy: Option<ExplicitDestroyObligation>,
@@ -1001,6 +1008,15 @@ pub fn declared_overloads(
             })
         })
         .collect();
+    let provided: Vec<(String, usize)> = structs
+        .iter()
+        .flat_map(|declaration| {
+            declaration
+                .provided_defaults
+                .iter()
+                .map(|(method, arity)| (format!("{}.{method}", declaration.name), *arity))
+        })
+        .collect();
     let is_trait = |owner: &str| traits.iter().any(|declaration| declaration.name == owner);
     OverloadSets::declared(
         functions
@@ -1017,6 +1033,7 @@ pub fn declared_overloads(
             .chain(
                 requirements
                     .iter()
+                    .chain(&provided)
                     .map(|(name, arity)| (OverloadFamily::Method(name), *arity)),
             ),
         structs
@@ -1074,6 +1091,7 @@ mod tests {
                 })
                 .collect(),
             explicit_destructors: HashMap::new(),
+            provided_defaults: Vec::new(),
             explicit_destroy: None,
             conformances: Vec::new(),
             declared: Vec::new(),

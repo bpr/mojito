@@ -129,12 +129,6 @@ impl Checker {
                 self.module_values.insert(name.clone(), vector);
                 continue;
             }
-            // A module type alias spells, in every declaration symbol, as
-            // the type it names.
-            if let Some(spelling) = module_alias_spelling(value) {
-                std::sync::Arc::make_mut(&mut self.program_constants)
-                    .declare_type_alias(name.clone(), spelling);
-            }
             match self.closed_module_constant(value) {
                 // An `Int` annotation converts the literal: the constant is
                 // the `Int`, which every compile-time read folds with `Int`'s
@@ -7751,21 +7745,6 @@ fn simd_construction(
             }
         })?;
     Ok(CtValue::Simd { dtype, lanes })
-}
-
-/// The type a module `comptime` bound to `value` spells, when `value` is
-/// written as a type (`Int`, `SIMD[DType.uint64, 4]`, `AHasher[U256(0)]`, a
-/// KGEN type): the spelling a declaration symbol reads the alias as.
-fn module_alias_spelling(value: &Expr) -> Option<SourceType> {
-    if super::reflection::spells_reflection_handle(value) {
-        return None;
-    }
-    match assoc_body_source_type(value).ok()? {
-        SourceType::SelfType | SourceType::SelfParam(_) | SourceType::IndexedProjection { .. } => {
-            None
-        }
-        spelling => Some(spelling),
-    }
 }
 
 /// Whether a generator's body names no parameter but its own.

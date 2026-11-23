@@ -356,9 +356,14 @@ fn instance_members_are_instantiated_from_their_templates() {
         .iter()
         .map(|(name, _)| name)
         .collect();
+    // `write_repr_to` is overloaded with the stub of `Writable`'s default
+    // it provides, so its symbol spells its signature.
     for template in ["Box.__len__", "Box.__eq__", "Box.write_repr_to"] {
         assert!(
-            parametric.iter().any(|name| *name == template),
+            parametric.iter().any(|name| {
+                name.strip_prefix(template)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with(mojito::symbol::OV_SEP))
+            }),
             "MIR keeps the template {template}: {parametric:?}"
         );
     }

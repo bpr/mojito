@@ -72,9 +72,6 @@ pub struct InterfaceExport {
     transfer_effects: Vec<(String, Vec<mojito_checked::checked::TransferEffect>)>,
     /// Their call-through effects, likewise.
     call_through_effects: Vec<(String, Vec<mojito_checked::checked::CallThroughEffect>)>,
-    /// The spelling of the type each library module type alias names,
-    /// which its lowered part holds for an importer's symbols to spell.
-    type_aliases: Vec<(String, SourceType)>,
 }
 
 impl std::fmt::Debug for InterfaceExport {
@@ -150,11 +147,6 @@ impl InterfaceExport {
             constants
                 .into_iter()
                 .filter_map(|(name, value)| records.place_constant(&name, value).err()),
-        );
-        unplaced.extend(
-            self.type_aliases
-                .into_iter()
-                .filter_map(|(name, spelling)| records.place_type_alias(&name, spelling).err()),
         );
         unplaced.extend(
             self.call_through_effects
@@ -906,7 +898,6 @@ impl Checker {
             declaring: modules,
             transfer_effects,
             call_through_effects,
-            type_aliases: self.program_constants.own_type_aliases(),
         })
     }
 
@@ -1191,6 +1182,7 @@ impl DeclarationInterface {
             info.fieldwise_init = false;
             info.explicit_destroy_message = None;
             info.explicit_destructors = HashMap::new();
+            info.provided_defaults = Vec::new();
             self.projected_structs.push(ProjectedStruct {
                 name: name.clone(),
                 methods,
@@ -1274,6 +1266,8 @@ impl DeclarationInterface {
             info.fieldwise_init = declaration.fieldwise_init;
             info.explicit_destructors
                 .clone_from(&declaration.explicit_destructors);
+            info.provided_defaults
+                .clone_from(&declaration.provided_defaults);
             if let Some(obligation) = declaration.explicit_destroy_info() {
                 info.explicit_destroy_message =
                     obligation.declared.then(|| obligation.message.clone());
@@ -1488,6 +1482,10 @@ fn struct_projection_differs(
         (
             "destructors",
             sorted(&info.explicit_destructors) == sorted(&declaration.explicit_destructors),
+        ),
+        (
+            "provided defaults",
+            info.provided_defaults == declaration.provided_defaults,
         ),
         (
             "explicit-destruction obligation",
@@ -2105,6 +2103,7 @@ mod tests {
             fieldwise_init: false,
             explicit_destroy_message: None,
             explicit_destructors: HashMap::new(),
+            provided_defaults: Vec::new(),
             materializes_to: None,
         };
         let declaration = StructDeclaration {
@@ -2115,6 +2114,7 @@ mod tests {
             fieldwise_init: false,
             param_decls: Vec::new(),
             explicit_destructors: HashMap::new(),
+            provided_defaults: Vec::new(),
             explicit_destroy: None,
             conformances: Vec::new(),
             declared: Vec::new(),

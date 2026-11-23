@@ -1367,6 +1367,7 @@ mod tests {
                     fieldwise_init: false,
                     param_decls: Vec::new(),
                     explicit_destructors: HashMap::new(),
+                    provided_defaults: Vec::new(),
                     explicit_destroy: None,
                     conformances: Vec::new(),
                     declared: Vec::new(),

@@ -1398,6 +1398,16 @@ for it. A reader of an older record, or of a bare trait name, gives the
 trait that one binder. The package format moves to `mojito-package 262`
 (R2216): a trait member's recorded signature no longer holds `_Self`.
 
+Schema 1.228 gives a `struct` record its optional `provided_defaults`, the
+inherited defaults an own member provides, which its methods' overload
+sets count: every inherited default is a stub of its conformer in the
+check's overload prescan, so a spelled method sharing a default's name is
+an overload and its symbol spells its signature (`S.write_to$ov$…`). The
+package format moves to `mojito-package 263` (R2217): a struct's checker
+residue no longer leaves its overload sets to its spelled methods alone, a
+trait's `DefaultShape` holds no syntactic overload key, and a module type
+alias's lowered part no longer records its spelling.
+
 The package format moves to `mojito-package 261` (R2215): a trait's
 checker residue records each default's signature as its trait's method
 (`DefaultShape::signature`, over the member's `_Self` binder) in place of
@@ -1979,7 +1989,12 @@ symbol }`, sorted by name. A `Deinitable` struct's message is `absent`, its
 `explicit_destroy_declared` `false`, and its `explicit_destroy_fields`
 empty. Schema 1.41 added the last two fields and widened
 `explicit_destructors` to every struct; a 1.40 or older artifact reads as
-undeclared with no obligated field. `associated_types` contains
+undeclared with no obligated field. `provided_defaults` (schema 1.228,
+written only when non-empty) lists `provided_default { name: symbol,
+arity: N }` records, in the order the struct reaches them: each inherited
+trait default an own member provides, the stub upstream's struct declares
+and drops once its signatures resolve, which the struct's method overload
+sets still count. `associated_types` contains
 `associated_type { name: symbol, type: type }` records sorted by name,
 `parameterized_associated_types` the minor-46 records sorted by name, and
 `associated_values` contains `associated_value { name: symbol, value:

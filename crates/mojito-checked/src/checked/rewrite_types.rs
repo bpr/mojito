@@ -57,6 +57,7 @@ impl CheckedProgram {
             tables,
             explicit_destroy_types: _,
             struct_destructors: _,
+            provided_defaults: _,
             struct_modules: _,
             conformances,
             declaration_effects,

@@ -733,7 +733,6 @@ impl Checker {
                 method.name != "__deinit__" && method.self_convention == Some(ArgConvention::Deinit)
             })
             .map(|method| (method.name.clone(), method.raises))
-            .chain(self.inherited_destructors(declaration))
             .collect::<HashMap<_, _>>();
         self.structs.insert(
             name.to_string(),
@@ -788,6 +787,7 @@ impl Checker {
                 fieldwise_init: declaration.fieldwise_init,
                 explicit_destroy_message,
                 explicit_destructors,
+                provided_defaults: Vec::new(),
                 materializes_to: None,
             },
         );

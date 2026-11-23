@@ -148,9 +148,7 @@ impl Checker {
                     let self_ty = self.self_instance_ty(name);
                     signatures.iter().any(|sig| {
                         !sig.has_self
-                            && (signatures.len() == 1
-                                || method_lowered_name(name, method, sig, self_ty.as_ref())
-                                    == target)
+                            && selected_method_symbol(name, method, sig, self_ty.as_ref()) == target
                     })
                 })
             }),

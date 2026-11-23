@@ -397,6 +397,19 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                 ),
             ));
         }
+        // Schema 1.228 lists the inherited defaults an own member provides,
+        // written only when the struct has one.
+        if !declaration.provided_defaults.is_empty() {
+            entries.push((
+                "provided_defaults",
+                list(declaration.provided_defaults.iter().map(|(method, arity)| {
+                    record(
+                        "provided_default",
+                        &[("name", symbol(method)), ("arity", arity.to_string())],
+                    )
+                })),
+            ));
+        }
         // Schema 1.225 names the fields declared `ref`, written only when
         // the struct declares one.
         if !declaration.ref_fields.is_empty() {

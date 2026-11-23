@@ -2463,13 +2463,7 @@ impl Checker {
             .transpose()?
             .unwrap_or(mojito_checked::checked::OmittedSliceOperand { conversion: None });
         let instance = self.self_instance_ty(name);
-        let constructor = constructor_symbol(
-            name,
-            "__init__",
-            constructors.len() > 1,
-            signature,
-            instance.as_ref(),
-        );
+        let constructor = selected_method_symbol(name, "__init__", signature, instance.as_ref());
         // The initializer's declared result is the struct at its own
         // parameters, as a construction's is judged.
         let indirect_result = self.memory_only(instance.as_ref().unwrap_or(target));

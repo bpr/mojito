@@ -1050,6 +1050,7 @@ fn lower_closure_storage(
         fieldwise_init: true,
         param_decls: storage.param_decls.clone(),
         explicit_destructors: HashMap::new(),
+        provided_defaults: Vec::new(),
         explicit_destroy: None,
         conformances: [
             ("Copyable", copyable),

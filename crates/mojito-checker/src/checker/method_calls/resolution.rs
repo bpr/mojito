@@ -447,7 +447,7 @@ impl Checker {
                     ),
                     lowered_name: if let Some(member) = member {
                         Some(member.to_string())
-                    } else if overloaded {
+                    } else if sig.overload.is_some() {
                         Some(method_lowered_name(
                             sname,
                             method,

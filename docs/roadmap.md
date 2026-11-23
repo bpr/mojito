@@ -4931,9 +4931,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   default's wrapper beside `S.f` and rejects only a call of either as
   ambiguous, while Mojito reports "struct 'S' method 'f' does not match
   the signature required by trait 'T'".
-  - Mojito suppresses a default by its parameter shape
-    (`trait_defaults::inherited_defaults`), upstream by satisfaction
-    (`filterOverloadSetForValueType`).
+  - Mojito suppresses a default by its resolved parameter shape
+    (`Checker::register_default_wrappers`, `same_resolved_shape`),
+    upstream by satisfaction (`filterOverloadSetForValueType`).
+  - Probe, the other direction: `StringSpan.__ne__(self, rhs: StringSpan)`
+    takes any origin, so it satisfies `Equatable`'s `__ne__(self, other:
+    Self, /)`, yet its shape differs, so `StringSpan` keeps the default's
+    wrapper beside it (`a != b` gives the same answer either way).
   - Keeping both needs two methods of one parameter shape on one struct,
     whose symbols collide: `SignatureKey` carries no result type, and the
     `OverloadSets` prescan keys a name by arity.
@@ -10203,10 +10207,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Origin`-spelled slot (every struct's but `Pointer`'s, R1156), while an alias-typed one (`[o: O]` over
     `comptime O = Origin`) gains upstream's implicit `mut` and
     `_mlir_origin` binders, so the two spellings differ before the check.
-  - `mojito-symbol`'s `func_annotation_raw` and
-    `syntactic_origin_argument` read the same spelling for the AST
-    `OverloadKey` of a `def[...]` annotation; they go with R570.
-  - Once both go, the parser drops its `Origin[mut=…]` special case
+  - Once it goes, the parser drops its `Origin[mut=…]` special case
     (`parser/types.rs`) and `TypeParam::origin_mutability`, taking
     `TypeParam::{is_erased_origin_param, is_origin_mutability_binder}`
     with it, and `TypeParam::annotation` collapses to `value_type`.
@@ -10701,30 +10702,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1284 (2026-11-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R2217 A trait default's overload key is still spelled from syntax**
-
-  Whether a conformer's own method suppresses an inherited default, or two
-  inherited defaults conflict, is decided by `trait_defaults::overload_key`,
-  which spells each parameter annotation through
-  `SignatureKey::from_ast_params` → `TypeKey::from_ast` → `symbol::ast_raw`;
-  upstream decides it from the requirement's resolved signature against the
-  conformer's registered method.
-  - `symbol::value_expr_raw` spells any annotation value it does not
-    recognize as `expr`, so a default is suppressed by, or conflicts with,
-    a same-arity method differing from it only in such a value.
-  - Fix: compare the requirement's typed `MethodSig` with the conformer's
-    registered signature; the overload prescan
-    (`plan_default_wrappers`) then needs the wrappers' arities before any
-    signature is typed, so it counts every inherited default and the
-    suppression moves to registration.
-  - Then delete `ast_raw`, `value_expr_raw`, `TypeKey::from_ast(_in_scope)`,
-    `SignatureKey::from_ast_params`, `VariadicKey::from_ast_params` (whose
-    only callers are `tests/symbol_test.rs` and a `symbol.rs` unit test),
-    and `symbol::ModuleNames` with `ProgramConstants`' impl of it.
-  - Found while landing R1770 (2026-11-14).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R561 A package body's types name the package check's binding
   owners**
@@ -12972,8 +12949,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - At the pin neither method satisfies the `other: Self, /` requirement,
     so the trait's defaults fill both, and the struct's methods are
     overloads beside them.
-  - `trait_defaults::inherited_defaults` skips a default whose overload
-    key a struct method spells, whatever its conventions, and the
+  - `Checker::register_default_wrappers` drops a default whose resolved
+    parameter types a struct method has, whatever its conventions, and the
     conformance check then finds no matching witness.
   - Mojito synthesizes `__eq__` per conformer that declares none (R1481),
     so `__eq__` needs the trait's own default body first.

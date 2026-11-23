@@ -283,12 +283,12 @@ import (every compilation that links the bundled library):
   (`InterfaceExport::checked_constants`,
   `DeclarationInterface::project`). In every compilation the check folds
   each module integer constant once, first, before any declaration's
-  symbol is spelled (`Checker::fold_module_constants`), and records each
-  module type alias's spelling there too, and every symbol speller — the
-  checker's binder owners and MIR's name lowering — reads them (`checked::package::ProgramConstants`, a
-  `symbol::ModuleNames`; `CheckedProgram::constants`), so a parameter
-  annotated by an alias spells as the type it names; the overload scan
-  folds nothing. It holds no overload set: as
+  symbol is spelled (`Checker::fold_module_constants`), and every reader
+  of a folded constant — the checker and MIR's lowering — reads them
+  (`checked::package::ProgramConstants`, `CheckedProgram::constants`).
+  Every symbol is spelled from a checked type (`symbol::TypeKey::from_ty`),
+  so a parameter annotated by an alias spells as the type it names; the
+  overload scan folds nothing. It holds no overload set: as
   upstream's package holds none, an importer's name's overload set is the
   reached declarations a lookup finds under it, the plain name and its
   `$ov$` run of the by-name function table (`PackageScope`'s
@@ -3348,14 +3348,20 @@ enclosing-parameter suffix, and two conformers never share one. A package places
 check records each of its defaults in its `TraitInfo` as a
 `trait_defaults::DefaultShape` naming its requirement row by overload
 index, which a package exports in the trait's declaration interface.
-Each conformer that does not spell a
-defaulted overload gets a wrapper the check builds, as
+Each conformer gets one stub per inherited default, as upstream's struct
+declares them: the check counts every stub in its overload prescan
+(`plan_default_wrappers`), so a spelled method sharing its name is
+qualified as an overload. After the struct's spelled signatures, each stub
+resolves at the conformer, as `signatureResolveDefaultTraitFnStubs` does,
+and drops when an own member has its resolved signature
+(`same_resolved_shape`, compared by type, never by annotation spelling);
+the struct's declaration records each dropped stub
+(`StructDeclaration::provided_defaults`), so a package's overload sets
+still count it. A surviving stub becomes the wrapper the check builds, as
 `synthesizeDefaultTraitMethodWrapper` builds one from the trait function's
-resolved signature: the check plans every wrapper before its overload
-prescan (`plan_default_wrappers`), so a spelled method sharing its name is
-qualified as an overload, registers its signature after the struct's
-spelled ones from the default's, with `Self` the conformer and its binders
-owned by the wrapper (`reown_generic_signature`), and, after every trait
+resolved signature: it registers its signature from the default's, with
+`Self` the conformer and its binders owned by the wrapper
+(`reown_generic_signature`), and, after every trait
 member, checks its body, one method call of the trait's member on the
 receiver, which binds the trait's `_Self`, with every argument and
 forwarded binder passed on (`populateDefaultedTraitFunction`). The wrapper is never syntax of
@@ -3482,7 +3488,7 @@ instance is the struct's own binder, rigid inside its methods. `Origin::coerces_
 is the instance rule: unbound accepts anything, everything else demands identity or
 containment. An instance's origins erase below the checker exactly like a pointer
 origin — the type mangler and the specialization encoder emit one `O` marker at
-each origin's position and the `ast_raw` spelling none, MIR verification compares
+each origin's position and the overload key none, MIR verification compares
 struct arguments with their origins set aside,
 monomorphization treats origin-differing instances as one (the native instance
 key erases its arguments' origins, since the instance symbol spells none —
@@ -3497,7 +3503,7 @@ binders or places leak into the instance whichever caller demands it first.
 A pointer's erased origin keeps the closed mutability it carries, since that
 is upstream's `Pointer` `mut` parameter: `Pointer[mut=True, …]` and
 `Pointer[mut=False, …]` key two instances, and the instance symbol (not the
-overload key `ast_raw` mirrors) spells it (`Pointer$Vtrue$Int`). A folded
+overload key) spells it (`Pointer$Vtrue$Int`). A folded
 `Pointer` receiver is an owner instance as an instance-named struct is
 (`self_instance`), so a member that keeps the struct's `mut` leads its key
 with it. A `!lit.ref` slot an inlined instance binds a pack element to
@@ -8457,7 +8463,7 @@ point where a slot declared in a loop is uninitialized again.
   never composes `{struct}.{method}` (`Prog::runtime_method_name`,
   `VmBackend::call_resolved_dunder`, R1027). A construction names the constructor the check selected from
   lowering on, as upstream's call names the selected `__init__` generator
-  (`overload_support::constructor_symbol`, R1020): `Box[n](5)` calls
+  (`overload_support::selected_method_symbol`, R1020): `Box[n](5)` calls
   `Box.__init__` with the struct's arguments as that constructor's, since
   its declaration restates the struct's parameters, so a constructor that
   removed `n` leaves a construction that passes none; an `@implicit`

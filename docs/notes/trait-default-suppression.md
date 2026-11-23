@@ -41,9 +41,10 @@ call, since both take no argument.
 ## What Mojito does
 
 Mojito suppresses a default by its *parameter shape*: a spelled method
-whose name and parameter overload key equal the default's
-(`trait_defaults::inherited_defaults`, keyed by `overload_key`) takes its
-place, whatever it returns. `S.f` above therefore suppresses the default,
+whose name and resolved parameter types equal the default's resolved
+signature at the conformer (`Checker::register_default_wrappers`,
+compared by `traits_support::same_resolved_shape`) takes its place,
+whatever it returns. `S.f` above therefore suppresses the default,
 and the conformance check then reports that `S.f` "does not match the
 signature required by trait 'T'". Mojito rejects a program the pin
 accepts; it never accepts one the pin rejects, because a call of either

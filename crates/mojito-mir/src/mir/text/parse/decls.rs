@@ -317,28 +317,7 @@ impl Decoder {
             })?;
         let explicit_destructors = {
             let field = self.required(value, fields, "explicit_destructors")?;
-            let mut destructors = HashMap::new();
-            if let Ok(values) = self.list(field) {
-                for entry in values {
-                    let Ok(entry_fields) = self.record(entry, "destructor") else {
-                        continue;
-                    };
-                    let destructor_name = self.req(entry, entry_fields, "name", Self::symbol);
-                    let raises = self.req(entry, entry_fields, "raises", Self::boolean);
-                    self.unknown(entry_fields, &["name", "raises"]);
-                    if let (Some(destructor_name), Some(raises)) = (destructor_name, raises)
-                        && destructors
-                            .insert(destructor_name.clone(), raises)
-                            .is_some()
-                    {
-                        self.error(
-                            entry.span,
-                            format!("duplicate destructor `{destructor_name}`"),
-                        );
-                    }
-                }
-            }
-            destructors
+            self.explicit_destructors(field)
         };
         // Schema 1.41 says whether the message was declared and which fields
         // carry their own obligation; an older artifact says neither.
@@ -503,6 +482,9 @@ impl Decoder {
             ref_fields.sort();
             ref_fields
         };
+        let provided_defaults = self
+            .field(fields, "provided_defaults")
+            .map_or_else(|()| Vec::new(), |entries| self.provided_defaults(entries));
         // Schema 1.175 says whether the struct declares register-passability
         // unconditionally, written only when it does; an older artifact's
         // answer is decided from its declared rows once its traits are read.
@@ -529,6 +511,7 @@ impl Decoder {
             "origin_params",
             "explicit_destroy_message",
             "explicit_destructors",
+            "provided_defaults",
             "explicit_destroy_declared",
             "explicit_destroy_fields",
             "conformances",
@@ -557,6 +540,7 @@ impl Decoder {
             fieldwise_init,
             param_decls,
             explicit_destructors,
+            provided_defaults,
             explicit_destroy,
             conformances,
             declared,
@@ -568,6 +552,51 @@ impl Decoder {
             members,
             witness_tables,
         })
+    }
+
+    /// A struct's `explicit_destructors`: each named `deinit self` method,
+    /// beside whether it raises.
+    fn explicit_destructors(&mut self, field: &Value) -> HashMap<String, bool> {
+        let mut destructors = HashMap::new();
+        if let Ok(values) = self.list(field) {
+            for entry in values {
+                let Ok(entry_fields) = self.record(entry, "destructor") else {
+                    continue;
+                };
+                let destructor_name = self.req(entry, entry_fields, "name", Self::symbol);
+                let raises = self.req(entry, entry_fields, "raises", Self::boolean);
+                self.unknown(entry_fields, &["name", "raises"]);
+                if let (Some(destructor_name), Some(raises)) = (destructor_name, raises)
+                    && destructors
+                        .insert(destructor_name.clone(), raises)
+                        .is_some()
+                {
+                    self.error(
+                        entry.span,
+                        format!("duplicate destructor `{destructor_name}`"),
+                    );
+                }
+            }
+        }
+        destructors
+    }
+
+    /// A struct's `provided_defaults` (schema 1.228, written only when the
+    /// struct has one): each inherited default an own member provides.
+    fn provided_defaults(&mut self, entries: &Value) -> Vec<(String, usize)> {
+        let Ok(entries) = self.list(entries) else {
+            return Vec::new();
+        };
+        entries
+            .iter()
+            .filter_map(|entry| {
+                let entry_fields = self.record(entry, "provided_default").ok()?;
+                let method = self.req(entry, entry_fields, "name", Self::symbol);
+                let arity = self.req(entry, entry_fields, "arity", Self::uint32);
+                self.unknown(entry_fields, &["name", "arity"]);
+                Some((method?, usize::try_from(arity?).ok()?))
+            })
+            .collect()
     }
 
     fn witness_table(

@@ -2617,11 +2617,12 @@ impl Checker {
         let targets = statics
             .iter()
             .map(|sig| {
-                Some(if signatures.len() > 1 {
-                    method_lowered_name(owner, method, sig, self.self_instance_ty(owner).as_ref())
-                } else {
-                    format!("{owner}.{method}")
-                })
+                Some(selected_method_symbol(
+                    owner,
+                    method,
+                    sig,
+                    self.self_instance_ty(owner).as_ref(),
+                ))
             })
             .collect();
         let callable = match types.len() {

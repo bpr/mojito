@@ -490,17 +490,19 @@ pub(super) fn explicit_parameter_names(decls: &[ParamDecl]) -> impl Iterator<Ite
         .map(ParamDecl::name)
 }
 
-/// The lowered symbol of the constructor a construction selected: the
-/// overload's canonical symbol when the struct declares several, else the
-/// lone constructor's plain `{type}.{method}`, as MIR declares it.
-pub(super) fn constructor_symbol(
+/// The lowered symbol of registered method `sig` of `type_name`, which a
+/// call selecting it names: the overload's canonical symbol when its
+/// registration qualified it ([`MethodSig::overload`]), its name one of a
+/// prescanned overload set, else the plain `{type}.{method}`, as MIR
+/// declares it. A name's registered signatures do not decide it: a stub an
+/// own member suppressed counts in the set and registers nothing.
+pub(super) fn selected_method_symbol(
     type_name: &str,
     method: &str,
-    overloaded: bool,
     sig: &MethodSig,
     self_ty: Option<&Ty>,
 ) -> String {
-    if overloaded {
+    if sig.overload.is_some() {
         method_lowered_name(type_name, method, sig, self_ty)
     } else {
         format!("{type_name}.{method}")

@@ -40,15 +40,13 @@ impl Checker {
                     .all(|bound| self.conforms_to(&implementation, bound))
             })
             .flat_map(|(name, info)| {
-                let signatures = &info.methods[method];
-                if signatures.len() == 1 {
-                    return vec![format!("{name}.{method}")];
-                }
                 let self_ty = Ty::new(TyKind::Struct(name.clone(), info.self_arguments()));
-                signatures
+                info.methods[method]
                     .iter()
-                    .map(|signature| method_lowered_name(name, method, signature, Some(&self_ty)))
-                    .collect()
+                    .map(|signature| {
+                        selected_method_symbol(name, method, signature, Some(&self_ty))
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
         conformers.sort();

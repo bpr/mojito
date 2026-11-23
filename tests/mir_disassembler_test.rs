@@ -187,6 +187,7 @@ fn metadata_program() -> MirProgram {
                 constraints: Vec::new(),
             }],
             explicit_destructors: HashMap::from([("_finish".into(), true)]),
+            provided_defaults: Vec::new(),
             explicit_destroy: Some(mojito::declaration::ExplicitDestroyObligation {
                 message: "call destroy() first".into(),
                 declared: true,

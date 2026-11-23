@@ -2175,6 +2175,11 @@ fn struct_declaration(
             .get(name)
             .cloned()
             .unwrap_or_default(),
+        provided_defaults: checked
+            .provided_defaults()
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
         explicit_destroy: checked
             .explicit_destroy_types()
             .get(name)
@@ -2270,6 +2275,7 @@ fn inflated_function_declarations(checked: &CheckedProgram) -> Vec<MirStructDecl
             ref_fields: Vec::new(),
             fieldwise_init: false,
             explicit_destructors: HashMap::new(),
+            provided_defaults: Vec::new(),
             explicit_destroy: None,
             conformances: [
                 "Copyable",

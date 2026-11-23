@@ -4557,6 +4557,7 @@ mod tests {
                 fieldwise_init: true,
                 param_decls: Vec::new(),
                 explicit_destructors: HashMap::new(),
+                provided_defaults: Vec::new(),
                 explicit_destroy: None,
                 conformances: Vec::new(),
                 declared: vec![StructConformance {
@@ -4702,6 +4703,7 @@ mod tests {
                     fieldwise_init: true,
                     param_decls: Vec::new(),
                     explicit_destructors: HashMap::new(),
+                    provided_defaults: Vec::new(),
                     explicit_destroy: None,
                     conformances: Vec::new(),
                     declared: vec![StructConformance {
@@ -4772,6 +4774,7 @@ mod tests {
             fieldwise_init: true,
             param_decls: Vec::new(),
             explicit_destructors: HashMap::new(),
+            provided_defaults: Vec::new(),
             explicit_destroy: None,
             conformances: Vec::new(),
             declared: vec![StructConformance {
@@ -4869,6 +4872,7 @@ mod tests {
                     constraints: Vec::new(),
                 }],
                 explicit_destructors: HashMap::new(),
+                provided_defaults: Vec::new(),
                 explicit_destroy: None,
                 conformances: Vec::new(),
                 declared: vec![StructConformance {
@@ -4957,6 +4961,7 @@ mod tests {
                 fieldwise_init: false,
                 param_decls: Vec::new(),
                 explicit_destructors: HashMap::new(),
+                provided_defaults: Vec::new(),
                 explicit_destroy: None,
                 conformances: Vec::new(),
                 declared: vec![mojito_checked::checked::StructConformance {

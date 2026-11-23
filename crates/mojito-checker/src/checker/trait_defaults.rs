@@ -1,8 +1,8 @@
 //! Trait defaults as upstream emits them: each default is its trait's member
 //! `Trait.method`, a method of its trait over the trait's `Self`, checked
-//! and lowered once, and a conformer that does not spell a defaulted method
-//! gets a member over the default's resolved signature whose body is one
-//! method call of the trait's member on its receiver
+//! and lowered once, and a conformer none of whose own members has a
+//! default's resolved signature gets a member over that signature whose
+//! body is one method call of the trait's member on its receiver
 //! (`StructEmitter::synthesizeDefaultTraitMethodWrapper` and
 //! `populateDefaultedTraitFunction`). The elaborator elaborates a default
 //! inside its trait; the check checks the member after every module
@@ -11,8 +11,8 @@
 use std::collections::{HashMap, HashSet};
 
 use mojito_ast::ast::{
-    ArgConvention, DeclaredParam, Expr, ExprKind, FnParam, KwArg, Method, MethodProvenance,
-    ParamArg, ParamKind, Stmt, StmtKind, TraitMethod, Type, TypeParam,
+    ArgConvention, DeclaredParam, Expr, ExprKind, KwArg, Method, MethodProvenance, ParamArg,
+    ParamKind, Stmt, StmtKind, TraitMethod, Type, TypeParam,
 };
 use mojito_ast::call::CompileTimeParam;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
@@ -20,13 +20,12 @@ use mojito_checked::checked::{CheckedDefaultWrapper, CheckedTraitMember, Signatu
 use mojito_common::error::TypeError;
 use mojito_common::token::{Span, SyntaxId};
 use mojito_symbol::symbol::OverloadLookup;
-use mojito_symbol::symbol::SignatureKey;
 use mojito_types::types::ParamDecl;
 
 use super::declarations::{BodyParam, MethodBody};
 use super::origins::ref_binding_is_writable;
 use super::overload_support::method_lowered_name;
-use super::traits_support::same_method_shape;
+use super::traits_support::same_resolved_shape;
 use super::{Checker, MethodSig, StructDeclaration, Ty};
 use mojito_symbol::symbol::lifecycle_method_name;
 
@@ -44,7 +43,6 @@ pub(super) struct DefaultShape {
     /// binders are owned; the trait's check records it
     /// ([`Self::at_requirement`]), so `None` until its trait registers.
     pub(super) member: Option<String>,
-    key: OverloadKey,
     /// Its requirement's position among its trait's same-name requirement
     /// signatures, which the trait's check records.
     overload: usize,
@@ -146,7 +144,7 @@ pub(super) struct DefaultWrapper {
     /// ([`Checker::conformance_availability`]).
     pub(super) gate: Option<String>,
     /// Its member position: after the struct's spelled methods, in the order
-    /// its defaults are reached.
+    /// its surviving defaults are reached, which registration assigns.
     pub(super) method_index: usize,
     /// The inheriting struct statement's span and syntax, which its body's
     /// syntax derives from.
@@ -177,13 +175,6 @@ pub(super) fn default_shapes(methods: &[TraitMethod]) -> Vec<DefaultShape> {
             method: method.name.clone(),
             declared_at,
             member: None,
-            key: overload_key(
-                &method.name,
-                (&method.type_params, method.ret.as_ref()),
-                &method.params,
-                method.keyword_only,
-                None,
-            ),
             overload: 0,
             arity: method.params.len(),
             binders: method
@@ -212,37 +203,24 @@ pub(super) fn default_shapes(methods: &[TraitMethod]) -> Vec<DefaultShape> {
         .collect()
 }
 
-/// The defaults struct `stmt` inherits and does not spell, each with the
-/// trait that declares it: its conformances' refinements first, each
-/// default once however many paths reach it. `traits` gives a trait's
+/// The defaults struct `stmt` inherits, each with the trait that declares
+/// it: its conformances' refinements first, each default once however many
+/// paths reach it. Each is a stub of the struct until its signatures
+/// resolve, when one its own members provide drops
+/// ([`Checker::register_default_wrappers`]). `traits` gives a trait's
 /// refinements and its own defaults.
 pub(super) fn inherited_defaults(
     stmt: &Stmt,
     traits: &dyn Fn(&str) -> Option<TraitDefaults>,
 ) -> Result<Vec<InheritedDefault>, TypeError> {
     let StmtKind::Struct {
-        name,
-        type_params,
         conforms,
         conformance_conditions,
-        methods,
         ..
     } = &stmt.kind
     else {
         return Ok(Vec::new());
     };
-    let explicit: Vec<_> = methods
-        .iter()
-        .map(|method| {
-            overload_key(
-                &method.name,
-                (&method.type_params, method.ret.as_ref()),
-                &method.params,
-                method.keyword_only,
-                Some(name),
-            )
-        })
-        .collect();
     // A default is as available as the conformances reaching it: always,
     // when one of them holds unconditionally.
     let mut reached: Vec<(String, DefaultShape)> = Vec::new();
@@ -273,41 +251,23 @@ pub(super) fn inherited_defaults(
                 .or_insert(condition);
         }
     }
-    let mut inherited: Vec<InheritedDefault> = Vec::new();
-    for (trait_name, default) in reached {
-        if explicit.contains(&default.key) {
-            continue;
-        }
-        if let Some((original, ..)) = inherited
-            .iter()
-            .find(|(_, seen, _)| seen.key == default.key)
-        {
-            return Err(TypeError::ConflictingTraitDefaults {
-                method: default.method,
-                original: original.clone(),
-                conflicting: trait_name,
-            });
-        }
-        if let Some(conflict) = default.binders.iter().find(|binder| {
-            type_params
-                .iter()
-                .any(|own| param_name(own) == binder.as_str())
-        }) {
-            return Err(TypeError::TraitDefaultParameterConflict(conflict.clone()));
-        }
-        let condition = conditions
-            .get(&(trait_name.clone(), default.declared_at))
-            .copied()
-            .flatten()
-            .cloned();
-        inherited.push((trait_name, default, condition));
-    }
-    Ok(inherited)
+    Ok(reached
+        .into_iter()
+        .map(|(trait_name, default)| {
+            let condition = conditions
+                .get(&(trait_name.clone(), default.declared_at))
+                .copied()
+                .flatten()
+                .cloned();
+            (trait_name, default, condition)
+        })
+        .collect())
 }
 
-/// The wrapper of every default struct `stmt` inherits, as
-/// [`inherited_defaults`] reaches them, its body built once its trait has
-/// registered ([`Checker::register_default_wrappers`]).
+/// The stub of every default struct `stmt` inherits, as
+/// [`inherited_defaults`] reaches them: a wrapper once its struct's
+/// signatures resolve and none of its own members provides it, its body
+/// built then ([`Checker::register_default_wrappers`]).
 pub(super) fn default_wrappers(
     stmt: &Stmt,
     traits: &dyn Fn(&str) -> Option<TraitDefaults>,
@@ -315,34 +275,31 @@ pub(super) fn default_wrappers(
     let StmtKind::Struct { name, methods, .. } = &stmt.kind else {
         return Ok(Vec::new());
     };
-    inherited_defaults(stmt, traits)?
+    Ok(inherited_defaults(stmt, traits)?
         .into_iter()
-        .enumerate()
-        .map(|(index, (trait_name, shape, gate))| {
-            if let Some(reason) = &shape.unforwardable {
-                return Err(TypeError::Unsupported(reason.clone()));
-            }
-            Ok(DefaultWrapper {
-                module: stmt.module.clone(),
-                declaration: name.clone(),
-                lowered_name: format!("{name}.{}", shape.method),
-                trait_name,
-                shape,
-                gate,
-                method_index: methods.len() + index,
-                span: stmt.span,
-                syntax_id: stmt.syntax_id,
-                body: Vec::new(),
-            })
+        .map(|(trait_name, shape, gate)| DefaultWrapper {
+            module: stmt.module.clone(),
+            declaration: name.clone(),
+            lowered_name: format!("{name}.{}", shape.method),
+            trait_name,
+            shape,
+            gate,
+            method_index: methods.len(),
+            span: stmt.span,
+            syntax_id: stmt.syntax_id,
+            body: Vec::new(),
         })
-        .collect()
+        .collect())
 }
 
 impl Checker {
-    /// The wrapper of every default a top-level struct of `stmts` inherits,
+    /// The stub of every default a top-level struct of `stmts` inherits,
     /// each counted among its struct's same-name methods for the overload
-    /// prescan. An own trait's defaults are read from its declaration, a
-    /// package trait's from its installed record.
+    /// prescan, as upstream's struct declares one per inherited default
+    /// before its signatures resolve; one an own member provides still
+    /// counts once it drops ([`Checker::register_default_wrappers`]). An
+    /// own trait's defaults are read from its declaration, a package
+    /// trait's from its installed record.
     pub(super) fn plan_default_wrappers(
         &mut self,
         stmts: &[Stmt],
@@ -399,14 +356,18 @@ impl Checker {
         Ok(wrappers)
     }
 
-    /// Register the signature of every wrapper struct `declaration`
-    /// inherits, after its spelled methods: the default's resolved
-    /// signature with `Self` the struct and its binders owned by the
-    /// wrapper, as `synthesizeDefaultTraitMethodWrapper` builds the
-    /// wrapper's `FnOp` from `getTraitFunctionSignature`. Its body is built
-    /// here, once its trait has registered the member it calls, one
-    /// statement calling that member with `Self` bound first and every
-    /// argument forwarded, as `populateDefaultedTraitFunction` forwards it.
+    /// Resolve every stub struct `declaration` inherits, after its spelled
+    /// methods, as `signatureResolveDefaultTraitFnStubs` does: the
+    /// default's resolved signature with `Self` the struct, which drops
+    /// when one of the struct's own members has its signature
+    /// (`filterOverloadSetForValueType`), and conflicts when an earlier
+    /// stub of another trait survives with it. A surviving stub is
+    /// registered as its wrapper, its binders owned by the wrapper, as
+    /// `synthesizeDefaultTraitMethodWrapper` builds the wrapper's `FnOp`
+    /// from `getTraitFunctionSignature`. Its body is built here, once its
+    /// trait has registered the member it calls, one statement calling
+    /// that member with `Self` bound first and every argument forwarded,
+    /// as `populateDefaultedTraitFunction` forwards it.
     ///
     /// Each wrapper's syntax is derived from the struct statement's
     /// identity, so every check of the program builds the same occurrences.
@@ -414,7 +375,25 @@ impl Checker {
         &mut self,
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
+        let name = declaration.name;
+        let self_ty = self.self_ty.clone().ok_or_else(|| {
+            TypeError::InvariantViolation(format!("struct '{name}' is not in scope"))
+        })?;
+        // The struct's own members, which its registered wrappers follow.
+        let spelled: HashMap<String, usize> = self
+            .structs
+            .get(name)
+            .map(|info| {
+                info.methods
+                    .iter()
+                    .map(|(method, own)| (method.clone(), own.len()))
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut ids = None;
+        let mut survivors: Vec<(String, String, MethodSig)> = Vec::new();
+        let mut suppressed = Vec::new();
+        let mut method_index = declaration.methods.len();
         for slot in 0..self.default_wrappers.len() {
             let wrapper = &self.default_wrappers[slot];
             if !wrapper.inherited_by(declaration) {
@@ -422,9 +401,46 @@ impl Checker {
             }
             let mut wrapper = wrapper.clone();
             wrapper.shape = self.registered_default(&wrapper)?.clone();
+            let sig = self.resolved_default(&wrapper, &self_ty)?;
+            let method = wrapper.shape.method.as_str();
+            let provided = self
+                .structs
+                .get(name)
+                .and_then(|info| info.methods.get(method))
+                .is_some_and(|overloads| {
+                    overloads
+                        .iter()
+                        .take(spelled.get(method).copied().unwrap_or_default())
+                        .any(|own| same_resolved_shape(own, &sig))
+                });
+            if provided {
+                suppressed.push(slot);
+                continue;
+            }
+            if let Some((original, ..)) = survivors
+                .iter()
+                .find(|(_, seen, resolved)| seen == method && same_resolved_shape(resolved, &sig))
+            {
+                return Err(TypeError::ConflictingTraitDefaults {
+                    method: wrapper.shape.method,
+                    original: original.clone(),
+                    conflicting: wrapper.trait_name,
+                });
+            }
+            if let Some(conflict) = wrapper.shape.binders.iter().find(|binder| {
+                declaration
+                    .type_params
+                    .iter()
+                    .any(|own| param_name(own) == binder.as_str())
+            }) {
+                return Err(TypeError::TraitDefaultParameterConflict(conflict.clone()));
+            }
             if let Some(reason) = &wrapper.shape.unforwardable {
                 return Err(TypeError::Unsupported(reason.clone()));
             }
+            survivors.push((wrapper.trait_name.clone(), method.to_string(), sig.clone()));
+            wrapper.method_index = method_index;
+            method_index += 1;
             let mut body = vec![forwarding_statement(&wrapper.shape, wrapper.span)?];
             if let Some(module) = &wrapper.module {
                 mojito_ast::ast::stamp_source(&mut body, module);
@@ -439,7 +455,7 @@ impl Checker {
             wrapper.body = body;
             let signature;
             (wrapper.lowered_name, signature) =
-                self.register_default_wrapper(declaration, &wrapper)?;
+                self.register_default_wrapper(declaration, &wrapper, sig)?;
             self.list_default_wrapper(
                 declaration,
                 &wrapper.shape.method,
@@ -450,24 +466,20 @@ impl Checker {
             );
             self.default_wrappers[slot] = wrapper;
         }
-        Ok(())
-    }
-
-    /// The named destructors struct `declaration` inherits: each wrapper of
-    /// a default with a `deinit` receiver, and whether it raises.
-    pub(super) fn inherited_destructors(
-        &self,
-        declaration: &StructDeclaration<'_>,
-    ) -> Vec<(String, bool)> {
-        self.default_wrappers
+        let provided: Vec<(String, usize)> = suppressed
             .iter()
-            .filter(|wrapper| {
-                wrapper.inherited_by(declaration)
-                    && wrapper.shape.method != "__deinit__"
-                    && wrapper.shape.receiver == Some(ArgConvention::Deinit)
+            .map(|slot| {
+                let shape = &self.default_wrappers[*slot].shape;
+                (shape.method.clone(), shape.arity)
             })
-            .map(|wrapper| (wrapper.shape.method.clone(), wrapper.shape.raises))
-            .collect()
+            .collect();
+        for slot in suppressed.into_iter().rev() {
+            self.default_wrappers.remove(slot);
+        }
+        if let Some(info) = self.structs.get_mut(name) {
+            info.provided_defaults = provided;
+        }
+        Ok(())
     }
 
     /// Check every default a top-level trait of `stmts` declares as its
@@ -603,15 +615,12 @@ impl Checker {
             .collect()
     }
 
-    /// Register `wrapper`'s signature on struct `declaration`, returning the
-    /// symbol it lowers to and the signature.
-    fn register_default_wrapper(
-        &mut self,
-        declaration: &StructDeclaration<'_>,
+    /// `wrapper`'s default's signature with `Self` the conformer `self_ty`.
+    fn resolved_default(
+        &self,
         wrapper: &DefaultWrapper,
-    ) -> Result<(String, MethodSig), TypeError> {
-        use mojito_checked::checked::{AnnotationSite, DeclarationEffect, GenericSite};
-        let name = declaration.name;
+        self_ty: &Ty,
+    ) -> Result<MethodSig, TypeError> {
         let method = wrapper.shape.method.as_str();
         let requirement = self
             .traits
@@ -628,10 +637,21 @@ impl Checker {
                     wrapper.trait_name
                 ))
             })?;
-        let self_ty = self.self_ty.clone().ok_or_else(|| {
-            TypeError::InvariantViolation(format!("struct '{name}' is not in scope"))
-        })?;
-        let mut sig = self.requirement_at(&requirement, &self_ty);
+        Ok(self.requirement_at(&requirement, self_ty))
+    }
+
+    /// Register `wrapper`'s signature `sig`, its default's resolved at the
+    /// conformer, on struct `declaration` as the wrapper's own, returning
+    /// the symbol it lowers to and the signature.
+    fn register_default_wrapper(
+        &mut self,
+        declaration: &StructDeclaration<'_>,
+        wrapper: &DefaultWrapper,
+        mut sig: MethodSig,
+    ) -> Result<(String, MethodSig), TypeError> {
+        use mojito_checked::checked::{AnnotationSite, DeclarationEffect, GenericSite};
+        let name = declaration.name;
+        let method = wrapper.shape.method.as_str();
         let source = format!("{name}.{method}");
         let overloaded = self
             .overload_sets
@@ -724,14 +744,15 @@ impl Checker {
         let info = self.structs.get_mut(name).ok_or_else(|| {
             TypeError::InvariantViolation(format!("struct '{name}' was not registered"))
         })?;
-        let overloads = info.methods.entry(method.to_string()).or_default();
-        if overloads
-            .iter()
-            .any(|existing| same_method_shape(existing, &sig))
-        {
-            return Err(TypeError::Redeclaration(method.to_string()));
+        if wrapper.shape.receiver == Some(ArgConvention::Deinit) && method != "__deinit__" {
+            info.explicit_destructors
+                .entry(method.to_string())
+                .or_insert(sig.raises);
         }
-        overloads.push(sig.clone());
+        info.methods
+            .entry(method.to_string())
+            .or_default()
+            .push(sig.clone());
         Ok((lowered, sig))
     }
 
@@ -962,124 +983,6 @@ impl Checker {
 /// A compile-time parameter's name without a pack's leading `*`.
 fn param_name(param: &TypeParam) -> &str {
     param.name.trim_start_matches('*')
-}
-
-/// A default method's identity among its same-name overloads: its name and
-/// its parameters' overload signature, with the conformer's own name read as
-/// `Self` so a method spelling either suppresses the default, and a
-/// parameter typed by an own binder nothing else names read as the
-/// `Some[Bound]` automatic parameterization makes the same signature
-/// (`[W: Writer](mut writer: W)` and `(mut writer: Some[Writer])`).
-#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct OverloadKey(String, SignatureKey);
-
-fn overload_key(
-    name: &str,
-    (type_params, ret): (&[TypeParam], Option<&Type>),
-    params: &[FnParam],
-    keyword_only: Option<usize>,
-    conformer: Option<&str>,
-) -> OverloadKey {
-    let params: Vec<FnParam> = params
-        .iter()
-        .filter(|param| !param.is_named_result())
-        .map(|param| {
-            let mut param = param.clone();
-            if matches!(&param.ty, Type::Named(named, args) if args.is_empty() && Some(named.as_str()) == conformer)
-            {
-                param.ty = Type::SelfType;
-            }
-            if let Some(existential) = existential_spelling(&param.ty, type_params, params, ret) {
-                param.ty = existential;
-            }
-            param
-        })
-        .collect();
-    let collector = params
-        .iter()
-        .position(|param| param.kind == ParamKind::Variadic);
-    let keyword_names = params
-        .iter()
-        .enumerate()
-        .filter(|(index, param)| {
-            param.kind == ParamKind::Regular
-                && [keyword_only, collector]
-                    .into_iter()
-                    .flatten()
-                    .any(|start| *index >= start)
-        })
-        .map(|(_, param)| param.name.clone())
-        .collect();
-    OverloadKey(
-        name.to_string(),
-        SignatureKey::from_ast_params(&params).with_keyword_names(keyword_names),
-    )
-}
-
-/// The `Some[Bound]` a parameter type `ty` is, as automatic
-/// parameterization reads it: `Some[Bound]` itself, spelled as a type, or
-/// a single-bound binder of `type_params` that no other spelling among
-/// `params` and `ret` names. `None` for any other type.
-fn existential_spelling(
-    ty: &Type,
-    type_params: &[TypeParam],
-    params: &[FnParam],
-    ret: Option<&Type>,
-) -> Option<Type> {
-    let existential = |bound: &str| {
-        Type::Named(
-            "Some".to_string(),
-            vec![ParamArg::Type(Type::Named(bound.to_string(), Vec::new()))],
-        )
-    };
-    let Type::Named(named, args) = ty else {
-        return None;
-    };
-    if named == "Some" {
-        return match args.as_slice() {
-            [
-                ParamArg::Value(Expr {
-                    kind: ExprKind::Identifier(bound),
-                    ..
-                }),
-            ] => Some(existential(bound)),
-            _ => None,
-        };
-    }
-    if !args.is_empty() {
-        return None;
-    }
-    let binder = type_params.iter().find(|param| {
-        param.name == *named
-            && param.value_type.is_none()
-            && param.callable_bound.is_none()
-            && param.default.is_none()
-    })?;
-    let [bound] = binder.bounds.as_slice() else {
-        return None;
-    };
-    let mut names = NamesType {
-        name: named,
-        count: 0,
-    };
-    for ty in params.iter().map(|param| &param.ty).chain(ret) {
-        mojito_ast::visit::walk_type(&mut names, ty);
-    }
-    (names.count == 1).then(|| existential(bound))
-}
-
-/// Count the type spellings that name `name`.
-struct NamesType<'a> {
-    name: &'a str,
-    count: usize,
-}
-
-impl mojito_ast::visit::Visitor for NamesType<'_> {
-    fn visit_type(&mut self, ty: &Type) {
-        if matches!(ty, Type::Named(named, _) if named == self.name) {
-            self.count += 1;
-        }
-    }
 }
 
 /// Add to `reached` every default trait `name` gives a conformer, its

@@ -124,6 +124,32 @@ pub(super) fn ty_args_equal(left: &TyArg, right: &TyArg) -> bool {
     }
 }
 
+/// Whether resolved signatures `a` and `b` are one member of a struct's
+/// overload set: the same parameter shape with every binder compared by
+/// its position, not its spelling, and an existential parameter as the
+/// anonymous binder upstream desugars it to, so a conformer's
+/// `[W: Writer](mut writer: W)` provides a default's
+/// `(mut writer: Some[Writer])`. This is how an inherited default's stub
+/// is filtered against the struct's own members.
+pub(super) fn same_resolved_shape(a: &MethodSig, b: &MethodSig) -> bool {
+    let canonical = |sig: &MethodSig| {
+        let sig = with_existential_binders(sig);
+        super::overload_support::canonical_generic_parameter_shape(
+            &sig.declared,
+            &sig.params,
+            sig.variadic.as_ref(),
+            sig.kw_variadic.as_ref(),
+        )
+    };
+    let keyword_names = |sig: &MethodSig| match sig.keyword_only {
+        Some(index) => sig.names[index..].to_vec(),
+        None => Vec::new(),
+    };
+    method_arity_range(a) == method_arity_range(b)
+        && keyword_names(a) == keyword_names(b)
+        && canonical(a) == canonical(b)
+}
+
 pub(super) fn same_method_shape(a: &MethodSig, b: &MethodSig) -> bool {
     // Keyword-only parameter NAMES are part of overload identity: two
     // signatures with identical types may still be distinct overloads when

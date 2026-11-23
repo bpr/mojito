@@ -8,17 +8,11 @@
 //! symbol elsewhere in `src/` is a bug (`tests/symbol_test.rs` scans for it).
 //!
 //! An overload signature is represented as typed data (`SignatureKey`, a list of
-//! `TypeKey`s) before it is ever formatted. A `TypeKey` can be built from two
-//! worlds and **must produce the same spelling for the same source annotation**:
-//!
-//! - [`TypeKey::from_ast`] — the declared `ast::Type` (MIR/VM lowering names
-//!   each overloaded definition from its parameter annotations).
-//! - [`TypeKey::from_ty`] — the checker's resolved `types::Ty` (the checker
-//!   records the selected callee from the winning signature's parameter types).
-//!
-//! Definition-side value arguments are folded with the same integer operations
-//! as the checker before formatting, so `FixedBuffer[N]` and `FixedBuffer[2+6]`
-//! name the same `FixedBuffer[8]` specialization selected at a call site.
+//! `TypeKey`s) before it is ever formatted. A `TypeKey` is built only from the
+//! checker's resolved `types::Ty` ([`TypeKey::from_ty`]): the declaration's
+//! registered signature names its definition, and the winning signature names
+//! the callee a call selects, so both spell one key. No key is spelled from an
+//! annotation's syntax.
 
 use mojito_types::types::TyKind;
 use std::borrow::Cow;
@@ -26,36 +20,13 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use mojito_ast::ast::{
-    AnnotatedParam, ArgConvention, Expr, ExprKind, FnParam, Method, ParamArg, ParamKind, Stmt,
-    StmtKind, Type, TypeParam,
+    AnnotatedParam, ArgConvention, FnParam, Method, ParamKind, Stmt, StmtKind, Type,
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_types::ct::{CtLane, CtValue};
 use mojito_types::param_expr::MetaTy;
 use mojito_types::types::{FuncTy, Ty, TyArg, canonical_simd_ty, default_literal};
 use sha2::{Digest, Sha256};
-
-/// The module names a declaration's parameter annotations read, which its
-/// lowered symbol spells as what they name: an integer constant as its
-/// value, and a type alias as the type it names.
-pub trait ModuleNames {
-    /// The value of the module integer constant `name`.
-    fn constant(&self, name: &str) -> Option<IntLiteral>;
-
-    /// The source spelling of the type the module type alias `name` names.
-    fn type_alias(&self, _name: &str) -> Option<Type> {
-        None
-    }
-}
-
-/// The [`ModuleNames`] of a scope that declares none.
-pub struct NoModuleNames;
-
-impl ModuleNames for NoModuleNames {
-    fn constant(&self, _name: &str) -> Option<IntLiteral> {
-        None
-    }
-}
 
 /// The receiver of a method symbol selected through a trait bound, which the
 /// concrete type replaces at run time (`__trait_dispatch.copy$ov$`).
@@ -332,31 +303,6 @@ pub fn removed_argument_symbol(template: &str) -> String {
 pub struct TypeKey(String);
 
 impl TypeKey {
-    /// Mangle a declared parameter annotation (the MIR/VM definition side).
-    pub fn from_ast(ty: &Type) -> Self {
-        Self(sanitize(&ast_raw(
-            ty,
-            &NoModuleNames,
-            &HashMap::new(),
-            None,
-        )))
-    }
-
-    /// Mangle a declared parameter annotation in the scope of the
-    /// declaration's own compile-time parameters, so an annotation naming one
-    /// of them carries its bounds exactly as the checker's `TyKind::Param` does
-    /// (`T$Copyable`). [`Self::from_ast`] spells such an annotation bare,
-    /// which is right for a lowered symbol but does not compare against a
-    /// checker-resolved type.
-    pub fn from_ast_in_scope(ty: &Type, type_params: &[TypeParam]) -> Self {
-        Self(sanitize(&ast_raw(
-            ty,
-            &NoModuleNames,
-            &binder_spellings(type_params, &NoModuleNames),
-            None,
-        )))
-    }
-
     /// The mangled spelling. Two keys compare equal exactly when the
     /// declaration and call-resolution sides agree on the type, which is what
     /// makes a checker-recorded parameter type matchable against the
@@ -365,9 +311,9 @@ impl TypeKey {
         &self.0
     }
 
-    /// Mangle a checker-resolved type (the call-resolution side). Aligned with
-    /// [`TypeKey::from_ast`]: a struct/parameter/`Self.T` type spells exactly as
-    /// its annotation does, so checker-recorded callees name real MIR functions.
+    /// Mangle a checker-resolved type, a declaration's registered parameter
+    /// or the one a call selected, so checker-recorded callees name real MIR
+    /// functions.
     pub fn from_ty(ty: &Ty) -> Self {
         Self(sanitize(&ty_raw(ty, None)))
     }
@@ -422,26 +368,6 @@ pub struct SignatureKey {
 }
 
 impl SignatureKey {
-    /// The signature of a declared `def`/method parameter list.
-    pub fn from_ast_params(params: &[FnParam]) -> Self {
-        Self {
-            types: params
-                .iter()
-                .filter(|parameter| parameter.kind != mojito_ast::ast::ParamKind::KwVariadic)
-                .map(|parameter| TypeKey::from_ast(&parameter.ty))
-                .collect(),
-            kw_variadic: params
-                .iter()
-                .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::KwVariadic)
-                .map(|parameter| TypeKey::from_ast(&parameter.ty)),
-            keywords: Vec::new(),
-            owned: Vec::new(),
-            parameters: Vec::new(),
-            packs: Vec::new(),
-            receiver: None,
-        }
-    }
-
     /// The signature of a checker-resolved parameter-type list.
     pub fn from_tys<'a>(tys: impl IntoIterator<Item = &'a Ty>) -> Self {
         Self {
@@ -616,26 +542,6 @@ pub struct VariadicKey {
 }
 
 impl VariadicKey {
-    /// The collector of a declared parameter list, keyed in the scope of the
-    /// declaration's own compile-time parameters (see
-    /// [`TypeKey::from_ast_in_scope`]). An `out` named result is not
-    /// caller-visible and does not count toward the position.
-    pub fn from_ast_params(params: &[FnParam], type_params: &[TypeParam]) -> Option<Self> {
-        let index = params
-            .iter()
-            .position(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Variadic)?;
-        Some(Self {
-            position: params[..index]
-                .iter()
-                .filter(|parameter| {
-                    parameter.kind == mojito_ast::ast::ParamKind::Regular
-                        && !matches!(parameter.convention, Some(ArgConvention::Out))
-                })
-                .count(),
-            element: TypeKey::from_ast_in_scope(&params[index].ty, type_params),
-        })
-    }
-
     /// The collector of a checker-resolved callable type. Every regular
     /// parameter after a collector is keyword-only, so the callable's
     /// keyword-only index is the collector's position.
@@ -1450,10 +1356,9 @@ fn address_space_raw(address_space: &mojito_types::types::AddressSpaceSlot) -> S
 
 fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
     // Canonicalize the enclosing struct type to `Self` however it is spelled
-    // (`Self`, `Pair`, or `List[Self.T]` inside `List`). The declaration side
-    // does the same (see `ast_raw`), so both agree on one key for a same-arity
-    // overload's self-typed parameter and the checker-recorded callee names the
-    // real MIR function. Origins erase from callable identity, so a `sep:
+    // (`Self`, `Pair`, or `List[Self.T]` inside `List`), so a same-arity
+    // overload's self-typed parameter has one key and the checker-recorded
+    // callee names the real MIR function. Origins erase from callable identity, so a `sep:
     // StringSpan` parameter inside `StringSpan` is `Self` whatever origin tail
     // the receiver carries.
     if self_ty.is_some_and(|self_ty| {
@@ -1577,8 +1482,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
                         s.push('$');
                         s.push_str(&value_argument_raw(v, mode));
                     }
-                    // The origin tail erases from the runtime ABI, exactly as
-                    // the annotation side (`ast_raw`) erases origin arguments:
+                    // The origin tail erases from the runtime ABI:
                     // origin-differing types share a specialization and a
                     // lowering, like a `Pointer`'s origin.
                     TyArg::Origin(_) => {}
@@ -1610,8 +1514,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // generic one spells nothing, so a generic pointer's key is unchanged.
         // An instance symbol spells the closed mutability the origin carries,
         // the struct's `mut` parameter, as an instance struct spells its
-        // value arguments; an overload key, which `ast_raw` mirrors, does
-        // not.
+        // value arguments; an overload key does not.
         kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
             let mutability = match (mode, origin.parts().1) {
                 (KeyMode::Instance, mojito_types::origin::Mutability::Mutable) => {
@@ -1750,568 +1653,6 @@ fn encode_identifier(name: &str) -> String {
     encoded
 }
 
-fn ast_raw(
-    ty: &Type,
-    comptimes: &dyn ModuleNames,
-    type_bounds: &HashMap<String, BinderSpelling>,
-    self_spelling: Option<&str>,
-) -> String {
-    // A bracket operand parses as an expression; a name or an application
-    // among a type's arguments (`List[Int]`, `List[Pair[Int]]`) spells as
-    // the type it names.
-    if let Type::Named(name, args) = ty
-        && args.iter().any(|arg| {
-            matches!(
-                spelled_type_operand(arg, type_bounds, comptimes),
-                Cow::Owned(_)
-            )
-        })
-    {
-        let args = args
-            .iter()
-            .map(|arg| spelled_type_operand(arg, type_bounds, comptimes).into_owned())
-            .collect();
-        return ast_raw(
-            &Type::Named(name.clone(), args),
-            comptimes,
-            type_bounds,
-            self_spelling,
-        );
-    }
-    let raw = match ty {
-        // A module type alias spells as the type it names, as the checker's
-        // resolved type does; a binder of the same name shadows it.
-        Type::Named(name, args)
-            if args.is_empty()
-                && !type_bounds.contains_key(name)
-                && let Some(aliased) = comptimes.type_alias(name) =>
-        {
-            return ast_raw(&aliased, comptimes, type_bounds, self_spelling);
-        }
-        // `__mlir_type[`!kgen.simd<`, length._mlir_value, `, `,
-        // dtype._mlir_value, `>`]` spells as the checker's storage of the
-        // vector `SIMD[dtype, length]` does.
-        Type::Named(name, args)
-            if name == "__mlir_type"
-                && let Some(vector) = mlir_simd_annotation(args) =>
-        {
-            return format!(
-                "__KgenSimd${}",
-                ast_raw(&vector, comptimes, type_bounds, None)
-            );
-        }
-        Type::None => "None".to_string(),
-        Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
-            // Mirror `ty_raw`: the nominal String annotation mangles as the
-            // stable `String` spelling.
-            "String".to_string()
-        }
-        // A scalar alias (`Byte`), a `Scalar`/`SIMD` application over
-        // concrete or binder arguments, spells as `ty_raw` displays the
-        // resolved `SIMD` application.
-        Type::Named(name, args)
-            if let Some(spelling) =
-                simd_annotation_spelling(name, args, type_bounds, comptimes) =>
-        {
-            spelling
-        }
-        // Mirror `ty_raw`: every pointer annotation (`Pointer[T, origin]`,
-        // the `ImmPointer`/`MutPointer` permission aliases) mangles as
-        // `Pointer$<element>`, and an opaque one
-        // (`OpaquePointer[origin]` and its permission aliases) over `None` —
-        // the origin argument erases from the runtime ABI, so a call site's
-        // `Pointer` type key and the declaration agree.
-        Type::Named(name, _)
-            if matches!(
-                name.as_str(),
-                "OpaquePointer" | "MutOpaquePointer" | "ImmOpaquePointer"
-            ) =>
-        {
-            "Pointer$None".to_string()
-        }
-        Type::Named(name, args)
-            if matches!(name.as_str(), "Pointer" | "ImmPointer" | "MutPointer")
-                && matches!(args.first(), Some(ParamArg::Type(_))) =>
-        {
-            let Some(ParamArg::Type(element)) = args.first() else {
-                unreachable!("guard established a type argument");
-            };
-            format!(
-                "Pointer${}",
-                ast_raw(element, comptimes, type_bounds, self_spelling)
-            )
-        }
-        // Mirror the checker's synthetic binder for an existential
-        // `Some[Trait]` parameter, which `ty_raw` spells as its binder name
-        // (`Some[Writer]`) followed by its one bound.
-        Type::Named(name, args)
-            if name == "Some" && args.len() == 1 && existential_trait(&args[0]).is_some() =>
-        {
-            let trait_name = existential_trait(&args[0]).expect("guard established a trait");
-            format!(
-                "{}${}",
-                encode_identifier(&format!("Some[{trait_name}]")),
-                encode_identifier(trait_name)
-            )
-        }
-        // The runtime-pack collector of a specialized variadic (`*args: *Ts`
-        // after `Ts` is bound) is the `$pack` annotation over its element
-        // types; mirror `ty_raw`'s `TyKind::RuntimePack` spelling so the
-        // declaration and its call sites agree.
-        Type::Named(name, args) if name == "$pack" => format!(
-            "$pack${}",
-            args.iter()
-                .map(|arg| match arg {
-                    ParamArg::Type(t) => ast_raw(t, comptimes, type_bounds, self_spelling),
-                    ParamArg::Value(v) => value_expr_raw(v, comptimes),
-                    ParamArg::Named { .. } => String::new(),
-                })
-                .collect::<Vec<_>>()
-                .join("$")
-        ),
-        Type::Named(name, args) => {
-            let mut s = parameter_raw(name, type_bounds);
-            for arg in args {
-                // An origin argument — a placeholder (`_`/`...`), an
-                // `origin_of(...)`/`ImmOrigin(...)`/`MutOrigin(...)` value, a
-                // builtin origin name, or an `Origin`-bound parameter — erases
-                // from the runtime ABI and from the checked spelling
-                // (`ty_raw_in` emits nothing for the origin tail); erase it
-                // from the declaration spelling too, so `Span[T, _]`,
-                // `Span[T, origin_of(xs)]`, and `Span[T]` declare one symbol.
-                if syntactic_origin_argument(arg, type_bounds) {
-                    continue;
-                }
-                s.push('$');
-                match arg {
-                    ParamArg::Type(t) => {
-                        s.push_str(&ast_raw(t, comptimes, type_bounds, self_spelling));
-                    }
-                    // The parser cannot tell a type parameter from a value
-                    // in argument position (`List[T]` arrives as a value
-                    // identifier); one naming a declared parameter of the
-                    // signature spells as the checker's `TyKind::Param` does, so
-                    // the declaration and its call sites agree.
-                    ParamArg::Value(v)
-                        if matches!(&v.kind, mojito_ast::ast::ExprKind::Identifier(name)
-                            if type_bounds.contains_key(name)) =>
-                    {
-                        let mojito_ast::ast::ExprKind::Identifier(name) = &v.kind else {
-                            unreachable!("guard matched an identifier");
-                        };
-                        s.push_str(&parameter_raw(name, type_bounds));
-                    }
-                    ParamArg::Value(v) => {
-                        s.push('V');
-                        s.push_str(&value_expr_raw(v, comptimes));
-                    }
-                    ParamArg::Named { name, value } => {
-                        s.push_str(name);
-                        s.push('=');
-                        match &**value {
-                            ParamArg::Type(t) => {
-                                s.push_str(&ast_raw(t, comptimes, type_bounds, self_spelling));
-                            }
-                            ParamArg::Value(v) => s.push_str(&value_expr_raw(v, comptimes)),
-                            ParamArg::Named { .. } => unreachable!(),
-                        }
-                    }
-                }
-            }
-            s
-        }
-        // `Self.T` names the same parameter a bare `T` does inside the struct,
-        // and the checker resolves both to the same `TyKind::Param` — spell them
-        // identically so the two sides agree.
-        Type::SelfParam(name) => parameter_raw(name, type_bounds),
-        // An `` __mlir_type.`name` `` the subset reads spells as the type the
-        // checker resolves it to (`mlir_type_named`), so the declaration and
-        // its call sites agree.
-        Type::Assoc { base, name, args }
-            if args.is_empty()
-                && matches!(base.as_ref(), Type::Named(base, base_args)
-                    if base == "__mlir_type" && base_args.is_empty())
-                && let Some(mlir) = mojito_types::types::mlir_type_named(name) =>
-        {
-            ty_raw(&mlir, None)
-        }
-        Type::Assoc { base, name, .. } => format!(
-            "Assoc${}${}",
-            ast_raw(base, comptimes, type_bounds, self_spelling),
-            encode_identifier(name)
-        ),
-        Type::SelfType => "Self".to_string(),
-        Type::Func { .. } => func_annotation_raw(ty, comptimes, type_bounds),
-        Type::Ref { referent, .. } => format!(
-            "Ref${}",
-            ast_raw(referent, comptimes, type_bounds, self_spelling)
-        ),
-        Type::IndexedProjection { base, index } => format!(
-            "{}[{}]",
-            ast_raw(base, comptimes, type_bounds, self_spelling),
-            value_expr_raw(index, comptimes)
-        ),
-        Type::TypeOf(value) => format!("TypeOf${}", value_expr_raw(value, comptimes)),
-        Type::Generator { params, result } => format!(
-            "Generator${}${}",
-            params
-                .iter()
-                .map(|param| encode_identifier(&param.name))
-                .collect::<Vec<_>>()
-                .join("$"),
-            ast_raw(
-                result,
-                comptimes,
-                &binders_in_scope(type_bounds, params),
-                self_spelling
-            )
-        ),
-        Type::Value(value) => format!("V{}", value_expr_raw(value, comptimes)),
-    };
-    // Canonicalize the enclosing struct type to `Self`, however it is spelled.
-    // `self_spelling` is that struct's `ty_raw` mangling (e.g. `Pair`,
-    // `List$T$AnyType`); a parameter that mangles the same denotes `Self`, and
-    // the call side (`ty_raw` with `self_ty`) canonicalizes the equal resolved
-    // type identically. A bare `Self` already produced `"Self"` above and never
-    // equals a concrete `self_spelling`, so it passes through unchanged.
-    match self_spelling {
-        Some(spelling) if raw == spelling => "Self".to_string(),
-        _ => raw,
-    }
-}
-
-/// The `SIMD[dtype, length]` annotation whose storage a `__mlir_type[...]`
-/// spelling of `!kgen.simd<length, dtype>` names, as the checker's
-/// `mlir_applied_type` reads it; `None` for every other MLIR type spelling.
-fn mlir_simd_annotation(args: &[ParamArg]) -> Option<Type> {
-    let (text, operands) = mojito_types::types::mlir_type_spelling(args);
-    let [length, dtype] = operands.as_slice() else {
-        return None;
-    };
-    if text != "!kgen.simd<{},{}>" {
-        return None;
-    }
-    let length = mojito_types::types::mlir_value_operand(length)?;
-    let dtype = mojito_types::types::mlir_value_operand(dtype)?;
-    Some(Type::Named("SIMD".to_string(), vec![dtype, length]))
-}
-
-/// A bracket operand as the type argument it spells: a bare name that is
-/// no binder of `scope`, module `Int` constant, or origin (`Int`, `UInt8`,
-/// `Pair`) as the type it names, and an application as
-/// [`spelled_type_argument`] spells it; any other argument unchanged.
-fn spelled_type_operand<'a>(
-    arg: &'a ParamArg,
-    scope: &HashMap<String, BinderSpelling>,
-    comptimes: &dyn ModuleNames,
-) -> Cow<'a, ParamArg> {
-    match arg {
-        ParamArg::Value(Expr {
-            kind: ExprKind::Identifier(name),
-            ..
-        }) if !scope.contains_key(name)
-            && comptimes.constant(name).is_none()
-            && !syntactic_origin_argument(arg, scope) =>
-        {
-            Cow::Owned(ParamArg::Type(Type::Named(name.clone(), Vec::new())))
-        }
-        _ => spelled_type_argument(arg),
-    }
-}
-
-/// A value operand that applies a type (`Pair[Int]`, `Box[1]`) as the type
-/// argument it spells; any other argument unchanged. A bare name keeps its
-/// value spelling.
-fn spelled_type_argument(arg: &ParamArg) -> Cow<'_, ParamArg> {
-    match arg {
-        ParamArg::Value(value)
-            if matches!(
-                value.kind,
-                ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
-            ) =>
-        {
-            value.type_spelling().map_or(Cow::Borrowed(arg), |spelled| {
-                Cow::Owned(ParamArg::Type(spelled))
-            })
-        }
-        _ => Cow::Borrowed(arg),
-    }
-}
-
-/// A source `def[...](...)` annotation spelled as the checked callable type
-/// displays (`write_callable`): its own binders as `write_param_decls` prints
-/// the `GenericFuncTy` decls the check keeps (origin binders erase), then
-/// its parameter and result types as [`annotation_display`] prints them, in
-/// the scope of the enclosing signature's binders and the contract's own.
-/// The declaration and the call of a callable-bounded overload then spell
-/// one symbol.
-fn func_annotation_raw(
-    ty: &Type,
-    comptimes: &dyn ModuleNames,
-    outer: &HashMap<String, BinderSpelling>,
-) -> String {
-    let Type::Func {
-        type_params,
-        params,
-        ret,
-        thin,
-        raises,
-        ..
-    } = ty
-    else {
-        unreachable!("func_annotation_raw takes a Type::Func");
-    };
-    let scope = binders_in_scope(outer, type_params);
-    let decls: Vec<&TypeParam> = type_params
-        .iter()
-        .filter(|param| !param.is_erased_origin_param(type_params))
-        .collect();
-    let mut s = String::from("def");
-    if !decls.is_empty() {
-        s.push('[');
-        for (index, param) in decls.iter().enumerate() {
-            if index > 0 {
-                s.push_str(", ");
-            }
-            s.push_str(&param.name);
-            let bounds = &scope[&param.name].bounds;
-            let declared = param.value_type.as_ref().map_or_else(
-                || bounds.join(" & "),
-                |value_type| annotation_display(value_type, comptimes, &scope),
-            );
-            if !declared.is_empty() {
-                let _ = write!(s, ": {declared}");
-            }
-        }
-        s.push(']');
-    }
-    s.push('(');
-    for (index, param) in params.iter().enumerate() {
-        if index > 0 {
-            s.push_str(", ");
-        }
-        s.push_str(&annotation_display(&param.ty, comptimes, &scope));
-    }
-    s.push(')');
-    if *thin {
-        s.push_str(" thin");
-    }
-    if *raises {
-        s.push_str(" raises");
-    }
-    s.push_str(" -> ");
-    s.push_str(&annotation_display(ret, comptimes, &scope));
-    s
-}
-
-/// Render one annotation as the checked `Ty` Display would, for use inside
-/// [`func_annotation_raw`] only: binders in `scope` print bare (no bounds),
-/// nominal arguments print bracketed and comma-separated, and a vector
-/// prints as its `SIMD` application does.
-fn annotation_display(
-    ty: &Type,
-    comptimes: &dyn ModuleNames,
-    scope: &HashMap<String, BinderSpelling>,
-) -> String {
-    match ty {
-        Type::None => "None".to_string(),
-        Type::Named(name, args)
-            if args.is_empty()
-                && !scope.contains_key(name)
-                && let Some(aliased) = comptimes.type_alias(name) =>
-        {
-            annotation_display(&aliased, comptimes, scope)
-        }
-        Type::Named(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
-            "String".to_string()
-        }
-        Type::Named(name, args)
-            if let Some(spelling) = simd_annotation_spelling(name, args, scope, comptimes) =>
-        {
-            spelling
-        }
-        Type::Named(name, args) => {
-            let mut s = name.clone();
-            if !args.is_empty() {
-                s.push('[');
-                for (index, argument) in args.iter().enumerate() {
-                    if index > 0 {
-                        s.push_str(", ");
-                    }
-                    s.push_str(&argument_display(argument, comptimes, scope));
-                }
-                s.push(']');
-            }
-            s
-        }
-        Type::SelfParam(name) => name.clone(),
-        Type::SelfType => "Self".to_string(),
-        func @ Type::Func { .. } => func_annotation_raw(func, comptimes, scope),
-        Type::Assoc { base, name, .. } => {
-            format!("{}.{name}", annotation_display(base, comptimes, scope))
-        }
-        Type::Ref { referent, .. } => {
-            format!("ref {}", annotation_display(referent, comptimes, scope))
-        }
-        Type::IndexedProjection { base, index } => format!(
-            "{}[{}]",
-            annotation_display(base, comptimes, scope),
-            value_display(index, comptimes, scope)
-        ),
-        Type::TypeOf(value) => format!("type_of({})", value_display(value, comptimes, scope)),
-        Type::Generator { params, result } => format!(
-            "__generator_type[{}] {}",
-            params
-                .iter()
-                .map(|param| param.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-            annotation_display(result, comptimes, &binders_in_scope(scope, params))
-        ),
-        Type::Value(value) => value_display(value, comptimes, scope),
-    }
-}
-
-/// One `[...]` argument of a nominal annotation as [`annotation_display`]
-/// prints it: a type as its display, an applied value operand as the type
-/// it spells, any other value as [`value_display`] prints it.
-fn argument_display(
-    argument: &ParamArg,
-    comptimes: &dyn ModuleNames,
-    scope: &HashMap<String, BinderSpelling>,
-) -> String {
-    match spelled_type_operand(argument, scope, comptimes).as_ref() {
-        ParamArg::Type(ty) => annotation_display(ty, comptimes, scope),
-        ParamArg::Value(value) => value_display(value, comptimes, scope),
-        ParamArg::Named { name, value } => {
-            format!("{name}={}", argument_display(value, comptimes, scope))
-        }
-    }
-}
-
-/// A compile-time value in a callable annotation as the checked type
-/// displays it: a binder in `scope` bare, as `TyKind::Param` displays,
-/// anything else as [`value_expr_raw`] spells it.
-fn value_display(
-    value: &Expr,
-    comptimes: &dyn ModuleNames,
-    scope: &HashMap<String, BinderSpelling>,
-) -> String {
-    match &value.kind {
-        ExprKind::Identifier(name) if scope.contains_key(name) => name.clone(),
-        _ => value_expr_raw(value, comptimes),
-    }
-}
-
-/// A vector annotation as the checker displays the resolved `SIMD` type:
-/// a scalar alias (`Byte`) or a concrete `Scalar`/`SIMD` application in its
-/// canonical spelling, and one over binders of the signature (`Scalar[dt]`,
-/// `SIMD[dt, width]`, `Self.width`) symbolically; `None` for any other
-/// annotation.
-fn simd_annotation_spelling(
-    name: &str,
-    args: &[ParamArg],
-    scope: &HashMap<String, BinderSpelling>,
-    comptimes: &dyn ModuleNames,
-) -> Option<String> {
-    match (name, args) {
-        (_, []) if !scope.contains_key(name) => mojito_ast::ast::Dtype::from_scalar_alias(name)
-            .map(|dtype| simd_annotation_raw(dtype, 1)),
-        ("Scalar", [dtype]) if let Some(dtype) = param_arg_dtype(dtype) => {
-            Some(simd_annotation_raw(dtype, 1))
-        }
-        ("SIMD", [dtype, width])
-            if let Some(dtype) = param_arg_dtype(dtype)
-                && let Some(width) = param_arg_width(width, comptimes) =>
-        {
-            Some(simd_annotation_raw(dtype, width))
-        }
-        ("Scalar", [_]) | ("SIMD", [_, _])
-            if args
-                .iter()
-                .any(|arg| simd_binder_slot(arg, scope).is_some()) =>
-        {
-            let slots = args
-                .iter()
-                .map(|arg| {
-                    simd_binder_slot(arg, scope)
-                        .map(str::to_string)
-                        .or_else(|| {
-                            param_arg_dtype(arg).map(|dtype| format!("DType.{}", dtype.name()))
-                        })
-                        .or_else(|| param_arg_width(arg, comptimes).map(|width| width.to_string()))
-                })
-                .collect::<Option<Vec<_>>>()?;
-            Some(match slots.as_slice() {
-                [dtype, width] if width == "1" => format!("Scalar[{dtype}]"),
-                [dtype, width] => format!("SIMD[{dtype}, {width}]"),
-                [dtype] => format!("Scalar[{dtype}]"),
-                _ => unreachable!("the pattern matched one or two slots"),
-            })
-        }
-        _ => None,
-    }
-}
-
-/// The dtype named by a `DType.<dt>` annotation argument, if that is what it is.
-fn param_arg_dtype(argument: &ParamArg) -> Option<mojito_ast::ast::Dtype> {
-    let ParamArg::Value(value) = argument else {
-        return None;
-    };
-    expr_dtype(value)
-}
-
-/// The dtype a `DType.<dt>` expression names, if that is what it is.
-fn expr_dtype(expr: &Expr) -> Option<mojito_ast::ast::Dtype> {
-    let ExprKind::Member { object, field } = &expr.kind else {
-        return None;
-    };
-    matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
-        .then(|| mojito_ast::ast::Dtype::from_name(field))
-        .flatten()
-}
-
-/// A comptime-evaluable SIMD width annotation argument.
-fn param_arg_width(argument: &ParamArg, comptimes: &dyn ModuleNames) -> Option<i64> {
-    let ParamArg::Value(expr) = argument else {
-        return None;
-    };
-    eval_comptime_int(expr, comptimes)?.to_i64()
-}
-
-/// The canonical checked spelling of a scalar/SIMD annotation: width-1
-/// `int`/`float64` canonicalize to the native scalars, everything else uses
-/// the `SIMD` application's display (the scalar alias where one exists).
-fn simd_annotation_raw(dtype: mojito_ast::ast::Dtype, width: i64) -> String {
-    canonical_simd_ty(dtype, width).to_string()
-}
-
-/// The exact value of a signature's integer argument, folded as the check
-/// folds it (`fold_infix` over `IntLiteral`s) over the module constants'
-/// values the check's fold gave them; `None` for anything the check would
-/// not fold to an integer.
-fn eval_comptime_int(expr: &Expr, comptimes: &dyn ModuleNames) -> Option<IntLiteral> {
-    use mojito_ast::ast::PrefixOp;
-    use mojito_types::param_expr::fold::fold_infix;
-    match &expr.kind {
-        ExprKind::Int(value) => Some(value.clone()),
-        ExprKind::Identifier(name) => comptimes.constant(name),
-        ExprKind::Prefix(PrefixOp::Neg, value) => Some(eval_comptime_int(value, comptimes)?.neg()),
-        ExprKind::Prefix(PrefixOp::Pos, value) => eval_comptime_int(value, comptimes),
-        ExprKind::Infix(op, left, right) => {
-            let (left, right) = (
-                eval_comptime_int(left, comptimes)?,
-                eval_comptime_int(right, comptimes)?,
-            );
-            match fold_infix(*op, &CtValue::IntLiteral(left), &CtValue::IntLiteral(right)) {
-                Ok(CtValue::IntLiteral(value)) => Some(value),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
 /// The separator that marks a signature-qualified overload symbol.
 ///
 /// `pick$ov$Int`, `Box.__init__$ov$String`. The native monomorphizer reads it
@@ -2363,204 +1704,6 @@ fn erase_capture_environment(ty: &Ty) -> Ty {
         });
     }
     erased
-}
-
-/// The trait an existential `Some[Trait]` annotation argument names, in its
-/// canonical spelling.
-fn existential_trait(arg: &ParamArg) -> Option<&str> {
-    match arg {
-        ParamArg::Type(Type::Named(trait_name, trait_args)) if trait_args.is_empty() => {
-            Some(trait_name)
-        }
-        ParamArg::Value(Expr {
-            kind: ExprKind::Identifier(trait_name),
-            ..
-        }) => Some(trait_name),
-        _ => None,
-    }
-}
-
-/// The binder of the signature a `Scalar`/`SIMD` annotation argument names,
-/// bare (`n`) or through `Self` (`Self.n`), which name one parameter.
-fn simd_binder_slot<'a>(
-    arg: &'a ParamArg,
-    type_bounds: &HashMap<String, BinderSpelling>,
-) -> Option<&'a str> {
-    let name = match arg {
-        ParamArg::Value(Expr {
-            kind: ExprKind::Identifier(name),
-            ..
-        }) => name.as_str(),
-        ParamArg::Value(expr) => expr.self_member()?,
-        _ => return None,
-    };
-    type_bounds.contains_key(name).then_some(name)
-}
-
-/// A declared compile-time parameter as its annotation spells in an overload
-/// key: its trait bounds, and a callable bound (`F: def(Int) -> Int`) as the
-/// checker's `TyKind::Param` spells its `callable_bound`.
-#[derive(Clone)]
-struct BinderSpelling {
-    bounds: Vec<String>,
-    callable: Option<String>,
-}
-
-impl BinderSpelling {
-    /// The parameter's trait bounds, without its callable bound.
-    fn bounded(param: &TypeParam) -> Self {
-        Self {
-            bounds: param
-                .bounds
-                .iter()
-                .filter(|bound| bound.as_str() != "<function type>")
-                .cloned()
-                .collect(),
-            callable: None,
-        }
-    }
-}
-
-/// Every binder of one signature, each callable bound spelled in the scope
-/// of all of them.
-fn binder_spellings(
-    type_params: &[TypeParam],
-    comptimes: &dyn ModuleNames,
-) -> HashMap<String, BinderSpelling> {
-    let mut spellings = binders_in_scope(&HashMap::new(), type_params);
-    let callables: Vec<_> = type_params
-        .iter()
-        .map(|param| {
-            param
-                .callable_bound
-                .as_ref()
-                .filter(|callable| matches!(callable, Type::Func { .. }))
-                .map(|callable| func_annotation_raw(callable, comptimes, &spellings))
-        })
-        .collect();
-    for (param, callable) in type_params.iter().zip(callables) {
-        if let Some(binder) = spellings.get_mut(&param.name) {
-            binder.callable = callable;
-        }
-    }
-    spellings
-}
-
-/// `outer` with `params` declared over it, each shadowing an outer binder of
-/// its name.
-fn binders_in_scope(
-    outer: &HashMap<String, BinderSpelling>,
-    params: &[TypeParam],
-) -> HashMap<String, BinderSpelling> {
-    let mut scope = outer.clone();
-    scope.extend(
-        params
-            .iter()
-            .map(|param| (param.name.clone(), BinderSpelling::bounded(param))),
-    );
-    scope
-}
-
-fn parameter_raw(name: &str, type_bounds: &HashMap<String, BinderSpelling>) -> String {
-    let mut result = encode_identifier(name);
-    if let Some(binder) = type_bounds.get(name) {
-        for bound in &binder.bounds {
-            result.push('$');
-            result.push_str(&encode_identifier(bound));
-        }
-        if let Some(callable) = &binder.callable {
-            result.push_str("$Callable$");
-            result.push_str(callable);
-        }
-    }
-    result
-}
-
-/// Whether an annotation argument spells an origin: the `_`/`...` placeholder,
-/// an `origin_of(...)` value, a one-argument call converting an origin
-/// (`ImmOrigin(o)`), a method building one (`o.unsafe_mut_cast[m]()`), one of
-/// `std.origin`'s named origins, or a parameter the signature binds by
-/// `Origin`/`OriginSet`.
-fn syntactic_origin_argument(
-    arg: &ParamArg,
-    type_bounds: &HashMap<String, BinderSpelling>,
-) -> bool {
-    let is_origin_binder = |name: &str| {
-        matches!(
-            type_bounds.get(name).map(|binder| binder.bounds.as_slice()),
-            Some([only]) if only == "Origin" || only == "OriginSet"
-        )
-    };
-    let ParamArg::Value(value) = arg else {
-        return false;
-    };
-    // A struct's own origin binder, spelled `Self.origin`.
-    if let Some(name) = value.self_member() {
-        return is_origin_binder(name);
-    }
-    match &value.kind {
-        ExprKind::Identifier(name) => {
-            matches!(
-                name.as_str(),
-                "_" | "..."
-                    | "ImmStaticOrigin"
-                    | "ImmUntrackedOrigin"
-                    | "MutUntrackedOrigin"
-                    | "ImmUnsafeAnyOrigin"
-                    | "MutUnsafeAnyOrigin"
-                    | "ImmutAnyOrigin"
-                    | "MutAnyOrigin"
-            ) || is_origin_binder(name)
-        }
-        ExprKind::Call { name, .. } if name == "origin_of" => true,
-        // A conversion of an origin (`ImmOrigin(o)`, `MyImm(o)`): a call
-        // with one positional argument that is an origin, whatever its
-        // callee; the check rejects one building no origin.
-        ExprKind::Call { args, kwargs, .. } => match args.as_slice() {
-            [operand] if kwargs.is_empty() => {
-                syntactic_origin_argument(&ParamArg::Value(operand.clone()), type_bounds)
-            }
-            _ => false,
-        },
-        // A method building an origin from an origin receiver
-        // (`o.unsafe_mut_cast[False]()`); the check rejects one whose
-        // result is no origin.
-        ExprKind::Invoke {
-            callee,
-            args,
-            kwargs,
-            ..
-        } if args.is_empty() && kwargs.is_empty() => match &callee.kind {
-            ExprKind::Member { object, .. } => {
-                syntactic_origin_argument(&ParamArg::Value((**object).clone()), type_bounds)
-            }
-            _ => false,
-        },
-        // A generic named origin's application (`UntrackedOrigin[mut=True]`).
-        _ => value.bracket_application().is_some_and(|(name, _)| {
-            matches!(name, "UntrackedOrigin" | "AnyOrigin" | "UnsafeAnyOrigin")
-        }),
-    }
-}
-
-/// The mangled spelling of a compile-time value argument in an annotation
-/// (`FixedBuffer[8]` → `8`, `_ZeroStartingRange[DType.int]` → `DType.int`,
-/// as a checked `CtValue` displays). A non-literal expression degrades to a
-/// stable placeholder — good enough because the name only needs to be
-/// deterministic.
-fn value_expr_raw(expr: &Expr, comptimes: &dyn ModuleNames) -> String {
-    if let Some(value) = eval_comptime_int(expr, comptimes) {
-        return value.to_string();
-    }
-    if let Some(dtype) = expr_dtype(expr) {
-        return format!("DType.{}", dtype.name());
-    }
-    match &expr.kind {
-        ExprKind::Bool(b) => b.to_string(),
-        ExprKind::Str(s) => encode_identifier(s),
-        ExprKind::Identifier(name) => encode_identifier(name),
-        _ => "expr".to_string(),
-    }
 }
 
 fn sorted_map<V: serde::Serialize, S: serde::Serializer>(
@@ -3735,39 +2878,15 @@ mod tests {
     }
 
     #[test]
-    fn a_value_binder_argument_keys_as_its_declaration_spells_it() {
-        use mojito_ast::ast::{Expr, ExprKind};
-        use mojito_common::token::Span;
+    fn a_value_binder_argument_keys_as_its_binder_name_and_type() {
         use mojito_types::param_expr::{ParamContext, ParamId};
-        let binder = TypeParam {
-            name: "k".to_string(),
-            bounds: vec!["Int".to_string()],
-            value_type: None,
-            callable_bound: None,
-            origin_mutability: None,
-            infer_only: false,
-            keyword_only: false,
-            default: None,
-        };
-        let annotation = Type::Named(
-            "Array".to_string(),
-            vec![
-                ParamArg::Type(Type::Named("Int".into(), vec![])),
-                ParamArg::Value(Expr::new(
-                    ExprKind::Identifier("k".to_string()),
-                    Span::default(),
-                )),
-            ],
-        );
         let reference =
             ParamContext::detached().decl_ref(ParamId::new("f", 0), "k", MetaTy::value(Ty::int()));
         let checked = Ty::new(TyKind::Struct(
             "Array".to_string(),
             vec![TyArg::Ty(Ty::int()), TyArg::Val(CtValue::Expr(reference))],
         ));
-        let declared = TypeKey::from_ast_in_scope(&annotation, std::slice::from_ref(&binder));
-        assert_eq!(declared.as_str(), "Array$Int$k$Int");
-        assert_eq!(TypeKey::from_ty(&checked), declared);
+        assert_eq!(TypeKey::from_ty(&checked).as_str(), "Array$Int$k$Int");
     }
 
     #[test]

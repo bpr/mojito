@@ -1992,30 +1992,22 @@ impl Checker {
         method_name: &str,
         overload_index: usize,
     ) -> Result<String, TypeError> {
-        let (overloaded, signature) = self
+        let signature = self
             .structs
             .get(declaration)
             .and_then(|info| info.methods.get(method_name))
-            .and_then(|methods| {
-                methods
-                    .get(overload_index)
-                    .map(|signature| (methods.len() > 1, signature))
-            })
+            .and_then(|methods| methods.get(overload_index))
             .ok_or_else(|| {
                 TypeError::InvariantViolation(format!(
                     "method signature for '{declaration}.{method_name}' is not registered"
                 ))
             })?;
-        Ok(if overloaded {
-            method_lowered_name(
-                declaration,
-                method_name,
-                signature,
-                self.self_instance_ty(declaration).as_ref(),
-            )
-        } else {
-            format!("{declaration}.{method_name}")
-        })
+        Ok(selected_method_symbol(
+            declaration,
+            method_name,
+            signature,
+            self.self_instance_ty(declaration).as_ref(),
+        ))
     }
 
     pub(super) fn check_method(
@@ -3326,10 +3318,9 @@ impl Checker {
                 "a collection built by '{name}'s raising empty constructor"
             )));
         }
-        Ok(constructor_symbol(
+        Ok(selected_method_symbol(
             name,
             "__init__",
-            sigs.len() > 1,
             sig,
             self.self_instance_ty(name).as_ref(),
         ))
@@ -3765,10 +3756,9 @@ impl Checker {
                             error: sig.error.clone(),
                             mutates_receiver: false,
                             consumes_receiver: false,
-                            lowered_name: Some(constructor_symbol(
+                            lowered_name: Some(selected_method_symbol(
                                 name,
                                 "__init__",
-                                sigs.len() > 1,
                                 sig,
                                 self.self_instance_ty(name).as_ref(),
                             )),
@@ -3950,10 +3940,9 @@ impl Checker {
                     &arg_tys,
                     bracket.application(&[]),
                 )?;
-                self.record_at(span.clone()).overload_target = Some(constructor_symbol(
+                self.record_at(span.clone()).overload_target = Some(selected_method_symbol(
                     name,
                     "__init__",
-                    false,
                     sig,
                     self.self_instance_ty(name).as_ref(),
                 ));
@@ -4070,7 +4059,6 @@ impl Checker {
             }
             let decls = info.decls().into_owned();
             let explicit = &bracket.explicit;
-            let overloaded = sigs.len() > 1;
             let keyword_names: Vec<&str> = kwargs.iter().map(|k| k.name.as_str()).collect();
             // Map arguments (positional and keyword) to each candidate's
             // parameter slots with the shared structural matcher, then solve
@@ -4514,10 +4502,9 @@ impl Checker {
                     }
                 }
                 // The template overload the source spelled.
-                self.record_at(span.clone()).overload_target = Some(constructor_symbol(
+                self.record_at(span.clone()).overload_target = Some(selected_method_symbol(
                     name,
                     "__init__",
-                    overloaded,
                     &sig,
                     self.self_instance_ty(name).as_ref(),
                 ));
@@ -5823,10 +5810,9 @@ impl Checker {
                 context: format!("argument 'copy' to '{name}.__init__'"),
             });
         }
-        self.record_at(span.clone()).overload_target = Some(constructor_symbol(
+        self.record_at(span.clone()).overload_target = Some(selected_method_symbol(
             name,
             "__copyinit__",
-            sigs.is_some_and(|sigs| sigs.len() > 1),
             sig,
             self.self_instance_ty(name).as_ref(),
         ));
