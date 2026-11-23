@@ -760,7 +760,7 @@ impl Checker {
             .collect();
         let regular_params: Vec<&FnParam> = regular.iter().map(|(_, param)| *param).collect();
         let named_result = mojito_ast::ast::named_result(&method.params);
-        let ret = method.ret.as_ref().map(annotation_view_of).transpose()?;
+        let ret = method.ret.as_ref();
         let self_ref = lower_ref_convention_sig(
             method.self_convention,
             method.self_origin.as_ref(),
@@ -802,7 +802,7 @@ impl Checker {
             conventions: regular.iter().map(|(_, p)| p.convention).collect(),
             ret: match &ret {
                 Some(referent) if method.ret_reference.is_some() => {
-                    self.ty_from_spelling(referent)?
+                    self.emit_expr_type(referent)?
                 }
                 // `$`-mangled generated methods rebind already-checked
                 // annotations with origins legitimately erased.
@@ -954,9 +954,8 @@ impl Checker {
             return Ok(None);
         }
         self.resolving_parameter_annotation.set(true);
-        let resolved = annotation_view_of(annotation).and_then(|annotation| {
-            self.resolve_storage_annotation(&annotation, super::StorageStrictness::AllowBare)
-        });
+        let resolved =
+            self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare);
         self.resolving_parameter_annotation.set(false);
         let resolved = resolved?;
         if resolved == *self_ty {
@@ -1789,9 +1788,7 @@ impl Checker {
                     self.ty_from_spelling(&AnnotationView::Named(name.clone(), Vec::new()))
                 }
             }
-            ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
-                self.type_value(value, &annotation_view_of(value)?)
-            }
+            ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => self.type_value(value),
             _ if let Some((name, args)) = self.parameter_application(value) => {
                 let (ty, attributes) = self.applied_type(name, &args)?;
                 self.record_declared_attributes(value.source_span(), &attributes);
@@ -2282,7 +2279,7 @@ impl Checker {
                 "a function cannot declare both a named result and '->' return type".to_string(),
             ));
         }
-        let ret = m.ret.as_ref().map(annotation_view_of).transpose()?;
+        let ret = m.ret.as_ref();
         let ret_ty = self.in_signature_scope(m.has_self.then_some(self_ty), |this| {
             let generated = this.generated_declaration.get();
             this.generated_declaration
@@ -2291,7 +2288,7 @@ impl Checker {
             this.generated_declaration.set(generated);
             params?;
             match &ret {
-                Some(referent) if m.ret_reference.is_some() => this.ty_from_spelling(referent),
+                Some(referent) if m.ret_reference.is_some() => this.emit_expr_type(referent),
                 // `$`-mangled generated methods rebind already-checked
                 // annotations with origins legitimately erased.
                 Some(t) if m.name.contains('$') => this.resolve_generated_return_annotation(t),
@@ -2478,17 +2475,17 @@ impl Checker {
             // `Pointer[T, _]` is concrete here only). A named `out` result
             // is the result, and resolves as one.
             let named_result = p.is_named_result();
-            let annotation = annotation_view_of(&p.ty)?;
+            let annotation = &p.ty;
             self.resolving_parameter_annotation.set(!named_result);
             let generated = self.generated_declaration.get();
             self.generated_declaration
                 .set(generated || m.name.contains('$'));
             let resolved = if named_result && !m.name.contains('$') {
-                self.resolve_return_annotation(&annotation)
+                self.resolve_return_annotation(annotation)
             } else if named_result {
-                self.resolve_generated_return_annotation(&annotation)
+                self.resolve_generated_return_annotation(annotation)
             } else {
-                self.resolve_storage_annotation(&annotation, super::StorageStrictness::AllowBare)
+                self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
             };
             self.generated_declaration.set(generated);
             self.resolving_parameter_annotation.set(false);

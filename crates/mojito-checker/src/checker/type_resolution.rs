@@ -808,10 +808,57 @@ impl StructBracket {
 }
 
 impl Checker {
-    /// The type an annotation slot's expression denotes, converted in the
-    /// type context ([`Self::annotation_view_of`]) and resolved.
+    /// The type a function-type or `__generator_type` expression spells,
+    /// at a nesting level of its own, so an application spelled in its
+    /// signature is one nested in the annotation. Any other expression is
+    /// an invariant violation.
+    pub(super) fn callable_type(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        let depth = self.annotation_depth.get();
+        self.annotation_depth.set(depth + 1);
+        let ty = match &expr.kind {
+            ExprKind::FunctionType(callable) => self.function_type(callable),
+            ExprKind::GeneratorType { params, result } => self.generator_type(params, result),
+            _ => Err(TypeError::InvariantViolation(
+                "a callable type is a function type or a generator type".to_string(),
+            )),
+        };
+        self.annotation_depth.set(depth);
+        ty
+    }
+
+    /// The type `annotation` denotes, upstream's `emitExprType`: the one
+    /// compile-time builder in the type context, where the `None` value is
+    /// the none type. An annotation that is not itself a name or a bracket
+    /// application opens a nesting level, as an application opens its own
+    /// ([`Self::applied_type`]), so only the outermost application may
+    /// leave its origin slots to inference.
+    pub(super) fn emit_expr_type(&self, annotation: &Expr) -> Result<Ty, TypeError> {
+        let view = annotation_view_of(annotation)?;
+        if let Some(reflected) = self.reflected_type_annotation(&view)? {
+            return Ok(reflected);
+        }
+        // R2547 moves these shapes onto the builder.
+        if unbuilt_annotation(annotation, &view) {
+            return self.ty_from_spelling(&view);
+        }
+        if matches!(annotation.kind, ExprKind::None) {
+            return Ok(Ty::none());
+        }
+        if matches!(annotation.kind, ExprKind::Identifier(_))
+            || annotation.bracket_application().is_some()
+        {
+            return self.annotation_type(annotation);
+        }
+        let depth = self.annotation_depth.get();
+        self.annotation_depth.set(depth + 1);
+        let built = self.annotation_type(annotation);
+        self.annotation_depth.set(depth);
+        built
+    }
+
+    /// The type an annotation slot's expression denotes ([`Self::emit_expr_type`]).
     pub(super) fn ty_from_anno(&self, annotation: &Expr) -> Result<Ty, TypeError> {
-        self.ty_from_spelling(&annotation_view_of(annotation)?)
+        self.emit_expr_type(annotation)
     }
 
     /// The type denoted by a source annotation; resolves type parameters and
@@ -947,7 +994,7 @@ impl Checker {
             .transpose()?;
         let (return_type, ref_return) = match ret_reference {
             Some(origin) => (
-                self.resolve_ty_from_anno(&annotation_view_of(ret)?)?,
+                self.emit_expr_type(ret)?,
                 Some(Box::new(
                     self.lower_callable_ref_sig(origin, decls, &regular)?,
                 )),
@@ -1636,7 +1683,7 @@ impl Checker {
 
     /// The type member `name` of `base`, applied to `args` (none for an
     /// unparameterized member): `T.Element`, `S[Int].Of[Bool]`, `S.Of[Bool]`.
-    fn member_type(
+    pub(super) fn member_type(
         &self,
         base: &AnnotationView,
         name: &str,
@@ -2610,10 +2657,7 @@ impl Checker {
     /// pin-attested), while an applied origin expression naming places only
     /// the body can resolve (`origin_of(self.entries)`) is accepted
     /// syntactically and erased.
-    pub(super) fn resolve_return_annotation(
-        &self,
-        annotation: &AnnotationView,
-    ) -> Result<Ty, TypeError> {
+    pub(super) fn resolve_return_annotation(&self, annotation: &Expr) -> Result<Ty, TypeError> {
         let saved = self.signature_origin_leniency.replace(true);
         let result = self.resolve_storage_annotation(annotation, super::StorageStrictness::Full);
         self.signature_origin_leniency.set(saved);
@@ -2628,7 +2672,7 @@ impl Checker {
     /// syntactically and erased rather than judged against the erased binder.
     pub(super) fn resolve_generated_return_annotation(
         &self,
-        annotation: &AnnotationView,
+        annotation: &Expr,
     ) -> Result<Ty, TypeError> {
         let saved = self.signature_origin_leniency.replace(true);
         let generated = self.generated_declaration.replace(true);
@@ -2645,7 +2689,7 @@ impl Checker {
     /// site can judge its initializer against them.
     pub(super) fn resolve_storage_annotation_with_origins(
         &self,
-        annotation: &AnnotationView,
+        annotation: &Expr,
         strictness: super::StorageStrictness,
     ) -> Result<(Ty, Vec<(String, mojito_types::origin::Origin)>), TypeError> {
         let saved = self.storage_origin_demands.replace(Some(Vec::new()));
@@ -2662,11 +2706,11 @@ impl Checker {
     /// storage has no constructor value argument to infer them from.
     pub(super) fn resolve_storage_annotation(
         &self,
-        annotation: &AnnotationView,
+        annotation: &Expr,
         strictness: super::StorageStrictness,
     ) -> Result<Ty, TypeError> {
         let saved = self.strict_storage_annotation.replace(strictness);
-        let result = self.ty_from_spelling(annotation);
+        let result = self.emit_expr_type(annotation);
         self.strict_storage_annotation.set(saved);
         result
     }
@@ -4175,10 +4219,10 @@ impl Checker {
         self.record_at(span.clone()).parameter_attributes = Some(binding);
     }
 
-    /// Resolve the type in value position `expr`, `ty`, recording the type
+    /// Resolve the type in value position `expr`, recording the type
     /// at it ([`mojito_checked::checked::NodeFacts::type_operand`]).
-    pub(super) fn type_value(&self, expr: &Expr, ty: &AnnotationView) -> Result<Ty, TypeError> {
-        let resolved = self.ty_from_spelling(ty)?;
+    pub(super) fn type_value(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        let resolved = self.emit_expr_type(expr)?;
         self.record_at(expr.source_span()).type_operand = Some(resolved.clone());
         Ok(resolved)
     }
@@ -5754,7 +5798,7 @@ fn literal_address_space(
         .map(mojito_types::types::AddressSpaceSlot::Known)
 }
 
-fn unsupported_mlir_type() -> TypeError {
+pub(super) fn unsupported_mlir_type() -> TypeError {
     TypeError::Unsupported(
         "this MLIR type spelling is outside the supported subset; only \
          '__mlir_type.index', '__mlir_type.i1', '__mlir_type.`!kgen.scalar<dtype>`', \
@@ -6099,6 +6143,17 @@ fn projection_index(bracket: &Expr) -> Option<&Expr> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+/// Whether `annotation` is one of the shapes [`Checker::emit_expr_type`]
+/// still types with the resolver (R2547): an index into a type sequence,
+/// `type_of`, an applied member, or a pack spread.
+const fn unbuilt_annotation(annotation: &Expr, view: &AnnotationView) -> bool {
+    match view {
+        AnnotationView::IndexedProjection { .. } | AnnotationView::TypeOf(_) => true,
+        AnnotationView::Assoc { args, .. } => !args.is_empty(),
+        _ => matches!(annotation.kind, ExprKind::Spread(_)),
     }
 }
 

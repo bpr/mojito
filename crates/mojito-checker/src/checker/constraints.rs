@@ -117,12 +117,12 @@ impl Checker {
             if !type_params.is_empty() || self.module_trait_constants.contains(name) {
                 continue;
             }
-            let ty = ty.as_ref().and_then(annotation_view);
+            let ty = ty.as_ref().filter(|annotation| !annotation.is_sentinel());
             // A `SIMD` annotation converts a scalar initializer to its
             // dtype, splatting it across the lanes, as `SIMD`'s implicit
             // scalar constructor does: `comptime Q: UInt8 = 5` is the
             // `UInt8`, whose operators wrap to its width.
-            if let Some(annotation) = &ty
+            if let Some(annotation) = ty
                 && let Some(vector) = self
                     .closed_module_constant(value)
                     .and_then(|scalar| self.splat_at_annotation(&scalar, annotation))
@@ -135,7 +135,7 @@ impl Checker {
                 // the `Int`, which every compile-time read folds with `Int`'s
                 // operators, while its number still spells the parameter.
                 Some(CtValue::IntLiteral(constant))
-                    if self.annotates_int(ty.as_ref())
+                    if self.annotates_int(ty)
                         && let Some(int) = constant.to_i64() =>
                 {
                     self.module_values.insert(name.clone(), CtValue::Int(int));
@@ -149,9 +149,7 @@ impl Checker {
                 }
                 // A `String` annotation converts a string literal at the
                 // declaration: the constant is the `String`, not the literal.
-                _ if super::traits::literal_default(value)
-                    && !self.annotates_string(ty.as_ref()) =>
-                {
+                _ if super::traits::literal_default(value) && !self.annotates_string(ty) => {
                     self.comptime_literals.insert(name.clone(), value.clone());
                 }
                 Some(folded) => {
@@ -168,13 +166,9 @@ impl Checker {
     /// value ([`has_host_scalar_value`]).
     ///
     /// [`has_host_scalar_value`]: mojito_types::types::has_host_scalar_value
-    fn splat_at_annotation(
-        &self,
-        scalar: &CtValue,
-        annotation: &AnnotationView,
-    ) -> Option<CtValue> {
+    fn splat_at_annotation(&self, scalar: &CtValue, annotation: &Expr) -> Option<CtValue> {
         let ty = self
-            .ty_from_spelling(annotation)
+            .emit_expr_type(annotation)
             .ok()
             .filter(|ty| !mojito_types::types::has_host_scalar_value(ty.kind()))?;
         let (dtype, width) = mojito_types::types::simd_shape(ty.kind())?;
@@ -185,16 +179,16 @@ impl Checker {
     }
 
     /// Whether `annotation` declares a constant `Int`.
-    pub(super) fn annotates_int(&self, annotation: Option<&AnnotationView<'_>>) -> bool {
+    pub(super) fn annotates_int(&self, annotation: Option<&Expr>) -> bool {
         annotation
-            .and_then(|annotation| self.ty_from_spelling(annotation).ok())
+            .and_then(|annotation| self.emit_expr_type(annotation).ok())
             .is_some_and(|declared| declared.is_int())
     }
 
     /// Whether `annotation` declares a constant `String`.
-    pub(super) fn annotates_string(&self, annotation: Option<&AnnotationView<'_>>) -> bool {
+    pub(super) fn annotates_string(&self, annotation: Option<&Expr>) -> bool {
         annotation
-            .and_then(|annotation| self.ty_from_spelling(annotation).ok())
+            .and_then(|annotation| self.emit_expr_type(annotation).ok())
             .is_some_and(|declared| mojito_types::types::is_nominal_string(&declared))
     }
 
@@ -202,9 +196,9 @@ impl Checker {
     /// than one lane.
     pub(super) fn vector_annotation(
         &self,
-        annotation: &AnnotationView,
+        annotation: &Expr,
     ) -> Option<(mojito_ast::ast::Dtype, usize)> {
-        let ty = self.ty_from_spelling(annotation).ok()?;
+        let ty = self.emit_expr_type(annotation).ok()?;
         let (dtype, width) = mojito_types::types::simd_shape(ty.kind())?;
         usize::try_from(width)
             .ok()
@@ -1319,8 +1313,16 @@ impl Checker {
     /// a value ("expected a type, not a value"). Builds silently: the caller
     /// records once the type is accepted.
     pub(super) fn denoted_type(&self, expr: &Expr, context: &str) -> Result<Ty, TypeError> {
-        let built = self.build_ct(expr, Recording::Silent)?;
+        let built = self
+            .build_ct(expr, Recording::Silent)
+            .map_err(|error| self.missing_type_member(expr).unwrap_or(error))?;
         if *built.meta() != MetaTy::Type {
+            if let Some(ty) = self.holed_alias_type(expr)? {
+                return Ok(ty);
+            }
+            if let Some(error) = self.missing_type_member(expr) {
+                return Err(error);
+            }
             return Err(TypeError::TypeMismatch {
                 expected: "a type".to_string(),
                 found: "a value".to_string(),
@@ -1331,15 +1333,31 @@ impl Checker {
     }
 
     /// The type an annotation expression `expr` denotes
-    /// ([`Self::denoted_type`]). An expression the compile-time builder
-    /// cannot read reports why the expression itself fails, as upstream's
+    /// ([`Self::denoted_type`]). A name chain whose head names nothing
+    /// (`Undeclared`, `Undeclared[Int]`, `Undeclared.Inner`) is an unknown
+    /// type; a head that names a declaration keeps the builder's own
+    /// failure. Any other expression the compile-time builder cannot read
+    /// reports why the expression itself fails, as upstream's
     /// `emitExprType` emits it as an ordinary expression before folding it:
     /// `Int & Copyable` is an invalid `__and__` call, `M.f()` over an
     /// undeclared `M` an unknown declaration.
     pub(super) fn annotation_type(&self, expr: &Expr) -> Result<Ty, TypeError> {
         self.denoted_type(expr, "type annotation")
             .map_err(|error| match error {
-                TypeError::NotComptime(_) => self.expression_error(expr).unwrap_or(error),
+                TypeError::NotComptime(unbound) => match annotation_head(expr) {
+                    Some(head)
+                        if head == unbound
+                            || matches!(self.build_ct_name(head, Recording::Silent),
+                                Err(TypeError::UnknownType(name) | TypeError::NotComptime(name))
+                                    if name == head) =>
+                    {
+                        TypeError::UnknownType(head.to_string())
+                    }
+                    Some(head) if self.declares(head) => TypeError::NotComptime(unbound),
+                    _ => self
+                        .expression_error(expr)
+                        .unwrap_or(TypeError::NotComptime(unbound)),
+                },
                 error => error,
             })
     }
@@ -2206,13 +2224,7 @@ impl Checker {
             ExprKind::None => self.ct_param(CtValue::None),
             ExprKind::Str(s) => self.ct_param(CtValue::Str(s.clone())),
             ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
-                let spelling = annotation_view_of(expr)?;
-                let ty = if record {
-                    self.type_value(expr, &spelling)?
-                } else {
-                    self.ty_from_spelling(&spelling)?
-                };
-                Ok(context.type_shape(ty))
+                Ok(context.type_shape(self.callable_type_operand(expr, recording)?))
             }
             ExprKind::Identifier(name) => {
                 self.instantiate_constrained_constant(name)?;
@@ -2420,9 +2432,15 @@ impl Checker {
                 if let Some(member @ CtValue::Type(_)) = self.self_struct_member(field) {
                     return self.ct_param(member.clone());
                 }
-                Err(self
-                    .instance_field_without_instance(field)
-                    .unwrap_or_else(|| TypeError::UnknownSelfParam(field.clone())))
+                self.self_type_member(field)
+                    .map(|ty| context.type_shape(ty))
+            }
+            // A type member read through a type (`T.Element` over an
+            // `Iterator`-bound `T`, `D.Y` over a generator).
+            ExprKind::Member { object, field }
+                if let Some(member) = self.member_through_type(object, field) =>
+            {
+                Ok(context.type_shape(member))
             }
             // A name no member declares is upstream's attribute fallback,
             // the receiver's `__getattr_param__` call.
@@ -3358,12 +3376,12 @@ impl Checker {
     /// thin -> Int = f`) as a callable parameter's type does.
     pub(super) fn annotated_function_value(
         &self,
-        annotation: Option<&AnnotationView<'_>>,
+        annotation: Option<&Expr>,
         value: &Expr,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let symbol = self.function_value(value)?;
         let Some(expected) = annotation
-            .and_then(|annotation| self.ty_from_spelling(annotation).ok())
+            .and_then(|annotation| self.emit_expr_type(annotation).ok())
             .filter(|expected| matches!(expected.kind(), TyKind::Func(_)))
         else {
             return Some(symbol);
@@ -3582,6 +3600,88 @@ impl Checker {
         let typed = self.probe(|| self.infer(expr));
         self.annotation_depth.set(depth);
         typed
+    }
+
+    /// The type a function-type or `__generator_type` operand spells
+    /// ([`Self::callable_type`]), recorded at it when `recording` records.
+    fn callable_type_operand(&self, expr: &Expr, recording: Recording) -> Result<Ty, TypeError> {
+        let ty = self.callable_type(expr)?;
+        if recording == Recording::Record {
+            self.record_at(expr.source_span()).type_operand = Some(ty.clone());
+        }
+        Ok(ty)
+    }
+
+    /// The type member `Self.field` reads once no parameter or shell
+    /// member of `Self` has the name: a trait's associated type
+    /// (`Self.Element`) or a concrete `Self`'s declared member. A field of
+    /// the instance is no member of the type.
+    fn self_type_member(&self, field: &str) -> Result<Ty, TypeError> {
+        if let Some(error) = self.instance_field_without_instance(field) {
+            return Err(error);
+        }
+        self.associated_type_for_self(field)
+    }
+
+    /// The type member `field` read through `object`, a type (`T.Element`
+    /// over an `Iterator`-bound `T`, `D.Y` over a generator). `None` when
+    /// `object` is a pack, whose members are its list's (`Self.Ts.length`),
+    /// or is no type, or when the type has no type member `field`, which
+    /// the value reads build.
+    fn member_through_type(&self, object: &Expr, field: &str) -> Option<Ty> {
+        self.member_read_through_type(object, field)?.ok()
+    }
+
+    /// [`Self::member_through_type`]'s read, its failure included: `None`
+    /// when `object` is a pack or no type.
+    fn member_read_through_type(
+        &self,
+        object: &Expr,
+        field: &str,
+    ) -> Option<Result<Ty, TypeError>> {
+        if self.type_pack_named(object).is_some()
+            || self.value_pack_named(object).is_some()
+            || !self.denotes_type_value(object)
+        {
+            return None;
+        }
+        let base = annotation_view(object)?;
+        Some(self.member_type(&base, field, &[]))
+    }
+
+    /// Why `expr`, read where only a type is accepted, is no type when it
+    /// reads a member through a type that declares no type member of its
+    /// name (`C.size` over a bound declaring `comptime size: Int`, `M.Y`
+    /// over a struct with no member `Y`). `None` for any other expression.
+    fn missing_type_member(&self, expr: &Expr) -> Option<TypeError> {
+        let ExprKind::Member { object, field } = &expr.kind else {
+            return None;
+        };
+        self.member_read_through_type(object, field)?.err()
+    }
+
+    /// The type an alias application that builds to no type denotes in
+    /// the type context: a type alias applied with holes
+    /// (`ImmPointer[Int, _]`, whose value is the type generator over its
+    /// open slot) is the application with each hole left to inference,
+    /// and a predicate alias (`IsCopy[Int]`) is a proposition, which the
+    /// alias application rejects as no type. `None` for any other
+    /// expression.
+    fn holed_alias_type(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
+        let Some((name, args)) = self.parameter_application(expr) else {
+            return Ok(None);
+        };
+        if self.lookup(name).is_some()
+            || !self.comptime_aliases.get(name).is_some_and(|alias| {
+                matches!(alias.body, AliasBody::Type(_) | AliasBody::Predicate(_))
+            })
+        {
+            return Ok(None);
+        }
+        Ok(match self.applied_type_value(name, &args)? {
+            Some((CtValue::Type(ty), _)) => Some(ty),
+            _ => None,
+        })
     }
 
     /// Why `expr` fails as an ordinary expression, if it does.
@@ -3922,8 +4022,11 @@ impl Checker {
             return None;
         };
         match base.as_str() {
-            "__mlir_type" => mojito_types::types::mlir_type_named(field)
-                .map(|ty| Ok(self.param_context.type_shape(ty))),
+            "__mlir_type" if self.lookup(base).is_none() => Some(
+                mojito_types::types::mlir_type_named(field)
+                    .map(|ty| self.param_context.type_shape(ty))
+                    .ok_or_else(super::type_resolution::unsupported_mlir_type),
+            ),
             "__mlir_attr" => Some(
                 super::comptime_validation::mlir_attribute_expr(&self.param_context, field)
                     .map(|(value, _)| value),
@@ -8086,4 +8189,17 @@ fn lit_struct_field(value: &str, ty: &Ty, field: &str) -> Result<CtValue, TypeEr
         found: format!("'{value}'"),
         context: format!("{field} in a '#lit.struct' attribute"),
     })
+}
+/// The name an annotation's name chain is rooted at: `M` of `M`,
+/// `M[Int]`, `M.Inner`, or `M[Int].Inner[0]`. `None` for any other
+/// expression (a call, an operator, a conditional).
+fn annotation_head(expr: &Expr) -> Option<&str> {
+    match &expr.kind {
+        ExprKind::Identifier(name) => Some(name),
+        _ if let Some((name, _)) = expr.bracket_application() => Some(name),
+        ExprKind::Member { object, .. }
+        | ExprKind::Index { object, .. }
+        | ExprKind::MultiIndex { object, .. } => annotation_head(object),
+        _ => None,
+    }
 }

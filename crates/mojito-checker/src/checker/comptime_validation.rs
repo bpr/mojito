@@ -5075,8 +5075,7 @@ impl Checker {
         annotation_expression: Option<&Expr>,
         value: &Expr,
     ) -> Result<bool, TypeError> {
-        let annotation = annotation_expression.map(annotation_view_of).transpose()?;
-        let annotation = annotation.as_ref();
+        let annotation = annotation_expression;
         // An annotation naming a struct the value is not converts it
         // through the struct's `@implicit` constructor, as a parameter
         // argument converts: `comptime w: L = 4` binds `L(4)`.
@@ -5346,7 +5345,7 @@ impl Checker {
     /// constructor converts, which the binding's ordinary check rejects.
     pub(super) fn annotated_comptime_conversion(
         &self,
-        annotation: &AnnotationView,
+        annotation: &Expr,
         value: &Expr,
     ) -> Option<ParamExpr> {
         // A trait (`comptime C: Hooks = …`) names no struct to convert to.
@@ -5364,7 +5363,7 @@ impl Checker {
     fn check_raw_list_annotation(
         &self,
         name: &str,
-        annotation: Option<&AnnotationView<'_>>,
+        annotation: Option<&Expr>,
         value: &Expr,
     ) -> Result<(), TypeError> {
         let (Some(annotation), Some(found)) = (annotation, self.member_value_type(value)) else {
@@ -5389,7 +5388,7 @@ impl Checker {
     fn check_type_list_annotation(
         &self,
         name: &str,
-        annotation: Option<&AnnotationView<'_>>,
+        annotation: Option<&Expr>,
         value: &Expr,
     ) -> Result<(), TypeError> {
         let Some(annotation) = annotation else {
@@ -5422,7 +5421,7 @@ impl Checker {
     fn bind_compile_time_only_value(
         &mut self,
         name: &str,
-        annotation: Option<&AnnotationView<'_>>,
+        annotation: Option<&Expr>,
         value: &Expr,
     ) -> Result<bool, TypeError> {
         let type_list = matches!(self.type_list_operand(value), Ok(Some(_)));
@@ -5497,10 +5496,7 @@ impl Checker {
                 )
             })
             .map(|annotation| {
-                self.resolve_storage_annotation(
-                    &annotation_view_of(annotation)?,
-                    super::StorageStrictness::AllowBare,
-                )
+                self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
             })
             .transpose()?;
         if let ExprKind::Call { name, .. } = &value.kind
@@ -5749,7 +5745,7 @@ impl Checker {
     fn evaluated_display_binding(
         &self,
         value: &Expr,
-        annotation: Option<&AnnotationView<'_>>,
+        annotation: Option<&Expr>,
     ) -> Option<(Ty, Ty, mojito_checked::checked::SemanticAdjustment)> {
         let annotated = || {
             annotation.and_then(|annotation| {

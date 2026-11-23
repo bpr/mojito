@@ -460,10 +460,9 @@ impl Checker {
             Err(error) => return Err(error),
         };
         let declared = match ty {
-            Some(annotation) => self.resolve_storage_annotation(
-                &annotation_view_of(annotation)?,
-                super::StorageStrictness::AllowBare,
-            ),
+            Some(annotation) => {
+                self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
+            }
             None => self
                 .infer(value)
                 .and_then(|found| self.comptime_binding_ty(&found, name)),
@@ -499,7 +498,6 @@ impl Checker {
         if !type_params.is_empty() {
             return Ok(());
         }
-        let ty = ty.as_ref().map(annotation_view_of).transpose()?;
         if !where_clauses.is_empty() {
             self.constrained_module_constants
                 .insert(name.clone(), where_clauses.clone());
@@ -509,7 +507,7 @@ impl Checker {
         let vector = ty
             .as_ref()
             .filter(|_| matches!(self.module_values.get(name), Some(CtValue::Simd { .. })))
-            .and_then(|annotation| self.ty_from_spelling(annotation).ok());
+            .and_then(|annotation| self.emit_expr_type(annotation).ok());
         // An annotation converting the value through its struct's
         // `@implicit` constructor binds the conversion's application
         // (`comptime W: L = 4` is `L(4)`), never the folded literal.
@@ -542,7 +540,7 @@ impl Checker {
             // declaration: every read is the `String`.
             self.comptime_literals.remove(name);
             ty.as_ref()
-                .and_then(|annotation| self.ty_from_spelling(annotation).ok())
+                .and_then(|annotation| self.emit_expr_type(annotation).ok())
         } else if super::traits::literal_default(value) {
             self.comptime_literals.insert(name.clone(), value.clone());
             self.infer(value).ok()
@@ -974,7 +972,6 @@ impl Checker {
                 continue;
             }
             self.module_trait_constants.insert(name.clone());
-            let ty = ty.as_ref().map(annotation_view_of).transpose()?;
             match self.bind_trait_constant(name, ty.as_ref(), value, 0) {
                 Err(error) if report => return Err(error),
                 _ => {}
@@ -1576,11 +1573,10 @@ impl Checker {
                 Ok(())
             }
             StmtKind::VarDecl { name, ty, value } => {
-                let ty = ty.as_ref().map(annotation_view_of).transpose()?;
                 // Current Mojo reads a bare `def(...)` local annotation as
                 // trait-typed storage, like fields and collection elements;
                 // a stored callable spells `def(...) thin`.
-                if let Some(AnnotationView::Value(value)) = &ty
+                if let Some(value) = ty
                     && matches!(&value.kind, ExprKind::FunctionType(callable) if !callable.thin)
                 {
                     return Err(TypeError::Unsupported(format!(
@@ -2316,7 +2312,7 @@ impl Checker {
                     && type_params.is_empty()
                     && self.bind_trait_constant(
                         name,
-                        ty.as_ref(),
+                        annotation.as_ref(),
                         value,
                         self.param_depth().saturating_sub(1),
                     )?
@@ -2418,7 +2414,7 @@ impl Checker {
                         })?
                         .insert(name.clone(), dtype);
                 }
-                let annotated = ty
+                let annotated = annotation
                     .as_ref()
                     .map(|annotation| {
                         self.resolve_storage_annotation(
@@ -2450,7 +2446,7 @@ impl Checker {
                     // vector's splat is the binding's value, never the
                     // literal.
                     if let Ok(v) = folded
-                        && ty
+                        && annotation
                             .as_ref()
                             .and_then(|annotation| self.vector_annotation(annotation))
                             .is_none()
@@ -4140,16 +4136,14 @@ impl Checker {
         // The clauses a compile-time application already emitted are the
         // signature's own, as upstream emits a signature once.
         let emitted = self.emitted_def_constraints(stmt, &ParamDecl::argument_view(&decls));
-        let ret = ret_anno.as_ref().map(annotation_view_of).transpose()?;
+        let ret = ret_anno.as_ref();
         let (param_tys, ret_ty, compiled) = self.in_signature_scope(None, |this| {
             let generated = this.generated_declaration.replace(name.contains('$'));
             let param_tys = this.param_tys(params);
             this.generated_declaration.set(generated);
             let param_tys = param_tys?;
             let ret_ty = match (&ret, named_result) {
-                (Some(referent), _) if ret_reference.is_some() => {
-                    this.ty_from_spelling(referent)?
-                }
+                (Some(referent), _) if ret_reference.is_some() => this.emit_expr_type(referent)?,
                 // A compiler-generated specialization (`$`-mangled) rebinds
                 // already-checked annotations whose origin identity is
                 // legitimately erased; signature concreteness applies to
@@ -4629,18 +4623,18 @@ impl Checker {
             .iter()
             .enumerate()
             .map(|(slot, parameter)| {
-                let annotation = annotation_view_of(&parameter.ty)?;
+                let annotation = &parameter.ty;
                 // The initialized-local rule for parameter annotations
                 // (pin-attested): bare infers per call, a partial application
                 // omitting an origin slot rejects, a placeholder is inferred
                 // (a bare `Pointer[T, _]` is concrete here only). A named
                 // `out` result is the result, and resolves as one.
                 let resolved = if mojito_ast::ast::DeclaredParam::is_named_result(parameter) {
-                    self.resolve_return_annotation(&annotation)
+                    self.resolve_return_annotation(annotation)
                 } else {
                     self.resolving_parameter_annotation.set(true);
                     let resolved = self.resolve_storage_annotation(
-                        &annotation,
+                        annotation,
                         super::StorageStrictness::AllowBare,
                     );
                     self.resolving_parameter_annotation.set(false);
@@ -4650,11 +4644,10 @@ impl Checker {
                 // A runtime value of a parametric function type is the
                 // closure a reference materializes, so its open parameters
                 // are origins alone, each call inferring them.
-                if let AnnotationView::Value(value) = &annotation
-                    && matches!(
-                        &value.kind,
-                        ExprKind::FunctionType(callable) if !callable.type_params.is_empty()
-                    )
+                if matches!(
+                    &annotation.kind,
+                    ExprKind::FunctionType(callable) if !callable.type_params.is_empty()
+                )
                     && super::is_unbound_parametric_function(&resolved)
                 {
                     return Err(TypeError::Unsupported(

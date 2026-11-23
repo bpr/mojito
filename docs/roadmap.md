@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2547**.
+Next free ID: **R2551**.
 
 ## Ordered Work
 
@@ -13372,17 +13372,72 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2541 The checker types an annotation with a second evaluator**
+- [ ] **R2547 Index, `type_of`, applied-member, and pack-spread annotations bypass the one builder**
 
-  `resolve_ty_from_anno` resolves the checker's `AnnotationView`
-  classification of the annotation expression, beside `build_ct`/`denoted_type`, where upstream types every
-  annotation with its one `emitExprType`.
-  - Since R2137 an annotation no spelling converts already goes through
-    `denoted_type`, so the two disagree only on the shapes the resolver
-    classifies.
-  - The resolver is about 5,000 lines of `type_resolution.rs`, so this
-    needs a plan that splits it.
-  - Depends on R2546.
+  `Checker::emit_expr_type` still sends four annotation shapes to the
+  resolver's `resolve_ty_from_anno_at_depth` (its `unbuilt_annotation`
+  gate), where upstream's `emitExprType` builds every annotation.
+  - The shapes are an index into a type sequence
+    (`values.element_types[i]`, `Self.Ts[0]`, `TypeList[...]()[i]`),
+    `type_of(x)`, an applied member (`Self.IteratorType[origin_of(self)]`,
+    `C.IteratorType[o]`), and a pack spread (`*Ts`, `*Self.Ts`).
+  - `reflected_type_annotation` and `handle_from_annotation` still take the
+    view, so `emit_expr_type` views every annotation first.
+  - Compare both paths on these shapes (an `R2541_PROBE`-style logging
+    differential in `emit_expr_type`, as R2541 ran on the other shapes),
+    move each disagreeing arm into `build_ct`, then delete the gate.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2548 The resolver's leaves and bracket operands read an annotation view**
+
+  `ty_from_spelling`, `resolve_ty_from_anno`, and
+  `resolve_ty_from_anno_at_depth` survive because synthesized views and
+  view-taking leaves still call them, where upstream's type-application code
+  takes the expression.
+  - Synthesized `AnnotationView::Named`/`SelfParam` sites go to
+    `applied_type` or `emit_expr_type` (`type_resolution.rs`,
+    `comptime_validation.rs`, `initializer_list.rs`, `declarations.rs`,
+    `origins/binders.rs`, `method_calls/type_receivers.rs`,
+    `constraints.rs`).
+  - `member_type`, `member_base`, `member_index_application`,
+    `dependent_type_sequence`, `unbound_pack_type`, and `value_base_type`
+    take the base expression; `constraints.rs::member_through_type` and
+    `denoted_type`'s value-member check then stop viewing the object.
+  - `build_ct`'s `&` of trait operands builds the trait composition, so
+    `composition_view` and `$trait_composition` go.
+  - `build_ct_rest`'s member-type fallback stops using `member_view_of`.
+  - Depends on R2547.
+  - Model: Fable, Planned.
+
+- [ ] **R2549 Origin, declaration, and trait readers classify an annotation by its view**
+
+  Structural readers in `origins/`, `declarations.rs`, `traits.rs`,
+  `statements.rs`, `reflection.rs`, and `builtin_fold.rs` match an
+  `AnnotationView`'s shape, where upstream reads the expression or the
+  emitted type.
+  - Probe: `origins/sig.rs::result_origin_roots`,
+    `origins/binders.rs::field_origin_binder_arguments`,
+    `declarations.rs::{binder_view, origin_annotation_mutability,
+    spread_pack_view}`, `traits.rs` field and requirement readers,
+    `statements.rs::{check_generic_comptime_alias, type_text}`,
+    `builtin_fold.rs`.
+  - Depends on R2548.
+  - Model: Fable, Planned.
+
+- [ ] **R2550 Constraint and comptime-validation readers classify an annotation by its view**
+
+  `constraints.rs`, `comptime_validation.rs`, and `initializer_list.rs`
+  still match `AnnotationView` shapes, so the view type outlives the
+  evaluator it was built for.
+  - Probe: `ct_member_req_from_anno`, `lower_parameterized_member`,
+    `assoc_body_view`, `member_view_of`, `type_initializer_mismatch`,
+    `mlir_source_name`, `SlotType` classification, the
+    `initializer_list.rs` view readers.
+  - Then delete `AnnotationView`, its view functions, and
+    `annotation_view_tests`, and say in `docs/features.md` that the checker
+    types every annotation with `emit_expr_type`.
+  - Depends on R2549.
   - Model: Fable, Planned.
 
 - [ ] **R2533 A module-qualified trait bound is a value type**

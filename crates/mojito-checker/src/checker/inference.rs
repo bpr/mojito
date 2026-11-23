@@ -1579,8 +1579,7 @@ impl Checker {
                 Some(mojito_ast::ast::ParamArg::Value(index.clone()))
             }
             ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
-                self.type_value(index, &annotation_view_of(index).ok()?)
-                    .ok();
+                self.type_value(index).ok();
                 Some(mojito_ast::ast::ParamArg::Value(index.clone()))
             }
             ExprKind::Index { .. } | ExprKind::MultiIndex { .. }

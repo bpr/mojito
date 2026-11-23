@@ -5823,18 +5823,21 @@ Across phase boundaries, Mojito names source syntax and checked semantics
 explicitly. An annotation expression is parser-owned syntax; `Ty`,
 `binding_ty`, and MIR `param_types` are checker-resolved facts. An annotation
 is one whole expression, as upstream's AST keeps it, and the AST has no
-second representation of a type. The checker classifies an annotation
-expression in its type context through its own borrowed view,
-`type_resolution.rs::AnnotationView` (`annotation_view`), until one
-evaluator reads every annotation (R2541): an expression no type spelling
-covers is `AnnotationView::Value`, which the checker evaluates in the
-type context (`denoted_type`), so the parser rejects no annotation for its
-shape. Every annotation slot (`var` and `comptime` annotations, struct and
+second representation of a type. The checker types an annotation as
+upstream's `emitExprType` does, with the one compile-time builder:
+`Checker::emit_expr_type` is `annotation_type` (`denoted_type` over
+`build_ct`) in the type context, where the `None` value is the none type, so
+the parser rejects no annotation for its shape. An index into a type
+sequence, `type_of`, an applied member, and a pack spread still go to the
+resolver's dispatcher (`resolve_ty_from_anno_at_depth`) until R2547 moves
+them, and structural readers still classify an annotation through the
+checker's borrowed view, `type_resolution.rs::AnnotationView`
+(`annotation_view`), until R2549 and R2550 retire it. Every annotation slot (`var` and `comptime` annotations, struct and
 trait `comptime` members, struct fields, union payloads, a parameter's type,
 a result, a `raises` type, a receiver's annotation, a callable conformance,
 and a type parameter's value type and callable bound) stores the annotation
 expression itself, as upstream keeps it, and the checker converts it when it
-reads it (`Checker::ty_from_anno`, `composition_view` for a struct or trait
+reads it (`Checker::emit_expr_type`, `composition_view` for a struct or trait
 `comptime` member's `&` composition, `binder_view` for a binder). A
 synthesized slot is built as the expression source would spell, and an
 elaborator rewrite of an annotation edits the expression

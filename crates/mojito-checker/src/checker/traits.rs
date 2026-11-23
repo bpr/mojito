@@ -171,7 +171,7 @@ impl Checker {
     pub(super) fn bind_trait_constant(
         &mut self,
         name: &str,
-        annotation: Option<&AnnotationView<'_>>,
+        annotation: Option<&Expr>,
         value: &Expr,
         level: usize,
     ) -> Result<bool, TypeError> {
@@ -181,7 +181,7 @@ impl Checker {
         let found = found?;
         let declared = match annotation {
             None => found.ty,
-            Some(annotation) => match self.ty_from_spelling(annotation)?.kind() {
+            Some(annotation) => match self.emit_expr_type(annotation)?.kind() {
                 TyKind::AnyTrait(declared) if self.traits_satisfy(&found.ty, declared) => {
                     declared.clone()
                 }
@@ -641,9 +641,8 @@ impl Checker {
                 })
                 .collect::<Vec<_>>();
             let all_types = this.param_tys(&m.params)?;
-            let ret_view = m.ret.as_ref().map(annotation_view_of).transpose()?;
-            let ret = match &ret_view {
-                Some(t) => this.ty_from_spelling(t)?,
+            let ret = match &m.ret {
+                Some(t) => this.emit_expr_type(t)?,
                 None => Ty::none(),
             };
             let error = this.declared_error(m.raises, m.raises_type.as_ref())?;
@@ -1260,7 +1259,6 @@ impl Checker {
                 return Err(TypeError::Redeclaration(f.name.clone()));
             }
             self.reject_trait_typed_storage(&f.ty, "struct fields")?;
-            let spelling = annotation_view_of(&f.ty)?;
             // A field's `Self.name` resolves declared parameters and (now
             // pre-installed) associated members; a residual miss on `Self`
             // itself still reports an unknown parameter. Field annotations are
@@ -1269,9 +1267,9 @@ impl Checker {
             // whose annotations reconstruct already-checked types with the
             // origin identity legitimately erased.
             let ty = if declaration.name.contains('$') {
-                self.ty_from_spelling(&spelling)
+                self.emit_expr_type(&f.ty)
             } else {
-                self.resolve_storage_annotation(&spelling, super::StorageStrictness::Full)
+                self.resolve_storage_annotation(&f.ty, super::StorageStrictness::Full)
             }
             .and_then(|referent| match &f.reference {
                 Some(spec) => self.reference_field_ty(spec, referent),
@@ -1342,8 +1340,8 @@ impl Checker {
                 },
                 ty.clone(),
             );
-            if let Some(bindings) =
-                self.field_origin_binder_arguments(&spelling, declaration.associated)
+            if let Some(bindings) = self
+                .field_origin_binder_arguments(&annotation_view_of(&f.ty)?, declaration.associated)
             {
                 field_origin_arguments.insert(f.name.clone(), bindings);
             }

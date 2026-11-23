@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker types an annotation with the one compile-time builder
+  (R2541): `Checker::emit_expr_type`, upstream's `emitExprType`, builds the
+  annotation expression with `build_ct` in the type context instead of
+  resolving the checker's `AnnotationView` with a second evaluator. The
+  builder now reads a type member through a type (`T.Element`,
+  `Self.Element`, `D.Y`) as the resolver did, types a type alias applied
+  with holes (`ImmPointer[Int, _]`), rejects a predicate alias and an
+  unsupported `__mlir_type` spelling where a type is read, and reports an
+  unknown head of a name chain as an unknown type. An index into a type
+  sequence, `type_of`, an applied member, and a pack spread still take the
+  resolver (R2547). No fixture's behavior changes.
+
 - The AST exports no second representation of a type (R2546):
   `ast::Type`, `SourceType`, and the view functions
   (`Expr::{annotation_type, composition_type, type_spelling,

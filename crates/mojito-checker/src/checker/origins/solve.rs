@@ -28,11 +28,10 @@ impl Checker {
         let Some(Some((annotation, generated))) = self.return_annotations.last() else {
             return None;
         };
-        let annotation = annotation_view_of(annotation).ok()?;
         if *generated {
-            self.resolve_generated_return_annotation(&annotation)
+            self.resolve_generated_return_annotation(annotation)
         } else {
-            self.resolve_return_annotation(&annotation)
+            self.resolve_return_annotation(annotation)
         }
         .ok()
     }
@@ -53,11 +52,10 @@ impl Checker {
         let Some(Some((annotation, generated))) = self.return_annotations.last() else {
             return Ok(found.clone());
         };
-        let annotation = annotation_view_of(annotation)?;
         let resolved = if *generated {
-            self.resolve_generated_return_annotation(&annotation)
+            self.resolve_generated_return_annotation(annotation)
         } else {
-            self.resolve_return_annotation(&annotation)
+            self.resolve_return_annotation(annotation)
         };
         let Ok(bound) = resolved else {
             return Ok(found.clone());
