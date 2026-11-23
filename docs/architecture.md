@@ -2093,7 +2093,9 @@ anchor's `EstablishLoans` goes on that storage. The slot establishes the
 temporary's own loans
 (`aggregate_borrows_unmaterialized`, the loan funnel without the slot's
 self-loan), so storage a materialized view borrows outlives every borrower of
-the slot (`it.peek_next().value()`). The slot is lent with the capability the
+the slot (`it.peek_next().value()`). A conditional's result slot, which each arm moves
+into as upstream emits an arm into its destination buffer, holds each
+arm's loans, and the conditional lends their union. The slot is lent with the capability the
 borrow that forced the materialization needs, which
 `MaterializeBorrowSource` records and `materialized_borrow_mutability` reads:
 materializing changes where the storage lives, never what the loan permits,

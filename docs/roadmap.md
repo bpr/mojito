@@ -1518,26 +1518,6 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R2527 A conditional expression building a struct with a `ref`
-  field ends the referent's owner before the result's last use**
-
-  `var h = Holder(x) if c else Holder(x)` over `var r: ref[Self.o] Int`
-  drops `x` right after the branch's construction, so `h.r` reads a dead
-  slot; the same construction outside a conditional keeps `x` live.
-  - The branch result's loan on the referent's owner is lost when the
-    branch value moves into the conditional's result slot (`$sc` in
-    `conditional_into_slot`); a `Pointer(to=s)` branch keeps its loan.
-  - Probe: `print(h.r + 1)` after the binding above fails in the VM with
-    `operator Add is not defined for None and Int`.
-  - Probe: the `String` form `var h = H(s) if c else H(s);
-    print(h.r.byte_length())` fails with `invalid reference projection
-    Field("size") on <moved>`.
-  - Probe: the temporary receiver `(H(s) if c else H(s)).r.byte_length()`
-    fails with `field access on non-struct <moved>`.
-  - Found while landing R2524 (2026-11-22).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2379 A subscript through a `ref` field read off a collection
   element passes the VM a value where it wants a reference**
 
@@ -3573,6 +3553,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     'StringSpan'"); the pin prints `x`.
   - Probe: `Span(l1) if c else Span(l2)` over two lists fails the same
     way; the pin prints `2`.
+  - Probe: a user `ref`-field struct with no `__merge_with__`, `H(s) if c
+    else H(t)`, is "'H[true]' is not compatible with 'H[true]'", printing
+    both types alike, and `H(s) or H(t)` types as `Bool` ("type 'Bool' has
+    no field 'r'"); the pin's verdict on either is unchecked (found while
+    landing R2527).
   - Found while landing R1848 (2026-11-06).
   - A `Pointer` holds a union origin (R2429), but the bundled
     `Pointer.__merge_with__` still cannot be declared: its result

@@ -1094,6 +1094,7 @@ assets/ok/pointer_field_adapter_from_reborrow.mojo	-	ineligible	no-scalar-entry-
 assets/ok/pointer_field_adapter_return_from_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_bare_origin_mutable_source_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_chained_view_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_field_conditional_expression_keeps_referent.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_ctor_from_ref_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_ctor_owned_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_field_ctor_temporary_explicit_init.mojo	-	ineligible	no-scalar-entry-shape
@@ -1923,6 +1924,7 @@ assets/extensions/ok/ref_field_adapter_from_reborrow.mojo	-	ineligible	no-scalar
 assets/extensions/ok/ref_field_adapter_return_from_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_argument_at_ref_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_chained_view_call.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_conditional_expression_keeps_referent.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_ctor_from_ref_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_ctor_owned_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_ctor_temporary_explicit_init.mojo	-	ineligible	no-scalar-entry-shape

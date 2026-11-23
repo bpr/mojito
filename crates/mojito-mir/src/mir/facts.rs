@@ -1743,6 +1743,23 @@ impl<'a> Flatten<'a> {
                 }
                 self.result_argument_borrows(node)
             }
+            // A conditional's value, or a value-returning `and`/`or`, is one
+            // of its arms: it lends the union of their loans, as its type
+            // names the union of the arms' origins.
+            CheckedOp::IfExpr {
+                then_branch: a,
+                else_branch: b,
+                ..
+            }
+            | CheckedOp::Infix(InfixOp::And | InfixOp::Or, a, b)
+                if node.ty().is_some_and(|ty| carries_references(&ty)) =>
+            {
+                [*a, *b]
+                    .into_iter()
+                    .filter_map(|arm| node.operand_of(arm))
+                    .flat_map(|arm| self.aggregate_borrows(arm))
+                    .collect()
+            }
             CheckedOp::ListLit(_) | CheckedOp::TupleLit(_) => node
                 .operands()
                 .flat_map(|value| self.aggregate_borrows(value))

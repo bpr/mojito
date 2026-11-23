@@ -1462,6 +1462,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A conditional expression, or a value-returning `and`/`or`, building a
+  struct with a `ref` field keeps the referent's owner live while the
+  result is: each arm puts its loans on the result slot it moves into, and
+  the expression lends the union of its arms' loans, as upstream keeps the
+  storage the result type's origins name live. `var h = Holder(x) if c
+  else Holder(x)` dropped `x` after the arm's construction, so `h.r`
+  failed in the VM, and growing a list a conditional's view borrowed was a
+  use after free instead of an invalidated-reference error.
+
 - A value read of a declared `ref` field off an expression temporary reads
   through the stored handle, as off a named local: `Holder(x).r + 1`
   printed garbage or failed in the VM with `operator Add is not defined for

@@ -272,6 +272,8 @@ impl<'a> Flatten<'a> {
                     binding_ty: None,
                     in_place: false,
                 });
+                let loans = this.aggregate_borrows(value);
+                this.establish_storage_loans(value, result, loans);
                 test.yield_values(Vec::new())
             })
         };
@@ -310,13 +312,18 @@ impl<'a> Flatten<'a> {
         let ty = self.f.reg_types.get(&ra.0).cloned().or_else(|| a.ty());
         let (held, cond) = self.hold_tested_operand(a, ra, ty.as_ref());
         let result = self.fresh_var();
-        let define = |this: &mut Self, src| {
+        // Each arm moves its operand into the result slot and puts that
+        // operand's loans on it, as upstream keeps the storage the result
+        // type's origins name live.
+        let define = |this: &mut Self, operand: Node<'a>, src| {
             this.emit(MirInstr::DefVar {
                 var: result,
                 src,
                 binding_ty: None,
                 in_place: false,
             });
+            let loans = this.aggregate_borrows(operand);
+            this.establish_storage_loans(operand, result, loans);
             MirTerm::Yield(Vec::new())
         };
         let rhs = self.region(|this| {
@@ -326,12 +333,12 @@ impl<'a> Flatten<'a> {
             } else {
                 this.move_out_of_temporary(b, src)
             };
-            define(this, src)
+            define(this, b, src)
         });
         let lhs = self.region(|this| {
             let moved = this.move_out_held(a, held, ty);
             let converted = this.convert_tested(a, moved);
-            define(this, converted)
+            define(this, a, converted)
         });
         let (then, orelse) = short_circuit_arms(op, lhs, rhs);
         self.emit(MirInstr::If {

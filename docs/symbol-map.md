@@ -1775,7 +1775,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   tested through `truthiness_test`, held in a slot its `__bool__` call
   reads when it is not a scalar (`hold_tested_operand`, by the slot's address unless the
   check proved the operand register-passable), and a memory-only result goes
-  through a result slot (`short_circuit_into_slot`). A left operand that
+  through a result slot (`short_circuit_into_slot`). Each arm of either
+  slot puts its operand's loans on the slot (`establish_storage_loans`),
+  and `aggregate_borrows` answers a conditional or a value-returning
+  `and`/`or` with the union of its operands' loans, as upstream keeps the
+  origins the result type names live. A left operand that
   converts to the common type is tested unconverted (`tested_operand`) and
   converted in its arm (`convert_tested`, through
   `Flatten::apply_conversion`, `lower_expr/entry.rs`, the conversion tail
