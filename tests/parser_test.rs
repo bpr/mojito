@@ -1,10 +1,10 @@
 use mojito::ast::{
     ArgConvention, BindingMode, Capture, CaptureKind, CollectionKind, ComprehensionClause,
     Condition, Decorator, DestructureTarget, DestructureTargetKind, Expr, ExprKind, FnParam,
-    FunctionTypeParam, ImportName, ImportNames, InfixOp, KwArg, MatchPattern, MatchPatternKind,
-    Method, Param, ParamArg, ParamKind, PrefixOp, SequencePattern, SequenceTarget, Stmt, StmtKind,
-    StructComptime, SubscriptArg, SumKind, TStringPart, TraitComptime, TraitMethod, Type,
-    TypeParam, WithItem,
+    FunctionTypeExpr, FunctionTypeParam, ImportName, ImportNames, InfixOp, KwArg, MatchPattern,
+    MatchPatternKind, Method, Param, ParamArg, ParamKind, PrefixOp, SequencePattern,
+    SequenceTarget, Stmt, StmtKind, StructComptime, SubscriptArg, SumKind, TStringPart,
+    TraitComptime, TraitMethod, Type, TypeParam, WithItem,
 };
 use mojito::{FloatLiteral, Lexer, Parser, parse_diagnostics};
 
@@ -537,7 +537,7 @@ fn signature_annotation_slots_store_the_annotation_expression() {
             .callable_bound
             .as_ref()
             .map(|bound| &bound.kind),
-        Some(ExprKind::TypeValue(Type::Func { .. }))
+        Some(ExprKind::FunctionType(_))
     ));
     assert!(matches!(
         type_params[1].value_type.as_ref().map(|value| &value.kind),
@@ -1447,25 +1447,19 @@ fn parses_generator_types_as_parameter_types_and_alias_bodies() {
     let StmtKind::Comptime { value, .. } = &statements[0].kind else {
         panic!("expected a comptime alias");
     };
-    let ExprKind::TypeValue(Type::Generator { params, result }) = &value.kind else {
-        panic!("expected a generator type, got {value:?}");
-    };
+    let (params, result) = generator_type(value);
     assert_eq!(params[0].name, "Idx");
-    assert_eq!(**result, Type::Named("Int".into(), vec![]));
+    assert_eq!(result, *ident("Int"));
     let StmtKind::Def { type_params, .. } = &statements[1].kind else {
         panic!("expected def");
     };
     assert_eq!(type_params[0].bounds, ["__generator_type"]);
-    let Some(Type::Generator { params, result }) = &type_params[0].value_type.as_ref().map(view)
-    else {
-        panic!("expected a generator-typed parameter");
-    };
+    let (params, result) = generator_type(type_params[0].value_type.as_ref().unwrap());
     assert_eq!(params.len(), 2);
-    assert_eq!(**result, Type::Named("T".into(), Vec::new()));
-    assert!(matches!(
-        &type_params[1].value_type.as_ref().map(view),
-        Some(Type::Generator { params, result }) if params.is_empty() && **result == Type::Named("Int".into(), vec![])
-    ));
+    assert_eq!(result, *ident("T"));
+    let (params, result) = generator_type(type_params[1].value_type.as_ref().unwrap());
+    assert!(params.is_empty());
+    assert_eq!(result, *ident("Int"));
 }
 
 #[test]
@@ -1478,11 +1472,9 @@ fn parses_a_trait_composition_as_a_generator_types_result() {
     };
     assert_eq!(type_params.len(), 2);
     assert_eq!(type_params[0].bounds, ["__generator_type"]);
-    let Some(Type::Generator { result, .. }) = &type_params[0].value_type.as_ref().map(view) else {
-        panic!("expected a generator-typed parameter");
-    };
+    let (_, result) = generator_type(type_params[0].value_type.as_ref().unwrap());
     assert_eq!(
-        **result,
+        result.composition_type().unwrap(),
         Type::Named(
             "$trait_composition".into(),
             vec![
@@ -2334,8 +2326,8 @@ fn parses_thin_and_raises_in_either_effect_order() {
         ));
     }
     assert!(matches!(
-        var_anno_type("var callback: def() raises thin -> Int = first\n"),
-        Type::Func {
+        var_function_type("var callback: def() raises thin -> Int = first\n"),
+        FunctionTypeExpr {
             raises: true,
             thin: true,
             ..
@@ -4570,15 +4562,47 @@ fn parses_dunder_method_names() {
 
 // --- Function/closure type annotations (parsed; semantics deferred) ---
 
-/// Extract the annotated type from `var NAME: TYPE = expr`.
-fn var_anno_type(src: &str) -> Type {
+/// Extract the function type annotating `var NAME: TYPE = expr`.
+fn var_function_type(src: &str) -> FunctionTypeExpr {
     match parse(src).into_iter().next().unwrap().kind {
-        StmtKind::VarDecl { ty: Some(ty), .. } => view(&ty),
+        StmtKind::VarDecl { ty: Some(ty), .. } => function_type(&ty),
         other => panic!("expected an annotated var decl, got {other:?}"),
     }
 }
 
-const fn function_type_param(ty: Type) -> FunctionTypeParam {
+/// The function type an expression spells.
+fn function_type(expr: &Expr) -> FunctionTypeExpr {
+    match &expr.kind {
+        ExprKind::FunctionType(callable) => (**callable).clone(),
+        other => panic!("expected a function type, got {other:?}"),
+    }
+}
+
+/// The parameter list and result of the generator type an expression spells.
+fn generator_type(expr: &Expr) -> (Vec<TypeParam>, Expr) {
+    match &expr.kind {
+        ExprKind::GeneratorType { params, result } => (params.clone(), (**result).clone()),
+        other => panic!("expected a generator type, got {other:?}"),
+    }
+}
+
+/// A plain function type over unnamed regular parameters.
+fn function_type_of(params: &[&str], ret: Expr, thin: bool, raises: bool) -> FunctionTypeExpr {
+    FunctionTypeExpr {
+        type_params: vec![],
+        params: params
+            .iter()
+            .map(|ty| function_type_param(*ident(ty)))
+            .collect(),
+        ret,
+        thin,
+        raises,
+        raises_type: None,
+        where_clauses: vec![],
+    }
+}
+
+const fn function_type_param(ty: Expr) -> FunctionTypeParam {
     FunctionTypeParam {
         name: None,
         kind: ParamKind::Regular,
@@ -4624,104 +4648,52 @@ fn parses_leading_dot_contextual_members() {
 #[test]
 fn parses_function_type_where_clauses_bind_innermost() {
     // Trailing `where` clauses attach to the function type itself.
-    let ty = var_anno_type("var f: def[w: Int](Int) thin -> None where (w > 0, \"m\") = g\n");
-    let Type::Func { where_clauses, .. } = ty else {
-        panic!("expected a function type");
-    };
-    assert_eq!(where_clauses.len(), 1);
+    let ty = var_function_type("var f: def[w: Int](Int) thin -> None where (w > 0, \"m\") = g\n");
+    assert_eq!(ty.where_clauses.len(), 1);
     // A function-type RETURN type greedily consumes a following `where`
     // (upstream's innermost-binding rule).
-    let ty = var_anno_type("var f: def() thin -> def(Int) thin -> None where (True, \"m\") = g\n");
-    let Type::Func {
-        where_clauses, ret, ..
-    } = ty
-    else {
-        panic!("expected a function type");
-    };
-    assert!(where_clauses.is_empty());
-    let Type::Func {
-        where_clauses: inner,
-        ..
-    } = *ret
-    else {
-        panic!("expected a function-type result");
-    };
-    assert_eq!(inner.len(), 1);
+    let ty =
+        var_function_type("var f: def() thin -> def(Int) thin -> None where (True, \"m\") = g\n");
+    assert!(ty.where_clauses.is_empty());
+    assert_eq!(function_type(&ty.ret).where_clauses.len(), 1);
 }
 
 #[test]
 fn parses_function_type_annotations() {
+    let none = || Expr::from(ExprKind::None);
     assert_eq!(
-        var_anno_type("var f: def(Int) -> Int = g\n"),
-        Type::Func {
-            type_params: vec![],
-            params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
-            ret: Box::new(Type::Named("Int".into(), vec![])),
-            thin: false,
-            raises: false,
-            raises_type: None,
-            where_clauses: vec![],
-        }
+        var_function_type("var f: def(Int) -> Int = g\n"),
+        function_type_of(&["Int"], *ident("Int"), false, false)
     );
     // `thin` (non-capturing) after the parameter list, multiple params.
     assert_eq!(
-        var_anno_type("var h: def(Int, Bool) thin -> String = k\n"),
-        Type::Func {
-            type_params: vec![],
-            params: vec![
-                function_type_param(Type::Named("Int".into(), vec![])),
-                function_type_param(Type::Named("Bool".into(), vec![])),
-            ],
-            ret: Box::new(Type::Named("String".into(), vec![])),
-            thin: true,
-            raises: false,
-            raises_type: None,
-            where_clauses: vec![],
-        }
+        var_function_type("var h: def(Int, Bool) thin -> String = k\n"),
+        function_type_of(&["Int", "Bool"], *ident("String"), true, false)
     );
     // No params + `raises` effect.
     assert_eq!(
-        var_anno_type("var n: def() raises -> None = m\n"),
-        Type::Func {
-            type_params: vec![],
-            params: vec![],
-            ret: Box::new(Type::None),
-            thin: false,
-            raises: true,
-            raises_type: None,
-            where_clauses: vec![],
-        }
+        var_function_type("var n: def() raises -> None = m\n"),
+        function_type_of(&[], none(), false, true)
     );
     // Current Mojo permits `-> None` to be omitted from callable types.
     assert_eq!(
-        var_anno_type("var sink: def(Int) thin = callback\n"),
-        Type::Func {
-            type_params: vec![],
-            params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
-            ret: Box::new(Type::None),
-            thin: true,
-            raises: false,
-            raises_type: None,
-            where_clauses: vec![],
-        }
+        var_function_type("var sink: def(Int) thin = callback\n"),
+        function_type_of(&["Int"], none(), true, false)
     );
 }
 
 #[test]
 fn function_types_retain_the_var_keyword_variadic_role() {
-    let ty = var_anno_type("var callback: def(var **options: Int) -> Int = target\n");
-    let Type::Func { params, .. } = ty else {
-        panic!("expected a function type");
-    };
+    let ty = var_function_type("var callback: def(var **options: Int) -> Int = target\n");
     assert!(matches!(
-        params.as_slice(),
+        ty.params.as_slice(),
         [FunctionTypeParam {
             name: Some(name),
             kind: ParamKind::KwVariadic,
             convention: Some(ArgConvention::Var),
-            ty: Type::Named(ty_name, ty_args),
+            ty: Expr { kind: ExprKind::Identifier(ty_name), .. },
             ..
-        }] if name == "options" && ty_name == "Int" && ty_args.is_empty()
+        }] if name == "options" && ty_name == "Int"
     ));
 
     let error = mojito::parse("var callback: def(**options: Int) -> Int = target\n")
@@ -4738,22 +4710,12 @@ fn retains_callable_parameter_bounds_and_thin_effects() {
     };
     assert_eq!(type_params.len(), 2);
     assert_eq!(type_params[0].bounds, vec!["<function type>"]);
-    assert!(matches!(
-        &type_params[0].callable_bound.as_ref().map(view),
-        Some(Type::Func {
-            ret,
-            thin: false,
-            ..
-        }) if **ret == Type::Named("Int".into(), vec![])
-    ));
-    assert!(matches!(
-        &type_params[1].callable_bound.as_ref().map(view),
-        Some(Type::Func {
-            ret,
-            thin: true,
-            ..
-        }) if **ret == Type::None
-    ));
+    let callable = function_type(type_params[0].callable_bound.as_ref().unwrap());
+    assert!(!callable.thin);
+    assert_eq!(callable.ret, *ident("Int"));
+    let sink = function_type(type_params[1].callable_bound.as_ref().unwrap());
+    assert!(sink.thin);
+    assert_eq!(sink.ret, Expr::from(ExprKind::None));
 }
 
 #[test]
@@ -4769,10 +4731,9 @@ fn composes_a_function_type_after_trait_bounds() {
         vec!["ImplicitlyCopyable", "RegisterPassable", "<function type>"]
     );
     assert!(type_params[0].infer_only);
-    assert!(matches!(
-        &type_params[0].callable_bound.as_ref().map(view),
-        Some(Type::Func { ret, thin: false, .. }) if **ret == Type::Named("Int".into(), vec![])
-    ));
+    let callable = function_type(type_params[0].callable_bound.as_ref().unwrap());
+    assert!(!callable.thin);
+    assert_eq!(callable.ret, *ident("Int"));
 }
 
 #[test]
@@ -4791,12 +4752,9 @@ fn a_function_type_result_takes_a_later_composition() {
         };
         let ty = type_params
             .first()
-            .and_then(|param| param.callable_bound.as_ref().map(view))
-            .unwrap_or_else(|| view(&params[0].ty));
-        let Type::Func { ret, .. } = ty else {
-            panic!("expected a function type, found {ty:?}");
-        };
-        *ret
+            .and_then(|param| param.callable_bound.as_ref())
+            .unwrap_or(&params[0].ty);
+        view(&function_type(ty).ret)
     };
     for (source, op) in [
         (
@@ -4842,8 +4800,8 @@ fn parses_a_type_parameter_bound_as_one_expression() {
     let callable = params("def f[F: def(Int) & Copyable]():\n    pass\n");
     assert_eq!(callable.bounds, ["<function type>", "Copyable"]);
     assert!(matches!(
-        callable.callable_bound.as_ref().map(view),
-        Some(Type::Func { .. })
+        callable.callable_bound.as_ref().map(|bound| &bound.kind),
+        Some(ExprKind::FunctionType(_))
     ));
     let statements = parse("def f[m: Bool, o: Origin[mut=m]]():\n    pass\n");
     let StmtKind::Def { type_params, .. } = &statements[0].kind else {
@@ -4951,10 +4909,7 @@ fn a_generator_result_composition_is_one_expression() {
         let StmtKind::Comptime { value, .. } = &statements[0].kind else {
             panic!("expected a comptime");
         };
-        let ExprKind::TypeValue(Type::Generator { result, .. }) = &value.kind else {
-            panic!("expected a generator type, found {value:?}");
-        };
-        (**result).clone()
+        generator_type(value).1.composition_type().unwrap()
     };
     let named = |name: &str| ParamArg::Type(Type::Named(name.into(), vec![]));
     let pair = Type::Named(
@@ -5059,25 +5014,15 @@ fn strict_parse_remains_fail_fast() {
 #[test]
 fn function_type_return_nests() {
     // `def(Int) -> def(Int) -> Int` — the return type is itself a function type.
+    let inner = function_type_of(&["Int"], *ident("Int"), false, false);
     assert_eq!(
-        var_anno_type("var c: def(Int) -> def(Int) -> Int = mk\n"),
-        Type::Func {
-            type_params: vec![],
-            params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
-            ret: Box::new(Type::Func {
-                type_params: vec![],
-                params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
-                ret: Box::new(Type::Named("Int".into(), vec![])),
-                thin: false,
-                raises: false,
-                raises_type: None,
-                where_clauses: vec![],
-            }),
-            thin: false,
-            raises: false,
-            raises_type: None,
-            where_clauses: vec![],
-        }
+        var_function_type("var c: def(Int) -> def(Int) -> Int = mk\n"),
+        function_type_of(
+            &["Int"],
+            Expr::from(ExprKind::FunctionType(Box::new(inner))),
+            false,
+            false
+        )
     );
 }
 
@@ -5089,17 +5034,24 @@ fn parses_function_typed_parameter() {
         panic!("expected a def")
     };
     assert_eq!(
-        view(&params[0].ty),
-        Type::Func {
-            type_params: vec![],
-            params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
-            ret: Box::new(Type::Named("Int".into(), vec![])),
-            thin: true,
-            raises: false,
-            raises_type: None,
-            where_clauses: vec![],
-        }
+        function_type(&params[0].ty),
+        function_type_of(&["Int"], *ident("Int"), true, false)
     );
+    // A function-type bracket operand is an ordinary expression.
+    let StmtKind::VarDecl { value, .. } = &parse("var xs = List[def(Int) -> Int]()\n")[0].kind
+    else {
+        panic!("expected a var declaration")
+    };
+    let ExprKind::Call { param_args, .. } = &value.kind else {
+        panic!("expected a call, found {value:?}")
+    };
+    assert!(matches!(
+        param_args.as_slice(),
+        [ParamArg::Value(Expr {
+            kind: ExprKind::FunctionType(_),
+            ..
+        })]
+    ));
 }
 
 #[test]

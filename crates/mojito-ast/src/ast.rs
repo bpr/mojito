@@ -208,8 +208,9 @@ pub fn named_subscript(name: &str, args: &[ParamArg], span: Span) -> Option<Expr
 /// types, which may carry type arguments (`Pair[Int]`), and references to a
 /// type parameter. `Int`, `UInt`, and `Float64` are nominal: the prelude's
 /// `comptime` aliases.
-/// Function/closure and reference types are represented even though their
-/// runtime semantics are not yet supported.
+/// A `def` function type and a `__generator_type` are expressions
+/// ([`ExprKind::FunctionType`], [`ExprKind::GeneratorType`]), which an
+/// annotation's view holds as [`Type::Value`].
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Type {
     None,
@@ -253,27 +254,6 @@ pub enum Type {
     /// Bare `Self` — the enclosing struct type (in a struct method) or the
     /// conforming type (in a trait method requirement).
     SelfType,
-    /// A **function type** annotation: `def(T1, mut T2, …) [thin] [raises]
-    /// [-> R]`.
-    /// Parameters retain optional conventions, origins, and diagnostic names
-    /// because those facts affect indirect-call ownership and reference results.
-    /// `thin` marks a non-capturing function pointer; without it the type is
-    /// a closure trait.
-    Func {
-        /// Compile-time parameters declared by the callable contract.
-        type_params: Vec<TypeParam>,
-        params: Vec<FunctionTypeParam>,
-        ret: Box<Self>,
-        thin: bool,
-        raises: bool,
-        raises_type: Option<Box<Self>>,
-        /// Trailing `where` clauses constraining the contract's own `def[...]`
-        /// parameters. The clause binds to the innermost function type
-        /// (upstream requires parenthesizing a function-type result to attach
-        /// a declaration-level `where` after it). Compiled onto the anonymous
-        /// contract's parameter declarations; rejected on plain annotations.
-        where_clauses: Vec<Expr>,
-    },
     /// A **reference type** `ref [origin] T` (Mojo's parametric-mutability
     /// reference: a `ref[origin]` result, or a direct `ref` field). The
     /// specifier's operands are the reference's origins plus at most one
@@ -288,13 +268,6 @@ pub enum Type {
     /// composition of traits, whose type is the trait metatype
     /// (`type_of(AnyType)` types a trait-valued parameter).
     TypeOf(Box<Expr>),
-    /// Upstream's generator type `__generator_type[params] Result`: the type
-    /// of a parameterized compile-time declaration read unapplied, its
-    /// parameter list and the type its application yields.
-    Generator {
-        params: Vec<TypeParam>,
-        result: Box<Self>,
-    },
     /// A compile-time value expression where an annotation expects a type: a
     /// struct construction such as `TypeList[Trait=AnyType, Ts.values]()`, a
     /// conditional `Int if c else Float64`. It is a type once the checker
@@ -328,18 +301,44 @@ impl Type {
     }
 }
 
+/// A function type `def[params](T1, mut T2, …) [thin] [raises [E]] [-> R]
+/// [where …]`, upstream's function-type expression node.
+///
+/// Parameters retain optional conventions, origins, and diagnostic names
+/// because those facts affect indirect-call ownership and reference results.
+/// `thin` marks a non-capturing function pointer; without it the type is a
+/// closure trait.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FunctionTypeExpr {
+    /// Compile-time parameters declared by the callable contract.
+    pub type_params: Vec<TypeParam>,
+    pub params: Vec<FunctionTypeParam>,
+    /// The result annotation; [`ExprKind::None`] when `->` is omitted.
+    pub ret: Expr,
+    pub thin: bool,
+    pub raises: bool,
+    pub raises_type: Option<Expr>,
+    /// Trailing `where` clauses constraining the contract's own `def[...]`
+    /// parameters. The clause binds to the innermost function type
+    /// (upstream requires parenthesizing a function-type result to attach a
+    /// declaration-level `where` after it). Compiled onto the anonymous
+    /// contract's parameter declarations; rejected on plain annotations.
+    pub where_clauses: Vec<Expr>,
+}
+
 /// One parameter in a source-level function/closure type.
 ///
 /// Unlike [`FnParam`], it has no default; its regular or keyword-variadic role
 /// and optional name are retained from spellings such as `def(mut writer:
-/// Writer)` and `def(var **options: Int)`.
+/// Writer)` and `def(var **options: Int)`. `ty` is the parameter's annotation
+/// expression.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FunctionTypeParam {
     pub name: Option<String>,
     pub kind: ParamKind,
     pub convention: Option<ArgConvention>,
     pub origin: Option<OriginSpec>,
-    pub ty: Type,
+    pub ty: Expr,
 }
 
 /// Source syntax inside a `ref[...]` clause.
@@ -2276,11 +2275,26 @@ impl Expr {
     /// The annotation expression a synthesized slot stores for `ty`: the
     /// expression spelling source would write ([`Type::expression_spelling`])
     /// when it converts back to exactly `ty`, else `ty` as a type value.
+    /// A [`Type::Value`] view re-spells as its own expression.
     pub fn annotation_of(ty: Type, span: Span) -> Self {
-        match ty.expression_spelling(span) {
-            Some(spelled) if spelled.annotation_type().as_ref() == Some(&ty) => spelled,
-            _ => Self::new(ExprKind::TypeValue(ty), span),
+        match ty {
+            Type::Value(value) if matches!(value.annotation_type(), Some(Type::Value(view)) if view == value) => {
+                *value
+            }
+            ty => match ty.expression_spelling(span) {
+                Some(spelled) if spelled.annotation_type().as_ref() == Some(&ty) => spelled,
+                _ => Self::new(ExprKind::TypeValue(ty), span),
+            },
         }
+    }
+
+    /// Whether this expression is a type spelled in expression position: a
+    /// [`ExprKind::TypeValue`], a function type, or a generator type.
+    pub const fn is_type_expression(&self) -> bool {
+        matches!(
+            self.kind,
+            ExprKind::TypeValue(_) | ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. }
+        )
     }
 
     /// Rewrite this annotation through its type-context view: `f` edits
@@ -2460,9 +2474,9 @@ impl Expr {
     ///   [`Type::IndexedProjection`] (`Self[0]`, `values.element_types[i]`)
     ///   and any other list applies an argument-less member (`M.A[1, 2]`);
     /// - `type_of(x)` is [`Type::TypeOf`];
-    /// - a `def` function type or a `__generator_type` is the type it spells;
     /// - any other expression (a call, a construction, a conditional, an
-    ///   operator) is the compile-time value it evaluates to
+    ///   operator, a `def` function type, a `__generator_type`) is the
+    ///   compile-time value it evaluates to
     ///   ([`Type::Value`]), which the checker evaluates in the type context
     ///   and rejects when it is no type.
     ///
@@ -2599,10 +2613,19 @@ pub enum ExprKind {
     /// compiled program — a run-time value, never folded before a backend
     /// reads it (upstream's `kgen.is_run_in_comptime_interpreter`).
     IsRunInComptimeInterpreter,
-    /// A type used as a compile-time value, such as a function/closure signature.
-    /// Parsed for source compatibility; semantic treatment as a first-class
-    /// compile-time value is deferred.
+    /// A type spelling in expression position that no expression node
+    /// covers: a `ref` reference type, a `*` pack, or a synthesized type.
     TypeValue(Type),
+    /// Upstream's function-type expression `def(...) -> R`.
+    FunctionType(Box<FunctionTypeExpr>),
+    /// Upstream's generator type `__generator_type[params] Result`: the type
+    /// of a parameterized compile-time declaration read unapplied, its
+    /// parameter list and the expression its application yields, which
+    /// converts by [`Expr::composition_type`].
+    GeneratorType {
+        params: Vec<TypeParam>,
+        result: Box<Expr>,
+    },
     /// A unary operator applied to an operand, e.g. `-x` or `not ok`.
     Prefix(PrefixOp, Box<Expr>),
     /// A binary operator applied to two operands, e.g. `a + b`.
@@ -3199,6 +3222,8 @@ pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
             }
         }
         ExprKind::TypeValue(_)
+        | ExprKind::FunctionType(_)
+        | ExprKind::GeneratorType { .. }
         | ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
@@ -3575,6 +3600,28 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                     }
                 }
                 ExprKind::TypeValue(ty) => self.ty(ty),
+                ExprKind::FunctionType(callable) => {
+                    self.type_params(&mut callable.type_params);
+                    for param in &mut callable.params {
+                        self.expr(&mut param.ty);
+                        if let Some(origins) = &mut param.origin {
+                            for expression in origins {
+                                self.expr(expression);
+                            }
+                        }
+                    }
+                    self.expr(&mut callable.ret);
+                    if let Some(error) = &mut callable.raises_type {
+                        self.expr(error);
+                    }
+                    for clause in &mut callable.where_clauses {
+                        self.expr(clause);
+                    }
+                }
+                ExprKind::GeneratorType { params, result } => {
+                    self.type_params(params);
+                    self.expr(result);
+                }
                 ExprKind::Lambda { def } => {
                     def.syntax_id = self.id(def.syntax_id);
                     // Cloning transformations (compile-time unrolling and
@@ -3656,35 +3703,6 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                     }
                 }
                 Type::TypeOf(operand) | Type::Value(operand) => self.expr(operand),
-                Type::Generator { params, result } => {
-                    self.type_params(params);
-                    self.ty(result);
-                }
-                Type::Func {
-                    type_params,
-                    params,
-                    ret,
-                    raises_type,
-                    where_clauses,
-                    ..
-                } => {
-                    self.type_params(type_params);
-                    for param in params {
-                        self.ty(&mut param.ty);
-                        if let Some(origins) = &mut param.origin {
-                            for expression in origins {
-                                self.expr(expression);
-                            }
-                        }
-                    }
-                    self.ty(ret);
-                    if let Some(error) = raises_type {
-                        self.ty(error);
-                    }
-                    for clause in where_clauses {
-                        self.expr(clause);
-                    }
-                }
                 Type::None | Type::SelfParam(_) | Type::SelfType => {}
             }
         }

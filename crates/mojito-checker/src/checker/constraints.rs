@@ -833,12 +833,14 @@ impl Checker {
             // A function type with its own binders (`def[dtype: DType,
             // width: SIMDLength, //](SIMD[dtype, width]) thin -> …`) is the
             // parametric function type a callable bound's is.
-            (_, SourceType::Func { type_params, .. }) if !type_params.is_empty() => {
-                self.lower_anonymous_callable_type(&format!("$callable:{owner}"), source_ty, params)
+            (ExprKind::FunctionType(callable), _) if !callable.type_params.is_empty() => {
+                self.lower_anonymous_callable_type(&format!("$callable:{owner}"), callable, params)
             }
             _ => self.ty_from_spelling(source_ty),
         };
-        if let (Ok(template), ExprKind::TypeValue(_)) = (&template, &body.kind) {
+        if let Ok(template) = &template
+            && body.is_type_expression()
+        {
             self.record_at(body.source_span()).type_operand = Some(template.clone());
         }
         self.enclosing_type_params.truncate(saved);
@@ -2194,11 +2196,12 @@ impl Checker {
             ExprKind::Bool(b) => self.ct_param(CtValue::Bool(*b)),
             ExprKind::None => self.ct_param(CtValue::None),
             ExprKind::Str(s) => self.ct_param(CtValue::Str(s.clone())),
-            ExprKind::TypeValue(ty) => {
+            ExprKind::TypeValue(_) | ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
+                let spelling = annotation_spelling(expr)?;
                 let ty = if record {
-                    self.type_value(expr, ty)?
+                    self.type_value(expr, &spelling)?
                 } else {
-                    self.ty_from_spelling(ty)?
+                    self.ty_from_spelling(&spelling)?
                 };
                 Ok(context.type_shape(ty))
             }
@@ -3791,7 +3794,7 @@ impl Checker {
     fn may_denote_type(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Identifier(name) => self.lookup(name).is_none(),
-            ExprKind::TypeValue(_) => true,
+            _ if expr.is_type_expression() => true,
             ExprKind::Call { name, .. } => name == "type_of",
             ExprKind::IfExpr {
                 then_branch,
@@ -7400,6 +7403,9 @@ pub(super) enum TypeListReceiver {
 pub(super) fn assoc_body_source_type(value: &Expr) -> Result<SourceType, TypeError> {
     match &value.kind {
         ExprKind::TypeValue(ty) => Ok(ty.clone()),
+        ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
+            Ok(SourceType::Value(Box::new(value.clone())))
+        }
         // `comptime IteratorType[...] = Self` — a self-iterating struct
         // (current Mojo's range family) names itself as the member's body.
         ExprKind::Identifier(name) if name == "Self" => Ok(SourceType::SelfType),
@@ -7509,7 +7515,7 @@ pub(super) fn member_source_type(expr: &Expr) -> Option<SourceType> {
     };
     match &expr.kind {
         ExprKind::Member { .. } => member(expr),
-        ExprKind::Index { object, index } if !matches!(index.kind, ExprKind::TypeValue(_)) => {
+        ExprKind::Index { object, index } if !index.is_type_expression() => {
             Some(SourceType::IndexedProjection {
                 base: Box::new(member(object)?),
                 index: index.clone(),

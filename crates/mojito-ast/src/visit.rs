@@ -507,6 +507,40 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
             }
         }
         ExprKind::TypeValue(ty) => walk_type(visitor, ty),
+        ExprKind::FunctionType(callable) => {
+            let names = callable
+                .type_params
+                .iter()
+                .map(|parameter| parameter.name.as_str())
+                .chain(
+                    callable
+                        .params
+                        .iter()
+                        .filter_map(|parameter| parameter.name.as_deref()),
+                )
+                .collect::<Vec<_>>();
+            if !visitor.enter_scope(&names) {
+                return;
+            }
+            walk_type_params(visitor, &callable.type_params);
+            for parameter in &callable.params {
+                walk_function_type_param(visitor, parameter);
+            }
+            walk_annotation(visitor, &callable.ret);
+            walk_optional_annotation(visitor, callable.raises_type.as_ref());
+            walk_exprs(visitor, &callable.where_clauses);
+        }
+        ExprKind::GeneratorType { params, result } => {
+            let names = params
+                .iter()
+                .map(|parameter| parameter.name.as_str())
+                .collect::<Vec<_>>();
+            if !visitor.enter_scope(&names) {
+                return;
+            }
+            walk_type_params(visitor, params);
+            walk_composition(visitor, result);
+        }
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
@@ -539,45 +573,6 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
             walk_expr(visitor, index);
         }
         Type::TypeOf(operand) | Type::Value(operand) => walk_expr(visitor, operand),
-        Type::Generator { params, result } => {
-            let names = params
-                .iter()
-                .map(|parameter| parameter.name.as_str())
-                .collect::<Vec<_>>();
-            if !visitor.enter_scope(&names) {
-                return;
-            }
-            walk_type_params(visitor, params);
-            walk_type(visitor, result);
-        }
-        Type::Func {
-            type_params,
-            params,
-            ret,
-            raises_type,
-            where_clauses,
-            ..
-        } => {
-            let names = type_params
-                .iter()
-                .map(|parameter| parameter.name.as_str())
-                .chain(
-                    params
-                        .iter()
-                        .filter_map(|parameter| parameter.name.as_deref()),
-                )
-                .collect::<Vec<_>>();
-            if !visitor.enter_scope(&names) {
-                return;
-            }
-            walk_type_params(visitor, type_params);
-            for parameter in params {
-                walk_function_type_param(visitor, parameter);
-            }
-            walk_type(visitor, ret);
-            walk_optional_type(visitor, raises_type.as_deref());
-            walk_exprs(visitor, where_clauses);
-        }
         Type::Ref { referent, origin } => {
             walk_type(visitor, referent);
             walk_exprs(visitor, origin.as_deref().unwrap_or_default());
@@ -823,7 +818,7 @@ fn walk_fn_params<V: Visitor>(visitor: &mut V, parameters: &[FnParam]) {
 }
 
 fn walk_function_type_param<V: Visitor>(visitor: &mut V, parameter: &FunctionTypeParam) {
-    walk_type(visitor, &parameter.ty);
+    walk_annotation(visitor, &parameter.ty);
     walk_exprs(visitor, parameter.origin.as_deref().unwrap_or_default());
 }
 
@@ -833,9 +828,15 @@ fn walk_optional_annotation<V: Visitor>(visitor: &mut V, annotation: Option<&Exp
     }
 }
 
-fn walk_optional_type<V: Visitor>(visitor: &mut V, ty: Option<&Type>) {
-    if let Some(ty) = ty {
-        walk_type(visitor, ty);
+/// A trait composition's `&` chain walks each member as an annotation, so
+/// its trait names stay type reads; any other expression is one annotation.
+fn walk_composition<V: Visitor>(visitor: &mut V, expr: &Expr) {
+    if let ExprKind::Infix(crate::ast::InfixOp::BitAnd, left, right) = &expr.kind {
+        visitor.visit_expr(expr);
+        walk_composition(visitor, left);
+        walk_composition(visitor, right);
+    } else {
+        walk_annotation(visitor, expr);
     }
 }
 
@@ -1329,6 +1330,28 @@ pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
             }
         }
         ExprKind::TypeValue(ty) => walk_type_mut(visitor, ty),
+        ExprKind::FunctionType(callable) => {
+            walk_type_params_mut(visitor, &mut callable.type_params);
+            for param in &mut callable.params {
+                walk_annotation_mut(visitor, &mut param.ty);
+                if let Some(origins) = &mut param.origin {
+                    for expression in origins {
+                        walk_expr_mut(visitor, expression);
+                    }
+                }
+            }
+            walk_annotation_mut(visitor, &mut callable.ret);
+            for clause in &mut callable.where_clauses {
+                walk_expr_mut(visitor, clause);
+            }
+            if let Some(error) = &mut callable.raises_type {
+                walk_annotation_mut(visitor, error);
+            }
+        }
+        ExprKind::GeneratorType { params, result } => {
+            walk_type_params_mut(visitor, params);
+            walk_composition_mut(visitor, result);
+        }
         ExprKind::Lambda { def } => walk_stmt_mut(visitor, def),
         ExprKind::Int(_)
         | ExprKind::Float(_)
@@ -1368,41 +1391,12 @@ fn walk_type_children_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
             walk_expr_mut(visitor, index);
         }
         Type::TypeOf(operand) | Type::Value(operand) => walk_expr_mut(visitor, operand),
-        Type::Generator { params, result } => {
-            walk_type_params_mut(visitor, params);
-            walk_type_mut(visitor, result);
-        }
         Type::Ref { referent, origin } => {
             walk_type_mut(visitor, referent);
             if let Some(origins) = origin {
                 for expression in origins {
                     walk_expr_mut(visitor, expression);
                 }
-            }
-        }
-        Type::Func {
-            type_params,
-            params,
-            ret,
-            raises_type,
-            where_clauses,
-            ..
-        } => {
-            walk_type_params_mut(visitor, type_params);
-            for param in params {
-                walk_type_mut(visitor, &mut param.ty);
-                if let Some(origins) = &mut param.origin {
-                    for expression in origins {
-                        walk_expr_mut(visitor, expression);
-                    }
-                }
-            }
-            walk_type_mut(visitor, ret);
-            for clause in where_clauses {
-                walk_expr_mut(visitor, clause);
-            }
-            if let Some(error) = raises_type {
-                walk_type_mut(visitor, error);
             }
         }
         Type::None | Type::SelfParam(_) | Type::SelfType => {}
@@ -1415,6 +1409,17 @@ pub fn walk_param_arg_mut<V: MutVisitor>(visitor: &mut V, argument: &mut ParamAr
         ParamArg::Type(ty) => walk_type_mut(visitor, ty),
         ParamArg::Value(value) => walk_expr_mut(visitor, value),
         ParamArg::Named { value, .. } => walk_param_arg_mut(visitor, value),
+    }
+}
+
+/// [`walk_composition`] in place.
+fn walk_composition_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
+    if let ExprKind::Infix(crate::ast::InfixOp::BitAnd, left, right) = &mut expr.kind {
+        walk_composition_mut(visitor, left);
+        walk_composition_mut(visitor, right);
+        visitor.visit_expr_mut(expr);
+    } else {
+        walk_annotation_mut(visitor, expr);
     }
 }
 

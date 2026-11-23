@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `def` function type and a `__generator_type` parse as their own
+  expression nodes, as upstream parses them, instead of `Type` variants
+  (R2536): their parameter types and results are annotation expressions,
+  and a function-type bracket operand (`List[def(Int) -> Int]`) is an
+  ordinary expression operand. The cached package format moves to
+  `mojito-package 267`.
+
 - A parameter's type, a result, a `raises` type, a receiver's annotation, a
   callable conformance, and a type parameter's value type and callable
   bound are stored as the annotation expression, which the checker
@@ -1506,6 +1513,11 @@ to evolve under the `0.x` compatibility rules.
   script helpers moved to `scripts/tierlib.py`.
 
 ### Fixed
+
+- The linker renames a module's names inside a generator type, as the pin
+  does (R2536): `comptime Gen = __generator_type[n: Int] m.S` after
+  `import m`, or a bare `S` after `from m import S`, no longer fails with
+  "unknown type".
 
 - An annotation that evaluates to no type reports why the expression fails,
   as at the pin, instead of "not a compile-time Int constant" (R2543):

@@ -1022,7 +1022,8 @@ impl Checker {
         if type_params.is_empty()
             && !subscript_application
             && !member_application
-            && !matches!(value.kind, ExprKind::Identifier(_) | ExprKind::TypeValue(_))
+            && !matches!(value.kind, ExprKind::Identifier(_))
+            && !value.is_type_expression()
             && !self.denotes_type(value)
             && !self.denotes_type_value(value)
         {
@@ -1579,7 +1580,9 @@ impl Checker {
                 // Current Mojo reads a bare `def(...)` local annotation as
                 // trait-typed storage, like fields and collection elements;
                 // a stored callable spells `def(...) thin`.
-                if let Some(mojito_ast::ast::Type::Func { thin: false, .. }) = &ty {
+                if let Some(SourceType::Value(value)) = &ty
+                    && matches!(&value.kind, ExprKind::FunctionType(callable) if !callable.thin)
+                {
                     return Err(TypeError::Unsupported(format!(
                         "a 'def(...)' type names a trait in the annotation of variable \
                          '{name}' in current Mojo, not a storable callable value; spell \
@@ -2363,10 +2366,8 @@ impl Checker {
                 if !value_alias
                     && (!type_params.is_empty()
                         || self.comptime_aliases.contains_key(name)
-                        || matches!(
-                            &value.kind,
-                            ExprKind::Identifier(_) | ExprKind::TypeValue(_)
-                        )
+                        || matches!(&value.kind, ExprKind::Identifier(_))
+                        || value.is_type_expression()
                         || (value.bracket_application().is_some() && self.denotes_type(value))
                         || (matches!(&value.kind, ExprKind::Member { .. })
                             && self.denotes_type(value)))
@@ -4635,10 +4636,12 @@ impl Checker {
                 // A runtime value of a parametric function type is the
                 // closure a reference materializes, so its open parameters
                 // are origins alone, each call inferring them.
-                if matches!(
-                    &annotation,
-                    SourceType::Func { type_params, .. } if !type_params.is_empty()
-                ) && super::is_unbound_parametric_function(&resolved)
+                if let SourceType::Value(value) = &annotation
+                    && matches!(
+                        &value.kind,
+                        ExprKind::FunctionType(callable) if !callable.type_params.is_empty()
+                    )
+                    && super::is_unbound_parametric_function(&resolved)
                 {
                     return Err(TypeError::Unsupported(
                         "a runtime parameter cannot use a parametric function type over a non-origin parameter; declare it as a compile-time callable parameter"

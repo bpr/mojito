@@ -1244,8 +1244,7 @@ impl Checker {
                 let Some(callable) = &source.callable_bound else {
                     continue;
                 };
-                let ExprKind::TypeValue(callable @ SourceType::Func { thin, .. }) = &callable.kind
-                else {
+                let ExprKind::FunctionType(callable) = &callable.kind else {
                     return Err(TypeError::InvariantViolation(
                         "retained callable parameter bound is not a function type".to_string(),
                     ));
@@ -1275,7 +1274,7 @@ impl Checker {
                 let constraints = constraints.clone();
                 let infer_only = *infer_only;
                 let variadic = *variadic;
-                if *thin {
+                if callable.thin {
                     let callable_default = source
                         .default
                         .as_ref()
@@ -1703,19 +1702,11 @@ impl Checker {
     pub(super) fn lower_anonymous_callable_type(
         &self,
         owner: &str,
-        callable: &SourceType,
+        callable: &mojito_ast::ast::FunctionTypeExpr,
         outer_type_params: &[mojito_ast::ast::TypeParam],
     ) -> Result<Ty, TypeError> {
-        let SourceType::Func {
-            type_params,
-            where_clauses,
-            ..
-        } = callable
-        else {
-            return Err(TypeError::InvariantViolation(
-                "anonymous callable lowering received a non-function type".to_string(),
-            ));
-        };
+        let type_params = &callable.type_params;
+        let where_clauses = &callable.where_clauses;
         let mut decls = self.classify_param_list(owner, type_params)?;
         // A trailing `where` clause constrains the contract's own `def[...]`
         // parameters; with none declared there is nothing to constrain.
@@ -1792,7 +1783,9 @@ impl Checker {
                     self.ty_from_spelling(&SourceType::Named(name.clone(), Vec::new()))
                 }
             }
-            ExprKind::TypeValue(ty) => self.type_value(value, ty),
+            ExprKind::TypeValue(_) | ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
+                self.type_value(value, &annotation_spelling(value)?)
+            }
             _ if let Some((name, args)) = self.parameter_application(value) => {
                 let (ty, attributes) = self.applied_type(name, &args)?;
                 self.record_declared_attributes(value.source_span(), &attributes);

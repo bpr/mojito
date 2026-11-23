@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_ast::ast::FunctionTypeExpr;
 use mojito_checked::checked::BracketBound as BoundAttribute;
 use mojito_types::origin::CallableEnvironment;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
@@ -617,22 +618,17 @@ impl Checker {
     /// context.
     pub(super) fn function_signature_type(
         &self,
-        callable: &SourceType,
+        callable: &FunctionTypeExpr,
         decls: &[ParamDecl],
     ) -> Result<Ty, TypeError> {
-        let SourceType::Func {
+        let FunctionTypeExpr {
             params,
             ret,
             thin,
             raises,
             raises_type,
             ..
-        } = callable
-        else {
-            return Err(TypeError::InvariantViolation(
-                "function signature lowering received a non-function type".to_string(),
-            ));
-        };
+        } = callable;
         let environment = if *thin {
             CallableEnvironment::Thin
         } else {
@@ -646,10 +642,7 @@ impl Checker {
                     .name
                     .clone()
                     .unwrap_or_else(|| format!("arg{index}")),
-                ty: Expr::annotation_of(
-                    parameter.ty.clone(),
-                    mojito_common::token::Span::default(),
-                ),
+                ty: parameter.ty.clone(),
                 default: None,
                 kind: parameter.kind,
                 convention: parameter.convention,
@@ -674,9 +667,9 @@ impl Checker {
             .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::KwVariadic)
             .map(|parameter| self.ty_from_anno(&parameter.ty))
             .transpose()?;
-        let (return_type, ref_return) = match &**ret {
+        let (return_type, ref_return) = match annotation_spelling(ret)? {
             SourceType::Ref { referent, origin } => (
-                self.resolve_ty_from_anno(referent)?,
+                self.resolve_ty_from_anno(&referent)?,
                 Some(Box::new(self.lower_callable_ref_sig(
                     origin.as_ref().ok_or_else(|| {
                         TypeError::Unsupported("reference return requires an origin".to_string())
@@ -685,7 +678,7 @@ impl Checker {
                     &regular,
                 )?)),
             ),
-            return_type => (self.resolve_ty_from_anno(return_type)?, None),
+            _ => (self.ty_from_anno(ret)?, None),
         };
         Ok(TyKind::Func(Box::new(FuncTy {
             environment,
@@ -704,7 +697,7 @@ impl Checker {
             raises: *raises,
             error: if *raises {
                 Some(match raises_type {
-                    Some(error) => self.resolve_ty_from_anno(error)?,
+                    Some(error) => self.ty_from_anno(error)?,
                     None => Ty::error(),
                 })
             } else {
@@ -926,8 +919,11 @@ impl Checker {
     fn generator_type(
         &self,
         params: &[mojito_ast::ast::TypeParam],
-        result: &SourceType,
+        result: &Expr,
     ) -> Result<Ty, TypeError> {
+        let result = &result.composition_type().ok_or_else(|| {
+            TypeError::InvariantViolation("a generator type's result spells no type".to_string())
+        })?;
         let decls =
             self.classify_param_list(mojito_types::types::GENERATOR_BINDER_OWNER, params)?;
         // The list scopes the result, as a declaration's list scopes its
@@ -1083,7 +1079,7 @@ impl Checker {
     /// identical spellings are one type, as upstream identifies a function
     /// type by its spelling, and a spelling nested in another's signature
     /// never shares the outer list's binders.
-    fn inline_callable_type(&self, callable: &SourceType) -> Result<Ty, TypeError> {
+    fn inline_callable_type(&self, callable: &FunctionTypeExpr) -> Result<Ty, TypeError> {
         let level = self.inline_callable_depth.get();
         self.inline_callable_depth.set(level + 1);
         let lowered = self.lower_anonymous_callable_type(
@@ -1095,6 +1091,26 @@ impl Checker {
         lowered
     }
 
+    /// The function type `callable` spells, upstream's `emitExprType` of a
+    /// function-type expression. One with its own `def[...]` list is
+    /// resolved in the scope of that list wherever it is spelled, as
+    /// upstream emits every type in the scope of its own parameters: a
+    /// `GenericFunc` over its binders.
+    fn function_type(&self, callable: &FunctionTypeExpr) -> Result<Ty, TypeError> {
+        if !callable.type_params.is_empty() {
+            return self.inline_callable_type(callable);
+        }
+        // A clause with no list has no binder to constrain.
+        if !callable.where_clauses.is_empty() {
+            return Err(TypeError::Unsupported(
+                "a 'where' clause on a function type is only supported on a \
+                 compile-time callable parameter bound with def[...] parameters"
+                    .to_string(),
+            ));
+        }
+        self.function_signature_type(callable, &[])
+    }
+
     fn resolve_ty_from_anno_at_depth(&self, ty: &SourceType) -> Result<Ty, TypeError> {
         if let Some(reflected) = self.reflected_type_annotation(ty)? {
             return Ok(reflected);
@@ -1102,29 +1118,6 @@ impl Checker {
         Ok(match ty {
             SourceType::TypeOf(operand) => self.type_of_operand(operand)?,
             SourceType::None => Ty::none(),
-            SourceType::Generator { params, result } => self.generator_type(params, result)?,
-            SourceType::Func {
-                type_params,
-                where_clauses,
-                ..
-            } => {
-                // A function type with its own `def[...]` list is resolved
-                // in the scope of that list wherever it is spelled, as
-                // upstream emits every type in the scope of its own
-                // parameters: a `GenericFunc` over its binders.
-                if !type_params.is_empty() {
-                    return self.inline_callable_type(ty);
-                }
-                // A clause with no list has no binder to constrain.
-                if !where_clauses.is_empty() {
-                    return Err(TypeError::Unsupported(
-                        "a 'where' clause on a function type is only supported on a \
-                         compile-time callable parameter bound with def[...] parameters"
-                            .to_string(),
-                    ));
-                }
-                self.function_signature_type(ty, &[])?
-            }
             SourceType::Ref { referent, origin } => {
                 let spec = origin.as_ref().ok_or_else(|| {
                     TypeError::Unsupported(
@@ -1233,7 +1226,13 @@ impl Checker {
             // Any other annotation expression is evaluated in the type
             // context, as upstream's `emitExprType` evaluates it: a
             // conditional of types is a type, a value is "expected a type".
-            SourceType::Value(value) => self.annotation_type(value)?,
+            SourceType::Value(value) => match &value.kind {
+                ExprKind::FunctionType(callable) => self.function_type(callable)?,
+                ExprKind::GeneratorType { params, result } => {
+                    self.generator_type(params, result)?
+                }
+                _ => self.annotation_type(value)?,
+            },
             // `TypeList[Trait=AnyType, Ts.values]()[i]`: the value's
             // `__getitem_param__[i]`, the path its explicit spelling takes.
             SourceType::IndexedProjection { base, index }

@@ -5833,10 +5833,12 @@ expression itself, as upstream keeps it, and the checker converts it when it
 reads it (`Checker::ty_from_anno`, `TraitComptime::annotation_type` for a
 trait member's `&` composition, `TypeParam::annotation_type` for a binder).
 A synthesized slot stores the expression source would spell
-(`Expr::annotation_of`). The `SourceType`s left inside the AST are a
-function type's internals, a generator's result, a `ref` referent, and a
-bracket's type operand, each held in an `ExprKind::TypeValue` or a
-`ParamArg::Type`.
+(`Expr::annotation_of`). A `def` function type and a `__generator_type`
+are their own expression nodes (`ExprKind::FunctionType`,
+`ExprKind::GeneratorType`), whose parameter types and results are
+annotation expressions. The `SourceType`s left inside the AST are a `ref`
+referent and a bracket's type operand, each held in an
+`ExprKind::TypeValue` or a `ParamArg::Type`.
 `AnnotationSite` keys declaration
 annotations at the checked boundary, after which HIR, MIR, and the VM carry only
 the resolved `Ty`. In particular, variable initialization and function-entry

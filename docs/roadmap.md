@@ -6398,6 +6398,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`mono/specializer.rs`) has no constant for a struct value.
   - Upstream's elaborator runs the generator's body in the interpreter and
     materializes the struct value it yields.
+  - Probe: `return g[3].x` in `def use[g: __generator_type[n: Int] S]()`,
+    called as `use[make]()` over `comptime make[n: Int]: S = S(n)`, stops
+    with "keeps the parameter constant `g[3].x`", where the pin prints `3`
+    (found while landing R2536).
   - Found while landing R1704 (2026-11-12).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -13381,20 +13385,6 @@ follow-ups the landed producer stages filed come last.
   - Needs a MIR text and package format bump.
   - Found while landing R1365 (2026-10-27).
   - Depends on R1495.
-  - Model: Fable, Not Planned.
-
-- [ ] **R2536 A function type and a generator type are `Type` nodes, not expressions**
-
-  `def(...) -> R` and `__generator_type[...] R` parse to `Type::Func` and
-  `Type::Generator`, where upstream parses them as expression nodes.
-  - Slice 4 of the R2137 plan: add `ExprKind::FunctionType` and
-    `ExprKind::GeneratorType`, whose parameter types and results are
-    expressions, and delete the two `Type` variants.
-  - A function-type bracket operand becomes `ParamArg::Value`.
-  - Readers: `module.rs::rewrite_type`, `function_signature_type`,
-    `inline_callable_type`, `lower_anonymous_callable_type`, and
-    `checked.rs`'s type-value lowering.
-  - Depends on R2535.
   - Model: Fable, Not Planned.
 
 - [ ] **R2537 A `ref` result and a `ref` field are a `Type::Ref`, not a slot convention**

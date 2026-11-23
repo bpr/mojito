@@ -1345,7 +1345,9 @@ capture-origin sets with read/write access. For example,
 `def[o: Origin[mut=True]](ref[o] Int) -> ref[o] Int` is the nominal
 contract implemented by a matching `__call__`. `thin` marks a non-capturing
 function pointer; the default function type can carry an environment. These facts
-parse into `Type::Func`, participate in callable conformance, escape and
+parse into the `ExprKind::FunctionType` expression node (upstream's), in an
+annotation, a bracket operand, or an alias body alike, whose parameter types,
+result, and typed error are annotation expressions; they participate in callable conformance, escape and
 indirect-call checking, and are preserved in checked HIR and the MIR call ABI.
 Own `def[...]` binders form a nested generic scope for a callable constraint or
 compile-time callable value; a parametric function type is not an ordinary
@@ -1368,8 +1370,8 @@ upstream's `__getitem_param__`; the value alone is "expected a type".
 `generator_type` is upstream's `__generator_type[params] Result`
 (`ParserExprs.cpp`'s `parseGeneratorType`): the type of a parameterized
 `comptime` declaration read unapplied, its parameter list and the type its
-application yields. `__generator_type` is a keyword. It parses into
-`Type::Generator` wherever a type does, and as an expression too (an alias
+application yields. `__generator_type` is a keyword. It parses into the
+`ExprKind::GeneratorType` expression node wherever a type does, and as an expression too (an alias
 body, `comptime Gen = __generator_type[Idx: Int] Int`), as `def` function
 types do. A missing result is a parse error ("Expected an expression").
 The result is one whole expression, so a `&` composition after it is the

@@ -6044,7 +6044,7 @@ impl Checker {
                 // end is the read's own failure.
                 Err(error)
                     if matches!(error, TypeError::UnknownType(_))
-                        || matches!(expr.kind, ExprKind::TypeValue(_))
+                        || expr.is_type_expression()
                         || self.parameter_application(expr).is_some()
                         || matches!(&expr.kind, ExprKind::Call { name, .. } if name == "type_of")
                         || matches!(&expr.kind, ExprKind::Index { object, .. }

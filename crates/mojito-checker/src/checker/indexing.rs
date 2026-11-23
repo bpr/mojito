@@ -2184,7 +2184,7 @@ impl Checker {
         }
         let root = match &object.kind {
             ExprKind::Identifier(name) => Some(name.as_str()),
-            ExprKind::TypeValue(_) => None,
+            _ if object.is_type_expression() => None,
             _ if let Some((name, _)) = object.bracket_application() => Some(name),
             ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
                 Some(applied_member_root(object)?)

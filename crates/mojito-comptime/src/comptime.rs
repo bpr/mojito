@@ -257,63 +257,8 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
         Type::IndexedProjection { base, .. } => {
             substitute_source_type_bindings(base, subs);
         }
-        Type::Func {
-            type_params,
-            params,
-            ret,
-            raises_type,
-            ..
-        } => {
-            // The contract's own binder of that spelling shadows the binding.
-            let binders: Vec<String> = type_params
-                .iter()
-                .map(|parameter| parameter.name.trim_start_matches('*').to_string())
-                .collect();
-            let inner = |name: &str| {
-                if binders.iter().any(|binder| binder == name) {
-                    None
-                } else {
-                    subs(name)
-                }
-            };
-            for parameter in type_params {
-                if let Some(value_type) = &mut parameter.value_type {
-                    rewrite::retype_annotation(value_type, &inner);
-                }
-                if let Some(callable) = &mut parameter.callable_bound {
-                    rewrite::retype_annotation(callable, &inner);
-                }
-            }
-            for parameter in params {
-                substitute_source_type_bindings(&mut parameter.ty, &inner);
-            }
-            substitute_source_type_bindings(ret, &inner);
-            if let Some(error) = raises_type {
-                substitute_source_type_bindings(error, &inner);
-            }
-        }
         Type::Ref { referent, .. } => {
             substitute_source_type_bindings(referent, subs);
-        }
-        Type::Generator { params, result } => {
-            // The generator's own binders shadow the binding.
-            let binders: Vec<String> = params
-                .iter()
-                .map(|parameter| parameter.name.trim_start_matches('*').to_string())
-                .collect();
-            let inner = |name: &str| {
-                if binders.iter().any(|binder| binder == name) {
-                    None
-                } else {
-                    subs(name)
-                }
-            };
-            for parameter in params {
-                if let Some(value_type) = &mut parameter.value_type {
-                    rewrite::retype_annotation(value_type, &inner);
-                }
-            }
-            substitute_source_type_bindings(result, &inner);
         }
         // The operand of `type_of` is an expression, which names no type
         // binder.
@@ -608,6 +553,11 @@ fn substitute_source_param_arg_bindings(argument: &mut ParamArg, subs: rewrite::
             };
             if let Some(replacement) = binder.and_then(subs) {
                 *argument = ParamArg::Type(replacement);
+            } else if matches!(
+                expr.kind,
+                ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. }
+            ) {
+                rewrite::substitute_type_bindings_in_expr(expr, subs);
             }
         }
     }

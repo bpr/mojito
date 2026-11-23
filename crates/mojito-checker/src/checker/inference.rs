@@ -875,9 +875,11 @@ impl Checker {
                  non-pointer subscript requires an index argument"
                     .to_string(),
             )),
-            ExprKind::TypeValue(_) => Err(TypeError::Unsupported(
-                "function types as compile-time values".to_string(),
-            )),
+            ExprKind::TypeValue(_) | ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
+                Err(TypeError::Unsupported(
+                    "function types as compile-time values".to_string(),
+                ))
+            }
             ExprKind::Lambda { .. } => self
                 .fact(&expr.source_span(), |facts| facts.ty.as_ref())
                 .ok_or_else(|| {
@@ -1583,6 +1585,11 @@ impl Checker {
             ExprKind::TypeValue(ty) => {
                 self.type_value(index, ty).ok();
                 Some(mojito_ast::ast::ParamArg::Type(ty.clone()))
+            }
+            ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
+                self.type_value(index, &annotation_spelling(index).ok()?)
+                    .ok();
+                Some(mojito_ast::ast::ParamArg::Value(index.clone()))
             }
             ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
                 if self.denoted_type(index, "Variant projection").is_ok() =>

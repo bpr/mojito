@@ -550,9 +550,11 @@ Postfix forms bind at `Call`, the highest level.
 - grouped expressions
 - tuple literals
 - list literals
-- a type spelled in expression position, a `def` function type or a
-  `__generator_type [params] Result` generator type, kept as
-  `ExprKind::TypeValue` (an alias body)
+- a `def` function type (`ExprKind::FunctionType`) or a
+  `__generator_type [params] Result` generator type
+  (`ExprKind::GeneratorType`), each its own expression node, as upstream
+  parses them; a `ref` or `*` pack spelled in expression position is the
+  `ExprKind::TypeValue` of its type
 
 Parenthesized expressions are disambiguated syntactically:
 

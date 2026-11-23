@@ -468,6 +468,32 @@ fn rewrite_expr(
             }
         }
         ExprKind::TypeValue(ty) => rewrite_type(ty, names, namespaces),
+        ExprKind::FunctionType(callable) => {
+            for parameter in &mut callable.type_params {
+                rewrite_type_param(parameter, names, namespaces);
+            }
+            for param in &mut callable.params {
+                rewrite_expr(&mut param.ty, names, namespaces);
+                if let Some(origin) = &mut param.origin {
+                    for expr in origin {
+                        rewrite_expr(expr, names, namespaces);
+                    }
+                }
+            }
+            rewrite_expr(&mut callable.ret, names, namespaces);
+            if let Some(error) = &mut callable.raises_type {
+                rewrite_expr(error, names, namespaces);
+            }
+            for clause in &mut callable.where_clauses {
+                rewrite_expr(clause, names, namespaces);
+            }
+        }
+        ExprKind::GeneratorType { params, result } => {
+            for parameter in params {
+                rewrite_type_param(parameter, names, namespaces);
+            }
+            rewrite_expr(result, names, namespaces);
+        }
         ExprKind::Comprehension {
             key,
             value,
@@ -515,33 +541,6 @@ fn rewrite_type(
                 *ty = Type::Named(target, std::mem::take(args));
             } else {
                 rewrite_type(base, names, namespaces);
-            }
-        }
-        Type::Func {
-            type_params,
-            params,
-            ret,
-            raises_type,
-            where_clauses,
-            ..
-        } => {
-            for parameter in type_params {
-                rewrite_type_param(parameter, names, namespaces);
-            }
-            for param in params {
-                rewrite_type(&mut param.ty, names, namespaces);
-                if let Some(origin) = &mut param.origin {
-                    for expr in origin {
-                        rewrite_expr(expr, names, namespaces);
-                    }
-                }
-            }
-            rewrite_type(ret, names, namespaces);
-            if let Some(error) = raises_type {
-                rewrite_type(error, names, namespaces);
-            }
-            for clause in where_clauses {
-                rewrite_expr(clause, names, namespaces);
             }
         }
         Type::Ref { referent, origin } => {

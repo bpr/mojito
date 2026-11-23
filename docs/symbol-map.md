@@ -2873,17 +2873,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   other than a `ref` or `*` pack parses as one whole expression at
   ternary level in `Parser::parse_annotation` (a `ref` or `*` pack is the
   `TypeValue` of its type there), which every annotation slot stores;
-  `Parser::parse_type`, for a function type's internals, a `ref` referent,
-  and a bracket's type operand, converts it
+  `Parser::parse_type`, for a `ref` referent and a bracket's type
+  operand, converts it
   through `Expr::annotation_type`, the annotation's type context, which
   alone maps the `None` value to `Type::None`, reads any name,
-  `type_of(x)`, a member, a subscript, and a `def`/`__generator_type`
-  `TypeValue` as a `Type`, and keeps any other expression (a construction,
-  a conditional, an operator) as `Type::Value`; the conversion fails only
-  for the `...` and contextual sentinels. `resolve_ty_from_anno_at_depth`
-  evaluates a `Type::Value` with `Checker::denoted_type`, upstream's
+  `type_of(x)`, a member, and a subscript as a `Type`, and keeps any other
+  expression (a construction, a conditional, an operator, a `def`
+  function type, a `__generator_type`) as `Type::Value`; the conversion
+  fails only for the `...` and contextual sentinels.
+  `resolve_ty_from_anno_at_depth` resolves a `Type::Value` holding an
+  `ExprKind::FunctionType` (`FunctionTypeExpr`, built by
+  `parse_function_type_tail`) with `Checker::function_type` and one
+  holding an `ExprKind::GeneratorType` with `Checker::generator_type`,
+  and evaluates any other with `Checker::denoted_type`, upstream's
   `emitExprType`, so a conditional of types is a type and a value is
-  "expected a type, found a value".
+  "expected a type, found a value". `Expr::is_type_expression` asks
+  whether an expression is a type spelled in expression position.
   `Expr::composition_type` is the trait-composition conversion (an `&`
   chain to `$trait_composition`), called by `parse_generator_type_tail`
   for a generator result and, through `TraitComptime::annotation_type`,

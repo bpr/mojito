@@ -1357,15 +1357,12 @@ impl Checker {
             .callable_conformance
             .as_ref()
             .map(|annotation| match &annotation.kind {
-                ExprKind::TypeValue(callable @ SourceType::Func { type_params, .. })
-                    if !type_params.is_empty() =>
-                {
-                    self.lower_anonymous_callable_type(
+                ExprKind::FunctionType(callable) if !callable.type_params.is_empty() => self
+                    .lower_anonymous_callable_type(
                         &format!("$callable:{name}"),
                         callable,
                         declaration.type_params,
-                    )
-                }
+                    ),
                 _ => self.ty_from_anno(annotation),
             })
             .transpose()?;

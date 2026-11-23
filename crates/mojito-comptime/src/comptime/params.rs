@@ -18,7 +18,7 @@ use mojito_types::types::TyKind;
 pub(super) fn retained_specialization_param(tp: &TypeParam) -> bool {
     matches!(
         tp.callable_bound.as_ref().map(|bound| &bound.kind),
-        Some(ExprKind::TypeValue(Type::Func { thin: true, .. }))
+        Some(ExprKind::FunctionType(callable)) if callable.thin
     )
 }
 

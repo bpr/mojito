@@ -128,7 +128,7 @@ fn retype_projection(
     let Some(base) = object.annotation_type() else {
         return false;
     };
-    if projection && indices.len() == 1 && !matches!(indices[0].kind, ExprKind::TypeValue(_)) {
+    if projection && indices.len() == 1 && !indices[0].is_type_expression() {
         retype_annotation(object, subs);
         return true;
     }
@@ -154,9 +154,16 @@ fn retype_projection(
 /// a type argument substitutes inside, and a bare or `Self.` binder becomes
 /// the bound type; any other value operand keeps its spelling.
 fn retype_annotation_operand(operand: &mut Expr, subs: TypeSubs) {
-    if let ExprKind::TypeValue(ty) = &mut operand.kind {
-        substitute_type_bindings_in_type(ty, subs);
-        return;
+    match &mut operand.kind {
+        ExprKind::TypeValue(ty) => {
+            substitute_type_bindings_in_type(ty, subs);
+            return;
+        }
+        ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
+            retype_expr(operand, subs);
+            return;
+        }
+        _ => {}
     }
     let binder = match &operand.kind {
         ExprKind::Identifier(name) => Some(name.as_str()),
@@ -663,7 +670,41 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
         // A lambda's hidden definition retypes like the equivalent nested
         // `def` statement (signature and body, minus its shadowed names).
         ExprKind::Lambda { def } => retype_stmt(def, subs),
+        ExprKind::FunctionType(callable) => retype_function_type(callable, subs),
+        ExprKind::GeneratorType { params, result } => {
+            retype_generator_type(params, result, subs);
+        }
     }
+}
+
+/// A function type's signature, which its own `def[...]` binders shadow;
+/// parameter types, result, and typed error substitute as annotations.
+fn retype_function_type(callable: &mut mojito_ast::ast::FunctionTypeExpr, subs: TypeSubs) {
+    let inner = without_shadowed(subs, &callable.type_params);
+    for parameter in &mut callable.type_params {
+        retype_type_parameter(parameter, &inner);
+    }
+    for parameter in &mut callable.params {
+        retype_annotation(&mut parameter.ty, &inner);
+        if let Some(origins) = &mut parameter.origin {
+            retype_exprs(origins, &inner);
+        }
+    }
+    retype_annotation(&mut callable.ret, &inner);
+    if let Some(error) = &mut callable.raises_type {
+        retype_annotation(error, &inner);
+    }
+    retype_exprs(&mut callable.where_clauses, &inner);
+}
+
+/// A generator type's result, which its own binders shadow; the result
+/// substitutes as a trait composition.
+fn retype_generator_type(params: &mut [TypeParam], result: &mut Expr, subs: TypeSubs) {
+    let inner = without_shadowed(subs, params);
+    for parameter in params.iter_mut() {
+        retype_type_parameter(parameter, &inner);
+    }
+    retype_composition(result, &inner);
 }
 
 fn retype_param_args(args: &mut Vec<ParamArg>, subs: TypeSubs) {

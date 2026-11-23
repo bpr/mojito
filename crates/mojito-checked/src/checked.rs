@@ -6397,6 +6397,10 @@ impl<'a> ArenaBuilder<'a> {
                 ty: self.facts(&expression.source_span()).type_operand.clone(),
                 applications: self.type_applications(ty),
             },
+            ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => CheckedOp::TypeValue {
+                ty: self.facts(&expression.source_span()).type_operand.clone(),
+                applications: self.expression_applications(expression),
+            },
             ExprKind::Prefix(op, value) => CheckedOp::Prefix(*op, self.expr(value)),
             ExprKind::Transfer(value) => CheckedOp::Transfer(self.expr(value)),
             ExprKind::Spread(value) => CheckedOp::Spread(self.expr(value)),

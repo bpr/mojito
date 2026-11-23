@@ -288,6 +288,32 @@ fn imported_generic_comptime_alias_expands_in_type_annotations() {
     assert_eq!(run(&main).unwrap(), "8\n");
 }
 
+/// The linker renames a module's names inside a generator type, whether
+/// imported by name or spelled through the module, as at the pin.
+#[test]
+fn linking_renames_names_inside_a_generator_type() {
+    let d = TempDir::new();
+    d.write(
+        "m.mojo",
+        "struct S(ImplicitlyCopyable):\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n",
+    );
+    for (name, import, spelled) in [
+        ("qualified.mojo", "import m", "m.S"),
+        ("selective.mojo", "from m import S", "S"),
+    ] {
+        let main = d.write(
+            name,
+            &format!(
+                "{import}\n\ncomptime Gen = __generator_type[n: Int] {spelled}\n\n\
+                 comptime make[n: Int]: {spelled} = {spelled}(n)\n\n\
+                 def use[g: Gen]() -> Int:\n    return 1\n\n\
+                 def main():\n    print(use[make]())\n"
+            ),
+        );
+        assert_eq!(run(&main).unwrap(), "1\n", "{import}");
+    }
+}
+
 #[test]
 fn transitive_and_dotted_imports() {
     let d = TempDir::new();

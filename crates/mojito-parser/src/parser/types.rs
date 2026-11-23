@@ -6,8 +6,7 @@ use super::*;
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// Parses a type annotation and converts it in the annotation's type
     /// context ([`Expr::annotation_type`]), for a slot that still stores the
-    /// converted type: a function type's parameters, result, and typed error,
-    /// a `ref` referent, and a bracket's type operand.
+    /// converted type: a `ref` referent and a bracket's type operand.
     pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
         let annotation = self.parse_annotation()?;
         annotation_type(&annotation)
@@ -88,28 +87,30 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// composition (`__generator_type[T: Copyable] Copyable & Defaultable`)
     /// is the `&` the expression grammar parses, converted by
     /// [`Expr::composition_type`].
-    pub(super) fn parse_generator_type_tail(&mut self) -> Result<Type, ParseError> {
+    pub(super) fn parse_generator_type_tail(
+        &mut self,
+    ) -> Result<(Vec<mojito_ast::ast::TypeParam>, Expr), ParseError> {
         let params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
             self.parse_type_params()?
         } else {
             Vec::new()
         };
-        let expr = self.parse_expression(Precedence::Walrus)?;
-        let result = expr.composition_type().ok_or_else(|| {
-            ParseError::Message("expected a type, found an expression".to_string()).at(expr.span)
-        })?;
-        Ok(Type::Generator {
-            params,
-            result: Box::new(result),
-        })
+        let result = self.parse_expression(Precedence::Walrus)?;
+        if result.composition_type().is_none() {
+            return Err(
+                ParseError::Message("expected a type, found an expression".to_string())
+                    .at(result.span),
+            );
+        }
+        Ok((params, result))
     }
 
     /// Parses a function type after its leading `def` has been consumed:
     /// `'(' [type (',' type)*] ')' effects ['->' type]`. Effects between `)` and
     /// the optional return are `thin`, `raises`, and `abi(...)` (the last
     /// parsed and discarded); the removed `capturing` is an error. An omitted
-    /// return is `None`.
-    pub(super) fn parse_function_type_tail(&mut self) -> Result<Type, ParseError> {
+    /// return is the `None` expression at the function type's end.
+    pub(super) fn parse_function_type_tail(&mut self) -> Result<FunctionTypeExpr, ParseError> {
         // Function signatures may themselves be parameterized, e.g.
         // `def[origin: Origin](ref[origin] Int) -> ref[origin] Int`.
         let type_params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
@@ -166,25 +167,23 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         &Token::Colon,
                         "Expected ':' after a keyword-variadic function-type parameter",
                     )?;
-                    (Some(name), self.parse_type()?)
+                    (Some(name), self.parse_annotation()?)
                 } else {
-                    let first = self.parse_type()?;
+                    let first = self.parse_annotation()?;
                     if matches!(self.peek_token()?, Some(Token::Colon)) {
-                        let Type::Named(name, arguments) = first else {
+                        let ExprKind::Identifier(name) = first.kind else {
+                            let message = if first.bracket_application().is_some() {
+                                "a function-type parameter name cannot have type arguments"
+                            } else {
+                                "a function-type parameter name must be an identifier"
+                            };
                             return Err(ParseError::UnexpectedToken(
                                 Token::Colon,
-                                "a function-type parameter name must be an identifier".to_string(),
+                                message.to_string(),
                             ));
                         };
-                        if !arguments.is_empty() {
-                            return Err(ParseError::UnexpectedToken(
-                                Token::Colon,
-                                "a function-type parameter name cannot have type arguments"
-                                    .to_string(),
-                            ));
-                        }
                         self.next_token()?;
-                        (Some(name), self.parse_type()?)
+                        (Some(name), self.parse_annotation()?)
                     } else {
                         (None, first)
                     }
@@ -243,7 +242,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         )
                     );
                     if !next_is_effect && !next_ends_type {
-                        raises_type = Some(Box::new(self.parse_type()?));
+                        raises_type = Some(self.parse_annotation()?);
                     }
                 }
                 Some(Token::Identifier(id)) if id == "abi" => {
@@ -267,9 +266,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // The result is one whole expression, as upstream reads it.
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
-            self.parse_type()?
+            self.parse_annotation()?
         } else {
-            Type::None
+            let end = self.last_span.1;
+            self.node(ExprKind::None, end)
         };
         // Trailing `where` clauses bind to the innermost function type: a
         // function-type result that is itself a function type consumes them
@@ -277,10 +277,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // declaration-level `where` after a function-type result needs the
         // result parenthesized.
         let where_clauses = self.parse_where_clauses()?;
-        Ok(Type::Func {
+        Ok(FunctionTypeExpr {
             type_params,
             params,
-            ret: Box::new(ret),
+            ret,
             thin,
             raises,
             raises_type,
@@ -340,10 +340,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// Parses a single parameter argument. An operand only the type grammar
-    /// spells (a function type, `ref`, a `*` pack) is a `Type`. Every other
-    /// operand is one expression (`Int`, `Foo[Int]`, `L[0] * 2`, `Self.T`,
-    /// and `None`, which is the `None` value), which the checker classifies
-    /// as a type or a value by what it denotes.
+    /// spells (`ref`, a `*` pack) is a `Type`. Every other operand is one
+    /// expression (`Int`, `Foo[Int]`, `L[0] * 2`, `Self.T`, a `def` function
+    /// type, and `None`, which is the `None` value), which the checker
+    /// classifies as a type or a value by what it denotes.
     pub(super) fn parse_param_arg(&mut self) -> Result<mojito_ast::ast::ParamArg, ParseError> {
         use mojito_ast::ast::ParamArg;
         // A spread: of a pack (`*Ts`, `*Self.Ts`), which stays the pack's own
@@ -383,11 +383,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// Whether the next token begins an operand only the type grammar
-    /// parses (a function type, `ref`, or a `*` pack) — used to classify a
-    /// parameter argument.
+    /// parses (`ref` or a `*` pack) — used to classify a parameter argument.
     pub(super) fn peek_starts_type(&mut self) -> Result<bool, ParseError> {
         Ok(match self.peek_token()? {
-            Some(Token::Def | Token::Star) => true,
+            Some(Token::Star) => true,
             Some(Token::Identifier(id)) => id == "ref",
             _ => false,
         })
@@ -568,12 +567,13 @@ fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
         origin_mutability: None,
     };
     if let [member] = members.as_slice() {
+        if matches!(member.kind, ExprKind::FunctionType(_)) {
+            bound.bounds.push(FUNCTION_TYPE.to_string());
+            bound.callable_bound = Some((*member).clone());
+            return Ok(bound);
+        }
         let ty = bound_member_type(member)?;
         match &ty {
-            Type::Func { .. } => {
-                bound.bounds.push(FUNCTION_TYPE.to_string());
-                bound.callable_bound = Some((*member).clone());
-            }
             Type::Named(name, args) if args.is_empty() => bound.bounds.push(name.clone()),
             Type::SelfType => bound.bounds.push("Self".to_string()),
             Type::Named(name, args)
@@ -594,18 +594,19 @@ fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
         return Ok(bound);
     }
     for member in members {
-        match bound_member_type(member)? {
-            Type::Named(name, args) if args.is_empty() => bound.bounds.push(name),
-            Type::Func { .. } if bound.callable_bound.is_none() => {
-                bound.bounds.push(FUNCTION_TYPE.to_string());
-                bound.callable_bound = Some(member.clone());
-            }
-            Type::Func { .. } => {
+        if matches!(member.kind, ExprKind::FunctionType(_)) {
+            if bound.callable_bound.is_some() {
                 return Err(ParseError::Message(
                     "trait composition must not contain more than one closure type".to_string(),
                 )
                 .at(member.span));
             }
+            bound.bounds.push(FUNCTION_TYPE.to_string());
+            bound.callable_bound = Some(member.clone());
+            continue;
+        }
+        match bound_member_type(member)? {
+            Type::Named(name, args) if args.is_empty() => bound.bounds.push(name),
             _ => {
                 return Err(ParseError::Message(
                     "expected a trait name in a type-parameter bound composition".to_string(),
@@ -647,7 +648,7 @@ fn bound_spelling(expr: &Expr) -> String {
         ExprKind::Member { object, .. }
         | ExprKind::Index { object, .. }
         | ExprKind::MultiIndex { object, .. } => bound_spelling(object),
-        ExprKind::TypeValue(Type::Generator { .. }) => "__generator_type".to_string(),
+        ExprKind::GeneratorType { .. } => "__generator_type".to_string(),
         ExprKind::None => "None".to_string(),
         _ => "<type expression>".to_string(),
     }

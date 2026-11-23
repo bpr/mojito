@@ -1416,6 +1416,12 @@ record hold their annotations as the parsed expressions upstream keeps,
 which the checker converts in its type context when it reads them, in
 place of the converted type. The MIR schema does not change.
 
+The package format moves to `mojito-package 267` (R2536): a `def`
+function type and a `__generator_type` in the checker residue are their
+own expression nodes, as upstream parses them, with their parameter
+types and results held as annotation expressions. The MIR schema does
+not change.
+
 Schema 1.229 completes a trait requirement's function type after its
 `variadic_convention`, as upstream's trait declares it:
 `receiver_convention`, its receiver's declared convention (`present(var)`
