@@ -2874,8 +2874,9 @@ struct StructMember<'a, P> {
 /// ([`TraitRequirement::defaults`]), as upstream's requirement function type
 /// carries each default attribute: a literal or a conversion of one as its
 /// constant, any other default as the lifted `$default$Trait.method$param`
-/// function over the requirement's binders it reads, which a call through
-/// the bound leaving the slot out applies.
+/// function over the binders it reads, its trait's `_Self` (the default's
+/// `Self`) and the requirement's own, which a call through the bound
+/// leaving the slot out applies.
 fn lower_requirement_defaults(
     (checked, name, index): (&CheckedProgram, &str, usize),
     m: &mojito_checked::checked::CheckedTraitMethod,
@@ -2884,7 +2885,8 @@ fn lower_requirement_defaults(
     invariant_errors: &mut Vec<String>,
 ) {
     let overloads = checked.overloads();
-    let binders = EnclosingBinders::of(m.signature.argument_binders());
+    let binders = EnclosingBinders::of(&[TraitDeclaration::self_binder(name)])
+        .with(m.signature.argument_binders());
     let regular: Vec<(usize, &mojito_checked::checked::CheckedFnParam)> = m
         .params
         .iter()
@@ -2894,9 +2896,14 @@ fn lower_requirement_defaults(
                 && !matches!(param.convention, Some(ArgConvention::Out))
         })
         .collect();
+    let self_type = TraitDeclaration::self_type(name);
     let defaults: Vec<Option<CheckedConst>> = regular
         .iter()
         .map(|(position, param)| {
+            let ty = m
+                .signature
+                .param(*position)
+                .and_then(|ty| crate::mir::call_defaults::replace_abstract_self(ty, &self_type));
             lower_default(
                 DefaultLowering {
                     checked,
@@ -2905,7 +2912,7 @@ fn lower_requirement_defaults(
                     parameter: *param,
                     default: param.default,
                     binders: &binders,
-                    ty: m.signature.param(*position),
+                    ty: ty.as_ref(),
                 },
                 functions,
                 declarations,

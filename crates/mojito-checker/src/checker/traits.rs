@@ -516,8 +516,8 @@ impl Checker {
     /// Type the parameter defaults of requirement `m`, the `index`-th
     /// method of trait `trait_name`, against its parameter types at the
     /// trait's method sites, as upstream types a requirement function's
-    /// default attributes: `Self` the abstract conforming type, the
-    /// requirement's own binders in scope. Each default's node then holds
+    /// default attributes: in its trait's scope, `Self` the trait's `_Self`
+    /// as a trait member reads it, the requirement's own binders in scope. Each default's node then holds
     /// its type and conversion, which a call through the bound leaving the
     /// slot out materializes.
     pub(super) fn check_requirement_defaults(
@@ -547,22 +547,22 @@ impl Checker {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let saved_self_ty = self.self_ty.replace(Ty::self_type());
+        let (self_ty, saved_scope) = self.enter_trait_scope(trait_name);
+        let types: Vec<Ty> = types
+            .iter()
+            .map(|ty| super::generics::substitute_self(ty, &self_ty))
+            .collect();
         let saved_site = self
             .method_site
             .replace((module.cloned(), trait_name.to_string()));
         self.push_param_scope(&declared);
-        let saved_type_params = self.enclosing_type_params.clone();
-        let saved_decls = self.enclosing_param_decls.clone();
         self.enclosing_type_params.extend(m.type_params.clone());
         self.enclosing_param_decls.extend(declared.iter().cloned());
         let checked =
             self.check_parameter_defaults(&m.params, &types, &ParamDecl::argument_decls(&declared));
-        self.enclosing_type_params = saved_type_params;
-        self.enclosing_param_decls = saved_decls;
         self.pop_param_scope();
         self.method_site = saved_site;
-        self.self_ty = saved_self_ty;
+        self.exit_struct_scope(saved_scope);
         checked
     }
 
@@ -607,7 +607,6 @@ impl Checker {
             m.self_origin.as_ref(),
             self,
         )?;
-        let decls = ParamDecl::argument_decls(&declared);
         let regular: Vec<_> = m
             .params
             .iter()
@@ -634,13 +633,9 @@ impl Checker {
                 .params
                 .iter()
                 .map(|param| {
-                    param
-                        .default
-                        .as_ref()
-                        .map(|default| requirement_default(default, &decls))
-                        .transpose()
+                    param.default.as_ref().map(requirement_default)
                 })
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Vec<_>>();
             let all_types = this.param_tys(&m.params)?;
             let ret = match &m.ret {
                 Some(SourceType::Ref { referent, .. }) => this.ty_from_anno(referent)?,
@@ -4927,58 +4922,12 @@ fn copyable_copy_requirement() -> MethodSig {
 
 /// A requirement's default as the attribute its signature holds, as an
 /// ordinary method's: a literal as its constant, any other default as
-/// evaluated, which the requirement's declaration lowers and a call
-/// through the bound leaving the slot out runs. A default may read
-/// anything an ordinary default may but `Self` and the method's type and
-/// origin parameters, which a call through the bound binds nothing for.
-fn requirement_default(
-    default: &mojito_ast::ast::Expr,
-    decls: &[ParamDecl],
-) -> Result<SignatureDefault, TypeError> {
-    let names = spelled_names(default);
-    let unbound = std::iter::once("Self").chain(
-        decls
-            .iter()
-            .filter(|decl| !matches!(decl, ParamDecl::Value { .. }))
-            .map(ParamDecl::name),
-    );
-    if let Some(name) = unbound.into_iter().find(|name| names.contains(*name)) {
-        return Err(TypeError::Unsupported(format!(
-            "a trait requirement's default reading '{name}'"
-        )));
-    }
-    Ok(mojito_checked::checked::CheckedConst::from_expr(default)
-        .map_or(SignatureDefault::Evaluated, SignatureDefault::Constant))
-}
-
-/// Every name `default` spells, as a value or a type, a member access's
-/// object included (`Self` of `Self.K`).
-fn spelled_names(default: &mojito_ast::ast::Expr) -> std::collections::HashSet<String> {
-    struct Names(std::collections::HashSet<String>);
-
-    impl mojito_ast::visit::Visitor for Names {
-        fn visit_expr(&mut self, expr: &mojito_ast::ast::Expr) {
-            if let mojito_ast::ast::ExprKind::Identifier(name) = &expr.kind {
-                self.0.insert(name.clone());
-            }
-        }
-
-        fn visit_type(&mut self, ty: &mojito_ast::ast::Type) {
-            match ty {
-                mojito_ast::ast::Type::Named(name, _) => {
-                    self.0.insert(name.clone());
-                }
-                mojito_ast::ast::Type::SelfParam(..) | mojito_ast::ast::Type::SelfType => {
-                    self.0.insert("Self".to_string());
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let mut names = Names(std::collections::HashSet::new());
-    mojito_ast::visit::walk_expr(&mut names, default);
-    names.0
+/// evaluated, which the requirement's declaration lowers over its trait's
+/// `_Self` and its own binders, and a call through the bound leaving the
+/// slot out runs under the receiver's type and the call's arguments.
+fn requirement_default(default: &mojito_ast::ast::Expr) -> SignatureDefault {
+    mojito_checked::checked::CheckedConst::from_expr(default)
+        .map_or(SignatureDefault::Evaluated, SignatureDefault::Constant)
 }
 
 /// Whether the struct declares the lifecycle member a trivial `kind` rules

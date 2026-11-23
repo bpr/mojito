@@ -4856,30 +4856,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2530 A requirement default reading `Self` or a type parameter is
-  rejected**
-
-  `def scale(self, value: Int, factor: Int = Self.K)` and
-  `def scale2[T: HasK](self, t: T, value: Int, factor: Int = T.K)` in a
-  trait fail with "a trait requirement's default reading 'Self'", where the
-  pin runs each requirement's default through the bound.
-  - The gate is `requirement_default` (`checker/traits.rs`). Every other
-    requirement default is typed at the trait and lifted like an ordinary
-    one (`TraitRequirement::defaults`).
-  - The cause: a requirement's lifted default has no `Self` binder, since
-    the requirement is spelled over the abstract `Self`, and a call
-    through the bound records no argument for the method's type binders
-    (`MirParamArg::value` is absent for a type argument), so
-    `mir::fill_omitted_arguments` cannot close either.
-  - The lever: lift the default over the trait's `_Self`, which the fill
-    binds to the receiver as it does a trait member's, and record a
-    bound call's type arguments for its requirement's binders.
-  - Probe: `conformance/probes/requirement_default_reads_self_and_type_parameter.mojo`
-    (the pin prints `1514`).
-  - Found while landing R769 (2026-11-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R548 A homogeneous variadic cannot be forwarded with `*xs`**
 
   Problem: `return g(*xs^)` in `def f(var *xs: Int)`, where `g` takes

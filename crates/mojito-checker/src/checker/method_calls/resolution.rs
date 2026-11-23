@@ -215,6 +215,21 @@ impl Checker {
                 ),
             );
         }
+        // A call through a bound binds its requirement's parameters, which
+        // a default the requirement declares reads.
+        if resolved
+            .lowered_name
+            .as_deref()
+            .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
+            && let Some(arguments) = &resolved.instantiation
+        {
+            self.record_at(span.clone()).bound_instantiation = Some(
+                resolved
+                    .declared_instantiation
+                    .clone()
+                    .unwrap_or_else(|| arguments.clone()),
+            );
+        }
         if let Some((sname, targs)) = obj_ty.kind().as_non_pointer_struct()
             && !targs.is_empty()
         {
@@ -587,6 +602,7 @@ impl Checker {
                 attributes: bracket_attributes,
                 ..
             } = instantiated;
+            let instantiation = method_instantiation_arguments(&sig, &method_arguments);
             let declared_instantiation =
                 method_declared_arguments(&sig, &method_arguments, &declared_arguments);
             if let Err(failure) = self.method_constraint_result(
@@ -687,8 +703,8 @@ impl Checker {
                 }),
                 param_types: params,
                 param_decls: sig.declared.clone(),
-                instantiation: None,
-                declared_instantiation: None,
+                instantiation,
+                declared_instantiation,
                 parameter_names: Vec::new(),
                 view_return_interior: Vec::new(),
                 view_return: Vec::new(),

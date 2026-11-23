@@ -401,10 +401,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   type's bound) leaves a requirement default it omits to the call's MIR
   fill; `reject_renamed_bound_keywords` beside it rejects binding by name a
   parameter some conformer's witness renames (`witness_renames`).
-  `requirement_default` in `checker/traits.rs` rejects a requirement
-  default reading `Self` or a type parameter (`spelled_names`), and makes
-  it its signature's attribute; `check_requirement_defaults` types a
-  bodiless requirement's defaults at its trait (called from
+  `record_method_call_instantiation` records a call through a bound's
+  solved requirement arguments (`bound_instantiation`, the call's
+  `InstantiatedArguments`). `requirement_default` in `checker/traits.rs`
+  makes a requirement default its signature's attribute;
+  `check_requirement_defaults` types a bodiless requirement's defaults in
+  its trait's scope (`enter_trait_scope`, `Self` its `_Self`) (called from
   `check_trait_members` in `checker/trait_defaults.rs`), so their nodes hold
   their types and conversions for MIR to lower.
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`)

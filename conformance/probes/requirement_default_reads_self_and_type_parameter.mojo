@@ -3,8 +3,7 @@
 #
 # The pin prints `1514`: `x.scale(2)` takes the requirement's `Self.K`
 # (7) and `x.scale2(B(), 3)` its `T.K` (5), not the witness's `10`.
-# Mojito rejects the trait ("a trait requirement's default reading 'Self'")
-# — `docs/roadmap.md` R2530.
+# Mojito matches.
 trait HasK:
     comptime K: Int
 

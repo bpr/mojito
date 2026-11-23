@@ -182,6 +182,13 @@ pub fn erase_unpassed_defaults(
     erased
 }
 
+/// `ty`, a requirement's type spelled over the abstract `Self`, with
+/// `Self` the type `replacement`: its trait's `_Self` where the
+/// requirement's defaults are lifted, a receiver's type at a call.
+pub fn replace_abstract_self(ty: &Ty, replacement: &Ty) -> Option<Ty> {
+    mojito_types::types::rewrite_ty(ty, &mut SelfAs(replacement)).ok()
+}
+
 /// The body whose calls are filled: its name, the declarations its callees
 /// are found in, and the function each of its registers statically holds.
 struct Caller<'a> {
@@ -211,6 +218,25 @@ struct Site {
     /// passes ahead of `args`: the declaration lists no slot for it, so it
     /// binds none of the callee's parameters.
     receiver: Option<Reg>,
+    /// The receiver's value type at a call of a requirement, whose
+    /// parameter types are spelled over the abstract `Self` it closes.
+    self_type: Option<Ty>,
+}
+
+/// The rewrite of a requirement's abstract `Self` to another type.
+struct SelfAs<'a>(&'a Ty);
+
+impl mojito_types::types::TyRewrite for SelfAs<'_> {
+    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        matches!(ty.kind(), TyKind::SelfType).then(|| self.0.clone())
+    }
+
+    fn expr(
+        &mut self,
+        expr: &ParamExpr,
+    ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
+        Ok(expr.clone())
+    }
 }
 
 /// One omitted argument, bound: the parameter it fills and the value its
@@ -494,6 +520,7 @@ fn collect_subscript_store(
         ),
         spread: None,
         receiver: None,
+        self_type: None,
     };
     let location = function.spans.0.get(&value.0).map(|(span, _)| span.clone());
     build_collector(
@@ -761,6 +788,7 @@ fn collect_through_contract(
         bound: Vec::new(),
         spread: None,
         receiver: None,
+        self_type: None,
     };
     let location = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
     if build_keyword_collector(
@@ -1725,6 +1753,17 @@ impl Site {
                     declarations,
                 )?;
                 if let DefaultedCallee::Required(requirement) = resolved {
+                    let mut bound = passed_bindings(
+                        &requirement.param_decls,
+                        instantiated_args,
+                        param_arg_regs,
+                        &caller.constants,
+                    );
+                    bound.extend(requirement_self_bindings(
+                        requirement,
+                        receiver,
+                        declarations,
+                    ));
                     return Some((
                         Self {
                             dest: *dest,
@@ -1732,14 +1771,12 @@ impl Site {
                             leading: 0,
                             args: args.clone(),
                             kwargs: kwargs.clone(),
-                            bound: passed_bindings(
-                                &requirement.param_decls,
-                                instantiated_args,
-                                param_arg_regs,
-                                &caller.constants,
-                            ),
+                            bound,
                             spread: *spread,
                             receiver: None,
+                            self_type: Some(
+                                crate::mir::call_addresses::receiver_value_ty(receiver).clone(),
+                            ),
                         },
                         resolved,
                     ));
@@ -1837,12 +1874,20 @@ impl Site {
                         Some(&receiver),
                         caller,
                     ),
-                    DefaultedCallee::Required(requirement) => passed_bindings(
-                        &requirement.param_decls,
-                        &[],
-                        &call.param_arg_regs,
-                        &caller.constants,
-                    ),
+                    DefaultedCallee::Required(requirement) => {
+                        let mut bound = passed_bindings(
+                            &requirement.param_decls,
+                            &[],
+                            &call.param_arg_regs,
+                            &caller.constants,
+                        );
+                        bound.extend(requirement_self_bindings(
+                            requirement,
+                            &receiver,
+                            declarations,
+                        ));
+                        bound
+                    }
                 };
                 return Some((
                     Self {
@@ -1857,6 +1902,8 @@ impl Site {
                         bound,
                         spread: None,
                         receiver: None,
+                        self_type: matches!(resolved, DefaultedCallee::Required(_))
+                            .then(|| receiver.clone()),
                     },
                     resolved,
                 ));
@@ -1881,9 +1928,21 @@ impl Site {
                 bound,
                 spread,
                 receiver: passed_receiver,
+                self_type: None,
             },
             DefaultedCallee::Declared(declaration),
         ))
+    }
+
+    /// `ty`, a parameter type of the callee, under the call's bindings
+    /// ([`close_parameter_type`]), a requirement's abstract `Self` the
+    /// receiver's type.
+    fn close_parameter_type(&self, ty: &Ty) -> Option<Ty> {
+        let ty = match &self.self_type {
+            Some(receiver) => replace_abstract_self(ty, receiver)?,
+            None => ty.clone(),
+        };
+        close_parameter_type(&ty, &self.bound)
     }
 
     /// Store the filled operand lists back into `instruction`; a subscript
@@ -2118,6 +2177,34 @@ fn bindings_of(
     bound
 }
 
+/// The binding of the `_Self` of the trait declaring `requirement` to
+/// `receiver`'s value type, which the requirement's lifted defaults read
+/// as their `Self`, as a trait member's receiver binds its trait's
+/// ([`bindings_of`]).
+fn requirement_self_bindings(
+    requirement: &TraitRequirement,
+    receiver: &Ty,
+    declarations: &MirDeclarations,
+) -> Vec<(ParamDecl, TyArg)> {
+    let receiver = crate::mir::call_addresses::receiver_value_ty(receiver);
+    declarations
+        .trait_declarations()
+        .find(|declaration| {
+            declaration
+                .requirements
+                .iter()
+                .any(|own| std::ptr::eq(own, requirement))
+        })
+        .map(|declaration| {
+            declaration
+                .param_decls
+                .iter()
+                .map(|decl| (decl.clone(), TyArg::Ty(receiver.clone())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The binders in scope around `callee`, the function `name`, beside its
 /// own: its struct's, for a method, and for a nested function each
 /// enclosing function's and its struct's, innermost first.
@@ -2254,7 +2341,7 @@ fn omitted_argument(
             let ty = callee
                 .param_types()
                 .get(slot)
-                .and_then(|ty| close_parameter_type(ty, &site.bound))
+                .and_then(|ty| site.close_parameter_type(ty))
                 .ok_or_else(|| {
                     format!("the type of '{name}' names a binder the call binds no argument for")
                 })?;
@@ -2272,7 +2359,7 @@ fn omitted_argument(
             parameter: parameter
                 .as_ref()
                 .map(|parameter| {
-                    close_parameter_type(parameter, &site.bound).ok_or_else(|| {
+                    site.close_parameter_type(parameter).ok_or_else(|| {
                         format!(
                             "the default of '{name}' converts at a parameter naming a binder the call binds no argument for"
                         )
@@ -2287,12 +2374,10 @@ fn omitted_argument(
         .get(slot)
         .ok_or_else(|| format!("parameter '{name}' has no type"))
         .and_then(|ty| {
-            close_parameter_type(ty, &site.bound).ok_or_else(|| {
+            site.close_parameter_type(ty).ok_or_else(|| {
                 format!("the type of '{name}' names a binder the call binds no argument for")
             })
         })?;
-    // A requirement spells its parameters over the abstract `Self`, which
-    // no binding of the call closes.
     if mentions(&ty, &|inner| matches!(inner.kind(), TyKind::SelfType)) {
         return Err(format!("the type of '{name}' names `Self`"));
     }

@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A trait requirement's default may read `Self` or the requirement's own
+  type parameters (`factor: Int = Self.K`, `factor: Int = T.K` in
+  `def scale2[T: HasK](...)`, `other: Self = Self()`), as at the pin: the default is typed in its
+  trait's scope and lifted over the trait's `_Self`, which a call through
+  the bound binds to its receiver, and a call through a bound now records
+  the arguments it solved for the requirement's parameters
+  (`assets/ok/trait_requirement_default_reads_self.mojo`), where the trait
+  was rejected.
+
 - A `ref[o]` argument binds its callee's own origin binder to the place it
   lends, and that binder's `mut=` binder to the place's mutability, in the
   call's one solve, as upstream's call binds every declared parameter:

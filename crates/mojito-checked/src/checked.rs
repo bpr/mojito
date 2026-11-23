@@ -7549,6 +7549,8 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
         adjustments.push(SemanticAdjustment::InstantiatedArguments(
             instantiation.arguments.clone(),
         ));
+    } else if let Some(arguments) = &facts.bound_instantiation {
+        adjustments.push(SemanticAdjustment::InstantiatedArguments(arguments.clone()));
     }
     if let Some(elements) = &facts.tuple_unpack_plan {
         adjustments.push(SemanticAdjustment::TupleUnpack {
@@ -7714,6 +7716,10 @@ node_facts! {
         contextual_base: String,
         generic_instantiation: GenericInstantiation,
         method_instantiation: MethodInstantiation,
+        /// The compile-time arguments a call through a trait bound applies
+        /// to its requirement's declared parameters, as upstream's call
+        /// binds every parameter of the requirement function it applies.
+        bound_instantiation: Vec<mojito_types::types::TyArg>,
         /// Caller-substituted loan transfers of a call.
         call_transfers: Vec<CheckedCallTransfer>,
         implicit_conversion: String,

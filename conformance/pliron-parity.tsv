@@ -1673,6 +1673,7 @@ assets/ok/trait_parameterized_value_requirement.mojo	main	exe-differential	sanit
 assets/ok/trait_reads_module_struct_member.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_constant_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_default_from_caller_parameter.mojo	main	exe-differential	sanitized
+assets/ok/trait_requirement_default_reads_self.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_docstring.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_indexes_own_pack.mojo	main	exe-differential	sanitized
 assets/ok/trait_requirement_origin_binder_in_type.mojo	main	exe-differential	sanitized
