@@ -2870,13 +2870,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `G[n].w()` and a capitalized `L[0] * 2` included, is the one expression
   the bracket suffix parses, which the checker classifies as a type or a
   value by what it denotes (`Checker::denoted_type`). An annotation
-  other than a `ref` or `*` pack parses as one expression at `**`
-  precedence in `Parser::parse_type` (`parse_type_at`, which a function
-  type's result reads at ternary level) and converts through
-  `Expr::annotation_type`, the
-  annotation's type context, which alone maps the `None` value to
-  `Type::None` and reads any name, `type_of(x)`, a member, a subscript, a
-  construction, and a `def`/`__generator_type` `TypeValue` as a `Type`.
+  other than a `ref` or `*` pack parses as one whole expression at
+  ternary level in `Parser::parse_type` and converts
+  through `Expr::annotation_type`, the annotation's type context, which
+  alone maps the `None` value to `Type::None`, reads any name,
+  `type_of(x)`, a member, a subscript, and a `def`/`__generator_type`
+  `TypeValue` as a `Type`, and keeps any other expression (a construction,
+  a conditional, an operator) as `Type::Value`; the conversion fails only
+  for the `...` and contextual sentinels. `resolve_ty_from_anno_at_depth`
+  evaluates a `Type::Value` with `Checker::denoted_type`, upstream's
+  `emitExprType`, so a conditional of types is a type and a value is
+  "expected a type, found a value".
   `Expr::composition_type` is the trait-composition conversion (an `&`
   chain to `$trait_composition`), called by `parse_generator_type_tail`
   for a generator result and `parse_trait_comptime` for an associated

@@ -1212,15 +1212,10 @@ impl Checker {
                     .ok_or_else(unsupported_mlir_type)?
             }
             SourceType::Assoc { base, name, args } => self.member_type(base, name, args)?,
-            // A compile-time value is a type only through a subscript, as at
-            // the pin ("expected a type, not a value").
-            SourceType::Value(_) => {
-                return Err(TypeError::TypeMismatch {
-                    expected: "a type".to_string(),
-                    found: "a value".to_string(),
-                    context: "type annotation".to_string(),
-                });
-            }
+            // Any other annotation expression is evaluated in the type
+            // context, as upstream's `emitExprType` evaluates it: a
+            // conditional of types is a type, a value is "expected a type".
+            SourceType::Value(value) => self.denoted_type(value, "type annotation")?,
             // `TypeList[Trait=AnyType, Ts.values]()[i]`: the value's
             // `__getitem_param__[i]`, the path its explicit spelling takes.
             SourceType::IndexedProjection { base, index }

@@ -5,19 +5,13 @@ use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// Parses a type annotation. As upstream parses an annotation, it is one
-    /// expression at `**` precedence (`Bool`, `Self.T`, `Pair[Int]`,
+    /// whole expression at ternary level (`Bool`, `Self.T`, `Pair[Int]`,
     /// `type_of(x).T`, `def(Int) -> Int`, `__generator_type[T: AnyType] T`,
-    /// `(Int)`), converted in the annotation's type context
-    /// ([`Expr::annotation_type`]). Only a `*` pack and a contextual `ref`
-    /// reference type keep their own forms.
+    /// `Int if c else Float64`), converted in the annotation's type context
+    /// ([`Expr::annotation_type`]); the checker evaluates one no spelling
+    /// converts. Only a `*` pack and a contextual `ref` reference type keep
+    /// their own forms.
     pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
-        self.parse_type_at(Precedence::Power)
-    }
-
-    /// [`Self::parse_type`] with the annotation expression read above `min`:
-    /// a function type's result is a whole expression, read at
-    /// [`Precedence::Walrus`].
-    pub(super) fn parse_type_at(&mut self, min: Precedence) -> Result<Type, ParseError> {
         let start = self.peek_start();
         match self.peek_token()? {
             // A variadic type-pack reference in `*args: *ArgTypes`. Inside a
@@ -59,19 +53,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     )
                 ) {
                     let head = self.node(ExprKind::Identifier("ref".to_string()), start);
-                    return self.annotation_from(head, min);
+                    return self.annotation_from(head);
                 }
                 // `ref [origin] T` — a reference type (parametric
                 // mutability); the referent follows the origin specifier.
                 let origin = self.parse_optional_origin_specifier()?;
                 Ok(Type::Ref {
-                    referent: Box::new(self.parse_type_at(min)?),
+                    referent: Box::new(self.parse_type()?),
                     origin,
                 })
             }
             _ => {
                 let head = self.parse_prefix()?;
-                self.annotation_from(head, min)
+                self.annotation_from(head)
             }
         }
     }
@@ -261,7 +255,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // The result is one whole expression, as upstream reads it.
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
-            self.parse_type_at(Precedence::Walrus)?
+            self.parse_type()?
         } else {
             Type::None
         };
@@ -501,11 +495,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(true)
     }
 
-    /// Reads the rest of an annotation whose head was just parsed as one
-    /// expression at `**` precedence, and converts it in the annotation's
-    /// type context.
-    fn annotation_from(&mut self, head: Expr, min: Precedence) -> Result<Type, ParseError> {
-        let expr = self.parse_expression_from(head, min)?;
+    /// Reads the rest of an annotation, one whole expression, from the head
+    /// just parsed, and converts it in the annotation's type context.
+    fn annotation_from(&mut self, head: Expr) -> Result<Type, ParseError> {
+        let expr = self.parse_expression_from(head, Precedence::Walrus)?;
         expr.annotation_type().ok_or_else(|| {
             ParseError::Message("expected a type, found an expression".to_string()).at(expr.span)
         })

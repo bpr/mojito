@@ -40,6 +40,7 @@ assets/ok/and_alias_construction_operand.mojo	main	exe-differential	sanitized
 assets/ok/and_or_left_operand_converts.mojo	main	exe-differential	sanitized
 assets/ok/and_or_operand_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/and_or_value_operands.mojo	main	exe-differential	sanitized
+assets/ok/annotation_expression_in_type_context.mojo	main	exe-differential	sanitized
 assets/ok/application_generic_construction_parameter.mojo	main	exe-differential	sanitized
 assets/ok/application_string_parameter.mojo	main	exe-differential	sanitized
 assets/ok/application_struct_parameter.mojo	main	exe-differential	sanitized

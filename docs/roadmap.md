@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2534**.
+Next free ID: **R2544**.
 
 ## Ordered Work
 
@@ -7719,6 +7719,42 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2542 A compile-time conditional whose arms are types is not a type**
+
+  A conditional of type values evaluates as an ordinary value expression,
+  so it is no type where it is not itself an annotation, where the pin
+  evaluates it to the selected type.
+  - Probe: `comptime T = Int if True else Int` then `var x: T = 3` is
+    "unknown type 'T'"; the pin prints 3.
+  - Probe: `comptime T = Int if True else String` is "value of type
+    'AnyStruct[Int]' is not compatible with value of type
+    'AnyStruct[String]'"; the pin prints 3 with `var x: T = 3`.
+  - The same conditional as an annotation (`var x: Int if True else Int`)
+    is a type since R2137, through `denoted_type`.
+  - Lever: `constraints.rs::may_denote_type` classifies by spelling and
+    has no `IfExpr` arm, and the checker's `IfExpr` typing unifies the arm
+    types instead of folding the constant condition over type values.
+  - Found while landing R2137 (2026-11-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2543 An annotation that evaluates to no type reports "not a compile-time Int constant"**
+
+  `build_ct` reports any annotation expression it cannot evaluate as a
+  missing `Int` constant, where the pin reports why the expression fails.
+  - Both compilers reject these programs. Only the diagnostic differs.
+  - Probe: `def f(x: Int & Copyable)` and `def f[T: Copyable & Movable |
+    Copyable]()` report "not a compile-time Int constant: Copyable"; the
+    pin reports "invalid call to '__and__'".
+  - Probe: `def f(x: M.f())` reports "not a compile-time Int constant: not
+    an associated comptime expression"; the pin reports "use of unknown
+    declaration 'M'".
+  - Probe: `struct S` with `def f(self) -> Self.make()` reports the same;
+    the pin reports "'S' value has no attribute 'make'".
+  - Found while landing R2137 (2026-11-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2069 A compile-time conditional with equal arms is not its arm**
 
   `Tag[b if c else b]` is not `Tag[b]`, where the pin folds the
@@ -13362,29 +13398,127 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2137 The AST stores an annotation as a parsed type, not as its expression**
+- [ ] **R2534 Statement and member annotation slots store a parsed type**
 
-  `Param.ty`, field types, `ret`, `VarDecl` annotations, and
-  `FunctionTypeParam.ty` hold the `Type` the parser built, where upstream
-  keeps the annotation expression and sema evaluates it in a type context.
-  - Plan it first: about 350 `SourceType`/`Type::` uses across the crates
-    make it multi-session, so the plan splits it into chained entries.
-  - The checker's `ty_from_anno` would convert through
-    `Expr::annotation_type`, deleting `Type` as a parser product along with
-    `Type::Value` and `Type::expression_spelling`.
-  - A type-valued expression the parser cannot convert is rejected where
-    the pin evaluates it (found landing R2135, 2026-11-23).
-  - Probe: `def g(x: def() -> Int if True else Int)` and
-    `comptime H = __generator_type[T: AnyType] Int if True else Int` are
-    "expected a type, found an expression"; the pin accepts both.
-  - Probe: `def g(x: Int if True else Int)` stops at the parser's `**`
-    floor for a plain annotation; the pin reads a whole expression there.
-  - Probe: `def f[x: Int if True else Int]()` is "expected a type, found
-    an expression"; the pin accepts it (`annotation_type` has no
-    conditional).
-  - Updates `docs/architecture.md` and `docs/symbol-map.md`.
-  - Depends on R2136.
+  `VarDecl` and `Comptime` annotations, struct and trait comptime members,
+  enum case payloads, and struct fields (`Param::ty`) hold the `Type` the
+  parser converted, where upstream keeps the annotation expression and
+  evaluates it in a type context.
+  - First slice of the plan at `R2137-the-ast-stores-an-annotation-as-plan.md`
+    (Slice 2): the slots become `Expr`, and `Checker::ty_from_anno(&Expr)`
+    converts with `Expr::annotation_type` before resolving.
+  - Keep a `&SourceType` overload (`ty_from_spelling`) for the slots later
+    entries switch.
+  - Add `Visitor::visit_annotation` and `MutVisitor::visit_annotation_mut`,
+    called at every annotation slot, with counterparts for the
+    `visit_type` overrides that are sensitive to type position.
+  - The linker's `rewrite_stmt` rewrites the switched slots through
+    `rewrite_expr`.
+  - Comptime needs a position-aware `rewrite.rs::retype_annotation`:
+    `retype_expr` does not substitute a bare identifier.
+  - Stop condition: `emit-mir` on fixtures exercising the slots is
+    byte-identical to the base.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R2535 Signature annotation slots store a parsed type**
+
+  A parameter's type, a result, a `raises` type, `self_type`, a callable
+  conformance, and a type parameter's value type and callable bound hold
+  the parser's `Type`, where upstream keeps their expressions.
+  - Slice 3 of the R2137 plan: `FnParam::ty`, `ret`, `raises_type`,
+    `self_type`, `callable_conformance`, and
+    `TypeParam::{value_type, callable_bound}` become `Expr`.
+  - `return_annotations`, `module_def_results`, and
+    `DeclarationInterface::def_results` hold expressions, which needs a
+    `PACKAGE_FORMAT` bump.
+  - Readers include `origins/{sig, binders, solve, subst}.rs`,
+    `comptime_validation.rs`, `reflection.rs`, `constraints.rs`, and the
+    comptime `retype_fn_parameter`/`retype_type_parameter`.
+  - Depends on R2534.
+  - Model: Fable, Planned.
+
+- [ ] **R2536 A function type and a generator type are `Type` nodes, not expressions**
+
+  `def(...) -> R` and `__generator_type[...] R` parse to `Type::Func` and
+  `Type::Generator`, where upstream parses them as expression nodes.
+  - Slice 4 of the R2137 plan: add `ExprKind::FunctionType` and
+    `ExprKind::GeneratorType`, whose parameter types and results are
+    expressions, and delete the two `Type` variants.
+  - A function-type bracket operand becomes `ParamArg::Value`.
+  - Readers: `module.rs::rewrite_type`, `function_signature_type`,
+    `inline_callable_type`, `lower_anonymous_callable_type`, and
+    `checked.rs`'s type-value lowering.
+  - Depends on R2535.
   - Model: Fable, Not Planned.
+
+- [ ] **R2537 A `ref` result and a `ref` field are a `Type::Ref`, not a slot convention**
+
+  `-> ref [o] T` and the kept `var f: ref[o] T` extension parse to a
+  `Type::Ref` wrapping the referent, where upstream reads `ref` as the
+  slot's convention.
+  - Slice 5 of the R2137 plan: a result carries
+    `ret_reference: Option<Option<OriginSpec>>` beside its expression, and a
+    field carries `Param::reference`, as `FnParam` carries its convention.
+  - Delete `Type::Ref` (24 crate sites, `rg 'Type::Ref'`).
+  - Depends on R2535.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2538 A pack-spread annotation is a magic type name, not a spread expression**
+
+  `*Ts` and `*Self.Ts` in an annotation parse to `Type::Named("*Ts")` and
+  `SelfParam("*Ts")`, where upstream parses a spread expression.
+  - Slice 6 of the R2137 plan: they become `ExprKind::Spread`, and the
+    checker maps a spread to the `*`-prefixed name it uses internally, so
+    the type-parameter name tests do not move.
+  - Changes `parser/types.rs::pack_spread_type`,
+    `comptime/pack_qualification.rs`, `auto_parameterize.rs`, and `elab.rs`.
+  - Depends on R2535.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2539 A bracket operand can be a parsed type instead of an expression**
+
+  `ParamArg::Type` holds a `Type` operand, which the checker and the
+  elaborator synthesize from checked types, where upstream's bracket
+  operands are all expressions.
+  - Slice 7 of the R2137 plan: delete `ParamArg::Type` (113 sites).
+  - Code that spells a checked `Ty` builds expressions:
+    `mojito_types::ct::source_type`, `comptime.rs::source_type_from_ty`,
+    `kgen_string_source_type`, `mlir_source_type`, the `TypeSubs` callback,
+    and `initializer_list.rs::keyword_spelling`.
+  - If it does not fit a session, land the synthesizers first and file the
+    matches.
+  - Depends on R2535.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2540 `Type` is an AST node**
+
+  `mojito_ast::ast::Type`, `ExprKind::TypeValue`, and the `SourceType`
+  alias remain after every annotation slot holds an expression, so the AST
+  keeps a second representation of a type that upstream's has not.
+  - Slice 8 of the R2137 plan: delete them and
+    `Type::expression_spelling`.
+  - The resolver's classification of an annotation expression moves into
+    `type_resolution.rs` as a private borrowed view over `&Expr`, with
+    `annotation_type`, `composition_type`, `type_spelling`, and
+    `constraints.rs::{assoc_body_source_type, member_source_type}`.
+  - Updates `docs/frontend.md`'s annotation section.
+  - Depends on R2536, R2537, R2538, R2539.
+  - Model: Fable, Planned.
+
+- [ ] **R2541 The checker types an annotation with a second evaluator**
+
+  `resolve_ty_from_anno` resolves a classification of the annotation
+  expression, beside `build_ct`/`denoted_type`, where upstream types every
+  annotation with its one `emitExprType`.
+  - Since R2137 an annotation no spelling converts already goes through
+    `denoted_type`, so the two disagree only on the shapes the resolver
+    classifies.
+  - The resolver is about 5,000 lines of `type_resolution.rs`, so this
+    needs a plan that splits it.
+  - Depends on R2540.
+  - Model: Fable, Planned.
+
 - [ ] **R2533 A module-qualified trait bound is a value type**
 
   `TypeParam::bounds` holds bound names as strings, so a qualified trait

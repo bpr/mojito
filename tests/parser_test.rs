@@ -1146,9 +1146,16 @@ fn parses_a_member_application_in_type_position() {
 }
 
 #[test]
-fn rejects_a_bracket_list_after_a_projection_that_is_no_member() {
-    let mut parser = Parser::new(Lexer::new("def f(x: Self.Ts[1, 2]):\n    pass\n"));
-    assert!(parser.parse_program().is_err());
+fn a_bracket_list_after_a_projection_that_is_no_member_is_its_expression() {
+    let statements = parse("def f(x: Self.Ts[1, 2]):\n    pass\n");
+    let StmtKind::Def { params, .. } = &statements[0].kind else {
+        panic!("expected a def");
+    };
+    assert!(
+        matches!(&params[0].ty, Type::Value(value) if matches!(value.kind, ExprKind::MultiIndex { .. })),
+        "{:?}",
+        params[0].ty
+    );
 }
 
 #[test]
@@ -4583,19 +4590,43 @@ fn composes_a_function_type_after_trait_bounds() {
 
 #[test]
 fn a_function_type_result_takes_a_later_composition() {
-    // The pin reads the result as one expression, which takes the `&`, so
-    // the result is no type.
-    for source in [
-        "def f[F: def(Int) -> Int & Copyable](f: F):\n    pass\n",
-        "def f[F: Copyable & def(Int) -> Int & def(Int) -> Int](f: F):\n    pass\n",
-        "def f(x: def() -> Int == Int):\n    pass\n",
+    // The pin reads the result as one expression, which takes the `&`: the
+    // result is that expression, which the checker evaluates (and rejects).
+    let result = |source: &str| {
+        let statements = parse(source);
+        let StmtKind::Def {
+            type_params,
+            params,
+            ..
+        } = &statements[0].kind
+        else {
+            panic!("expected a def");
+        };
+        let ty = type_params
+            .first()
+            .and_then(|param| param.callable_bound.clone())
+            .unwrap_or_else(|| params[0].ty.clone());
+        let Type::Func { ret, .. } = ty else {
+            panic!("expected a function type, found {ty:?}");
+        };
+        *ret
+    };
+    for (source, op) in [
+        (
+            "def f[F: def(Int) -> Int & Copyable](f: F):\n    pass\n",
+            InfixOp::BitAnd,
+        ),
+        (
+            "def f[F: Copyable & def(Int) -> Int & def(Int) -> Int](f: F):\n    pass\n",
+            InfixOp::BitAnd,
+        ),
+        ("def f(x: def() -> Int == Int):\n    pass\n", InfixOp::Eq),
     ] {
-        let error = mojito::parse(source).expect_err("a composed function-type result");
+        let ret = result(source);
         assert!(
-            error
-                .to_string()
-                .contains("expected a type, found an expression"),
-            "{error}"
+            matches!(&ret, Type::Value(value)
+                if matches!(&value.kind, ExprKind::Infix(found, ..) if *found == op)),
+            "{source}: {ret:?}"
         );
     }
 }
@@ -4633,16 +4664,34 @@ fn parses_a_type_parameter_bound_as_one_expression() {
 }
 
 #[test]
-fn rejects_a_type_parameter_bound_no_type_converts() {
-    for (source, message) in [
+fn a_type_parameter_bound_no_spelling_converts_is_its_expression() {
+    for (source, is_kind) in [
         (
             "def f[T: Copyable & Movable | Copyable]():\n    pass\n",
-            "expected a type, found an expression",
+            (|kind| matches!(kind, ExprKind::Infix(InfixOp::BitOr, ..))) as fn(&ExprKind) -> bool,
         ),
-        (
-            "def f[x: 3]():\n    pass\n",
-            "expected a type, found an expression",
-        ),
+        ("def f[x: 3]():\n    pass\n", |kind| {
+            matches!(kind, ExprKind::Int(_))
+        }),
+        ("def f[x: Int if True else Int]():\n    pass\n", |kind| {
+            matches!(kind, ExprKind::IfExpr { .. })
+        }),
+    ] {
+        let statements = parse(source);
+        let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+            panic!("expected a def");
+        };
+        assert!(
+            matches!(&type_params[0].value_type, Some(Type::Value(value)) if is_kind(&value.kind)),
+            "{source}: {:?}",
+            type_params[0].value_type
+        );
+    }
+}
+
+#[test]
+fn rejects_a_type_parameter_bound_composition_of_no_traits() {
+    for (source, message) in [
         (
             "def f[x: List[Int] & Copyable]():\n    pass\n",
             "expected a trait name in a type-parameter bound composition",
@@ -4665,13 +4714,35 @@ fn an_annotation_is_one_expression() {
     };
     assert_eq!(params[0].ty, Type::Named("Int".into(), vec![]));
     assert_eq!(*ret, Some(Type::Named("Int".into(), vec![])));
-    let error = mojito::parse("def g(x: 3):\n    pass\n").expect_err("a value annotation");
+    let statements = parse("def g(x: 3):\n    pass\n");
+    let StmtKind::Def { params, .. } = &statements[0].kind else {
+        panic!("expected a def");
+    };
     assert!(
-        error
-            .to_string()
-            .contains("expected a type, found an expression"),
-        "{error}"
+        matches!(&params[0].ty, Type::Value(value) if matches!(value.kind, ExprKind::Int(_))),
+        "{:?}",
+        params[0].ty
     );
+}
+
+#[test]
+fn an_annotation_reads_a_whole_conditional_expression() {
+    let statements = parse(
+        "def g(x: Int if True else Int) -> Int if True else Int:\n    var y: Int if True else Int = x\n    return y\n",
+    );
+    let StmtKind::Def {
+        params, ret, body, ..
+    } = &statements[0].kind
+    else {
+        panic!("expected a def");
+    };
+    let conditional = |ty: &Type| matches!(ty, Type::Value(value) if matches!(value.kind, ExprKind::IfExpr { .. }));
+    assert!(conditional(&params[0].ty), "{:?}", params[0].ty);
+    assert!(ret.as_ref().is_some_and(conditional), "{ret:?}");
+    let StmtKind::VarDecl { ty: Some(ty), .. } = &body[0].kind else {
+        panic!("expected an annotated var, found {:?}", body[0].kind);
+    };
+    assert!(conditional(ty), "{ty:?}");
 }
 
 #[test]
@@ -5840,28 +5911,31 @@ fn an_applied_member_construction_in_an_annotation_keeps_its_source_spans() {
 }
 
 #[test]
-fn annotation_expressions_that_are_no_type_are_rejected() {
+fn annotation_expressions_no_spelling_converts_are_their_expression() {
     for annotation in ["M.f()", "Pair[Int](1)(2)", "type_of(a, b)"] {
         let source = format!("def f(x: {annotation}):\n    pass\n");
-        let error = mojito::parse(&source).expect_err("no annotation");
+        let statements = parse(&source);
+        let StmtKind::Def { params, .. } = &statements[0].kind else {
+            panic!("expected a def");
+        };
         assert!(
-            error
-                .to_string()
-                .starts_with("expected a type, found an expression"),
-            "{annotation}: {error}"
+            matches!(&params[0].ty, Type::Value(_)),
+            "{annotation}: {:?}",
+            params[0].ty
         );
     }
 }
 
 #[test]
-fn annotation_method_call_is_not_a_type() {
-    let error = mojito::parse("struct S:\n    def f(self) -> Self.make():\n        pass\n")
-        .expect_err("a method call is no annotation");
+fn annotation_method_call_is_its_expression() {
+    let statements = parse("struct S:\n    def f(self) -> Self.make():\n        pass\n");
+    let StmtKind::Struct { methods, .. } = &statements[0].kind else {
+        panic!("expected a struct");
+    };
     assert!(
-        error
-            .to_string()
-            .starts_with("expected a type, found an expression"),
-        "{error}"
+        matches!(&methods[0].ret, Some(Type::Value(_))),
+        "{:?}",
+        methods[0].ret
     );
 }
 

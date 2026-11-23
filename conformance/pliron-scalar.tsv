@@ -39,6 +39,7 @@ assets/ok/and_alias_construction_operand.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/and_or_left_operand_converts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/and_or_operand_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/and_or_value_operands.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/annotation_expression_in_type_context.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/application_generic_construction_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/application_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/application_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape

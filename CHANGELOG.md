@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An annotation is one whole expression evaluated in its type context, as
+  upstream evaluates it (R2137): `def g(x: Int if True else Int) -> Int if
+  True else Int`, `var y: Int if True else Int`, `def f[n: Int if True else
+  Int]()`, a function-type result, and a generator result are accepted
+  (`assets/ok/annotation_expression_in_type_context.mojo`); an annotation
+  that evaluates to no type is a check error rather than a parse error, so
+  `assets/parse_error/function_type_bound_then_trait.mojo` moved to
+  `assets/type_error/`.
+
 - A type-parameter bound is one expression, as upstream parses it (R2136):
   `x: (Int)`, `T: (Copyable & Movable)`, `x: None`, and a function type
   anywhere in a composition (`F: def(Int) & Copyable`, `F: (def(Int) ->

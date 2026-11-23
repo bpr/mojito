@@ -45,6 +45,7 @@ assets/type_error/function_bracket_explicit_mut_rejects_immutable.mojo	compile-r
 assets/type_error/function_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'p' cannot be converted from 'Pointer[Int, ImmUntrackedOrigin]' to 'Pointer[Int, o]'
 assets/type_error/function_bracket_unbound_origin_uninferred.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'origin_of(_mlir_origin)'
 assets/type_error/function_bracket_ref_field_not_owner_origin.mojo	compile-reject	agree	error: invalid call to 'read': value passed to 'v' cannot be converted from 'Int' to ref 'Int'
+assets/type_error/function_type_bound_then_trait.mojo	compile-reject	agree	error: invalid call to '__and__': value passed to 'self' cannot be converted from type value 'Int' to an instance of 'Int'; did you mean to instantiate 'Int'?
 assets/type_error/getattr_param_assignment.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/implicit_constructor_own_origin_binder_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'V[Int, origin_of(y)]' value to 'V[Int, origin_of(x)]'
 assets/type_error/lit_origin_rejects_non_bool_mutability.mojo	compile-reject	agree	error: invalid MLIR type: !lit.origin<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> n, "_mlir_value"> : !kgen.scalar<index>>
@@ -212,7 +213,6 @@ assets/parse_error/comptime_if_module_level.mojo	compile-reject	agree	error: 'co
 assets/parse_error/comptime_match_module_level.mojo	compile-reject	agree	error: 'comptime match' must be contained in a function
 assets/parse_error/copy_capture_decorator.mojo	compile-reject	agree	error: '@__copy_capture' is no longer supported; list the captures in a capture list like '{var x}' instead
 assets/parse_error/for_target_trailing_comma.mojo	compile-reject	agree	error: unexpected token in expression
-assets/parse_error/function_type_bound_then_trait.mojo	compile-reject	agree	error: invalid call to '__and__': value passed to 'self' cannot be converted from type value 'Int' to an instance of 'Int'; did you mean to instantiate 'Int'?
 assets/parse_error/generator_type_missing_result.mojo	compile-reject	agree	error: unexpected token in expression
 assets/parse_error/lambda_missing_colon.mojo	compile-reject	agree	error: unknown function effect 'x', expected 'raises' or 'thin'
 assets/parse_error/lambda_unparenthesized_args.mojo	compile-reject	agree	error: unparenthesized lambda arguments are not supported; write them in parentheses, with types, e.g. `lambda (x: Int, y: Int) -> Int: x + y`

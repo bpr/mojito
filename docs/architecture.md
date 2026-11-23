@@ -5821,7 +5821,11 @@ and resolution-side symbol construction use the same field.
 
 Across phase boundaries, Mojito names source syntax and checked semantics
 explicitly. `SourceType` is parser-owned syntax; `Ty`, `binding_ty`, and MIR
-`param_types` are checker-resolved facts. `AnnotationSite` keys declaration
+`param_types` are checker-resolved facts. An annotation is one whole
+expression, and a `SourceType` is only its conversion: an expression no type
+spelling covers stays `SourceType::Value`, which the checker evaluates in the
+type context (`denoted_type`), so the parser rejects no annotation for its
+shape. `AnnotationSite` keys declaration
 annotations at the checked boundary, after which HIR, MIR, and the VM carry only
 the resolved `Ty`. In particular, variable initialization and function-entry
 coercion no longer reinterpret source annotations in the backend. Missing checked

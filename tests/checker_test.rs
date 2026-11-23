@@ -6,10 +6,15 @@ use mojito::{
 
 /// Parse `source` and run the type checker, returning its result.
 fn check_source(source: &str) -> Result<(), TypeError> {
-    // `print` is the prelude's library function, as upstream's is, and a
-    // `Pointer` construction is the bundled struct's initializer, so a
-    // snippet that prints or constructs a pointer links the prelude.
-    if source.contains("print(") || source.contains("Pointer(") || source.contains("(to=") {
+    // `print` is the prelude's library function, as upstream's is, a
+    // `Pointer` construction is the bundled struct's initializer, and an
+    // `Origin[mut=m]` bound names the bundled `Origin`, so a snippet that
+    // prints, constructs a pointer, or binds an origin links the prelude.
+    if source.contains("print(")
+        || source.contains("Pointer(")
+        || source.contains("(to=")
+        || source.contains("Origin[")
+    {
         return check_with_std(source);
     }
     let program = Parser::new(Lexer::new(source))
@@ -5321,7 +5326,11 @@ fn callable_type_bounds_reject_structural_generic_overloaded_and_stronger_effect
     let structural = err_std(
         "@fieldwise_init\nstruct Structural:\n    def __call__(self, value: Int) -> Int:\n        return value\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(Structural()))\n",
     );
-    assert!(matches!(structural, TypeError::TraitNotSatisfied { .. }));
+    assert!(
+        matches!(&structural, TypeError::BadCall { reason, .. }
+            if reason.contains("does not conform to trait 'def(Int) -> Int'")),
+        "{structural}"
+    );
 
     let raising = err_std(
         "def fail(value: Int) raises -> Int:\n    raise Error(\"failure\")\n\ndef apply[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(1)\n\ndef main():\n    print(apply(fail))\n",
@@ -7924,14 +7933,14 @@ fn builtin_origin_values_bind_struct_origin_slots() {
     // in either permission, and an unresolvable origin-shaped argument reports
     // the origin diagnostic rather than an arity count against the erased
     // binder.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Holder[o: Origin]:\n    var p: Pointer[Int, Self.o]\n\ndef f(h: Holder[MutUntrackedOrigin]) -> Int:\n    return h.p[0]\n\ndef g(h: Holder[ImmUnsafeAnyOrigin]) -> Int:\n    return h.p[0]\n\ndef main():\n    pass\n",
     );
     let src = "@fieldwise_init\nstruct Holder[o: Origin]:\n    var p: Pointer[Int, Self.o]\n\ndef f(h: Holder[Bogus]) -> Int:\n    return 1\n\ndef main():\n    pass\n";
     assert!(
-        matches!(err(src), TypeError::TypeMismatch { context, .. } if context == "explicit origin argument"),
+        matches!(err_std(src), TypeError::TypeMismatch { context, .. } if context == "explicit origin argument"),
         "{:?}",
-        err(src)
+        err_std(src)
     );
 }
 
@@ -11714,4 +11723,39 @@ fn an_alias_of_an_existential_parameter_type_names_that_parameter() {
     ok_std(&format!(
         "{apply}trait Show:\n    def show(self, mut writer: Some[Writer]):\n{body}\nstruct S(Show):\n    pass\n"
     ));
+}
+
+#[test]
+fn an_annotation_expression_is_evaluated_in_the_type_context() {
+    check_with_std(
+        "def g(x: Int if True else Int) -> Int if True else Int:\n    var y: Int if True else Int = x\n    return y\n\ndef f[n: Int if True else Int]() -> Int:\n    return n\n",
+    )
+    .expect("a conditional of types is a type");
+    for (annotation, message) in [
+        ("3", "expected a type, found a value"),
+        ("def() -> Int == Int", "expected a type, found a value"),
+        (
+            "def(Int) -> Int & Copyable",
+            "not a compile-time Int constant",
+        ),
+        (
+            "Copyable & Movable | Copyable",
+            "not a compile-time Int constant",
+        ),
+        ("M.f()", "not a compile-time Int constant"),
+        ("Pair[Int](1)(2)", "not a compile-time Int constant"),
+        ("type_of(a, b)", "'type_of' expects 1 argument(s), got 2"),
+    ] {
+        let source = format!("def f(x: {annotation}):\n    pass\n");
+        let error = check_with_std(&source).expect_err(annotation);
+        assert!(error.to_string().contains(message), "{annotation}: {error}");
+    }
+    let error = check_with_std("struct S:\n    def f(self) -> Self.make():\n        pass\n")
+        .expect_err("a method call is no type");
+    assert!(
+        error
+            .to_string()
+            .contains("not a compile-time Int constant"),
+        "{error}"
+    );
 }

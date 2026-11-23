@@ -295,10 +295,11 @@ pub enum Type {
         params: Vec<TypeParam>,
         result: Box<Self>,
     },
-    /// A compile-time value where the type grammar expects a type: a struct
-    /// construction such as `TypeList[Trait=AnyType, Ts.values]()`. It is a
-    /// type only as the base of an `IndexedProjection`, which reads the
-    /// value's `__getitem_param__[index]`; alone, the checker rejects it.
+    /// A compile-time value expression where an annotation expects a type: a
+    /// struct construction such as `TypeList[Trait=AnyType, Ts.values]()`, a
+    /// conditional `Int if c else Float64`. It is a type once the checker
+    /// evaluates it to one; as the base of an `IndexedProjection` it reads
+    /// the value's `__getitem_param__[index]`.
     Value(Box<Expr>),
 }
 
@@ -2394,13 +2395,29 @@ impl Expr {
     ///   [`Type::IndexedProjection`] (`Self[0]`, `values.element_types[i]`)
     ///   and any other list applies an argument-less member (`M.A[1, 2]`);
     /// - `type_of(x)` is [`Type::TypeOf`];
-    /// - any other call, or an applied member's construction
-    ///   (`Pair[Int](1, 2)`, `M.Of[Int]()`), is the compile-time value it
-    ///   builds ([`Type::Value`]);
-    /// - a `def` function type or a `__generator_type` is the type it spells.
+    /// - a `def` function type or a `__generator_type` is the type it spells;
+    /// - any other expression (a call, a construction, a conditional, an
+    ///   operator) is the compile-time value it evaluates to
+    ///   ([`Type::Value`]), which the checker evaluates in the type context
+    ///   and rejects when it is no type.
     ///
-    /// Anything else (a method call, a slice, an operator) is no type.
+    /// Only the `...` and contextual sentinels, which are no annotation,
+    /// convert to nothing.
     pub fn annotation_type(&self) -> Option<Type> {
+        if let ExprKind::Identifier(name) = &self.kind
+            && (name == "..." || name == CONTEXTUAL_SENTINEL)
+        {
+            return None;
+        }
+        Some(
+            self.spelled_annotation_type()
+                .unwrap_or_else(|| Type::Value(Box::new(self.clone()))),
+        )
+    }
+
+    /// The type an expression spells as an annotation, before
+    /// [`Self::annotation_type`]'s compile-time-value fallback.
+    fn spelled_annotation_type(&self) -> Option<Type> {
         match &self.kind {
             ExprKind::TypeValue(ty) => Some(ty.clone()),
             ExprKind::None => Some(Type::None),
@@ -2449,12 +2466,6 @@ impl Expr {
                 }
                 _ => None,
             },
-            ExprKind::Call { .. } => Some(Type::Value(Box::new(self.clone()))),
-            ExprKind::Invoke {
-                callee, param_args, ..
-            } if !param_args.is_empty() && matches!(callee.kind, ExprKind::Member { .. }) => {
-                Some(Type::Value(Box::new(self.clone())))
-            }
             _ => None,
         }
     }

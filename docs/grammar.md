@@ -1280,7 +1280,7 @@ type:
     | annotation_expression       # any expression read as a type
     | 'ref' [origin_spec] type    # an origin-checked reference type `ref[origin] T` (a direct field, a result; never a type argument)
     | '*' NAME | '*' 'Self' '.' NAME  # a variadic type-pack reference
-annotation_expression:            # the expression grammar at `**` precedence, including
+annotation_expression:            # the expression grammar at ternary level, including
     | expression                  # a function_type, a generator_type, and `( expression )`
 generator_type: '__generator_type' [params_decl] expression   # result read at ternary level
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* ['->' result_type]
@@ -1291,11 +1291,11 @@ function_type_param:
 fn_effect: 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 ```
 
-As upstream parses an annotation, it is one expression (the expression
-grammar at `**` precedence; a function type's result and a generator type's
-result are whole expressions, read at ternary level), converted in the
-annotation's type context (`Expr::annotation_type`). Only a `*` pack and a
-contextual `ref` keep their own forms:
+As upstream parses an annotation, it is one whole expression (the
+expression grammar at ternary level, as a function type's result and a
+generator type's result are), converted in the annotation's type context
+(`Expr::annotation_type`). Only a `*` pack and a contextual `ref` keep their
+own forms:
 
 - `None` is the none type (a bracket operand reads the same expression but
   keeps `None` a value); `Self` is the enclosing type; any other `NAME`,
@@ -1311,11 +1311,12 @@ contextual `ref` keep their own forms:
 - `type_of(expression)` is the type of its operand.
 - A `def` function type and a `__generator_type` are the type they spell;
   a parenthesized annotation (`(Int)`) is its operand.
-- Any other call, and a call of an applied member, is a compile-time value
-  (a construction, `Pair[Int](1, 2)`, `M.Of[Int]()`), a type only as the
-  base of a subscript.
-- Anything else (a method call, a slice, an operator, `M.f()`) is "expected
-  a type, found an expression".
+- Any other expression (a construction `Pair[Int](1, 2)`, a conditional
+  `Int if c else Float64`, a method call, an operator) is the compile-time
+  value the checker evaluates in the type context. One that evaluates to a
+  type is that type (`var x: Int if True else Int`); one that does not is a
+  check error ("expected a type, found a value" for `x: 3`). As the base of
+  a subscript a value is its `__getitem_param__` projection.
 
 `None` is a reserved keyword. `Bool` is a plain `NAME`, the prelude's
 `std.builtin.bool.Bool` struct, which a program's own `struct Bool` shadows.
@@ -1377,9 +1378,10 @@ never further bounds of the parameter it types. It converts as a trait
 composition (`Expr::composition_type`, which an associated member's
 annotation uses too): an `&` chain becomes the `$trait_composition` node,
 and the checker requires each member to be a trait. Any other operator
-(`A & B | C`, `Int == Int`) is "expected a type, found an expression". A
-function type's result is a whole expression too, converted as an
-annotation, so `def(Int) -> Int & Copyable` is no type.
+(`A & B | C`, `Int == Int`) is a compile-time value the checker evaluates
+and rejects. A function type's result is a whole expression too, converted
+as an annotation, so in `def(Int) -> Int & Copyable` the result is
+`Int & Copyable`, which the checker rejects as no type.
 A **member application** `type '.' NAME param_args` reads a type's
 parameterized `comptime` member (`S[Int].Of[Bool]`, `M.Pair[A, B]`,
 `_MLIR.KGENParamListType[Int]`) and parses into `Type::Assoc` with the
