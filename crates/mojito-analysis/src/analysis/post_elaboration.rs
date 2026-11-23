@@ -5,7 +5,9 @@
 //!
 //! The body passes are the pre-elaboration pipeline's own, but
 //! `lower-arg-conventions`, which only the concrete program's pipelines run
-//! (this one and [`MANDATORY_PIPELINE`]), and its call-graph pass is
+//! (this one and [`MANDATORY_PIPELINE`]; the elaborator also runs its
+//! caller half, `mojito_mir::mir::load_register_passable_operands`, over each
+//! compile-time application's fragment), and its call-graph pass is
 //! `automatic-inline`, which nests a function pipeline of its own. Unlike that seam, no body is verified after each pass: each pass reports
 //! whether it changed a body, and the caller re-admits the program as
 //! concrete once, verifying only the changed bodies

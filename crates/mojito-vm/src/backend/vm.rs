@@ -969,6 +969,9 @@ struct Prog {
     /// value a parameter or receiver takes ([`mojito_mir::mir::addressed_registers`]):
     /// a call binds such an operand as the reference it is.
     addressed: Vec<HashSet<u32>>,
+    /// Per function, whether each parameter slot holds its caller's address
+    /// by its convention ([`mojito_mir::mir::address_parameters`]).
+    address_params: Vec<Vec<bool>>,
     /// Every struct's field types, which [`VmBackend::element_stride`]
     /// lays a pointee out over.
     layout_structs: mojito_native_core::layout::StructFieldIndex,
@@ -1121,6 +1124,11 @@ impl Prog {
             .iter()
             .map(|(_, function)| mojito_mir::mir::addressed_registers(function, &mir.declarations))
             .collect();
+        let address_params = mir
+            .functions
+            .iter()
+            .map(|(_, function)| mojito_mir::mir::address_parameters(function, &mir.declarations))
+            .collect();
         let structs = build_structs(&mir.declarations);
         let mut mir = mir;
         for (_, function) in &mut mir.functions {
@@ -1133,6 +1141,7 @@ impl Prog {
             mir,
             error_slots,
             addressed,
+            address_params,
         }
     }
 
@@ -1153,9 +1162,15 @@ impl Prog {
     }
 
     /// Whether slot `var` of `function` holds an address a read goes
-    /// through, by declaration ([`mojito_mir::mir::MirFunction::holds_address`]).
+    /// through, by declaration: a slot that binds one
+    /// ([`mojito_mir::mir::MirFunction::binds_address`]), or a parameter its
+    /// convention passes by address ([`mojito_mir::mir::address_parameters`]).
     fn holds_address(&self, function: usize, var: VarId) -> bool {
-        self.mir.functions[function].1.holds_address(var)
+        self.mir.functions[function].1.binds_address(var)
+            || self.address_params[function]
+                .get(var as usize)
+                .copied()
+                .unwrap_or(false)
     }
 
     /// Whether `place` reaches storage through a handle stored below its
@@ -2164,6 +2179,7 @@ mod pointer_storage_tests {
             sigs: HashMap::new(),
             error_slots: Vec::new(),
             addressed: Vec::new(),
+            address_params: Vec::new(),
             layout_structs: mojito_native_core::layout::StructFieldIndex::default(),
         }
     }

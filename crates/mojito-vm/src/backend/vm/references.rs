@@ -763,7 +763,8 @@ impl VmBackend {
 
     /// The handle `place` designates through the handle its root slot
     /// holds, if any. A root whose declaration makes its handle an address
-    /// (`addresses`, [`mojito_mir::mir::MirFunction::holds_address`])
+    /// (`addresses`: a binding, or a parameter
+    /// [`mojito_mir::mir::address_parameters`] passes by address)
     /// extends that handle with the place's projections. A handle that is
     /// the slot's own value (a place pointer, or a reference held by a slot
     /// declared of reference type) is stepped through only by a

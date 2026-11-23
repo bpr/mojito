@@ -2380,6 +2380,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A compile-time application's fragment loads each operand an instance
+  makes register-passable for its by-value callee before it runs, as the
+  run-time program's `lower-arg-conventions` does, so a generic `max[T]`
+  instance's `x > y` passes `SIMD.__gt__` its values rather than
+  addresses. The VM now reads a parameter's handle through only where the
+  parameter's convention passes it by address (`mir::address_parameters`:
+  `mut`, `ref`, or a memory-only `read`), replacing
+  `MirFunction::holds_address`'s rule that took every borrowed parameter
+  for an address. Pliron no longer loads a reference operand at a scalar
+  parameter slot (`call_operand_value`): no corpus program reaches it
+  after `lower-arg-conventions`, so such an operand is now unsupported
+  (R2529).
+
 - A `!lit.ref` and a `ref` are one type, as upstream has one `!lit.ref`:
   `TyKind::LitRef` is gone, a reference displays `ref[origin] T`, MIR text
   writes every reference as `ref { … }` (schema 1.226, `lit_ref` still read

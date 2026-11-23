@@ -1951,7 +1951,7 @@ impl<'a> Specializer<'a> {
             .iter()
             .map(|&member| self.instances[member].1.as_str())
             .collect();
-        let fragment = ConcreteMir::verified(MirProgram {
+        let mut program = MirProgram {
             functions: closure
                 .iter()
                 .filter_map(|&member| self.output_positions.get(&self.instances[member].1))
@@ -1981,8 +1981,15 @@ impl<'a> Specializer<'a> {
                 imported: None,
             },
             invariant_errors: Vec::new(),
-        })
-        .map_err(|findings| {
+        };
+        // The fragment runs as a concrete program, so its calls take the
+        // caller half of `LowerArgConventions` first: an operand an
+        // instance makes register-passable is loaded for its by-value
+        // callee, as the post-elaboration pipeline loads the program's.
+        for (_, function) in &mut program.functions {
+            mojito_mir::mir::load_register_passable_operands(function, &program.declarations);
+        }
+        let fragment = ConcreteMir::verified(program).map_err(|findings| {
             self.error(
                 Some(template),
                 format!(

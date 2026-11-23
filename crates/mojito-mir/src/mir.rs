@@ -61,11 +61,11 @@ pub use bound_calls::{
 };
 mod call_addresses;
 pub use call_addresses::{
-    BoundOperand, ByAddressOperand, CallByAddress, addressed_operand, addressed_receiver,
-    addressed_registers, by_address_parameter, by_address_receiver, call_by_address_operands,
-    call_operand_parameters, load_register_passable_operands, make_ref_forwards_stored_handle,
-    method_operand_parameters, read_addressed_operands, receiver_value_ty,
-    requirement_by_address_parameter, requirement_by_address_receiver,
+    BoundOperand, ByAddressOperand, CallByAddress, address_parameters, addressed_operand,
+    addressed_receiver, addressed_registers, by_address_parameter, by_address_receiver,
+    call_by_address_operands, call_operand_parameters, load_register_passable_operands,
+    make_ref_forwards_stored_handle, method_operand_parameters, read_addressed_operands,
+    receiver_value_ty, requirement_by_address_parameter, requirement_by_address_receiver,
     requirement_operand_parameters, signature_by_address_operands, signature_operand_parameters,
     subscript_operand_parameters, subscript_requirement_operand_parameters,
 };

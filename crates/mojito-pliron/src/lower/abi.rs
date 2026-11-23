@@ -73,7 +73,7 @@ impl FnLowering<'_> {
     /// The value one argument passes at a slot its callee binds by value
     /// in the lowered signature: a reference operand (a by-address `read`
     /// argument, a `ref.make` MIR lowering formed) passes its pointer at an
-    /// aggregate slot and is loaded at a scalar one, as upstream's LLVM
+    /// aggregate slot, as upstream's LLVM
     /// lowering passes a `!lit.ref` operand's pointer; any other operand is
     /// its own value ([`Self::arg_value`]). A consuming slot never takes a
     /// reference: it takes the owned value.
@@ -93,13 +93,12 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("consuming argument passed by reference".into(), dest));
         }
         match expected {
-            LowerTy::Scalar(scalar) => {
-                let address = self.reg_value(ctx, reg, ScalarTy::PTR)?;
-                let handle = scalar.handle(ctx);
-                let load = LoadOp::new(ctx, address, handle);
-                self.append(ctx, load.get_operation(), Some(dest));
-                Ok(load.get_result(ctx))
-            }
+            // `lower-arg-conventions` loads every operand a by-value
+            // register-passable slot takes before lowering.
+            LowerTy::Scalar(_) => Err(self.unsupported_reg(
+                "reference operand at a by-value register-passable parameter".into(),
+                dest,
+            )),
             LowerTy::Aggregate { .. } => {
                 let address = self.reg_value(ctx, reg, ScalarTy::PTR)?;
                 Ok(self.generic_argument(ctx, address, expected, dest))

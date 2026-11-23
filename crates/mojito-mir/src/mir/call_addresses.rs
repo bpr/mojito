@@ -191,6 +191,40 @@ pub fn by_address_parameter(
     )
 }
 
+/// Whether each parameter slot of `function` holds its caller's address.
+///
+/// The receiver counts as a parameter. This is the callee half of the rule
+/// [`by_address_parameter`] states for its callers, as upstream's parameter
+/// of a by-address convention is the caller's `!lit.ref`.
+///
+/// A `mut` or `ref` parameter and a `read` one of a memory-only type are
+/// addresses; an owned (`var`, `deinit`) or register-passable `read` one is
+/// the value. A parameter declared of reference type holds that reference
+/// as its value, not an address of it.
+#[must_use]
+pub fn address_parameters(function: &MirFunction, declarations: &MirDeclarations) -> Vec<bool> {
+    (0..function.n_params)
+        .map(|parameter| {
+            let Some(ty) = function.param_types.get(parameter) else {
+                return false;
+            };
+            let reference = function.ref_params.get(parameter).copied().unwrap_or(false);
+            let owned = function
+                .owned_params
+                .get(parameter)
+                .copied()
+                .unwrap_or(false);
+            let convention = Some(if owned {
+                ArgConvention::Var
+            } else {
+                ArgConvention::Imm
+            });
+            crate::mir::verify::reference_record(ty).is_none()
+                && by_address(convention, reference, ty, declarations).is_some()
+        })
+        .collect()
+}
+
 /// How a method receives its receiver, of type `receiver_ty` at the call,
 /// by address.
 ///
@@ -2194,6 +2228,28 @@ mod tests {
             ty: Some(ty),
             through: None,
         }
+    }
+
+    #[test]
+    fn address_parameters_follow_each_parameter_convention() {
+        let memory_only = list_of_span(Origin::Static);
+        let function = MirFunction {
+            n_params: 5,
+            param_types: vec![
+                Ty::int(),
+                memory_only.clone(),
+                Ty::int(),
+                memory_only,
+                reference(Ty::int()),
+            ],
+            ref_params: vec![true, false, false, false, false],
+            owned_params: vec![false, false, false, true, false],
+            ..MirFunction::default()
+        };
+        assert_eq!(
+            address_parameters(&function, &MirDeclarations::default()),
+            [true, true, false, false, false]
+        );
     }
 
     #[test]

@@ -818,10 +818,10 @@ impl VmBackend {
                         moved
                     }
                 } else if let Value::Ref { .. } = &vars[slot]
-                    && prog.mir.functions[function].1.holds_address(*var)
+                    && prog.holds_address(function, *var)
                 {
-                    // A reference binding, or a borrowed parameter bound to
-                    // its argument's address, reads through its stored
+                    // A reference binding, or a parameter its convention
+                    // binds to its argument's address, reads through its stored
                     // handle; any other slot's handle, a reference-typed
                     // parameter's among them, is its value.
                     self.read_reference(&vars[slot], frame_id, vars)?

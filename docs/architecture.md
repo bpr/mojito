@@ -449,7 +449,10 @@ VM's one executable entry: the VM interprets concrete MIR and nothing else,
 and a parametric instruction, terminator, or constant reaching it is a
 compiler invariant error, since `verify_concrete` rejects each before a
 program runs. Compile-time evaluation runs concrete fragments the elaborator
-builds (`VmBackend::call_concrete`). The corpus binary's `artifact` group
+builds (`VmBackend::call_concrete`), whose calls the caller half of
+`lower-arg-conventions` (`mir::load_register_passable_operands`) loads
+first (`Specializer::verified_fragment`), so a fragment's call passes a
+by-value parameter its value as the program's calls do. The corpus binary's `artifact` group
 compares the production run with the serialized artifact's run per fixture.
 
 `CompiledProgram::emit_mir` serializes the artifact program
@@ -2624,9 +2627,11 @@ call names: no call-shaped instruction carries a place table beside its
 operands, as upstream's `lit.call` carries none. The inliner binds a
 parameter passed a `ref` field to the handle it stores (`place_binding`).
 Backends read the operand: the VM binds the reference, and Pliron passes
-its pointer as upstream's LLVM lowering passes a `!lit.ref`, loading it at
-a slot its lowered signature takes as a scalar (`call_operand_value`,
-`by_address_operand`, `lower/abi.rs`). So do the analyses that place a
+its pointer as upstream's LLVM lowering passes a `!lit.ref`
+(`call_operand_value`, `by_address_operand`, `lower/abi.rs`); a reference
+operand never reaches a slot its lowered signature takes as a scalar, since
+`lower-arg-conventions` loads it first, and one that did would be
+unsupported. So do the analyses that place a
 call's accesses and the inliner: `mir::operand_addresses` maps each `ref.make` a call of a function
 passes as a by-address operand, read off the call's contract
 (`mir::addressed_registers`), to the place it addresses (a `!lit.ref`
@@ -2761,8 +2766,8 @@ holding it, as `!kgen.pointer` is from `!lit.ref`: the VM tags a handle
 by its destination's type, a pointer value's as a `Value::PlacePointer` and
 a reference's of either tag as a `Value::Ref`, so a reference to a pointer
 slot designates the slot; whether a slot's `Value::Ref` is read through is
-its declaration's question (`MirFunction::holds_address`), never the
-runtime tag's. A memory-only `read` temporary (one
+its declaration's question (`MirFunction::binds_address`, and
+`mir::address_parameters` for a parameter), never the runtime tag's. A memory-only `read` temporary (one
 its call binds to a `read` parameter, `Flatten::operand_reads`, that the
 checker did not prove register-passable, `RegisterPassableRead`, judged at its converted type
 when an implicit conversion made it) retains its storage as its place:
@@ -3206,8 +3211,9 @@ convention (`CheckedIterationBinding::yields_reference`); every pass that makes,
 splices, renumbers, or retires a slot keeps the set (`retire`,
 `inline-parametric`'s splice, the `comptime for` unroll). Slot readers ask
 the fact (`binds_reference`, and the VM's `var.use` read-through
-`holds_address`, which adds the borrowed parameters a call binds by
-address, a parameter declared of reference type excepted); a place's designated type stays a type question, since a whole
+`holds_address`, which adds the parameters their convention binds by
+address, `mir::address_parameters`: a `mut` or `ref` one or a `read` one
+of a memory-only type, a parameter declared of reference type excepted); a place's designated type stays a type question, since a whole
 slot's place may designate the referent. `mir::verify` requires a binding
 to be typed as a reference; a reference-typed slot that is no binding
 holds a `!lit.ref` value.
@@ -3267,8 +3273,8 @@ when `addressed_registers` names it, upstream's `LowerArgConventions` fact:
 a `ref<P>` against the `P` its parameter takes, so a `!lit.ref` value passed
 at a `!lit.ref` parameter is passed by value. The VM holds a reference of
 either tag as a `Value::Ref` (`address_as`), and reads a root slot's handle
-through only where `MirFunction::holds_address` says the slot's declaration
-makes it an address.
+through only where the slot's declaration makes it an address (a `ref`
+binding, or a parameter `mir::address_parameters` passes by address).
 
 A call's result is a reference by the same rule: the callee's `ref`
 result convention, never its result type. The check records
@@ -5122,7 +5128,7 @@ verifier's `make_ref_target` and Pliron's `designated_ty`
 (`lower/places.rs`) share that rule, which the VM's representation keeps
 (a place pointer is a `Value::PlacePointer`, and a `!lit.ref` slot's
 `Value::Ref` is its value, since the slot's declaration does not make it an
-address, `MirFunction::holds_address`), as upstream
+address, `mir::address_parameters`), as upstream
 addresses a pointer local only through a `!lit.ref`. The verifier's loan check
 (`through_designations`, `verify/loans.rs`) takes a pointer root's designation
 from the same rule (`pointer_root_is_value`). Neither backend keeps a
@@ -9186,10 +9192,9 @@ addresses offset 0, the field's storage. Three VM rules narrow the VM's
 representation, each decided in `build_structs`, and are the VM's alone:
 
 - A struct whose field is a reference stays boxed: a held struct's slot
-  is typed as the struct, not as a reference, so a `Value::Ref` in it
-  would read as an address under `MirFunction::holds_address`'s
-  borrowed-parameter arm, which takes a by-address `read` parameter's
-  handle in a slot typed as the value for an address (R2184, R2529). A struct held as its pointer field is a pointer
+  is typed as the struct, not as a reference, and a held closure storage
+  of one `ref` capture loses its write through a `__call__` witness call
+  when the struct is held as its field (R2184). A struct held as its pointer field is a pointer
   value, as a `Pointer` slot is: its whole place is the pointer, a
   `Value::PlacePointer`.
 - Every instance of a template is held or none is: an erased instance

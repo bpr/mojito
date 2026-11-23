@@ -10314,26 +10314,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2182.
   - Model: Fable, Not Planned.
 
-- [ ] **R2184 The VM cannot tell a by-address `read` parameter's handle
-  from a held value, so a one-field register-passable struct of a `ref`
-  field stays boxed**
+- [ ] **R2184 A one-field register-passable struct of a `ref` field
+  stays boxed in the VM, because a held `{mut n}` closure storage loses
+  its write through a `__call__` witness call**
 
-  A memory-only `read` argument passes a `ref.make` of the caller's place,
-  and the VM binds the callee's slot to that `Value::Ref` with no static
-  mark: upstream types such a parameter `!lit.ref`, and `ref_params`
-  marks only `mut`/`ref` ones.
-  - So the VM reads any non-pointer slot holding a `Value::Ref` through
-    it, and a struct held as its `ref` field would read its referent
-    where it should read the reference.
-  - `build_structs` (`crates/mojito-vm/src/backend/vm.rs`) therefore keeps
-    a one-field `TrivialRegisterPassable` struct whose field is a `ref`
-    boxed, where the pin holds it as the reference.
-  - Probe: dropping the `Ref` filter in `build_structs` fails about 22
-    corpus fixtures, `FastMathFlag._mlir_attr`'s compile-time run among
-    them ("cannot use ref as an integer SIMD element").
-  - Fix: mark a by-address `read` parameter in the MIR function as
-    `ref_params` marks a `mut` one, read its places through the handle by
-    that mark, then drop the filter.
+  The pin holds such a struct as its reference; `build_structs`
+  (`crates/mojito-vm/src/backend/vm.rs`) keeps it boxed by a filter on
+  `declares_ref_field`.
+  - A parameter's slot is now an address only where its convention passes
+    it by address (`mir::address_parameters`), so a held struct passed to
+    a register-passable `read` parameter reads as its value.
+  - Probe: dropping the filter fails only
+    `assets/ok/closure_witness_forwards_owned_argument.mojo`, whose final
+    `print(n)` prints 2, not 3: the `{mut n}` closure `h` passed to
+    `apply[F: def(var x: M) -> None]` loses `n += 1` through the
+    `__call__` witness.
+  - Fix: make a held closure storage of one `ref` capture keep its write
+    through the witness call, then drop the filter.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -11331,28 +11328,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R2491 (2026-11-22).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R2529 A call passes an address to a by-value `read` parameter
-  whose slot is typed as the value**
-
-  Upstream's `LowerArgConventions` loads an argument for a callee that
-  takes it by value, so the callee's parameter is the value. Some Mojito
-  calls pass a `ref.make` there instead, and the VM absorbs it:
-  `MirFunction::holds_address` reads a borrowed parameter not declared of
-  reference type through whatever handle it holds.
-  - Probe: a generic `max[T]` instance's `x > y` reaching `SIMD.__gt__`,
-    and `SIMD.copy` from the same instance, receive a `Value::Ref`.
-  - Probe: `$default$grow$xs` (`def grow(var xs: List[Int] = [1, 2])`)
-    passes a `ref.make` of its `Layout` local to `Allocation.__init__`.
-  - Fix: make the caller load the operand where the callee's convention
-    (`by_address`) takes it by value, then drop `holds_address`'s
-    borrowed-parameter arm (keep `binds_address`), and the boxing rule for
-    a struct with a reference field in `build_structs` if R2184 no longer
-    needs it.
-  - Check whether Pliron sees the same operand mismatch.
-  - Found while landing R2526 (2026-11-22).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R2512 Pointer readers below the checker read the `PointerOrigin`
   view, not the pointer's `!lit.ref` record**
