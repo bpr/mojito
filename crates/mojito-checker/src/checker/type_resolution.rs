@@ -5051,7 +5051,7 @@ impl Checker {
     }
 
     /// The struct's own instance type as `Self` resolves to inside its methods:
-    /// `TyKind::Struct(name, info.self_arguments())` — the same value the checker
+    /// [`Self::struct_instance_type`] of `info.self_arguments()` — the same value the checker
     /// installs as `self_ty` during registration, so a `self`-typed parameter's
     /// resolved type is equal to it. Used to canonicalize overload keys back to
     /// `Self` (see [`method_lowered_name`]). `None` when `name` is not a
@@ -5064,7 +5064,7 @@ impl Checker {
             return None;
         }
         let info = self.structs.get(name)?;
-        Some(TyKind::Struct(name.to_string(), info.self_arguments()).into())
+        Some(Self::struct_instance_type(name, info.self_arguments()))
     }
 
     /// The generator a bare parameterized struct name denotes as the base

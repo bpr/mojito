@@ -863,16 +863,6 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R2532 1 fixture stopped elaborating after batch 5**
-
-  The instantiation ratchet finds `assets/ok` fixtures that elaborated at the last baseline and now fail to compile.
-  - Probe: `assets/ok/tuple_comparison_dunder_call.mojo` (failed: run error: Elaboration error: in `main`: unsupported MIR function 'main' keeps the parameter constant `(Tuple[Int, Int](2, 1) > Tuple[Int, Int](1, 9))` in elaborated MIR after monomorphization).
-  - Ratchet log: `target/run-batches/20261120-073546/batch5-ratchet.log`.
-  - Fix the regression, or delete this entry and file one entry per cause in the track that owns it.
-  - Filed by `scripts/run-batches` (2026-11-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2523 Concrete instructions grew by 306273 instructions (+5.48%) over batch 4**
 
   The elaborated corpus grew past `scripts/run-batches`' `--max-growth`, and the growth was accepted into the baseline.

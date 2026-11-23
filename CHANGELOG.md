@@ -1471,6 +1471,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A compile-time comparison of tuple displays under `>`, `<=`, `>=`, or
+  `!=` (`comptime later = (2, 1) > (1, 9)`) runs again instead of failing
+  elaboration: a variadic struct's `Self` now spells its overload key
+  `Self` on every side, so the overload a compile-time call applies
+  (`Tuple.__gt__`, overloaded beside `Comparable`'s inherited default) is
+  the one MIR declares (`assets/ok/tuple_comparison_dunder_call.mojo`).
+
 - An operator special method is checked against its operator's operand
   count at its declaration, as at the pin: `def __add__(self, other: Int,
   k: Int = 50)` in a struct or trait is "'__add__' requires 2 operands"

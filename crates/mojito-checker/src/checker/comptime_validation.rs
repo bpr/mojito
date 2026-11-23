@@ -3186,7 +3186,7 @@ impl Checker {
         });
         let instance: Option<Ty> = structure.and_then(|name| {
             let info = self.structs.get(name)?;
-            Some(TyKind::Struct(name.to_string(), info.self_arguments()).into())
+            Some(Self::struct_instance_type(name, info.self_arguments()))
         });
         let mut declared = params.iter();
         let mut slot_ty = |slot: &SlotType| {
