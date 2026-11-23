@@ -625,7 +625,8 @@ impl Checker {
     fn shell_awaits_declarations(&self, params: &[mojito_ast::ast::TypeParam]) -> bool {
         super::traits::names_member_type(params)
             || params.iter().any(|param| {
-                let named = match &param.value_type {
+                let value_type = param.value_type.as_ref().and_then(Expr::annotation_type);
+                let named = match &value_type {
                     Some(SourceType::Named(name, _)) => Some(name),
                     Some(_) => None,
                     None => param.bounds.first().filter(|_| param.bounds.len() == 1),
@@ -4132,12 +4133,13 @@ impl Checker {
         // The clauses a compile-time application already emitted are the
         // signature's own, as upstream emits a signature once.
         let emitted = self.emitted_def_constraints(stmt, &ParamDecl::argument_view(&decls));
+        let ret = ret_anno.as_ref().map(annotation_spelling).transpose()?;
         let (param_tys, ret_ty, compiled) = self.in_signature_scope(None, |this| {
             let generated = this.generated_declaration.replace(name.contains('$'));
             let param_tys = this.param_tys(params);
             this.generated_declaration.set(generated);
             let param_tys = param_tys?;
-            let ret_ty = match (ret_anno, named_result) {
+            let ret_ty = match (&ret, named_result) {
                 (Some(SourceType::Ref { referent, .. }), _) => this.ty_from_spelling(referent)?,
                 // A compiler-generated specialization (`$`-mangled) rebinds
                 // already-checked annotations whose origin identity is
@@ -4147,7 +4149,7 @@ impl Checker {
                     this.resolve_generated_return_annotation(t)?
                 }
                 (Some(t), _) => this.resolve_return_annotation(t)?,
-                (None, Some(result)) => this.ty_from_spelling(&result.ty)?,
+                (None, Some(result)) => this.ty_from_anno(&result.ty)?,
                 (None, None) => Ty::none(),
             };
             if !name.contains('$') {
@@ -4185,7 +4187,7 @@ impl Checker {
             decls.clone(),
         );
         let ref_params = lower_ref_param_sigs(&decls, caller_regular, 0, self)?;
-        let ref_return = match ret_anno {
+        let ref_return = match &ret {
             Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                 origin.as_ref().ok_or_else(|| {
                     TypeError::Unsupported("reference return requires an origin".to_string())
@@ -4612,17 +4614,18 @@ impl Checker {
             .iter()
             .enumerate()
             .map(|(slot, parameter)| {
+                let annotation = annotation_spelling(&parameter.ty)?;
                 // The initialized-local rule for parameter annotations
                 // (pin-attested): bare infers per call, a partial application
                 // omitting an origin slot rejects, a placeholder is inferred
                 // (a bare `Pointer[T, _]` is concrete here only). A named
                 // `out` result is the result, and resolves as one.
                 let resolved = if mojito_ast::ast::DeclaredParam::is_named_result(parameter) {
-                    self.resolve_return_annotation(&parameter.ty)
+                    self.resolve_return_annotation(&annotation)
                 } else {
                     self.resolving_parameter_annotation.set(true);
                     let resolved = self.resolve_storage_annotation(
-                        &parameter.ty,
+                        &annotation,
                         super::StorageStrictness::AllowBare,
                     );
                     self.resolving_parameter_annotation.set(false);
@@ -4633,7 +4636,7 @@ impl Checker {
                 // closure a reference materializes, so its open parameters
                 // are origins alone, each call inferring them.
                 if matches!(
-                    &parameter.ty,
+                    &annotation,
                     SourceType::Func { type_params, .. } if !type_params.is_empty()
                 ) && super::is_unbound_parametric_function(&resolved)
                 {
@@ -4907,7 +4910,7 @@ fn holds_closure(ty: &Ty) -> bool {
 /// The source spelling of a dependent pack projection annotation
 /// (`values.Ts[index]`), used as the opaque element's type name inside a
 /// handler body.
-fn dependent_projection_spelling(annotation: &SourceType) -> String {
+fn dependent_projection_spelling(annotation: &Expr) -> String {
     fn type_text(annotation: &SourceType) -> String {
         match annotation {
             SourceType::Named(name, _) => name.clone(),
@@ -4923,7 +4926,10 @@ fn dependent_projection_spelling(annotation: &SourceType) -> String {
             _ => "element".to_string(),
         }
     }
-    type_text(annotation)
+    annotation.annotation_type().map_or_else(
+        || "element".to_string(),
+        |annotation| type_text(&annotation),
+    )
 }
 
 impl Checker {

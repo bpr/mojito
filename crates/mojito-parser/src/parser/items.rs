@@ -95,7 +95,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         origin: Option<mojito_ast::ast::OriginSpec>,
     ) -> Result<FnParam, ParseError> {
         self.expect(&Token::Colon, "Parameters require a type annotation")?;
-        let ty = self.parse_type()?;
+        let ty = self.parse_annotation()?;
         let default = if matches!(self.peek_token()?, Some(Token::Assign)) {
             self.next_token()?; // consume '='
             Some(self.parse_expression(Precedence::Lowest)?)
@@ -392,7 +392,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         "a struct may declare only one def(...) callable conformance".into(),
                     ));
                 }
-                callable = Some(self.parse_type()?);
+                callable = Some(self.parse_annotation()?);
                 if matches!(self.peek_token()?, Some(Token::Comma)) {
                     self.next_token()?;
                     if matches!(self.peek_token()?, Some(Token::RParen)) {
@@ -689,7 +689,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let (raises, raises_type) = self.parse_callable_effects()?;
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
-            Some(self.parse_type()?)
+            Some(self.parse_annotation()?)
         } else {
             None
         };
@@ -819,7 +819,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let (raises, raises_type) = self.parse_callable_effects()?;
         let mut ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
-            Some(self.parse_type()?)
+            Some(self.parse_annotation()?)
         } else {
             None
         };
@@ -1003,7 +1003,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     {
                         params.push(FnParam {
                             name,
-                            ty: Type::SelfType,
+                            ty: Expr::new(ExprKind::Identifier("Self".to_string()), self.last_span),
                             default: None,
                             kind: ParamKind::Regular,
                             convention,
@@ -1047,7 +1047,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         {
             return Ok(FnParam {
                 name,
-                ty: Type::SelfType,
+                ty: Expr::new(ExprKind::Identifier("Self".to_string()), self.last_span),
                 default: None,
                 kind: ParamKind::Regular,
                 convention,
@@ -1058,12 +1058,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 
     /// The optional `: type` annotating a method's `self` receiver.
-    fn parse_optional_receiver_type(&mut self) -> Result<Option<Type>, ParseError> {
+    fn parse_optional_receiver_type(&mut self) -> Result<Option<Expr>, ParseError> {
         if !matches!(self.peek_token()?, Some(Token::Colon)) {
             return Ok(None);
         }
         self.next_token()?;
-        self.parse_type().map(Some)
+        self.parse_annotation().map(Some)
     }
 
     /// The rest of a method's argument list after its leading receiver
@@ -1247,7 +1247,7 @@ fn also_listed(trait_name: &str) -> ParseError {
 struct Receiver {
     convention: Option<ArgConvention>,
     origin: Option<mojito_ast::ast::OriginSpec>,
-    ty: Option<Type>,
+    ty: Option<Expr>,
     index: usize,
 }
 

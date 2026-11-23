@@ -122,9 +122,11 @@ impl Checker {
                 .filter(|member| member.params.is_empty() && member.ty.is_none())
                 .filter(|member| {
                     methods.iter().any(|method| {
-                        matches!(&method.ret, Some(SourceType::SelfParam(read)) if *read == member.name)
-                            && InlineLevel::of(&method.decorators)
-                                .is_ok_and(|level| level == InlineLevel::Builtin)
+                        matches!(
+                            method.ret.as_ref().and_then(Expr::annotation_type),
+                            Some(SourceType::SelfParam(read)) if read == member.name
+                        ) && InlineLevel::of(&method.decorators)
+                            .is_ok_and(|level| level == InlineLevel::Builtin)
                     })
                 })
                 .collect();

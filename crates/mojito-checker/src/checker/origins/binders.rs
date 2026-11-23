@@ -102,7 +102,7 @@ impl Checker {
                 };
                 (
                     SigOrigin::Param(index),
-                    self.ty_from_spelling(&params[index].ty)?,
+                    self.ty_from_anno(&params[index].ty)?,
                 )
             }
             _ => {

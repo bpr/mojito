@@ -1030,7 +1030,7 @@ fn unforwardable(method: &TraitMethod) -> Option<String> {
     let name = &method.name;
     if let Some(param) = method.params.iter().find(|param| {
         param.kind == ParamKind::Variadic
-            && !matches!(&param.ty, Type::Named(pack, _) if pack.starts_with('*'))
+            && !matches!(&param.ty.kind, ExprKind::TypeValue(Type::Named(pack, _)) if pack.starts_with('*'))
     }) {
         return Some(format!(
             "forwarding the homogeneous variadic '*{}' of trait default '{name}' to a \
@@ -1046,7 +1046,10 @@ fn unforwardable(method: &TraitMethod) -> Option<String> {
     }
     let names_origin = method.self_origin.is_some()
         || method.params.iter().any(|param| param.origin.is_some())
-        || matches!(method.ret, Some(Type::Ref { .. }));
+        || matches!(
+            method.ret.as_ref().map(|ret| &ret.kind),
+            Some(ExprKind::TypeValue(Type::Ref { .. }))
+        );
     names_origin.then(|| names_origin_reason(name))
 }
 

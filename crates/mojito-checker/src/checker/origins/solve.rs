@@ -28,10 +28,11 @@ impl Checker {
         let Some(Some((annotation, generated))) = self.return_annotations.last() else {
             return None;
         };
+        let annotation = annotation_spelling(annotation).ok()?;
         if *generated {
-            self.resolve_generated_return_annotation(annotation)
+            self.resolve_generated_return_annotation(&annotation)
         } else {
-            self.resolve_return_annotation(annotation)
+            self.resolve_return_annotation(&annotation)
         }
         .ok()
     }
@@ -52,10 +53,11 @@ impl Checker {
         let Some(Some((annotation, generated))) = self.return_annotations.last() else {
             return Ok(found.clone());
         };
+        let annotation = annotation_spelling(annotation)?;
         let resolved = if *generated {
-            self.resolve_generated_return_annotation(annotation)
+            self.resolve_generated_return_annotation(&annotation)
         } else {
-            self.resolve_return_annotation(annotation)
+            self.resolve_return_annotation(&annotation)
         };
         let Ok(bound) = resolved else {
             return Ok(found.clone());
@@ -125,11 +127,16 @@ impl Checker {
     /// not a reference return — flagged when it is the rebound annotation of
     /// a compiler-generated (`$`-mangled) specialization.
     pub(in crate::checker) fn body_return_annotation(
-        annotation: Option<&mojito_ast::ast::SourceType>,
+        annotation: Option<&Expr>,
         name: &str,
-    ) -> Option<(mojito_ast::ast::SourceType, bool)> {
+    ) -> Option<(Expr, bool)> {
         annotation
-            .filter(|annotation| !matches!(annotation, mojito_ast::ast::SourceType::Ref { .. }))
+            .filter(|annotation| {
+                !matches!(
+                    annotation.kind,
+                    ExprKind::TypeValue(mojito_ast::ast::SourceType::Ref { .. })
+                )
+            })
             .map(|annotation| (annotation.clone(), name.contains('$')))
     }
 

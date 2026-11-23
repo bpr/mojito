@@ -646,7 +646,10 @@ impl Checker {
                     .name
                     .clone()
                     .unwrap_or_else(|| format!("arg{index}")),
-                ty: parameter.ty.clone(),
+                ty: Expr::annotation_of(
+                    parameter.ty.clone(),
+                    mojito_common::token::Span::default(),
+                ),
                 default: None,
                 kind: parameter.kind,
                 convention: parameter.convention,
@@ -659,17 +662,17 @@ impl Checker {
             .collect();
         let parameter_types = regular
             .iter()
-            .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
+            .map(|parameter| self.ty_from_anno(&parameter.ty))
             .collect::<Result<Vec<_>, _>>()?;
         let variadic = function_params
             .iter()
             .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Variadic)
-            .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
+            .map(|parameter| self.ty_from_anno(&parameter.ty))
             .transpose()?;
         let kw_variadic = function_params
             .iter()
             .find(|parameter| parameter.kind == mojito_ast::ast::ParamKind::KwVariadic)
-            .map(|parameter| self.resolve_ty_from_anno(&parameter.ty))
+            .map(|parameter| self.ty_from_anno(&parameter.ty))
             .transpose()?;
         let (return_type, ref_return) = match &**ret {
             SourceType::Ref { referent, origin } => (

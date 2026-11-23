@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2544**.
+Next free ID: **R2545**.
 
 ## Ordered Work
 
@@ -3203,6 +3203,23 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R2344 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2544 Copying a `union` value with an empty-payload case fails to
+  elaborate**
+
+  A `union` declaring a case with an empty payload (`case eof()`) cannot be
+  copied: elaboration rejects `Token.eof` with "copy of `Tuple$mono` names
+  no __copyinit__, not its __copyinit__ `Tuple$mono.__copyinit__`".
+  - The empty payload is the zero-element `Tuple`, and the copy the case's
+    constructor emits names no copy initializer while the concrete
+    `Tuple$mono` declares one, so the post-elaboration verifier rejects it.
+  - Probe: `assets/extensions/ok/union_payload_lifecycle.mojo`, which
+    fails under `run` and `emit-mir`.
+  - Probe: `union Token(ImplicitlyCopyable): case eof(); case num(Int)`
+    with `var token: Token = .eof(); var copy = token.copy()`.
+  - Found while landing R2535 (2026-11-23); it fails at `d68f34e96`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
@@ -13365,23 +13382,6 @@ follow-ups the landed producer stages filed come last.
   - Found while landing R1365 (2026-10-27).
   - Depends on R1495.
   - Model: Fable, Not Planned.
-
-- [ ] **R2535 Signature annotation slots store a parsed type**
-
-  A parameter's type, a result, a `raises` type, `self_type`, a callable
-  conformance, and a type parameter's value type and callable bound hold
-  the parser's `Type`, where upstream keeps their expressions.
-  - Slice 3 of the R2137 plan: `FnParam::ty`, `ret`, `raises_type`,
-    `self_type`, `callable_conformance`, and
-    `TypeParam::{value_type, callable_bound}` become `Expr`.
-  - `return_annotations`, `module_def_results`, and
-    `DeclarationInterface::def_results` hold expressions, which needs a
-    `PACKAGE_FORMAT` bump.
-  - Readers include `origins/{sig, binders, solve, subst}.rs`,
-    `comptime_validation.rs`, `reflection.rs`, `constraints.rs`, and the
-    comptime `retype_fn_parameter`/`retype_type_parameter`.
-  - Depends on R2534.
-  - Model: Fable, Planned.
 
 - [ ] **R2536 A function type and a generator type are `Type` nodes, not expressions**
 

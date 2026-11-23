@@ -180,7 +180,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let captures = self.parse_capture_list()?;
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?; // consume '->'
-            Some(self.parse_type()?)
+            Some(self.parse_annotation()?)
         } else {
             None
         };

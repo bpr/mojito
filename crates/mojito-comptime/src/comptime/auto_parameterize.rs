@@ -177,7 +177,7 @@ impl<'a> Declared<'a> {
         &self,
         type_params: &mut Vec<TypeParam>,
         params: &mut [FnParam],
-        receiver: Option<&mut Type>,
+        receiver: Option<&mut Expr>,
         enclosing: &[String],
         span: Span,
     ) {
@@ -199,20 +199,31 @@ impl<'a> Declared<'a> {
             {
                 continue;
             }
-            let spelled = match (&parameter.value_type, parameter.bounds.as_slice()) {
-                (Some(ty), _) => ty.clone(),
-                (None, [only]) => Type::Named(only.clone(), Vec::new()),
-                _ => continue,
-            };
-            if let Some(bound) = self.bind(&spelled, &parameter.name, &in_scope, &mut binders, span)
-            {
-                parameter.value_type = Some(bound);
+            match (&mut parameter.value_type, parameter.bounds.as_slice()) {
+                (Some(annotation), _) => annotation.retype_view(|ty| {
+                    if let Some(bound) =
+                        self.bind(ty, &parameter.name, &in_scope, &mut binders, span)
+                    {
+                        *ty = bound;
+                    }
+                }),
+                (None, [only]) => {
+                    let spelled = Type::Named(only.clone(), Vec::new());
+                    if let Some(bound) =
+                        self.bind(&spelled, &parameter.name, &in_scope, &mut binders, span)
+                    {
+                        parameter.value_type = Some(Expr::annotation_of(bound, span));
+                    }
+                }
+                _ => {}
             }
         }
-        if let Some(receiver) = receiver
-            && let Some(bound) = self.bind(receiver, "self", &in_scope, &mut binders, span)
-        {
-            *receiver = bound;
+        if let Some(receiver) = receiver {
+            receiver.retype_view(|ty| {
+                if let Some(bound) = self.bind(ty, "self", &in_scope, &mut binders, span) {
+                    *ty = bound;
+                }
+            });
         }
         // A named `out` result is the declaration's result, not an
         // argument: its type is never parameterized.
@@ -220,15 +231,11 @@ impl<'a> Declared<'a> {
             .iter_mut()
             .filter(|parameter| !parameter.is_named_result())
         {
-            if let Some(bound) = self.bind(
-                &parameter.ty,
-                &parameter.name,
-                &in_scope,
-                &mut binders,
-                span,
-            ) {
-                parameter.ty = bound;
-            }
+            parameter.ty.retype_view(|ty| {
+                if let Some(bound) = self.bind(ty, &parameter.name, &in_scope, &mut binders, span) {
+                    *ty = bound;
+                }
+            });
         }
         let at = type_params
             .iter()
@@ -524,10 +531,10 @@ fn binder_for(
     span: Span,
 ) -> TypeParam {
     let mut substitute = Substitute { arguments, span };
-    let mut read = |ty: &Type| {
-        let mut ty = ty.clone();
-        mojito_ast::visit::walk_type_mut(&mut substitute, &mut ty);
-        ty
+    let mut read = |annotation: &Expr| {
+        let mut annotation = annotation.clone();
+        annotation.retype_view(|ty| mojito_ast::visit::walk_type_mut(&mut substitute, ty));
+        annotation
     };
     let value_type = parameter.value_type.as_ref().map(&mut read);
     let callable_bound = parameter.callable_bound.as_ref().map(&mut read);

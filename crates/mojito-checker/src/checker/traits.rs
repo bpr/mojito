@@ -62,8 +62,8 @@ pub(super) fn comptime_defaults(members: &[TraitComptime]) -> Vec<StructComptime
             Some(StructComptime {
                 name: member.name.clone(),
                 params: member.params.clone(),
-                ty: Some(Expr::new(
-                    ExprKind::TypeValue(member.annotation_type()?),
+                ty: Some(Expr::annotation_of(
+                    member.annotation_type()?,
                     member.ty.span,
                 )),
                 where_clauses: member.where_clauses.clone(),
@@ -628,7 +628,7 @@ impl Checker {
         self.enclosing_param_decls.extend(declared.iter().cloned());
         let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
             if let Some(annotation) = &m.self_type {
-                let ty = this.ty_from_spelling(annotation)?;
+                let ty = this.ty_from_anno(annotation)?;
                 if ty != Ty::self_type() {
                     return Err(TypeError::InvalidReceiver(format!(
                         "'self' argument must have type 'Self' in trait method declaration, but actually has type '{ty}'"
@@ -643,7 +643,8 @@ impl Checker {
                 })
                 .collect::<Vec<_>>();
             let all_types = this.param_tys(&m.params)?;
-            let ret = match &m.ret {
+            let ret_view = m.ret.as_ref().map(annotation_spelling).transpose()?;
+            let ret = match &ret_view {
                 Some(SourceType::Ref { referent, .. }) => this.ty_from_spelling(referent)?,
                 Some(t) => this.ty_from_spelling(t)?,
                 None => Ty::none(),
@@ -657,7 +658,7 @@ impl Checker {
             }
             // The `ref` clauses read the method's value binders
             // (`ref[_, a] self`), in scope only here.
-            let ref_return = match &m.ret {
+            let ref_return = match &ret_view {
                 Some(SourceType::Ref { origin, .. }) => Some(lower_ref_sig(
                     origin.as_ref().ok_or_else(|| {
                         TypeError::Unsupported("reference return requires an origin".to_string())
@@ -1355,14 +1356,17 @@ impl Checker {
         let callable_conformance = declaration
             .callable_conformance
             .as_ref()
-            .map(|annotation| match annotation {
-                SourceType::Func { type_params, .. } if !type_params.is_empty() => self
-                    .lower_anonymous_callable_type(
+            .map(|annotation| match &annotation.kind {
+                ExprKind::TypeValue(callable @ SourceType::Func { type_params, .. })
+                    if !type_params.is_empty() =>
+                {
+                    self.lower_anonymous_callable_type(
                         &format!("$callable:{name}"),
-                        annotation,
+                        callable,
                         declaration.type_params,
-                    ),
-                _ => self.ty_from_spelling(annotation),
+                    )
+                }
+                _ => self.ty_from_anno(annotation),
             })
             .transpose()?;
         Ok((
@@ -4465,7 +4469,8 @@ impl Checker {
                 }
             }
         }
-        let contextual = match &param.value_type {
+        let value_type = param.value_type.as_ref().and_then(Expr::annotation_type);
+        let contextual = match &value_type {
             Some(SourceType::Named(name, _)) => Some(name.as_str()),
             Some(_) => None,
             None => param
@@ -4899,7 +4904,7 @@ pub(super) fn literal_default(default: &mojito_ast::ast::Expr) -> bool {
 pub(super) fn names_member_type(params: &[mojito_ast::ast::TypeParam]) -> bool {
     params.iter().any(|param| {
         matches!(
-            param.value_type,
+            param.value_type.as_ref().and_then(Expr::annotation_type),
             Some(SourceType::Assoc { .. } | SourceType::IndexedProjection { .. })
         )
     })

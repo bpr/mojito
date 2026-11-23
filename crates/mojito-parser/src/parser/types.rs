@@ -5,8 +5,9 @@ use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// Parses a type annotation and converts it in the annotation's type
-    /// context ([`Expr::annotation_type`]), for a slot that stores the
-    /// converted type.
+    /// context ([`Expr::annotation_type`]), for a slot that still stores the
+    /// converted type: a function type's parameters, result, and typed error,
+    /// a `ref` referent, and a bracket's type operand.
     pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
         let annotation = self.parse_annotation()?;
         annotation_type(&annotation)
@@ -542,8 +543,8 @@ fn pack_spread_type(operand: &Expr) -> Option<Type> {
 /// [`mojito_ast::ast::TypeParam`].
 struct TypeParamBound {
     bounds: Vec<String>,
-    value_type: Option<Type>,
-    callable_bound: Option<Type>,
+    value_type: Option<Expr>,
+    callable_bound: Option<Expr>,
     origin_mutability: Option<Expr>,
 }
 
@@ -571,7 +572,7 @@ fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
         match &ty {
             Type::Func { .. } => {
                 bound.bounds.push(FUNCTION_TYPE.to_string());
-                bound.callable_bound = Some(ty);
+                bound.callable_bound = Some((*member).clone());
             }
             Type::Named(name, args) if args.is_empty() => bound.bounds.push(name.clone()),
             Type::SelfType => bound.bounds.push("Self".to_string()),
@@ -587,7 +588,7 @@ fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
             }
             _ => {
                 bound.bounds.push(bound_spelling(member));
-                bound.value_type = Some(ty);
+                bound.value_type = Some((*member).clone());
             }
         }
         return Ok(bound);
@@ -595,9 +596,9 @@ fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
     for member in members {
         match bound_member_type(member)? {
             Type::Named(name, args) if args.is_empty() => bound.bounds.push(name),
-            ty @ Type::Func { .. } if bound.callable_bound.is_none() => {
+            Type::Func { .. } if bound.callable_bound.is_none() => {
                 bound.bounds.push(FUNCTION_TYPE.to_string());
-                bound.callable_bound = Some(ty);
+                bound.callable_bound = Some(member.clone());
             }
             Type::Func { .. } => {
                 return Err(ParseError::Message(

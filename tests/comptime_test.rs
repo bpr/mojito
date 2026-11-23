@@ -1854,7 +1854,7 @@ fn a_kgen_string_parameter_prepares_as_a_value_binder_of_its_spelling() {
         })
         .expect("the function");
     let kgen_string = |parameter: &mojito::ast::TypeParam| {
-        matches!(&parameter.value_type,
+        matches!(parameter.value_type.as_ref().and_then(mojito::ast::Expr::annotation_type),
             Some(mojito::ast::Type::Assoc { base, name, args })
                 if name == "!kgen.string"
                     && args.is_empty()

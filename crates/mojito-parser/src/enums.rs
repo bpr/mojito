@@ -28,7 +28,7 @@
 use std::fmt::Write;
 
 use mojito_ast::ast::{EnumCase, Expr, ExprKind, Stmt, StmtKind, SumCases, SumKind, Type};
-use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_type_mut};
+use mojito_ast::visit::{MutVisitor, walk_annotation_mut, walk_block_mut};
 use mojito_common::error::ParseError;
 use mojito_common::token::Span;
 use mojito_lexer::lexer::Lexer;
@@ -119,7 +119,7 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
         for method in &mut generated_methods {
             if method.name == "__hash__" {
                 for parameter in &mut method.params {
-                    walk_type_mut(&mut LinkHasher, &mut parameter.ty);
+                    walk_annotation_mut(&mut LinkHasher, &mut parameter.ty);
                 }
             }
             let at = cases

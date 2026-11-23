@@ -107,8 +107,8 @@ fn explicit_core_imports_and_aliases_reuse_prelude_declarations() {
         .expect("entry function");
     let type_names: Vec<_> = consume
         .iter()
-        .map(|parameter| match &parameter.ty {
-            mojito::Type::Named(name, _) => name.clone(),
+        .map(|parameter| match parameter.ty.annotation_type() {
+            Some(mojito::Type::Named(name, _)) => name,
             other => panic!("expected a named core type, got {other:?}"),
         })
         .collect();

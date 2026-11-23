@@ -15,10 +15,10 @@ use mojito_types::types::TyKind;
 /// compile-time callable value; evaluating that value as a
 /// [`CtValue`] would incorrectly require the compile-time universe to own VM
 /// closures and captured storage.
-pub(super) const fn retained_specialization_param(tp: &TypeParam) -> bool {
+pub(super) fn retained_specialization_param(tp: &TypeParam) -> bool {
     matches!(
-        tp.callable_bound.as_ref(),
-        Some(Type::Func { thin: true, .. })
+        tp.callable_bound.as_ref().map(|bound| &bound.kind),
+        Some(ExprKind::TypeValue(Type::Func { thin: true, .. }))
     )
 }
 
@@ -50,13 +50,11 @@ pub(super) fn classify_ct_param(
         variadic: tp.name.starts_with('*'),
         constraints: Vec::new(),
     };
-    if let Some(source_type) = &tp.value_type
-        && let Some(ty) = ct_param_source_type(source_type)
-    {
+    let value_type = tp.value_type.as_ref().and_then(Expr::annotation_type);
+    if let Some(ty) = value_type.as_ref().and_then(ct_param_source_type) {
         return Some(value(ty));
     }
-    if let Some(element) = tp
-        .value_type
+    if let Some(element) = value_type
         .as_ref()
         .and_then(|source| param_list_element(tp, source, siblings, owner))
     {

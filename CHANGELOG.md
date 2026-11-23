@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter's type, a result, a `raises` type, a receiver's annotation, a
+  callable conformance, and a type parameter's value type and callable
+  bound are stored as the annotation expression, which the checker
+  converts in its type context when it reads it, as upstream keeps an
+  annotation (R2535). The cached package format moves to
+  `mojito-package 266`. No program's behavior changes.
+
 - A `var` or `comptime` annotation, a struct or trait `comptime` member's
   annotation, a struct field's type, and a union case's payload are stored
   as the annotation expression, which the checker converts in its type

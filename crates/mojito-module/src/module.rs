@@ -2097,10 +2097,10 @@ fn rewrite_type_param(
         rename(bound, names);
     }
     if let Some(ty) = &mut parameter.value_type {
-        rewrite_type(ty, names, namespaces);
+        rewrite_expr(ty, names, namespaces);
     }
     if let Some(ty) = &mut parameter.callable_bound {
-        rewrite_type(ty, names, namespaces);
+        rewrite_expr(ty, names, namespaces);
     }
     if let Some(value) = &mut parameter.origin_mutability {
         rewrite_expr(value, names, namespaces);
@@ -2571,16 +2571,16 @@ fn rewrite_stmt(
                 rewrite_type_param(tp, names, namespaces);
             }
             for p in &mut *params {
-                rewrite_type(&mut p.ty, names, namespaces);
+                rewrite_expr(&mut p.ty, names, namespaces);
                 if let Some(v) = &mut p.default {
                     rewrite_expr(v, names, namespaces);
                 }
             }
             if let Some(error) = raises_type {
-                rewrite_type(error, names, namespaces);
+                rewrite_expr(error, names, namespaces);
             }
             if let Some(ret) = ret {
-                rewrite_type(ret, names, namespaces);
+                rewrite_expr(ret, names, namespaces);
             }
             for condition in where_clauses {
                 rewrite_expr(condition, names, namespaces);
@@ -2622,7 +2622,7 @@ fn rewrite_stmt(
                 rewrite_type_param(tp, names, namespaces);
             }
             if let Some(callable) = callable_conformance {
-                rewrite_type(callable, names, namespaces);
+                rewrite_expr(callable, names, namespaces);
             }
             for (conformance, condition) in conformance_conditions {
                 rename(conformance, names);
@@ -2658,19 +2658,19 @@ fn rewrite_stmt(
                     rewrite_type_param(parameter, names, namespaces);
                 }
                 for p in &mut m.params {
-                    rewrite_type(&mut p.ty, names, namespaces);
+                    rewrite_expr(&mut p.ty, names, namespaces);
                     if let Some(v) = &mut p.default {
                         rewrite_expr(v, names, namespaces);
                     }
                 }
                 if let Some(error) = &mut m.raises_type {
-                    rewrite_type(error, names, namespaces);
+                    rewrite_expr(error, names, namespaces);
                 }
                 if let Some(ret) = &mut m.ret {
-                    rewrite_type(ret, names, namespaces);
+                    rewrite_expr(ret, names, namespaces);
                 }
                 if let Some(receiver) = &mut m.self_type {
-                    rewrite_type(receiver, names, namespaces);
+                    rewrite_expr(receiver, names, namespaces);
                 }
                 for condition in &mut m.where_clauses {
                     rewrite_expr(condition, names, namespaces);
@@ -2839,19 +2839,19 @@ fn rewrite_trait_method(
     // a module item of the same name.
     let (own_names, own_namespaces) = &without_parameter_names(names, namespaces, &m.type_params);
     for p in &mut m.params {
-        rewrite_type(&mut p.ty, names, namespaces);
+        rewrite_expr(&mut p.ty, names, namespaces);
         if let Some(v) = &mut p.default {
             rewrite_expr(v, own_names, own_namespaces);
         }
     }
     if let Some(error) = &mut m.raises_type {
-        rewrite_type(error, names, namespaces);
+        rewrite_expr(error, names, namespaces);
     }
     if let Some(ret) = &mut m.ret {
-        rewrite_type(ret, names, namespaces);
+        rewrite_expr(ret, names, namespaces);
     }
     if let Some(receiver) = &mut m.self_type {
-        rewrite_type(receiver, names, namespaces);
+        rewrite_expr(receiver, names, namespaces);
     }
     for condition in &mut m.where_clauses {
         rewrite_expr(condition, names, namespaces);

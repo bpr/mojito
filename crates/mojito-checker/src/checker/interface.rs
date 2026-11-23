@@ -600,7 +600,7 @@ pub(super) struct DeclarationInterface {
     #[serde(with = "keyless")]
     applicable_functions: Vec<(String, Vec<comptime_validation::ApplicableFunction>)>,
     #[serde(with = "keyless")]
-    def_results: Vec<(String, SourceType)>,
+    def_results: Vec<(String, Expr)>,
     #[serde(with = "keyless")]
     owned_collectors: Vec<(String, bool)>,
     #[serde(with = "keyless")]

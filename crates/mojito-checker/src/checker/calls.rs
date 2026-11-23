@@ -64,7 +64,7 @@ pub(super) fn is_move_param(p: &FnParam) -> bool {
         && p.default.is_none()
         && p.kind == mojito_ast::ast::ParamKind::Regular
         && matches!(p.convention, Some(ArgConvention::Deinit))
-        && matches!(p.ty, SourceType::SelfType)
+        && p.ty.is_self_annotation()
 }
 
 /// The removed bare `move: Self` spelling: shaped like the unified move
@@ -80,7 +80,7 @@ pub(super) fn is_legacy_bare_move_constructor(m: &Method) -> bool {
         && m.params[0].default.is_none()
         && m.params[0].kind == mojito_ast::ast::ParamKind::Regular
         && m.params[0].convention.is_none()
-        && matches!(m.params[0].ty, SourceType::SelfType)
+        && m.params[0].ty.is_self_annotation()
         && m.ret.is_none()
 }
 
@@ -100,7 +100,7 @@ pub(super) fn is_copy_param(p: &FnParam) -> bool {
         && p.default.is_none()
         && p.kind == mojito_ast::ast::ParamKind::Regular
         && p.convention.is_none()
-        && matches!(p.ty, SourceType::SelfType)
+        && p.ty.is_self_annotation()
 }
 
 /// A call using keyword arguments (`name=value`) is parsed but not implemented.

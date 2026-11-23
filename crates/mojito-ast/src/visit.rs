@@ -99,8 +99,8 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
             }
             walk_type_params(visitor, type_params);
             walk_fn_params(visitor, params);
-            walk_optional_type(visitor, raises_type.as_ref());
-            walk_optional_type(visitor, ret.as_ref());
+            walk_optional_annotation(visitor, raises_type.as_ref());
+            walk_optional_annotation(visitor, ret.as_ref());
             walk_exprs(visitor, where_clauses);
             walk_block(visitor, body);
         }
@@ -125,7 +125,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
                 return;
             }
             walk_type_params(visitor, type_params);
-            walk_optional_type(visitor, callable_conformance.as_ref());
+            walk_optional_annotation(visitor, callable_conformance.as_ref());
             for (_, condition) in conformance_conditions {
                 walk_expr(visitor, condition);
             }
@@ -595,8 +595,8 @@ pub fn walk_param_arg<V: Visitor>(visitor: &mut V, argument: &ParamArg) {
 }
 
 pub fn walk_type_param<V: Visitor>(visitor: &mut V, parameter: &TypeParam) {
-    walk_optional_type(visitor, parameter.value_type.as_ref());
-    walk_optional_type(visitor, parameter.callable_bound.as_ref());
+    walk_optional_annotation(visitor, parameter.value_type.as_ref());
+    walk_optional_annotation(visitor, parameter.callable_bound.as_ref());
     if let Some(mutability) = &parameter.origin_mutability {
         walk_expr(visitor, mutability);
     }
@@ -606,7 +606,7 @@ pub fn walk_type_param<V: Visitor>(visitor: &mut V, parameter: &TypeParam) {
 }
 
 pub fn walk_fn_param<V: Visitor>(visitor: &mut V, parameter: &FnParam) {
-    walk_type(visitor, &parameter.ty);
+    walk_annotation(visitor, &parameter.ty);
     walk_exprs(visitor, parameter.origin.as_deref().unwrap_or_default());
     if let Some(default) = &parameter.default {
         walk_expr(visitor, default);
@@ -664,9 +664,9 @@ pub fn walk_method<V: Visitor>(visitor: &mut V, method: &Method) {
     walk_type_params(visitor, &method.type_params);
     walk_exprs(visitor, method.self_origin.as_deref().unwrap_or_default());
     walk_fn_params(visitor, &method.params);
-    walk_optional_type(visitor, method.raises_type.as_ref());
-    walk_optional_type(visitor, method.ret.as_ref());
-    walk_optional_type(visitor, method.self_type.as_ref());
+    walk_optional_annotation(visitor, method.raises_type.as_ref());
+    walk_optional_annotation(visitor, method.ret.as_ref());
+    walk_optional_annotation(visitor, method.self_type.as_ref());
     walk_exprs(visitor, &method.where_clauses);
     walk_block(visitor, &method.body);
 }
@@ -692,9 +692,9 @@ pub fn walk_trait_method<V: Visitor>(visitor: &mut V, method: &TraitMethod) {
     walk_type_params(visitor, &method.type_params);
     walk_exprs(visitor, method.self_origin.as_deref().unwrap_or_default());
     walk_fn_params(visitor, &method.params);
-    walk_optional_type(visitor, method.raises_type.as_ref());
-    walk_optional_type(visitor, method.ret.as_ref());
-    walk_optional_type(visitor, method.self_type.as_ref());
+    walk_optional_annotation(visitor, method.raises_type.as_ref());
+    walk_optional_annotation(visitor, method.ret.as_ref());
+    walk_optional_annotation(visitor, method.self_type.as_ref());
     walk_exprs(visitor, &method.where_clauses);
     walk_optional_block(visitor, method.default_body.as_deref());
 }
@@ -1018,10 +1018,10 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
                 walk_fn_param_mut(visitor, param);
             }
             if let Some(error) = raises_type {
-                walk_type_mut(visitor, error);
+                walk_annotation_mut(visitor, error);
             }
             if let Some(ret) = ret {
-                walk_type_mut(visitor, ret);
+                walk_annotation_mut(visitor, ret);
             }
             for condition in where_clauses {
                 walk_expr_mut(visitor, condition);
@@ -1043,7 +1043,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
         } => {
             walk_type_params_mut(visitor, type_params);
             if let Some(callable) = callable_conformance {
-                walk_type_mut(visitor, callable);
+                walk_annotation_mut(visitor, callable);
             }
             for condition in where_clauses {
                 walk_expr_mut(visitor, condition);
@@ -1343,7 +1343,6 @@ pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
     visitor.visit_expr_mut(expr);
 }
 
-/// Walk a type annotation's embedded expressions and nested types in place.
 /// [`walk_annotation`] in place: the expression's walk, then
 /// [`MutVisitor::visit_annotation_mut`].
 pub fn walk_annotation_mut<V: MutVisitor>(visitor: &mut V, annotation: &mut Expr) {
@@ -1351,6 +1350,7 @@ pub fn walk_annotation_mut<V: MutVisitor>(visitor: &mut V, annotation: &mut Expr
     visitor.visit_annotation_mut(annotation);
 }
 
+/// Walk a type annotation's embedded expressions and nested types in place.
 pub fn walk_type_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
     walk_type_children_mut(visitor, ty);
     visitor.visit_type_mut(ty);
@@ -1428,10 +1428,10 @@ fn walk_type_params_mut<V: MutVisitor>(visitor: &mut V, params: &mut [TypeParam]
     for param in params {
         visitor.visit_type_param_mut(param);
         if let Some(ty) = &mut param.value_type {
-            walk_type_mut(visitor, ty);
+            walk_annotation_mut(visitor, ty);
         }
         if let Some(ty) = &mut param.callable_bound {
-            walk_type_mut(visitor, ty);
+            walk_annotation_mut(visitor, ty);
         }
         if let Some(value) = &mut param.origin_mutability {
             walk_expr_mut(visitor, value);
@@ -1443,7 +1443,7 @@ fn walk_type_params_mut<V: MutVisitor>(visitor: &mut V, params: &mut [TypeParam]
 }
 
 fn walk_fn_param_mut<V: MutVisitor>(visitor: &mut V, param: &mut FnParam) {
-    walk_type_mut(visitor, &mut param.ty);
+    walk_annotation_mut(visitor, &mut param.ty);
     if let Some(value) = &mut param.default {
         walk_expr_mut(visitor, value);
     }
@@ -1466,7 +1466,7 @@ fn walk_method_mut<V: MutVisitor>(visitor: &mut V, method: &mut Method) {
     .into_iter()
     .flatten()
     {
-        walk_type_mut(visitor, ty);
+        walk_annotation_mut(visitor, ty);
     }
     for condition in &mut method.where_clauses {
         walk_expr_mut(visitor, condition);
@@ -1492,7 +1492,7 @@ fn walk_trait_method_mut<V: MutVisitor>(visitor: &mut V, method: &mut TraitMetho
     .into_iter()
     .flatten()
     {
-        walk_type_mut(visitor, ty);
+        walk_annotation_mut(visitor, ty);
     }
     for condition in &mut method.where_clauses {
         walk_expr_mut(visitor, condition);

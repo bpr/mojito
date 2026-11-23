@@ -25,7 +25,7 @@ pub(super) struct MethodBody<'a> {
     pub(super) ref_return: Option<mojito_types::origin::RefSig>,
     /// The return annotation a `return` re-resolves
     /// ([`Checker::body_return_annotation`]).
-    pub(super) return_annotation: Option<(SourceType, bool)>,
+    pub(super) return_annotation: Option<(Expr, bool)>,
     /// Whether the method declares compile-time parameters of its own.
     pub(super) generic: bool,
     pub(super) ret_ty: &'a Ty,
@@ -760,6 +760,7 @@ impl Checker {
             .collect();
         let regular_params: Vec<&FnParam> = regular.iter().map(|(_, param)| *param).collect();
         let named_result = mojito_ast::ast::named_result(&method.params);
+        let ret = method.ret.as_ref().map(annotation_spelling).transpose()?;
         let self_ref = lower_ref_convention_sig(
             method.self_convention,
             method.self_origin.as_ref(),
@@ -799,7 +800,7 @@ impl Checker {
             positional_only: regular_marker_index(&method.params, method.positional_only),
             keyword_only: collectors.keyword_only,
             conventions: regular.iter().map(|(_, p)| p.convention).collect(),
-            ret: match &method.ret {
+            ret: match &ret {
                 Some(SourceType::Ref { referent, .. }) => self.ty_from_spelling(referent)?,
                 // `$`-mangled generated methods rebind already-checked
                 // annotations with origins legitimately erased.
@@ -808,7 +809,7 @@ impl Checker {
                 }
                 Some(ret) => self.resolve_return_annotation(ret)?,
                 None => match named_result {
-                    Some(result) => self.ty_from_spelling(&result.ty)?,
+                    Some(result) => self.ty_from_anno(&result.ty)?,
                     None => Ty::none(),
                 },
             },
@@ -823,7 +824,7 @@ impl Checker {
                 self.enclosing_struct_type_params.get(),
                 self,
             )?,
-            ref_return: match &method.ret {
+            ref_return: match &ret {
                 Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                     origin.as_ref().ok_or_else(|| {
                         TypeError::Unsupported("reference return requires an origin".to_string())
@@ -881,7 +882,7 @@ impl Checker {
         // An annotation may name an earlier argument's place only the body
         // can resolve (`origin_of(iterable)`), as a return annotation may.
         let saved = self.signature_origin_leniency.replace(true);
-        let refined = self.ty_from_spelling(annotation);
+        let refined = self.ty_from_anno(annotation);
         self.signature_origin_leniency.set(saved);
         let refined = refined?;
         if refined == *self_ty {
@@ -947,8 +948,9 @@ impl Checker {
             return Ok(None);
         }
         self.resolving_parameter_annotation.set(true);
-        let resolved =
-            self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare);
+        let resolved = annotation_spelling(annotation).and_then(|annotation| {
+            self.resolve_storage_annotation(&annotation, super::StorageStrictness::AllowBare)
+        });
         self.resolving_parameter_annotation.set(false);
         let resolved = resolved?;
         if resolved == *self_ty {
@@ -1082,7 +1084,7 @@ impl Checker {
                 continue;
             }
             if let Some(value_type) = &tp.value_type {
-                let ty = self.ty_from_spelling(value_type)?;
+                let ty = self.ty_from_anno(value_type)?;
                 let decl = self.value_param_decl(tp, binder_id(decls.len()), ty)?;
                 self.push_value_param(&mut decls, decl);
                 continue;
@@ -1242,7 +1244,8 @@ impl Checker {
                 let Some(callable) = &source.callable_bound else {
                     continue;
                 };
-                let SourceType::Func { thin, .. } = callable else {
+                let ExprKind::TypeValue(callable @ SourceType::Func { thin, .. }) = &callable.kind
+                else {
                     return Err(TypeError::InvariantViolation(
                         "retained callable parameter bound is not a function type".to_string(),
                     ));
@@ -1386,7 +1389,7 @@ impl Checker {
                 return Ok(None);
             }
             _ => {
-                let Some(annotation) = tp.annotation() else {
+                let Some(annotation) = tp.annotation_type() else {
                     return Ok(None);
                 };
                 let Some(binder) = self.origin_annotation_mutability(&annotation)? else {
@@ -2280,6 +2283,7 @@ impl Checker {
                 "a function cannot declare both a named result and '->' return type".to_string(),
             ));
         }
+        let ret = m.ret.as_ref().map(annotation_spelling).transpose()?;
         let ret_ty = self.in_signature_scope(m.has_self.then_some(self_ty), |this| {
             let generated = this.generated_declaration.get();
             this.generated_declaration
@@ -2287,16 +2291,14 @@ impl Checker {
             let params = this.param_tys(&m.params);
             this.generated_declaration.set(generated);
             params?;
-            match &m.ret {
+            match &ret {
                 Some(SourceType::Ref { referent, .. }) => this.ty_from_spelling(referent),
                 // `$`-mangled generated methods rebind already-checked
                 // annotations with origins legitimately erased.
                 Some(t) if m.name.contains('$') => this.resolve_generated_return_annotation(t),
                 Some(t) => this.resolve_return_annotation(t),
-                None => named_result.map_or_else(
-                    || Ok(Ty::none()),
-                    |result| this.ty_from_spelling(&result.ty),
-                ),
+                None => named_result
+                    .map_or_else(|| Ok(Ty::none()), |result| this.ty_from_anno(&result.ty)),
             }
         })?;
         let regular: Vec<&FnParam> = m
@@ -2306,7 +2308,7 @@ impl Checker {
                 param.kind == mojito_ast::ast::ParamKind::Regular && !param.is_named_result()
             })
             .collect();
-        let ref_return = match &m.ret {
+        let ref_return = match &ret {
             Some(SourceType::Ref { origin, .. }) => Some(self.lower_ref_sig_resolved(
                 origin.as_ref().ok_or_else(|| {
                     TypeError::Unsupported("reference return requires an origin".to_string())
@@ -2476,16 +2478,17 @@ impl Checker {
             // `Pointer[T, _]` is concrete here only). A named `out` result
             // is the result, and resolves as one.
             let named_result = p.is_named_result();
+            let annotation = annotation_spelling(&p.ty)?;
             self.resolving_parameter_annotation.set(!named_result);
             let generated = self.generated_declaration.get();
             self.generated_declaration
                 .set(generated || m.name.contains('$'));
             let resolved = if named_result && !m.name.contains('$') {
-                self.resolve_return_annotation(&p.ty)
+                self.resolve_return_annotation(&annotation)
             } else if named_result {
-                self.resolve_generated_return_annotation(&p.ty)
+                self.resolve_generated_return_annotation(&annotation)
             } else {
-                self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare)
+                self.resolve_storage_annotation(&annotation, super::StorageStrictness::AllowBare)
             };
             self.generated_declaration.set(generated);
             self.resolving_parameter_annotation.set(false);
@@ -2868,7 +2871,7 @@ impl Checker {
         }
         let receiver = match &m.self_type {
             Some(annotation) if m.self_convention == Some(ArgConvention::Out) => {
-                self.ty_from_spelling(annotation)?
+                self.ty_from_anno(annotation)?
             }
             _ => self.custom_receiver(m)?.unwrap_or_else(|| self_ty.clone()),
         };
@@ -3042,7 +3045,7 @@ impl Checker {
             let Some(default) = &param.default else {
                 continue;
             };
-            self.check_parameter_default(&param.name, default, &self.ty_from_spelling(&param.ty)?)?;
+            self.check_parameter_default(&param.name, default, &self.ty_from_anno(&param.ty)?)?;
         }
         Ok(())
     }

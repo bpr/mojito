@@ -474,7 +474,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let captures = self.parse_capture_list()?;
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?; // consume '->'
-            Some(self.parse_type()?)
+            Some(self.parse_annotation()?)
         } else {
             None
         };
@@ -609,7 +609,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// Parses an optional `raises` effect after a function's parameter list. An
     /// error type may follow (`raises ValidationError`).
-    pub(super) fn parse_raises_effect(&mut self) -> Result<(bool, Option<Type>), ParseError> {
+    pub(super) fn parse_raises_effect(&mut self) -> Result<(bool, Option<Expr>), ParseError> {
         if !matches!(self.peek_token()?, Some(Token::Raises)) {
             return Ok((false, None));
         }
@@ -627,7 +627,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 self.peek_token()?,
                 Some(Token::Arrow | Token::Colon | Token::LBrace)
             ) {
-            Some(self.parse_type()?)
+            Some(self.parse_annotation()?)
         } else {
             None
         };
@@ -638,7 +638,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// `thin raises`, `raises thin`, and the other ABI-only effects in one
     /// sequence; only the raising contract survives in the checked AST. A
     /// removed `capturing` is reported where it is spelled.
-    pub(super) fn parse_callable_effects(&mut self) -> Result<(bool, Option<Type>), ParseError> {
+    pub(super) fn parse_callable_effects(&mut self) -> Result<(bool, Option<Expr>), ParseError> {
         let mut raises = false;
         let mut raises_type = None;
         loop {

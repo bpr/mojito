@@ -179,8 +179,8 @@ pub(in crate::checker) fn interior_origin_syntax(expr: &Expr) -> Option<(&Expr, 
 /// `["bytes"]`. A base under `self` (`origin_of(self.items)`) widens to the
 /// receiver, as an abstract signature's `origin_of` does. Any other return,
 /// or a projection over a non-receiver base, gives no tags.
-pub(in crate::checker) fn view_return_interior_tags(ret: Option<&SourceType>) -> Vec<String> {
-    let Some(SourceType::Named(_, arguments)) = ret else {
+pub(in crate::checker) fn view_return_interior_tags(ret: Option<&Expr>) -> Vec<String> {
+    let Some(SourceType::Named(_, arguments)) = ret.and_then(Expr::annotation_type) else {
         return Vec::new();
     };
     arguments
@@ -527,7 +527,7 @@ impl Checker {
     /// signature cannot resolve is left to origin lowering.
     pub(in crate::checker) fn check_result_origins(
         &self,
-        ret: Option<&SourceType>,
+        ret: Option<&Expr>,
         params: &[FnParam],
         param_tys: &[Ty],
         receiver: Option<(Option<ArgConvention>, &Ty)>,
@@ -538,8 +538,9 @@ impl Checker {
         else {
             return Ok(());
         };
+        let annotation = annotation_spelling(annotation)?;
         let mut roots = Vec::new();
-        result_origin_roots(annotation, &mut roots);
+        result_origin_roots(&annotation, &mut roots);
         for root in roots {
             let (convention, ty) = if root == "self" {
                 match receiver {
@@ -592,7 +593,7 @@ impl Checker {
     /// left symbolic.
     pub(in crate::checker) fn view_return_origins(
         &self,
-        ret: Option<&SourceType>,
+        ret: Option<&Expr>,
         decls: &[ParamDecl],
         params: &[&FnParam],
         struct_params: usize,
@@ -600,10 +601,10 @@ impl Checker {
         self_ref: Option<&mojito_types::origin::RefSig>,
     ) -> Vec<ViewReturnOrigin> {
         use mojito_types::origin::{SigMutability, SigOrigin};
-        let Some(SourceType::Named(name, arguments)) = ret else {
+        let Some(SourceType::Named(name, arguments)) = ret.and_then(Expr::annotation_type) else {
             return Vec::new();
         };
-        let Some(info) = self.structs.get(name) else {
+        let Some(info) = self.structs.get(&name) else {
             return Vec::new();
         };
         let origin_id = |decl: &ParamDecl| match decl {
@@ -635,7 +636,7 @@ impl Checker {
             lower_ref_param_sigs(decls, params, struct_params, self).unwrap_or_default();
         let mut slots = Vec::new();
         let mut positional = explicit.iter();
-        for argument in arguments {
+        for argument in &arguments {
             let (slot, expression) = match argument {
                 mojito_ast::ast::ParamArg::Named { name, value } => {
                     let Some(slot) = explicit
@@ -700,7 +701,7 @@ pub(in crate::checker) fn pack_collector(params: &[FnParam]) -> Option<&str> {
         .find(|param| {
             param.kind == mojito_ast::ast::ParamKind::Variadic
                 && matches!(param.convention, None | Some(ArgConvention::Imm))
-                && matches!(&param.ty, mojito_ast::ast::Type::Named(name, _) if name.starts_with('*'))
+                && matches!(&param.ty.kind, ExprKind::TypeValue(mojito_ast::ast::Type::Named(name, _)) if name.starts_with('*'))
         })
         .map(|param| param.name.as_str())
 }

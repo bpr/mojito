@@ -95,7 +95,7 @@ pub(super) fn synthesize_copyable_copy(
             keyword_only: None,
             raises,
             raises_type,
-            ret: Some(Type::SelfType),
+            ret: Some(Expr::annotation_of(Type::SelfType, span)),
             where_clauses: Vec::new(),
             body,
             provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault(gate),
@@ -215,12 +215,15 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             decorators: Vec::new(),
             params: vec![mojito_ast::ast::FnParam {
                 name: "hasher".to_string(),
-                ty: Type::Named(
-                    "Some".to_string(),
-                    vec![ParamArg::Type(Type::Named(
-                        mojito_checker::checker::hasher_trait(),
-                        Vec::new(),
-                    ))],
+                ty: Expr::annotation_of(
+                    Type::Named(
+                        "Some".to_string(),
+                        vec![ParamArg::Type(Type::Named(
+                            mojito_checker::checker::hasher_trait(),
+                            Vec::new(),
+                        ))],
+                    ),
+                    span,
                 ),
                 default: None,
                 kind: mojito_ast::ast::ParamKind::Regular,
@@ -265,8 +268,8 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
         let takes_self = |method: &mojito_ast::ast::Method| {
             matches!(
                 method.params.as_slice(),
-                [parameter] if matches!(&parameter.ty, Type::SelfType)
-                    || matches!(&parameter.ty, Type::Named(named, _) if named == name)
+                [parameter] if parameter.ty.is_self_annotation()
+                    || matches!(parameter.ty.annotation_type(), Some(Type::Named(named, _)) if named == *name)
             )
         };
         if !conforms.iter().any(|conformance| equatable(conformance))
@@ -345,7 +348,7 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
             decorators: Vec::new(),
             params: vec![mojito_ast::ast::FnParam {
                 name: "other".to_string(),
-                ty: Type::SelfType,
+                ty: Expr::annotation_of(Type::SelfType, span),
                 default: None,
                 kind: mojito_ast::ast::ParamKind::Regular,
                 convention: None,
@@ -355,7 +358,10 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
             keyword_only: None,
             raises: false,
             raises_type: None,
-            ret: Some(Type::Named("Bool".to_string(), Vec::new())),
+            ret: Some(Expr::annotation_of(
+                Type::Named("Bool".to_string(), Vec::new()),
+                span,
+            )),
             where_clauses: Vec::new(),
             body,
             provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault(gate),
@@ -461,6 +467,7 @@ pub(super) fn fold_simd_alias_bounds(
         return;
     }
     for statement in program {
+        let span = statement.span;
         let StmtKind::Struct { type_params, .. } = &mut statement.kind else {
             continue;
         };
@@ -469,7 +476,10 @@ pub(super) fn fold_simd_alias_bounds(
                 && let [only] = parameter.bounds.as_slice()
                 && let Some(args) = own.get(only).cloned().or_else(|| imported(only))
             {
-                parameter.value_type = Some(Type::Named("SIMD".to_string(), args));
+                parameter.value_type = Some(Expr::annotation_of(
+                    Type::Named("SIMD".to_string(), args),
+                    span,
+                ));
                 parameter.bounds = vec!["SIMD".to_string()];
             }
         }
@@ -595,9 +605,11 @@ pub(super) fn fold_kgen_type_parameters(
         installed,
         members: &members,
         own: None,
+        span: Span::default(),
         error: None,
     };
     for statement in program {
+        fold.span = statement.span;
         fold.own = match &statement.kind {
             StmtKind::Struct { name, .. } => members.get(name),
             _ => None,
@@ -647,24 +659,31 @@ struct KgenTypeFold<'a> {
     installed: Option<&'a InstalledInterfaces>,
     members: &'a HashMap<String, HashMap<String, Ty>>,
     own: Option<&'a HashMap<String, Ty>>,
+    /// The span of the top-level statement being walked, where a folded
+    /// binder's synthesized annotation sits.
+    span: Span,
     error: Option<ComptimeError>,
 }
 
 impl KgenTypeFold<'_> {
     /// The KGEN type `parameter`'s type spelling denotes, if any.
     fn denoted(&self, parameter: &TypeParam) -> Option<Ty> {
-        match &parameter.value_type {
-            Some(Type::Assoc { base, name, args }) if args.is_empty() => match base.as_ref() {
+        match parameter
+            .value_type
+            .as_ref()
+            .and_then(Expr::annotation_type)
+        {
+            Some(Type::Assoc { base, name, args }) if args.is_empty() => match *base {
                 Type::Named(base, base_args) if base_args.is_empty() => {
                     if base == "__mlir_type" {
-                        mojito_types::types::mlir_type_named(name)
+                        mojito_types::types::mlir_type_named(&name)
                     } else {
-                        self.members.get(base)?.get(name).cloned()
+                        self.members.get(&base)?.get(&name).cloned()
                     }
                 }
                 _ => None,
             },
-            Some(Type::SelfParam(name)) => self.own?.get(name).cloned(),
+            Some(Type::SelfParam(name)) => self.own?.get(&name).cloned(),
             Some(_) => None,
             None => match parameter.bounds.as_slice() {
                 [only] => self.module_aliases.get(only).cloned().or_else(|| {
@@ -700,7 +719,11 @@ impl mojito_ast::visit::MutVisitor for KgenTypeFold<'_> {
                 parameter.bounds = vec![TYPE_OF_ALL_TYPES.to_string()];
             }
             Some(TyKind::KgenString) => {
-                parameter.value_type = Some(kgen_string_source_type());
+                let span = parameter
+                    .value_type
+                    .as_ref()
+                    .map_or(self.span, |annotation| annotation.span);
+                parameter.value_type = Some(Expr::annotation_of(kgen_string_source_type(), span));
                 parameter.bounds = vec!["__mlir_type".to_string()];
             }
             _ => {}

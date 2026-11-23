@@ -26,7 +26,7 @@ fn fieldwise_deco() -> Decorator {
 fn fnparam(name: &str, ty: Type) -> FnParam {
     FnParam {
         name: name.into(),
-        ty,
+        ty: anno(ty),
         default: None,
         kind: ParamKind::Regular,
         convention: None,
@@ -78,6 +78,11 @@ fn float_literal(n: f64) -> FloatLiteral {
 
 fn ident(name: &str) -> Box<Expr> {
     bx(ExprKind::Identifier(name.into()))
+}
+
+/// The expression a constructed annotation slot holds for `ty`.
+fn anno(ty: Type) -> Expr {
+    Expr::annotation_of(ty, (0, 0))
 }
 
 /// The type an annotation slot's expression converts to.
@@ -304,7 +309,7 @@ fn parses_struct_with_field_and_method() {
                 keyword_only: None,
                 raises: false,
                 raises_type: None,
-                ret: Some(Type::Named("Int".into(), vec![])),
+                ret: Some(anno(Type::Named("Int".into(), vec![]))),
                 body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                     ExprKind::Member {
                         object: ident("self"),
@@ -489,8 +494,82 @@ fn annotation_slots_store_the_annotation_expression() {
 }
 
 #[test]
+fn signature_annotation_slots_store_the_annotation_expression() {
+    let statements = parse(
+        "def f(x: Int, *xs: *Ts) raises E -> List[Int]:\n    pass\n\
+         def h(ref x: Int) -> ref [x] Int:\n    return x\n\
+         def g[F: def(Int) -> Int, n: Int if True else Int]():\n    pass\n",
+    );
+    let StmtKind::Def {
+        params,
+        ret,
+        raises_type,
+        ..
+    } = &statements[0].kind
+    else {
+        panic!("expected a def");
+    };
+    assert_eq!(params[0].ty.kind, ExprKind::Identifier("Int".into()));
+    assert_eq!(
+        params[1].ty.kind,
+        ExprKind::TypeValue(Type::Named("*Ts".into(), vec![]))
+    );
+    assert!(matches!(
+        ret.as_ref().map(|ret| &ret.kind),
+        Some(ExprKind::Index { .. })
+    ));
+    assert_eq!(
+        raises_type.as_ref().map(|error| &error.kind),
+        Some(&ExprKind::Identifier("E".into()))
+    );
+    let StmtKind::Def { ret, .. } = &statements[1].kind else {
+        panic!("expected a def");
+    };
+    assert!(matches!(
+        ret.as_ref().map(|ret| &ret.kind),
+        Some(ExprKind::TypeValue(Type::Ref { .. }))
+    ));
+    let StmtKind::Def { type_params, .. } = &statements[2].kind else {
+        panic!("expected a def");
+    };
+    assert!(matches!(
+        type_params[0]
+            .callable_bound
+            .as_ref()
+            .map(|bound| &bound.kind),
+        Some(ExprKind::TypeValue(Type::Func { .. }))
+    ));
+    assert!(matches!(
+        type_params[1].value_type.as_ref().map(|value| &value.kind),
+        Some(ExprKind::IfExpr { .. })
+    ));
+    // An unannotated `out self` after other arguments is typed `Self`, as
+    // the receiver's annotation expression.
+    let StmtKind::Struct { methods, .. } = &parse(
+        "struct S:\n    def __init__(x: Int, out self):\n        pass\n    def get(self) -> Int:\n        return 1\n",
+    )[0]
+    .kind
+    else {
+        panic!("expected a struct");
+    };
+    assert_eq!(
+        methods[0].self_type.as_ref().map(|receiver| &receiver.kind),
+        Some(&ExprKind::Identifier("Self".into()))
+    );
+    assert_eq!(
+        methods[1].ret.as_ref().map(|ret| &ret.kind),
+        Some(&ExprKind::Identifier("Int".into()))
+    );
+}
+
+#[test]
 fn a_sentinel_is_no_annotation() {
-    for source in ["var x: ... = 1\n", "comptime N: ... = 1\n"] {
+    for source in [
+        "var x: ... = 1\n",
+        "comptime N: ... = 1\n",
+        "def f(x: ...):\n    pass\n",
+        "def f() -> ...:\n    pass\n",
+    ] {
         let mut parser = Parser::new(Lexer::new(source));
         let error = parser.parse_program().expect_err(source);
         assert!(
@@ -533,7 +612,7 @@ fn parses_def_signature_and_body() {
             captures: None,
             raises: false,
             raises_type: None,
-            ret: Some(Type::Named("Int".into(), vec![])),
+            ret: Some(anno(Type::Named("Int".into(), vec![]))),
             body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                 ExprKind::Infix(InfixOp::Add, ident("a"), ident("b"))
             ))))],
@@ -904,7 +983,7 @@ fn parses_generic_def_with_type_param_signature() {
             captures: None,
             raises: false,
             raises_type: None,
-            ret: Some(Type::Named("T".into(), vec![])),
+            ret: Some(anno(Type::Named("T".into(), vec![]))),
             body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(
                 ExprKind::Identifier("x".into())
             ))))],
@@ -980,7 +1059,7 @@ fn parses_trait_with_method_requirements() {
                     keyword_only: None,
                     raises: false,
                     raises_type: None,
-                    ret: Some(Type::Named("String".into(), vec![])),
+                    ret: Some(anno(Type::Named("String".into(), vec![]))),
                     default_body: None,
                 },
                 TraitMethod {
@@ -996,7 +1075,7 @@ fn parses_trait_with_method_requirements() {
                     keyword_only: None,
                     raises: false,
                     raises_type: None,
-                    ret: Some(Type::Named("Int".into(), vec![])),
+                    ret: Some(anno(Type::Named("Int".into(), vec![]))),
                     default_body: None,
                 },
             ],
@@ -1049,7 +1128,7 @@ fn parses_raises_effect_on_trait_requirements() {
     };
     assert!(methods[0].raises);
     assert_eq!(
-        methods[0].raises_type,
+        methods[0].raises_type.as_ref().map(view),
         Some(Type::Named("ValidationError".into(), Vec::new()))
     );
 }
@@ -1131,7 +1210,10 @@ fn parses_a_method_value_parameter_typed_by_self_param() {
     let parameter = &methods[0].type_params[0];
     assert_eq!(parameter.name, "v");
     assert_eq!(parameter.bounds, ["Self.T"]);
-    assert_eq!(parameter.value_type, Some(Type::SelfParam("T".into())));
+    assert_eq!(
+        parameter.value_type.as_ref().map(view),
+        Some(Type::SelfParam("T".into()))
+    );
 }
 
 #[test]
@@ -1145,9 +1227,12 @@ fn parses_value_parameters_typed_by_qualified_types() {
         name: name.into(),
         args: vec![],
     };
-    assert_eq!(type_params[1].value_type, Some(assoc("A")));
     assert_eq!(
-        type_params[2].value_type,
+        type_params[1].value_type.as_ref().map(view),
+        Some(assoc("A"))
+    );
+    assert_eq!(
+        type_params[2].value_type.as_ref().map(view),
         Some(Type::IndexedProjection {
             base: Box::new(assoc("L")),
             index: Box::new(Expr::from(ExprKind::Identifier("t".into()))),
@@ -1178,7 +1263,7 @@ fn parses_a_member_application_in_type_position() {
     // A member's one bracket operand is the subscript the checker
     // classifies, a type (`Int`) or a value (`3`) alike.
     assert_eq!(
-        type_params[0].value_type,
+        type_params[0].value_type.as_ref().map(view),
         Some(Type::IndexedProjection {
             base: Box::new(assoc(
                 Type::Named("_MLIR".into(), vec![]),
@@ -1189,7 +1274,7 @@ fn parses_a_member_application_in_type_position() {
         })
     );
     assert_eq!(
-        params[0].ty,
+        view(&params[0].ty),
         Type::IndexedProjection {
             base: Box::new(assoc(
                 Type::Named("S".into(), vec![ParamArg::Value(*ident("Int"))]),
@@ -1200,7 +1285,7 @@ fn parses_a_member_application_in_type_position() {
         }
     );
     assert_eq!(
-        params[1].ty,
+        view(&params[1].ty),
         Type::IndexedProjection {
             base: Box::new(assoc(Type::Named("M".into(), vec![]), "Buf", vec![])),
             index: int(3),
@@ -1224,7 +1309,7 @@ fn a_bracket_list_after_a_projection_that_is_no_member_is_its_expression() {
         panic!("expected a def");
     };
     assert!(
-        matches!(&params[0].ty, Type::Value(value) if matches!(value.kind, ExprKind::MultiIndex { .. })),
+        matches!(&view(&params[0].ty), Type::Value(value) if matches!(value.kind, ExprKind::MultiIndex { .. })),
         "{:?}",
         params[0].ty
     );
@@ -1296,8 +1381,10 @@ fn parses_a_subscript_of_a_construction_as_a_type_projection() {
         matches!(ty, Type::IndexedProjection { base, .. }
             if matches!(base.as_ref(), Type::Value(value) if is_construction(value)))
     };
-    assert!(is_projection(&params[0].ty));
-    assert!(matches!(ret, Some(Type::Ref { referent, .. }) if is_projection(referent)));
+    assert!(is_projection(&view(&params[0].ty)));
+    assert!(
+        matches!(ret.as_ref().map(view), Some(Type::Ref { referent, .. }) if is_projection(&referent))
+    );
     let StmtKind::VarDecl { ty: Some(ty), .. } = &body[0].kind else {
         panic!("expected a var declaration");
     };
@@ -1326,7 +1413,7 @@ fn parses_trait_valued_parameters_spelled_type_of() {
     assert_eq!(type_params[0].bounds, ["type_of"]);
     assert!(type_params[0].infer_only);
     assert_eq!(
-        type_params[0].value_type,
+        type_params[0].value_type.as_ref().map(view),
         Some(Type::TypeOf(bx(ExprKind::Infix(
             InfixOp::BitAnd,
             ident("Copyable"),
@@ -1341,7 +1428,7 @@ fn parses_trait_valued_parameters_spelled_type_of() {
         panic!("expected def");
     };
     assert_eq!(
-        type_params[0].value_type,
+        type_params[0].value_type.as_ref().map(view),
         Some(Type::TypeOf(ident("AnyType")))
     );
     assert!(type_params[0].default.is_some());
@@ -1369,13 +1456,14 @@ fn parses_generator_types_as_parameter_types_and_alias_bodies() {
         panic!("expected def");
     };
     assert_eq!(type_params[0].bounds, ["__generator_type"]);
-    let Some(Type::Generator { params, result }) = &type_params[0].value_type else {
+    let Some(Type::Generator { params, result }) = &type_params[0].value_type.as_ref().map(view)
+    else {
         panic!("expected a generator-typed parameter");
     };
     assert_eq!(params.len(), 2);
     assert_eq!(**result, Type::Named("T".into(), Vec::new()));
     assert!(matches!(
-        &type_params[1].value_type,
+        &type_params[1].value_type.as_ref().map(view),
         Some(Type::Generator { params, result }) if params.is_empty() && **result == Type::Named("Int".into(), vec![])
     ));
 }
@@ -1390,7 +1478,7 @@ fn parses_a_trait_composition_as_a_generator_types_result() {
     };
     assert_eq!(type_params.len(), 2);
     assert_eq!(type_params[0].bounds, ["__generator_type"]);
-    let Some(Type::Generator { result, .. }) = &type_params[0].value_type else {
+    let Some(Type::Generator { result, .. }) = &type_params[0].value_type.as_ref().map(view) else {
         panic!("expected a generator-typed parameter");
     };
     assert_eq!(
@@ -1540,7 +1628,7 @@ fn parses_bare_self_type_in_trait_method() {
     let stmts = parse("trait Eq2:\n    def same(self, other: Self) -> Bool:\n        ...\n");
     match &stmts[0].kind {
         StmtKind::Trait { methods, .. } => {
-            assert_eq!(methods[0].params[0].ty, Type::SelfType);
+            assert_eq!(view(&methods[0].params[0].ty), Type::SelfType);
         }
         other => panic!("expected a trait, got {other:?}"),
     }
@@ -1686,8 +1774,8 @@ fn parses_associated_type_annotation() {
     match &parse("def first[C: Iterable](c: C) -> C.Element:\n    pass\n")[0].kind {
         StmtKind::Def { ret, .. } => {
             assert_eq!(
-                ret,
-                &Some(Type::Assoc {
+                ret.as_ref().map(view),
+                Some(Type::Assoc {
                     base: Box::new(Type::Named("C".into(), vec![])),
                     name: "Element".into(),
                     args: vec![],
@@ -1710,7 +1798,7 @@ fn parses_dependent_indexed_type_projection_structurally() {
         panic!("expected nested def");
     };
     assert_eq!(
-        params[0].ty,
+        view(&params[0].ty),
         Type::IndexedProjection {
             base: Box::new(Type::Assoc {
                 base: Box::new(Type::Named("values".into(), vec![])),
@@ -2222,8 +2310,8 @@ fn parses_raises_effect_on_def() {
         } => {
             assert!(*raises);
             assert_eq!(
-                raises_type,
-                &Some(Type::Named("ValidationError".into(), Vec::new()))
+                raises_type.as_ref().map(view),
+                Some(Type::Named("ValidationError".into(), Vec::new()))
             );
         }
         other => panic!("expected a def, got {other:?}"),
@@ -3662,7 +3750,10 @@ fn retains_variadic_type_pack_declarations_and_uses() {
         panic!("expected function declaration")
     };
     assert_eq!(type_params[0].name, "*ArgTypes");
-    assert_eq!(params[0].ty, Type::Named("*ArgTypes".into(), Vec::new()));
+    assert_eq!(
+        view(&params[0].ty),
+        Type::Named("*ArgTypes".into(), Vec::new())
+    );
 }
 
 #[test]
@@ -3684,7 +3775,10 @@ fn keeps_the_qualified_pack_spread_apart_from_the_bare_one() {
         view(&fields[0].ty),
         Type::Named("Tuple".into(), vec![spread.clone()])
     );
-    assert_eq!(methods[0].params[0].ty, Type::SelfParam("*Ts".into()));
+    assert_eq!(
+        view(&methods[0].params[0].ty),
+        Type::SelfParam("*Ts".into())
+    );
     let StmtKind::SetPlace { value, .. } = &methods[0].body[0].kind else {
         panic!("expected the field store")
     };
@@ -3702,8 +3796,9 @@ fn parses_a_spread_of_a_type_list_expression() {
     let parsed = parse(
         "struct Pair[*Ts: Movable]:\n    def flip(self) -> Tuple[*Self.Ts.reverse()]:\n        pass\n\n    def join[*Us: Movable](self, other: Tuple[*Us]) -> Tuple[*TypeList._concat[Self.Ts.values, Us.values]()]:\n        pass\n\ndef flip[*Ts: Movable](t: Tuple[*Ts]) -> Tuple[*Ts.reverse()]:\n    pass\n",
     );
-    let spread_operand = |ty: &Option<Type>| -> Expr {
-        let Some(Type::Named(name, arguments)) = ty else {
+    let spread_operand = |annotation: &Option<Expr>| -> Expr {
+        let ty = annotation.as_ref().map(view);
+        let Some(Type::Named(name, arguments)) = &ty else {
             panic!("expected a Tuple annotation, got {ty:?}")
         };
         assert_eq!(name, "Tuple");
@@ -3949,9 +4044,9 @@ fn parses_origin_unions_parameters_and_reference_bindings() {
     assert_eq!(params[0].convention, Some(ArgConvention::Ref));
     assert_eq!(params[1].convention, Some(ArgConvention::Ref));
     assert!(matches!(
-        ret,
+        ret.as_ref().map(view),
         Some(Type::Ref { referent, origin: Some(origins) })
-            if **referent == Type::Named("String".into(), vec![]) && origins.len() == 2
+            if *referent == Type::Named("String".into(), vec![]) && origins.len() == 2
     ));
     assert!(matches!(
         &body[0].kind,
@@ -4006,17 +4101,23 @@ fn parses_an_annotated_self_receiver() {
     };
     assert_eq!(methods[0].self_convention, Some(ArgConvention::Out));
     assert!(
-        matches!(&methods[0].self_type, Some(Type::Named(name, args)) if name == "W" && args.len() == 1)
+        matches!(&methods[0].self_type.as_ref().map(view), Some(Type::Named(name, args)) if name == "W" && args.len() == 1)
     );
     assert_eq!(methods[0].params.len(), 1);
-    assert!(matches!(&methods[1].self_type, Some(Type::SelfType)));
+    assert!(matches!(
+        &methods[1].self_type.as_ref().map(view),
+        Some(Type::SelfType)
+    ));
     assert!(methods[2].self_type.is_none());
 
     let stmts = parse("trait T:\n    def __init__(out self: Self, *, x: Int):\n        ...\n");
     let StmtKind::Trait { methods, .. } = &stmts[0].kind else {
         panic!("expected a trait");
     };
-    assert!(matches!(&methods[0].self_type, Some(Type::SelfType)));
+    assert!(matches!(
+        &methods[0].self_type.as_ref().map(view),
+        Some(Type::SelfType)
+    ));
 }
 
 #[test]
@@ -4031,7 +4132,9 @@ fn parses_an_initializer_receiver_after_other_arguments() {
     };
     assert!(methods[0].has_self);
     assert_eq!(methods[0].self_convention, Some(ArgConvention::Out));
-    assert!(matches!(&methods[0].self_type, Some(Type::Named(name, _)) if name == "W"));
+    assert!(
+        matches!(&methods[0].self_type.as_ref().map(view), Some(Type::Named(name, _)) if name == "W")
+    );
     assert_eq!(methods[0].receiver_index, 1);
     let names: Vec<_> = methods[0].params.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, ["it", "k"]);
@@ -4039,7 +4142,10 @@ fn parses_an_initializer_receiver_after_other_arguments() {
     assert_eq!(methods[0].keyword_only, Some(1));
     assert!(methods[1].has_self);
     assert_eq!(methods[1].receiver_index, 1);
-    assert!(matches!(&methods[1].self_type, Some(Type::SelfType)));
+    assert!(matches!(
+        &methods[1].self_type.as_ref().map(view),
+        Some(Type::SelfType)
+    ));
 }
 
 #[test]
@@ -4055,7 +4161,9 @@ fn parses_an_initializer_result_as_its_out_self() {
     };
     assert!(methods[0].has_self);
     assert_eq!(methods[0].self_convention, Some(ArgConvention::Out));
-    assert!(matches!(&methods[0].self_type, Some(Type::Named(name, _)) if name == "W"));
+    assert!(
+        matches!(&methods[0].self_type.as_ref().map(view), Some(Type::Named(name, _)) if name == "W")
+    );
     assert_eq!(methods[0].receiver_index, 2);
     assert!(methods[0].ret.is_none());
     assert!(!methods[1].has_self);
@@ -4085,9 +4193,9 @@ fn parses_ref_return_type() {
     match &stmts[0].kind {
         StmtKind::Def { ret, .. } => {
             assert!(matches!(
-                ret,
+                ret.as_ref().map(view),
                 Some(Type::Ref { referent, origin: Some(origins) })
-                    if **referent == Type::Named("Int".into(), vec![]) && origins.len() == 1
+                    if *referent == Type::Named("Int".into(), vec![]) && origins.len() == 1
             ));
         }
         other => panic!("expected a def, got {other:?}"),
@@ -4435,7 +4543,7 @@ fn parses_static_method_leading_self() {
     assert_eq!(methods[0].params[0].name, "from_t");
     assert!(!methods[1].has_self, "a static method has no receiver");
     assert_eq!(methods[1].params[0].name, "self");
-    assert_eq!(methods[1].params[0].ty, Type::SelfType);
+    assert_eq!(view(&methods[1].params[0].ty), Type::SelfType);
     assert_eq!(methods[1].params[1].name, "k");
 }
 
@@ -4631,7 +4739,7 @@ fn retains_callable_parameter_bounds_and_thin_effects() {
     assert_eq!(type_params.len(), 2);
     assert_eq!(type_params[0].bounds, vec!["<function type>"]);
     assert!(matches!(
-        &type_params[0].callable_bound,
+        &type_params[0].callable_bound.as_ref().map(view),
         Some(Type::Func {
             ret,
             thin: false,
@@ -4639,7 +4747,7 @@ fn retains_callable_parameter_bounds_and_thin_effects() {
         }) if **ret == Type::Named("Int".into(), vec![])
     ));
     assert!(matches!(
-        &type_params[1].callable_bound,
+        &type_params[1].callable_bound.as_ref().map(view),
         Some(Type::Func {
             ret,
             thin: true,
@@ -4662,7 +4770,7 @@ fn composes_a_function_type_after_trait_bounds() {
     );
     assert!(type_params[0].infer_only);
     assert!(matches!(
-        &type_params[0].callable_bound,
+        &type_params[0].callable_bound.as_ref().map(view),
         Some(Type::Func { ret, thin: false, .. }) if **ret == Type::Named("Int".into(), vec![])
     ));
 }
@@ -4683,8 +4791,8 @@ fn a_function_type_result_takes_a_later_composition() {
         };
         let ty = type_params
             .first()
-            .and_then(|param| param.callable_bound.clone())
-            .unwrap_or_else(|| params[0].ty.clone());
+            .and_then(|param| param.callable_bound.as_ref().map(view))
+            .unwrap_or_else(|| view(&params[0].ty));
         let Type::Func { ret, .. } = ty else {
             panic!("expected a function type, found {ty:?}");
         };
@@ -4725,12 +4833,18 @@ fn parses_a_type_parameter_bound_as_one_expression() {
         ["Copyable", "Movable"]
     );
     assert_eq!(
-        params("def f[x: None]():\n    pass\n").value_type,
+        params("def f[x: None]():\n    pass\n")
+            .value_type
+            .as_ref()
+            .map(view),
         Some(Type::None)
     );
     let callable = params("def f[F: def(Int) & Copyable]():\n    pass\n");
     assert_eq!(callable.bounds, ["<function type>", "Copyable"]);
-    assert!(matches!(callable.callable_bound, Some(Type::Func { .. })));
+    assert!(matches!(
+        callable.callable_bound.as_ref().map(view),
+        Some(Type::Func { .. })
+    ));
     let statements = parse("def f[m: Bool, o: Origin[mut=m]]():\n    pass\n");
     let StmtKind::Def { type_params, .. } = &statements[0].kind else {
         panic!("expected a def");
@@ -4761,7 +4875,7 @@ fn a_type_parameter_bound_no_spelling_converts_is_its_expression() {
             panic!("expected a def");
         };
         assert!(
-            matches!(&type_params[0].value_type, Some(Type::Value(value)) if is_kind(&value.kind)),
+            matches!(&type_params[0].value_type.as_ref().map(view), Some(Type::Value(value)) if is_kind(&value.kind)),
             "{source}: {:?}",
             type_params[0].value_type
         );
@@ -4791,14 +4905,17 @@ fn an_annotation_is_one_expression() {
     let StmtKind::Def { params, ret, .. } = &statements[0].kind else {
         panic!("expected a def");
     };
-    assert_eq!(params[0].ty, Type::Named("Int".into(), vec![]));
-    assert_eq!(*ret, Some(Type::Named("Int".into(), vec![])));
+    assert_eq!(view(&params[0].ty), Type::Named("Int".into(), vec![]));
+    assert_eq!(
+        ret.as_ref().map(view),
+        Some(Type::Named("Int".into(), vec![]))
+    );
     let statements = parse("def g(x: 3):\n    pass\n");
     let StmtKind::Def { params, .. } = &statements[0].kind else {
         panic!("expected a def");
     };
     assert!(
-        matches!(&params[0].ty, Type::Value(value) if matches!(value.kind, ExprKind::Int(_))),
+        matches!(&view(&params[0].ty), Type::Value(value) if matches!(value.kind, ExprKind::Int(_))),
         "{:?}",
         params[0].ty
     );
@@ -4816,8 +4933,11 @@ fn an_annotation_reads_a_whole_conditional_expression() {
         panic!("expected a def");
     };
     let conditional = |ty: &Type| matches!(ty, Type::Value(value) if matches!(value.kind, ExprKind::IfExpr { .. }));
-    assert!(conditional(&params[0].ty), "{:?}", params[0].ty);
-    assert!(ret.as_ref().is_some_and(conditional), "{ret:?}");
+    assert!(conditional(&view(&params[0].ty)), "{:?}", params[0].ty);
+    assert!(
+        ret.as_ref().map(view).as_ref().is_some_and(conditional),
+        "{ret:?}"
+    );
     let StmtKind::VarDecl { ty: Some(ty), .. } = &body[0].kind else {
         panic!("expected an annotated var, found {:?}", body[0].kind);
     };
@@ -4969,7 +5089,7 @@ fn parses_function_typed_parameter() {
         panic!("expected a def")
     };
     assert_eq!(
-        params[0].ty,
+        view(&params[0].ty),
         Type::Func {
             type_params: vec![],
             params: vec![function_type_param(Type::Named("Int".into(), vec![]))],
@@ -5196,7 +5316,7 @@ fn lambda_expr(
             captures,
             raises,
             raises_type: None,
-            ret,
+            ret: ret.map(anno),
             where_clauses: vec![],
             body: vec![Stmt::from(StmtKind::Return(Some(Expr::from(body))))],
         })),
@@ -5846,7 +5966,7 @@ fn self_and_none_in_a_bracket_are_expressions() {
         Type::Named("List".into(), vec![self_member()])
     );
     assert_eq!(
-        methods[0].params[0].ty,
+        view(&methods[0].params[0].ty),
         Type::Named(
             "List".into(),
             vec![ParamArg::Value(Expr::from(ExprKind::None))]
@@ -5870,8 +5990,8 @@ fn method_signatures(source: &str) -> Vec<(Vec<Type>, Option<Type>)> {
             .into_iter()
             .map(|method| {
                 (
-                    method.params.into_iter().map(|param| param.ty).collect(),
-                    method.ret,
+                    method.params.iter().map(|param| view(&param.ty)).collect(),
+                    method.ret.as_ref().map(view),
                 )
             })
             .collect(),
@@ -5928,10 +6048,10 @@ fn annotations_with_named_heads_and_projections_parse_as_expressions() {
         args,
     };
     assert_eq!(
-        type_params[0].value_type,
+        type_params[0].value_type.as_ref().map(view),
         Some(applied_member(vec![value(1), value(2)]))
     );
-    let types: Vec<_> = params.iter().map(|param| param.ty.clone()).collect();
+    let types: Vec<_> = params.iter().map(|param| view(&param.ty)).collect();
     assert_eq!(
         types,
         vec![
@@ -5994,7 +6114,7 @@ fn annotation_expressions_no_spelling_converts_are_their_expression() {
             panic!("expected a def");
         };
         assert!(
-            matches!(&params[0].ty, Type::Value(_)),
+            matches!(&view(&params[0].ty), Type::Value(_)),
             "{annotation}: {:?}",
             params[0].ty
         );
@@ -6008,7 +6128,7 @@ fn annotation_method_call_is_its_expression() {
         panic!("expected a struct");
     };
     assert!(
-        matches!(&methods[0].ret, Some(Type::Value(_))),
+        matches!(&methods[0].ret.as_ref().map(view), Some(Type::Value(_))),
         "{:?}",
         methods[0].ret
     );

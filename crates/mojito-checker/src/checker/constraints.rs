@@ -1834,7 +1834,7 @@ impl Checker {
                     return None;
                 }
                 let result = self.module_def_results.get(name)?;
-                let meta = MetaTy::value(self.ty_from_spelling(result).ok()?);
+                let meta = MetaTy::value(self.ty_from_anno(result).ok()?);
                 let args = args
                     .iter()
                     .map(|argument| self.applied_constant_expr(argument))
@@ -7890,14 +7890,15 @@ struct BoundSiblings(HashMap<String, ParamArg>);
 
 impl BoundSiblings {
     /// Spell `param`'s declaration over the bound arguments in place of
-    /// the parameters they bind.
+    /// the parameters they bind. The annotations substitute through their
+    /// type-context view, where an applied head is no bound sibling.
     fn substitute(&self, param: &mut mojito_ast::ast::TypeParam) {
         use mojito_ast::visit::{walk_expr_mut, walk_type_mut};
-        for ty in [&mut param.value_type, &mut param.callable_bound]
+        for annotation in [&mut param.value_type, &mut param.callable_bound]
             .into_iter()
             .flatten()
         {
-            walk_type_mut(&mut &*self, ty);
+            annotation.retype_view(|ty| walk_type_mut(&mut &*self, ty));
         }
         for value in [&mut param.origin_mutability, &mut param.default]
             .into_iter()

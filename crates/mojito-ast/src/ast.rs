@@ -369,13 +369,15 @@ pub struct TypeParam {
     pub name: String,
     /// The trait bound(s), or (for a value parameter) the single value type name.
     pub bounds: Vec<String>,
-    /// Full source type for a syntactically unambiguous value parameter such as
-    /// `items: List[Int]`. Scalar value parameters are classified semantically.
-    pub value_type: Option<Type>,
-    /// A retained callable right-hand side (`F: def(...)`). Whether it denotes a
-    /// callable type constraint or a compile-time function-value parameter is a
-    /// semantic decision; the parser preserves the complete function type.
-    pub callable_bound: Option<Type>,
+    /// The annotation expression of a syntactically unambiguous value
+    /// parameter such as `items: List[Int]`, which the checker converts in
+    /// its type context. Scalar value parameters are classified semantically.
+    pub value_type: Option<Expr>,
+    /// A retained callable right-hand side (`F: def(...)`), as the annotation
+    /// expression the checker converts in its type context. Whether it
+    /// denotes a callable type constraint or a compile-time function-value
+    /// parameter is a semantic decision.
+    pub callable_bound: Option<Expr>,
     /// `Some(expr)` for `Origin[mut=expr]`; `None` for type/value parameters.
     /// A bound naming an alias of an origin type (`ImmOrigin`, `MutOrigin`,
     /// a parameterized `O[True]`) stays as spelled, and the check classifies
@@ -431,12 +433,13 @@ impl TypeParam {
             })
     }
 
-    /// This binder's type as written: its value type, else the
-    /// `Origin[mut=e]` the parser read into [`Self::origin_mutability`],
-    /// else its lone bound. `None` for several bounds.
-    pub fn annotation(&self) -> Option<Type> {
+    /// This binder's type, the checker's view of it: its value type
+    /// converted in the type context, else the `Origin[mut=e]` the parser
+    /// read into [`Self::origin_mutability`], else its lone bound. `None`
+    /// for several bounds.
+    pub fn annotation_type(&self) -> Option<Type> {
         if let Some(value_type) = &self.value_type {
-            return Some(value_type.clone());
+            return value_type.annotation_type();
         }
         if let Some(mutability) = &self.origin_mutability {
             return Some(Type::Named(
@@ -964,7 +967,9 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FnParam {
     pub name: String,
-    pub ty: Type,
+    /// The annotation expression, which the checker converts in its type
+    /// context ([`Expr::annotation_type`]).
+    pub ty: Expr,
     /// A default value (`= expr`), for an optional argument. `None` if required.
     pub default: Option<Expr>,
     /// `*args` (variadic) / `**kwargs` (keyword variadic) / a plain parameter.
@@ -1030,17 +1035,17 @@ impl DeclaredParam for FnParam {
 /// A declared parameter that also holds its annotation as written, which a
 /// symbol spells.
 pub trait AnnotatedParam: DeclaredParam {
-    fn annotation(&self) -> &Type;
+    fn annotation(&self) -> &Expr;
 }
 
 impl<P: AnnotatedParam + ?Sized> AnnotatedParam for &P {
-    fn annotation(&self) -> &Type {
+    fn annotation(&self) -> &Expr {
         (**self).annotation()
     }
 }
 
 impl AnnotatedParam for FnParam {
-    fn annotation(&self) -> &Type {
+    fn annotation(&self) -> &Expr {
         &self.ty
     }
 }
@@ -1174,10 +1179,10 @@ pub struct Method {
     /// owned/read receivers participate in lifecycle and call checking.
     pub self_convention: Option<ArgConvention>,
     pub self_origin: Option<OriginSpec>,
-    /// The receiver's annotation (`out self: W[2]`), `None` when `self` is
-    /// unannotated. On `out self` it is the initializer's refined result
+    /// The receiver's annotation expression (`out self: W[2]`), `None` when
+    /// `self` is unannotated. On `out self` it is the initializer's refined result
     /// type; on any other receiver the checker accepts only `Self`.
-    pub self_type: Option<Type>,
+    pub self_type: Option<Expr>,
     /// How many of `params` an initializer declares before its `out self`
     /// (`__init__[T: Iterable](ref iterable: T, out self: List[...])`): the
     /// arguments the receiver's annotation may read. `0` on every other
@@ -1193,9 +1198,12 @@ pub struct Method {
     pub keyword_only: Option<usize>,
     /// Whether the `raises` effect was declared.
     pub raises: bool,
-    /// The declared typed error, or `None` for bare `raises`/non-raising.
-    pub raises_type: Option<Type>,
-    pub ret: Option<Type>,
+    /// The declared typed error's annotation expression, or `None` for bare
+    /// `raises`/non-raising.
+    pub raises_type: Option<Expr>,
+    /// The result's annotation expression, which the checker converts in its
+    /// type context.
+    pub ret: Option<Expr>,
     pub where_clauses: Vec<Expr>,
     pub body: Vec<Stmt>,
     /// Where the method came from, when not from source. The parser never
@@ -1236,17 +1244,20 @@ pub struct TraitMethod {
     /// `params`.
     pub self_convention: Option<ArgConvention>,
     pub self_origin: Option<OriginSpec>,
-    /// The receiver's annotation, `None` when `self` is unannotated. A trait
-    /// requirement accepts only `Self`.
-    pub self_type: Option<Type>,
+    /// The receiver's annotation expression, `None` when `self` is
+    /// unannotated. A trait requirement accepts only `Self`.
+    pub self_type: Option<Expr>,
     pub params: Vec<FnParam>,
     pub positional_only: Option<usize>,
     pub keyword_only: Option<usize>,
     /// Whether the trait requirement/default declares a `raises` effect.
     pub raises: bool,
-    /// The declared typed error, or `None` for bare `raises`/non-raising.
-    pub raises_type: Option<Type>,
-    pub ret: Option<Type>,
+    /// The declared typed error's annotation expression, or `None` for bare
+    /// `raises`/non-raising.
+    pub raises_type: Option<Expr>,
+    /// The result's annotation expression, which the checker converts in its
+    /// type context.
+    pub ret: Option<Expr>,
     pub where_clauses: Vec<Expr>,
     /// The method body. `None` for a pure requirement (`...`); `Some(body)` for a
     /// **default implementation**, which is the trait's member `Trait.method`,
@@ -2003,12 +2014,13 @@ pub enum StmtKind {
         /// The parser also accepts legacy `unified { ... }` as a Mojito-only
         /// compatibility spelling, but normalizes both forms here.
         captures: Option<CaptureList>,
-        /// Whether the `raises` effect was declared. A following typed-error
-        /// annotation is currently parsed but not retained.
+        /// Whether the `raises` effect was declared.
         raises: bool,
-        /// The typed error following `raises`, if present.
-        raises_type: Option<Type>,
-        ret: Option<Type>,
+        /// The typed error's annotation expression following `raises`, if
+        /// present.
+        raises_type: Option<Expr>,
+        /// The result's annotation expression.
+        ret: Option<Expr>,
         where_clauses: Vec<Expr>,
         body: Vec<Stmt>,
     },
@@ -2024,8 +2036,9 @@ pub enum StmtKind {
         /// Traits this struct declares conformance to (`struct S(A, B):`); empty
         /// if none. Nominal — a `[T: A]` bound is satisfied only if `A` is here.
         conforms: Vec<String>,
-        /// The nominal closure trait (`def(...) -> ...`), when declared.
-        callable_conformance: Option<Type>,
+        /// The nominal closure trait's annotation expression (`def(...) ->
+        /// ...`), when declared.
+        callable_conformance: Option<Expr>,
         /// Conditions attached to entries in `conforms`, represented as
         /// `(trait_name, comptime predicate)`. An absent entry is unconditional.
         conformance_conditions: Vec<(String, Expr)>,
@@ -2257,6 +2270,42 @@ impl Expr {
             span,
             source: None,
             syntax_id: mojito_common::token::SyntaxId::fresh(),
+        }
+    }
+
+    /// The annotation expression a synthesized slot stores for `ty`: the
+    /// expression spelling source would write ([`Type::expression_spelling`])
+    /// when it converts back to exactly `ty`, else `ty` as a type value.
+    pub fn annotation_of(ty: Type, span: Span) -> Self {
+        match ty.expression_spelling(span) {
+            Some(spelled) if spelled.annotation_type().as_ref() == Some(&ty) => spelled,
+            _ => Self::new(ExprKind::TypeValue(ty), span),
+        }
+    }
+
+    /// Rewrite this annotation through its type-context view: `f` edits
+    /// [`Self::annotation_type`], and only a changed view replaces the
+    /// expression, by [`Self::annotation_of`] at the same span and source.
+    pub fn retype_view(&mut self, f: impl FnOnce(&mut Type)) {
+        let Some(before) = self.annotation_type() else {
+            return;
+        };
+        let mut view = before.clone();
+        f(&mut view);
+        if view != before {
+            let source = self.source.take();
+            *self = Self::annotation_of(view, self.span);
+            self.source = source;
+        }
+    }
+
+    /// Whether this annotation is the enclosing type `Self`, spelled or
+    /// synthesized.
+    pub fn is_self_annotation(&self) -> bool {
+        match &self.kind {
+            ExprKind::Identifier(name) => name == "Self",
+            ExprKind::TypeValue(ty) => matches!(ty, Type::SelfType),
+            _ => false,
         }
     }
 
@@ -3573,10 +3622,10 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
         fn type_params(&mut self, params: &mut [TypeParam]) {
             for param in params {
                 if let Some(ty) = &mut param.value_type {
-                    self.ty(ty);
+                    self.expr(ty);
                 }
                 if let Some(ty) = &mut param.callable_bound {
-                    self.ty(ty);
+                    self.expr(ty);
                 }
                 if let Some(value) = &mut param.origin_mutability {
                     self.expr(value);
@@ -3641,7 +3690,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
         }
 
         fn param(&mut self, param: &mut FnParam) {
-            self.ty(&mut param.ty);
+            self.expr(&mut param.ty);
             if let Some(value) = &mut param.default {
                 self.expr(value);
             }
@@ -3784,10 +3833,10 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                         self.param(param);
                     }
                     if let Some(error) = raises_type {
-                        self.ty(error);
+                        self.expr(error);
                     }
                     if let Some(ret) = ret {
-                        self.ty(ret);
+                        self.expr(ret);
                     }
                     self.decorators(decorators);
                     for condition in where_clauses {
@@ -3809,7 +3858,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                 } => {
                     self.type_params(type_params);
                     if let Some(callable) = callable_conformance {
-                        self.ty(callable);
+                        self.expr(callable);
                     }
                     for condition in where_clauses {
                         self.expr(condition);
@@ -3856,7 +3905,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                         .into_iter()
                         .flatten()
                         {
-                            self.ty(ty);
+                            self.expr(ty);
                         }
                         self.decorators(&mut method.decorators);
                         for condition in &mut method.where_clauses {
@@ -3888,7 +3937,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
                         .into_iter()
                         .flatten()
                         {
-                            self.ty(ty);
+                            self.expr(ty);
                         }
                         for condition in &mut method.where_clauses {
                             self.expr(condition);

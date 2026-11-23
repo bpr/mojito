@@ -278,10 +278,10 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
             };
             for parameter in type_params {
                 if let Some(value_type) = &mut parameter.value_type {
-                    substitute_source_type_bindings(value_type, &inner);
+                    rewrite::retype_annotation(value_type, &inner);
                 }
                 if let Some(callable) = &mut parameter.callable_bound {
-                    substitute_source_type_bindings(callable, &inner);
+                    rewrite::retype_annotation(callable, &inner);
                 }
             }
             for parameter in params {
@@ -310,7 +310,7 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
             };
             for parameter in params {
                 if let Some(value_type) = &mut parameter.value_type {
-                    substitute_source_type_bindings(value_type, &inner);
+                    rewrite::retype_annotation(value_type, &inner);
                 }
             }
             substitute_source_type_bindings(result, &inner);
@@ -354,7 +354,7 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
         ExprKind::Identifier(name) => {
             let sibling = siblings.iter().find(|sibling| sibling.name == *name)?;
             let ty = match (&sibling.value_type, sibling.bounds.as_slice()) {
-                (Some(source), _) => ct_param_source_type(source)?,
+                (Some(source), _) => ct_param_source_type(&source.annotation_type()?)?,
                 (None, [only]) => ct_value_param_type(only)?,
                 _ => return None,
             };

@@ -5825,12 +5825,18 @@ explicitly. `SourceType` is parser-owned syntax; `Ty`, `binding_ty`, and MIR
 expression, and a `SourceType` is only its conversion: an expression no type
 spelling covers stays `SourceType::Value`, which the checker evaluates in the
 type context (`denoted_type`), so the parser rejects no annotation for its
-shape. A statement or member annotation slot (`var` and `comptime`
-annotations, struct and trait `comptime` members, struct fields, and union
-payloads) stores the annotation expression itself, as upstream keeps it, and
-the checker converts it when it reads it (`Checker::ty_from_anno`,
-`TraitComptime::annotation_type` for a trait member's `&` composition);
-signature and type-parameter slots still store the conversion.
+shape. Every annotation slot (`var` and `comptime` annotations, struct and
+trait `comptime` members, struct fields, union payloads, a parameter's type,
+a result, a `raises` type, a receiver's annotation, a callable conformance,
+and a type parameter's value type and callable bound) stores the annotation
+expression itself, as upstream keeps it, and the checker converts it when it
+reads it (`Checker::ty_from_anno`, `TraitComptime::annotation_type` for a
+trait member's `&` composition, `TypeParam::annotation_type` for a binder).
+A synthesized slot stores the expression source would spell
+(`Expr::annotation_of`). The `SourceType`s left inside the AST are a
+function type's internals, a generator's result, a `ref` referent, and a
+bracket's type operand, each held in an `ExprKind::TypeValue` or a
+`ParamArg::Type`.
 `AnnotationSite` keys declaration
 annotations at the checked boundary, after which HIR, MIR, and the VM carry only
 the resolved `Ty`. In particular, variable initialization and function-entry

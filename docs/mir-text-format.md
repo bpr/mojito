@@ -1410,6 +1410,12 @@ slot as `absent`. The package format moves to `mojito-package 265` (R769):
 a trait method op names its symbol, and a requirement declaring a
 parameter default is a lowering unit of its own.
 
+The package format moves to `mojito-package 266` (R2535): the checker
+residue's module `def` results and the source parameters of a struct
+record hold their annotations as the parsed expressions upstream keeps,
+which the checker converts in its type context when it reads them, in
+place of the converted type. The MIR schema does not change.
+
 Schema 1.229 completes a trait requirement's function type after its
 `variadic_convention`, as upstream's trait declares it:
 `receiver_convention`, its receiver's declared convention (`present(var)`

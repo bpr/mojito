@@ -672,7 +672,7 @@ pub struct Checker {
     /// The declared result of each non-generic module `def` that declares
     /// one, the first declaration's under an overloaded name: what a module
     /// constant applying it denotes ([`Self::applied_constant_expr`]).
-    module_def_results: declaration_table::DeclarationTable<SourceType>,
+    module_def_results: declaration_table::DeclarationTable<Expr>,
     /// The expressions lifted so far, each with the application it denotes.
     lifted_applications: RefCell<Vec<comptime_validation::LiftedApplication>>,
     /// The lowered name of the declaration whose body is being checked,
@@ -1008,11 +1008,12 @@ pub struct Checker {
     /// raise point (`explicit_destroy`'s raise edges).
     raising_iterations: RefCell<FactSet<SourceSpan>>,
     return_ref_contracts: Vec<Option<ReturnRefContract>>,
-    /// The enclosing body's value-return annotation, re-resolved over the
+    /// The enclosing body's value-return annotation expression, re-resolved
+    /// over the
     /// body's own places to judge a returned struct's origin tail, flagged
     /// when it belongs to a compiler-generated (`$`-mangled) specialization;
     /// `None` for a reference return.
-    return_annotations: Vec<Option<(mojito_ast::ast::SourceType, bool)>>,
+    return_annotations: Vec<Option<(Expr, bool)>>,
     /// How each enclosing body's `return` meets its result.
     named_result_context: Vec<BodyResult>,
     /// Whether each enclosing body returns upstream's `!kgen.deferred`, so
@@ -1540,13 +1541,13 @@ impl Checker {
     fn declared_error(
         &self,
         raises: bool,
-        raises_type: Option<&SourceType>,
+        raises_type: Option<&Expr>,
     ) -> Result<Option<Ty>, TypeError> {
         if !raises {
             return Ok(None);
         }
         Ok(Some(match raises_type {
-            Some(error) => self.ty_from_spelling(error)?,
+            Some(error) => self.ty_from_anno(error)?,
             None => Ty::error(),
         }))
     }
@@ -4232,7 +4233,7 @@ struct StructDeclaration<'a> {
     name: &'a str,
     type_params: &'a [mojito_ast::ast::TypeParam],
     conforms: &'a [String],
-    callable_conformance: &'a Option<SourceType>,
+    callable_conformance: &'a Option<Expr>,
     conformance_conditions: &'a [(String, Expr)],
     where_clauses: &'a [Expr],
     fields: &'a [mojito_ast::ast::Param],

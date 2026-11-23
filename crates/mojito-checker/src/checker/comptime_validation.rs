@@ -1219,7 +1219,10 @@ pub(super) fn applicable_declarations<'a>(
                     positional_only: *positional_only,
                     keyword_only: *keyword_only,
                     raises: *raises,
-                    ret: ret.as_ref().unwrap_or(&SourceType::None),
+                    ret: ret
+                        .as_ref()
+                        .and_then(Expr::annotation_type)
+                        .unwrap_or(SourceType::None),
                     where_clauses,
                     gate: None,
                 };
@@ -1271,20 +1274,18 @@ pub(super) fn applicable_declarations<'a>(
                 if mojito_checked::unit::synthesizes_fieldwise_constructor(
                     *fieldwise_init,
                     methods.iter().map(super::calls::lifecycle_method_name),
-                ) && let Some(params) = fields
-                    .iter()
-                    .map(|field| {
-                        Some(mojito_ast::ast::FnParam {
+                ) {
+                    let params: Vec<_> = fields
+                        .iter()
+                        .map(|field| mojito_ast::ast::FnParam {
                             name: field.name.clone(),
-                            ty: field.ty.annotation_type()?,
+                            ty: field.ty.clone(),
                             default: None,
                             kind: mojito_ast::ast::ParamKind::Regular,
                             convention: None,
                             origin: None,
                         })
-                    })
-                    .collect::<Option<Vec<_>>>()
-                {
+                        .collect();
                     let shape = ApplicableShape {
                         decorators: &[],
                         type_params: &[],
@@ -1292,7 +1293,7 @@ pub(super) fn applicable_declarations<'a>(
                         positional_only: None,
                         keyword_only: None,
                         raises: false,
-                        ret: &constructed,
+                        ret: constructed.clone(),
                         where_clauses: &[],
                         gate: None,
                     };
@@ -1340,7 +1341,7 @@ pub(super) fn applicable_declarations<'a>(
                             positional_only: method.positional_only,
                             keyword_only: method.keyword_only,
                             raises: method.raises,
-                            ret: &constructed,
+                            ret: constructed.clone(),
                             where_clauses: &method.where_clauses,
                             gate: synthesized_gate(method),
                         };
@@ -1353,7 +1354,10 @@ pub(super) fn applicable_declarations<'a>(
                                 SelfSlot::Constructed,
                             )
                             .map(|function| ApplicableFunction {
-                                refined_self: method.self_type.clone(),
+                                refined_self: method
+                                    .self_type
+                                    .as_ref()
+                                    .and_then(Expr::annotation_type),
                                 ..function
                             });
                         list(name.clone(), function, Some(method));
@@ -1374,11 +1378,10 @@ pub(super) fn applicable_declarations<'a>(
                     {
                         continue;
                     }
-                    let Some(ret) = method
-                        .ret
-                        .as_ref()
-                        .or_else(|| (!method.has_self).then_some(&SourceType::None))
-                    else {
+                    let Some(ret) = method.ret.as_ref().map_or_else(
+                        || (!method.has_self).then_some(SourceType::None),
+                        Expr::annotation_type,
+                    ) else {
                         continue;
                     };
                     let shape = ApplicableShape {
@@ -7565,7 +7568,8 @@ struct ApplicableShape<'a> {
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
     raises: bool,
-    ret: &'a SourceType,
+    /// The `->` result converted in its type context.
+    ret: SourceType,
     where_clauses: &'a [Expr],
     gate: Option<&'a String>,
 }
@@ -7619,7 +7623,7 @@ impl ApplicableShape<'_> {
                 Some(ApplicableCollector {
                     index: mojito_ast::call::regular_marker_index(self.params, Some(position))?,
                     name: param.name.clone(),
-                    element: slot(&param.ty).filter(|_| by_value(param))?,
+                    element: slot(&param.ty.annotation_type()?).filter(|_| by_value(param))?,
                 })
             }
             None => None,
@@ -7639,14 +7643,17 @@ impl ApplicableShape<'_> {
                     && applicable_convention(param);
                 Some(ApplicableParameter {
                     name: param.name.clone(),
-                    ty: slot(&param.ty).filter(|_| passed)?,
+                    ty: slot(&param.ty.annotation_type()?).filter(|_| passed)?,
                     default: param.default.clone(),
                     by_reference: param.convention == Some(ArgConvention::Ref),
                     convention: param.convention,
                 })
             })
             .collect::<Option<Vec<_>>>()?;
-        let ret = mojito_ast::ast::named_result(self.params).map_or(self.ret, |result| &result.ty);
+        let ret = match mojito_ast::ast::named_result(self.params) {
+            Some(result) => &result.ty.annotation_type()?,
+            None => &self.ret,
+        };
         Some(ApplicableFunction {
             owner,
             site: Some(site),

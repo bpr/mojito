@@ -129,7 +129,7 @@ fn assert_outside_function() -> ParseError {
 /// branches plus the optional `else` body. Shared by `if` and `comptime if`.
 type IfChain = (Vec<(Condition, Vec<Stmt>)>, Option<Vec<Stmt>>);
 
-type StructConformanceList = (Vec<String>, Vec<(String, Expr)>, Option<Type>);
+type StructConformanceList = (Vec<String>, Vec<(String, Expr)>, Option<Expr>);
 
 type ParsedSliceTail = (Option<Box<Expr>>, Option<Box<Expr>>);
 

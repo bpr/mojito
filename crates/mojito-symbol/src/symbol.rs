@@ -19,9 +19,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-use mojito_ast::ast::{
-    AnnotatedParam, ArgConvention, FnParam, Method, ParamKind, Stmt, StmtKind, Type,
-};
+use mojito_ast::ast::{AnnotatedParam, ArgConvention, FnParam, Method, ParamKind, Stmt, StmtKind};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_types::ct::{CtLane, CtValue};
 use mojito_types::param_expr::MetaTy;
@@ -1769,7 +1767,7 @@ fn is_mojo_move_constructor<P: AnnotatedParam>(m: &LifecycleShape<'_, P>) -> boo
         // Current Mojo requires the consuming `deinit move: Self` convention;
         // the bare `move: Self` shape is rejected by the checker.
         && matches!(m.params[0].convention(), Some(ArgConvention::Deinit))
-        && matches!(m.params[0].annotation(), Type::SelfType)
+        && m.params[0].annotation().is_self_annotation()
         && !m.returns
 }
 
@@ -1784,7 +1782,7 @@ fn is_mojo_copy_constructor<P: AnnotatedParam>(m: &LifecycleShape<'_, P>) -> boo
         && !m.params[0].has_default()
         && m.params[0].kind() == ParamKind::Regular
         && m.params[0].convention().is_none()
-        && matches!(m.params[0].annotation(), Type::SelfType)
+        && m.params[0].annotation().is_self_annotation()
         && !m.returns
 }
 

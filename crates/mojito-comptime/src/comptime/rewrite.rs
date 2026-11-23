@@ -35,7 +35,7 @@ pub(super) fn substitute_type_bindings_in_expr(e: &mut Expr, subs: TypeSubs) {
 /// binder, `Self.binder`, or bracket operand naming one becomes the bound
 /// type, while a bracket's head and any expression the annotation evaluates
 /// keep their own spelling.
-fn retype_annotation(e: &mut Expr, subs: TypeSubs) {
+pub(super) fn retype_annotation(e: &mut Expr, subs: TypeSubs) {
     let binder = match &e.kind {
         ExprKind::Identifier(name) if name != "Self" => Some(name.as_str()),
         _ => e.self_member(),
@@ -200,10 +200,10 @@ fn retype_target(target: &mut mojito_ast::ast::DestructureTarget, subs: TypeSubs
 )]
 fn retype_type_parameter(parameter: &mut TypeParam, subs: TypeSubs) {
     if let Some(value_type) = &mut parameter.value_type {
-        substitute_type_bindings_in_type(value_type, subs);
+        retype_annotation(value_type, subs);
     }
     if let Some(callable) = &mut parameter.callable_bound {
-        substitute_type_bindings_in_type(callable, subs);
+        retype_annotation(callable, subs);
     }
     if let Some(mutability) = &mut parameter.origin_mutability {
         retype_expr(mutability, subs);
@@ -214,7 +214,7 @@ fn retype_type_parameter(parameter: &mut TypeParam, subs: TypeSubs) {
 }
 
 fn retype_fn_parameter(parameter: &mut FnParam, subs: TypeSubs) {
-    substitute_type_bindings_in_type(&mut parameter.ty, subs);
+    retype_annotation(&mut parameter.ty, subs);
     if let Some(origins) = &mut parameter.origin {
         retype_exprs(origins, subs);
     }
@@ -369,10 +369,10 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 retype_fn_parameter(parameter, &inner);
             }
             if let Some(ret) = ret {
-                substitute_type_bindings_in_type(ret, &inner);
+                retype_annotation(ret, &inner);
             }
             if let Some(error) = raises_type {
-                substitute_type_bindings_in_type(error, &inner);
+                retype_annotation(error, &inner);
             }
             for predicate in where_clauses {
                 retype_expr(predicate, &inner);
@@ -397,7 +397,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 retype_type_parameter(parameter, &inner);
             }
             if let Some(callable) = callable_conformance {
-                substitute_type_bindings_in_type(callable, &inner);
+                retype_annotation(callable, &inner);
             }
             for (_, condition) in conformance_conditions {
                 retype_expr(condition, &inner);
@@ -456,7 +456,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 .into_iter()
                 .flatten()
                 {
-                    substitute_type_bindings_in_type(ty, &inner);
+                    retype_annotation(ty, &inner);
                 }
                 for condition in &mut method.where_clauses {
                     retype_expr(condition, &inner);
@@ -794,7 +794,7 @@ fn retype_method(method: &mut mojito_ast::ast::Method, subs: TypeSubs) {
     .into_iter()
     .flatten()
     {
-        substitute_type_bindings_in_type(ty, &inner);
+        retype_annotation(ty, &inner);
     }
     for predicate in &mut method.where_clauses {
         retype_expr(predicate, &inner);
