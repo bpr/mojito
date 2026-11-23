@@ -2872,15 +2872,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   value by what it denotes (`Checker::denoted_type`). An annotation
   other than a `ref` or `*` pack parses as one expression at `**`
   precedence in `Parser::parse_type` (`parse_type_at`, which a function
-  type's result reads at ternary level; and a value bound's `x: M.A[...]`
-  in `parse_type_params`) and converts through `Expr::annotation_type`, the
+  type's result reads at ternary level) and converts through
+  `Expr::annotation_type`, the
   annotation's type context, which alone maps the `None` value to
   `Type::None` and reads any name, `type_of(x)`, a member, a subscript, a
   construction, and a `def`/`__generator_type` `TypeValue` as a `Type`.
   `Expr::composition_type` is the trait-composition conversion (an `&`
   chain to `$trait_composition`), called by `parse_generator_type_tail`
   for a generator result and `parse_trait_comptime` for an associated
-  member's annotation.
+  member's annotation. `parse_type_params` reads a type-parameter bound
+  as one expression and classifies it (`type_param_bound`, through the same
+  conversion) into bounds, a callable bound, an origin mutability, or a
+  value type.
   A callable bound (`F: def[width: SIMDLength](...) -> ...`) keys as its
   checked contract displays (`write_callable`/`write_param_decls`), its own
   binders included; no overload key embeds a span or source path.
@@ -3543,8 +3546,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`record_discarded_metatype`). A call argument of a metatype is
   `TypeError::MetatypeArgument` (`argument_mismatch`, `call_inference.rs`),
   and a missing member through one `TypeError::NoTypeAttribute`.
-- The parser reads `type_of(...)` as `Type::TypeOf` (`parse_type`, and
-  `parse_type_params` for a parameter's value type). The checker's
+- The parser reads `type_of(...)` as `Type::TypeOf` through
+  `Expr::annotation_type` (an annotation, and a type-parameter bound). The checker's
   `resolve_ty_from_anno_at_depth` (`type_resolution.rs`) maps a trait
   operand to the metatype through `Checker::trait_value` (`traits.rs`),
   which drops a trait another one implies (`trait_implies`), so the binder

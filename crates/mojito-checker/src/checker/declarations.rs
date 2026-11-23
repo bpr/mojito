@@ -513,9 +513,9 @@ fn marks_initialized(expr: &Expr, field: &str) -> bool {
     })
 }
 
-/// The mutability the `mut` argument among an `Origin` application's
-/// `args` (`mut=` or the first positional one) spells: a literal's, or the
-/// binder it names, else one left to inference.
+/// The mutability the `mut=` argument among an `Origin` application's
+/// `args` spells: a literal's, or the binder it names, else one left to
+/// inference.
 fn origin_mut_argument(args: &[mojito_ast::ast::ParamArg]) -> OriginMutability {
     use mojito_ast::ast::ParamArg;
     match origin_mut_source(args) {
@@ -529,18 +529,12 @@ fn origin_mut_argument(args: &[mojito_ast::ast::ParamArg]) -> OriginMutability {
 }
 
 /// The `mut` argument an `Origin[...]` bracket `args` spells, by keyword
-/// or as its leading positional argument.
+/// only: upstream's `mut` is infer-only, so no positional argument binds it.
 fn origin_mut_source(args: &[mojito_ast::ast::ParamArg]) -> Option<&mojito_ast::ast::ParamArg> {
-    use mojito_ast::ast::ParamArg;
-    args.iter()
-        .find_map(|argument| match argument {
-            ParamArg::Named { name, value } if name == "mut" => Some(value.as_ref()),
-            _ => None,
-        })
-        .or_else(|| {
-            args.first()
-                .filter(|argument| !matches!(argument, ParamArg::Named { .. }))
-        })
+    args.iter().find_map(|argument| match argument {
+        mojito_ast::ast::ParamArg::Named { name, value } if name == "mut" => Some(value.as_ref()),
+        _ => None,
+    })
 }
 
 /// The type an origin binder declares: the `Origin` struct (or an
@@ -1464,12 +1458,18 @@ impl Checker {
                 if !self.is_library_origin(name) {
                     return Ok(None);
                 }
-                // A `mut` argument of another type than `Bool` is the
-                // binding's mismatch; one naming a binder this scope does
-                // not hold (an enclosing declaration's, read after it
-                // closed) leaves the mutability symbolic: the type is still
-                // `Origin`.
-                if matches!(error, TypeError::TypeMismatch { .. }) {
+                // A `mut` argument of another type than `Bool`, or any
+                // argument but `mut=` (a positional one, which the
+                // infer-only `mut` refuses), is the binding's error. A bare
+                // `Origin`, or a `mut=` naming a binder this scope does not
+                // hold (an enclosing declaration's, read after it closed),
+                // leaves the mutability symbolic: the type is still `Origin`.
+                let only_mut = match args.as_slice() {
+                    [] => true,
+                    [mojito_ast::ast::ParamArg::Named { name, .. }] => name == "mut",
+                    _ => false,
+                };
+                if !only_mut || matches!(error, TypeError::TypeMismatch { .. }) {
                     return Err(error);
                 }
                 return Ok(Some(OriginBinderType::Origin(origin_mut_argument(args))));

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A type-parameter bound is one expression, as upstream parses it (R2136):
+  `x: (Int)`, `T: (Copyable & Movable)`, `x: None`, and a function type
+  anywhere in a composition (`F: def(Int) & Copyable`, `F: (def(Int) ->
+  Int) & ImplicitlyCopyable`) are accepted
+  (`assets/ok/type_param_bound_expression.mojo`); a second function type is
+  the pin's "trait composition must not contain more than one closure type".
+
 - A trait requirement's default may read `Self` or the requirement's own
   type parameters (`factor: Int = Self.K`, `factor: Int = T.K` in
   `def scale2[T: HasK](...)`, `other: Self = Self()`), as at the pin: the default is typed in its
@@ -1470,6 +1477,11 @@ to evolve under the `0.x` compatibility rules.
   script helpers moved to `scripts/tierlib.py`.
 
 ### Fixed
+
+- A positional `Origin` argument (`o: Origin[True]`) is the pin's "invalid
+  call to 'Origin': unexpected parameter", since `Origin`'s `mut` is
+  infer-only, where it was read as `mut`
+  (`assets/type_error/origin_bound_positional_mutability.mojo`).
 
 - A compile-time comparison of tuple displays under `>`, `<=`, `>=`, or
   `!=` (`comptime later = (2, 1) > (1, 9)`) runs again instead of failing

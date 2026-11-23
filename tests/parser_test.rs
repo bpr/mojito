@@ -4601,6 +4601,63 @@ fn a_function_type_result_takes_a_later_composition() {
 }
 
 #[test]
+fn parses_a_type_parameter_bound_as_one_expression() {
+    let params = |source: &str| {
+        let statements = parse(source);
+        let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+            panic!("expected a def");
+        };
+        type_params[0].clone()
+    };
+    assert_eq!(params("def f[x: (Int)]():\n    pass\n").bounds, ["Int"]);
+    assert_eq!(
+        params("def f[T: (Copyable & Movable)]():\n    pass\n").bounds,
+        ["Copyable", "Movable"]
+    );
+    assert_eq!(
+        params("def f[x: None]():\n    pass\n").value_type,
+        Some(Type::None)
+    );
+    let callable = params("def f[F: def(Int) & Copyable]():\n    pass\n");
+    assert_eq!(callable.bounds, ["<function type>", "Copyable"]);
+    assert!(matches!(callable.callable_bound, Some(Type::Func { .. })));
+    let statements = parse("def f[m: Bool, o: Origin[mut=m]]():\n    pass\n");
+    let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+        panic!("expected a def");
+    };
+    assert_eq!(type_params[1].bounds, ["Origin"]);
+    assert!(type_params[1].origin_mutability.is_some());
+    let alias = params("def f[o: ImmOrigin]():\n    pass\n");
+    assert_eq!(alias.bounds, ["ImmOrigin"]);
+    assert_eq!(alias.origin_mutability, None);
+}
+
+#[test]
+fn rejects_a_type_parameter_bound_no_type_converts() {
+    for (source, message) in [
+        (
+            "def f[T: Copyable & Movable | Copyable]():\n    pass\n",
+            "expected a type, found an expression",
+        ),
+        (
+            "def f[x: 3]():\n    pass\n",
+            "expected a type, found an expression",
+        ),
+        (
+            "def f[x: List[Int] & Copyable]():\n    pass\n",
+            "expected a trait name in a type-parameter bound composition",
+        ),
+        (
+            "def f[F: def(Int) & def(Float64)]():\n    pass\n",
+            "trait composition must not contain more than one closure type",
+        ),
+    ] {
+        let error = mojito::parse(source).expect_err(source);
+        assert!(error.to_string().contains(message), "{source}: {error}");
+    }
+}
+
+#[test]
 fn an_annotation_is_one_expression() {
     let statements = parse("def g(x: (Int)) -> (Int):\n    return x\n");
     let StmtKind::Def { params, ret, .. } = &statements[0].kind else {

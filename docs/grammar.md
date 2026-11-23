@@ -365,7 +365,9 @@ retained; the marker is followed by `,` or the closing `]`, so `[T: Copyable
 // U: AnyType]` is upstream's "expected ']' for parameter list". Any other
 bound name, `ImmOrigin` and `MutOrigin` included, records as spelled: those
 two are library aliases of `Origin`, and the check resolves an origin alias
-in a bound as any type.
+in a bound as any type. `Origin`'s `mut` is infer-only (before its `//`), so
+a positional argument (`o: Origin[True]`) parses and is the check's
+"invalid call to 'Origin': unexpected parameter", as on the pin.
 Signature-level origin inference and substitution remain deferred.
 Origin positions also recognize two member projections as ordinary member
 syntax (no dedicated productions): `base._get_owned_interior["tag"]` names a
@@ -435,10 +437,29 @@ param_marker_or_decl:
     | '/'                                    # positional-only marker
     | '*'                                    # keyword-only marker (bare)
     | param_decl
-param_decl: ['*'] NAME ':' ( bound | type | generator_type ) ['=' expression]
+param_decl: ['*'] NAME ':' expression ['=' expression]
                                              # a type/callable parameter (or pack), or a value parameter
-bound: '&'.NAME+ ['&' function_type] | function_type
 ```
+
+A bound is one expression, as upstream parses it (`|`, `==`, `not`, and a
+ternary are inside it), converted in the type context as an annotation is
+and classified:
+
+- an `&` composition (however parenthesized) of trait names, with at most
+  one function type in any position, is the bound list and its callable
+  bound (`T: (Copyable & Movable)`, `F: def(Int) & Copyable`, `F: (def(Int)
+  -> Int) & ImplicitlyCopyable`); a second function type is the pin's
+  "trait composition must not contain more than one closure type", and any
+  other member "expected a trait name in a type-parameter bound
+  composition";
+- a lone function type is the callable bound;
+- a lone name (a trait, `Self`, `ImmOrigin`) is the one bound;
+- `Origin[mut=e]` is an origin binder of mutability `e`;
+- any other type (`Self.T`, `M.A`, `SIMD[...]`, `type_of(x)`, `None`, a
+  generator type) is the value type, beside its spelled head.
+
+An expression no type converts from is "expected a type, found an
+expression".
 
 The `/` positional-only and bare `*` keyword-only markers parse
 (`slice[output_width: Int, /, *, offset: Int = 0]`), but the parameter
@@ -448,28 +469,24 @@ keyword whichever side of a marker its parameter sits (R1735).
 A value parameter's `type` may be an earlier type parameter of the same list
 (`[T: Copyable, //, v: T]`, `[T: Copyable, //, *vs: T]`) or, on a method,
 `Self.NAME` naming the enclosing struct's type parameter (`def pick[v:
-Self.T](self)`); the parser records `Self.NAME` as the value type, and the
-checker reads a lone bound naming an earlier type binder as that binder's type.
-A qualified type, `NAME ('.' NAME)+ [param_args]`, is a value
-parameter's type too (`[x: M.A]`, `[t: AnyType, //, raw:
-_MLIR.KGENParamListType[t]]`, `[raw: _MLIR.KGENParamListType[Int]]`); the
-parser records it as the same associated lookup, member application, or
+Self.T](self)`), and the checker reads a lone bound naming an earlier type
+binder as that binder's type. A qualified type is a value parameter's type
+too (`[x: M.A]`, `[t: AnyType, //, raw: _MLIR.KGENParamListType[t]]`): the
+bound converts to the same associated lookup, member application, or
 dependent projection a type annotation produces.
 
 A **trait-valued parameter** is a value parameter typed by the trait
 metatype, spelled `type_of(Trait)` (`[Tr: type_of(AnyType)]`, `[Tr:
 type_of(Copyable & Hashable) = Copyable, //, n: Int]`). Its argument is a
 trait or a `&` composition of traits (`g[Copyable]()`, `g[Tr=Movable]()`).
-The parser records `type_of` as the bound and the `type_of(...)` type as the
-value type, as for a qualified type; `type_of` without parentheses stays an
-ordinary bound name.
+The bound converts to the `type_of(...)` type; `type_of` without
+parentheses stays an ordinary bound name.
 
 A **generator-typed parameter** is a value parameter whose type is a
 `generator_type` (`[G: __generator_type[Idx: Int] Int]`, see **Types**). Its
 argument is a parameterized `comptime` declaration read unapplied (`Twice`,
 `S.k`, `T.get`) or another generator parameter, which the body applies
-(`G[3]`). The parser records `__generator_type` as the bound and the
-generator type as the value type, as for `type_of`.
+(`G[3]`). The bound converts to the generator type.
 
 A `params_decl` list may follow the name in a `struct` or `def` header, declaring
 compile-time **parameters**. Each `NAME: X` is either a **type parameter** — when `X`
@@ -488,12 +505,13 @@ Current Mojo also permits a function type as a generic bound (`F: def(Int) ->
 Int`). Mojito retains that shape as a dependent checked callable constraint:
 conventions, effects, reference origins, and the result type survive substitution,
 nominal conformance, bounded indirect dispatch, HIR, and verified MIR. Traits
-compose with the function type as further requirements of the binder, before
-it (`F: ImplicitlyCopyable & RegisterPassable & def[width:
-SIMDLength](SIMD[DType.int32, width]) -> SIMD[DType.int32, width]`): the
-function type ends the composition, since upstream reads its result as an
-expression that would take a later `& Trait`, so `F: def(Int) -> Int &
-Copyable` is a parse error. A thin function, and a closure whose captures
+compose with the function type as further requirements of the binder, on
+either side of it (`F: ImplicitlyCopyable & RegisterPassable & def[width:
+SIMDLength](SIMD[DType.int32, width]) -> SIMD[DType.int32, width]`, `F:
+def(Int) & Copyable`). A function type's result is one expression that takes
+a later `& Trait`, so `F: def(Int) -> Int & Copyable` is a parse error and
+the result is parenthesized to compose (`F: (def(Int) -> Int) &
+Copyable`). A thin function, and a closure whose captures
 all are, satisfies `TrivialRegisterPassable`. The
 function type may declare its own parameter list, as in
 `F: def[T: ImplicitlyCopyable](T) -> T`; binder names are alpha-equivalent, while

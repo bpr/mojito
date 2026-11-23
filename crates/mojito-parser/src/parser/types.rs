@@ -389,8 +389,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
     /// Parses an optional type-parameter list `'[' type_param (',' type_param)* ']'`
     /// following a `struct`/`def` name. Returns an empty list if the next token is
-    /// not `[`. Each parameter must carry a `: bound` (one or more trait names
-    /// joined by `&`) — Mojo has no unconstrained type parameters.
+    /// not `[`. Each parameter must carry a `: bound` — Mojo has no
+    /// unconstrained type parameters. The bound is one expression, as upstream
+    /// parses it, converted in the type context and classified by
+    /// [`type_param_bound`].
     pub(super) fn parse_type_params(
         &mut self,
     ) -> Result<Vec<mojito_ast::ast::TypeParam>, ParseError> {
@@ -427,113 +429,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 &Token::Colon,
                 "A type parameter requires a ': bound' (e.g. 'T: Copyable')",
             )?;
-            let mut value_type = None;
-            let (first_bound, callable_bound, spelled_bound) =
-                if matches!(self.peek_token()?, Some(Token::Def)) {
-                    (
-                        "<function type>".to_string(),
-                        Some(self.parse_type()?),
-                        String::new(),
-                    )
-                // `G: __generator_type[Idx: Int] Int` is a value parameter
-                // typed by a generator type, recorded as for `type_of`.
-                } else if matches!(self.peek_token()?, Some(Token::GeneratorType)) {
-                    value_type = Some(self.parse_type()?);
-                    (
-                        "__generator_type".to_string(),
-                        None,
-                        "__generator_type".to_string(),
-                    )
-                } else {
-                    let bound = self.expect_identifier(
-                        "Expected a trait or type in the type-parameter bound",
-                    )?;
-                    (bound.clone(), None, bound)
-                };
-            // Origin parameters use `Origin[mut=<bool expression>]`. Preserve the
-            // Origin classification and parse the mutability expression; semantic
-            // origin parameters are deliberately deferred. An alias of an origin
-            // type (`ImmOrigin`, `MutOrigin`) records as spelled, and
-            // preparation resolves it.
-            // `Tr: type_of(AnyType)` is a value parameter typed by the trait
-            // metatype; the spelled head stays the bound, as for a qualified
-            // value type.
-            let first_bound = if first_bound == "type_of"
-                && callable_bound.is_none()
-                && matches!(self.peek_token()?, Some(Token::LParen))
-            {
-                value_type = Some(self.parse_type_of_operand()?);
-                first_bound
-            // `v: Self.T` is a value parameter typed by the enclosing
-            // struct's type parameter.
-            } else if first_bound == "Self"
-                && callable_bound.is_none()
-                && matches!(self.peek_token()?, Some(Token::Dot))
-            {
-                self.next_token()?;
-                let param = self.expect_identifier("Expected a parameter name after 'Self.'")?;
-                let spelled = format!("Self.{param}");
-                value_type = Some(Type::SelfParam(param));
-                spelled
-            } else if callable_bound.is_none() && matches!(self.peek_token()?, Some(Token::Dot)) {
-                // `x: M.A` or `raw: _MLIR.KGENParamListType[t]` is a value
-                // parameter typed by a qualified type.
-                let head = self.node(
-                    ExprKind::Identifier(spelled_bound.clone()),
-                    self.last_span.0,
-                );
-                let qualified = self.annotation_from(head, Precedence::Power)?;
-                value_type = Some(qualified);
-                spelled_bound
-            } else {
-                first_bound
-            };
-            let origin_mutability =
-                if first_bound == "Origin" && matches!(self.peek_token()?, Some(Token::LBracket)) {
-                    self.next_token()?;
-                    let key = self.expect_identifier("Expected 'mut' in Origin[mut=...]")?;
-                    if key != "mut" {
-                        return Err(ParseError::UnexpectedToken(
-                            Token::Identifier(key),
-                            "expected 'mut' in Origin[mut=...]".into(),
-                        ));
-                    }
-                    self.expect(&Token::Assign, "Expected '=' after 'mut' in Origin")?;
-                    let mutability = self.parse_expression(Precedence::Lowest)?;
-                    self.expect(&Token::RBracket, "Expected ']' after Origin mutability")?;
-                    Some(mutability)
-                } else if matches!(self.peek_token()?, Some(Token::LBracket)) {
-                    let args = self.parse_param_args()?;
-                    value_type = Some(Type::Named(first_bound.clone(), args));
-                    None
-                } else {
-                    None
-                };
-            let mut bounds = vec![first_bound];
-            let mut callable_bound = callable_bound;
-            while matches!(self.peek_token()?, Some(Token::Amp)) {
-                // A function type ends the composition. One with a result
-                // never reaches here (its result expression takes the `&`);
-                // one without (`def(Int) & Copyable`) is still refused.
-                if callable_bound.is_some() {
-                    return Err(ParseError::UnexpectedToken(
-                        self.next_token()?,
-                        "a function type ends a type-parameter bound; compose its traits before it"
-                            .into(),
-                    ));
-                }
-                self.next_token()?; // consume '&'
-                // A function type composes with the traits as one more
-                // requirement of the binder (`F: ImplicitlyCopyable &
-                // def(Int) -> Int`).
-                if matches!(self.peek_token()?, Some(Token::Def)) {
-                    callable_bound = Some(self.parse_type()?);
-                    bounds.push("<function type>".to_string());
-                    continue;
-                }
-                let bound = self.expect_identifier("Expected a trait name after '&'")?;
-                bounds.push(bound);
-            }
+            let bound = type_param_bound(&self.parse_expression(Precedence::Lowest)?)?;
             if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
                 return Err(ParseError::UnexpectedToken(
                     self.next_token()?,
@@ -549,10 +445,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             };
             params.push(mojito_ast::ast::TypeParam {
                 name,
-                bounds,
-                value_type,
-                callable_bound,
-                origin_mutability,
+                bounds: bound.bounds,
+                value_type: bound.value_type,
+                callable_bound: bound.callable_bound,
+                origin_mutability: bound.origin_mutability,
                 infer_only: false,
                 keyword_only,
                 default,
@@ -615,14 +511,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         })
     }
 
-    /// The parenthesized operand of `type_of`, whose name was just read.
-    fn parse_type_of_operand(&mut self) -> Result<Type, ParseError> {
-        self.expect(&Token::LParen, "Expected '(' after 'type_of'")?;
-        let operand = self.parse_expression(Precedence::Lowest)?;
-        self.expect(&Token::RParen, "Expected ')' after the 'type_of' operand")?;
-        Ok(Type::TypeOf(Box::new(operand)))
-    }
-
     // --- Expressions (Pratt parser) ---
 }
 
@@ -635,5 +523,119 @@ fn pack_spread_type(operand: &Expr) -> Option<Type> {
         _ => operand
             .self_member()
             .map(|field| Type::SelfParam(format!("*{field}"))),
+    }
+}
+
+/// A type-parameter bound's expression, classified into the fields of
+/// [`mojito_ast::ast::TypeParam`].
+struct TypeParamBound {
+    bounds: Vec<String>,
+    value_type: Option<Type>,
+    callable_bound: Option<Type>,
+    origin_mutability: Option<Expr>,
+}
+
+/// Classifies a type-parameter bound's expression, converted in the type
+/// context:
+///
+/// - an `&` composition is a list of trait names with at most one function
+///   type (the callable bound), in any position;
+/// - a lone function type is the callable bound;
+/// - a lone name (a trait, `Self`, an origin alias) is the one bound;
+/// - `Origin[mut=e]` is an origin binder of mutability `e`;
+/// - any other type is the parameter's value type, beside its spelled head.
+fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
+    const FUNCTION_TYPE: &str = "<function type>";
+    let mut members = Vec::new();
+    bound_members(expr, &mut members);
+    let mut bound = TypeParamBound {
+        bounds: Vec::new(),
+        value_type: None,
+        callable_bound: None,
+        origin_mutability: None,
+    };
+    if let [member] = members.as_slice() {
+        let ty = bound_member_type(member)?;
+        match &ty {
+            Type::Func { .. } => {
+                bound.bounds.push(FUNCTION_TYPE.to_string());
+                bound.callable_bound = Some(ty);
+            }
+            Type::Named(name, args) if args.is_empty() => bound.bounds.push(name.clone()),
+            Type::SelfType => bound.bounds.push("Self".to_string()),
+            Type::Named(name, args)
+                if name == "Origin"
+                    && let [mojito_ast::ast::ParamArg::Named { name: key, value }] =
+                        args.as_slice()
+                    && key == "mut"
+                    && let mojito_ast::ast::ParamArg::Value(mutability) = value.as_ref() =>
+            {
+                bound.bounds.push(name.clone());
+                bound.origin_mutability = Some(mutability.clone());
+            }
+            _ => {
+                bound.bounds.push(bound_spelling(member));
+                bound.value_type = Some(ty);
+            }
+        }
+        return Ok(bound);
+    }
+    for member in members {
+        match bound_member_type(member)? {
+            Type::Named(name, args) if args.is_empty() => bound.bounds.push(name),
+            ty @ Type::Func { .. } if bound.callable_bound.is_none() => {
+                bound.bounds.push(FUNCTION_TYPE.to_string());
+                bound.callable_bound = Some(ty);
+            }
+            Type::Func { .. } => {
+                return Err(ParseError::Message(
+                    "trait composition must not contain more than one closure type".to_string(),
+                )
+                .at(member.span));
+            }
+            _ => {
+                return Err(ParseError::Message(
+                    "expected a trait name in a type-parameter bound composition".to_string(),
+                )
+                .at(member.span));
+            }
+        }
+    }
+    Ok(bound)
+}
+
+/// The members of an `&` chain, however nested, in source order; any other
+/// expression is its own one member.
+fn bound_members<'a>(expr: &'a Expr, members: &mut Vec<&'a Expr>) {
+    if let ExprKind::Infix(InfixOp::BitAnd, left, right) = &expr.kind {
+        bound_members(left, members);
+        bound_members(right, members);
+    } else {
+        members.push(expr);
+    }
+}
+
+/// One bound member converted in the type context.
+fn bound_member_type(member: &Expr) -> Result<Type, ParseError> {
+    member.annotation_type().ok_or_else(|| {
+        ParseError::Message("expected a type, found an expression".to_string()).at(member.span)
+    })
+}
+
+/// The spelled head recorded beside a value type: `Self.NAME`, the root
+/// name of a qualified or applied type, `type_of`, `__generator_type`, or
+/// `None`.
+fn bound_spelling(expr: &Expr) -> String {
+    if let Some(field) = expr.self_member() {
+        return format!("Self.{field}");
+    }
+    match &expr.kind {
+        ExprKind::Identifier(name) | ExprKind::Call { name, .. } => name.clone(),
+        ExprKind::Member { object, .. }
+        | ExprKind::Index { object, .. }
+        | ExprKind::MultiIndex { object, .. } => bound_spelling(object),
+        ExprKind::TypeValue(Type::Generator { .. }) => "__generator_type".to_string(),
+        ExprKind::None => "None".to_string(),
+        _ => "<type expression>".to_string(),
     }
 }

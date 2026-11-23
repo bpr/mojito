@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2533**.
+Next free ID: **R2534**.
 
 ## Ordered Work
 
@@ -13362,19 +13362,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2136 Type-parameter bounds are a third, identifier-led grammar**
-
-  `parse_type_params` (`parser/types.rs`) reads a bound (`T: Copyable &
-  Hashable`, `v: Self.T`, `x: M.A`, `o: Origin[mut=e]`) with its own
-  grammar, where upstream parses the bound as an expression.
-  - Parse one expression at `Precedence::BitOr` and classify it: trait
-    names and compositions → `bounds`, `def` → `callable_bound`,
-    `Origin[mut=e]`/`ImmOrigin`/`MutOrigin` → `origin_mutability`,
-    anything else → `value_type`.
-  - Deletes the `v: Self.T` and `x: M.A` special arms.
-  - Depends on R2135.
-  - Model: Fable, Planned.
-
 - [ ] **R2137 The AST stores an annotation as a parsed type, not as its expression**
 
   `Param.ty`, field types, `ret`, `VarDecl` annotations, and
@@ -13392,7 +13379,26 @@ follow-ups the landed producer stages filed come last.
     "expected a type, found an expression"; the pin accepts both.
   - Probe: `def g(x: Int if True else Int)` stops at the parser's `**`
     floor for a plain annotation; the pin reads a whole expression there.
+  - Probe: `def f[x: Int if True else Int]()` is "expected a type, found
+    an expression"; the pin accepts it (`annotation_type` has no
+    conditional).
   - Updates `docs/architecture.md` and `docs/symbol-map.md`.
+  - Depends on R2136.
+  - Model: Fable, Not Planned.
+- [ ] **R2533 A module-qualified trait bound is a value type**
+
+  `TypeParam::bounds` holds bound names as strings, so a qualified trait
+  (`T: tr.Greet`) converts to an associated-member value type, where the
+  pin resolves the member to the trait and binds a type parameter.
+  - Probe: `import tr` (a module declaring `trait Greet`), then `def
+    f[T: tr.Greet](t: T)` is "unknown type '__module$tr$Greet'"; the pin
+    accepts it.
+  - Probe: `def f[T: tr.Greet & Copyable](t: T)` is "expected a trait name
+    in a type-parameter bound composition"; the pin accepts it.
+  - Fix: classify a bound member by what it resolves to at the check (a
+    trait through the module's namespace), not by its spelling, either
+    through R2137's expression AST or a qualified-name bound spelling the
+    linker rewrites.
   - Depends on R2136.
   - Model: Fable, Not Planned.
 
