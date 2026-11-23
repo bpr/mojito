@@ -271,6 +271,7 @@ pub fn lower_body(
         lazy_values: Vec::new(),
         erased: HashSet::new(),
         aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
+        addressed: mojito_mir::mir::addressed_registers(func, env.mir_declarations),
         storage_reads: HashSet::new(),
         made_ref_places: HashMap::new(),
         reference_places: HashMap::new(),
@@ -410,6 +411,10 @@ struct FnLowering<'a> {
     /// holds its place's address and no copy lifecycle runs (MIR's aggregate
     /// load is a shallow read; `CopyValue` is the copy boundary).
     aliased_load_regs: HashSet<u32>,
+    /// The registers this function's calls pass as a reference to the value
+    /// a parameter or receiver takes ([`mojito_mir::mir::addressed_registers`]),
+    /// the `!lit.ref` operands a call passes as their pointer.
+    addressed: HashSet<u32>,
     /// Aggregate registers read out of storage (a load, a field, an
     /// element, a payload): byte snapshots sharing their storage's buffers,
     /// which the storage's drop may free while the register is still read.

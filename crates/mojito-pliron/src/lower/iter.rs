@@ -55,7 +55,9 @@ impl FnLowering<'_> {
                 None,
             )
         })?;
-        let (source_storage, current_ty) = if let TyKind::Ref(reference) = source_ty.kind() {
+        let (source_storage, current_ty) = if let TyKind::Ref(reference) = source_ty.kind()
+            && self.func.binds_address(source)
+        {
             let handle =
                 pointer_scalar(self.name, &source_ty, &reference.address_space, None)?.handle(ctx);
             let load = LoadOp::new(ctx, self.var_slots[source as usize], handle);

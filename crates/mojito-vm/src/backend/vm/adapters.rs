@@ -486,12 +486,14 @@ impl VmBackend {
         // (`self.data[i].storage[1]`) is not raw storage: read it through
         // the reference walk, which chases stored handles mid-projection,
         // exactly like a plain `LoadPlace` does.
-        let recv = if parent
-            .projection_tys
-            .iter()
-            .any(|ty| matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
-            || super::references::place_crosses_reference(&parent)
-        {
+        let recv = if prog.crosses_reference(&parent)
+            || parent.proj.last().is_some_and(|_| {
+                mojito_mir::mir::place_step_holds_reference(
+                    &parent,
+                    parent.proj.len() - 1,
+                    |ty, field| prog.mir.declarations.declares_ref_field(ty, field),
+                )
+            }) {
             let composed = Value::Ref {
                 frame: frame_id.0,
                 slot: parent.root as usize,

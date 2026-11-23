@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::{AddressSpaceSlot, TyKind};
+use mojito_types::types::AddressSpaceSlot;
 
 impl FnLowering<'_> {
     /// Mask a shift amount with `& 63`, matching the VM's
@@ -353,11 +353,18 @@ impl FnLowering<'_> {
         scalar_type(self.name, ty, self.reg_span(reg)).map(Some)
     }
 
-    /// The scalar a reference-typed `reg` addresses, or `None` when `reg` is
-    /// no reference or its referent is a pointer or an aggregate, which
-    /// stay handles.
+    /// The scalar a by-address operand `reg` of a builtin operator
+    /// addresses, or `None` when `reg` is no reference or its referent is a
+    /// pointer or an aggregate, which stay handles. A builtin takes no
+    /// reference, so a reference operand is a by-address one
+    /// ([`mojito_mir::mir::addressed_receiver`]).
     pub(super) fn referent_scalar_ty(&self, reg: Reg) -> Result<Option<ScalarTy>, PlironError> {
-        let Some(TyKind::Ref(reference)) = self.func.reg_types.get(&reg.0).map(Ty::kind) else {
+        let Some(reference) = self
+            .func
+            .reg_types
+            .get(&reg.0)
+            .and_then(mojito_mir::mir::addressed_receiver)
+        else {
             return Ok(None);
         };
         match reference.referent.kind() {

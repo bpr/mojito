@@ -475,6 +475,11 @@ fn verify_reference_instruction(
                                 && crate::mir::make_ref_forwards_stored_handle(
                                     place,
                                     destination,
+                                    crate::mir::place_holds_reference(
+                                        place,
+                                        cx.function.binds_reference(place.root),
+                                        |ty, field| cx.declarations.declares_ref_field(ty, field),
+                                    ),
                                 ) =>
                         {
                             Some(ReferencePermission::from_mutability(stored.mutability))

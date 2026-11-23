@@ -48,8 +48,15 @@ impl FnLowering<'_> {
                     || mojito_types::types::is_stdlib_string_span_struct(name)
             })
         };
-        match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-            Some(mojito_types::types::TyKind::Ref(reference)) if is_string(&reference.referent) => {
+        // A builtin takes no reference, so a reference operand is a
+        // by-address one ([`mojito_mir::mir::addressed_receiver`]).
+        let addressed = self
+            .func
+            .reg_types
+            .get(&arg.0)
+            .and_then(mojito_mir::mir::addressed_receiver);
+        match addressed {
+            Some(reference) if is_string(&reference.referent) => {
                 self.reg_value(ctx, arg, ScalarTy::PTR).map(Some)
             }
             Some(_) if self.func.reg_types.get(&arg.0).is_some_and(is_string) => {

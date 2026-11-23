@@ -3247,6 +3247,20 @@ never a place's `TyKind::Ref` type. A capture reads through only a captured
 `ref` binding (`CheckedCapture::binds_reference`), and a closure storage's
 field is a reference field by `CheckedStorageField::reference`.
 
+Both backends decide by the same declarations. The VM and Pliron read
+through, write through, or forward a stored handle only where
+`place_holds_reference` says a place holds one (`Prog::holds_reference`,
+Pliron's `holds_reference`); a walk chases a handle mid-place only at a
+step `place_step_holds_reference` names, a field declared `ref`
+(`place_crosses_declared_reference`, the VM's `place_crosses_reference`),
+and a whole slot holds an address only when `MirFunction::binds_address`
+says so (a `ref` binding, or a parameter slot typed as a reference to the
+value it declares). A call passes an operand as its `!lit.ref` pointer only
+when `addressed_registers` names it, upstream's `LowerArgConventions` fact:
+a `ref<P>` against the `P` its parameter takes, so a `!lit.ref` value passed
+at a `!lit.ref` parameter is passed by value. The VM's runtime handle choice
+(`address_as`) still reads the reference type's tag (R2526).
+
 A call's result is a reference by the same rule: the callee's `ref`
 result convention, never its result type. The check records
 `SemanticAdjustment::ReferenceResult` where the call binds its result

@@ -693,14 +693,15 @@ impl VmBackend {
     /// not it is spelled as read through the root.
     pub(super) fn heap_handle_place(
         &mut self,
-        function: &MirFunction,
+        (function, declarations): (&MirFunction, &MirDeclarations),
         place: &MirPlace,
         registers: &[Value],
         variables: &[Value],
     ) -> Result<Option<Value>, RuntimeError> {
         let reference_root = function.binds_reference(place.root);
-        let projected_from_reference =
-            reference_root && !place.proj.is_empty() && !place_crosses_reference(place);
+        let projected_from_reference = reference_root
+            && !place.proj.is_empty()
+            && !place_crosses_reference(place, declarations);
         if place.through != Some(place.root) && !projected_from_reference {
             return Ok(None);
         }
@@ -711,17 +712,24 @@ impl VmBackend {
         // A `ref` field on the way (a closure's `mut` capture) stores a
         // handle of its own: the rest of the place lies behind it.
         let storage = place.storage();
-        let wants_slot = matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
+        let declares_ref_field = |ty: &Ty, field: &str| declarations.declares_ref_field(ty, field);
+        let wants_slot = place
+            .ty
+            .as_ref()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)))
+            && mojito_mir::mir::place_holds_reference(
+                place,
+                function.binds_reference(place.root),
+                declares_ref_field,
+            );
         let last = segments.len().saturating_sub(1);
         let mut handle = self.pointee_reference(allocation, offset);
         for (position, segment) in segments.into_iter().enumerate() {
             if let Value::Ref { projection, .. } = &mut handle {
                 projection.push(segment);
             }
-            let stores_handle = matches!(
-                storage.projection_tys.get(position).map(Ty::kind),
-                Some(TyKind::Ref(_))
-            );
+            let stores_handle =
+                mojito_mir::mir::place_step_holds_reference(&storage, position, declares_ref_field);
             if stores_handle && !(position == last && wants_slot) {
                 let roots = self.pointer_roots.clone();
                 handle = match self.read_reference(&handle, FrameId(POINTER_ROOT_FRAME), &roots)? {
@@ -804,6 +812,7 @@ impl VmBackend {
     /// as it does for the whole of a slot holding a pointer value.
     pub(super) fn place_handle(
         &self,
+        declarations: &MirDeclarations,
         frame_id: FrameId,
         place: &MirPlace,
         registers: &[Value],
@@ -814,7 +823,7 @@ impl VmBackend {
         {
             return Ok(Some(reference));
         }
-        if !place_crosses_reference(place) {
+        if !place_crosses_reference(place, declarations) {
             return Ok(None);
         }
         Self::reference_to_place_parts(frame_id, registers, variables, place).map(Some)
@@ -825,12 +834,13 @@ impl VmBackend {
     /// or parameter's field included, or in frame storage.
     pub(super) fn take_place(
         &mut self,
+        declarations: &MirDeclarations,
         frame_id: FrameId,
         place: &MirPlace,
         registers: &[Value],
         variables: &mut [Value],
     ) -> Result<Value, RuntimeError> {
-        match self.place_handle(frame_id, place, registers, variables)? {
+        match self.place_handle(declarations, frame_id, place, registers, variables)? {
             Some(reference) => {
                 let old = self.read_reference(&reference, frame_id, variables)?;
                 self.write_reference(&reference, frame_id, variables, Value::Moved)?;
@@ -935,22 +945,19 @@ pub(super) fn single_pointee_pointer(ty: Option<&Ty>) -> bool {
         .is_some_and(|origin| origin.single_place())
 }
 
-/// Whether a place reaches a stored handle *below* its root: a `ref`-typed
-/// field or a pointer field along the way (`self.value.items` through a
-/// `ref` field, `p.src[].v` through a `Pointer[Box, o]` field,
-/// `self.data[i]._scalar` through a `List`'s element pointer). Such a place
-/// is not raw frame storage — the handle designates storage this frame may
+/// Whether a place reaches a stored handle *below* its root: a field
+/// declared `ref` or a pointer field along the way (`self.value.items`
+/// through a `ref` field, `p.src[].v` through a `Pointer[Box, o]` field,
+/// `self.data[i]._scalar` through a `List`'s element pointer), by
+/// [`mojito_mir::mir::place_crosses_declared_reference`]. Such a place is
+/// not raw frame storage — the handle designates storage this frame may
 /// not own — so every access to it routes through the reference walk, which
-/// chases stored handles mid-projection. The final projection's type is
-/// excluded: it names the slot the access lands on, not a step through it.
-pub(super) fn place_crosses_reference(place: &MirPlace) -> bool {
-    place
-        .storage()
-        .projection_tys
-        .iter()
-        .rev()
-        .skip(1)
-        .any(|ty| ty.is_pointer_layout() || matches!(ty.kind(), TyKind::Ref(_)))
+/// chases stored handles mid-projection. The final step is excluded: it
+/// names the slot the access lands on, not a step through it.
+pub(super) fn place_crosses_reference(place: &MirPlace, declarations: &MirDeclarations) -> bool {
+    mojito_mir::mir::place_crosses_declared_reference(place, |ty, field| {
+        declarations.declares_ref_field(ty, field)
+    })
 }
 
 /// Whether a place designates one element slot of multi-element raw pointer

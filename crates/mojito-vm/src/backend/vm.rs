@@ -19,8 +19,8 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    ConcreteMir, Const, MirBlock, MirFunction, MirInstr, MirIntrinsicSubscript, MirPlace,
-    MirProgram, MirResultAdapter, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
+    ConcreteMir, Const, MirBlock, MirDeclarations, MirFunction, MirInstr, MirIntrinsicSubscript,
+    MirPlace, MirProgram, MirResultAdapter, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
 };
 use mojito_native_core::target::NativeTarget;
 use mojito_types::ct::CtValue;
@@ -965,6 +965,10 @@ struct Prog {
     /// ([`VmBackend::stage_error`]), and a raise edge writing one is the
     /// `try` catching the error.
     error_slots: Vec<HashSet<VarId>>,
+    /// Per function, the registers its calls pass as a reference to the
+    /// value a parameter or receiver takes ([`mojito_mir::mir::addressed_registers`]):
+    /// a call binds such an operand as the reference it is.
+    addressed: Vec<HashSet<u32>>,
     /// Every struct's field types, which [`VmBackend::element_stride`]
     /// lays a pointee out over.
     layout_structs: mojito_native_core::layout::StructFieldIndex,
@@ -1117,6 +1121,11 @@ impl Prog {
                     .collect()
             })
             .collect();
+        let addressed = mir
+            .functions
+            .iter()
+            .map(|(_, function)| mojito_mir::mir::addressed_registers(function, &mir.declarations))
+            .collect();
         let structs = build_structs(&mir.declarations);
         let mut mir = mir;
         for (_, function) in &mut mir.functions {
@@ -1128,7 +1137,36 @@ impl Prog {
             layout_structs: mojito_mir::mir::struct_field_index(&mir.declarations),
             mir,
             error_slots,
+            addressed,
         }
+    }
+
+    /// Whether `place` of `function` holds a reference a read goes through
+    /// and a borrow forwards, by declaration ([`mojito_mir::mir::place_holds_reference`]):
+    /// its root's `ref` binding, or a field declared `ref`. Only a place of
+    /// reference type can, which spares the declaration lookup elsewhere.
+    fn holds_reference(&self, function: usize, place: &MirPlace) -> bool {
+        place
+            .ty
+            .as_ref()
+            .is_some_and(|ty| matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
+            && mojito_mir::mir::place_holds_reference(
+                place,
+                self.mir.functions[function].1.binds_reference(place.root),
+                |ty, field| self.mir.declarations.declares_ref_field(ty, field),
+            )
+    }
+
+    /// Whether `place` reaches storage through a handle stored below its
+    /// root, by declaration ([`mojito_mir::mir::place_crosses_declared_reference`]).
+    fn crosses_reference(&self, place: &MirPlace) -> bool {
+        references::place_crosses_reference(place, &self.mir.declarations)
+    }
+
+    /// Whether `function`'s calls pass `register` as a reference to the
+    /// value its parameter or receiver takes.
+    fn addressed(&self, function: usize, register: Reg) -> bool {
+        self.addressed[function].contains(&register.0)
     }
 
     /// Whether `place` of `function` is the whole of a slot whose own type
@@ -1740,7 +1778,7 @@ fn build_structs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<Str
                         .collect(),
                     register_field: declarations
                         .register_field(&declaration.name)
-                        .filter(|(_, ty)| !matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
+                        .filter(|(field, _)| !declaration.declares_ref_field(field))
                         .map(|(field, _)| field.clone()),
                 },
             )
@@ -2124,6 +2162,7 @@ mod pointer_storage_tests {
             structs: HashMap::new(),
             sigs: HashMap::new(),
             error_slots: Vec::new(),
+            addressed: Vec::new(),
             layout_structs: mojito_native_core::layout::StructFieldIndex::default(),
         }
     }

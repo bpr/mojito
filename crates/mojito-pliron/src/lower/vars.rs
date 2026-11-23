@@ -2,7 +2,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// `UseVar`: scalars load from their slot; an aggregate copy or move

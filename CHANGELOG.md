@@ -2353,6 +2353,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The VM and the Pliron backend decide a read-through, a write-through,
+  and a forwarded stored handle from declarations, never from a
+  `TyKind::Ref` place type: a `ref` binding, a by-address parameter's slot
+  (`MirFunction::binds_address`), or a field declared `ref`
+  (`place_step_holds_reference`, `place_crosses_declared_reference`). A
+  call passes an operand as its pointer only when it is a `ref<P>` against
+  its parameter's `P` (`mir::addressed_registers`), as upstream's
+  `LowerArgConventions` reads it, so a `!lit.ref` value passed at a
+  `!lit.ref` parameter stays by value once the two reference types merge.
+  Output is unchanged on both backends. The VM's runtime handle choice for
+  a `!lit.ref` value is R2526.
+
 - The MIR verifier reads a `ref` binding from the slot's declaration
   (`MirFunction::binds_reference`), never from a `TyKind::Ref` slot type:
   the reference-read rule, a pointer root's value test, and a `DefVar`'s

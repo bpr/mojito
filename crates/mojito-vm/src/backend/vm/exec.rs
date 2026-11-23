@@ -23,7 +23,7 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         // The read half of `c[i] += e` on a user struct goes through
         // `c.__getitem__(i)`; any other place reads its slot / SIMD lane.
-        let holds_reference = matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
+        let holds_reference = prog.holds_reference(function, place);
         let value = if let Some((element, suffix)) =
             super::references::pointer_element(&vars[place.root as usize], place, regs)?
         {
@@ -32,9 +32,12 @@ impl VmBackend {
             // the rest of the projection within it.
             let referent = self.read_reference(&element, frame_id, vars)?;
             self.read_reference_projection(frame_id, vars, &referent, &suffix)?
-        } else if let Some(handle) =
-            self.heap_handle_place(&prog.mir.functions[function].1, place, regs, vars)?
-        {
+        } else if let Some(handle) = self.heap_handle_place(
+            (&prog.mir.functions[function].1, &prog.mir.declarations),
+            place,
+            regs,
+            vars,
+        )? {
             // A reference binding of a static-origin call result holds
             // the element's heap pointer (`heap_reference_result`).
             self.read_reference(&handle, frame_id, vars)?
@@ -62,7 +65,7 @@ impl VmBackend {
             // `self.src[]` on `Pointer[List[T], o]` storage) cannot
             // walk raw storage — route it through the reference walk,
             // which chases stored handles mid-projection.
-            if super::references::place_crosses_reference(place) {
+            if prog.crosses_reference(place) {
                 let composed = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
                 let value = self.read_reference(&composed, frame_id, vars)?;
                 if matches!(value, Value::Ref { .. }) && holds_reference {
@@ -83,8 +86,10 @@ impl VmBackend {
     }
 
     /// The value a call passes for its operand `register`, as upstream's
-    /// `lit.call` passes the operand itself: a by-address operand is the
-    /// reference the call formed, which the callee binds as its parameter.
+    /// `lit.call` passes the operand itself: a by-address operand (one the
+    /// call passes as a reference to its parameter's value,
+    /// [`Prog::addressed`]) is the reference the call formed, which the
+    /// callee binds as its parameter.
     /// A heap element `ref.make` forwards as its pointer passes as the
     /// interned pointer's element handle, which a callee writes through as
     /// it writes any reference.
@@ -97,16 +102,7 @@ impl VmBackend {
     ) -> Value {
         let value = &regs[register.0 as usize];
         match value {
-            Value::Pointer { allocation, offset }
-                if matches!(
-                    prog.mir.functions[function]
-                        .1
-                        .reg_types
-                        .get(&register.0)
-                        .map(Ty::kind),
-                    Some(TyKind::Ref(_))
-                ) =>
-            {
+            Value::Pointer { allocation, offset } if prog.addressed(function, register) => {
                 Value::Ref {
                     frame: POINTER_ROOT_FRAME,
                     slot: self.pointer_root(*allocation, *offset),
@@ -130,10 +126,11 @@ impl VmBackend {
     ) -> Result<(Value, Option<&'p Ty>, Option<Value>), RuntimeError> {
         let ty = prog.mir.functions[function].1.reg_types.get(&register.0);
         let value = regs[register.0 as usize].clone();
-        Ok(match ty.map(Ty::kind) {
-            Some(TyKind::Ref(reference))
-                if matches!(value, Value::Ref { .. } | Value::Pointer { .. }) =>
-            {
+        let addressed = ty
+            .and_then(mojito_mir::mir::addressed_receiver)
+            .filter(|_| prog.addressed(function, register));
+        Ok(match addressed {
+            Some(reference) if matches!(value, Value::Ref { .. } | Value::Pointer { .. }) => {
                 let referent = self.read_reference(&value, frame_id, vars)?;
                 let reference_operand =
                     self.call_operand(prog, function, (frame_id, regs, vars), register);
@@ -171,10 +168,11 @@ impl VmBackend {
         };
         let ty = prog.mir.functions[function].1.reg_types.get(&register.0);
         let value = regs[register.0 as usize].clone();
-        Ok(match ty.map(Ty::kind) {
-            Some(TyKind::Ref(reference))
-                if matches!(value, Value::Ref { .. } | Value::Pointer { .. }) =>
-            {
+        let addressed = ty
+            .and_then(mojito_mir::mir::addressed_receiver)
+            .filter(|_| prog.addressed(function, register));
+        Ok(match addressed {
+            Some(reference) if matches!(value, Value::Ref { .. } | Value::Pointer { .. }) => {
                 let referent = self.read_reference(&value, frame_id, vars)?;
                 operand(referent, Some(&reference.referent))
             }
@@ -218,16 +216,23 @@ impl VmBackend {
                 return Err(parametric_instruction("interior invalidation"));
             }
             MirInstr::MakeRef { dest, place } => {
-                if let Some(handle) =
-                    self.heap_handle_place(&prog.mir.functions[function].1, place, regs, vars)?
-                {
+                if let Some(handle) = self.heap_handle_place(
+                    (&prog.mir.functions[function].1, &prog.mir.declarations),
+                    place,
+                    regs,
+                    vars,
+                )? {
                     // A `ref` field (a closure's `mut` capture) forwards the
                     // handle it stores when the destination is typed as
                     // that handle, as below.
                     let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                    regs[dest.0 as usize] = if target
-                        .is_some_and(|made| make_ref_forwards_stored_handle(place, made))
-                    {
+                    regs[dest.0 as usize] = if target.is_some_and(|made| {
+                        make_ref_forwards_stored_handle(
+                            place,
+                            made,
+                            prog.holds_reference(function, place),
+                        )
+                    }) {
                         match self.read_reference(&handle, frame_id, vars)? {
                             stored @ (Value::Ref { .. } | Value::Pointer { .. }) => stored,
                             _ => handle,
@@ -359,7 +364,13 @@ impl VmBackend {
                 // handle (`ref s = self.src` reborrows), as the native
                 // lowering loads it.
                 if !place.proj.is_empty()
-                    && target.is_some_and(|made| make_ref_forwards_stored_handle(place, made))
+                    && target.is_some_and(|made| {
+                        make_ref_forwards_stored_handle(
+                            place,
+                            made,
+                            prog.holds_reference(function, place),
+                        )
+                    })
                     && let stored @ (Value::Ref { .. } | Value::Pointer { .. }) =
                         self.read_reference(&handle, frame_id, vars)?
                 {
@@ -1335,7 +1346,7 @@ impl VmBackend {
                         vec![idx]
                     };
                     let receiver_operand = match &regs[base.0 as usize] {
-                        _ if matches!(base_ty.map(Ty::kind), Some(TyKind::Ref(_))) => {
+                        _ if prog.addressed(function, *base) => {
                             Some(self.call_operand(prog, function, (frame_id, regs, vars), *base))
                         }
                         reference @ Value::Ref { .. } => Some(reference.clone()),
@@ -1776,7 +1787,14 @@ impl VmBackend {
                     index: *index,
                     value: Box::new(payload),
                 };
-                self.store_at_call_place(frame_id, place, replacement, regs, vars)?;
+                self.store_at_call_place(
+                    &prog.mir.declarations,
+                    frame_id,
+                    place,
+                    replacement,
+                    regs,
+                    vars,
+                )?;
                 self.drop_variant_payload(prog, old, destructors)?;
                 regs[dest.0 as usize] = Value::None;
             }
@@ -1828,7 +1846,14 @@ impl VmBackend {
                     index: *input_index,
                     value: Box::new(payload),
                 };
-                self.store_at_call_place(frame_id, place, replacement, regs, vars)?;
+                self.store_at_call_place(
+                    &prog.mir.declarations,
+                    frame_id,
+                    place,
+                    replacement,
+                    regs,
+                    vars,
+                )?;
                 regs[dest.0 as usize] = *old_payload;
             }
             MirInstr::MakeSimd {
@@ -1940,9 +1965,12 @@ impl VmBackend {
             }
             MirInstr::Store { place, src } => {
                 let mut v = regs[src.0 as usize].clone();
-                if let Some(handle) =
-                    self.heap_handle_place(&prog.mir.functions[function].1, place, regs, vars)?
-                {
+                if let Some(handle) = self.heap_handle_place(
+                    (&prog.mir.functions[function].1, &prog.mir.declarations),
+                    place,
+                    regs,
+                    vars,
+                )? {
                     self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&handle, frame_id, vars, v)?;
                     return Ok(());
@@ -1966,7 +1994,7 @@ impl VmBackend {
                 let handle = if matches!(place.steps().next_back(), Some(Proj::Index(_))) {
                     self.extend_reference(&vars[place.root as usize], place, regs)?
                 } else {
-                    self.place_handle(frame_id, place, regs, vars)?
+                    self.place_handle(&prog.mir.declarations, frame_id, place, regs, vars)?
                 };
                 let slot = super::references::pointer_element_slot(place);
                 if let Some(handle) = handle {
@@ -1976,18 +2004,18 @@ impl VmBackend {
                     } else {
                         self.store_through_handle(
                             frame_id,
-                            matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))),
+                            prog.holds_reference(function, place),
                             handle,
                             v,
                             vars,
                         )?;
                     }
-                } else if !slot && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
+                } else if !slot && prog.holds_reference(function, place) {
                     let reference = load_place(vars, regs, place)?;
                     self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&reference, frame_id, vars, v)?;
                 } else {
-                    self.store_at_place(frame_id, place, v, regs, vars)?;
+                    self.store_at_place(&prog.mir.declarations, frame_id, place, v, regs, vars)?;
                 }
             }
             MirInstr::StoreRef { place, reference } => {
@@ -2007,7 +2035,7 @@ impl VmBackend {
                         "vm: reference storage requires a reference handle".to_string(),
                     ));
                 }
-                self.store_at_place(frame_id, place, handle, regs, vars)?;
+                self.store_at_place(&prog.mir.declarations, frame_id, place, handle, regs, vars)?;
             }
             MirInstr::LoadPlace { dest, place } => {
                 regs[dest.0 as usize] =
@@ -2134,7 +2162,7 @@ impl VmBackend {
                 }
             }
             MirInstr::DropPlace { place, destructor } => {
-                let value = self.take_place(frame_id, place, regs, vars)?;
+                let value = self.take_place(&prog.mir.declarations, frame_id, place, regs, vars)?;
                 self.drop_named(prog, value, place.ty.as_ref(), destructor.as_deref())?;
             }
             // An owned register's death, its value's fields dropped by

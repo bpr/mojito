@@ -133,7 +133,13 @@ impl FnLowering<'_> {
             };
         let mut offset: u64 = 0;
         for (step, proj) in place.proj.iter().enumerate().skip(projected) {
-            while let TyKind::Ref(reference) = ty.kind() {
+            // The previous step landed on a field declared `ref`: the rest
+            // of the place lies behind the handle it stores.
+            let behind_handle = step > 0
+                && mojito_mir::mir::place_step_holds_reference(place, step - 1, |ty, field| {
+                    self.mir_declarations.declares_ref_field(ty, field)
+                });
+            while behind_handle && let TyKind::Ref(reference) = ty.kind() {
                 if offset != 0 {
                     address = self.gep_byte(ctx, address, offset, dest);
                     offset = 0;

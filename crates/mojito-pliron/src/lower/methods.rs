@@ -255,28 +255,28 @@ impl FnLowering<'_> {
         if let Some(ptr) = self.string_storage(ctx, arg)? {
             return Ok(self.string_parts(ctx, ptr, dest));
         }
-        match self.func.reg_types.get(&arg.0).map(Ty::kind) {
-            Some(kind) if kind.is_error() => {
-                let ptr = self.reg_ptr(ctx, arg)?;
-                return Ok(self.string_parts(ctx, ptr, dest));
+        let arg_ty = self.func.reg_types.get(&arg.0);
+        if arg_ty.is_some_and(|ty| ty.kind().is_error()) {
+            let ptr = self.reg_ptr(ctx, arg)?;
+            return Ok(self.string_parts(ctx, ptr, dest));
+        }
+        // A builtin takes no reference, so a reference operand is a
+        // by-address one, read through ([`mojito_mir::mir::addressed_receiver`]).
+        if let Some(reference) = arg_ty.and_then(mojito_mir::mir::addressed_receiver) {
+            let referent = reference.referent.clone();
+            if let LowerTy::Scalar(scalar) = lower_ty(
+                self.name,
+                &referent,
+                &self.layout,
+                self.mir_declarations,
+                self.reg_span(arg),
+            )? {
+                let pointer = self.reg_value(ctx, arg, ScalarTy::PTR)?;
+                let handle = scalar.handle(ctx);
+                let load = LoadOp::new(ctx, pointer, handle);
+                self.append(ctx, load.get_operation(), Some(dest));
+                return self.format_scalar(ctx, scalar, load.get_result(ctx), repr, dest);
             }
-            Some(TyKind::Ref(reference)) => {
-                let referent = reference.referent.clone();
-                if let LowerTy::Scalar(scalar) = lower_ty(
-                    self.name,
-                    &referent,
-                    &self.layout,
-                    self.mir_declarations,
-                    self.reg_span(arg),
-                )? {
-                    let pointer = self.reg_value(ctx, arg, ScalarTy::PTR)?;
-                    let handle = scalar.handle(ctx);
-                    let load = LoadOp::new(ctx, pointer, handle);
-                    self.append(ctx, load.get_operation(), Some(dest));
-                    return self.format_scalar(ctx, scalar, load.get_result(ctx), repr, dest);
-                }
-            }
-            _ => {}
         }
         let Some(ty) = self.concrete_scalar_ty(arg)? else {
             return Err(self.unsupported_reg("formatted write argument".into(), dest));
@@ -286,9 +286,9 @@ impl FnLowering<'_> {
     }
 
     /// The storage a `mut`/`ref` receiver aliases: the place's address,
-    /// dereferenced once when the place designates a reference handle (a ref
-    /// field like an iterator's `src`) — the VM reads through `Value::Ref`
-    /// receivers before dispatch.
+    /// dereferenced once when the place holds a reference by declaration (a
+    /// `ref` field like an iterator's `src`) — the VM reads through
+    /// `Value::Ref` receivers before dispatch.
     pub(super) fn aliased_receiver_address(
         &mut self,
         ctx: &mut Context,
@@ -296,7 +296,7 @@ impl FnLowering<'_> {
         anchor: Reg,
     ) -> Result<Value, PlironError> {
         let (address, ty) = self.place_address(ctx, place, anchor)?;
-        if matches!(ty.kind(), TyKind::Ref(_)) {
+        if self.holds_reference(place) && matches!(ty.kind(), TyKind::Ref(_)) {
             let handle = self.pointer_handle(ctx, &ty, anchor)?;
             let load = LoadOp::new(ctx, address, handle);
             self.append(ctx, load.get_operation(), Some(anchor));

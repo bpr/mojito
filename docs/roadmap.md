@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2526**.
+Next free ID: **R2527**.
 
 ## Ordered Work
 
@@ -11342,30 +11342,33 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2510 The VM and the Pliron backend choose a handle or a
-  read-through from a `TyKind::Ref` type**
+- [ ] **R2526 The VM holds a `!lit.ref` value as a `Value::PlacePointer`
+  unless its type is `TyKind::Ref`**
 
-  Upstream's `!lit.ref` reads through only where a declaration says so.
-  The VM reads through any `Ref`-typed place or register, and picks its
-  runtime handle by type.
-  - VM read and write paths (decide by `mir::place_holds_reference` with
-    `MirDeclarations::declares_ref_field`, or the by-address operand list,
-    `mir::call_by_address_operands`): `load_place_value`'s final
-    branch, `Store`'s else-branch, `call_operand`, `value_operand`,
-    `register_field`, `heap_handle_place`, and `heap_reference_result`.
-  - VM handle choice: `address_as` / `pointer_valued` (`vm.rs`) make a
-    `Value::Ref` only for a binding (a `ref_bindings` slot, a `MakeRef`
-    destination, a call with a `reference_result`), and a
-    `Value::PlacePointer` elsewhere.
-  - `PointerConvert` reads its direction from the checked op
-    (`lit.ref.from_pointer` / `to_pointer`), since both sides merge.
-  - Pliron: `ctors.rs`'s whole-slot `make_ref` asks `binds_reference`, and
-    `abi.rs`'s `is_reference_operand` the call's by-address operand list
-    (`mir::call_by_address_operands`).
-  - If the VM's two handle values must merge too, file that separately on
-    this track: it is internal structure, not a language divergence.
-  - Found while landing R2492 (2026-11-22).
-  - Depends on R2506, R2507.
+  Upstream has one `!lit.ref`, and `runtime.rs`'s own `PlacePointer` doc
+  reserves place pointers for `!kgen.pointer`. The VM's handle choice
+  still keys on the reference type's tag: `pointer_valued` (`vm.rs`)
+  counts `TyKind::LitRef` as pointer-valued, so `address_as` makes a
+  `!lit.ref` value a place pointer and a `ref` value a `Value::Ref`.
+  - Make every reference-typed value a `Value::Ref`: drop `LitRef` from
+    `pointer_valued`, and let `address_as`, `PointerConvert`, and
+    `heap_reference_result` (`references.rs`) read the reference record
+    for either tag. A `PointerConvert` between two references is then the
+    identity, so it needs no direction field.
+  - Blocker found by probe (R2510 plan, finding 7): with that flip,
+    `collection_display_default`, `comptime_collections`, and
+    `ctfe_module_display_constant_requests` fail CTFE with `stale
+    reference to frame`. A `ref.make` with a `!lit.ref` destination over a
+    parameter's whole slot (`VariadicList.__init__`) addresses the
+    callee's slot, which holds the argument by value, instead of
+    forwarding the caller's address, as upstream's
+    `__get_mvalue_as_litref(param)` does.
+  - The read-throughs that test a runtime value's kind rather than a
+    declaration become declaration tests: `extend_reference`'s callers,
+    `receiver_operand`'s `Value::Ref` arm, `UseVar` (already gated by
+    `reads_through`), and the canonicalizing walk's mid-projection chase.
+  - Found while landing R2510 (2026-11-22).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R2525 `OperandAddresses` keeps a `ref.make` by its `TyKind::Ref`
@@ -11437,13 +11440,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `register_loans.rs`' `origin_operands` `Ref`-destination guard, which
     then covers a `!lit.ref` result too, as upstream's origin liveness
     does.
+  - VM and Pliron record reads, which take the referent of either tag and
+    so need only the tag sweep: `freeze_value` and `peel_references`
+    (`vm.rs`), `address_pointee` and `held_pointee` (`runtime.rs`),
+    `adapters.rs`'s thaw referent, Pliron `support.rs`, `types.rs`,
+    `lib.rs`'s struct collector, `places.rs`'s and `closures.rs`'s peels,
+    and the `TyKind::Ref` precondition beside each declaration test R2510
+    added (`Prog::holds_reference`, `heap_handle_place`, Pliron
+    `lower_make_ref`, `places.rs`'s step walk, `iter.rs`).
   - Docs: `docs/architecture.md` and `docs/mir-text-format.md`'s "until
     `!lit.ref` folds into `ref`" sentences, `docs/symbol-map.md`'s
     `!lit.ref` row.
   - Plan: `R2492-tykind-litref-is-a-second-reference-plan.md`, section E7.
   - Go sites-first: `scripts/smoke --suites`, then `scripts/focused`.
   - Found while landing R2211 (2026-11-21).
-  - Depends on R2505, R2506, R2507, R2508, R2509, R2510, R2524, R2525.
+  - Depends on R2505, R2506, R2507, R2508, R2509, R2510, R2524, R2525,
+    R2526.
   - Model: Fable, Planned.
 
 - [ ] **R2512 Pointer readers below the checker read the `PointerOrigin`

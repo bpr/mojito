@@ -119,7 +119,8 @@ impl FnLowering<'_> {
             self.guard_uninit_present(ctx, storage, TrapCategory::UninitRead, dest)?;
         }
         let (address, ty) = self.place_address(ctx, &place, dest)?;
-        // A bare reference-typed variable re-borrows: its slot stores a
+        // A bare slot that holds an address by declaration (a `ref`
+        // binding, a by-address parameter) re-borrows: its slot stores a
         // handle (reference slots always hold real referent addresses), and
         // the made reference is that stored handle, collapsing the chain
         // like the VM's recursive `Value::Ref` reads. A projected place
@@ -134,13 +135,14 @@ impl FnLowering<'_> {
         // slot address; its consumers dereference explicitly.
         // The decision reads the place's checked type, not the type this
         // walk recomputes, which may spell an origin argument differently.
-        let forwards_stored_handle = !place.proj.is_empty()
-            && self
-                .func
-                .reg_types
-                .get(&dest.0)
-                .is_some_and(|made| make_ref_forwards_stored_handle(&place, made));
-        if (place.proj.is_empty() || forwards_stored_handle)
+        let holds_reference = self.holds_reference(&place);
+        let forwards_stored_handle =
+            !place.proj.is_empty()
+                && self.func.reg_types.get(&dest.0).is_some_and(|made| {
+                    make_ref_forwards_stored_handle(&place, made, holds_reference)
+                });
+        let whole_binding = place.proj.is_empty() && holds_reference;
+        if (whole_binding || forwards_stored_handle)
             && let TyKind::Ref(reference) = ty.kind()
         {
             self.made_ref_places.insert(

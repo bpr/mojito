@@ -127,6 +127,7 @@ impl VmBackend {
     /// `self.buckets[i] = row`.
     pub(super) fn store_at_place(
         &mut self,
+        declarations: &MirDeclarations,
         frame_id: FrameId,
         place: &MirPlace,
         value: Value,
@@ -155,7 +156,7 @@ impl VmBackend {
             // A parent reached through a stored handle (`self.src.entries._storage`
             // through a `ref` field) is read through the reference walk, as
             // a load of it is.
-            let crossing = references::place_crosses_reference(&parent)
+            let crossing = references::place_crosses_reference(&parent, declarations)
                 .then(|| Self::reference_to_place_parts(frame_id, regs, vars, &parent))
                 .transpose()?
                 .map(|handle| self.read_reference(&handle, frame_id, vars))
@@ -245,6 +246,7 @@ impl VmBackend {
     /// re-root the write at the storage the handle designates.
     pub(super) fn store_at_call_place(
         &mut self,
+        declarations: &MirDeclarations,
         frame_id: FrameId,
         place: &MirPlace,
         value: Value,
@@ -277,7 +279,7 @@ impl VmBackend {
             found
         };
         if !crosses_reference {
-            return self.store_at_place(frame_id, place, value, regs, vars);
+            return self.store_at_place(declarations, frame_id, place, value, regs, vars);
         }
         self.write_reference(&handle, frame_id, vars, value)
     }

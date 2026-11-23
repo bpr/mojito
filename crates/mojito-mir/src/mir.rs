@@ -62,12 +62,12 @@ pub use bound_calls::{
 mod call_addresses;
 pub use call_addresses::{
     BoundOperand, ByAddressOperand, CallByAddress, addressed_operand, addressed_receiver,
-    by_address_parameter, by_address_receiver, call_by_address_operands, call_operand_parameters,
-    load_register_passable_operands, make_ref_forwards_stored_handle, method_operand_parameters,
-    read_addressed_operands, receiver_value_ty, requirement_by_address_parameter,
-    requirement_by_address_receiver, requirement_operand_parameters, signature_by_address_operands,
-    signature_operand_parameters, subscript_operand_parameters,
-    subscript_requirement_operand_parameters,
+    addressed_registers, by_address_parameter, by_address_receiver, call_by_address_operands,
+    call_operand_parameters, load_register_passable_operands, make_ref_forwards_stored_handle,
+    method_operand_parameters, read_addressed_operands, receiver_value_ty,
+    requirement_by_address_parameter, requirement_by_address_receiver,
+    requirement_operand_parameters, signature_by_address_operands, signature_operand_parameters,
+    subscript_operand_parameters, subscript_requirement_operand_parameters,
 };
 mod call_operands;
 pub use call_operands::{
@@ -1439,18 +1439,53 @@ pub fn place_holds_reference(
                 .as_ref()
                 .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)));
     };
-    let Proj::Field(field) = last else {
+    matches!(last, Proj::Field(_))
+        && place_step_holds_reference(place, place.proj.len() - 1, declares_ref_field)
+}
+
+/// Whether step `step` of `place` lands on a reference its field
+/// declaration stores: a [`Proj::Field`] that the struct type it applies
+/// to declares `ref` (`declares_ref_field`).
+///
+/// It is [`place_holds_reference`]'s member rule at any step, so a walk
+/// over a place chases a stored handle exactly where a declaration put
+/// one. No element step holds one by declaration.
+pub fn place_step_holds_reference(
+    place: &MirPlace,
+    step: usize,
+    declares_ref_field: impl Fn(&Ty, &str) -> bool,
+) -> bool {
+    let Some(Proj::Field(field)) = place.proj.get(step) else {
         return false;
     };
-    let base = match place.proj.len() {
-        1 => verify::place_base_ty(place),
-        n => place.projection_tys.get(n - 2),
+    let base = match step {
+        0 => verify::place_base_ty(place),
+        n => place.projection_tys.get(n - 1),
     };
     base.map(|base| match base.kind() {
         TyKind::Ref(reference) => &reference.referent,
         _ => base,
     })
     .is_some_and(|base| declares_ref_field(base, field))
+}
+
+/// Whether `place` reaches storage through a handle stored below its root:
+/// a non-final step of its storage that lands on a declared `ref` field
+/// ([`place_step_holds_reference`]) or on a pointer.
+///
+/// Such a place is not its root's own storage; a backend reaches it by
+/// chasing each stored handle. The final step names the slot an access
+/// lands on, not a step through it, so it never counts.
+pub fn place_crosses_declared_reference(
+    place: &MirPlace,
+    declares_ref_field: impl Fn(&Ty, &str) -> bool,
+) -> bool {
+    let storage = place.storage();
+    let steps = storage.proj.len().min(storage.projection_tys.len());
+    (0..steps.saturating_sub(1)).any(|step| {
+        storage.projection_tys[step].is_pointer_layout()
+            || place_step_holds_reference(&storage, step, &declares_ref_field)
+    })
 }
 
 /// The value an operand read or addressed at `place` passes.

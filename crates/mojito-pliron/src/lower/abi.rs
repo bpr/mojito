@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::{SimdDtype, SimdWidth, TyKind};
+use mojito_types::types::{SimdDtype, SimdWidth};
 
 impl FnLowering<'_> {
     /// The bound operand value of one argument at its expected lowered type.
@@ -628,11 +628,22 @@ impl FnLowering<'_> {
         alloca.get_result(ctx)
     }
 
-    /// Whether `reg` is a reference: the `!lit.ref` a by-address operand is.
+    /// Whether the call operand `reg` is the `!lit.ref` a by-address
+    /// operand is: a reference to the value its parameter or receiver takes
+    /// ([`mojito_mir::mir::addressed_registers`]).
     pub(super) fn is_reference_operand(&self, reg: Reg) -> bool {
-        matches!(
-            self.func.reg_types.get(&reg.0).map(Ty::kind),
-            Some(TyKind::Ref(_))
+        self.addressed.contains(&reg.0)
+    }
+
+    /// Whether `place` holds a reference a read goes through and a borrow
+    /// forwards, by declaration ([`mojito_mir::mir::place_holds_reference`]):
+    /// a whole slot holding an address ([`MirFunction::binds_address`]), or a
+    /// field declared `ref`.
+    pub(super) fn holds_reference(&self, place: &MirPlace) -> bool {
+        mojito_mir::mir::place_holds_reference(
+            place,
+            self.func.binds_address(place.root),
+            |ty, field| self.mir_declarations.declares_ref_field(ty, field),
         )
     }
 

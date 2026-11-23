@@ -42,7 +42,7 @@ use mojito_hir::hir::VarId;
 use mojito_symbol::symbol::is_initializer_symbol;
 use mojito_types::origin::{Mutability, OriginParamId, RefTy};
 use mojito_types::types::{FuncTy, Ty, TyKind, erase_origins};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// The regular parameter each operand of a direct call of `declaration`
 /// binds.
@@ -530,6 +530,52 @@ pub fn call_by_address_operands(
     Some(CallByAddress { receiver, operands })
 }
 
+/// Every register a call of `function` passes as a reference to the value
+/// its receiver or parameter takes, as upstream's `LowerArgConventions`
+/// reads a `ref<P>` argument at a `P` slot.
+///
+/// A regular operand bound to a typed parameter is one when it is a
+/// `ref<P>` against that parameter's `P` ([`addressed_operand`]), so a
+/// `!lit.ref<Q>` value passed at a `!lit.ref<Q>` parameter is not. A
+/// receiver, a callee value, a collector's operand, and every operand of a
+/// call no contract binds (a builtin's) is one when it is of reference
+/// type ([`addressed_receiver`]): no type declares a method on a
+/// reference, and no builtin takes one. Registers are defined once, so a
+/// backend keys its by-address operand passing on the register's number.
+#[must_use]
+pub fn addressed_registers(function: &MirFunction, declarations: &MirDeclarations) -> HashSet<u32> {
+    let reg_types = &function.reg_types;
+    let callees = Callees::of(declarations);
+    let mut addressed = HashSet::new();
+    for instruction in crate::mir::nested_instructions(&function.body) {
+        let operands = crate::mir::call_operands(instruction);
+        if operands.is_empty() {
+            continue;
+        }
+        addressed.extend(
+            operands
+                .iter()
+                .map(|operand| operand.reg.0)
+                .filter(|reg| reg_types.get(reg).and_then(addressed_receiver).is_some()),
+        );
+        let Some(bound) = bound_call(instruction, &callees, reg_types) else {
+            continue;
+        };
+        for (register, parameter) in bound.operands {
+            let value = parameter.and_then(|parameter| bound.contract.parameter_ty(parameter));
+            if let Some(value) = value
+                && reg_types
+                    .get(&register.0)
+                    .and_then(|operand| addressed_operand(operand, value))
+                    .is_none()
+            {
+                addressed.remove(&register.0);
+            }
+        }
+    }
+    addressed
+}
+
 /// Whether two places name the same storage, whatever local reference
 /// either is reached through.
 pub fn same_storage(left: &MirPlace, right: &MirPlace) -> bool {
@@ -593,12 +639,16 @@ pub fn stored_handle(
 /// Whether a `ref.make` of `place` whose destination is typed `made`
 /// forwards the reference `place` stores rather than borrowing its slot.
 ///
-/// It does when `place` holds a `ref` and `made` is that stored handle's
-/// type, the form [`stored_handle`] makes; a destination typed as a borrow
-/// of the slot (`ref (ref T)`) never forwards. Origins erase from the
-/// runtime ABI, so the two referents are compared without them: a spliced
-/// place's root may spell an origin argument its projections do not.
-pub fn make_ref_forwards_stored_handle(place: &MirPlace, made: &Ty) -> bool {
+/// It does when `place` holds a `ref` by declaration (`holds_reference`,
+/// [`place_holds_reference`]) and `made` is that stored handle's type, the
+/// form [`stored_handle`] makes; a destination typed as a borrow of the
+/// slot (`ref (ref T)`) never forwards. Origins erase from the runtime
+/// ABI, so the two referents are compared without them: a spliced place's
+/// root may spell an origin argument its projections do not.
+pub fn make_ref_forwards_stored_handle(place: &MirPlace, made: &Ty, holds_reference: bool) -> bool {
+    if !holds_reference {
+        return false;
+    }
     match (place.ty.as_ref().map(Ty::kind), made.kind()) {
         (Some(TyKind::Ref(stored)), TyKind::Ref(made)) => {
             erase_origins(&made.referent) == erase_origins(&stored.referent)
@@ -2142,7 +2192,18 @@ mod tests {
         let place = field_place(reference(list_of_span(Origin::Static)));
         assert!(make_ref_forwards_stored_handle(
             &place,
-            &reference(list_of_span(Origin::Unbound))
+            &reference(list_of_span(Origin::Unbound)),
+            true
+        ));
+    }
+
+    #[test]
+    fn make_ref_forwards_stored_handle_only_from_a_declared_reference() {
+        let place = field_place(reference(list_of_span(Origin::Static)));
+        assert!(!make_ref_forwards_stored_handle(
+            &place,
+            &reference(list_of_span(Origin::Static)),
+            false
         ));
     }
 
@@ -2150,11 +2211,16 @@ mod tests {
     fn make_ref_forwards_stored_handle_never_for_a_slot_borrow() {
         let stored = reference(list_of_span(Origin::Static));
         let place = field_place(stored.clone());
-        assert!(!make_ref_forwards_stored_handle(&place, &reference(stored)));
+        assert!(!make_ref_forwards_stored_handle(
+            &place,
+            &reference(stored),
+            true
+        ));
         let held = field_place(list_of_span(Origin::Static));
         assert!(!make_ref_forwards_stored_handle(
             &held,
-            &reference(list_of_span(Origin::Static))
+            &reference(list_of_span(Origin::Static)),
+            true
         ));
     }
 
@@ -2172,6 +2238,50 @@ mod tests {
             .expect("a `ref` field forwards its stored handle");
         assert!(same_storage(&forwarded, &place));
         assert!(stored_handle(&place, false, |_, _| false, Mutability::Mutable).is_none());
+    }
+
+    /// `holder.src.len` with `src` of reference type: a step through it.
+    fn through_src(src: Ty) -> MirPlace {
+        let int = Ty::int();
+        MirPlace {
+            root: 0,
+            root_ty: Some(holder()),
+            proj: vec![Proj::Field("src".into()), Proj::Field("len".into())],
+            projection_tys: vec![src, int.clone()],
+            ty: Some(int),
+            through: None,
+        }
+    }
+
+    #[test]
+    fn a_step_holds_a_reference_only_where_its_field_is_declared_ref() {
+        let place = through_src(reference(list_of_span(Origin::Static)));
+        let declares = |base: &Ty, field: &str| *base == holder() && field == "src";
+        assert!(crate::mir::place_step_holds_reference(&place, 0, declares));
+        assert!(!crate::mir::place_step_holds_reference(&place, 1, declares));
+        assert!(crate::mir::place_crosses_declared_reference(
+            &place, declares
+        ));
+        assert!(!crate::mir::place_step_holds_reference(
+            &place,
+            0,
+            |_, _| false
+        ));
+        assert!(!crate::mir::place_crosses_declared_reference(
+            &place,
+            |_, _| false
+        ));
+    }
+
+    #[test]
+    fn the_final_step_never_crosses_a_reference() {
+        let mut place = field_place(reference(list_of_span(Origin::Static)));
+        place.root_ty = Some(holder());
+        let declares = |base: &Ty, field: &str| *base == holder() && field == "src";
+        assert!(crate::mir::place_step_holds_reference(&place, 0, declares));
+        assert!(!crate::mir::place_crosses_declared_reference(
+            &place, declares
+        ));
     }
 
     #[test]

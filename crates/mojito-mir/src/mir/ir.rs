@@ -4101,6 +4101,24 @@ impl MirFunction {
         self.ref_bindings.contains(&var)
     }
 
+    /// Whether slot `var` holds an address: a `ref` binding, or a parameter
+    /// whose slot is typed as a reference to the value it declares
+    /// ([`crate::mir::addressed_operand`]), which its call binds to the
+    /// argument's address as upstream binds a by-address parameter to a
+    /// `!lit.ref`. A parameter declared of reference type holds that
+    /// reference as its value, not an address of it.
+    pub fn binds_address(&self, var: VarId) -> bool {
+        self.binds_reference(var)
+            || ((var as usize) < self.n_params
+                && self
+                    .var_tys
+                    .get(&var)
+                    .zip(self.param_types.get(var as usize))
+                    .is_some_and(|(slot, value)| {
+                        crate::mir::addressed_operand(slot, value).is_some()
+                    }))
+    }
+
     /// Whether a read of slot `var` reads through the reference it holds:
     /// a `ref` binding, or a borrowed parameter, which a call binds to its
     /// argument's address as upstream binds it to a `!lit.ref`.
