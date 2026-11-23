@@ -440,7 +440,7 @@ the declaration's parameter kinds.
 
 A leading `*` spreads a type list: the operand is an `ExprKind::Spread`, the
 node a call argument's `*values` uses, whether it spreads a pack (`*Ts`,
-`*Self.Ts`, which `ParamArg::spread_pack` names) or any other type-list
+`*Self.Ts`, which the checker's `spread_pack_view` names) or any other type-list
 expression (`*Ts.reverse()`, `*TypeList._concat[A.values, B.values]()`).
 
 An annotation is its expression and nothing else, as upstream's is: the AST
@@ -453,9 +453,10 @@ annotation to its bound application, and a binder's annotation substitutes
 along its type positions (`visit::walk_annotation_names_mut`, which skips a
 bracket's head and a pack spread). The parser and the elaborator match an
 annotation's expression shape and never convert it; only the checker
-converts the expression when it reads it (`Expr::annotation_type`,
-`Expr::composition_type` for an associated `comptime` member, struct or
-trait, where an `&` chain composes traits).
+views the expression in its type context when it reads it
+(`type_resolution.rs::annotation_view`, and `composition_view` for an
+associated `comptime` member, struct or trait, where an `&` chain composes
+traits).
 
 This is an intentional parser/checker split: the parser handles syntax, while
 the checker knows which parameter positions expect types versus comptime values.
@@ -567,8 +568,8 @@ Postfix forms bind at `Call`, the highest level.
   (`ExprKind::GeneratorType`), each its own expression node, as upstream
   parses them; a `*` pack annotation (`*Ts`, `*Self.Ts`) is the
   `ExprKind::Spread` of the pack, as upstream parses a spread, which
-  `Expr::annotation_type` converts to the pack's `*`-prefixed name
-  (`Expr::pack_spread_type`). `ref` is never a type: after `->`
+  the checker's `annotation_view` views as the pack's `*`-prefixed name
+  (`pack_spread_view`). `ref` is never a type: after `->`
   (`Parser::parse_result`) and after a field's `:`
   (`Parser::parse_reference_slot`) a `ref[...]` is the slot's convention,
   kept as `ret_reference` / `Param::reference` beside the referent

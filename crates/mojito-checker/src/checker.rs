@@ -53,7 +53,7 @@ use mojito_types::conformance::COMPILER_TRAITS;
 
 use mojito_ast::ast::{
     ArgConvention, Dtype, Expr, ExprKind, FnParam, InfixOp, Method, PrefixOp, Stmt, StmtKind,
-    StructComptime, SubscriptArg, TStringPart, TraitComptime, Type as SourceType,
+    StructComptime, SubscriptArg, TStringPart, TraitComptime,
 };
 use mojito_ast::call::{
     ArgSlot, CallVariadics, effective_keyword_only_index, match_call_slots, regular_marker_index,
@@ -3282,7 +3282,7 @@ struct StructInfo {
     /// order, which a compile-time read of the fields resolves on demand
     /// before the typed `fields` arrive (a `#lit.struct` attribute in a module alias).
     #[serde(skip)]
-    declared_field_types: Vec<(mojito_ast::ast::Type, Option<mojito_ast::ast::OriginSpec>)>,
+    declared_field_types: Vec<(Expr, Option<mojito_ast::ast::OriginSpec>)>,
     /// For each field whose SOURCE annotation applied origin-binder
     /// arguments (`var iter: EntryIter[Self.o2]`), the (callee origin-param
     /// index, enclosing origin-param index) pairs the application bound —
@@ -3303,11 +3303,11 @@ struct StructInfo {
     /// has this type.
     #[serde(serialize_with = "interface::sorted")]
     associated_value_types: HashMap<String, Ty>,
-    /// The source spelling of each `associated` type alias whose body
+    /// The body expression of each `associated` type alias whose body
     /// names a type (`comptime _Mask = SIMD[.bool, Self.length]`), which a
     /// construction through the alias (`Self._Mask(mlir_value=v)`) calls.
     #[serde(serialize_with = "interface::sorted")]
-    associated_spellings: HashMap<String, mojito_ast::ast::Type>,
+    associated_spellings: HashMap<String, Expr>,
     /// Availability constraints for monomorphic associated members, one entry
     /// per trailing `where` clause. They are evaluated against the enclosing
     /// struct arguments at projection time.
@@ -4385,10 +4385,11 @@ mod iteration;
 
 mod type_resolution;
 use type_resolution::{
-    BoundMutability, BoundOrigin, BoundParameters, BracketOrigins, BracketUse, DeclaredAttributes,
-    DependentValues, EXTERNAL_CALL_PARAMS, ExplicitTypes, T_PARAMS, TYPE_PARAMS, VALUE_PACK_PARAMS,
-    VARIANT_REPLACE_PARAMS, annotation_spelling, bracket_attribute, composition_spelling,
-    tyarg_is_symbolic, types_attributes, view_expression,
+    AnnotationView, BoundMutability, BoundOrigin, BoundParameters, BracketOrigins, BracketUse,
+    DeclaredAttributes, DependentValues, EXTERNAL_CALL_PARAMS, ExplicitTypes, T_PARAMS,
+    TYPE_PARAMS, VALUE_PACK_PARAMS, VARIANT_REPLACE_PARAMS, annotation_view, annotation_view_of,
+    binder_view, bracket_attribute, composition_view_of, member_view, spelled_view,
+    spread_pack_view, tyarg_is_symbolic, types_attributes, view_expression,
 };
 
 mod constraints;

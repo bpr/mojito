@@ -185,7 +185,7 @@ pub(in crate::checker) fn value_result<'a>(
 /// receiver, as an abstract signature's `origin_of` does. Any other return,
 /// or a projection over a non-receiver base, gives no tags.
 pub(in crate::checker) fn view_return_interior_tags(ret: Option<&Expr>) -> Vec<String> {
-    let Some(SourceType::Named(_, arguments)) = ret.and_then(Expr::annotation_type) else {
+    let Some(AnnotationView::Named(_, arguments)) = ret.and_then(annotation_view) else {
         return Vec::new();
     };
     arguments
@@ -543,7 +543,7 @@ impl Checker {
         else {
             return Ok(());
         };
-        let annotation = annotation_spelling(annotation)?;
+        let annotation = annotation_view_of(annotation)?;
         let mut roots = Vec::new();
         for expression in reference.into_iter().flatten() {
             origin_roots(expression, &mut roots);
@@ -609,7 +609,7 @@ impl Checker {
         self_ref: Option<&mojito_types::origin::RefSig>,
     ) -> Vec<ViewReturnOrigin> {
         use mojito_types::origin::{SigMutability, SigOrigin};
-        let Some(SourceType::Named(name, arguments)) = ret.and_then(Expr::annotation_type) else {
+        let Some(AnnotationView::Named(name, arguments)) = ret.and_then(annotation_view) else {
             return Vec::new();
         };
         let Some(info) = self.structs.get(&name) else {
@@ -1024,7 +1024,7 @@ pub(in crate::checker) fn sig_origin_for_binder(
 /// source order: in a struct or associated-type
 /// application's arguments, at any depth. A function type's own origins
 /// are its contract's, not the result's.
-fn result_origin_roots<'a>(annotation: &'a SourceType, roots: &mut Vec<&'a str>) {
+fn result_origin_roots<'a>(annotation: &'a AnnotationView, roots: &mut Vec<&'a str>) {
     fn argument_roots<'a>(argument: &'a mojito_ast::ast::ParamArg, roots: &mut Vec<&'a str>) {
         match argument {
             mojito_ast::ast::ParamArg::Value(expression) => origin_roots(expression, roots),
@@ -1032,12 +1032,12 @@ fn result_origin_roots<'a>(annotation: &'a SourceType, roots: &mut Vec<&'a str>)
         }
     }
     match annotation {
-        SourceType::Named(_, arguments) => {
+        AnnotationView::Named(_, arguments) => {
             for argument in arguments {
                 argument_roots(argument, roots);
             }
         }
-        SourceType::Assoc {
+        AnnotationView::Assoc {
             base,
             args: arguments,
             ..
@@ -1047,7 +1047,7 @@ fn result_origin_roots<'a>(annotation: &'a SourceType, roots: &mut Vec<&'a str>)
                 argument_roots(argument, roots);
             }
         }
-        SourceType::IndexedProjection { base, index } => {
+        AnnotationView::IndexedProjection { base, index } => {
             result_origin_roots(base, roots);
             origin_roots(index, roots);
         }

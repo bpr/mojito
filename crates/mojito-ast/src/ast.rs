@@ -191,71 +191,6 @@ pub fn named_subscript(name: &str, args: &[ParamArg], span: Span) -> Option<Expr
     subscript_application(object, args.iter().cloned(), span).map(|kind| Expr::new(kind, span))
 }
 
-/// A type annotation.
-///
-/// Covers `Bool`, the closed string literal type, and `None` plus nominal (`struct`)
-/// types, which may carry type arguments (`Pair[Int]`), and references to a
-/// type parameter. `Int`, `UInt`, and `Float64` are nominal: the prelude's
-/// `comptime` aliases.
-/// A `def` function type and a `__generator_type` are expressions
-/// ([`ExprKind::FunctionType`], [`ExprKind::GeneratorType`]), which an
-/// annotation's view holds as [`Type::Value`].
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum Type {
-    None,
-    /// A name that resolves to a `struct` type, optionally applied to parameter
-    /// arguments (`Point` is `Named("Point", [])`, `Pair[Int]` is
-    /// `Named("Pair", [Value(Int)])`, `FixedBuffer[8]` is
-    /// `Named("FixedBuffer", [Value(Int(8))])`). A bare `Named(name, [])` may also
-    /// resolve to a type *parameter* in scope (a `T` inside a generic `def`); the
-    /// checker decides. The checker validates the name and the argument kinds.
-    Named(String, Vec<ParamArg>),
-    /// `Self.T` — one of the enclosing struct's own type parameters, referenced
-    /// from inside its body (Mojo spelling; a bare `T` is not in scope there).
-    /// The checker also accepts it as a shorthand for a type-valued associated
-    /// member when there is no struct parameter by that name. The qualified
-    /// pack spread `*Self.Ts` converts with the leading `*` in the name
-    /// (`SelfParam("*Ts")`); the elaborator's pack-qualification pass folds
-    /// it onto the bare `*Ts` spread once a struct's members are known to
-    /// qualify every use.
-    SelfParam(String),
-    /// `Base.Member` in type position — an associated type/comptime member lookup
-    /// on a type parameter, `Self`, or a concrete type. `args` is the parameter
-    /// application of a parameterized associated type
-    /// (`Self.IteratorType[origin_of(self)]`); it is empty for a bare `C.Element`.
-    Assoc {
-        base: Box<Self>,
-        name: String,
-        args: Vec<ParamArg>,
-    },
-    /// Index a compile-time sequence of types while remaining in type position.
-    ///
-    /// This is deliberately a structured projection rather than a synthesized
-    /// name: the base can itself be an associated projection and the index is a
-    /// retained expression whose value may depend on a compile-time binder.
-    /// For example, `values.element_types[index]` is represented as an indexed
-    /// projection over `values.element_types`, not as the text
-    /// `"values.element_types[index]"`.
-    IndexedProjection {
-        base: Box<Self>,
-        index: Box<Expr>,
-    },
-    /// Bare `Self` — the enclosing struct type (in a struct method) or the
-    /// conforming type (in a trait method requirement).
-    SelfType,
-    /// Upstream's `type_of(x)`: the type of a compile-time expression. The
-    /// parser accepts any operand; the checker accepts a trait or a `&`
-    /// composition of traits, whose type is the trait metatype
-    /// (`type_of(AnyType)` types a trait-valued parameter).
-    TypeOf(Box<Expr>),
-    /// A compile-time value expression where an annotation expects a type: a
-    /// struct construction such as `TypeList[Trait=AnyType, Ts.values]()`, a
-    /// conditional `Int if c else Float64`. It is a type once the checker
-    /// evaluates it to one; as the base of an `IndexedProjection` it reads
-    /// the value's `__getitem_param__[index]`.
-    Value(Box<Expr>),
-}
-
 /// A function type `def[params](T1, mut T2, …) [thin] [raises [E]] [-> R]
 /// [where …]`, upstream's function-type expression node.
 ///
@@ -306,11 +241,6 @@ pub struct FunctionTypeParam {
 /// never evaluated, and semantic resolution belongs to the checker where
 /// bindings have stable identities.
 pub type OriginSpec = Vec<Expr>;
-
-/// Explicit name for [`Type`] when code handles parsed source annotations rather
-/// than the checked semantic lattice in `types::Ty`. `Type` remains as a
-/// compatibility name for the public AST API.
-pub type SourceType = Type;
 
 /// A compile-time **parameter** declared in a `[...]` list on a `struct` or
 /// `def` header.
@@ -390,29 +320,6 @@ impl TypeParam {
                 )
             })
     }
-
-    /// This binder's type, the checker's view of it: its value type
-    /// converted in the type context, else the `Origin[mut=e]` the parser
-    /// read into [`Self::origin_mutability`], else its lone bound. `None`
-    /// for several bounds.
-    pub fn annotation_type(&self) -> Option<Type> {
-        if let Some(value_type) = &self.value_type {
-            return value_type.annotation_type();
-        }
-        if let Some(mutability) = &self.origin_mutability {
-            return Some(Type::Named(
-                "Origin".to_string(),
-                vec![ParamArg::Named {
-                    name: "mut".to_string(),
-                    value: Box::new(ParamArg::Value(mutability.clone())),
-                }],
-            ));
-        }
-        match self.bounds.as_slice() {
-            [only] => Some(Type::Named(only.clone(), Vec::new())),
-            _ => None,
-        }
-    }
 }
 
 /// A parameter **argument** supplied in a `[...]` list at a use site, i.e. a
@@ -428,20 +335,6 @@ pub enum ParamArg {
         name: String,
         value: Box<Self>,
     },
-}
-
-impl ParamArg {
-    /// The pack a positional spread operand of a pack (`*Ts`, `*Self.Ts`)
-    /// names, as [`Expr::pack_spread_type`] spells it.
-    pub fn spread_pack(&self) -> Option<Type> {
-        match self {
-            Self::Value(Expr {
-                kind: ExprKind::Spread(operand),
-                ..
-            }) => operand.pack_spread_type(),
-            _ => None,
-        }
-    }
 }
 
 /// A SIMD element type — the `<dt>` in `SIMD[DType.<dt>, width]`.
@@ -922,8 +815,8 @@ pub const DTYPE_INTEGER_MASK: u8 = 128;
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Param {
     pub name: String,
-    /// The field's annotation expression, which the checker converts in the
-    /// type context ([`Expr::annotation_type`]); a `ref` field's referent.
+    /// The field's annotation expression, which the checker converts in its
+    /// type context; a `ref` field's referent.
     pub ty: Expr,
     /// The kept direct-`ref`-field extension's `ref[...]` convention
     /// (`docs/non-goals.md`): `Some` stores a reference to `ty` under these
@@ -940,7 +833,7 @@ pub struct Param {
 pub struct FnParam {
     pub name: String,
     /// The annotation expression, which the checker converts in its type
-    /// context ([`Expr::annotation_type`]).
+    /// context.
     pub ty: Expr,
     /// A default value (`= expr`), for an optional argument. `None` if required.
     pub default: Option<Expr>,
@@ -1256,21 +1149,13 @@ pub struct TraitComptime {
     /// Origin[mut=iterable_mut]]: Iterator`); empty for a monomorphic member.
     pub params: Vec<TypeParam>,
     /// The member's annotation expression, where an `&` chain composes
-    /// traits ([`Self::annotation_type`]).
+    /// traits, converted in the checker's type context.
     pub ty: Expr,
     /// Optional availability constraint, including the diagnostic tuple form.
     pub where_clauses: Vec<Expr>,
     /// The member a conformer that omits it takes, read with `Self` as
     /// the conformer.
     pub default: Option<Expr>,
-}
-
-impl TraitComptime {
-    /// The member's annotation converted in its type context, where an `&`
-    /// chain is a trait composition ([`Expr::composition_type`]).
-    pub fn annotation_type(&self) -> Option<Type> {
-        self.ty.composition_type()
-    }
 }
 
 /// Whether a declaration of cases is an `enum`, whose cases carry no
@@ -1339,8 +1224,8 @@ impl<'a> IntoIterator for &'a mut SumCases {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EnumCase {
     pub name: String,
-    /// The payload annotation expressions, each converted in the type
-    /// context ([`Expr::annotation_type`]).
+    /// The payload annotation expressions, each converted in the checker's
+    /// type context.
     pub payload: Vec<Expr>,
     /// The `case` declaration's source span, where each member it generates
     /// is located.
@@ -2394,165 +2279,6 @@ impl Expr {
             _ => self.self_member(),
         }
     }
-
-    /// The pack type a `*` spread of this operand names, under the
-    /// `*`-prefixed name the checker binds a pack by: a bare pack (`*Ts` is
-    /// `Named("*Ts")`) or the enclosing struct's own pack (`*Self.Ts` is
-    /// `SelfParam("*Ts")`). `None` for any other type-list expression, which
-    /// spreads as a value.
-    pub fn pack_spread_type(&self) -> Option<Type> {
-        match &self.kind {
-            ExprKind::Identifier(name) => Some(Type::Named(format!("*{name}"), Vec::new())),
-            _ => self
-                .self_member()
-                .map(|field| Type::SelfParam(format!("*{field}"))),
-        }
-    }
-
-    /// The type a type-shaped expression spells: a capitalized name, `Self`,
-    /// a parameter application (`S[Int]`, or the one-operand subscript
-    /// `S[1]`), or a member chain rooted at one (`M.Inner`, `Self.T`). `None`
-    /// for a value-shaped expression, whose lowercase root names a binding.
-    pub fn type_spelling(&self) -> Option<Type> {
-        match &self.kind {
-            ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
-            ExprKind::Identifier(name) if !name.chars().next()?.is_lowercase() => {
-                Some(Type::Named(name.clone(), Vec::new()))
-            }
-            _ if let Some((name, args)) = self.bracket_application()
-                && !name.chars().next()?.is_lowercase() =>
-            {
-                Some(Type::Named(name.to_string(), args.into_owned()))
-            }
-            ExprKind::Member { object, field } => Some(match object.type_spelling()? {
-                Type::SelfType => Type::SelfParam(field.clone()),
-                base => Type::Assoc {
-                    base: Box::new(base),
-                    name: field.clone(),
-                    args: Vec::new(),
-                },
-            }),
-            _ => None,
-        }
-    }
-
-    /// The type an annotation's expression spells, read in the annotation's
-    /// type context as upstream evaluates it:
-    ///
-    /// - `None` is the none type (a bracket operand is no type context, so
-    ///   `List[None]` keeps a `None` value and [`Self::type_spelling`] leaves
-    ///   it alone);
-    /// - `Self` is the enclosing type, and any other name, whatever its case,
-    ///   is [`Type::Named`] (the checker decides what it denotes);
-    /// - `B.NAME` is [`Type::SelfParam`] on `Self` and [`Type::Assoc`] on any
-    ///   other base;
-    /// - a bracket on a name other than `Self` applies it (`Pair[Int]`,
-    ///   `tl[1]`); on any other base, one value operand is an
-    ///   [`Type::IndexedProjection`] (`Self[0]`, `values.element_types[i]`)
-    ///   and any other list applies an argument-less member (`M.A[1, 2]`);
-    /// - `type_of(x)` is [`Type::TypeOf`];
-    /// - a pack spread (`*Ts`, `*Self.Ts`) is the pack's `*`-prefixed name
-    ///   ([`Self::pack_spread_type`]);
-    /// - any other expression (a call, a construction, a conditional, an
-    ///   operator, a `def` function type, a `__generator_type`) is the
-    ///   compile-time value it evaluates to
-    ///   ([`Type::Value`]), which the checker evaluates in the type context
-    ///   and rejects when it is no type.
-    ///
-    /// Only the `...` and contextual sentinels, which are no annotation,
-    /// convert to nothing.
-    pub fn annotation_type(&self) -> Option<Type> {
-        if self.is_sentinel() {
-            return None;
-        }
-        Some(
-            self.spelled_annotation_type()
-                .unwrap_or_else(|| Type::Value(Box::new(self.clone()))),
-        )
-    }
-
-    /// The type an expression spells as an annotation, before
-    /// [`Self::annotation_type`]'s compile-time-value fallback.
-    fn spelled_annotation_type(&self) -> Option<Type> {
-        match &self.kind {
-            ExprKind::Spread(operand) => operand.pack_spread_type(),
-            ExprKind::None => Some(Type::None),
-            ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
-            ExprKind::Identifier(name) if !self.is_sentinel() => {
-                Some(Type::Named(name.clone(), Vec::new()))
-            }
-            ExprKind::Member { object, field } => Some(match object.annotation_type()? {
-                Type::SelfType => Type::SelfParam(field.clone()),
-                base => Type::Assoc {
-                    base: Box::new(base),
-                    name: field.clone(),
-                    args: Vec::new(),
-                },
-            }),
-            ExprKind::Index { .. } | ExprKind::MultiIndex { .. } => {
-                let (object, args) = self.bracket_operands()?;
-                if let ExprKind::Identifier(name) = &object.kind
-                    && name != "Self"
-                {
-                    return Some(Type::Named(name.clone(), args));
-                }
-                match object.annotation_type()? {
-                    base if let [ParamArg::Value(index)] = args.as_slice() => {
-                        Some(Type::IndexedProjection {
-                            base: Box::new(base),
-                            index: Box::new(index.clone()),
-                        })
-                    }
-                    Type::Assoc {
-                        base,
-                        name,
-                        args: own,
-                    } if own.is_empty() => Some(Type::Assoc { base, name, args }),
-                    _ => None,
-                }
-            }
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if name == "type_of" => match (param_args.as_slice(), args.as_slice()) {
-                ([], [operand]) if kwargs.is_empty() => {
-                    Some(Type::TypeOf(Box::new(operand.clone())))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    /// The type an expression spells where upstream composes traits as a
-    /// type (a generator result, an associated member's annotation): an
-    /// `&` chain (`Copyable & Defaultable`), however nested, is a
-    /// `$trait_composition` of its member expressions in source order; any
-    /// other expression converts as an annotation
-    /// ([`Self::annotation_type`]).
-    pub fn composition_type(&self) -> Option<Type> {
-        let mut members = Vec::new();
-        self.composition_members(&mut members)?;
-        match <[_; 1]>::try_from(members) {
-            Ok([only]) => only.annotation_type(),
-            Err(members) => Some(Type::Named(
-                "$trait_composition".to_string(),
-                members.into_iter().cloned().map(ParamArg::Value).collect(),
-            )),
-        }
-    }
-
-    fn composition_members<'a>(&'a self, members: &mut Vec<&'a Self>) -> Option<()> {
-        if let ExprKind::Infix(InfixOp::BitAnd, left, right) = &self.kind {
-            left.composition_members(members)?;
-            return right.composition_members(members);
-        }
-        self.annotation_type()?;
-        members.push(self);
-        Some(())
-    }
 }
 
 /// Wrap a bare [`ExprKind`] into an [`Expr`] with a dummy span. Convenient for
@@ -2596,7 +2322,8 @@ pub enum ExprKind {
     /// Upstream's generator type `__generator_type[params] Result`: the type
     /// of a parameterized compile-time declaration read unapplied, its
     /// parameter list and the expression its application yields, which
-    /// converts by [`Expr::composition_type`].
+    /// is converted in the checker's type context, where an `&` chain
+    /// composes traits.
     GeneratorType {
         params: Vec<TypeParam>,
         result: Box<Expr>,

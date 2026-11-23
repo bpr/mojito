@@ -2218,7 +2218,7 @@ impl Checker {
         if root.is_some_and(|name| name == "Self" || self.lookup(name).is_some()) {
             return None;
         }
-        let source = super::constraints::assoc_body_source_type(object).ok()?;
+        let source = super::constraints::assoc_body_view(object).ok()?;
         Some(self.ty_from_spelling(&source))
     }
 }

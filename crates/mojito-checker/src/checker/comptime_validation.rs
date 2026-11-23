@@ -7,7 +7,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::{CaptureList, ParamArg, SourceType};
+use mojito_ast::ast::{CaptureList, ParamArg};
 use mojito_types::conformance::Conformance;
 use mojito_types::ct::FuncSymbolRef;
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
@@ -81,7 +81,7 @@ pub(in crate::checker) struct LiftedApplication {
 /// lifted.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ConstantScope<'a> {
-    Module(Option<&'a SourceType>),
+    Module(Option<&'a Expr>),
     Local,
 }
 
@@ -213,7 +213,7 @@ pub(in crate::checker) struct ApplicableFunction {
     /// it constructs or is called on. For a reference result it is the
     /// referent ([`Self::returns`]); for a named `out` result, the `out`
     /// parameter's type.
-    result: SourceType,
+    result: Expr,
     /// How it returns its result.
     returns: ResultConvention,
     /// Whether it is declared `raises`, which no type or parameter argument
@@ -223,7 +223,7 @@ pub(in crate::checker) struct ApplicableFunction {
     /// Scalar[target_dtype]`): the type a construction's instance must
     /// unify with, inferring the initializer's own parameters, as the pin
     /// resolves the overload.
-    refined_self: Option<SourceType>,
+    refined_self: Option<Expr>,
     /// Whether it is an `@implicit` initializer.
     implicit: bool,
     /// The inline level its decorators name.
@@ -557,12 +557,12 @@ impl ApplicableFunction {
     }
 
     /// A refined initializer's `out self` annotation.
-    pub(in crate::checker) const fn refined_self(&self) -> Option<&SourceType> {
+    pub(in crate::checker) const fn refined_self(&self) -> Option<&Expr> {
         self.refined_self.as_ref()
     }
 
     /// The declared result.
-    pub(in crate::checker) const fn result(&self) -> &SourceType {
+    pub(in crate::checker) const fn result(&self) -> &Expr {
         &self.result
     }
 
@@ -952,9 +952,9 @@ impl Checker {
             return;
         }
         let (result, applied_result) = if signature.ret == self_ty {
-            (SourceType::SelfType, None)
+            (Expr::from(ExprKind::Identifier("Self".to_string())), None)
         } else {
-            (SourceType::None, Some(signature.ret.clone()))
+            (Expr::from(ExprKind::None), Some(signature.ret.clone()))
         };
         let name = format!("{}.{method}", declaration.name);
         let ordinal = self.applicable_functions.get(&name).map_or(0, Vec::len);
@@ -1132,11 +1132,11 @@ pub(super) fn mlir_attribute_expr(
 }
 
 /// The `name` of an `` __mlir_type.`name` `` spelling.
-pub(super) fn mlir_source_name(ty: &SourceType) -> Option<&str> {
+pub(super) fn mlir_source_name<'a>(ty: &'a AnnotationView<'_>) -> Option<&'a str> {
     match ty {
-        SourceType::Assoc { base, name, args }
+        AnnotationView::Assoc { base, name, args }
             if args.is_empty()
-                && matches!(base.as_ref(), SourceType::Named(base, base_args)
+                && matches!(base.as_ref(), AnnotationView::Named(base, base_args)
                     if base == "__mlir_type" && base_args.is_empty()) =>
         {
             Some(name)
@@ -1221,9 +1221,9 @@ pub(super) fn applicable_declarations<'a>(
                     keyword_only: *keyword_only,
                     raises: *raises,
                     ret: ret
-                        .as_ref()
-                        .and_then(Expr::annotation_type)
-                        .unwrap_or(SourceType::None),
+                        .clone()
+                        .filter(|ret| !ret.is_sentinel())
+                        .unwrap_or_else(|| Expr::from(ExprKind::None)),
                     reference: ret_reference.is_some(),
                     where_clauses,
                     gate: None,
@@ -1259,7 +1259,7 @@ pub(super) fn applicable_declarations<'a>(
                 let on_instance = !type_params.is_empty();
                 // A construction calls its `__init__` under the struct's
                 // name, its `out self` the result.
-                let constructed = SourceType::Named(name.clone(), Vec::new());
+                let constructed = Expr::new(ExprKind::Identifier(name.clone()), statement.span);
                 let mut list =
                     |source: String,
                      function: Option<ApplicableFunction>,
@@ -1360,8 +1360,8 @@ pub(super) fn applicable_declarations<'a>(
                             .map(|function| ApplicableFunction {
                                 refined_self: method
                                     .self_type
-                                    .as_ref()
-                                    .and_then(Expr::annotation_type),
+                                    .clone()
+                                    .filter(|refined| !refined.is_sentinel()),
                                 ..function
                             });
                         list(name.clone(), function, Some(method));
@@ -1383,8 +1383,8 @@ pub(super) fn applicable_declarations<'a>(
                         continue;
                     }
                     let Some(ret) = method.ret.as_ref().map_or_else(
-                        || (!method.has_self).then_some(SourceType::None),
-                        Expr::annotation_type,
+                        || (!method.has_self).then(|| Expr::from(ExprKind::None)),
+                        |ret| (!ret.is_sentinel()).then(|| ret.clone()),
                     ) else {
                         continue;
                     };
@@ -3299,7 +3299,7 @@ impl Checker {
                     .map(|collector| &collector.element),
             )
             .map(|slot| match slot {
-                SlotType::Declared(Some(source), _) => self.ty_from_spelling(source).ok().map(Some),
+                SlotType::Declared(Some(source), _) => self.ty_from_anno(source).ok().map(Some),
                 SlotType::Declared(None, ty) => Some(ty.clone()),
                 SlotType::Scalar(_) | SlotType::Owner => Some(None),
             })
@@ -3312,7 +3312,7 @@ impl Checker {
         let owner = self.self_ty.clone();
         let result = match &function.result {
             _ if function.constructs() => Some(None),
-            SourceType::SelfType => Some(None),
+            result if result.is_self_annotation() => Some(None),
             result => self
                 .in_signature_scope(receiver.as_ref(), |checker| {
                     for (param, declared) in function.params.iter().zip(params.iter().flatten()) {
@@ -3336,13 +3336,13 @@ impl Checker {
                             mojito_types::types::variadic_collector_type(element.clone(), None),
                         )?;
                     }
-                    checker.ty_from_spelling(result)
+                    checker.ty_from_anno(result)
                 })
                 .ok()
                 .map(Some),
         };
         let refined_self = match &function.refined_self {
-            Some(refined) => self.ty_from_spelling(refined).ok().map(Some),
+            Some(refined) => self.ty_from_anno(refined).ok().map(Some),
             None => Some(None),
         };
         self.pop_param_scope();
@@ -3637,7 +3637,7 @@ impl Checker {
                             if struct_args.is_empty() {
                                 run_time_type()
                             } else {
-                                self.ty_from_spelling(&SourceType::Named(
+                                self.ty_from_spelling(&AnnotationView::Named(
                                     name.clone(),
                                     struct_args.clone(),
                                 ))
@@ -3646,7 +3646,7 @@ impl Checker {
                             param_args,
                         ),
                         (true, true) if !param_args.is_empty() => (
-                            self.ty_from_spelling(&SourceType::Named(
+                            self.ty_from_spelling(&AnnotationView::Named(
                                 name.clone(),
                                 param_args.to_vec(),
                             ))
@@ -3673,8 +3673,11 @@ impl Checker {
                         function
                             .constructs()
                             .then(|| {
-                                self.ty_from_spelling(&SourceType::Named(name.clone(), Vec::new()))
-                                    .ok()
+                                self.ty_from_spelling(&AnnotationView::Named(
+                                    name.clone(),
+                                    Vec::new(),
+                                ))
+                                .ok()
                             })
                             .flatten()
                     });
@@ -4019,10 +4022,10 @@ impl Checker {
             ..
         } = selected;
         let result = match &instance {
-            Some(instance) if function.constructs() || function.result == SourceType::SelfType => {
+            Some(instance) if function.constructs() || function.result.is_self_annotation() => {
                 Some(instance.clone())
             }
-            _ => result.or_else(|| self.ty_from_spelling(&function.result).ok()),
+            _ => result.or_else(|| self.ty_from_anno(&function.result).ok()),
         }
         .filter(|ty| {
             ty.is_simd()
@@ -4281,7 +4284,7 @@ impl Checker {
         let named = |name: &str, args: Vec<ParamArg>| {
             (self.binding_scope(name).is_none() && applicable(name))
                 .then(|| {
-                    self.ty_from_spelling(&SourceType::Named(name.to_string(), args))
+                    self.ty_from_spelling(&AnnotationView::Named(name.to_string(), args))
                         .ok()
                 })
                 .flatten()
@@ -5008,7 +5011,7 @@ impl Checker {
     /// annotation admits a type or the initializer is not one.
     pub(super) fn type_initializer_mismatch(
         &self,
-        annotation: &SourceType,
+        annotation: &AnnotationView,
         value: &Expr,
     ) -> Option<TypeError> {
         let CtMemberReq::Value(expected) = self.ct_member_req_from_anno(&[], annotation).ok()?
@@ -5069,9 +5072,11 @@ impl Checker {
         &mut self,
         stmt: &Stmt,
         name: &str,
-        annotation: Option<&SourceType>,
+        annotation_expression: Option<&Expr>,
         value: &Expr,
     ) -> Result<bool, TypeError> {
+        let annotation = annotation_expression.map(annotation_view_of).transpose()?;
+        let annotation = annotation.as_ref();
         // An annotation naming a struct the value is not converts it
         // through the struct's `@implicit` constructor, as a parameter
         // argument converts: `comptime w: L = 4` binds `L(4)`.
@@ -5196,7 +5201,7 @@ impl Checker {
                 {
                     self.module_values.insert(name.to_string(), folded);
                 }
-                ConstantScope::Module(annotation)
+                ConstantScope::Module(annotation_expression)
             } else {
                 ConstantScope::Local
             };
@@ -5341,7 +5346,7 @@ impl Checker {
     /// constructor converts, which the binding's ordinary check rejects.
     pub(super) fn annotated_comptime_conversion(
         &self,
-        annotation: &SourceType,
+        annotation: &AnnotationView,
         value: &Expr,
     ) -> Option<ParamExpr> {
         // A trait (`comptime C: Hooks = …`) names no struct to convert to.
@@ -5359,7 +5364,7 @@ impl Checker {
     fn check_raw_list_annotation(
         &self,
         name: &str,
-        annotation: Option<&SourceType>,
+        annotation: Option<&AnnotationView<'_>>,
         value: &Expr,
     ) -> Result<(), TypeError> {
         let (Some(annotation), Some(found)) = (annotation, self.member_value_type(value)) else {
@@ -5384,7 +5389,7 @@ impl Checker {
     fn check_type_list_annotation(
         &self,
         name: &str,
-        annotation: Option<&SourceType>,
+        annotation: Option<&AnnotationView<'_>>,
         value: &Expr,
     ) -> Result<(), TypeError> {
         let Some(annotation) = annotation else {
@@ -5417,7 +5422,7 @@ impl Checker {
     fn bind_compile_time_only_value(
         &mut self,
         name: &str,
-        annotation: Option<&SourceType>,
+        annotation: Option<&AnnotationView<'_>>,
         value: &Expr,
     ) -> Result<bool, TypeError> {
         let type_list = matches!(self.type_list_operand(value), Ok(Some(_)));
@@ -5492,7 +5497,10 @@ impl Checker {
                 )
             })
             .map(|annotation| {
-                self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
+                self.resolve_storage_annotation(
+                    &annotation_view_of(annotation)?,
+                    super::StorageStrictness::AllowBare,
+                )
             })
             .transpose()?;
         if let ExprKind::Call { name, .. } = &value.kind
@@ -5741,7 +5749,7 @@ impl Checker {
     fn evaluated_display_binding(
         &self,
         value: &Expr,
-        annotation: Option<&SourceType>,
+        annotation: Option<&AnnotationView<'_>>,
     ) -> Option<(Ty, Ty, mojito_checked::checked::SemanticAdjustment)> {
         let annotated = || {
             annotation.and_then(|annotation| {
@@ -6083,7 +6091,7 @@ impl Checker {
             let declared = ParamDecl::type_pack_list(&self.self_decls, pack).is_some();
             let reference = self.pack_reference(pack).filter(|_| declared)?;
             (
-                SourceType::SelfParam(pack.to_string()),
+                AnnotationView::SelfParam(pack.to_string()),
                 format!("Self.{pack}"),
                 reference,
             )
@@ -6092,15 +6100,15 @@ impl Checker {
                 .type_pack_in_scope(pack)
                 .filter(|_| self.lookup(pack).is_none() || self.is_value_parameter(pack))?;
             (
-                SourceType::Named(pack.to_string(), Vec::new()),
+                AnnotationView::Named(pack.to_string(), Vec::new()),
                 pack.to_string(),
                 reference,
             )
         };
         Some(
-            self.ty_from_spelling(&SourceType::IndexedProjection {
+            self.ty_from_spelling(&AnnotationView::IndexedProjection {
                 base: Box::new(base),
-                index: Box::new(index.clone()),
+                index,
             })
             .and_then(|element| {
                 let view = self
@@ -6573,10 +6581,10 @@ impl Checker {
     /// The value pack a bracket argument spreads whole: `*vs` of a `def`'s
     /// or method's own value pack, or `*Self.vs` of the enclosing struct's.
     pub(super) fn value_pack_spread(&self, argument: &ParamArg) -> Option<ParamExpr> {
-        match argument.spread_pack()? {
+        match spread_pack_view(argument)? {
             // The struct's own pack arrives here too: pack qualification
             // folds `*Self.vs` onto the bare spread.
-            SourceType::Named(name, args) if args.is_empty() => {
+            AnnotationView::Named(name, args) if args.is_empty() => {
                 let name = name.strip_prefix('*')?;
                 self.value_pack_named(&Expr::new(
                     ExprKind::Identifier(name.to_string()),
@@ -6584,7 +6592,7 @@ impl Checker {
                 ))
                 .or_else(|| self.self_value_pack(name))
             }
-            SourceType::SelfParam(name) => self.self_value_pack(name.strip_prefix('*')?),
+            AnnotationView::SelfParam(name) => self.self_value_pack(name.strip_prefix('*')?),
             _ => None,
         }
     }
@@ -6959,18 +6967,21 @@ impl Checker {
             return Some(Ok(constructed));
         }
         Some(
-            self.ty_from_spelling(&SourceType::Named(name.to_string(), param_args.to_vec()))
-                .and_then(|declared| {
-                    if declared == constructed {
-                        Ok(constructed)
-                    } else {
-                        Err(TypeError::TypeMismatch {
-                            expected: declared.to_string(),
-                            found: constructed.to_string(),
-                            context: format!("spread of '{binding}'"),
-                        })
-                    }
-                }),
+            self.ty_from_spelling(&AnnotationView::Named(
+                name.to_string(),
+                param_args.to_vec(),
+            ))
+            .and_then(|declared| {
+                if declared == constructed {
+                    Ok(constructed)
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: declared.to_string(),
+                        found: constructed.to_string(),
+                        context: format!("spread of '{binding}'"),
+                    })
+                }
+            }),
         )
     }
 
@@ -7523,7 +7534,7 @@ enum SlotType {
     /// and one that resolves to no [`parameter_value_type`] takes no call.
     /// A trait default's wrapper spells none: its slot is its registered
     /// signature's type ([`Checker::list_default_wrapper`]).
-    Declared(Option<SourceType>, Option<Ty>),
+    Declared(Option<Expr>, Option<Ty>),
 }
 
 impl SlotType {
@@ -7567,9 +7578,9 @@ struct ApplicableShape<'a> {
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
     raises: bool,
-    /// The `->` result converted in its type context: a `ref` result's
-    /// referent when `reference` is set.
-    ret: SourceType,
+    /// The `->` result's annotation, the `None` expression when `->` is
+    /// omitted: a `ref` result's referent when `reference` is set.
+    ret: Expr,
     /// Whether the result is a `ref` result ([`ResultConvention::Reference`]).
     reference: bool,
     where_clauses: &'a [Expr],
@@ -7593,13 +7604,15 @@ impl ApplicableShape<'_> {
             .iter()
             .map(|binder| binder.callable_bound.is_none().then(|| binder.name.clone()))
             .collect::<Option<_>>()?;
-        let slot = |ty: &SourceType| match ty {
-            SourceType::SelfType => Some(SlotType::Owner),
+        let slot = |annotation: &Expr| match &annotation_view_of(annotation).ok()? {
+            AnnotationView::SelfType => Some(SlotType::Owner),
             ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
             ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
             ty if is_mlir_source(ty, "!kgen.dtype") => Some(SlotType::Scalar(Ty::kgen_dtype())),
-            SourceType::Named(..) | SourceType::SelfParam(_) | SourceType::Assoc { .. } => {
-                Some(SlotType::Declared(Some(ty.clone()), None))
+            AnnotationView::Named(..)
+            | AnnotationView::SelfParam(_)
+            | AnnotationView::Assoc { .. } => {
+                Some(SlotType::Declared(Some(annotation.clone()), None))
             }
             _ => None,
         };
@@ -7625,7 +7638,7 @@ impl ApplicableShape<'_> {
                 Some(ApplicableCollector {
                     index: mojito_ast::call::regular_marker_index(self.params, Some(position))?,
                     name: param.name.clone(),
-                    element: slot(&param.ty.annotation_type()?).filter(|_| by_value(param))?,
+                    element: slot(&param.ty).filter(|_| by_value(param))?,
                 })
             }
             None => None,
@@ -7645,7 +7658,7 @@ impl ApplicableShape<'_> {
                     && applicable_convention(param);
                 Some(ApplicableParameter {
                     name: param.name.clone(),
-                    ty: slot(&param.ty.annotation_type()?).filter(|_| passed)?,
+                    ty: slot(&param.ty).filter(|_| passed)?,
                     default: param.default.clone(),
                     by_reference: param.convention == Some(ArgConvention::Ref),
                     convention: param.convention,
@@ -7653,9 +7666,10 @@ impl ApplicableShape<'_> {
             })
             .collect::<Option<Vec<_>>>()?;
         let ret = match mojito_ast::ast::named_result(self.params) {
-            Some(result) => &result.ty.annotation_type()?,
+            Some(result) => &result.ty,
             None => &self.ret,
         };
+        let ret_view = annotation_view_of(ret).ok()?;
         Some(ApplicableFunction {
             owner,
             site: Some(site),
@@ -7676,19 +7690,21 @@ impl ApplicableShape<'_> {
                 self.keyword_only,
                 variadic,
             ),
-            result: match ret {
+            result: match &ret_view {
                 // A reference result is its referent's application, which
                 // the call reads ([`ResultConvention::Reference`]).
-                SourceType::SelfType
-                | SourceType::Named(..)
-                | SourceType::SelfParam(_)
-                | SourceType::IndexedProjection { .. }
+                AnnotationView::SelfType
+                | AnnotationView::Named(..)
+                | AnnotationView::SelfParam(_)
+                | AnnotationView::IndexedProjection { .. }
                     if self.reference =>
                 {
                     ret.clone()
                 }
                 _ if self.reference => return None,
-                SourceType::None | SourceType::SelfType | SourceType::Named(..) => ret.clone(),
+                AnnotationView::None | AnnotationView::SelfType | AnnotationView::Named(..) => {
+                    ret.clone()
+                }
                 // A `comptime` member type of `Self` (`SIMD.eq`'s
                 // `Self._Mask`), or a parametric one applied
                 // (`SIMD.reduce_max`'s `Self._T[size_out]`), resolved in its
@@ -7696,11 +7712,13 @@ impl ApplicableShape<'_> {
                 // builtin's bare member is registered before its body folds
                 // ([`Checker::register_builtin_result_members`]); no other
                 // callable's member is needed sooner.
-                SourceType::SelfParam(_) | SourceType::IndexedProjection { .. } => ret.clone(),
-                ret if is_mlir_index_source(ret)
-                    || is_mlir_source(ret, "!kgen.deferred")
-                    || is_mlir_source(ret, "!kgen.string")
-                    || is_mlir_source(ret, "!kgen.target") =>
+                AnnotationView::SelfParam(_) | AnnotationView::IndexedProjection { .. } => {
+                    ret.clone()
+                }
+                view if is_mlir_index_source(view)
+                    || is_mlir_source(view, "!kgen.deferred")
+                    || is_mlir_source(view, "!kgen.string")
+                    || is_mlir_source(view, "!kgen.target") =>
                 {
                     ret.clone()
                 }
@@ -8045,12 +8063,12 @@ pub(super) fn reads_comptime_interpreter_query(expr: &Expr) -> bool {
 }
 
 /// Whether `ty` spells the MLIR builtin `__mlir_type.index`.
-fn is_mlir_index_source(ty: &SourceType) -> bool {
+fn is_mlir_index_source(ty: &AnnotationView) -> bool {
     is_mlir_source(ty, "index")
 }
 
 /// Whether `ty` spells `` __mlir_type.`name` ``.
-fn is_mlir_source(ty: &SourceType, mlir_name: &str) -> bool {
+fn is_mlir_source(ty: &AnnotationView, mlir_name: &str) -> bool {
     mlir_source_name(ty) == Some(mlir_name)
 }
 
@@ -8124,8 +8142,8 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
         /// stay value reads.
         fn visit_annotation(&mut self, annotation: &Expr) {
             if matches!(
-                annotation.annotation_type(),
-                None | Some(SourceType::Value(_))
+                annotation_view(annotation),
+                None | Some(AnnotationView::Value(_))
             ) {
                 return;
             }

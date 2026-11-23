@@ -124,8 +124,8 @@ impl Checker {
                     methods.iter().any(|method| {
                         matches!(
                             value_result(method.ret.as_ref(), method.ret_reference.as_ref())
-                                .and_then(Expr::annotation_type),
-                            Some(SourceType::SelfParam(read)) if read == member.name
+                                .and_then(annotation_view),
+                            Some(AnnotationView::SelfParam(read)) if read == member.name
                         ) && InlineLevel::of(&method.decorators)
                             .is_ok_and(|level| level == InlineLevel::Builtin)
                     })
@@ -140,9 +140,9 @@ impl Checker {
                         .iter()
                         .filter_map(|member| {
                             let spelling =
-                                super::constraints::assoc_body_source_type(&member.value).ok()?;
+                                super::constraints::assoc_body_view(&member.value).ok()?;
                             let ty = checker.ty_from_spelling(&spelling).ok()?;
-                            Some((member.name.clone(), ty, spelling))
+                            Some((member.name.clone(), ty, member.value.clone()))
                         })
                         .collect::<Vec<_>>()
                 })
@@ -511,8 +511,8 @@ impl Checker {
     ) -> Option<TypeError> {
         let slots = declaration.function.argument_slots(self.self_ty.as_ref())?;
         let result = match declaration.function.result() {
-            SourceType::SelfType => self.self_ty.clone(),
-            result => self.ty_from_spelling(result).ok(),
+            result if result.is_self_annotation() => self.self_ty.clone(),
+            result => self.ty_from_anno(result).ok(),
         };
         let runtime = slots.len() - declaration.function.runtime_slot_count();
         let by_value = slots[runtime..]
@@ -865,8 +865,8 @@ impl Checker {
                 checker.bind_struct_slots(declaration, level, self_ty)?;
             }
             let result = match declaration.function.result() {
-                SourceType::SelfType => self_ty?,
-                result => checker.ty_from_spelling(result).ok()?,
+                result if result.is_self_annotation() => self_ty?,
+                result => checker.ty_from_anno(result).ok()?,
             };
             checker
                 .folded_statements(declaration.body, level, &result)
@@ -927,7 +927,7 @@ impl Checker {
         let Some(refined) = declaration.function.refined_self() else {
             return Some((self.self_ty.clone()?, declared));
         };
-        let refined = self.ty_from_spelling(refined).ok()?;
+        let refined = self.ty_from_anno(refined).ok()?;
         if let Some(storage) = mojito_types::types::simd_storage(&refined) {
             let fields = declared
                 .into_iter()

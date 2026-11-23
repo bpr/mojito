@@ -1294,7 +1294,7 @@ fn_effect: 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 As upstream parses an annotation, it is one whole expression (the
 expression grammar at ternary level, as a function type's result and a
 generator type's result are), converted in the annotation's type context
-(`Expr::annotation_type`). Only a `*` pack and a contextual `ref` keep their
+by the checker (`annotation_view`). Only a `*` pack and a contextual `ref` keep their
 own forms:
 
 - `None` is the none type (a bracket operand reads the same expression but
@@ -1377,7 +1377,7 @@ types do. A missing result is a parse error ("Expected an expression").
 The result is one whole expression, so a `&` composition after it is the
 whole result (`[G: __generator_type[T: Copyable] Copyable & Defaultable]`),
 never further bounds of the parameter it types. It converts as a trait
-composition (`Expr::composition_type`, which an associated member's
+composition (the checker's `composition_view`, which an associated member's
 annotation uses too): an `&` chain becomes the `$trait_composition` node,
 and the checker requires each member to be a trait. Any other operator
 (`A & B | C`, `Int == Int`) is a compile-time value the checker evaluates

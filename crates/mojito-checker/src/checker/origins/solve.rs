@@ -28,7 +28,7 @@ impl Checker {
         let Some(Some((annotation, generated))) = self.return_annotations.last() else {
             return None;
         };
-        let annotation = annotation_spelling(annotation).ok()?;
+        let annotation = annotation_view_of(annotation).ok()?;
         if *generated {
             self.resolve_generated_return_annotation(&annotation)
         } else {
@@ -53,7 +53,7 @@ impl Checker {
         let Some(Some((annotation, generated))) = self.return_annotations.last() else {
             return Ok(found.clone());
         };
-        let annotation = annotation_spelling(annotation)?;
+        let annotation = annotation_view_of(annotation)?;
         let resolved = if *generated {
             self.resolve_generated_return_annotation(&annotation)
         } else {

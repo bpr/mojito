@@ -49,10 +49,7 @@ pub fn check_ownership(program: &[ast::Stmt]) -> Result<(), error::OwnershipErro
     check_ownership_program(&mir::lower_checked_program(&checked))
 }
 pub use artifact::{ArtifactRunError, run_artifact};
-pub use ast::{
-    Dtype, Expr, ImportName, ImportNames, InfixOp, Param, PrefixOp, SourceType, Stmt, Type,
-    TypeParam,
-};
+pub use ast::{Dtype, Expr, ImportName, ImportNames, InfixOp, Param, PrefixOp, Stmt, TypeParam};
 pub use backend::{Backend, BackendKind};
 pub use checked::{
     CheckedCapture, CheckedConst, CheckedDeclId, CheckedDeclKind, CheckedDeclaration, CheckedExpr,

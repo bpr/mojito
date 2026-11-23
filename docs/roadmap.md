@@ -5236,7 +5236,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   L[1], found Bool", where the pin reads the local and prints `True`.
   - A name resolves through the innermost scope at the pin, so the local
     binding hides the module struct in every position.
-  - `Checker::ty_from_spelling`'s `SourceType::Named` arm
+  - `Checker::ty_from_spelling`'s `AnnotationView::Named` arm
     (`checker/type_resolution.rs`) asks `applied_type_at_depth` first and
     reads the name as a compile-time value (`value_headed_type`) only
     when no type has that name, so a module type wins over a local value.
@@ -13372,34 +13372,10 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2546 The annotation view is an AST type, not the checker's**
-
-  `mojito_ast::ast::Type`, the `SourceType` alias, and the view functions
-  (`annotation_type`, `composition_type`, `type_spelling`,
-  `pack_spread_type`, `ParamArg::spread_pack`,
-  `TypeParam::annotation_type`, `TraitComptime::annotation_type`) live in
-  the AST, so the AST still exports a second representation of a type that
-  upstream's has not.
-  - Slice 3 of the R2540 plan: the view becomes the checker's borrowed
-    `AnnotationView<'a>` in `type_resolution.rs`, where R2541 retires it.
-  - The checker stores owned views that must become the annotation
-    expression: `comptime_validation.rs`'s `result`, `refined_self`,
-    `Declared`, `ret`, and `ConstantScope::Module`, and
-    `StructInfo::associated_spellings`.
-  - `type_resolution.rs::view_expression`, the checker's inverse of
-    `type_spelling`, goes with the view.
-  - Every `SourceType` site in the checker becomes `AnnotationView`, and
-    `src/lib.rs` drops `Type` and `SourceType` from its re-export.
-  - `tests/parser_test.rs`'s 43 view tests (and its `view` helper) move
-    to checker tests of the view, and the parser tests keep
-    expression-shape assertions.
-  - Depends on R2545.
-  - Model: Fable, Planned.
-
 - [ ] **R2541 The checker types an annotation with a second evaluator**
 
-  `resolve_ty_from_anno` resolves a classification of the annotation
-  expression, beside `build_ct`/`denoted_type`, where upstream types every
+  `resolve_ty_from_anno` resolves the checker's `AnnotationView`
+  classification of the annotation expression, beside `build_ct`/`denoted_type`, where upstream types every
   annotation with its one `emitExprType`.
   - Since R2137 an annotation no spelling converts already goes through
     `denoted_type`, so the two disagree only on the shapes the resolver

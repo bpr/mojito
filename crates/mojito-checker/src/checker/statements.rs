@@ -449,7 +449,6 @@ impl Checker {
         if self.lookup(name).is_some() {
             return Ok(true);
         }
-        let ty = ty.as_ref().map(annotation_spelling).transpose()?;
         let _position = self.comptime_position();
         let expression = match self.binderless_comptime_expression(
             name,
@@ -460,10 +459,11 @@ impl Checker {
             Ok(None) | Err(TypeError::UndefinedVariable(_)) => return Ok(false),
             Err(error) => return Err(error),
         };
-        let declared = match &ty {
-            Some(annotation) => {
-                self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
-            }
+        let declared = match ty {
+            Some(annotation) => self.resolve_storage_annotation(
+                &annotation_view_of(annotation)?,
+                super::StorageStrictness::AllowBare,
+            ),
             None => self
                 .infer(value)
                 .and_then(|found| self.comptime_binding_ty(&found, name)),
@@ -499,7 +499,7 @@ impl Checker {
         if !type_params.is_empty() {
             return Ok(());
         }
-        let ty = ty.as_ref().map(annotation_spelling).transpose()?;
+        let ty = ty.as_ref().map(annotation_view_of).transpose()?;
         if !where_clauses.is_empty() {
             self.constrained_module_constants
                 .insert(name.clone(), where_clauses.clone());
@@ -625,9 +625,9 @@ impl Checker {
     fn shell_awaits_declarations(&self, params: &[mojito_ast::ast::TypeParam]) -> bool {
         super::traits::names_member_type(params)
             || params.iter().any(|param| {
-                let value_type = param.value_type.as_ref().and_then(Expr::annotation_type);
+                let value_type = param.value_type.as_ref().and_then(annotation_view);
                 let named = match &value_type {
-                    Some(SourceType::Named(name, _)) => Some(name),
+                    Some(AnnotationView::Named(name, _)) => Some(name),
                     Some(_) => None,
                     None => param.bounds.first().filter(|_| param.bounds.len() == 1),
                 };
@@ -974,7 +974,7 @@ impl Checker {
                 continue;
             }
             self.module_trait_constants.insert(name.clone());
-            let ty = ty.as_ref().map(annotation_spelling).transpose()?;
+            let ty = ty.as_ref().map(annotation_view_of).transpose()?;
             match self.bind_trait_constant(name, ty.as_ref(), value, 0) {
                 Err(error) if report => return Err(error),
                 _ => {}
@@ -1029,17 +1029,17 @@ impl Checker {
         {
             return Ok(());
         }
-        let ty = ty.as_ref().map(annotation_spelling).transpose()?;
+        let ty = ty.as_ref().map(annotation_view_of).transpose()?;
         self.check_generic_comptime_alias(name, type_params, ty.as_ref(), where_clauses, value)
     }
 
     /// The type an alias body spells, or else the type it evaluates to (`Int
     /// if c else String`), as upstream's alias declaration evaluates its
     /// body and keeps a type result as the alias's type.
-    fn alias_body_source_type(&self, value: &Expr) -> Result<SourceType, TypeError> {
-        super::constraints::assoc_body_source_type(value).or_else(|error| {
+    fn alias_body_view<'a>(&self, value: &'a Expr) -> Result<AnnotationView<'a>, TypeError> {
+        super::constraints::assoc_body_view(value).or_else(|error| {
             if self.denotes_type_value(value) {
-                Ok(SourceType::Value(Box::new(value.clone())))
+                Ok(AnnotationView::Value(value))
             } else {
                 Err(error)
             }
@@ -1062,7 +1062,7 @@ impl Checker {
     /// module `comptime` bound to it is a type alias. A value spelled the
     /// same way (`DType.int16`) is not.
     fn denotes_type(&self, value: &Expr) -> bool {
-        super::constraints::assoc_body_source_type(value)
+        super::constraints::assoc_body_view(value)
             .is_ok_and(|source| self.ty_from_spelling(&source).is_ok())
     }
 
@@ -1576,11 +1576,11 @@ impl Checker {
                 Ok(())
             }
             StmtKind::VarDecl { name, ty, value } => {
-                let ty = ty.as_ref().map(annotation_spelling).transpose()?;
+                let ty = ty.as_ref().map(annotation_view_of).transpose()?;
                 // Current Mojo reads a bare `def(...)` local annotation as
                 // trait-typed storage, like fields and collection elements;
                 // a stored callable spells `def(...) thin`.
-                if let Some(SourceType::Value(value)) = &ty
+                if let Some(AnnotationView::Value(value)) = &ty
                     && matches!(&value.kind, ExprKind::FunctionType(callable) if !callable.thin)
                 {
                     return Err(TypeError::Unsupported(format!(
@@ -2310,7 +2310,8 @@ impl Checker {
                 if at_module && self.module_trait_constants.contains(name) {
                     return Ok(());
                 }
-                let ty = ty.as_ref().map(annotation_spelling).transpose()?;
+                let annotation = ty;
+                let ty = ty.as_ref().map(annotation_view_of).transpose()?;
                 if !at_module
                     && type_params.is_empty()
                     && self.bind_trait_constant(
@@ -2345,7 +2346,7 @@ impl Checker {
                     return Err(mismatch);
                 }
                 if type_params.is_empty()
-                    && self.bind_template_comptime(stmt, name, ty.as_ref(), value)?
+                    && self.bind_template_comptime(stmt, name, annotation.as_ref(), value)?
                 {
                     return Ok(());
                 }
@@ -4139,7 +4140,7 @@ impl Checker {
         // The clauses a compile-time application already emitted are the
         // signature's own, as upstream emits a signature once.
         let emitted = self.emitted_def_constraints(stmt, &ParamDecl::argument_view(&decls));
-        let ret = ret_anno.as_ref().map(annotation_spelling).transpose()?;
+        let ret = ret_anno.as_ref().map(annotation_view_of).transpose()?;
         let (param_tys, ret_ty, compiled) = self.in_signature_scope(None, |this| {
             let generated = this.generated_declaration.replace(name.contains('$'));
             let param_tys = this.param_tys(params);
@@ -4628,7 +4629,7 @@ impl Checker {
             .iter()
             .enumerate()
             .map(|(slot, parameter)| {
-                let annotation = annotation_spelling(&parameter.ty)?;
+                let annotation = annotation_view_of(&parameter.ty)?;
                 // The initialized-local rule for parameter annotations
                 // (pin-attested): bare infers per call, a partial application
                 // omitting an origin slot rejects, a placeholder is inferred
@@ -4649,7 +4650,7 @@ impl Checker {
                 // A runtime value of a parametric function type is the
                 // closure a reference materializes, so its open parameters
                 // are origins alone, each call inferring them.
-                if let SourceType::Value(value) = &annotation
+                if let AnnotationView::Value(value) = &annotation
                     && matches!(
                         &value.kind,
                         ExprKind::FunctionType(callable) if !callable.type_params.is_empty()
@@ -4690,7 +4691,7 @@ impl Checker {
         &mut self,
         name: &str,
         type_params: &[mojito_ast::ast::TypeParam],
-        ty: Option<&SourceType>,
+        ty: Option<&AnnotationView<'_>>,
         where_clauses: &[Expr],
         value: &Expr,
     ) -> Result<(), TypeError> {
@@ -4779,7 +4780,7 @@ impl Checker {
             if origin_value {
                 return Ok(AliasBody::OriginValue);
             }
-            Ok(match (self.alias_body_source_type(value), &declared) {
+            Ok(match (self.alias_body_view(value), &declared) {
                 // A `Bool` annotation admits a proposition as well as a value.
                 (_, Some(declared)) => {
                     match self.lower_parametric_value(&decls, value, Some(declared)) {
@@ -4927,11 +4928,11 @@ fn holds_closure(ty: &Ty) -> bool {
 /// (`values.Ts[index]`), used as the opaque element's type name inside a
 /// handler body.
 fn dependent_projection_spelling(annotation: &Expr) -> String {
-    fn type_text(annotation: &SourceType) -> String {
+    fn type_text(annotation: &AnnotationView) -> String {
         match annotation {
-            SourceType::Named(name, _) => name.clone(),
-            SourceType::Assoc { base, name, .. } => format!("{}.{name}", type_text(base)),
-            SourceType::IndexedProjection { base, index } => {
+            AnnotationView::Named(name, _) => name.clone(),
+            AnnotationView::Assoc { base, name, .. } => format!("{}.{name}", type_text(base)),
+            AnnotationView::IndexedProjection { base, index } => {
                 let index = match &index.kind {
                     ExprKind::Identifier(name) => name.clone(),
                     ExprKind::Int(value) => value.to_string(),
@@ -4942,7 +4943,7 @@ fn dependent_projection_spelling(annotation: &Expr) -> String {
             _ => "element".to_string(),
         }
     }
-    annotation.annotation_type().map_or_else(
+    annotation_view(annotation).map_or_else(
         || "element".to_string(),
         |annotation| type_text(&annotation),
     )

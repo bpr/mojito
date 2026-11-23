@@ -170,7 +170,7 @@ impl Checker {
                 args,
                 kwargs,
             } if self.generic_type_alias(name) => Some(
-                self.ty_from_spelling(&SourceType::Named(name.clone(), param_args.clone()))
+                self.ty_from_spelling(&AnnotationView::Named(name.clone(), param_args.clone()))
                     .and_then(|ty| {
                         let applied =
                             mojito_ast::ast::named_subscript(name, param_args, expression.span);
@@ -589,7 +589,7 @@ impl Checker {
         if !self.generic_type_alias(name) {
             return None;
         }
-        let ty = match self.ty_from_spelling(&SourceType::Named(
+        let ty = match self.ty_from_spelling(&AnnotationView::Named(
             name.to_string(),
             param_args.into_owned(),
         )) {
@@ -659,8 +659,11 @@ impl Checker {
     /// source spelling. `None` when `object` names no such member.
     fn type_member_spelling(&self, object: &Expr) -> Option<Expr> {
         let (spelling, member) = self.type_member_read(object)?;
-        if matches!(spelling, SourceType::SelfParam(_)) {
-            return view_expression(member?, object.span);
+        if matches!(spelling, AnnotationView::SelfParam(_)) {
+            return view_expression(
+                &super::constraints::assoc_body_view(member?).ok()?,
+                object.span,
+            );
         }
         let ty = self.ty_from_spelling(&spelling).ok()?;
         if let Some(spelled) = mojito_types::ct::source_expr(&ty, object.span) {
@@ -670,7 +673,10 @@ impl Checker {
         // (`T[n=f()]`), or one still a parameter expression (`T[t]`) — is
         // the member's own spelling with `Self` bound to the receiver, as
         // upstream substitutes the member's value at the instance.
-        let spelled = view_expression(member?, object.span)?;
+        let spelled = view_expression(
+            &super::constraints::assoc_body_view(member?).ok()?,
+            object.span,
+        )?;
         if !reads_self(&spelled) {
             return Some(spelled);
         }
@@ -733,19 +739,19 @@ impl Checker {
     /// member's own spelling over `Self` when it has one, as upstream's name
     /// lookup reads the member as its value. `None` when `object` names no
     /// such member.
-    fn type_member_read(&self, object: &Expr) -> Option<(SourceType, Option<&SourceType>)> {
+    fn type_member_read(&self, object: &Expr) -> Option<(AnnotationView<'_>, Option<&Expr>)> {
         let ExprKind::Member { field, .. } = &object.kind else {
             return None;
         };
-        let spelling = object.type_spelling()?;
+        let spelling = spelled_view(object)?;
         let owner = match &spelling {
-            SourceType::SelfParam(_) => self.self_ty.clone()?,
-            SourceType::Assoc { base, .. } => {
+            AnnotationView::SelfParam(_) => self.self_ty.clone()?,
+            AnnotationView::Assoc { base, .. } => {
                 let mut root = base.as_ref();
-                while let SourceType::Assoc { base, .. } = root {
+                while let AnnotationView::Assoc { base, .. } = root {
                     root = base;
                 }
-                if matches!(root, SourceType::Named(name, _) if self.lookup(name).is_some()) {
+                if matches!(root, AnnotationView::Named(name, _) if self.lookup(name).is_some()) {
                     return None;
                 }
                 // A bare parametric struct's member is read through its
@@ -849,11 +855,11 @@ impl Checker {
         {
             return Some(construction);
         }
-        let base = object.type_spelling()?;
+        let base = spelled_view(object)?;
         let owner = match &base {
-            SourceType::Named(owner, _) => owner.as_str(),
+            AnnotationView::Named(owner, _) => owner.as_str(),
             // `Self._T[w](v)`: the enclosing struct's own member.
-            SourceType::SelfType if self.lookup("Self").is_none() => {
+            AnnotationView::SelfType if self.lookup("Self").is_none() => {
                 let (instance, _) = mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?;
                 mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance)
             }
@@ -864,7 +870,7 @@ impl Checker {
         {
             return None;
         }
-        let member = SourceType::Assoc {
+        let member = AnnotationView::Assoc {
             base: Box::new(base),
             name: field.clone(),
             args: param_args.to_vec(),
@@ -892,14 +898,16 @@ impl Checker {
         if info.methods.contains_key(alias) {
             return None;
         }
-        let SourceType::Named(name, param_args) = info.associated_spellings.get(alias)? else {
+        let AnnotationView::Named(name, param_args) =
+            super::constraints::assoc_body_view(info.associated_spellings.get(alias)?).ok()?
+        else {
             return None;
         };
         let construction = derived_construction(
             expression,
             ExprKind::Call {
-                name: name.clone(),
-                param_args: param_args.clone(),
+                name,
+                param_args,
                 args: args.to_vec(),
                 kwargs: kwargs.to_vec(),
             },
@@ -1441,7 +1449,7 @@ fn self_at_receiver(mut spelled: Expr, receiver: &Expr) -> Option<Expr> {
             }
         }
     }
-    receiver.type_spelling()?;
+    spelled_view(receiver)?;
     mojito_ast::visit::walk_expr_mut(
         &mut SelfAt {
             expression: receiver,

@@ -301,14 +301,12 @@ impl Checker {
         }
         // The bare struct (`Origin(o)`) leaves its parameters to the
         // conversion: the struct at its own binders.
-        let callee = match self.ty_from_spelling(&mojito_ast::ast::Type::Named(
-            name.clone(),
-            param_args.clone(),
-        )) {
-            Ok(callee) => callee,
-            Err(_) if param_args.is_empty() => self.self_instance_ty(name)?,
-            Err(_) => return None,
-        };
+        let callee =
+            match self.ty_from_spelling(&AnnotationView::Named(name.clone(), param_args.clone())) {
+                Ok(callee) => callee,
+                Err(_) if param_args.is_empty() => self.self_instance_ty(name)?,
+                Err(_) => return None,
+            };
         let (head, arguments) = callee.kind().as_non_pointer_struct()?;
         if head != "Origin" || !self.is_library_origin(head) {
             return None;
@@ -733,7 +731,7 @@ impl Checker {
     /// application's arguments.
     pub(in crate::checker) fn field_origin_binder_arguments(
         &self,
-        annotation: &mojito_ast::ast::SourceType,
+        annotation: &AnnotationView,
         associated: &[mojito_ast::ast::StructComptime],
     ) -> Option<Vec<(u32, u32)>> {
         let mut binders = Vec::new();
@@ -755,12 +753,12 @@ impl Checker {
     /// `None` when the annotation is not a recordable struct application.
     pub(super) fn collect_field_origin_binders(
         &self,
-        annotation: &mojito_ast::ast::SourceType,
+        annotation: &AnnotationView,
         associated: &[mojito_ast::ast::StructComptime],
         substitution: &HashMap<String, String>,
         out: &mut Vec<(u32, String)>,
     ) -> Option<()> {
-        use mojito_ast::ast::{ParamArg, SourceType};
+        use mojito_ast::ast::ParamArg;
         let applied_binder = |argument: &ParamArg| -> Option<String> {
             let binder = match argument {
                 ParamArg::Value(expression) => origin_binder_name(expression)?,
@@ -774,7 +772,7 @@ impl Checker {
             )
         };
         match annotation {
-            SourceType::Named(name, args) => {
+            AnnotationView::Named(name, args) => {
                 let info = self.structs.get(name)?;
                 let explicit: Vec<&ParamDecl> = info.explicit_params().collect();
                 if args.len() != explicit.len() {
@@ -791,18 +789,18 @@ impl Checker {
                 Some(())
             }
             // A monomorphic alias of the declaring struct: read its body.
-            SourceType::SelfParam(alias) => {
+            AnnotationView::SelfParam(alias) => {
                 let member = associated
                     .iter()
                     .find(|member| member.name == *alias && member.params.is_empty())?;
-                let body = super::constraints::assoc_body_source_type(&member.value).ok()?;
+                let body = super::constraints::assoc_body_view(&member.value).ok()?;
                 self.collect_field_origin_binders(&body, associated, substitution, out)
             }
             // A parameterized alias application (`Self.view_t[o2]`): bind the
             // alias's explicit binders to the supplied arguments, then read
             // its body under that substitution.
-            SourceType::IndexedProjection { base, index } => {
-                let SourceType::SelfParam(alias) = base.as_ref() else {
+            AnnotationView::IndexedProjection { base, index } => {
+                let AnnotationView::SelfParam(alias) = base.as_ref() else {
                     return None;
                 };
                 let member = associated
@@ -810,7 +808,7 @@ impl Checker {
                     .find(|member| member.name == *alias && !member.params.is_empty())?;
                 let supplied: Vec<&Expr> = match &index.kind {
                     ExprKind::TupleLit(items) => items.iter().collect(),
-                    _ => vec![index.as_ref()],
+                    _ => vec![*index],
                 };
                 // An associated alias's own list is classified where it is
                 // read; none is stored for its members.
@@ -832,7 +830,7 @@ impl Checker {
                         inner.insert(parameter.name.clone(), binder);
                     }
                 }
-                let body = super::constraints::assoc_body_source_type(&member.value).ok()?;
+                let body = super::constraints::assoc_body_view(&member.value).ok()?;
                 self.collect_field_origin_binders(&body, associated, &inner, out)
             }
             _ => None,

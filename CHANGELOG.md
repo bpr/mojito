@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The AST exports no second representation of a type (R2546):
+  `ast::Type`, `SourceType`, and the view functions
+  (`Expr::{annotation_type, composition_type, type_spelling,
+  pack_spread_type}`, `ParamArg::spread_pack`,
+  `TypeParam::annotation_type`, `TraitComptime::annotation_type`) are gone,
+  and the facade no longer re-exports `Type` or `SourceType`. The checker
+  classifies an annotation expression through its own borrowed
+  `AnnotationView`, and its tables store the annotation expression instead
+  of a view. No program's behavior changes. The cached package format moves
+  to `mojito-package 272`.
+
 - Only the checker classifies an annotation (R2545): the parser, the
   elaborator, and `visit::walk_annotation_names_mut` match an annotation's
   expression shape instead of reading `Expr::annotation_type`'s `Type`

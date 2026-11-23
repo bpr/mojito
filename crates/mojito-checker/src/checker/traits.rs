@@ -59,7 +59,7 @@ pub(super) fn comptime_defaults(members: &[TraitComptime]) -> Vec<StructComptime
     members
         .iter()
         .filter_map(|member| {
-            member.annotation_type()?;
+            member_view(member)?;
             Some(StructComptime {
                 name: member.name.clone(),
                 params: member.params.clone(),
@@ -94,8 +94,8 @@ impl Checker {
         annotation: &Expr,
         storage: &'static str,
     ) -> Result<(), TypeError> {
-        match annotation_spelling(annotation)? {
-            mojito_ast::ast::Type::Named(name, arguments)
+        match annotation_view_of(annotation)? {
+            AnnotationView::Named(name, arguments)
                 if arguments.is_empty()
                     && !self.structs.contains_key(&name)
                     && self.check_trait_name(&name).is_ok() =>
@@ -171,7 +171,7 @@ impl Checker {
     pub(super) fn bind_trait_constant(
         &mut self,
         name: &str,
-        annotation: Option<&SourceType>,
+        annotation: Option<&AnnotationView<'_>>,
         value: &Expr,
         level: usize,
     ) -> Result<bool, TypeError> {
@@ -357,7 +357,7 @@ impl Checker {
                 self.classify_params(&owner, &member.params)?
             };
             let declared = self.in_param_scope(&decls, |checker| {
-                let annotation = member.annotation_type().ok_or_else(|| {
+                let annotation = member_view(member).ok_or_else(|| {
                     TypeError::InvariantViolation(
                         "a trait member's annotation holds no annotation".to_string(),
                     )
@@ -641,7 +641,7 @@ impl Checker {
                 })
                 .collect::<Vec<_>>();
             let all_types = this.param_tys(&m.params)?;
-            let ret_view = m.ret.as_ref().map(annotation_spelling).transpose()?;
+            let ret_view = m.ret.as_ref().map(annotation_view_of).transpose()?;
             let ret = match &ret_view {
                 Some(t) => this.ty_from_spelling(t)?,
                 None => Ty::none(),
@@ -862,8 +862,8 @@ impl Checker {
                     .fields
                     .iter()
                     .map(|field| {
-                        annotation_spelling(&field.ty)
-                            .map(|spelling| (spelling, field.reference.clone()))
+                        annotation_view_of(&field.ty)
+                            .map(|_| (field.ty.clone(), field.reference.clone()))
                     })
                     .collect::<Result<_, _>>()?,
                 field_origin_arguments: HashMap::new(),
@@ -1260,7 +1260,7 @@ impl Checker {
                 return Err(TypeError::Redeclaration(f.name.clone()));
             }
             self.reject_trait_typed_storage(&f.ty, "struct fields")?;
-            let spelling = annotation_spelling(&f.ty)?;
+            let spelling = annotation_view_of(&f.ty)?;
             // A field's `Self.name` resolves declared parameters and (now
             // pre-installed) associated members; a residual miss on `Self`
             // itself still reports an unknown parameter. Field annotations are
@@ -4466,9 +4466,9 @@ impl Checker {
                 }
             }
         }
-        let value_type = param.value_type.as_ref().and_then(Expr::annotation_type);
+        let value_type = param.value_type.as_ref().and_then(annotation_view);
         let contextual = match &value_type {
-            Some(SourceType::Named(name, _)) => Some(name.as_str()),
+            Some(AnnotationView::Named(name, _)) => Some(name.as_str()),
             Some(_) => None,
             None => param
                 .bounds
@@ -4901,8 +4901,8 @@ pub(super) fn literal_default(default: &mojito_ast::ast::Expr) -> bool {
 pub(super) fn names_member_type(params: &[mojito_ast::ast::TypeParam]) -> bool {
     params.iter().any(|param| {
         matches!(
-            param.value_type.as_ref().and_then(Expr::annotation_type),
-            Some(SourceType::Assoc { .. } | SourceType::IndexedProjection { .. })
+            param.value_type.as_ref().and_then(annotation_view),
+            Some(AnnotationView::Assoc { .. } | AnnotationView::IndexedProjection { .. })
         )
     })
 }

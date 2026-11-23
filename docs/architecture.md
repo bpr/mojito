@@ -5806,7 +5806,7 @@ special-casing `name#arity`.
 
 Signature identity and this name scheme are owned by one canonical module,
 `crates/mojito-symbol/src/symbol.rs`: a signature is typed data (`SignatureKey`, built from either
-the declared `ast::SourceType` or the checker-resolved `Ty` — both spell a type
+the declared annotation expression or the checker-resolved `Ty` — both spell a type
 from its annotation, e.g. `Point`, `Pair$Int`) and only the module formats the
 final symbol. Checker, MIR, and VM all route through it, so the recorded
 callee always names the emitted function; `tests/symbol_test.rs` pins the
@@ -5820,26 +5820,31 @@ identities even though their sole declared element type is `Int`; definition-
 and resolution-side symbol construction use the same field.
 
 Across phase boundaries, Mojito names source syntax and checked semantics
-explicitly. `SourceType` is parser-owned syntax; `Ty`, `binding_ty`, and MIR
-`param_types` are checker-resolved facts. An annotation is one whole
-expression, and a `SourceType` is only its conversion: an expression no type
-spelling covers stays `SourceType::Value`, which the checker evaluates in the
+explicitly. An annotation expression is parser-owned syntax; `Ty`,
+`binding_ty`, and MIR `param_types` are checker-resolved facts. An annotation
+is one whole expression, as upstream's AST keeps it, and the AST has no
+second representation of a type. The checker classifies an annotation
+expression in its type context through its own borrowed view,
+`type_resolution.rs::AnnotationView` (`annotation_view`), until one
+evaluator reads every annotation (R2541): an expression no type spelling
+covers is `AnnotationView::Value`, which the checker evaluates in the
 type context (`denoted_type`), so the parser rejects no annotation for its
 shape. Every annotation slot (`var` and `comptime` annotations, struct and
 trait `comptime` members, struct fields, union payloads, a parameter's type,
 a result, a `raises` type, a receiver's annotation, a callable conformance,
 and a type parameter's value type and callable bound) stores the annotation
 expression itself, as upstream keeps it, and the checker converts it when it
-reads it (`Checker::ty_from_anno`, `Expr::composition_type` for a struct
-or trait `comptime` member's `&` composition, `TypeParam::annotation_type`
-for a binder). A synthesized slot is built as the expression source would
-spell, and an elaborator rewrite of an annotation edits the expression
-(`visit::walk_annotation_names_mut`), never a `SourceType`. A `def`
+reads it (`Checker::ty_from_anno`, `composition_view` for a struct or trait
+`comptime` member's `&` composition, `binder_view` for a binder). A
+synthesized slot is built as the expression source would spell, and an
+elaborator rewrite of an annotation edits the expression
+(`visit::walk_annotation_names_mut`). A `def`
 function type and a `__generator_type` are their own expression nodes
 (`ExprKind::FunctionType`, `ExprKind::GeneratorType`), whose parameter
 types and results are annotation expressions, and every bracket operand is
-an expression. No `SourceType` is stored in the AST: it is only the view
-the checker and a few elaborator readers take of an annotation expression.
+an expression. No view is stored anywhere: the checker's own tables keep
+the annotation expression (`ApplicableFunction::result`,
+`StructInfo::associated_spellings`) and view it where they read it.
 `AnnotationSite` keys declaration
 annotations at the checked boundary, after which HIR, MIR, and the VM carry only
 the resolved `Ty`. In particular, variable initialization and function-entry

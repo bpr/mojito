@@ -760,7 +760,7 @@ impl Checker {
             .collect();
         let regular_params: Vec<&FnParam> = regular.iter().map(|(_, param)| *param).collect();
         let named_result = mojito_ast::ast::named_result(&method.params);
-        let ret = method.ret.as_ref().map(annotation_spelling).transpose()?;
+        let ret = method.ret.as_ref().map(annotation_view_of).transpose()?;
         let self_ref = lower_ref_convention_sig(
             method.self_convention,
             method.self_origin.as_ref(),
@@ -954,7 +954,7 @@ impl Checker {
             return Ok(None);
         }
         self.resolving_parameter_annotation.set(true);
-        let resolved = annotation_spelling(annotation).and_then(|annotation| {
+        let resolved = annotation_view_of(annotation).and_then(|annotation| {
             self.resolve_storage_annotation(&annotation, super::StorageStrictness::AllowBare)
         });
         self.resolving_parameter_annotation.set(false);
@@ -1366,7 +1366,7 @@ impl Checker {
         {
             return None;
         }
-        self.ty_from_spelling(&SourceType::Named(only.clone(), Vec::new()))
+        self.ty_from_spelling(&AnnotationView::Named(only.clone(), Vec::new()))
             .ok()
             .filter(|ty| !matches!(ty.kind(), TyKind::Trait(_) | TyKind::AnyTrait(_)))
     }
@@ -1394,7 +1394,7 @@ impl Checker {
                 return Ok(None);
             }
             _ => {
-                let Some(annotation) = tp.annotation_type() else {
+                let Some(annotation) = binder_view(tp) else {
                     return Ok(None);
                 };
                 let Some(binder) = self.origin_annotation_mutability(&annotation)? else {
@@ -1426,7 +1426,7 @@ impl Checker {
     /// type than `Bool` is the binding's type mismatch.
     fn origin_annotation_mutability(
         &self,
-        annotation: &SourceType,
+        annotation: &AnnotationView,
     ) -> Result<Option<OriginBinderType>, TypeError> {
         if let Some(binder) = self.enclosing_self_mutability(annotation) {
             return Ok(Some(OriginBinderType::Origin(OriginMutability::Binder(
@@ -1460,7 +1460,7 @@ impl Checker {
                     .cloned()
             }
             Err(error) => {
-                let SourceType::Named(name, args) = annotation else {
+                let AnnotationView::Named(name, args) = annotation else {
                     return Ok(None);
                 };
                 if !self.is_library_origin(name) {
@@ -1499,8 +1499,8 @@ impl Checker {
     /// The enclosing struct's `Bool` binder an `Origin[mut=Self.mut]`
     /// annotation of a method's list names, as upstream's method signature
     /// keeps the struct's parameter symbolic until a receiver binds it.
-    fn enclosing_self_mutability(&self, annotation: &SourceType) -> Option<ParamRef> {
-        let SourceType::Named(name, args) = annotation else {
+    fn enclosing_self_mutability(&self, annotation: &AnnotationView) -> Option<ParamRef> {
+        let AnnotationView::Named(name, args) = annotation else {
             return None;
         };
         if !self.is_library_origin(name) {
@@ -1786,11 +1786,11 @@ impl Checker {
                 if let Some(ty) = scalar_type_name(name) {
                     Ok(ty)
                 } else {
-                    self.ty_from_spelling(&SourceType::Named(name.clone(), Vec::new()))
+                    self.ty_from_spelling(&AnnotationView::Named(name.clone(), Vec::new()))
                 }
             }
             ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
-                self.type_value(value, &annotation_spelling(value)?)
+                self.type_value(value, &annotation_view_of(value)?)
             }
             _ if let Some((name, args)) = self.parameter_application(value) => {
                 let (ty, attributes) = self.applied_type(name, &args)?;
@@ -2282,7 +2282,7 @@ impl Checker {
                 "a function cannot declare both a named result and '->' return type".to_string(),
             ));
         }
-        let ret = m.ret.as_ref().map(annotation_spelling).transpose()?;
+        let ret = m.ret.as_ref().map(annotation_view_of).transpose()?;
         let ret_ty = self.in_signature_scope(m.has_self.then_some(self_ty), |this| {
             let generated = this.generated_declaration.get();
             this.generated_declaration
@@ -2478,7 +2478,7 @@ impl Checker {
             // `Pointer[T, _]` is concrete here only). A named `out` result
             // is the result, and resolves as one.
             let named_result = p.is_named_result();
-            let annotation = annotation_spelling(&p.ty)?;
+            let annotation = annotation_view_of(&p.ty)?;
             self.resolving_parameter_annotation.set(!named_result);
             let generated = self.generated_declaration.get();
             self.generated_declaration
@@ -7031,7 +7031,7 @@ impl Checker {
                         kind: ExprKind::Spread(operand),
                         ..
                     }) = argument
-                        && argument.spread_pack().is_none()
+                        && spread_pack_view(argument).is_none()
                     {
                         values.extend(self.spread_pack_values(operand)?);
                         continue;

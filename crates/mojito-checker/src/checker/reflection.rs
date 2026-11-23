@@ -229,7 +229,7 @@ impl Checker {
     /// `comptime` binding here, as the elaborator requires too.
     pub(super) fn reflected_type_annotation(
         &self,
-        source: &SourceType,
+        source: &AnnotationView,
     ) -> Result<Option<Ty>, TypeError> {
         if self.local_comptime_values.iter().all(HashMap::is_empty)
             && !self.installs_any(interface::Table::ComptimeValues)
@@ -237,7 +237,7 @@ impl Checker {
             return Ok(None);
         }
         match source {
-            SourceType::Named(name, args) => {
+            AnnotationView::Named(name, args) => {
                 let [ParamArg::Value(index)] = args.as_slice() else {
                     return Ok(None);
                 };
@@ -251,7 +251,7 @@ impl Checker {
                     _ => Ok(None),
                 }
             }
-            SourceType::Assoc { base, name, args } if name == "T" && args.is_empty() => {
+            AnnotationView::Assoc { base, name, args } if name == "T" && args.is_empty() => {
                 self.handle_from_annotation(base)
             }
             _ => Ok(None),
@@ -627,16 +627,16 @@ impl Checker {
 
     /// A handle spelled in an annotation: a bound name, or a
     /// `field_at[i]` / `field[name]` selection on one.
-    fn handle_from_annotation(&self, source: &SourceType) -> Result<Option<Ty>, TypeError> {
+    fn handle_from_annotation(&self, source: &AnnotationView) -> Result<Option<Ty>, TypeError> {
         match source {
-            SourceType::Named(name, args) if args.is_empty() => {
+            AnnotationView::Named(name, args) if args.is_empty() => {
                 match self.local_comptime_value(name) {
                     Some(bound) => self.reflection_handle(bound),
                     None => Ok(None),
                 }
             }
-            SourceType::IndexedProjection { base, index } => {
-                let SourceType::Assoc {
+            AnnotationView::IndexedProjection { base, index } => {
+                let AnnotationView::Assoc {
                     base: inner,
                     name,
                     args,

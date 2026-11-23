@@ -357,7 +357,7 @@ impl Checker {
     ) -> Option<Result<Ty, TypeError>> {
         let (name, targs) = object.bracket_application()?;
         self.generic_type_alias(name).then(|| {
-            self.ty_from_spelling(&SourceType::Named(name.to_string(), targs.into_owned()))
+            self.ty_from_spelling(&AnnotationView::Named(name.to_string(), targs.into_owned()))
         })
     }
 
