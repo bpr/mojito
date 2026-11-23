@@ -2363,6 +2363,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `!lit.ref` and a `ref` are one type, as upstream has one `!lit.ref`:
+  `TyKind::LitRef` is gone, a reference displays `ref[origin] T`, MIR text
+  writes every reference as `ref { … }` (schema 1.226, `lit_ref` still read
+  as its alias), and the package format moves to `mojito-package 260`. A
+  call's reference pack now holds `!lit.ref` element references, as
+  upstream's `lit.ref.pack.create` takes them, instead of pointers. A
+  `ref` field whose `Origin[mut=True]` binder an immutable source fills now
+  reports the binder's mutability for the field. Program output is
+  unchanged.
+
 - The VM holds a reference value of either tag as a `Value::Ref`, as
   upstream has one `!lit.ref`, keeping `Value::PlacePointer` for pointer
   values, and reads a slot's handle through only where the slot's

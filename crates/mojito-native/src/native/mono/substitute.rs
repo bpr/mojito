@@ -427,7 +427,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             substitute_ty(element, bindings)?,
             substitute_address_space(address_space, bindings),
         ),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = substitute_ty(&reference.referent, bindings)?;
             reference.address_space = substitute_address_space(&reference.address_space, bindings);
@@ -443,12 +443,6 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             mutability: *mutability,
         }
         .into(),
-        TyKind::Ref(value) => {
-            let mut value = value.clone();
-            value.referent = substitute_ty(&value.referent, bindings)?;
-            value.address_space = substitute_address_space(&value.address_space, bindings);
-            TyKind::Ref(value).into()
-        }
         TyKind::Dependent(dependent) => {
             let Some((elements, index)) = dependent.selection() else {
                 // An element of a pack that is still a parameter (`Ts[i]`)
@@ -877,11 +871,10 @@ fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
             }
             struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => false,
             TyKind::KgenPointer { element, .. }
-            | TyKind::LitRef(mojito_types::origin::RefTy {
+            | TyKind::Ref(mojito_types::origin::RefTy {
                 referent: element, ..
             })
             | TyKind::PopArray { element, .. } => names_outside_structs(element, removed),
-            TyKind::Ref(reference) => names_outside_structs(&reference.referent, removed),
             TyKind::Tuple(elements)
             | TyKind::RuntimePack(elements)
             | TyKind::Variant(elements)

@@ -97,7 +97,7 @@ impl Checker {
         let offset_ty = mojito_types::types::storage_ty(&Ty::int());
         let result = match op {
             PointerOp::LitRefToPointer => match operands[0].kind() {
-                TyKind::LitRef(reference) => {
+                TyKind::Ref(reference) => {
                     Ty::kgen_pointer(reference.referent.clone(), reference.address_space.clone())
                 }
                 _ => return Err(operand_must(0, "a '!lit.ref'")),
@@ -105,7 +105,7 @@ impl Checker {
             PointerOp::LitRefFromPointer => {
                 let element = pointer_element(0)?;
                 let result = self.mlir_result_type(attribute("_type").expect("required"))?;
-                let TyKind::LitRef(mojito_types::origin::RefTy { referent, .. }) = result.kind()
+                let TyKind::Ref(mojito_types::origin::RefTy { referent, .. }) = result.kind()
                 else {
                     return Err(invalid(format!(
                         "result type must be a '!lit.ref', but got '{result}'"

@@ -1025,7 +1025,7 @@ fn simd_instance<'s>(
 /// Whether a value of `ty` is a pointer value: a `Pointer`, its
 /// `!kgen.pointer`, or a struct held as its pointer field
 /// ([`StructDef::register_field`]). A frame or compile-time address such a
-/// value holds is a [`Value::PlacePointer`]; a reference of either tag
+/// value holds is a [`Value::PlacePointer`]; a reference
 /// holds it as a [`Value::Ref`] ([`address_as`]).
 fn pointer_valued(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
     use mojito_types::types::TyKind;

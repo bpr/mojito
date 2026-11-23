@@ -3322,21 +3322,6 @@ impl TyRewrite for BoundMutabilities {
                 address_space,
             ));
         }
-        // So does a `!lit.ref` the body forms over one.
-        if let TyKind::LitRef(reference) = ty.kind()
-            && let Mutability::Param(id) = reference.mutability
-            && matches!(
-                reference.pointer_origin(),
-                Some(PointerOrigin::Param { .. } | PointerOrigin::SelfPlace { .. })
-            )
-        {
-            let bound = *self.0.get(&id)?;
-            return Some(Ty::lit_ref(RefTy {
-                referent: rewrite_ty(&reference.referent, self).ok()?,
-                mutability: bound,
-                ..reference.clone()
-            }));
-        }
         let TyKind::Ref(reference) = ty.kind() else {
             return None;
         };

@@ -28,7 +28,6 @@
 use crate::mir::type_construction::storage_construction;
 use crate::mir::variadics::{
     FrameTables, ListElement, build_variadic_list, build_variadic_pack, element_lit_ref_type,
-    element_pointer_type,
 };
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
@@ -1276,7 +1275,7 @@ fn copied_variable(
     let pointer = element_pointer(
         function,
         register,
-        element_pointer_type(element, mutable),
+        element_lit_ref_type(element, mutable),
         location,
     );
     prelude[at] = MirInstr::MakeRef {
@@ -1347,7 +1346,7 @@ fn shared_load(
     let pointer = element_pointer(
         function,
         register,
-        element_pointer_type(element, mutable),
+        element_lit_ref_type(element, mutable),
         location,
     );
     prelude.insert(
@@ -1414,7 +1413,7 @@ fn borrowed_field(
     let pointer = element_pointer(
         function,
         register,
-        element_pointer_type(element, mutable),
+        element_lit_ref_type(element, mutable),
         location,
     );
     let loaded = std::mem::replace(

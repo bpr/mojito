@@ -46,8 +46,7 @@ pub(super) fn functions_equivalent(a: &MirFunction, b: &MirFunction) -> bool {
 pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
     match (a.kind(), b.kind()) {
         (a, b) if a.is_pointer_layout() && b.is_pointer_layout() => true,
-        (TyKind::KgenPointer { .. }, TyKind::KgenPointer { .. })
-        | (TyKind::LitRef { .. }, TyKind::LitRef { .. }) => true,
+        (TyKind::KgenPointer { .. }, TyKind::KgenPointer { .. }) => true,
         (TyKind::LitRefPack { elements: a, .. }, TyKind::LitRefPack { elements: b, .. }) => {
             a.len() == b.len()
         }
@@ -171,18 +170,6 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
                 element: b,
                 address_space: b_space,
             },
-        )
-        | (
-            TyKind::LitRef(mojito_types::origin::RefTy {
-                referent: a,
-                address_space: a_space,
-                ..
-            }),
-            TyKind::LitRef(mojito_types::origin::RefTy {
-                referent: b,
-                address_space: b_space,
-                ..
-            }),
         ) => a_space == b_space && ty_equal_modulo_origins(a, b),
         (TyKind::LitRefPack { elements: a, .. }, TyKind::LitRefPack { elements: b, .. }) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equal_modulo_origins(a, b))
@@ -320,9 +307,8 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         | TyKind::ComptimeList(_)
         | TyKind::VariadicPack(_)
         | TyKind::KgenPointer { .. }
-        | TyKind::LitRef { .. }
-        | TyKind::LitRefPack { .. }
-        | TyKind::Ref(_) => true,
+        | TyKind::Ref(_)
+        | TyKind::LitRefPack { .. } => true,
         pointer if pointer.is_pointer_layout() => true,
         struct_ty if let Some(_) = struct_ty.as_non_simd_struct() => !ty.is_closed(),
         _ => false,
@@ -385,7 +371,7 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
             erase_callable_environments(element);
         }
         TyKind::KgenPointer { element, .. }
-        | TyKind::LitRef(mojito_types::origin::RefTy {
+        | TyKind::Ref(mojito_types::origin::RefTy {
             referent: element, ..
         }) => {
             erase_callable_environments(element);
@@ -393,7 +379,6 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
         TyKind::LitRefPack { elements, .. } => {
             elements.iter_mut().for_each(erase_callable_environments);
         }
-        TyKind::Ref(reference) => erase_callable_environments(&mut reference.referent),
         _ => {}
     });
 }

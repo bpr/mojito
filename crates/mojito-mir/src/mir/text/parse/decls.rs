@@ -241,6 +241,9 @@ impl Decoder {
     pub(super) fn struct_declaration(&mut self, value: &Value) -> Option<MirStructDeclaration> {
         let fields = self.record(value, "struct").ok()?;
         let name = self.req(value, fields, "name", Self::symbol)?;
+        // Before schema 1.225 a field typed with the `ref` record tag, not
+        // the `lit_ref` one, was a declared `ref` field.
+        let mut ref_tagged_fields = Vec::new();
         let struct_fields = {
             let field = self.required(value, fields, "fields")?;
             let Ok(values) = self.list(field) else {
@@ -252,9 +255,15 @@ impl Decoder {
                     continue;
                 };
                 let field_name = self.req(entry, entry_fields, "name", Self::symbol);
+                let ref_tagged = self
+                    .field(entry_fields, "type")
+                    .is_ok_and(|ty| matches!(&ty.kind, ValueKind::Record(tag, _) if tag == "ref"));
                 let field_ty = self.req(entry, entry_fields, "type", Self::ty);
                 self.unknown(entry_fields, &["name", "type"]);
                 if let (Some(field_name), Some(field_ty)) = (field_name, field_ty) {
+                    if ref_tagged {
+                        ref_tagged_fields.push(field_name.clone());
+                    }
                     entries.push((field_name, field_ty));
                 }
             }
@@ -482,13 +491,8 @@ impl Decoder {
         // wrote no other field with the `ref` type tag, so its `ref` fields
         // are the fields that tag types.
         let ref_fields = if self.minor < 225 {
-            let mut ref_fields: Vec<String> = struct_fields
-                .iter()
-                .filter(|(_, ty)| matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
-                .map(|(field, _)| field.clone())
-                .collect();
-            ref_fields.sort();
-            ref_fields
+            ref_tagged_fields.sort();
+            ref_tagged_fields
         } else {
             let mut ref_fields: Vec<String> = self
                 .field(fields, "ref_fields")

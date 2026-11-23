@@ -111,6 +111,29 @@ impl Decoder {
         }
         out
     }
+    /// The slots of the `var_types` rows `value` whose type is written as a
+    /// `ref` record, not a `lit_ref` one: what read as `ref` bindings before
+    /// schema 1.224, when the two tags were two types.
+    pub(super) fn slots_written_as_ref(
+        &mut self,
+        value: &Value,
+    ) -> std::collections::BTreeSet<u32> {
+        let ValueKind::List(rows) = &value.kind else {
+            return std::collections::BTreeSet::new();
+        };
+        rows.iter()
+            .filter_map(|row| match &row.kind {
+                ValueKind::Record(tag, fields) if tag == "var_type" => Some(fields),
+                _ => None,
+            })
+            .filter(|fields| {
+                field_value(fields, "type")
+                    .is_some_and(|ty| matches!(&ty.kind, ValueKind::Record(tag, _) if tag == "ref"))
+            })
+            .filter_map(|fields| self.identity(field_value(fields, "var"), "$v"))
+            .filter_map(|slot| u32::try_from(slot).ok())
+            .collect()
+    }
     pub(super) fn types(&mut self, value: &Value) -> Vec<Ty> {
         self.list(value)
             .map(|v| v.iter().filter_map(|v| self.ty(v)).collect())
@@ -394,4 +417,12 @@ impl Decoder {
             self.diagnostics.push(diagnostic(span, message));
         }
     }
+}
+
+/// The value of the field `name` among `fields`, reporting nothing.
+fn field_value<'a>(fields: &'a [Field], name: &str) -> Option<&'a Value> {
+    fields
+        .iter()
+        .find(|field| field.name == name)
+        .map(|field| &field.value)
 }

@@ -623,9 +623,9 @@ pub(in crate::checker) fn field_carries_origin_param(
 ) -> bool {
     use mojito_types::origin::{Origin, PointerOrigin};
     match ty.kind() {
-        TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(k) if k == id),
-        TyKind::LitRef(reference) => {
-            matches!(reference.pointer_origin(), Some(PointerOrigin::Param { id: k, .. }) if k == id)
+        TyKind::Ref(reference) => {
+            matches!(reference.origin, Origin::Param(k) if k == id)
+                || matches!(reference.pointer_origin(), Some(PointerOrigin::Param { id: k, .. }) if k == id)
         }
         TyKind::LitRefPack {
             origin, mutability, ..
@@ -648,8 +648,8 @@ pub(in crate::checker) fn field_carries_origin_param(
 /// to a symbolic cast becomes the nominal symbolic-cast pointer. An
 /// application that held a pointer keeps its origin and `mut` arguments
 /// when the bound ones are no pointer's (an unbound slot, a `mut` its
-/// origin contradicts), and a `!lit.ref` or reference pack its own,
-/// alike. `Ref` origins are the reference solver's.
+/// origin contradicts), and a reference or reference pack its own,
+/// alike.
 ///
 /// [`Origin::reprojected`]: mojito_types::origin::Origin::reprojected
 pub(in crate::checker) fn substitute_struct_origins(ty: &Ty, bindings: &OriginBindings) -> Ty {
@@ -686,10 +686,10 @@ pub(in crate::checker) fn substitute_struct_origins(ty: &Ty, bindings: &OriginBi
                 bound
             }
         }
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let (origin, mutability) =
                 bindings.bind_reference(&reference.origin, reference.mutability);
-            TyKind::LitRef(mojito_types::origin::RefTy {
+            TyKind::Ref(mojito_types::origin::RefTy {
                 referent: recur(&reference.referent),
                 origin,
                 mutability,
@@ -710,13 +710,6 @@ pub(in crate::checker) fn substitute_struct_origins(ty: &Ty, bindings: &OriginBi
             }
             .into()
         }
-        TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
-            referent: recur(&reference.referent),
-            origin: reference.origin.clone(),
-            mutability: reference.mutability,
-            address_space: reference.address_space.clone(),
-        })
-        .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
         _ => ty.clone(),
     }

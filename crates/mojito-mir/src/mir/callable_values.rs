@@ -215,9 +215,7 @@ fn immutable_reference(function: &MirFunction, register: Reg) -> bool {
         .reg_types
         .get(&register.0)
         .is_some_and(|ty| match ty.kind() {
-            TyKind::Ref(reference) | TyKind::LitRef(reference) => {
-                reference.mutability == Mutability::Immutable
-            }
+            TyKind::Ref(reference) => reference.mutability == Mutability::Immutable,
             _ => false,
         })
 }

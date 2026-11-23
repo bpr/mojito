@@ -1340,7 +1340,7 @@ impl Checker {
         }
         let operand = single_address_operand(name, param_args, args, kwargs)?;
         let found = self.infer(operand)?;
-        if !matches!(found.kind(), TyKind::LitRef { .. }) {
+        if !matches!(found.kind(), TyKind::Ref { .. }) {
             return Err(TypeError::InvalidAddressOperand(format!(
                 "operand isn't a '!lit.ref' type '{found}'"
             )));

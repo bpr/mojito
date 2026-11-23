@@ -1379,6 +1379,15 @@ fact, reads with every `ref`-typed slot as a binding, since a slot then
 bound a reference exactly when it was typed as one. The package format
 moves to `mojito-package 257` (R2488).
 
+Schema 1.226 writes one reference record, `ref { referent, origin,
+mutability }`, for every reference: upstream's one `!lit.ref` type, whose
+reads a declaration decides (`ref_bindings`, `ref_fields`), never the
+record's tag. A reader still accepts `lit_ref` in both its forms as an
+alias of `ref`. An artifact older than 1.224 infers its `ref_bindings`, and
+one older than 1.225 its `ref_fields`, from the rows written with the
+`ref` tag, not the `lit_ref` one. The package format moves to
+`mojito-package 260` (R2511).
+
 The package format moves to `mojito-package 258` (R2490): a struct's
 interface residue carries the fields its declaration marks `ref`
 (`StructInfo::ref_fields`), which decide a field's read-through and its
@@ -2126,9 +2135,8 @@ A function with a `ref` binding carries `ref_bindings: [$vN, ...]` after
 `returns_reference` (schema 1.224), ascending: the slots that hold a
 reference their reads go through, upstream's `!lit.ref`-valued bindings.
 The binding position decides membership, never the slot's type. The
-verifier requires a binding to be typed as a reference and, until
-`!lit.ref` folds into `ref` (R2511), every `ref`-typed slot to be a
-binding.
+verifier requires a binding to be typed as a reference; a `ref`-typed
+slot that is no binding holds a `!lit.ref` value.
 
 A raising function carries `error_slot: $vN` after `error_type` (schema
 1.108): the local slot its raises out of the function store their error
@@ -2406,7 +2414,6 @@ pop_array { size, element } variadic_pack(type) variant([type...])
 lit_origin { mutable } lit_origin_set
 pointer { element, origin }
 kgen_pointer { element }
-lit_ref { referent, origin, mutability }
 lit_ref_pack { elements, origin, mutability }
 ref { referent, origin, mutability }
 ```
@@ -2514,7 +2521,9 @@ kind by element, erasing origins as it does for a `pointer`, and takes a
 `lit_ref` as a reference capability, as `ref.make` builds one.
 
 Since schema 1.222 `lit_ref { referent, origin, mutability }` holds the
-fields a `ref` holds, an `origin` beside its `mutability`.
+fields a `ref` holds, an `origin` beside its `mutability`; since schema
+1.226 the writer spells it `ref`, and a reader takes `lit_ref` as that
+record's alias.
 
 `lit_ref_pack { elements, origin }` (schema 1.161) is upstream's
 `!lit.ref.pack`, one `lit_ref` to each of `elements` under the one origin

@@ -839,7 +839,7 @@ impl Checker {
         litref: &Ty,
     ) -> Option<mojito_types::origin::RefTy> {
         use mojito_types::origin::{Mutability, Origin, OriginPlace, PointerOrigin, RefTy};
-        let TyKind::LitRef(reference) = litref.kind() else {
+        let TyKind::Ref(reference) = litref.kind() else {
             return None;
         };
         let origin = &reference.pointer_origin()?;

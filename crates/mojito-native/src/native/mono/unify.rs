@@ -617,9 +617,10 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             TyKind::ParamList(a) => unify(p, a, bindings),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
-        // A pointer's address space binds a bare `AddressSpace` binder
-        // (`Pointer[T, _, address_space=a]`) from the argument's space; two
-        // known spaces must agree.
+        // A pointer's or a reference's address space binds a bare
+        // `AddressSpace` binder (`Pointer[T, _, address_space=a]`) from the
+        // argument's space; two known spaces must agree. Origins and their
+        // mutability erase from the instance, as a pointer's do.
         kind if let Some((p, pattern_space)) = kind.address_parts() => {
             let Some((a, actual_space)) = actual.kind().address_parts() else {
                 return Err(format!("expected `{pattern}`, found `{actual}`"));
@@ -640,15 +641,6 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                 &TyKind::Tuple(a.clone()).into(),
                 bindings,
             ),
-            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
-        },
-        TyKind::Ref(p) => match actual.kind() {
-            TyKind::Ref(a)
-                if p.mutability == a.mutability
-                    && unify_address_space(&p.address_space, &a.address_space, bindings)? =>
-            {
-                unify(&p.referent, &a.referent, bindings)
-            }
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
         // A vector's storage binds as the vector it stores.

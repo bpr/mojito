@@ -158,14 +158,9 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // its type arguments, so a `ref T` element slot holds a reference of any
     // origin in the same address space at no more than the permission held.
     // A symbolic `mut` binder on either side is the instance's to bind, as
-    // an origin is. The rule reads the reference record alone, as
-    // upstream's one `!lit.ref` type has no second spelling to distinguish.
+    // an origin is.
     if let (Some(found_reference), Some(expected_reference)) =
         (reference_record(found), reference_record(expected))
-        && matches!(
-            (found.kind(), expected.kind()),
-            (TyKind::Ref(_), TyKind::Ref(_)) | (TyKind::LitRef(_), TyKind::LitRef(_))
-        )
         && mutability_weakens(found_reference.mutability, expected_reference.mutability)
         && found_reference.address_space == expected_reference.address_space
     {
@@ -377,7 +372,7 @@ pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
         TyKind::ComptimeList(inner)
         | TyKind::PopArray { element: inner, .. }
         | TyKind::KgenPointer { element: inner, .. }
-        | TyKind::LitRef(mojito_types::origin::RefTy {
+        | TyKind::Ref(mojito_types::origin::RefTy {
             referent: inner, ..
         }) => contains_runtime_pack(inner),
         pointer if let Some((inner, _)) = pointer.pointer_layout() => contains_runtime_pack(inner),
@@ -385,7 +380,6 @@ pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
         | TyKind::Variant(elements)
         | TyKind::Overload(elements)
         | TyKind::LitRefPack { elements, .. } => elements.iter().any(contains_runtime_pack),
-        TyKind::Ref(reference) => contains_runtime_pack(&reference.referent),
         struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => {
             arguments.iter().any(|argument| match argument {
                 mojito_types::types::TyArg::Ty(inner) => contains_runtime_pack(inner),
@@ -587,18 +581,6 @@ pub(super) fn instantiate_checked_type(
             instantiate_checked_type(element, type_arguments, value_arguments, bound_values)?,
             instantiate_address_space(address_space, value_arguments)?,
         ),
-        TyKind::LitRef(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = instantiate_checked_type(
-                &reference.referent,
-                type_arguments,
-                value_arguments,
-                bound_values,
-            )?;
-            reference.address_space =
-                instantiate_address_space(&reference.address_space, value_arguments)?;
-            Ty::lit_ref(reference)
-        }
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = instantiate_checked_type(
@@ -609,7 +591,7 @@ pub(super) fn instantiate_checked_type(
             )?;
             reference.address_space =
                 instantiate_address_space(&reference.address_space, value_arguments)?;
-            TyKind::Ref(reference).into()
+            Ty::lit_ref(reference)
         }
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
             base: instantiate_checked_type(base, type_arguments, value_arguments, bound_values)?,
@@ -748,7 +730,7 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         | TyKind::VariadicPack(inner)
         | TyKind::PopArray { element: inner, .. }
         | TyKind::KgenPointer { element: inner, .. }
-        | TyKind::LitRef(mojito_types::origin::RefTy {
+        | TyKind::Ref(mojito_types::origin::RefTy {
             referent: inner, ..
         }) => contains_type_param(inner),
         pointer if let Some((inner, _)) = pointer.pointer_layout() => contains_type_param(inner),
@@ -756,7 +738,6 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         | TyKind::RuntimePack(elements)
         | TyKind::Variant(elements)
         | TyKind::LitRefPack { elements, .. } => elements.iter().any(contains_type_param),
-        TyKind::Ref(reference) => contains_type_param(&reference.referent),
         kind if let Some(value) = kind
             .string_literal_value()
             .or_else(|| kind.numeric_literal_slot()) =>

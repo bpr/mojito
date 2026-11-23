@@ -2011,8 +2011,7 @@ fn field_interior(place: &MirPlace, named: &[String]) -> Option<MirInteriorOrigi
 /// whose arguments names an origin or such a type.
 fn carries_references(ty: &Ty) -> bool {
     match ty.kind() {
-        TyKind::Ref(reference) => carries_references(&reference.referent),
-        TyKind::LitRef { .. }
+        TyKind::Ref { .. }
         | TyKind::LitRefPack { .. }
         | TyKind::Func(_)
         | TyKind::GenericFunc(_)

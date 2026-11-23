@@ -1112,14 +1112,16 @@ pub enum TyKind {
         element: Ty,
         address_space: AddressSpaceSlot,
     },
-    /// Upstream's reference value `!lit.ref<T, origin>`
-    /// (`Pointer[T, o]._mlir_lit_ref`), what `__get_mvalue_as_litref(place)`
-    /// gives and `Pointer(_mlir_value=)` takes, displayed `ref[origin] T`.
-    /// Its origin is part of its type, and it is not its referent: no read
-    /// goes through it. Both backends hold it as they hold a `Pointer`. It
-    /// stores the reference record a `ref` does: its referent, origin, and
-    /// mutability, and the address space of its storage.
-    LitRef(crate::origin::RefTy),
+    /// Upstream's one reference type `!lit.ref<T, origin>`, displayed
+    /// `ref[origin(, address_space)] T`: what `__get_mvalue_as_litref(place)`
+    /// gives, what `Pointer(_mlir_value=)` takes, and the type of a `ref`
+    /// binding, a `ref` field, and a by-address slot. Its record holds its
+    /// referent, origin, mutability, and the address space of its storage.
+    /// The type never decides whether a name reads through it: a `ref`
+    /// declaration does (a `ref` binding, a declared `ref` field, a
+    /// reference result, a by-address operand). Both backends hold it as
+    /// they hold a `Pointer`.
+    Ref(crate::origin::RefTy),
     /// Upstream's reference pack `!lit.ref.pack<:param_list<Trait> Ts,
     /// origin>` (`VariadicPack._mlir_type`): one `!lit.ref` to each of a
     /// type list's elements, all under one origin. Its `elements` are a
@@ -1131,9 +1133,6 @@ pub enum TyKind {
         origin: crate::origin::Origin,
         mutability: crate::origin::Mutability,
     },
-    /// A reference value. Origins and permissions are checked statically; its
-    /// runtime representation is introduced only after loan checking exists.
-    Ref(crate::origin::RefTy),
 }
 
 /// A node is sized for its common variants: the callable payloads, the
@@ -1539,7 +1538,7 @@ impl Ty {
 
     /// The reference `!lit.ref<referent, origin, address_space>`.
     pub fn lit_ref(reference: crate::origin::RefTy) -> Self {
-        TyKind::LitRef(reference).into()
+        TyKind::Ref(reference).into()
     }
 
     /// The `Pointer` built from the `!lit.ref` `reference`, its origin and
@@ -1674,7 +1673,7 @@ impl TyKind {
     /// ([`TyKind::pointer_lit_ref`]).
     pub fn pointer_or_lit_ref(&self) -> Option<crate::origin::RefTy> {
         match self {
-            Self::LitRef(reference) => reference
+            Self::Ref(reference) => reference
                 .pointer_origin()
                 .is_some()
                 .then(|| reference.clone()),
@@ -1700,7 +1699,7 @@ impl TyKind {
     /// The reference record of a `!lit.ref`.
     pub const fn as_lit_ref(&self) -> Option<&crate::origin::RefTy> {
         match self {
-            Self::LitRef(reference) => Some(reference),
+            Self::Ref(reference) => Some(reference),
             _ => None,
         }
     }
@@ -1712,7 +1711,7 @@ impl TyKind {
         other: &Self,
     ) -> Option<(crate::origin::RefTy, crate::origin::RefTy)> {
         match (self, other) {
-            (Self::LitRef { .. }, Self::LitRef { .. }) => {
+            (Self::Ref { .. }, Self::Ref { .. }) => {
                 self.pointer_or_lit_ref().zip(other.pointer_or_lit_ref())
             }
             _ => self.pointer_lit_ref().zip(other.pointer_lit_ref()),
@@ -1742,7 +1741,7 @@ impl TyKind {
                 element,
                 address_space,
             } => Some((element, address_space.clone())),
-            Self::LitRef(reference) => Some((&reference.referent, reference.address_space.clone())),
+            Self::Ref(reference) => Some((&reference.referent, reference.address_space.clone())),
             pointer => pointer.pointer_layout(),
         }
     }
@@ -3120,10 +3119,10 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
             expand_pack_spread(element, pack, elements),
             address_space.clone(),
         ),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = expand_pack_spread(&reference.referent, pack, elements);
-            TyKind::LitRef(reference).into()
+            TyKind::Ref(reference).into()
         }
         TyKind::LitRefPack {
             elements,
@@ -3135,11 +3134,6 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
             mutability: *mutability,
         }
         .into(),
-        TyKind::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = expand_pack_spread(&reference.referent, pack, elements);
-            TyKind::Ref(reference).into()
-        }
         _ => ty.clone(),
     }
 }
@@ -5024,7 +5018,7 @@ impl fmt::Display for TyKind {
                 Some(space) => write!(f, "__mlir_type.`!kgen.pointer<{element}, {space}>`"),
                 None => write!(f, "__mlir_type.`!kgen.pointer<{element}, {address_space}>`"),
             },
-            Self::LitRef(reference) => {
+            Self::Ref(reference) => {
                 write!(f, "ref[")?;
                 fmt_origin_parts(f, &reference.origin, reference.mutability)?;
                 if !reference.address_space.is_generic() {
@@ -5048,7 +5042,6 @@ impl fmt::Display for TyKind {
                 fmt_origin_parts(f, origin, *mutability)?;
                 write!(f, ">`")
             }
-            Self::Ref(reference) => write!(f, "ref {}", reference.referent),
             Self::ComptimeList(elem) => write!(f, "<comptime-list[{elem}]>"),
             Self::ParamList(elem) => write!(f, "KGENParamList[{elem}]"),
             Self::AnyTrait(traits) => write!(f, "AnyTrait[{}]", traits.join(" & ")),
@@ -5245,10 +5238,10 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
             element,
             address_space,
         } => Ty::kgen_pointer(recur(element), address_space.clone()),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = recur(&reference.referent);
-            TyKind::LitRef(reference).into()
+            TyKind::Ref(reference).into()
         }
         TyKind::LitRefPack {
             elements,
@@ -5260,11 +5253,6 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
             mutability: *mutability,
         }
         .into(),
-        TyKind::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = recur(&reference.referent);
-            TyKind::Ref(reference).into()
-        }
         _ => ty.clone(),
     }
 }
@@ -5306,9 +5294,11 @@ pub fn erase_origins(ty: &Ty) -> Ty {
             element,
             address_space,
         } => Ty::kgen_pointer(recur(element), address_space.clone()),
-        TyKind::LitRef(reference) => Ty::lit_ref(crate::origin::RefTy::from_pointer_origin(
+        TyKind::Ref(reference) => Ty::lit_ref(crate::origin::RefTy::from_pointer_origin(
             recur(&reference.referent),
-            crate::origin::PointerOrigin::Static { mutable: false },
+            crate::origin::PointerOrigin::Static {
+                mutable: matches!(reference.mutability, crate::origin::Mutability::Mutable),
+            },
             reference.address_space.clone(),
         )),
         TyKind::LitRefPack { elements, .. } => {
@@ -5337,11 +5327,6 @@ pub fn erase_origins(ty: &Ty) -> Ty {
         TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
         TyKind::AnyStruct(ty) => TyKind::AnyStruct(recur(ty)).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
-        TyKind::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = recur(&reference.referent);
-            TyKind::Ref(reference).into()
-        }
         _ => ty.clone(),
     }
 }
@@ -5510,10 +5495,10 @@ pub fn bind_origin_params<S: std::hash::BuildHasher>(
             }
             .unwrap_or_else(|element| Ty::pointer(element, bind(&origin), address_space))
         }
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let mut reference = reference.map_pointer_origin(bind);
             reference.referent = recur(&reference.referent);
-            TyKind::LitRef(reference).into()
+            TyKind::Ref(reference).into()
         }
         TyKind::LitRefPack {
             elements,
@@ -5539,11 +5524,6 @@ pub fn bind_origin_params<S: std::hash::BuildHasher>(
         )
         .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
-        TyKind::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = recur(&reference.referent);
-            TyKind::Ref(reference).into()
-        }
         TyKind::Func(func) => TyKind::Func(Box::new(func.map_types(recur))).into(),
         _ => mapped,
     }
@@ -5578,11 +5558,6 @@ pub fn map_origins(ty: &Ty, map: &impl Fn(&crate::origin::Origin) -> crate::orig
             element,
             address_space,
         } => Ty::kgen_pointer(recur(element), address_space.clone()),
-        TyKind::LitRef(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = recur(&reference.referent);
-            TyKind::LitRef(reference).into()
-        }
         TyKind::LitRefPack {
             elements,
             origin,
@@ -5719,11 +5694,6 @@ pub fn map_struct_arguments(ty: &Ty, map: &impl Fn(&str, Vec<TyArg>) -> Vec<TyAr
         }
         TyKind::Struct(name, args) => {
             ty.reusing(TyKind::Struct(name.clone(), map(name, map_args(args))))
-        }
-        TyKind::LitRef(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = recur(&reference.referent);
-            TyKind::LitRef(reference).into()
         }
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
@@ -6435,7 +6405,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         | (TyKind::I1, TyKind::I1)
         | (TyKind::Ui8, TyKind::Ui8)
         | (TyKind::KgenDtype, TyKind::KgenDtype) => true,
-        (TyKind::LitRef(a), TyKind::LitRef(b)) => {
+        (TyKind::Ref(a), TyKind::Ref(b)) => {
             a.address_space == b.address_space
                 && coerces(&a.referent, &b.referent)
                 && a.provenance_coerces_to(b)
@@ -6681,7 +6651,7 @@ pub fn copy_is_identity(ty: &TyKind) -> bool {
             | TyKind::KgenDtype
             | TyKind::None
             | TyKind::KgenPointer { .. }
-            | TyKind::LitRef { .. }
+            | TyKind::Ref { .. }
             | TyKind::LitRefPack { .. }
             | TyKind::KgenSimd {
                 width: SimdWidth::Known(1),
@@ -7420,11 +7390,11 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             substitute(element, subst),
             substitute_address_space(address_space, subst),
         ),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = substitute(&reference.referent, subst);
             reference.address_space = substitute_address_space(&reference.address_space, subst);
-            TyKind::LitRef(reference).into()
+            TyKind::Ref(reference).into()
         }
         TyKind::LitRefPack {
             elements,
@@ -7436,12 +7406,6 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             mutability: *mutability,
         }
         .into(),
-        TyKind::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = substitute(&reference.referent, subst);
-            reference.address_space = substitute_address_space(&reference.address_space, subst);
-            TyKind::Ref(reference).into()
-        }
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
             base: substitute(base, subst),
             name: name.clone(),
@@ -7703,13 +7667,13 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             rewrite_ty(element, rewrite)?,
             address_space.try_map(|space| rewrite.expr(space))?,
         ),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = rewrite_ty(&reference.referent, rewrite)?;
             reference.address_space = reference
                 .address_space
                 .try_map(|space| rewrite.expr(space))?;
-            TyKind::LitRef(reference).into()
+            TyKind::Ref(reference).into()
         }
         TyKind::LitRefPack {
             elements,
@@ -7721,11 +7685,6 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             mutability: *mutability,
         }
         .into(),
-        TyKind::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = rewrite_ty(&reference.referent, rewrite)?;
-            TyKind::Ref(reference).into()
-        }
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
             base: rewrite_ty(base, rewrite)?,
             name: name.clone(),
@@ -8562,13 +8521,12 @@ fn symbolic_in(ty: &Ty, keyed: bool) -> bool {
             element,
             address_space,
         } => address_space.is_symbolic() || symbolic_in(element, keyed),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             reference.address_space.is_symbolic() || symbolic_in(&reference.referent, keyed)
         }
         TyKind::LitRefPack { elements, .. } => elements.iter().any(|ty| symbolic_in(ty, keyed)),
         TyKind::PopArray { size, element } => size.is_symbolic() || symbolic_in(element, keyed),
         TyKind::LitOrigin(mutability) => mutability.is_symbolic(),
-        TyKind::Ref(reference) => symbolic_in(&reference.referent, keyed),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
         TyKind::KgenAddressSimd { width } => width.is_symbolic(),
         TyKind::AnyTrait(_)
@@ -9292,12 +9250,12 @@ fn expand_packs<S: std::hash::BuildHasher>(
             recurse(element),
             expand_address_space(address_space, subst, packs, values),
         ),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = recurse(&reference.referent);
             reference.address_space =
                 expand_address_space(&reference.address_space, subst, packs, values);
-            TyKind::LitRef(reference).into()
+            TyKind::Ref(reference).into()
         }
         TyKind::LitRefPack {
             elements,
@@ -9309,13 +9267,6 @@ fn expand_packs<S: std::hash::BuildHasher>(
             mutability: *mutability,
         }
         .into(),
-        TyKind::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = recurse(&reference.referent);
-            reference.address_space =
-                expand_address_space(&reference.address_space, subst, packs, values);
-            TyKind::Ref(reference).into()
-        }
         TyKind::Dependent(dependent) => {
             let context = ParamContext::detached();
             context

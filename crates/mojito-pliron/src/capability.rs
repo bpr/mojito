@@ -607,14 +607,9 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "one opaque pointer, the address a `Pointer` wraps",
     ),
     (
-        "lit_ref",
-        CapabilityStatus::Supported,
-        "one opaque pointer, the address a `Pointer` is built from",
-    ),
-    (
         "ref",
         CapabilityStatus::Supported,
-        "one opaque place address",
+        "one opaque address: a place's, or the one a `Pointer` is built from",
     ),
 ];
 

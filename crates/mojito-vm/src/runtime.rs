@@ -2349,7 +2349,7 @@ fn held_address(ty: &mojito_types::types::Ty) -> mojito_types::types::Ty {
 
 fn held_pointee(pointee: &mojito_types::types::Ty) -> mojito_types::types::Ty {
     match pointee.kind() {
-        mojito_types::types::TyKind::LitRef(reference) => {
+        mojito_types::types::TyKind::Ref(reference) => {
             mojito_types::types::Ty::pointer_from_lit_ref(reference)
         }
         _ => pointee.clone(),

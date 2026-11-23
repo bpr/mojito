@@ -5627,7 +5627,8 @@ fn a_pre_1_225_struct_infers_its_ref_fields_from_the_ref_tag() {
             "mojito-mir 1.224",
             1,
         )
-        .replace(", ref_fields: [view]", "");
+        .replace(", ref_fields: [view]", "")
+        .replace("name: value, type: ref {", "name: value, type: lit_ref {");
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
     let holder = parsed
         .program
@@ -5635,4 +5636,38 @@ fn a_pre_1_225_struct_infers_its_ref_fields_from_the_ref_tag() {
         .structure("Holder")
         .expect("Holder");
     assert_eq!(holder.ref_fields, vec!["view".to_string()]);
+}
+
+/// Before schema 1.224 a slot bound a reference exactly when its type was
+/// written with the `ref` tag: a `lit_ref`-tagged slot of the same
+/// reference type binds nothing.
+#[test]
+fn a_pre_1_224_function_binds_only_its_ref_tagged_slots() {
+    let reference: Ty = TyKind::Ref(RefTy {
+        referent: Ty::int(),
+        origin: Origin::Static,
+        mutability: Mutability::Immutable,
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+    })
+    .into();
+    let mut function = function_with(Vec::new(), Vec::new());
+    function.n_vars = 2;
+    function.var_names = vec!["bound".into(), "value".into()];
+    function.var_tys = HashMap::from([(0, reference.clone()), (1, reference)]);
+    function.ref_bindings = std::collections::BTreeSet::from([0]);
+    let program = program_with(vec![("main".into(), function)]);
+    let text = write::program(&program);
+    assert!(text.contains("ref_bindings: [$v0]"), "{text}");
+    let legacy = text
+        .replacen(
+            &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
+            "mojito-mir 1.223",
+            1,
+        )
+        .replace("    ref_bindings: [$v0],\n", "")
+        .replace("var: $v1, type: ref {", "var: $v1, type: lit_ref {");
+    assert!(legacy.contains("type: lit_ref {"), "{legacy}");
+    let parsed = artifact(legacy.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let (_, read) = &parsed.program.functions[0];
+    assert_eq!(read.ref_bindings, std::collections::BTreeSet::from([0]));
 }

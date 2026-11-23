@@ -5617,11 +5617,10 @@ fn type_is_symbolic(ty: &Ty) -> bool {
             element,
             address_space,
         } => address_space.is_symbolic() || type_is_symbolic(element),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             reference.address_space.is_symbolic() || type_is_symbolic(&reference.referent)
         }
         TyKind::LitRefPack { elements, .. } => elements.iter().any(type_is_symbolic),
-        TyKind::Ref(reference) => type_is_symbolic(&reference.referent),
     }
 }
 

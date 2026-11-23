@@ -1636,8 +1636,10 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
             ty_raw_in(element, self_ty, mode),
             address_space_raw(address_space)
         ),
-        TyKind::LitRef(reference) => format!(
-            "LitRef${}{}",
+        // A reference's origin and mutability erase from the runtime ABI,
+        // as a `Pointer`'s origin does.
+        TyKind::Ref(reference) => format!(
+            "Ref${}{}",
             ty_raw_in(&reference.referent, self_ty, mode),
             address_space_raw(&reference.address_space)
         ),
@@ -2718,7 +2720,7 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
             element,
             address_space,
         } => Ty::kgen_pointer(respell(element), address_space.clone()),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let mut reference = reference.map_pointer_origin(respell_bindable_place);
             reference.referent = respell(&reference.referent);
             Ty::lit_ref(reference)
@@ -2739,11 +2741,6 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
                 mutability,
             }
             .into()
-        }
-        TyKind::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = respell(&reference.referent);
-            TyKind::Ref(reference).into()
         }
         _ => ty.clone(),
     }

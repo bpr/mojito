@@ -2152,13 +2152,12 @@ fn retire_made_references(block: &mut MirBlock, retired: &[u32]) {
     }
 }
 
-/// The reference layers `ty` nests: each `TyKind::Ref` and `!lit.ref`
-/// (`TyKind::LitRef`) layer, so the count is the same whichever tag a
-/// reference carries. A pointer is a value, not a layer.
+/// The reference layers `ty` nests: each `!lit.ref` (`TyKind::Ref`)
+/// layer. A pointer is a value, not a layer.
 fn reference_depth(ty: &Ty) -> usize {
     let mut depth = 0;
     let mut current = ty;
-    while let TyKind::Ref(reference) | TyKind::LitRef(reference) = current.kind() {
+    while let TyKind::Ref(reference) = current.kind() {
         depth += 1;
         current = &reference.referent;
     }

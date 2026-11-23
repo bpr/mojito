@@ -1,4 +1,4 @@
-# expect: type mismatch for field 1 of 'MutView'
+# expect: type mismatch for field 'src' of 'MutView'
 # An auto-borrowed source must satisfy the field's declared origin mutability:
 # an immutable place (a read parameter) cannot feed an Origin[mut=True] slot.
 @fieldwise_init

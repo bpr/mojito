@@ -961,7 +961,7 @@ pub(super) fn pointer_root_is_value(place: &MirPlace, function: &MirFunction) ->
         && place
             .root_ty
             .as_ref()
-            .is_some_and(|ty| ty.is_pointer_layout() || matches!(ty.kind(), TyKind::LitRef { .. }))
+            .is_some_and(|ty| ty.is_pointer_layout() || matches!(ty.kind(), TyKind::Ref { .. }))
 }
 
 pub(super) fn verify_function(
@@ -977,16 +977,16 @@ pub(super) fn verify_function(
             function.n_vars
         ));
     }
+    // A `ref` binding's slot is typed as a reference; a slot typed as one
+    // may also hold a `!lit.ref` value, which binds nothing.
     for (&slot, ty) in &function.var_tys {
-        let typed = matches!(ty.kind(), TyKind::Ref(_));
-        if typed != function.binds_reference(slot) {
+        if function.binds_reference(slot) && !matches!(ty.kind(), TyKind::Ref(_)) {
             errors.push(format!(
-                "MIR function '{name}' slot $v{slot} `{}` {} a reference but is typed `{ty}`",
+                "MIR function '{name}' slot $v{slot} `{}` binds a reference but is typed `{ty}`",
                 function
                     .var_names
                     .get(slot as usize)
                     .map_or("?", String::as_str),
-                if typed { "does not bind" } else { "binds" }
             ));
         }
     }

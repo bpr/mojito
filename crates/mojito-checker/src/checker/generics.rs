@@ -132,8 +132,8 @@ pub(super) fn unify(
             TyKind::ParamList(element) => unify(pattern_element, element, subst, deduce),
             _ => Ok(()),
         },
-        // A reference pattern solves through its referent; the actual may be
-        // the bare referent type (reference reads type as the referent).
+        // A reference pattern solves through its referent, against another
+        // reference only.
         TyKind::Ref(pattern_reference) => match actual.kind() {
             TyKind::Ref(actual_reference) => unify(
                 &pattern_reference.referent,
@@ -141,7 +141,7 @@ pub(super) fn unify(
                 subst,
                 deduce,
             ),
-            _ => unify(&pattern_reference.referent, actual, subst, deduce),
+            _ => Ok(()),
         },
         // A pointer pattern solves through its pointee (`Pointer[Self.T,
         // Self.origin]` against `Pointer[Int, …]` solves `T = Int`); the
@@ -152,16 +152,12 @@ pub(super) fn unify(
             }
             Ok(())
         }
-        // So do its raw `!kgen.pointer` and `!lit.ref`.
+        // So does its raw `!kgen.pointer`.
         TyKind::KgenPointer {
             element: pattern_element,
             ..
         } => match actual.kind() {
             TyKind::KgenPointer { element, .. } => unify(pattern_element, element, subst, deduce),
-            _ => Ok(()),
-        },
-        TyKind::LitRef(pattern) => match actual.kind() {
-            TyKind::LitRef(actual) => unify(&pattern.referent, &actual.referent, subst, deduce),
             _ => Ok(()),
         },
         TyKind::LitRefPack {
@@ -600,10 +596,10 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             element,
             address_space,
         } => Ty::kgen_pointer(substitute_self(element, replacement), address_space.clone()),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = substitute_self(&reference.referent, replacement);
-            TyKind::LitRef(reference).into()
+            TyKind::Ref(reference).into()
         }
         TyKind::LitRefPack {
             elements,
@@ -772,11 +768,11 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
             element,
             address_space,
         } => Ty::kgen_pointer(recur(element), space(address_space)),
-        TyKind::LitRef(reference) => {
+        TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = recur(&reference.referent);
             reference.address_space = space(&reference.address_space);
-            TyKind::LitRef(reference).into()
+            TyKind::Ref(reference).into()
         }
         TyKind::LitRefPack {
             elements,
@@ -788,12 +784,6 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
             mutability: *mutability,
         }
         .into(),
-        TyKind::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = recur(&reference.referent);
-            reference.address_space = space(&reference.address_space);
-            TyKind::Ref(reference).into()
-        }
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
         TyKind::RuntimePack(elements) => {
             TyKind::RuntimePack(elements.iter().map(recur).collect()).into()

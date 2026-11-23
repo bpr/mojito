@@ -3207,8 +3207,8 @@ the fact (`binds_reference`, and the VM's `var.use` read-through
 `holds_address`, which adds the borrowed parameters a call binds by
 address, a parameter declared of reference type excepted); a place's designated type stays a type question, since a whole
 slot's place may designate the referent. `mir::verify` requires a binding
-to be typed as a reference and, until `!lit.ref` folds into `ref` (R2511),
-every reference-typed slot to be a binding.
+to be typed as a reference; a reference-typed slot that is no binding
+holds a `!lit.ref` value.
 
 The checker holds the same fact one phase up: `Checker::ref_bindings` is the
 set of owners whose declaration is a `ref` binding — a `ref` local
@@ -3891,8 +3891,9 @@ origin binder as a place does, mutable only when every member is, and an
 argument carrying it carries every member place. The decode still builds
 `PointerOrigin::Union` for the readers that ask for the view, which no
 reader outside `origin.rs` matches (R2512 and R2513 retire them). A `!lit.ref` stores no
-`PointerOrigin`: `TyKind::LitRef` holds the `RefTy` a `ref` holds, an
-`Origin` beside a `Mutability`, and `TyKind::LitRefPack` the same pair, so
+`PointerOrigin`: it is `TyKind::Ref`, upstream's one reference type,
+whose `RefTy` holds an `Origin` beside a `Mutability`, and
+`TyKind::LitRefPack` holds the same pair, so
 `RefTy::pointer_origin` decodes the view only for a reader that still asks
 for it.
 

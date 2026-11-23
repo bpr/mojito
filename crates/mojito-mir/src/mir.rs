@@ -831,10 +831,7 @@ impl MirDeclarations {
             return true;
         }
         match ty.kind() {
-            TyKind::KgenPointer { .. }
-            | TyKind::LitRef { .. }
-            | TyKind::LitRefPack { .. }
-            | TyKind::Ref(_) => true,
+            TyKind::KgenPointer { .. } | TyKind::Ref(_) | TyKind::LitRefPack { .. } => true,
             pointer if pointer.is_pointer() => true,
             TyKind::Tuple(_) => true,
             TyKind::RuntimePack(items) => items

@@ -472,7 +472,7 @@ impl ScopeCx<'_> {
                 element,
                 address_space,
             } => self.address_in(role, element, address_space, nested),
-            TyKind::LitRef(reference) | TyKind::Ref(reference) => {
+            TyKind::Ref(reference) => {
                 self.address_in(role, &reference.referent, &reference.address_space, nested);
             }
             TyKind::LitRefPack { elements, .. } => {

@@ -197,8 +197,7 @@ impl ReferencePermission {
 /// tag.
 pub fn reference_record(ty: &Ty) -> Option<&mojito_types::origin::RefTy> {
     match ty.kind() {
-        mojito_types::types::TyKind::Ref(reference)
-        | mojito_types::types::TyKind::LitRef(reference) => Some(reference),
+        mojito_types::types::TyKind::Ref(reference) => Some(reference),
         _ => None,
     }
 }

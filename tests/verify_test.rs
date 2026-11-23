@@ -511,7 +511,7 @@ fn verifier_checks_read_and_write_reference_capabilities() {
     );
     expect_finding(
         &program(write_immutable_reference),
-        "WriteRef source capability of type ref Int is immutable",
+        "WriteRef source capability of type ref[ImmUntrackedOrigin] Int is immutable",
     );
 
     let write_immutable_pointer = function(

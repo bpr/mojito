@@ -342,7 +342,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
             element: v,
             address_space,
         }
-        | TyKind::LitRef(mojito_types::origin::RefTy {
+        | TyKind::Ref(mojito_types::origin::RefTy {
             referent: v,
             address_space,
             ..
@@ -356,7 +356,6 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         {
             matches!(value, CtValue::Expr(_) | CtValue::Deferred(_))
         }
-        TyKind::Ref(v) => v.address_space.is_symbolic() || is_symbolic(&v.referent),
         kind if let Some((dtype, width)) = kind
             .as_simd()
             .or_else(|| mojito_types::types::kgen_simd_slots(kind)) =>
@@ -544,10 +543,9 @@ pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
         | TyKind::VariadicPack(v)
         | TyKind::PopArray { element: v, .. }
         | TyKind::KgenPointer { element: v, .. }
-        | TyKind::LitRef(mojito_types::origin::RefTy { referent: v, .. }) => {
+        | TyKind::Ref(mojito_types::origin::RefTy { referent: v, .. }) => {
             output.push((*v).clone());
         }
-        TyKind::Ref(v) => output.push(v.referent.clone()),
         _ => {}
     }
 }

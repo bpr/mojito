@@ -216,7 +216,7 @@ impl Analysis {
                 && function
                     .var_tys
                     .get(var)
-                    .is_some_and(|ty| !matches!(ty.kind(), TyKind::LitRef { .. }))
+                    .is_some_and(|ty| !matches!(ty.kind(), TyKind::Ref { .. }))
         };
         let mut slots = BTreeMap::new();
         let mut variants: HashMap<usize, Vec<VarId>> = HashMap::new();

@@ -112,6 +112,12 @@ which names the upstream pass each one follows. Each is measured by the
     and `pre_elaboration::lit_ref_struct_field_initializer` stop at
     elaboration: "unsupported monomorphizing `Pointer.__init__$ov$LitRef…`:
     conflicting solutions for `mut`".
+  - Probe: on 2026-11-22, before and after R2511, `scripts/focused`
+    fails `pre_elaboration::{ctfe_dict_set_result,
+    comptime_for_borrowing_iterator, simd_symbolic_surface,
+    bool_declared_members}` at elaboration: a CTFE call of
+    `Pointer.__getitem__` "produced" its pointee value (`Simd { … }`,
+    `Int(0)`) where a reference result is expected.
   - The bundled `Pointer` initializers run their declared bodies, and
     the call omits a defaulted argument that only the pipeline's passes
     fill or remove.
@@ -11378,73 +11384,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R2526 (2026-11-22).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R2511 `TyKind::LitRef` is a second reference type beside
-  `TyKind::Ref`, where upstream's `!lit.ref` is the one reference type**
-
-  Both variants hold the same `RefTy` record and differ only in their tag.
-  Once R2505–R2510 move every decision onto declarations, delete
-  `TyKind::LitRef` and make a `!lit.ref` value `TyKind::Ref`.
-  - Type lattice (`mojito-types`): take the `!lit.ref` answer wherever the
-    arms differ (`copy_is_identity`, `coerces`, conformance, and
-    `erase_origins` to Static keeping mutability), the union of both arms
-    in the origin walkers, and `pointer_or_lit_ref`, `as_lit_ref`,
-    `matching_pointer_parts`, `address_parts` for every `Ref`.
-  - Checker: `type_storage_contains`' top-level `TyKind::Ref => true` arm
-    takes the `pointer_or_lit_ref` loan rule (a declared `ref` field
-    already answers through `declares_ref_field`).
-  - Checker `!lit.ref` rules to decide: `substitute_struct_origins` binds
-    a `!lit.ref`'s origin but not a `ref`'s, `origins/construct.rs`'s arm
-    order, and `storage_value_coerces`.
-  - Display is `ref[origin(, space)] T` only. Move the `ref T` expect
-    lines (`tests/verify_test.rs`, and what the type-error run shows).
-  - Mangling: `ty_raw_in` (`symbol.rs`) gets one `Ref` arm. Update any
-    instance-symbol goldens.
-  - mono `equiv.rs` and `unify.rs`: one rule.
-  - MIR text: the writer emits `ref {…}`, the reader keeps `lit_ref` as an
-    alias, the pre-1.224 binding inference keys on the written tag, and
-    the schema and package format bump (`docs/mir-text-format.md`).
-  - `verify_function` (`verify/calls.rs`) keeps only "a binding is typed
-    as a reference".
-  - MIR verifier (R2508 left one rule per record): delete
-    `types_compatible`'s tag-equality guard on its reference arm,
-    `verify::reference_record`'s `LitRef` alternative, and
-    `same_address`'s `LitRef` arm, whose `lit` flag becomes "either side
-    is a reference".
-  - Audit the receiver and callee peels R2507 left on the outer
-    reference, merge-safe only while no method is declared on a
-    reference: `mir::addressed_receiver`/`receiver_value_ty` callers,
-    `function_signature` (`call_addresses.rs`), `bound_calls.rs`'s and
-    mono `specializer.rs`'s `peel_refs`, `generic_callable_contract`
-    (`lower_expr/calls.rs`), `verify/calls.rs`'s `owner_arguments`,
-    `verify/drops.rs`'s `deinit`-receiver `TyKind::Ref` test,
-    `unused_params.rs`'s `receiver_forwarded_owner_params`, and
-    `loans.rs`'s closure `__call__` receiver peel.
-  - `mir::addressed_registers`' type fallback (a receiver, a collector
-    operand, an operand of a call no contract binds) is also what
-    `mir::operand_addresses` keeps, since it reads that set.
-  - Audit the type-level reference reads R2509 left in place:
-    `inline_parametric.rs`'s `peel_refs` (existential binders),
-    `BoundMutabilities::ty`'s separate `LitRef` arm, and
-    `register_loans.rs`' `origin_operands` `Ref`-destination guard, which
-    then covers a `!lit.ref` result too, as upstream's origin liveness
-    does.
-  - VM and Pliron record reads, which take the referent of either tag and
-    so need only the tag sweep: `freeze_value` and `peel_references`
-    (`vm.rs`), `address_pointee` and `held_pointee` (`runtime.rs`),
-    `adapters.rs`'s thaw referent, Pliron `support.rs`, `types.rs`,
-    `lib.rs`'s struct collector, `places.rs`'s and `closures.rs`'s peels,
-    and the `TyKind::Ref` precondition beside each declaration test R2510
-    added (`Prog::holds_reference`, `heap_handle_place`, Pliron
-    `lower_make_ref`, `places.rs`'s step walk, `iter.rs`).
-  - Docs: `docs/architecture.md` and `docs/mir-text-format.md`'s "until
-    `!lit.ref` folds into `ref`" sentences, `docs/symbol-map.md`'s
-    `!lit.ref` row.
-  - Plan: `R2492-tykind-litref-is-a-second-reference-plan.md`, section E7.
-  - Go sites-first: `scripts/smoke --suites`, then `scripts/focused`.
-  - Found while landing R2211 (2026-11-21).
-  - Depends on R2505, R2506, R2507, R2508, R2509, R2510, R2525, R2526.
-  - Model: Fable, Planned.
 
 - [ ] **R2512 Pointer readers below the checker read the `PointerOrigin`
   view, not the pointer's `!lit.ref` record**

@@ -25,25 +25,17 @@ impl Decoder {
         let deinit_params = self.bools(self.field(fields, "deinit_params").ok()?);
         let ref_params = self.bools(self.field(fields, "ref_params").ok()?);
         let returns_reference = self.boolean(self.field(fields, "returns_reference").ok()?)?;
-        let var_tys = self.type_map(
-            self.field(fields, "var_types").ok()?,
-            "var_type",
-            "var",
-            "$v",
-        );
-        // Before 1.224 a slot bound a reference exactly when it was typed
-        // as one.
+        let var_type_rows = self.field(fields, "var_types").ok()?;
+        let var_tys = self.type_map(var_type_rows, "var_type", "var", "$v");
+        // Before 1.224 a slot bound a reference exactly when its type was
+        // written as a `ref` record; a `lit_ref` one bound nothing.
         let ref_bindings = match self.field(fields, "ref_bindings").ok() {
             Some(value) => self
                 .list(value)
                 .ok()
                 .map(|values| values.iter().filter_map(|value| self.var(value)).collect())
                 .unwrap_or_default(),
-            None if self.minor < 224 => var_tys
-                .iter()
-                .filter(|(_, ty)| matches!(ty.kind(), TyKind::Ref(_)))
-                .map(|(id, _)| *id as u32)
-                .collect(),
+            None if self.minor < 224 => self.slots_written_as_ref(var_type_rows),
             None => std::collections::BTreeSet::new(),
         };
         let ret_ty = self.option_ty(self.field(fields, "return_type").ok());

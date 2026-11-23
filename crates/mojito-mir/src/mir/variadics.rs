@@ -38,9 +38,9 @@ use mojito_types::types::{Ty, TyArg, TyKind, variadic_list_type};
 /// One element of the list a call builds.
 pub enum ListElement {
     /// A place of the caller's the element is, already addressed: `pointer`
-    /// is its `ref.make`, typed [`element_lit_ref_type`] for a list and
-    /// [`element_pointer_type`] for a pack, and `roots` the
-    /// slots the place lies in, which outlive the call.
+    /// is its `ref.make`, typed [`element_lit_ref_type`] for a list and a
+    /// pack alike, and `roots` the slots the place lies in, which outlive
+    /// the call.
     Borrowed { pointer: Reg, roots: Vec<VarId> },
     /// A value the call holds, bound to a fresh slot of the caller's.
     Value(Reg),
@@ -69,20 +69,12 @@ pub struct VariadicListConstruction {
     pub after: Vec<MirInstr>,
 }
 
-/// The type of one element pointer of a list of `element`s: upstream's
-/// `Pointer[element_type, origin]`, its origin untracked, mutable for an
-/// owned list.
-pub fn element_pointer_type(element: &Ty, owned: bool) -> Ty {
-    Ty::pointer(
-        element.clone(),
-        PointerOrigin::Untracked { mutable: owned },
-        mojito_types::types::AddressSpaceSlot::GENERIC,
-    )
-}
-
-/// The type of one element reference a list of `element`s gathers in its
-/// `!pop.array`: upstream's `Pointer[element_type, origin]._mlir_lit_ref`,
-/// its origin untracked, mutable for an owned list.
+/// The type of one element reference of a list or pack of `element`s.
+///
+/// A list gathers it in its `!pop.array`, a pack in its
+/// `lit.ref.pack.create`: upstream's
+/// `Pointer[element_type, origin]._mlir_lit_ref`, its origin untracked,
+/// mutable for an owned list.
 pub fn element_lit_ref_type(element: &Ty, owned: bool) -> Ty {
     Ty::lit_ref(mojito_types::origin::RefTy::from_pointer_origin(
         element.clone(),
@@ -254,7 +246,7 @@ pub fn build_variadic_pack(
                     binding_ty: Some(element.clone()),
                     in_place: false,
                 });
-                let pointer = tables.fresh_register(element_pointer_type(element, mutable));
+                let pointer = tables.fresh_register(element_lit_ref_type(element, mutable));
                 before.push(MirInstr::MakeRef {
                     dest: pointer,
                     place: MirPlace::root(slot, Some(element.clone())),
@@ -306,7 +298,7 @@ pub fn build_variadic_pack(
             Some(place) => {
                 let referent = place.ty.clone().unwrap_or_else(Ty::none);
                 MirInstr::MakeRef {
-                    dest: tables.fresh_register(element_pointer_type(&referent, false)),
+                    dest: tables.fresh_register(element_lit_ref_type(&referent, false)),
                     place,
                 }
             }

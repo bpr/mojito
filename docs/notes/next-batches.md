@@ -144,13 +144,11 @@ the struct.
   bump. R2486 and R2487 carry the struct rules and binding passes it
   left as the compiler's.
 - R2211 gave a `!lit.ref` the `RefTy` record a `ref` holds. R2488–R2491
-  move the read-through off `TyKind::Ref` at each binding position, and
-  R2511 then folds `TyKind::LitRef` into it, as upstream has one type.
+  move the read-through off `TyKind::Ref` at each binding position.
 
 ```sh
 scripts/claude_loop.py --model opus --plan-fable-on-opus -n 0 \
-  --task R2024 --task R2207 --task R2208 --task R2209 --task R2210 \
-  --task R2511
+  --task R2024 --task R2207 --task R2208 --task R2209 --task R2210
 ```
 
 ## 5. A trait's members are its methods (6 entries)

@@ -1543,11 +1543,6 @@ fn verify_ref_pack_create(cx: &InstrCx<'_>, dest: Reg, elems: &[Reg], errors: &m
     }
     for (index, (operand, element)) in elems.iter().zip(elements).enumerate() {
         match cx.reg_ty(*operand).map(Ty::kind) {
-            Some(TyKind::LitRef(mojito_types::origin::RefTy { referent: found, .. })) if types_compatible(found, element) => {}
-            Some(pointer_ty)
-                if pointer_ty
-                    .pointer_layout()
-                    .is_some_and(|(found, _)| types_compatible(found, element)) => {}
             Some(TyKind::Ref(reference)) if types_compatible(&reference.referent, element) => {}
             Some(found) => errors.push(format!(
                 "{prefix}: lit.ref.pack.create operand {index} has type {found}, not a reference to {element}"
@@ -1692,11 +1687,9 @@ fn verify_pointer_convert(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
     };
     let element = |ty: &Ty| match ty.kind() {
         TyKind::KgenPointer { element, .. }
-        | TyKind::LitRef(mojito_types::origin::RefTy {
+        | TyKind::Ref(mojito_types::origin::RefTy {
             referent: element, ..
         }) => Some(element.clone()),
-        // A `ref` value is the `!lit.ref` upstream holds it as.
-        TyKind::Ref(reference) => Some(reference.referent.clone()),
         pointer => pointer.pointer_layout().map(|(element, _)| element.clone()),
     };
     let (Some(to_element), Some(from_element)) = (element(to), element(from)) else {
@@ -1808,7 +1801,7 @@ fn verify_tuple_elements(
 }
 
 /// Whether `found` and `expected` are one address typed two ways: a
-/// `Pointer` or a reference and a `!lit.ref` to the same element in the
+/// `Pointer` or a reference and a reference to the same element in the
 /// same address space, which `lit.ref.to_pointer` retypes without changing
 /// it (a pack element's address bound to a `!lit.ref` parameter slot).
 /// A `ref` binding's slot is never such a target: a binding keeps its
@@ -1820,15 +1813,10 @@ fn verify_tuple_elements(
 /// [`erase_origins`]: mojito_types::types::erase_origins
 fn same_address(found: &Ty, expected: &Ty) -> bool {
     let address = |ty: &Ty| match ty.kind() {
-        TyKind::LitRef(reference) => Some((
-            reference.referent.clone(),
-            reference.address_space.clone(),
-            true,
-        )),
         TyKind::Ref(reference) => Some((
             reference.referent.clone(),
             reference.address_space.clone(),
-            false,
+            true,
         )),
         pointer => Some((
             pointer

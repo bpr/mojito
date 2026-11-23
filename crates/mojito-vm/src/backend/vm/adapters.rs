@@ -429,7 +429,7 @@ impl VmBackend {
         let mut references = Vec::with_capacity(items.len());
         for (index, item) in items.iter().enumerate() {
             let value = self.thaw(prog, item, elements.get(index))?;
-            references.push(comptime_pointer(self.store_to_comptime_memory(value)));
+            references.push(self.store_to_comptime_memory(value));
         }
         let name = prog.declared_struct(Some(target)).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
