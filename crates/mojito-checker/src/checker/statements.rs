@@ -3301,7 +3301,6 @@ impl Checker {
             _ => decls.clone(),
         };
         self.push_param_scope(&declared);
-        self.bind_trait_self();
         let capture_policy = if self.function_bases.is_empty() {
             if captures.is_some() {
                 self.pop_param_scope();
@@ -3952,16 +3951,11 @@ impl Checker {
         }
         // Current Mojo restricts the `deinit` convention to struct method
         // arguments; free functions, nested functions, and lambdas take
-        // ownership with `var` instead. A trait member is a method of its
-        // trait, whose receiver may be `deinit`.
-        let trait_member = std::mem::take(&mut self.checking_trait_member);
-        let unavailable = if trait_member {
-            None
-        } else {
-            self.check_decorators(DecoratorSite::Function, decorators)?
-                .unavailable
-                .map(|unavailable| unavailable.message(name))
-        };
+        // ownership with `var` instead.
+        let unavailable = self
+            .check_decorators(DecoratorSite::Function, decorators)?
+            .unavailable
+            .map(|unavailable| unavailable.message(name));
         // An unavailable function declares a signature only: its body is
         // the one `...` upstream requires.
         if unavailable.is_some()
@@ -3976,7 +3970,6 @@ impl Checker {
         }
         if let Some(param) = params
             .iter()
-            .skip(usize::from(trait_member))
             .find(|p| p.convention == Some(mojito_ast::ast::ArgConvention::Deinit))
         {
             return Err(TypeError::Unsupported(format!(
@@ -4067,10 +4060,7 @@ impl Checker {
         // dependent parameter expression names (`Buf[n + 1]`), an origin
         // binder among them (`where o.mut`).
         self.push_param_scope(&decls);
-        let enclosing_self = self.self_ty.clone();
-        self.bind_trait_self();
         let signature = self.def_signature_in_scope(stmt, shape, decls, unavailable, required);
-        self.self_ty = enclosing_self;
         self.pop_param_scope();
         signature
     }
@@ -4322,17 +4312,11 @@ impl Checker {
                 "check_def requires a function declaration".to_string(),
             ));
         };
-        // A trait member binds on its trait's record, which only a wrapper's
-        // forwarding call reads; its signature carries no origin a call
-        // would bind, as `unforwardable` rejects every one that does.
-        let trait_member = self.binds_trait_member(lambda);
-        if !lambda && !trait_member && !self.function_bases.is_empty() {
+        if !lambda && !self.function_bases.is_empty() {
             self.declare_nested_signature(name, &signature.fn_ty)?;
         }
         // A function's name is not a variable: assigning it is rejected.
-        if !trait_member {
-            self.declare_immutable(name, signature.fn_ty.clone())?;
-        }
+        self.declare_immutable(name, signature.fn_ty.clone())?;
         if !lambda
             && !self.function_bases.is_empty()
             && let Some(owner) = self.lookup_owner(name)
@@ -4351,10 +4335,8 @@ impl Checker {
                 )
             }),
         );
-        if !trait_member {
-            self.record_statement_binding(stmt, name);
-            self.register_callable_origins(name, signature.origin_signature.clone());
-        }
+        self.record_statement_binding(stmt, name);
+        self.register_callable_origins(name, signature.origin_signature.clone());
         Ok(())
     }
 

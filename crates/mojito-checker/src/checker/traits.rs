@@ -946,6 +946,21 @@ impl Checker {
         Ok((self_ty, saved))
     }
 
+    /// Enter the member scope of a trait whose `Self` is `self_ty`, its
+    /// member's `_Self` binder: the trait declares no parameter of its own,
+    /// so nothing else is in scope. Returns the saved outer scope for
+    /// `exit_struct_scope`.
+    pub(super) fn enter_trait_scope(&mut self, self_ty: Ty) -> SavedStructScope {
+        SavedStructScope {
+            type_params: std::mem::take(&mut self.enclosing_type_params),
+            param_decls: std::mem::take(&mut self.enclosing_param_decls),
+            self_decls: std::mem::take(&mut self.self_decls),
+            self_ty: self.self_ty.replace(self_ty),
+            bundled_stdlib: std::mem::replace(&mut self.bundled_stdlib_declaration, false),
+            enum_declaration: std::mem::replace(&mut self.enum_declaration, false),
+        }
+    }
+
     pub(super) fn exit_struct_scope(&mut self, saved: SavedStructScope) {
         self.self_decls = saved.self_decls;
         self.enclosing_type_params = saved.type_params;
@@ -1471,59 +1486,10 @@ impl Checker {
             &sig.decls(),
             &sig.availability,
         );
-        self.generic_parameters.borrow_mut().insert(
-            mojito_checked::checked::GenericSite::Method {
-                module: declaration.module.clone(),
-                declaration: name.to_string(),
-                method: method_index,
-            },
-            sig.declared.clone(),
-        );
-        for (param, ty) in all_types.iter().enumerate() {
-            self.declaration_types.borrow_mut().insert(
-                mojito_checked::checked::AnnotationSite::MethodParam {
-                    module: declaration.module.clone(),
-                    declaration: name.to_string(),
-                    method: method_index,
-                    param,
-                },
-                ty.clone(),
-            );
-        }
-        self.declaration_types.borrow_mut().insert(
-            mojito_checked::checked::AnnotationSite::MethodReturn {
-                module: declaration.module.clone(),
-                declaration: name.to_string(),
-                method: method_index,
-            },
-            sig.ret.clone(),
-        );
-        if let Some(receiver) = &sig.custom_self {
-            self.declaration_types.borrow_mut().insert(
-                mojito_checked::checked::AnnotationSite::MethodReceiver {
-                    module: declaration.module.clone(),
-                    declaration: name.to_string(),
-                    method: method_index,
-                },
-                receiver.clone(),
-            );
-        }
-        self.declaration_effects.borrow_mut().insert(
-            mojito_checked::checked::AnnotationSite::MethodReturn {
-                module: declaration.module.clone(),
-                declaration: name.to_string(),
-                method: method_index,
-            },
-            mojito_checked::checked::DeclarationEffect {
-                raises: sig.raises,
-                error: sig.raises.then(|| sig.error.clone()).flatten(),
-                returns_reference: sig.ref_return.is_some(),
-                param_writes: mojito_checked::checked::DeclarationEffect::param_writes(
-                    &sig.conventions,
-                    &sig.ref_params,
-                ),
-                availability: sig.availability.clone(),
-            },
+        self.record_method_sites(
+            (declaration.module.as_ref(), name, method_index),
+            &all_types,
+            &sig,
         );
         let overloads = self
             .declared_methods_mut(name)?
@@ -1548,6 +1514,65 @@ impl Checker {
         }
         overloads.push(sig);
         Ok(())
+    }
+
+    /// Record the `method_index`-th member of declaration `name` (a struct,
+    /// or a trait whose default it is) at its checked sites: its declared
+    /// parameter list, each parameter's type `all_types`, its result and
+    /// effect, and a receiver typed other than `Self`.
+    pub(super) fn record_method_sites(
+        &self,
+        (module, name, method_index): (Option<&String>, &str, usize),
+        all_types: &[Ty],
+        sig: &MethodSig,
+    ) {
+        use mojito_checked::checked::{AnnotationSite, DeclarationEffect, GenericSite};
+        self.generic_parameters.borrow_mut().insert(
+            GenericSite::Method {
+                module: module.cloned(),
+                declaration: name.to_string(),
+                method: method_index,
+            },
+            sig.declared.clone(),
+        );
+        let mut types = self.declaration_types.borrow_mut();
+        for (param, ty) in all_types.iter().enumerate() {
+            types.insert(
+                AnnotationSite::MethodParam {
+                    module: module.cloned(),
+                    declaration: name.to_string(),
+                    method: method_index,
+                    param,
+                },
+                ty.clone(),
+            );
+        }
+        let result = AnnotationSite::MethodReturn {
+            module: module.cloned(),
+            declaration: name.to_string(),
+            method: method_index,
+        };
+        types.insert(result.clone(), sig.ret.clone());
+        if let Some(receiver) = &sig.custom_self {
+            types.insert(
+                AnnotationSite::MethodReceiver {
+                    module: module.cloned(),
+                    declaration: name.to_string(),
+                    method: method_index,
+                },
+                receiver.clone(),
+            );
+        }
+        self.declaration_effects.borrow_mut().insert(
+            result,
+            DeclarationEffect {
+                raises: sig.raises,
+                error: sig.raises.then(|| sig.error.clone()).flatten(),
+                returns_reference: sig.ref_return.is_some(),
+                param_writes: DeclarationEffect::param_writes(&sig.conventions, &sig.ref_params),
+                availability: sig.availability.clone(),
+            },
+        );
     }
 
     /// Method `m`'s parameter types and signature, the `method_index`-th of
@@ -1650,7 +1675,7 @@ impl Checker {
     /// clauses and gate compiled here: those reading none of its arguments
     /// before its parameter types resolve, their facts assumed, and the rest
     /// in its signature scope.
-    fn compiled_method_signature(
+    pub(super) fn compiled_method_signature(
         &mut self,
         name: &str,
         m: &Method,

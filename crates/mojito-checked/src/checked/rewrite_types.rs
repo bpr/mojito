@@ -1007,6 +1007,15 @@ impl RewriteTypes for CheckedStmtOp {
             Self::Struct(f0) => {
                 f0.rewrite_types(rewrite);
             }
+            Self::Trait(declaration) => {
+                for default in declaration
+                    .methods
+                    .iter_mut()
+                    .filter_map(|method| method.default.as_mut())
+                {
+                    default.signature.rewrite_types(rewrite);
+                }
+            }
             Self::Comptime {
                 name: _,
                 where_clauses: _,
@@ -1036,7 +1045,6 @@ impl RewriteTypes for CheckedStmtOp {
                 value: _,
             }
             | Self::SetPlace { place: _, value: _ }
-            | Self::Trait(_)
             | Self::ComptimeIf {
                 branches: _,
                 orelse: _,

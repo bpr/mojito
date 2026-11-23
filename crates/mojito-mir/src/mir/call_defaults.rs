@@ -1650,13 +1650,11 @@ impl Site {
                 let named = record.callee.clone().or_else(|| resolved.clone())?;
                 // A call through a trait bound names the requirement's
                 // dispatch symbol; its defaults are the requirement's,
-                // which the trait member's body declares, `self` first.
+                // which the trait member, its trait's method, declares.
                 let callee = if declarations.function(&named).is_some() {
                     named
                 } else {
-                    let member = requirement_member(&named, declarations)?;
-                    leading = 1;
-                    member
+                    requirement_member(&named, declarations)?
                 };
                 (
                     callee,
@@ -1832,7 +1830,7 @@ impl Site {
 
 /// The lowered body of the trait member whose requirement dispatches as
 /// `dispatch` (`__trait_dispatch.f$…`), when the member has one: the
-/// function `Trait.member`, whose first parameter is `self`.
+/// trait's method `Trait.member`.
 fn requirement_member(dispatch: &str, declarations: &MirDeclarations) -> Option<String> {
     declarations.trait_declarations().find_map(|declaration| {
         declaration
@@ -1841,10 +1839,9 @@ fn requirement_member(dispatch: &str, declarations: &MirDeclarations) -> Option<
             .find(|requirement| requirement.dispatch == dispatch)
             .map(|requirement| format!("{}.{}", declaration.name, requirement.name))
             .filter(|member| {
-                declarations.function(member).is_some_and(|declaration| {
-                    !declaration.has_receiver
-                        && declaration.param_names.first().map(String::as_str) == Some("self")
-                })
+                declarations
+                    .function(member)
+                    .is_some_and(|declaration| declaration.has_receiver)
             })
     })
 }

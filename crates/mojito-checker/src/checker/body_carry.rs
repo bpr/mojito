@@ -345,7 +345,7 @@ macro_rules! define_carry_ops {
                 conformances: mojito_checked::checked::ConformanceFacts,
             ) -> PassCarry {
                 self.record_lifted_applications();
-                let trait_members = self.checked_trait_members(&statements);
+                let trait_members = self.checked_trait_members();
                 let result = HandoffStores {
                     statements,
                     trait_members,

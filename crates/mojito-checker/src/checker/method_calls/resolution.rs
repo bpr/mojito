@@ -17,6 +17,20 @@ impl Checker {
         site: MethodCallSite<'_>,
         availability_failure: &mut Option<String>,
     ) -> Result<MethodSelection, TypeError> {
+        // A wrapper's forwarding call names its trait's member, which only
+        // it reaches: the member's signature, its `_Self` the receiver's
+        // type, as upstream's wrapper calls its trait's function.
+        if let Some(member) = self.trait_member_signature(site.method) {
+            let Some((sname, targs)) = self.nominal_struct(site.obj_ty) else {
+                return Ok(Ok(None));
+            };
+            return self.resolve_struct_candidates(
+                site,
+                (sname, &targs),
+                (std::slice::from_ref(member), Some(site.method)),
+                availability_failure,
+            );
+        }
         match site.obj_ty.kind() {
             struct_ty if let Some((sname, targs)) = struct_ty.as_non_pointer_struct() => {
                 self.resolve_struct_method(site, sname, targs, availability_failure)
@@ -202,6 +216,25 @@ impl Checker {
         targs: &[TyArg],
         availability_failure: &mut Option<String>,
     ) -> Result<MethodSelection, TypeError> {
+        let info = self.structs.get(sname).ok_or_else(|| {
+            TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
+        })?;
+        let Some(sigs) = info.methods.get(site.method) else {
+            return Ok(Ok(None));
+        };
+        self.resolve_struct_candidates(site, (sname, targs), (sigs, None), availability_failure)
+    }
+
+    /// The one of `sigs`, methods of struct `sname` at its arguments
+    /// `targs`, the call at `site` selects; `member` names the trait member
+    /// the one signature is, which lowers to its symbol.
+    fn resolve_struct_candidates(
+        &self,
+        site: MethodCallSite<'_>,
+        (sname, targs): (&str, &[TyArg]),
+        (sigs, member): (&[MethodSig], Option<&str>),
+        availability_failure: &mut Option<String>,
+    ) -> Result<MethodSelection, TypeError> {
         let MethodCallSite {
             object,
             method,
@@ -219,9 +252,6 @@ impl Checker {
         let info = self.structs.get(sname).ok_or_else(|| {
             TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
         })?;
-        let Some(sigs) = info.methods.get(method) else {
-            return Ok(Ok(None));
-        };
         let overloaded = sigs.len() > 1;
         let has_instance_candidate = sigs.iter().any(|sig| sig.has_self);
         let mut matches = Vec::new();
@@ -400,7 +430,9 @@ impl Checker {
                                 | mojito_ast::ast::ArgConvention::Deinit
                         )
                     ),
-                    lowered_name: if overloaded {
+                    lowered_name: if let Some(member) = member {
+                        Some(member.to_string())
+                    } else if overloaded {
                         Some(method_lowered_name(
                             sname,
                             method,

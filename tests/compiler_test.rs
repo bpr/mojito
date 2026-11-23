@@ -1,5 +1,4 @@
 use mojito::Ty;
-use mojito::ast::StmtKind;
 use mojito::checked::{CheckedStmtOp, WalkResult, Walked};
 use mojito::{Compiler, CompilerError, SemanticAdjustment, ValueCategory};
 
@@ -1443,9 +1442,9 @@ def main():
 
 #[test]
 fn trait_default_body_is_one_member_node() {
-    // The trait's op names its member's `def` node, built once, as
-    // upstream's trait names its member function; the method without a
-    // default names none.
+    // The trait's op holds its member, its trait's method, built once, as
+    // upstream's trait holds its member function; the method without a
+    // default holds none.
     let program = Compiler::default()
         .compile_unlinked(TRAIT_DEFAULT_MEMBER)
         .expect("compile");
@@ -1462,20 +1461,14 @@ fn trait_default_body_is_one_member_node() {
             _ => None,
         })
         .expect("the trait's checked node");
-    let member_name = match &checked.trait_members()[0].declaration.kind {
-        StmtKind::Def { name, .. } => Some(name.clone()),
-        _ => None,
-    }
-    .expect("the member is a def");
-    let default = methods[0].default.expect("`d` names its member");
-    assert!(
-        matches!(
-            &tables.statement(default).expect("member node").op,
-            CheckedStmtOp::Def(def) if def.name == member_name
-        ),
-        "`d`'s default is the member `def` {member_name}"
+    let default = methods[0].default.as_ref().expect("`d` holds its member");
+    assert_eq!(default.symbol, checked.trait_members()[0].symbol);
+    assert_eq!(
+        default.signature.receiver.as_ref().map(ToString::to_string),
+        Some("_Self".to_string()),
+        "the member's receiver is its trait's `Self`"
     );
-    assert_eq!(methods[1].default, None, "`r` declares no default");
+    assert!(methods[1].default.is_none(), "`r` declares no default");
     let returns = tables
         .statements
         .iter()

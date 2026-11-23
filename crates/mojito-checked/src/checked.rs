@@ -2648,8 +2648,8 @@ impl CheckedStmtOp {
     }
 
     /// The statement's nested statement lists, in source order: a `def`'s
-    /// body, a struct's method bodies, a trait's default members' `def`
-    /// nodes, a branch, loop, `with`, `try`, or scope body.
+    /// body, a struct's method bodies, a trait's defaults' bodies, a
+    /// branch, loop, `with`, `try`, or scope body.
     pub fn bodies(&self) -> Vec<&[CheckedStmtId]> {
         match self {
             Self::Def(def) => vec![def.body.as_slice()],
@@ -2661,7 +2661,7 @@ impl CheckedStmtOp {
             Self::Trait(declaration) => declaration
                 .methods
                 .iter()
-                .filter_map(|method| method.default.as_ref().map(std::slice::from_ref))
+                .filter_map(|method| Some(method.default.as_ref()?.body.as_slice()))
                 .collect(),
             Self::ComptimeIf { branches, orelse } | Self::If { branches, orelse } => branches
                 .iter()
@@ -2824,12 +2824,7 @@ impl CheckedStmtOp {
                 let methods = declaration
                     .methods
                     .iter()
-                    .map(|method| CheckedTraitMethod {
-                        params: map_params(map, &method.params),
-                        where_clauses: values(map, &method.where_clauses),
-                        default: method.default.map(|default| map.statement(default)),
-                        ..method.clone()
-                    })
+                    .map(|method| method.map_operands(map))
                     .collect();
                 let comptime_members = declaration
                     .comptime_members
@@ -3204,10 +3199,49 @@ pub struct CheckedTraitMethod {
     pub keyword_only: Option<usize>,
     pub raises: bool,
     pub where_clauses: Vec<CheckedNodeId>,
-    /// The `def` node of its trait's member
-    /// ([`CheckedProgram::trait_members`]) when the method declares a
-    /// default, as upstream's trait names its member function.
-    pub default: Option<CheckedStmtId>,
+    /// Its default, its trait's member ([`CheckedProgram::trait_members`]),
+    /// when the method declares one, as upstream's trait holds its member
+    /// function.
+    pub default: Option<CheckedTraitDefault>,
+}
+
+impl CheckedTraitMethod {
+    /// The method with each node it names replaced by `map`'s, in the
+    /// order its nodes are built: its parameters' defaults, its
+    /// constraints, its default's body.
+    fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        let params = map_params(map, &self.params);
+        let where_clauses = self
+            .where_clauses
+            .iter()
+            .map(|clause| map.expression(*clause))
+            .collect();
+        Self {
+            params,
+            where_clauses,
+            default: self.default.as_ref().map(|default| CheckedTraitDefault {
+                body: default
+                    .body
+                    .iter()
+                    .map(|statement| map.statement(*statement))
+                    .collect(),
+                ..default.clone()
+            }),
+            ..self.clone()
+        }
+    }
+}
+
+/// A trait default as its trait's method: the member symbol it lowers to,
+/// its signature at its trait's method sites, over the trait's `Self` (the
+/// `_Self` binder its receiver binds), and its body.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CheckedTraitDefault {
+    pub symbol: String,
+    pub signature: CheckedSignature,
+    pub body: Vec<CheckedStmtId>,
+    /// The level its inline decorator names.
+    pub inline: crate::declaration::InlineLevel,
 }
 
 /// A trait's `comptime` member requirement.
@@ -4458,21 +4492,6 @@ impl CheckedTables {
         tables
     }
 
-    /// The `def` node of trait member `member`, which its trait's op names
-    /// as its method's default.
-    pub(crate) fn trait_member_root(&self, member: &CheckedTraitMember) -> Option<CheckedStmtId> {
-        self.roots.iter().find_map(|root| {
-            let node = self.statement(*root)?;
-            let CheckedStmtOp::Trait(declaration) = &node.op else {
-                return None;
-            };
-            if (&declaration.name, &node.module) != (&member.trait_name, &member.module) {
-                return None;
-            }
-            declaration.methods.get(member.method_index)?.default
-        })
-    }
-
     /// The tables of `arena`, which declare nothing yet.
     fn new(arena: CheckedArena) -> Self {
         let CheckedArena {
@@ -4495,11 +4514,7 @@ impl CheckedTables {
     /// statement naming its own: in source preorder, the lambdas of a
     /// statement's own expressions before it, and a declaration before the
     /// ones its bodies make. A function's type is `function_ty`'s.
-    fn declare(
-        &mut self,
-        members: &[CheckedStmtId],
-        function_ty: &dyn Fn(&CheckedStmt) -> Option<Ty>,
-    ) {
+    fn declare(&mut self, function_ty: &dyn Fn(&CheckedStmt) -> Option<Ty>) {
         let mut declarer = Declarer {
             tables: self,
             function_ty,
@@ -4507,7 +4522,6 @@ impl CheckedTables {
             declared: Vec::new(),
         };
         declarer.block(&self.roots);
-        declarer.block(members);
         let Declarer {
             declarations,
             declared,
@@ -4753,9 +4767,15 @@ impl Declarer<'_> {
                         .map(|method| method.body.as_slice())
                         .collect(),
                 ),
-                CheckedStmtOp::Trait(declaration) => {
-                    (CheckedDeclKind::Trait, &declaration.name, Vec::new())
-                }
+                CheckedStmtOp::Trait(declaration) => (
+                    CheckedDeclKind::Trait,
+                    &declaration.name,
+                    declaration
+                        .methods
+                        .iter()
+                        .filter_map(|method| Some(method.default.as_ref()?.body.as_slice()))
+                        .collect(),
+                ),
                 CheckedStmtOp::VarDecl { name, .. } | CheckedStmtOp::RefDecl { name, .. } => {
                     (CheckedDeclKind::Binding, name, Vec::new())
                 }
@@ -4911,13 +4931,14 @@ impl CheckedDefaultWrapper {
 
 /// A trait default as the check checked it: its trait's member.
 ///
-/// As upstream emits a default inside its trait, it is one function over the
-/// trait's `Self`, its first compile-time parameter `_Self`, named by its
-/// member symbol (`Trait.method`, signature-qualified when overloaded) and
-/// taking the receiver as its first argument. Its declaration is the one the
-/// check checked, built from its trait's method, whose checked sites are the
-/// declaration's `AnnotationSite::FunctionParam`/`FunctionReturn` and
-/// `GenericSite::Function`; a conformer's wrapper calls it.
+/// As upstream emits a default inside its trait, it is a method of its
+/// trait over the trait's `Self`, its first compile-time parameter `_Self`,
+/// which its receiver binds, named by its member symbol (`Trait.method`,
+/// signature-qualified when overloaded). Its checked sites are its trait's
+/// `AnnotationSite::MethodParam`/`MethodReturn`/`MethodReceiver` and
+/// `GenericSite::Method` at its position among the trait's methods, and its
+/// trait's [`CheckedTraitMethod::default`] holds its body; a conformer's
+/// wrapper calls it.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitMember {
     #[serde(with = "mojito_ast::ast::statement_module")]
@@ -4925,13 +4946,8 @@ pub struct CheckedTraitMember {
     pub trait_name: String,
     /// Its position among its trait's methods.
     pub method_index: usize,
-    /// A `def` named by the member symbol, over `[_Self, ...]` and
-    /// `(self: _Self, ...)`, whose body is the default's. The whole program
-    /// holds it as its node too, where its trait is, and the trait's
-    /// [`CheckedTraitMethod::default`] names it. A package unit does not
-    /// hold its syntax: its node is the unit's root.
-    #[serde(skip, default = "absent_declaration")]
-    pub declaration: Stmt,
+    /// The member symbol it lowers to.
+    pub symbol: String,
 }
 
 /// A parameter of a resolved signature as a call binds and a body declares
@@ -5472,21 +5488,12 @@ impl CheckedProgram {
                 wrapper.params.len(),
             );
         }
-        let arena = build_checked_expressions(
-            &statements,
-            &node_facts,
-            &default_wrappers,
-            &trait_members,
-            signatures,
-        );
+        let arena =
+            build_checked_expressions(&statements, &node_facts, &default_wrappers, signatures);
         drop(expressions_span);
         let declarations_span = mojito_common::timing::span("declarations");
         let mut tables = CheckedTables::new(arena);
-        let members: Vec<CheckedStmtId> = trait_members
-            .iter()
-            .filter_map(|member| tables.trait_member_root(member))
-            .collect();
-        tables.declare(&members, &|node| {
+        tables.declare(&|node| {
             checked_types
                 .get(&AnnotationSite::FunctionType {
                     module: node.module.clone(),
@@ -5533,11 +5540,11 @@ impl CheckedProgram {
 
     /// The program of one package unit: its checked `tables` as the
     /// package holds them, its declaration-site facts `sites`, and
-    /// `wrapper` or `trait_member` when it is one.
+    /// and `wrapper` when it is one.
     ///
     /// It holds the unit's nodes and no syntax, as upstream's package
-    /// holds each body as its IR: no statements, and neither the wrapper's
-    /// body nor the member's declaration, whose nodes are the tables'. The
+    /// holds each body as its IR: no statements, and no wrapper's body,
+    /// whose nodes are the tables'. The
     /// location maps unit lowering reads are built from the nodes'
     /// attributes; the instantiation tables, which only whole-program
     /// passes read, are empty.
@@ -5547,7 +5554,6 @@ impl CheckedProgram {
         overloads: Arc<crate::package::ProgramOverloads>,
         constants: Arc<crate::package::ProgramConstants>,
         wrapper: Option<CheckedDefaultWrapper>,
-        trait_member: Option<CheckedTraitMember>,
     ) -> Self {
         let tables = tables.reindexed();
         let mut overload_targets = HashMap::new();
@@ -5595,7 +5601,7 @@ impl CheckedProgram {
             overloads,
             constants,
             default_wrappers: wrapper.into_iter().collect(),
-            trait_members: trait_member.into_iter().collect(),
+            trait_members: Vec::new(),
         }
     }
 
@@ -5791,6 +5797,9 @@ pub(crate) enum StructShell {
     /// constructor, or move constructor), which has no checked body: its
     /// lowering reads the struct's fields alone.
     Synthesized,
+    /// A trait's default, its trait's member, at its position among the
+    /// trait's node's methods: the trait's shell holds that method alone.
+    TraitDefault(usize),
 }
 
 /// What a node operand is replaced by when an op is copied
@@ -5902,22 +5911,19 @@ impl Signatures<'_> {
     }
 }
 
-/// The checked arena of `statements`, of `default_wrappers`' bodies, and of
-/// each of `trait_members`' declarations, each node holding the facts
-/// `facts` recorded at its occurrence, each declaration op's symbol and
+/// The checked arena of `statements` and of `default_wrappers`' bodies,
+/// each node holding the facts `facts` recorded at its occurrence, each declaration op's symbol and
 /// signature read from `signatures`.
 fn build_checked_expressions<'a>(
     statements: &[Stmt],
     facts: &'a HashMap<SourceSpan, NodeFacts>,
     default_wrappers: &[CheckedDefaultWrapper],
-    trait_members: &'a [CheckedTraitMember],
     signatures: Signatures<'a>,
 ) -> CheckedArena {
     let mut builder = ArenaBuilder {
         nodes: Vec::new(),
         statements: Vec::new(),
         facts,
-        trait_members,
         signatures,
         functions: 0,
     };
@@ -5954,6 +5960,25 @@ impl Extraction<'_> {
     /// The struct `statement` as a member's unit holds it: its name, and
     /// the member's method when `shell` names one.
     fn shell(&mut self, statement: &CheckedStmt, shell: StructShell) -> CheckedStmtId {
+        if let (CheckedStmtOp::Trait(declaration), StructShell::TraitDefault(member)) =
+            (&statement.op, shell)
+        {
+            let methods = declaration
+                .methods
+                .get(member)
+                .map(|method| method.map_operands(self))
+                .into_iter()
+                .collect();
+            return self.push(CheckedStmt {
+                op: CheckedStmtOp::Trait(Box::new(CheckedTrait {
+                    name: declaration.name.clone(),
+                    refines: Vec::new(),
+                    methods,
+                    comptime_members: Vec::new(),
+                })),
+                ..statement.clone()
+            });
+        }
         let CheckedStmtOp::Struct(declaration) = &statement.op else {
             return self.statement(statement.id);
         };
@@ -5964,11 +5989,15 @@ impl Extraction<'_> {
                 .map(|method| method.map_operands(self))
                 .into_iter()
                 .collect(),
-            StructShell::Wrapper | StructShell::Synthesized => Vec::new(),
+            StructShell::Wrapper | StructShell::Synthesized | StructShell::TraitDefault(_) => {
+                Vec::new()
+            }
         };
         let fields = match shell {
             StructShell::Synthesized => declaration.fields.clone(),
-            StructShell::Method(_) | StructShell::Wrapper => Vec::new(),
+            StructShell::Method(_) | StructShell::Wrapper | StructShell::TraitDefault(_) => {
+                Vec::new()
+            }
         };
         self.push(CheckedStmt {
             op: CheckedStmtOp::Struct(Box::new(CheckedStruct {
@@ -6026,8 +6055,6 @@ struct ArenaBuilder<'a> {
     nodes: Vec<CheckedExpr>,
     statements: Vec<CheckedStmt>,
     facts: &'a HashMap<SourceSpan, NodeFacts>,
-    /// The members whose `def` nodes a trait's defaults are built as.
-    trait_members: &'a [CheckedTraitMember],
     /// What a declaration op's symbol and signature are read from.
     signatures: Signatures<'a>,
     /// How many function bodies enclose the statement being built: a
@@ -6038,24 +6065,6 @@ struct ArenaBuilder<'a> {
 impl<'a> ArenaBuilder<'a> {
     fn facts(&self, span: &SourceSpan) -> &'a NodeFacts {
         self.facts.get(span).unwrap_or(&NodeFacts::EMPTY)
-    }
-
-    /// The `def` of the member method `index` of trait `trait_name`, which
-    /// `statement` declares, defaults to.
-    fn member_declaration(
-        &self,
-        statement: &Stmt,
-        trait_name: &str,
-        index: usize,
-    ) -> Option<&'a Stmt> {
-        self.trait_members
-            .iter()
-            .find(|member| {
-                member.module == statement.module
-                    && member.trait_name == trait_name
-                    && member.method_index == index
-            })
-            .map(|member| &member.declaration)
     }
 
     /// A condition's nodes: the value, then a pattern's expressions.
@@ -6963,8 +6972,18 @@ impl<'a> ArenaBuilder<'a> {
                         default: method
                             .default_body
                             .as_ref()
-                            .and_then(|_| self.member_declaration(statement, name, index))
-                            .map(|member| self.stmt(member)),
+                            .map(|body| CheckedTraitDefault {
+                                symbol: self.method_symbol(statement, name, index, &method.name),
+                                signature: self.signatures.method(
+                                    statement.module.as_ref(),
+                                    name,
+                                    index,
+                                    method.params.len(),
+                                ),
+                                body: self.function_body(body),
+                                inline: crate::declaration::InlineLevel::of(&method.decorators)
+                                    .unwrap_or_default(),
+                            }),
                     })
                     .collect();
                 let comptime_members = comptime_members
@@ -7612,15 +7631,6 @@ pub fn materialized_borrow_owner(
         } => Some(*owner),
         _ => None,
     })
-}
-
-/// The declaration syntax of a decoded trait member, which a package unit
-/// does not hold.
-fn absent_declaration() -> Stmt {
-    Stmt::new(
-        mojito_ast::ast::StmtKind::Pass,
-        mojito_common::token::DUMMY_SPAN,
-    )
 }
 
 /// One fact of every occurrence that holds it, by occurrence.

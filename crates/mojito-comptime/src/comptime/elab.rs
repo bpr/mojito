@@ -166,33 +166,21 @@ fn elaborated_stmt(stmt: &Stmt, packs: Packs<'_>) -> Stmt {
             }
             kind
         }
-        // A default is its trait's member, a function over the trait's
-        // `Self` (`_Self`): its body is elaborated in place as that
-        // function's.
+        // A default is its trait's member, a method of its trait over the
+        // trait's `Self` (`_Self`, no pack): its body is elaborated in place
+        // as that method's, the trait declaring no parameter of its own.
         StmtKind::Trait { methods, .. } => {
-            let elaborated: Vec<_> = methods
-                .iter()
-                .enumerate()
-                .map(|(index, method)| {
-                    let member = mojito_checker::checker::trait_member_declaration(
-                        stmt,
-                        index,
-                        method.name.clone(),
-                    );
-                    match member.as_ref().map(|member| &member.kind) {
-                        Some(StmtKind::Def {
-                            type_params, body, ..
-                        }) => Some(def_body(&[], type_params, body)),
-                        _ => None,
-                    }
-                })
-                .collect();
             let mut kind = stmt.kind.clone();
-            if let StmtKind::Trait { methods, .. } = &mut kind {
-                for (method, body) in methods.iter_mut().zip(elaborated) {
-                    if body.is_some() {
-                        method.default_body = body;
-                    }
+            if let StmtKind::Trait {
+                methods: elaborated,
+                ..
+            } = &mut kind
+            {
+                for (method, declared) in elaborated.iter_mut().zip(methods) {
+                    method.default_body = declared
+                        .default_body
+                        .as_ref()
+                        .map(|body| def_body(&[], &declared.type_params, body));
                 }
             }
             kind

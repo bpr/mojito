@@ -2028,11 +2028,47 @@ impl Checker {
         overload_index: usize,
     ) -> Result<(), TypeError> {
         let owner = self.method_binder_owner(declaration, method_index, m);
+        let availability = self
+            .structs
+            .get(declaration)
+            .and_then(|info| info.methods.get(lifecycle_method_name(m)))
+            .and_then(|methods| methods.get(overload_index))
+            .map(|signature| signature.availability.clone())
+            .unwrap_or_default();
+        // Transfer summaries belong to the same callable identity as
+        // dispatch. Same-name overloads may have different loan behavior,
+        // so a bare method key would merge unrelated effects according to
+        // declaration order.
+        let effect_key =
+            self.method_effect_key(declaration, lifecycle_method_name(m), overload_index)?;
+        self.check_member(
+            self_ty,
+            m,
+            (module, declaration, method_index),
+            &owner,
+            &availability,
+            effect_key,
+        )
+    }
+
+    /// Check member `m`, the `method_index`-th of declaration `declaration`
+    /// (a struct, or the trait whose default it is), its own binders owned
+    /// by `owner`, under its compiled `availability`, its body committing
+    /// its transfer effects under `effect_key`.
+    pub(super) fn check_member(
+        &mut self,
+        self_ty: &Ty,
+        m: &Method,
+        (module, declaration, method_index): (Option<&String>, &str, usize),
+        owner: &str,
+        availability: &[GenericConstraint],
+        effect_key: String,
+    ) -> Result<(), TypeError> {
         // The body reads every value binder the method declares, an
         // origin's `mut=` binder included.
-        let declared = self.classify_param_list(&owner, &m.type_params)?;
+        let declared = self.classify_param_list(owner, &m.type_params)?;
         let enclosed = self.classify_param_list_after(
-            &owner,
+            owner,
             &m.type_params,
             self.enclosing_type_params.len(),
         )?;
@@ -2046,15 +2082,8 @@ impl Checker {
         let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
         self.enclosing_type_params.extend(m.type_params.clone());
         self.enclosing_param_decls.extend(enclosed);
-        let availability = self
-            .structs
-            .get(declaration)
-            .and_then(|info| info.methods.get(lifecycle_method_name(m)))
-            .and_then(|methods| methods.get(overload_index))
-            .map(|signature| signature.availability.clone())
-            .unwrap_or_default();
-        let mut assumptions = self.method_where_assumptions(m, &availability);
-        assumptions.extend(self.method_propositions(&availability, &decls));
+        let mut assumptions = self.method_where_assumptions(m, availability);
+        assumptions.extend(self.method_propositions(availability, &decls));
         self.push_assumptions(assumptions);
         let result = (|| {
             for param in 0..m.params.len() {
@@ -2083,13 +2112,7 @@ impl Checker {
                     .flatten();
                 self.record_declaration_verdict(site, verdict);
             }
-            // Transfer summaries belong to the same callable identity
-            // as dispatch. Same-name overloads may have different loan
-            // behavior, so a bare method key would merge unrelated
-            // effects according to declaration order.
-            let effect_key =
-                self.method_effect_key(declaration, lifecycle_method_name(m), overload_index)?;
-            self.check_method_inner(self_ty, m, &owner, effect_key)
+            self.check_method_inner(self_ty, m, owner, effect_key)
         })();
         self.pop_assumptions();
         self.enclosing_type_params = saved;

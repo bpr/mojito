@@ -358,7 +358,6 @@ pub use body_carry::PassCarry;
 pub use overload_support::is_bundled_module_source;
 mod trait_defaults;
 mod traits_support;
-pub use trait_defaults::trait_member_declaration;
 
 /// Type-check a program and return the concrete lowered callee chosen for
 /// every overloaded call site.
@@ -553,12 +552,6 @@ pub struct Checker {
     /// Every trait default the check checked as its trait's member, in
     /// program order.
     trait_members: Vec<trait_defaults::TraitMember>,
-    /// Whether the declaration `check_def` checks next is a trait member,
-    /// whose receiver is a method receiver.
-    checking_trait_member: bool,
-    /// Whether the `def` being checked is a trait member, whose `Self` is
-    /// its `_Self` binder.
-    binding_trait_self: bool,
     /// Top-level structs whose shell, member types, and method signatures were
     /// registered by `check_program`'s order-independent pre-passes. The
     /// source-order walk removes each entry and runs only the completion phase
@@ -1196,8 +1189,6 @@ impl Checker {
             program_constants: std::sync::Arc::default(),
             default_wrappers: Vec::new(),
             trait_members: Vec::new(),
-            checking_trait_member: false,
-            binding_trait_self: false,
             predeclared_structs: HashSet::new(),
             shells_awaiting_defaults: Vec::new(),
             declared_aliases: HashSet::new(),
@@ -3618,14 +3609,8 @@ fn run_explicit_destroy(
         .iter()
         .map(|(span, linear)| (span.clone(), linear.clone()))
         .partition(|(span, _)| unconsumed.contains(span));
-    let members: Vec<Stmt> = checker
-        .checked_trait_members(program)
-        .into_iter()
-        .map(|member| member.declaration)
-        .collect();
     crate::explicit_destroy::check(
         program,
-        &members,
         &node_facts,
         &deletability,
         &types,

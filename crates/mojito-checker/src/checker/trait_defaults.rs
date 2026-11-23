@@ -1,8 +1,9 @@
 //! Trait defaults as upstream emits them: each default is its trait's member
-//! `Trait.method`, one function over the trait's `Self`, checked and lowered
-//! once, and a conformer that does not spell a defaulted method gets a member
-//! over the default's resolved signature whose body is one call of the
-//! trait's member (`StructEmitter::synthesizeDefaultTraitMethodWrapper` and
+//! `Trait.method`, a method of its trait over the trait's `Self`, checked
+//! and lowered once, and a conformer that does not spell a defaulted method
+//! gets a member over the default's resolved signature whose body is one
+//! method call of the trait's member on its receiver
+//! (`StructEmitter::synthesizeDefaultTraitMethodWrapper` and
 //! `populateDefaultedTraitFunction`). The elaborator elaborates a default
 //! inside its trait; the check checks the member after every module
 //! declaration is bound, and builds the wrapper.
@@ -10,8 +11,8 @@
 use std::collections::{HashMap, HashSet};
 
 use mojito_ast::ast::{
-    ArgConvention, DeclaredParam, Expr, ExprKind, FnParam, KwArg, ParamArg, ParamKind, Stmt,
-    StmtKind, TraitMethod, Type, TypeParam,
+    ArgConvention, DeclaredParam, Expr, ExprKind, FnParam, KwArg, Method, MethodProvenance,
+    ParamArg, ParamKind, Stmt, StmtKind, TraitMethod, Type, TypeParam,
 };
 use mojito_ast::call::CompileTimeParam;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
@@ -28,81 +29,6 @@ use super::overload_support::method_lowered_name;
 use super::traits_support::same_method_shape;
 use super::{Checker, MethodSig, StructDeclaration, Ty};
 use mojito_symbol::symbol::lifecycle_method_name;
-
-/// The declaration trait default `index` of `trait_stmt` is checked and
-/// lowered as: its trait's member, named `name`.
-///
-/// Its first compile-time parameter is the trait's `Self`, the binder
-/// `_Self` (as upstream's diagnostics name it), its first argument the
-/// receiver `self: _Self`, and its body the default's, which still spells
-/// `Self`: the check resolves that `Self` to the binder
-/// ([`Checker::bind_trait_self`]), as upstream's name resolution does.
-/// `None` when the method declares no default.
-///
-/// Its syntax is derived from the trait statement's, so the check, the
-/// elaborator, and MIR each build the same declaration.
-pub fn trait_member_declaration(trait_stmt: &Stmt, index: usize, name: String) -> Option<Stmt> {
-    let StmtKind::Trait {
-        name: trait_name,
-        methods,
-        ..
-    } = &trait_stmt.kind
-    else {
-        return None;
-    };
-    let method = methods.get(index)?;
-    let body = method.default_body.clone()?;
-    let self_param = TypeParam {
-        name: SELF_PARAM.to_string(),
-        bounds: vec![trait_name.clone()],
-        value_type: None,
-        callable_bound: None,
-        origin_mutability: None,
-        // The receiver's type infers it, so it joins an infer-only section
-        // the default's own parameters open.
-        infer_only: method
-            .type_params
-            .first()
-            .is_some_and(|param| param.infer_only),
-        keyword_only: false,
-        default: None,
-    };
-    let receiver = FnParam {
-        name: "self".to_string(),
-        ty: Type::Named(SELF_PARAM.to_string(), Vec::new()),
-        default: None,
-        kind: ParamKind::Regular,
-        convention: method.self_convention,
-        origin: method.self_origin.clone(),
-    };
-    let function = Stmt {
-        kind: StmtKind::Def {
-            name,
-            decorators: method.decorators.clone(),
-            type_params: std::iter::once(self_param)
-                .chain(method.type_params.iter().cloned())
-                .collect(),
-            params: std::iter::once(receiver)
-                .chain(method.params.iter().cloned())
-                .collect(),
-            positional_only: method.positional_only.map(|index| index + 1),
-            keyword_only: method.keyword_only.map(|index| index + 1),
-            captures: None,
-            raises: method.raises,
-            raises_type: method.raises_type.clone(),
-            ret: method.ret.clone(),
-            where_clauses: method.where_clauses.clone(),
-            body,
-        },
-        span: trait_stmt.span,
-        module: trait_stmt.module.clone(),
-        syntax_id: SyntaxId::derived(
-            trait_stmt.syntax_id,
-            u32::try_from(index).unwrap_or(u32::MAX),
-        ),
-    };
-    Some(function)
-}
 
 /// A trait's own default, as its declaration gives it: what a conformer
 /// that inherits it binds and forwards, whichever program declared the
@@ -138,18 +64,16 @@ pub(super) struct DefaultShape {
     returns: bool,
     /// Whether it declares `raises`.
     raises: bool,
-    /// Whether the forwarding call binds `Self` explicitly: unless the
-    /// default opens an infer-only section, which the receiver infers.
-    explicit_self: bool,
     /// The compile-time parameters the forwarding call binds by name.
     forwarded: Vec<String>,
     /// Why no wrapper can forward to it, when none can.
     unforwardable: Option<String>,
-    /// The member's checked callable type, which the trait's check
-    /// records: what a wrapper's forwarding call types against, as
-    /// upstream's wrapper names its trait's function. No module binding
-    /// names the member.
-    pub(super) callable: Option<Ty>,
+    /// The member's signature as its trait's method, over the trait's
+    /// `Self` (its `_Self` binder, which its receiver binds), which the
+    /// trait's check records: what a wrapper's forwarding method call
+    /// selects, as upstream's wrapper names its trait's function. No
+    /// module binding names the member.
+    pub(super) signature: Option<MethodSig>,
 }
 
 impl DefaultShape {
@@ -281,13 +205,9 @@ pub(super) fn default_shapes(methods: &[TraitMethod]) -> Vec<DefaultShape> {
             keyword_only: method.keyword_only,
             returns: method.ret.is_some(),
             raises: method.raises,
-            explicit_self: !method
-                .type_params
-                .first()
-                .is_some_and(|param| param.infer_only),
             forwarded: Vec::new(),
             unforwardable: unforwardable(method),
-            callable: None,
+            signature: None,
         })
         .collect()
 }
@@ -553,18 +473,18 @@ impl Checker {
     /// Check every default a top-level trait of `stmts` declares as its
     /// trait's member, once every module declaration is bound, as upstream
     /// emits a default inside its trait: its body names any function of the
-    /// module, wherever declared. The member's callable is recorded on its
+    /// module, wherever declared. The member's signature is recorded on its
     /// trait's default, through which only a conformer's wrapper calls it
-    /// ([`Checker::trait_member_callable`]).
+    /// ([`Checker::trait_member_signature`]).
     pub(super) fn check_trait_members(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         for stmt in stmts {
             let StmtKind::Trait { name, methods, .. } = &stmt.kind else {
                 continue;
             };
             for (index, method) in methods.iter().enumerate() {
-                if method.default_body.is_none() {
+                let Some(member) = member_method(name, method) else {
                     continue;
-                }
+                };
                 let symbol = self
                     .traits
                     .get(name)
@@ -580,18 +500,7 @@ impl Checker {
                             method.name
                         ))
                     })?;
-                let Some(declaration) = trait_member_declaration(stmt, index, symbol.clone())
-                else {
-                    continue;
-                };
-                self.checking_trait_member = true;
-                self.binding_trait_self = true;
-                let checked = self.check_def(&declaration, false);
-                self.binding_trait_self = false;
-                self.self_ty = None;
-                self.checking_trait_member = false;
-                checked?;
-                self.record_member_callable(name, index, &declaration);
+                self.check_trait_member(stmt.module.as_ref(), (name, index), &member, &symbol)?;
                 self.trait_members.push(TraitMember {
                     module: stmt.module.clone(),
                     trait_name: name.clone(),
@@ -603,37 +512,19 @@ impl Checker {
         Ok(())
     }
 
-    /// The callable type of trait member `symbol`, `Trait.method`, from its
-    /// trait's record, own or installed: what the forwarding call of a
-    /// conformer's wrapper resolves its callee to. Source cannot spell a
-    /// dotted callee, so no other call reaches it.
-    pub(super) fn trait_member_callable(&self, symbol: &str) -> Option<&Ty> {
+    /// The signature of trait member `symbol`, `Trait.method`, from its
+    /// trait's record, own or installed: what the forwarding method call of
+    /// a conformer's wrapper selects. Source cannot spell a dotted member,
+    /// so no other call reaches it.
+    pub(super) fn trait_member_signature(&self, symbol: &str) -> Option<&MethodSig> {
         let (trait_name, _) = symbol.split_once('.')?;
         self.traits
             .get(trait_name)?
             .defaults
             .iter()
             .find(|default| default.member.as_deref() == Some(symbol))?
-            .callable
+            .signature
             .as_ref()
-    }
-
-    /// Whether the `def` `bind_def` binds is the trait member being
-    /// checked, which binds on its trait's record instead of the module
-    /// scope.
-    pub(super) const fn binds_trait_member(&self, lambda: bool) -> bool {
-        self.binding_trait_self && !lambda && self.function_bases.is_empty()
-    }
-
-    /// Bind `Self` to the member's `_Self` binder once its scope is open,
-    /// while a trait member is checked: the binder's owner is the member's
-    /// provisional one in the first signature pass and its symbol after, so
-    /// it comes from the open scope. A nested `def` finds `Self` bound and
-    /// inherits it.
-    pub(super) fn bind_trait_self(&mut self) {
-        if self.binding_trait_self && self.self_ty.is_none() {
-            self.self_ty = self.lookup_tparam(SELF_PARAM);
-        }
     }
 
     /// Check the body of every wrapper a top-level struct of `stmts`
@@ -674,45 +565,15 @@ impl Checker {
         Ok(())
     }
 
-    /// Record the finalized callable type of trait `trait_name`'s member for
-    /// its `declared_at`-th method, which its check recorded at
-    /// `declaration`'s function site, on that method's default.
-    fn record_member_callable(&mut self, trait_name: &str, declared_at: usize, declaration: &Stmt) {
-        let site = mojito_checked::checked::AnnotationSite::FunctionType {
-            module: declaration.module.clone(),
-            declaration: declaration.span,
-            syntax: declaration.syntax_id,
-        };
-        let callable = self.declaration_types.borrow().get(&site).cloned();
-        if let Some(default) = self.traits.get_mut(trait_name).and_then(|info| {
-            info.defaults
-                .iter_mut()
-                .find(|default| default.declared_at == declared_at)
-        }) {
-            default.callable = callable;
-        }
-    }
-
-    /// The checked handoff of every trait member, each declaration built
-    /// from its trait statement in `statements`, the checked tree.
-    pub(super) fn checked_trait_members(&self, statements: &[Stmt]) -> Vec<CheckedTraitMember> {
+    /// The checked handoff of every trait member.
+    pub(super) fn checked_trait_members(&self) -> Vec<CheckedTraitMember> {
         self.trait_members
             .iter()
-            .filter_map(|member| {
-                let trait_stmt = statements.iter().find(|stmt| {
-                    stmt.module == member.module
-                        && matches!(&stmt.kind, StmtKind::Trait { name, .. } if *name == member.trait_name)
-                })?;
-                Some(CheckedTraitMember {
-                    module: member.module.clone(),
-                    trait_name: member.trait_name.clone(),
-                    method_index: member.method_index,
-                    declaration: trait_member_declaration(
-                        trait_stmt,
-                        member.method_index,
-                        member.lowered_name.clone(),
-                    )?,
-                })
+            .map(|member| CheckedTraitMember {
+                module: member.module.clone(),
+                trait_name: member.trait_name.clone(),
+                method_index: member.method_index,
+                symbol: member.lowered_name.clone(),
             })
             .collect()
     }
@@ -868,6 +729,90 @@ impl Checker {
         }
         overloads.push(sig.clone());
         Ok((lowered, sig))
+    }
+
+    /// Check default `m` of trait `trait_name`, its `index`-th method, as
+    /// that trait's method named `symbol`: its signature registered at its
+    /// trait's method sites, its receiver `self: _Self`, and its body
+    /// checked in the trait's scope, where `Self` is the `_Self` binder.
+    fn check_trait_member(
+        &mut self,
+        module: Option<&String>,
+        (trait_name, index): (&str, usize),
+        m: &Method,
+        symbol: &str,
+    ) -> Result<(), TypeError> {
+        let owner = super::annotations::binder_owner(symbol);
+        let declared = self.classify_param_list(&owner, &m.type_params)?;
+        self.push_param_scope(&declared);
+        let self_ty = self.lookup_tparam(SELF_PARAM);
+        self.pop_param_scope();
+        let self_ty = self_ty.ok_or_else(|| {
+            TypeError::InvariantViolation(format!(
+                "trait member '{symbol}' declares no '{SELF_PARAM}'"
+            ))
+        })?;
+        let saved = self.enter_trait_scope(self_ty.clone());
+        let checked = self
+            .register_trait_member(module, (trait_name, index), m, (&owner, symbol))
+            .and_then(|availability| {
+                self.check_member(
+                    &self_ty,
+                    m,
+                    (module, trait_name, index),
+                    &owner,
+                    &availability,
+                    symbol.to_string(),
+                )
+            });
+        self.exit_struct_scope(saved);
+        checked
+    }
+
+    /// Type default `m` of trait `trait_name`, its `index`-th method, in its
+    /// trait's scope, its binders owned by `owner`; record it at its
+    /// trait's method sites and on its trait's default as the member
+    /// `symbol`, and return its availability.
+    fn register_trait_member(
+        &mut self,
+        module: Option<&String>,
+        (trait_name, index): (&str, usize),
+        m: &Method,
+        (owner, symbol): (&str, &str),
+    ) -> Result<Vec<super::GenericConstraint>, TypeError> {
+        let method_decls = self.classify_param_list_after(owner, &m.type_params, 0)?;
+        self.push_param_scope(&method_decls);
+        let saved_struct_count = self.enclosing_struct_type_params.replace(0);
+        self.enclosing_type_params.clone_from(&m.type_params);
+        self.enclosing_param_decls.clone_from(&method_decls);
+        let signature = self.compiled_method_signature(trait_name, m, method_decls);
+        self.enclosing_type_params.clear();
+        self.enclosing_param_decls.clear();
+        self.enclosing_struct_type_params.set(saved_struct_count);
+        self.pop_param_scope();
+        let (all_types, mut sig) = signature?;
+        sig.custom_self.clone_from(&self.self_ty);
+        sig.overload = mojito_symbol::symbol::overload_qualifier(symbol).map(str::to_string);
+        self.record_method_sites((module, trait_name, index), &all_types, &sig);
+        if symbol != format!("{trait_name}.{}", m.name) {
+            self.declaration_symbols.borrow_mut().insert(
+                mojito_checked::checked::GenericSite::Method {
+                    module: module.cloned(),
+                    declaration: trait_name.to_string(),
+                    method: index,
+                },
+                symbol.to_string(),
+            );
+        }
+        let availability = sig.availability.clone();
+        if let Some(default) = self.traits.get_mut(trait_name).and_then(|info| {
+            info.defaults
+                .iter_mut()
+                .find(|default| default.declared_at == index)
+        }) {
+            default.signature = Some(sig);
+        }
+        Ok(availability)
     }
 
     /// `wrapper`'s default as its trait registered it, its member named.
@@ -1200,9 +1145,10 @@ fn names_origin_reason(name: &str) -> String {
     )
 }
 
-/// The one statement of a wrapper for `shape`: a call of its trait's member, with
-/// `Self` bound first and every argument forwarded with the convention it
-/// declares.
+/// The one statement of a wrapper for `shape`: a method call of its trait's
+/// member on the receiver, which binds the member's `_Self`, every argument
+/// forwarded with the convention it declares and every forwarded binder
+/// bound by name.
 fn forwarding_statement(shape: &DefaultShape, span: Span) -> Result<Stmt, TypeError> {
     let expr = |kind| Expr::new(kind, span);
     let name = |name: &str| expr(ExprKind::Identifier(name.to_string()));
@@ -1210,19 +1156,20 @@ fn forwarding_statement(shape: &DefaultShape, span: Span) -> Result<Stmt, TypeEr
     let owned = |convention: Option<ArgConvention>| {
         matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit))
     };
-    let mut param_args = Vec::new();
-    if shape.explicit_self {
-        param_args.push(ParamArg::Value(name("Self")));
-    }
-    param_args.extend(shape.forwarded.iter().map(|param| ParamArg::Named {
-        name: param.clone(),
-        value: Box::new(ParamArg::Value(name(param))),
-    }));
-    let mut args = vec![if owned(shape.receiver) {
+    let param_args: Vec<ParamArg> = shape
+        .forwarded
+        .iter()
+        .map(|param| ParamArg::Named {
+            name: param.clone(),
+            value: Box::new(ParamArg::Value(name(param))),
+        })
+        .collect();
+    let receiver = Box::new(if owned(shape.receiver) {
         transfer("self")
     } else {
         name("self")
-    }];
+    });
+    let mut args = Vec::new();
     let mut kwargs = Vec::new();
     let mut keyword = false;
     for (index, param) in shape.params.iter().enumerate() {
@@ -1254,11 +1201,23 @@ fn forwarding_statement(shape: &DefaultShape, span: Span) -> Result<Stmt, TypeEr
             shape.method
         ))
     })?;
-    let call = expr(ExprKind::Call {
-        name: member,
-        param_args,
-        args,
-        kwargs,
+    let call = expr(if param_args.is_empty() {
+        ExprKind::MethodCall {
+            object: receiver,
+            method: member,
+            args,
+            kwargs,
+        }
+    } else {
+        ExprKind::Invoke {
+            callee: Box::new(expr(ExprKind::Member {
+                object: receiver,
+                field: member,
+            })),
+            param_args,
+            args,
+            kwargs,
+        }
     });
     let statement = if shape.returns {
         StmtKind::Return(Some(call))
@@ -1266,6 +1225,51 @@ fn forwarding_statement(shape: &DefaultShape, span: Span) -> Result<Stmt, TypeEr
         StmtKind::Expr(call)
     };
     Ok(Stmt::new(statement, span))
+}
+
+/// Trait `trait_name`'s default `method` as its trait's method: its first
+/// compile-time parameter the trait's `Self`, the binder `_Self` (as
+/// upstream's diagnostics name it), which its receiver `self: _Self` binds,
+/// and its body the default's, whose `Self` the trait's scope resolves to
+/// the binder. `None` when the method declares no default.
+fn member_method(trait_name: &str, method: &TraitMethod) -> Option<Method> {
+    let body = method.default_body.clone()?;
+    let self_param = TypeParam {
+        name: SELF_PARAM.to_string(),
+        bounds: vec![trait_name.to_string()],
+        value_type: None,
+        callable_bound: None,
+        origin_mutability: None,
+        // The receiver's type infers it, so it joins an infer-only section
+        // the default's own parameters open.
+        infer_only: method
+            .type_params
+            .first()
+            .is_some_and(|param| param.infer_only),
+        keyword_only: false,
+        default: None,
+    };
+    Some(Method {
+        name: method.name.clone(),
+        type_params: std::iter::once(self_param)
+            .chain(method.type_params.iter().cloned())
+            .collect(),
+        has_self: true,
+        self_convention: method.self_convention,
+        self_origin: method.self_origin.clone(),
+        self_type: None,
+        receiver_index: 0,
+        decorators: method.decorators.clone(),
+        params: method.params.clone(),
+        positional_only: method.positional_only,
+        keyword_only: method.keyword_only,
+        raises: method.raises,
+        raises_type: method.raises_type.clone(),
+        ret: method.ret.clone(),
+        where_clauses: method.where_clauses.clone(),
+        body,
+        provenance: MethodProvenance::Source,
+    })
 }
 
 /// Number every node it walks as the next derivation of `parent`.

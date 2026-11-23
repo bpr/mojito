@@ -444,8 +444,7 @@ impl Checker {
     }
 
     /// Look up `name`, walking outward through the scope chain (lexical lookup).
-    /// A package module binding resolves below the module scope, and a
-    /// trait member's symbol through its trait's record.
+    /// A package module binding resolves below the module scope.
     pub(super) fn lookup(&self, name: &str) -> Option<&Ty> {
         if let Some(local) = self
             .scopes
@@ -463,7 +462,6 @@ impl Checker {
             .first()
             .and_then(|module| module.get(name))
             .or_else(|| self.installed_binding(name).map(|(_, binding)| &binding.ty))
-            .or_else(|| self.trait_member_callable(name))
     }
 
     /// Whether a declaration's own compile-time parameter, or a local type
@@ -541,14 +539,13 @@ impl Checker {
         }
     }
 
-    /// The scope binding `name`; a package module binding's, and a trait
-    /// member's, is the module scope.
+    /// The scope binding `name`; a package module binding's is the module
+    /// scope.
     pub(super) fn binding_scope(&self, name: &str) -> Option<usize> {
         self.scopes
             .iter()
             .rposition(|scope| scope.contains_key(name))
             .or_else(|| self.installed_binding(name).map(|_| 0))
-            .or_else(|| self.trait_member_callable(name).map(|_| 0))
     }
 
     /// Reject a nested function naming itself from inside its own body — a

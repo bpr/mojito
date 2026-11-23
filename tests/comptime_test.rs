@@ -1590,10 +1590,11 @@ fn callable_contract_binder_shadows_the_enclosing_binder() {
 #[test]
 fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
     // As upstream's `synthesizeDefaultTraitMethodWrapper`: the default is its
-    // trait's member `T.d`, one function over the trait's `Self`, and the
-    // conformer's method is a member the check builds over the default's
-    // resolved signature, one call of the trait's member with `Self` bound
-    // first, holding none of the default's body.
+    // trait's member `T.d`, a method of its trait over the trait's `Self`,
+    // and the conformer's method is a member the check builds over the
+    // default's resolved signature, one method call of the trait's member on
+    // its receiver, which binds the member's `_Self`, holding none of the
+    // default's body.
     let src = "trait T:\n    def req(self) -> Int:\n        ...\n    def d(self, k: Int = 2) -> Int:\n        var doubled = self.req() * k\n        return doubled\n\n@fieldwise_init\nstruct S(T):\n    var x: Int\n    def req(self) -> Int:\n        return self.x\n";
     let prepared = mojito::comptime::prepare(parse(src).unwrap()).unwrap();
     // The bundled library's functions are linked beside the program; the
@@ -1650,23 +1651,21 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
     let mojito::ast::StmtKind::Return(Some(call)) = &statement.kind else {
         panic!("the wrapper returns the call: {statement:?}");
     };
-    let mojito::ast::ExprKind::Call {
-        name,
-        param_args,
+    let mojito::ast::ExprKind::MethodCall {
+        object,
+        method,
         args,
         ..
     } = &call.kind
     else {
-        panic!("the wrapper calls the default: {call:?}");
+        panic!("the wrapper calls the default on its receiver: {call:?}");
     };
-    assert_eq!(name, "T.d");
-    assert_eq!(
-        param_args.as_slice(),
-        [mojito::ast::ParamArg::Value(mojito::ast::Expr::from(
-            mojito::ast::ExprKind::Identifier("Self".to_string())
-        ))]
+    assert!(
+        matches!(&object.kind, mojito::ast::ExprKind::Identifier(name) if name == "self"),
+        "{object:?}"
     );
-    assert_eq!(args.len(), 2);
+    assert_eq!(method, "T.d");
+    assert_eq!(args.len(), 1);
     let [member] = compiled.checked().trait_members() else {
         panic!("one trait member: {:?}", compiled.checked().trait_members());
     };
@@ -1678,7 +1677,21 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
         .iter()
         .find(|declaration| declaration.lowered_name == "T.d")
         .expect("MIR declares the trait member");
-    assert_eq!(declaration.param_names, ["self", "k"]);
+    assert_eq!(declaration.param_names, ["k"]);
+    assert!(declaration.has_receiver, "the member is its trait's method");
+    let (_, wrapper_fn) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "S.d")
+        .expect("MIR lowers the wrapper");
+    assert!(
+        wrapper_fn.body.instrs.iter().any(|instruction| matches!(
+            instruction,
+            mojito::mir::MirInstr::MethodCall { resolved: Some(target), .. } if target == "T.d"
+        )),
+        "the wrapper's call is statically resolved to the member: {:#?}",
+        wrapper_fn.body.instrs
+    );
     assert_eq!(
         declaration.param_decls.first().map(mojito::ParamDecl::name),
         Some("_Self")
@@ -1689,29 +1702,45 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
 #[test]
 fn a_trait_members_self_resolves_to_its_binder_unrespelled() {
     // Upstream's name resolution binds a default's `Self` to its member's
-    // `_Self` binder: the member's declaration keeps the source's `Self` in
-    // its signature and body, and only the binder and receiver say `_Self`.
+    // `_Self` binder: the default keeps the source's `Self` in its body, and
+    // its checked signature, at its trait's method sites, types its
+    // receiver and its `Self` parameter at the binder.
     let src = "trait T:\n    comptime N: Int\n    def req(self) -> Int:\n        ...\n    def d(self, other: Self) -> Int:\n        return Self.N + self.req() + other.req()\n\n@fieldwise_init\nstruct S(T):\n    comptime N = 4\n    var x: Int\n    def req(self) -> Int:\n        return self.x\n\ndef main():\n    print(S(3).d(S(5)))\n";
     let compiler = Compiler::default();
     let compiled = compiler.compile_unlinked(src).unwrap();
     let [member] = compiled.checked().trait_members() else {
         panic!("one trait member: {:?}", compiled.checked().trait_members());
     };
-    let mojito::ast::StmtKind::Def {
-        type_params,
-        params,
-        body,
-        ..
-    } = &member.declaration.kind
-    else {
-        panic!("the member is a def: {:?}", member.declaration);
+    assert_eq!(member.symbol, "T.d");
+    let checked = compiled.checked();
+    let site = |param| mojito::checked::AnnotationSite::MethodParam {
+        module: member.module.clone(),
+        declaration: "T".to_string(),
+        method: 1,
+        param,
     };
-    assert_eq!(type_params[0].name, "_Self");
+    let receiver = checked
+        .checked_type_at(&mojito::checked::AnnotationSite::MethodReceiver {
+            module: member.module.clone(),
+            declaration: "T".to_string(),
+            method: 1,
+        })
+        .expect("the member's receiver site");
+    assert_eq!(receiver.to_string(), "_Self");
     assert_eq!(
-        params[0].ty,
-        mojito::ast::Type::Named("_Self".to_string(), Vec::new())
+        checked.checked_type_at(&site(0)).map(ToString::to_string),
+        Some("_Self".to_string())
     );
-    assert_eq!(params[1].ty, mojito::ast::Type::SelfType);
+    let body = mojito::comptime::prepare(parse(src).unwrap())
+        .unwrap()
+        .into_iter()
+        .find_map(|stmt| match stmt.kind {
+            mojito::ast::StmtKind::Trait { name, methods, .. } if name == "T" => {
+                methods.into_iter().find_map(|method| method.default_body)
+            }
+            _ => None,
+        })
+        .expect("the default stays in its trait");
     let body = format!("{body:?}");
     assert!(
         !body.contains("\"_Self\""),

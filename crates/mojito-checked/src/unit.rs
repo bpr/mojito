@@ -8,8 +8,8 @@
 
 use crate::checked::{
     AnnotationSite, CheckedDefaultWrapper, CheckedProgram, CheckedStmtId, CheckedStmtOp,
-    CheckedStruct, CheckedTables, CheckedTraitMember, DeclarationEffect, GenericSite,
-    InstalledSites, StructShell, WalkResult, Walked,
+    CheckedStruct, CheckedTables, DeclarationEffect, GenericSite, InstalledSites, StructShell,
+    WalkResult, Walked,
 };
 use crate::package::{LibraryRoot, ProgramConstants, ProgramOverloads};
 use mojito_common::token::SyntaxId;
@@ -53,11 +53,13 @@ pub enum LoweringUnit<'a> {
         wrapper: &'a CheckedDefaultWrapper,
         index: usize,
     },
-    /// A trait default, as its trait's member, and its own `def`'s
-    /// statement node.
+    /// The default of the method at `index` among the methods of the
+    /// trait whose statement node is `root`, its trait's member; `member`
+    /// is the method's position among its node's methods.
     TraitMember {
-        member: &'a CheckedTraitMember,
+        index: usize,
         root: CheckedStmtId,
+        member: usize,
     },
     /// A module `comptime` constant, and its statement node.
     Constant { root: CheckedStmtId },
@@ -90,13 +92,16 @@ impl LoweringUnit<'_> {
         let (root, member) = match self {
             Self::Method { root, index, .. } => (root, *index),
             Self::Wrapper { root, wrapper, .. } => (root, wrapper.method_index),
+            Self::TraitMember { root, index, .. } => (root, *index),
             _ => return None,
         };
         let node = tables.statement(*root)?;
-        let CheckedStmtOp::Struct(declaration) = &node.op else {
-            return None;
+        let name = match &node.op {
+            CheckedStmtOp::Struct(declaration) => &declaration.name,
+            CheckedStmtOp::Trait(declaration) => &declaration.name,
+            _ => return None,
         };
-        Some((&node.module, &declaration.name, member))
+        Some((&node.module, name, member))
     }
 }
 
@@ -239,17 +244,15 @@ impl CheckedProgram {
                     }
                 }
                 CheckedStmtOp::Trait(declaration) => units.extend(
-                    self.trait_members()
+                    declaration
+                        .methods
                         .iter()
-                        .filter(|member| {
-                            (&member.trait_name, &member.module)
-                                == (&declaration.name, &node.module)
-                        })
-                        .filter_map(|member| {
-                            Some(LoweringUnit::TraitMember {
-                                member,
-                                root: declaration.methods.get(member.method_index)?.default?,
-                            })
+                        .enumerate()
+                        .filter(|(_, method)| method.default.is_some())
+                        .map(|(index, _)| LoweringUnit::TraitMember {
+                            index,
+                            root,
+                            member: index,
                         }),
                 ),
                 CheckedStmtOp::Comptime { .. } => constants.push(LoweringUnit::Constant { root }),
@@ -343,7 +346,10 @@ pub enum UnitKind {
         index: usize,
     },
     Wrapper,
-    TraitMember,
+    /// A trait's default, at its position among the trait's methods.
+    TraitMember {
+        index: usize,
+    },
     Constant,
     /// A struct's synthesized destructor.
     Destructor,
@@ -370,8 +376,6 @@ pub struct CheckedUnit {
     kind: UnitKind,
     /// A wrapper's declaration, whose body `tables` holds.
     wrapper: Option<CheckedDefaultWrapper>,
-    /// A trait member's declaration, whose syntax `tables` holds.
-    trait_member: Option<CheckedTraitMember>,
     tables: CheckedTables,
     sites: SiteFacts,
 }
@@ -423,7 +427,6 @@ impl CheckedUnit {
                 overloads,
                 constants,
                 self.wrapper,
-                self.trait_member,
             ),
         }
     }
@@ -472,7 +475,6 @@ impl CheckedUnit {
     /// site facts yet: its nodes are its subtree of `tables`.
     fn extracted(unit: &LoweringUnit<'_>, tables: &CheckedTables) -> Self {
         let mut wrapper = None;
-        let mut trait_member = None;
         let (kind, root, shell, body) = match unit {
             LoweringUnit::Function { root } => (UnitKind::Function, *root, None, &[][..]),
             LoweringUnit::Constant { root } => (UnitKind::Constant, *root, None, &[][..]),
@@ -499,10 +501,16 @@ impl CheckedUnit {
                     tables.wrapper_roots(*index),
                 )
             }
-            LoweringUnit::TraitMember { member, root } => {
-                trait_member = Some((*member).clone());
-                (UnitKind::TraitMember, *root, None, &[][..])
-            }
+            LoweringUnit::TraitMember {
+                index,
+                root,
+                member,
+            } => (
+                UnitKind::TraitMember { index: *index },
+                *root,
+                Some(StructShell::TraitDefault(*member)),
+                &[][..],
+            ),
             LoweringUnit::Destructor { root } => (
                 UnitKind::Destructor,
                 *root,
@@ -531,7 +539,6 @@ impl CheckedUnit {
         Self {
             kind,
             wrapper,
-            trait_member,
             tables: tables.extract(root, shell, body),
             sites: SiteFacts::default(),
         }
@@ -558,10 +565,17 @@ impl UnitProgram {
         Some(match &self.kind {
             UnitKind::Function => LoweringUnit::Function { root },
             UnitKind::Constant => LoweringUnit::Constant { root },
-            UnitKind::TraitMember => LoweringUnit::TraitMember {
-                member: self.program.trait_members().first()?,
-                root,
-            },
+            UnitKind::TraitMember { index } => {
+                let CheckedStmtOp::Trait(declaration) = &tables.statement(root)?.op else {
+                    return None;
+                };
+                declaration.methods.first()?.default.as_ref()?;
+                LoweringUnit::TraitMember {
+                    index: *index,
+                    root,
+                    member: 0,
+                }
+            }
             UnitKind::Method { index } => {
                 let CheckedStmtOp::Struct(declaration) = &tables.statement(root)?.op else {
                     return None;

@@ -327,14 +327,15 @@ pub(super) fn existential_slot_binder(binder: &ParamRef, slot: usize) -> ParamRe
 }
 
 /// `ty` with a whole-type existential `Some[Trait]` bound by parameter
-/// `slot`'s own [`existential_slot_binder`]; any other type is kept.
+/// `slot`'s own [`existential_slot_binder`]; any other type is kept, one
+/// that names a parameter's binder already (`type_of(writer)`) among them.
 pub(super) fn existential_at_slot(ty: Ty, slot: usize) -> Ty {
     match ty.kind() {
         TyKind::Param {
             binder,
             bounds,
             callable_bound: None,
-        } if is_existential_binder(binder) => TyKind::Param {
+        } if is_existential_binder(binder) && binder.id.slot == 0 => TyKind::Param {
             binder: existential_slot_binder(binder, slot),
             bounds: bounds.clone(),
             callable_bound: None,

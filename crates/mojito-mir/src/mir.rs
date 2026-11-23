@@ -1255,10 +1255,41 @@ pub fn lower_unit(
             }
         }
         // A trait's requirements have no body (`...`); each default is
-        // the trait's member, lowered as the check checked it.
-        LoweringUnit::TraitMember { root, .. } => {
+        // the trait's member, its trait's method, whose receiver is its
+        // `_Self` binder's.
+        LoweringUnit::TraitMember { root, member, .. } => {
             let _other = timing::span("other");
-            lower_function(root, checked, functions, declarations, invariant_errors);
+            let Some(node) = checked.tables().statement(root) else {
+                return;
+            };
+            let CheckedStmtOp::Trait(declaration) = &node.op else {
+                return;
+            };
+            let Some(m) = declaration.methods.get(member) else {
+                return;
+            };
+            let Some(default) = &m.default else {
+                return;
+            };
+            lower_struct_member(
+                &StructLowering::new(checked, node.module.as_ref(), &declaration.name),
+                StructMember {
+                    name: &m.name,
+                    lowered: default.symbol.clone(),
+                    signature: &default.signature,
+                    params: &m.params,
+                    has_self: true,
+                    self_convention: m.self_convention,
+                    positional_only: m.positional_only,
+                    keyword_only: m.keyword_only,
+                    statements: &default.body,
+                    defaults: m.params.iter().map(|param| param.default).collect(),
+                    inline: default.inline,
+                },
+                functions,
+                declarations,
+                invariant_errors,
+            );
         }
         LoweringUnit::Destructor { root }
         | LoweringUnit::CopyConstructor { root }
@@ -5770,7 +5801,7 @@ fn adopt_member_defaults(
 }
 
 /// The defaults and required flags `wrapper` adopts from its member's
-/// declaration: every parameter's after the member's leading `self`.
+/// declaration, its trait's method over the same parameters.
 fn member_defaults(
     checked: &CheckedProgram,
     declarations: &MirDeclarations,
@@ -5782,14 +5813,13 @@ fn member_defaults(
     let member = declarations
         .function(&wrapper.member)
         .ok_or("the member's declaration is not reached")?;
-    if member.has_receiver || member.param_names.first().map(String::as_str) != Some("self") {
-        return Err("the member does not take its receiver first".into());
+    if !member.has_receiver {
+        return Err("the member takes no receiver".into());
     }
-    if member.param_names[1..] != own.param_names[..] {
+    if member.param_names != own.param_names {
         return Err(format!(
             "parameters {:?} differ from the member's {:?}",
-            own.param_names,
-            &member.param_names[1..]
+            own.param_names, member.param_names
         ));
     }
     let call = wrapper
@@ -5801,10 +5831,11 @@ fn member_defaults(
         })
         .ok_or("its body is not one forwarding call")?;
     let instantiation = checked
-        .generic_instantiations()
+        .method_instantiations()
         .get(&call.source_span())
         .map_or(&[][..], |instantiation| &instantiation.arguments[..]);
-    let defaults = member.defaults[1..]
+    let defaults = member
+        .defaults
         .iter()
         .map(|default| match default {
             Some(CheckedConst::Evaluate {
@@ -5840,7 +5871,7 @@ fn member_defaults(
             default => Ok(default.clone()),
         })
         .collect::<Result<_, String>>()?;
-    Ok((defaults, member.required[1..].to_vec()))
+    Ok((defaults, member.required.clone()))
 }
 
 /// The invariant construction state shared by every recursive level of a

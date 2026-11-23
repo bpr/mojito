@@ -1462,6 +1462,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A parameter annotated with an alias of an existential parameter's type
+  (`comptime W = type_of(writer)` over `mut writer: Some[Writer]`, then a
+  nested `def f(mut writer: W)`) names that parameter's binder, as at the
+  pin, where the check rebound it as a fresh existential of the nested
+  parameter's slot and rejected passing the nested function where the
+  outer method's writer type was expected.
+
 - A `^` through a declared `ref` field (`take(h.r^)`, `take(Holder(s).r^)`,
   `take(h.r.name^)`) is rejected by the checker with `expression does not
   designate a value with an origin`, as a transfer out of a `ref` binding
@@ -2380,6 +2387,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait default is checked and lowered as its trait's method, as upstream
+  emits it inside its trait: its signature sits at its trait's method sites
+  with its receiver typed by the `_Self` binder, its body is checked in its
+  trait's scope as a struct method's is, and its lowered declaration takes a
+  receiver (`decl { lowered_name: "Greet.hello", has_receiver: true … }`),
+  where the check built a `def` taking the receiver as an ordinary first
+  argument. A conformer's wrapper now forwards with a method call statically
+  resolved to the member (`call.method { resolved: present("Greet.hello") …
+  }`), the receiver binding `_Self`, instead of a direct call binding `Self`
+  explicitly (R2215). The package format moves to `mojito-package 261`.
 - A compile-time application's fragment loads each operand an instance
   makes register-passable for its by-value callee before it runs, as the
   run-time program's `lower-arg-conventions` does, so a generic `max[T]`

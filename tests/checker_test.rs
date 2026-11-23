@@ -11695,3 +11695,19 @@ def main():
         );
     }
 }
+
+#[test]
+fn an_alias_of_an_existential_parameter_type_names_that_parameter() {
+    // `type_of(writer)` over `mut writer: Some[Writer]` is the method's own
+    // writer type, as at the pin: a nested `def` taking it is the callable a
+    // parameter over that type expects, in a struct's method and in a
+    // trait's default alike.
+    let apply = "def apply[W: Writer, //, f: def[T: Writable](field: T, mut writer: W) thin](x: Int, mut writer: W):\n    f(x, writer)\n\n";
+    let body = "        comptime WriterType = type_of(writer)\n\n        def inner[T: Writable](field: T, mut writer: WriterType):\n            field.write_to(writer)\n\n        apply[f=inner](1, writer)\n";
+    ok_std(&format!(
+        "{apply}struct S:\n    def show(self, mut writer: Some[Writer]):\n{body}"
+    ));
+    ok_std(&format!(
+        "{apply}trait Show:\n    def show(self, mut writer: Some[Writer]):\n{body}\nstruct S(Show):\n    pass\n"
+    ));
+}

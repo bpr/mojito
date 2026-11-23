@@ -66,11 +66,10 @@ pub struct SpanFacts {
     pub raise_points: HashSet<SourceSpan>,
 }
 
-/// Check `statements`, and each trait member of `members` (a `def` whose
-/// first argument is its trait's receiver).
+/// Check `statements`: each function, each struct method, and each trait
+/// default, its trait's method.
 pub(crate) fn check(
     statements: &[Stmt],
-    members: &[Stmt],
     node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
@@ -91,7 +90,7 @@ pub(crate) fn check(
     for statement in statements {
         match &statement.kind {
             StmtKind::Def { .. } => {
-                check_def(statement, 0, node_facts, deletability, types, &root)?;
+                check_def(statement, node_facts, deletability, types, &root)?;
             }
             StmtKind::Struct {
                 name,
@@ -133,13 +132,39 @@ pub(crate) fn check(
                     )?;
                 }
             }
+            // A default's receiver is a method receiver, which owes nothing
+            // here, as a struct method's does not.
+            StmtKind::Trait { name, methods, .. } => {
+                let owner = root.function_env(&[]);
+                for (method_index, method) in methods.iter().enumerate() {
+                    let Some(body) = &method.default_body else {
+                        continue;
+                    };
+                    let params = method.params.iter().enumerate().map(|(param, p)| {
+                        let site = AnnotationSite::MethodParam {
+                            module: statement.module.clone(),
+                            declaration: name.clone(),
+                            method: method_index,
+                            param,
+                        };
+                        (
+                            &p.name,
+                            p.convention,
+                            deletability.declarations.get(&site).cloned(),
+                        )
+                    });
+                    check_function(
+                        params,
+                        body,
+                        node_facts,
+                        deletability,
+                        types,
+                        owner.function_env(&method.type_params),
+                    )?;
+                }
+            }
             _ => {}
         }
-    }
-    // A trait member's receiver is a method receiver, which owes nothing
-    // here, as a struct method's does not.
-    for member in members {
-        check_def(member, 1, node_facts, deletability, types, &root)?;
     }
     Ok(())
 }
@@ -1294,17 +1319,15 @@ fn check_stmt(
         }
         // A nested function's parameters and locals carry their own
         // obligations; its captures never move the enclosing values.
-        StmtKind::Def { .. } => check_def(stmt, 0, node_facts, deletability, types, &env)?,
+        StmtKind::Def { .. } => check_def(stmt, node_facts, deletability, types, &env)?,
         _ => {}
     }
     Ok(Some(env))
 }
 
-/// Check one free (top-level or nested) function definition statement,
-/// whose first `receiver` arguments are a method receiver that owes nothing.
+/// Check one free (top-level or nested) function definition statement.
 fn check_def(
     statement: &Stmt,
-    receiver: usize,
     node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
@@ -1319,7 +1342,7 @@ fn check_def(
     else {
         return Ok(());
     };
-    let params = params.iter().enumerate().skip(receiver).map(|(param, p)| {
+    let params = params.iter().enumerate().map(|(param, p)| {
         let site = AnnotationSite::FunctionParam {
             module: statement.module.clone(),
             declaration: statement.span,

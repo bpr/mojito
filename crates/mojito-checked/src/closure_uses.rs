@@ -427,7 +427,7 @@ impl CheckedProgram {
             .unwrap_or_default()
         };
         match unit {
-            LoweringUnit::Function { root } | LoweringUnit::TraitMember { root, .. } => {
+            LoweringUnit::Function { root } => {
                 if let Some(def) = tables.def(root) {
                     collector.declaration(
                         &def.body,
@@ -457,6 +457,26 @@ impl CheckedProgram {
                             .iter()
                             .chain(method.signature.argument_binders()),
                     ),
+                    &HashMap::new(),
+                );
+            }
+            LoweringUnit::TraitMember { root, member, .. } => {
+                let Some(CheckedStmtOp::Trait(declaration)) =
+                    tables.statement(root).map(|node| &node.op)
+                else {
+                    return;
+                };
+                let Some(method) = declaration.methods.get(member) else {
+                    return;
+                };
+                let Some(default) = &method.default else {
+                    return;
+                };
+                collector.declaration(
+                    &default.body,
+                    defaults(&method.params),
+                    &default.symbol,
+                    &BinderScope::of(default.signature.argument_binders()),
                     &HashMap::new(),
                 );
             }

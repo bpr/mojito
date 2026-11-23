@@ -10702,37 +10702,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2215 A trait member is checked as a function the check builds,
-  not as its trait's method**
-
-  The check checks a trait default as a `def` it builds from the trait
-  method, its receiver an ordinary first argument, while upstream checks
-  the default as a method of its trait.
-  - `check_trait_members` runs `check_def` over `trait_member_declaration`,
-    whose sites are `FunctionParam`/`FunctionReturn` keyed by a syntax id
-    derived from the trait statement's; a trait method has no
-    `MethodParam`/`MethodReturn`/`GenericSite::Method` sites today.
-  - The member's MIR declaration has `has_receiver: false`, which
-    `member_defaults` (`mir.rs`) and `call_defaults::requirement_member`
-    require, and the wrapper's forwarding call is a direct `call`.
-  - The lever: open a trait scope (as `enter_struct_scope` does), register
-    the member's signature from the `TraitMethod` under its trait's method
-    sites, check the body with `check_method_body`, and lower it through
-    `lower_struct_member` with `has_receiver: true`; the forwarding call
-    becomes a `call.method` statically resolved to the member, still
-    resolved through `Checker::trait_member_callable`.
-  - `CheckedTraitMember::declaration`, `trait_member_declaration`, the
-    elaborator's `StmtKind::Trait` arm (`elab.rs`) and
-    `explicit_destroy::check`'s member list follow it.
-  - `_Self` stays the member's own first binder here (R2216 moves it).
-  - Probe: `emit-mir` of a trait `Greet` whose default `hello(self)` a
-    conformer `S` inherits shows `decl { lowered_name: "Greet.hello",
-    has_receiver: false … }` and `S.hello` lowering to `call { func:
-    "Greet.hello" … }`.
-  - Found while landing R595 (2026-11-14).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2216 A trait member's `_Self` is its own compile-time
   parameter, not its trait's binder**
 
@@ -10746,10 +10715,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     own `param_decls` drop slot 0.
   - Mono binds a trait's enclosing `_Self` from a resolved `call.method`'s
     receiver type, as it binds a struct's binders from its receiver.
-  - The forwarding call drops its explicit `Self` argument and
-    `DefaultShape::explicit_self`: the receiver binds it.
-  - Probe: the same `emit-mir` shows `param_decls: [type_param { owner:
-    "Greet.hello", slot: 0, name: _Self … }]` on the member.
+  - The forwarding call is already a `call.method` whose receiver binds
+    `_Self` (inferred today through the member signature's custom receiver
+    type, `MethodSig::custom_self`); the binder moving to the trait leaves
+    the call's own instantiation without it.
+  - Probe: `emit-mir` of a trait `Greet` whose default `hello(self)` a
+    conformer `S` inherits shows the member's `has_receiver: true`
+    declaration with `param_decls: [type_param { owner: "Greet.hello",
+    slot: 0, name: _Self … }]`.
   - Found while landing R595 (2026-11-14).
   - Depends on R2215.
   - Model: Fable, Not Planned.

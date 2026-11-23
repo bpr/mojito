@@ -1388,6 +1388,13 @@ one older than 1.225 its `ref_fields`, from the rows written with the
 `ref` tag, not the `lit_ref` one. The package format moves to
 `mojito-package 260` (R2511).
 
+The package format moves to `mojito-package 261` (R2215): a trait's
+checker residue records each default's signature as its trait's method
+(`DefaultShape::signature`, over the member's `_Self` binder) in place of
+its callable type, a trait default's lowering unit is its trait's shell
+holding that method (`UnitKind::TraitMember::index`), and its lowered
+declaration takes a receiver. The MIR schema is unchanged.
+
 The package format moves to `mojito-package 258` (R2490): a struct's
 interface residue carries the fields its declaration marks `ref`
 (`StructInfo::ref_fields`), which decide a field's read-through and its
