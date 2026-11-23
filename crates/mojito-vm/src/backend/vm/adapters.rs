@@ -500,7 +500,7 @@ impl VmBackend {
                 projection: Vec::new(),
             };
             let composed = self
-                .extend_reference(&composed, &parent, regs)?
+                .extend_reference(&composed, true, &parent, regs)?
                 .expect("a composed root handle extends");
             let value = self.read_reference(&composed, frame_id, vars)?;
             if matches!(value, Value::Ref { .. }) {

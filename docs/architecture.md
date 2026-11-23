@@ -2756,8 +2756,11 @@ a by-address one as its reference, as upstream's callee binds its
 `!lit.ref`, and reads one through only for a builtin taking values. A
 place pointer is a pointer value, distinct from a reference to the slot
 holding it, as `!kgen.pointer` is from `!lit.ref`: the VM tags a handle
-by its destination's type (`Value::PlacePointer` or `Value::Ref`), so a
-reference to a pointer slot designates the slot. A memory-only `read` temporary (one
+by its destination's type, a pointer value's as a `Value::PlacePointer` and
+a reference's of either tag as a `Value::Ref`, so a reference to a pointer
+slot designates the slot; whether a slot's `Value::Ref` is read through is
+its declaration's question (`MirFunction::holds_address`), never the
+runtime tag's. A memory-only `read` temporary (one
 its call binds to a `read` parameter, `Flatten::operand_reads`, that the
 checker did not prove register-passable, `RegisterPassableRead`, judged at its converted type
 when an implicit conversion made it) retains its storage as its place:
@@ -3201,8 +3204,8 @@ convention (`CheckedIterationBinding::yields_reference`); every pass that makes,
 splices, renumbers, or retires a slot keeps the set (`retire`,
 `inline-parametric`'s splice, the `comptime for` unroll). Slot readers ask
 the fact (`binds_reference`, and the VM's `var.use` read-through
-`reads_through`, which adds the borrowed parameters a call binds by
-address); a place's designated type stays a type question, since a whole
+`holds_address`, which adds the borrowed parameters a call binds by
+address, a parameter declared of reference type excepted); a place's designated type stays a type question, since a whole
 slot's place may designate the referent. `mir::verify` requires a binding
 to be typed as a reference and, until `!lit.ref` folds into `ref` (R2511),
 every reference-typed slot to be a binding.
@@ -3260,8 +3263,10 @@ says so (a `ref` binding, or a parameter slot typed as a reference to the
 value it declares). A call passes an operand as its `!lit.ref` pointer only
 when `addressed_registers` names it, upstream's `LowerArgConventions` fact:
 a `ref<P>` against the `P` its parameter takes, so a `!lit.ref` value passed
-at a `!lit.ref` parameter is passed by value. The VM's runtime handle choice
-(`address_as`) still reads the reference type's tag (R2526).
+at a `!lit.ref` parameter is passed by value. The VM holds a reference of
+either tag as a `Value::Ref` (`address_as`), and reads a root slot's handle
+through only where `MirFunction::holds_address` says the slot's declaration
+makes it an address.
 
 A call's result is a reference by the same rule: the callee's `ref`
 result convention, never its result type. The check records
@@ -5112,7 +5117,9 @@ the pointer, not its pointee, unless the place reads through the slot
 `mut`/`ref` parameter, whose handle addresses the caller's pointer: the
 verifier's `make_ref_target` and Pliron's `designated_ty`
 (`lower/places.rs`) share that rule, which the VM's representation keeps
-(a place pointer is a `Value::PlacePointer`, never a `Value::Ref`), as upstream
+(a place pointer is a `Value::PlacePointer`, and a `!lit.ref` slot's
+`Value::Ref` is its value, since the slot's declaration does not make it an
+address, `MirFunction::holds_address`), as upstream
 addresses a pointer local only through a `!lit.ref`. The verifier's loan check
 (`through_designations`, `verify/loans.rs`) takes a pointer root's designation
 from the same rule (`pointer_root_is_value`). Neither backend keeps a
@@ -9175,10 +9182,11 @@ value's `field.get` are the identity, and a `Proj::Field` over it
 addresses offset 0, the field's storage. Three VM rules narrow the VM's
 representation, each decided in `build_structs`, and are the VM's alone:
 
-- A struct whose field is a reference stays boxed: a `Value::Ref` in a
-  slot that is not a pointer value reads as a reference alias to the VM,
-  which cannot tell a by-address `read` parameter's handle from a held
-  reference (R2184). A struct held as its pointer field is a pointer
+- A struct whose field is a reference stays boxed: a held struct's slot
+  is typed as the struct, not as a reference, so a `Value::Ref` in it
+  would read as an address under `MirFunction::holds_address`'s
+  borrowed-parameter arm, which takes a by-address `read` parameter's
+  handle in a slot typed as the value for an address (R2184, R2529). A struct held as its pointer field is a pointer
   value, as a `Pointer` slot is: its whole place is the pointer, a
   `Value::PlacePointer`.
 - Every instance of a template is held or none is: an erased instance

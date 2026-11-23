@@ -2363,6 +2363,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The VM holds a reference value of either tag as a `Value::Ref`, as
+  upstream has one `!lit.ref`, keeping `Value::PlacePointer` for pointer
+  values, and reads a slot's handle through only where the slot's
+  declaration makes it an address (`MirFunction::holds_address`). A
+  `!lit.ref` parameter now holds its reference as its value instead of
+  being read through, which had left a compile-time `VariadicList` holding
+  a reference into a dead frame once the tags agreed. Program output is
+  unchanged.
+
 - The analyses after MIR lowering (liveness, moves, loans, drops, copy
   elision, SROA, unused-parameter removal, the inliner, and the drop
   verifier) find the storage a call operand addresses only for an operand

@@ -88,10 +88,14 @@ accessed; the compact notation omits this analysis-only field.
 | `var.store` | `DefVar` | Define or redefine a variable slot |
 
 A non-moving `UseVar` of a slot holding a reference reads through it when
-the slot binds a reference (`MirFunction::ref_bindings`) or is a borrowed
-parameter, which a call binds to its argument's address
-(`MirFunction::reads_through`). Any other slot's reference, a `!lit.ref`
-or `!kgen.pointer` value among them, is the slot's value.
+the slot's declaration makes it an address (`MirFunction::holds_address`):
+it binds a reference (`MirFunction::ref_bindings`), or it is a borrowed
+parameter not declared of reference type, which a call binds to its
+argument's address. Any other slot's reference, a `!lit.ref` parameter's
+or a `!kgen.pointer` value among them, is the slot's value. Every other
+read through a root slot's handle (`LoadPlace`, `Store`, `MovePlace`,
+`MakeRef`) asks the same declaration; a handle that is the slot's value is
+stepped through only by a dereferencing segment.
 
 ### Scalar computation
 

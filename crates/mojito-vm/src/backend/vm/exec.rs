@@ -41,9 +41,12 @@ impl VmBackend {
             // A reference binding of a static-origin call result holds
             // the element's heap pointer (`heap_reference_result`).
             self.read_reference(&handle, frame_id, vars)?
-        } else if let Some(reference) =
-            self.extend_reference(&vars[place.root as usize], place, regs)?
-        {
+        } else if let Some(reference) = self.extend_reference(
+            &vars[place.root as usize],
+            prog.holds_address(function, place.root),
+            place,
+            regs,
+        )? {
             // Reading through a reference-alias root (a `mut`/`ref self`
             // receiver) reaches the referent in one handle read. A
             // `ref[origin]`-typed field stored behind that alias yields
@@ -138,8 +141,12 @@ impl VmBackend {
             }
             // A borrow of a slot holding a reference (a by-address
             // parameter or a `ref` binding, read at its referent's type)
-            // is that reference, as upstream's `!lit.ref` value is.
-            _ if matches!(value, Value::Ref { .. }) => {
+            // is that reference, as upstream's `!lit.ref` value is. A
+            // receiver register of reference type is a value: no method is
+            // declared on a reference.
+            _ if matches!(value, Value::Ref { .. })
+                && ty.is_none_or(|ty| mojito_mir::mir::verify::reference_record(ty).is_none()) =>
+            {
                 let referent = self.read_reference(&value, frame_id, vars)?;
                 (referent, ty, Some(value))
             }
@@ -314,13 +321,28 @@ impl VmBackend {
                     return Ok(());
                 }
                 let mut segments = super::references::place_projection_segments(place, regs)?;
-                // A place dereferencing the place pointer its root holds
-                // (`p[]`, `elements[unsafe_offset=i]`) is the pointee's
-                // storage; a reference root (a `mut`/`ref` binding) extends
-                // to its referent.
+                // A root whose declaration makes it an address (a `mut`/`ref`
+                // binding) extends to its referent; a place dereferencing the
+                // handle its root holds as its value (`p[]`,
+                // `elements[unsafe_offset=i]`, a `!lit.ref` parameter) is the
+                // pointee's storage; any other place is the slot's own.
+                let addresses = prog.holds_address(function, place.root);
                 let (frame, slot, mut projection) = match (root, segments.first()) {
                     (
+                        Value::Ref {
+                            frame,
+                            slot,
+                            projection,
+                        },
+                        _,
+                    ) if addresses => (frame, slot, projection),
+                    (
                         Value::PlacePointer {
+                            frame,
+                            slot,
+                            projection,
+                        }
+                        | Value::Ref {
                             frame,
                             slot,
                             projection,
@@ -336,14 +358,6 @@ impl VmBackend {
                         segments.remove(0);
                         target?
                     }
-                    (
-                        Value::Ref {
-                            frame,
-                            slot,
-                            projection,
-                        },
-                        _,
-                    ) => (frame, slot, projection),
                     _ => (frame_id.0, place.root as usize, Vec::new()),
                 };
                 projection.extend(segments);
@@ -789,11 +803,8 @@ impl VmBackend {
                 // ownership analysis rejects this statically, so this only fires on a
                 // compiler bug).
                 // A moved owned generic `T` may itself be a reference value;
-                // transfer that handle intact. Non-moving UseVar remains the
-                // compatibility read path for out/ref receiver slots whose
-                // handle ABI predates explicit LoadPlace/ReadRef. Checked
-                // reference-valued storage sites use Borrow adjustments and do
-                // not rely on that compatibility path.
+                // transfer that handle intact. A non-moving read of a slot
+                // whose declaration makes it an address reads through it.
                 let value = if mode.moves() {
                     let moved = std::mem::replace(&mut vars[slot], Value::Moved);
                     if self.has_moveinit && *mode == mojito_mir::mir::UseMode::Move {
@@ -807,11 +818,12 @@ impl VmBackend {
                         moved
                     }
                 } else if let Value::Ref { .. } = &vars[slot]
-                    && prog.mir.functions[function].1.reads_through(*var)
+                    && prog.mir.functions[function].1.holds_address(*var)
                 {
                     // A reference binding, or a borrowed parameter bound to
                     // its argument's address, reads through its stored
-                    // handle; any other slot's handle is its value.
+                    // handle; any other slot's handle, a reference-typed
+                    // parameter's among them, is its value.
                     self.read_reference(&vars[slot], frame_id, vars)?
                 } else {
                     match mode {
@@ -1766,7 +1778,12 @@ impl VmBackend {
                 destructors,
             } => {
                 let index = &known_variant_index(index)?;
-                let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
+                let old = self.load_place_through_reference(
+                    place,
+                    prog.holds_address(function, place.root),
+                    (regs, vars),
+                    frame_id,
+                )?;
                 let Value::Variant { alternatives, .. } = &old else {
                     return Err(RuntimeError::TypeError(format!(
                         "Variant.set applied to {}",
@@ -1809,7 +1826,12 @@ impl VmBackend {
             } => {
                 let input_index = &known_variant_index(input_index)?;
                 let output_index = &known_variant_index(output_index)?;
-                let old = self.load_place_through_reference(place, regs, vars, frame_id)?;
+                let old = self.load_place_through_reference(
+                    place,
+                    prog.holds_address(function, place.root),
+                    (regs, vars),
+                    frame_id,
+                )?;
                 let Value::Variant {
                     alternatives,
                     index: active,
@@ -1992,9 +2014,23 @@ impl VmBackend {
                 // heap element, or a nominal `__setitem__` receiver — and
                 // keeps that path.
                 let handle = if matches!(place.steps().next_back(), Some(Proj::Index(_))) {
-                    self.extend_reference(&vars[place.root as usize], place, regs)?
+                    self.extend_reference(
+                        &vars[place.root as usize],
+                        prog.holds_address(function, place.root),
+                        place,
+                        regs,
+                    )?
                 } else {
-                    self.place_handle(&prog.mir.declarations, frame_id, place, regs, vars)?
+                    self.place_handle(
+                        (
+                            &prog.mir.declarations,
+                            prog.holds_address(function, place.root),
+                        ),
+                        frame_id,
+                        place,
+                        regs,
+                        vars,
+                    )?
                 };
                 let slot = super::references::pointer_element_slot(place);
                 if let Some(handle) = handle {
@@ -2047,7 +2083,12 @@ impl VmBackend {
                 // analysis has proven the moved field is not read again, and
                 // `mir::verify` that no destroy of the whole follows unless the
                 // field is stored again.
-                let reference = self.extend_reference(&vars[place.root as usize], place, regs)?;
+                let reference = self.extend_reference(
+                    &vars[place.root as usize],
+                    prog.holds_address(function, place.root),
+                    place,
+                    regs,
+                )?;
                 let value = if let Some(reference) = reference {
                     let old = self.read_reference(&reference, frame_id, vars)?;
                     self.write_reference(&reference, frame_id, vars, Value::Moved)?;
@@ -2162,7 +2203,16 @@ impl VmBackend {
                 }
             }
             MirInstr::DropPlace { place, destructor } => {
-                let value = self.take_place(&prog.mir.declarations, frame_id, place, regs, vars)?;
+                let value = self.take_place(
+                    (
+                        &prog.mir.declarations,
+                        prog.holds_address(function, place.root),
+                    ),
+                    frame_id,
+                    place,
+                    regs,
+                    vars,
+                )?;
                 self.drop_named(prog, value, place.ty.as_ref(), destructor.as_deref())?;
             }
             // An owned register's death, its value's fields dropped by
@@ -2226,11 +2276,13 @@ impl VmBackend {
     fn load_place_through_reference(
         &mut self,
         place: &MirPlace,
-        regs: &[Value],
-        vars: &mut [Value],
+        addresses: bool,
+        (regs, vars): (&[Value], &mut [Value]),
         frame_id: FrameId,
     ) -> Result<Value, RuntimeError> {
-        if let Some(reference) = self.extend_reference(&vars[place.root as usize], place, regs)? {
+        if let Some(reference) =
+            self.extend_reference(&vars[place.root as usize], addresses, place, regs)?
+        {
             return self.read_reference(&reference, frame_id, vars);
         }
         load_place(vars, regs, place)

@@ -4119,17 +4119,28 @@ impl MirFunction {
                     }))
     }
 
-    /// Whether a read of slot `var` reads through the reference it holds:
-    /// a `ref` binding, or a borrowed parameter, which a call binds to its
-    /// argument's address as upstream binds it to a `!lit.ref`.
-    pub fn reads_through(&self, var: VarId) -> bool {
-        self.binds_reference(var)
+    /// Whether slot `var` holds an address a read goes through: a slot that
+    /// binds one ([`Self::binds_address`]), or a borrowed parameter whose
+    /// declared type is not a reference. A parameter declared of reference
+    /// type holds that reference as its value, as upstream's parameter *is*
+    /// the caller's `!lit.ref`.
+    ///
+    /// The borrowed-parameter arm covers calls that pass an address to a
+    /// by-value `read` parameter whose slot is typed as the value (R2529).
+    /// It is sound because a slot whose declared type is not a reference
+    /// never holds a reference value, so a handle there is an address.
+    pub fn holds_address(&self, var: VarId) -> bool {
+        self.binds_address(var)
             || ((var as usize) < self.n_params
                 && !self
                     .owned_params
                     .get(var as usize)
                     .copied()
-                    .unwrap_or(false))
+                    .unwrap_or(false)
+                && self
+                    .param_types
+                    .get(var as usize)
+                    .is_none_or(|ty| crate::mir::verify::reference_record(ty).is_none()))
     }
 
     /// The instructions of this body at any depth: a region op counts once,
@@ -4479,6 +4490,28 @@ struct ArgumentConventionList(Vec<mojito_checked::checked::CheckedArgumentConven
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn holds_address_excludes_a_parameter_declared_of_reference_type() {
+        let lit_ref = Ty::lit_ref(mojito_types::origin::RefTy {
+            referent: Ty::int(),
+            origin: mojito_types::origin::Origin::Static,
+            mutability: mojito_types::origin::Mutability::Immutable,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+        });
+        let function = MirFunction {
+            n_params: 3,
+            param_types: vec![lit_ref.clone(), Ty::int(), Ty::int()],
+            owned_params: vec![false, false, true],
+            var_tys: HashMap::from([(0, lit_ref), (1, Ty::int()), (2, Ty::int()), (3, Ty::int())]),
+            ref_bindings: BTreeSet::from([3]),
+            ..MirFunction::default()
+        };
+        assert!(!function.holds_address(0));
+        assert!(function.holds_address(1));
+        assert!(!function.holds_address(2));
+        assert!(function.holds_address(3));
+    }
 
     #[test]
     fn only_an_instruction_free_of_effects_would_be_trivially_dead() {

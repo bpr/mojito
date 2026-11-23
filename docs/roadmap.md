@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2529**.
+Next free ID: **R2530**.
 
 ## Ordered Work
 
@@ -11357,32 +11357,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2526 The VM holds a `!lit.ref` value as a `Value::PlacePointer`
-  unless its type is `TyKind::Ref`**
+- [ ] **R2529 A call passes an address to a by-value `read` parameter
+  whose slot is typed as the value**
 
-  Upstream has one `!lit.ref`, and `runtime.rs`'s own `PlacePointer` doc
-  reserves place pointers for `!kgen.pointer`. The VM's handle choice
-  still keys on the reference type's tag: `pointer_valued` (`vm.rs`)
-  counts `TyKind::LitRef` as pointer-valued, so `address_as` makes a
-  `!lit.ref` value a place pointer and a `ref` value a `Value::Ref`.
-  - Make every reference-typed value a `Value::Ref`: drop `LitRef` from
-    `pointer_valued`, and let `address_as`, `PointerConvert`, and
-    `heap_reference_result` (`references.rs`) read the reference record
-    for either tag. A `PointerConvert` between two references is then the
-    identity, so it needs no direction field.
-  - Blocker found by probe (R2510 plan, finding 7): with that flip,
-    `collection_display_default`, `comptime_collections`, and
-    `ctfe_module_display_constant_requests` fail CTFE with `stale
-    reference to frame`. A `ref.make` with a `!lit.ref` destination over a
-    parameter's whole slot (`VariadicList.__init__`) addresses the
-    callee's slot, which holds the argument by value, instead of
-    forwarding the caller's address, as upstream's
-    `__get_mvalue_as_litref(param)` does.
-  - The read-throughs that test a runtime value's kind rather than a
-    declaration become declaration tests: `extend_reference`'s callers,
-    `receiver_operand`'s `Value::Ref` arm, `UseVar` (already gated by
-    `reads_through`), and the canonicalizing walk's mid-projection chase.
-  - Found while landing R2510 (2026-11-22).
+  Upstream's `LowerArgConventions` loads an argument for a callee that
+  takes it by value, so the callee's parameter is the value. Some Mojito
+  calls pass a `ref.make` there instead, and the VM absorbs it:
+  `MirFunction::holds_address` reads a borrowed parameter not declared of
+  reference type through whatever handle it holds.
+  - Probe: a generic `max[T]` instance's `x > y` reaching `SIMD.__gt__`,
+    and `SIMD.copy` from the same instance, receive a `Value::Ref`.
+  - Probe: `$default$grow$xs` (`def grow(var xs: List[Int] = [1, 2])`)
+    passes a `ref.make` of its `Layout` local to `Allocation.__init__`.
+  - Fix: make the caller load the operand where the callee's convention
+    (`by_address`) takes it by value, then drop `holds_address`'s
+    borrowed-parameter arm (keep `binds_address`), and the boxing rule for
+    a struct with a reference field in `build_structs` if R2184 no longer
+    needs it.
+  - Check whether Pliron sees the same operand mismatch.
+  - Found while landing R2526 (2026-11-22).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

@@ -1023,19 +1023,14 @@ fn simd_instance<'s>(
 }
 
 /// Whether a value of `ty` is a pointer value: a `Pointer`, its
-/// `!kgen.pointer` or `!lit.ref`, or a struct held as its pointer field
+/// `!kgen.pointer`, or a struct held as its pointer field
 /// ([`StructDef::register_field`]). A frame or compile-time address such a
-/// value holds is a [`Value::PlacePointer`], never a reference
-/// ([`address_as`]).
+/// value holds is a [`Value::PlacePointer`]; a reference of either tag
+/// holds it as a [`Value::Ref`] ([`address_as`]).
 fn pointer_valued(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
     use mojito_types::types::TyKind;
-    let is_pointer = |ty: &Ty| {
-        ty.is_pointer_layout()
-            || matches!(
-                ty.kind(),
-                TyKind::KgenPointer { .. } | TyKind::LitRef { .. }
-            )
-    };
+    let is_pointer =
+        |ty: &Ty| ty.is_pointer_layout() || matches!(ty.kind(), TyKind::KgenPointer { .. });
     is_pointer(ty)
         || held_field(structs, ty).is_some_and(|(name, field)| {
             structs[name]
@@ -1049,9 +1044,9 @@ fn pointer_valued(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
 /// handle in a pointer-valued destination ([`pointer_valued`]) is a place
 /// pointer, and one in a reference destination is a reference, as
 /// upstream's `lit.ref.to_pointer` and `lit.ref.from_pointer` retype one
-/// address between `!kgen.pointer` and `!lit.ref`.
+/// address between `!kgen.pointer` and `!lit.ref`. A conversion between two
+/// references is the identity.
 fn address_as(structs: &HashMap<String, StructDef>, value: Value, ty: Option<&Ty>) -> Value {
-    use mojito_types::types::TyKind;
     match (value, ty) {
         (
             Value::Ref {
@@ -1072,7 +1067,7 @@ fn address_as(structs: &HashMap<String, StructDef>, value: Value, ty: Option<&Ty
                 projection,
             },
             Some(ty),
-        ) if matches!(ty.kind(), TyKind::Ref(_)) => Value::Ref {
+        ) if mojito_mir::mir::verify::reference_record(ty).is_some() => Value::Ref {
             frame,
             slot,
             projection,
@@ -1155,6 +1150,12 @@ impl Prog {
                 self.mir.functions[function].1.binds_reference(place.root),
                 |ty, field| self.mir.declarations.declares_ref_field(ty, field),
             )
+    }
+
+    /// Whether slot `var` of `function` holds an address a read goes
+    /// through, by declaration ([`mojito_mir::mir::MirFunction::holds_address`]).
+    fn holds_address(&self, function: usize, var: VarId) -> bool {
+        self.mir.functions[function].1.holds_address(var)
     }
 
     /// Whether `place` reaches storage through a handle stored below its

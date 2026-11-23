@@ -102,7 +102,7 @@ impl VmBackend {
         current: FrameId,
         current_variables: &[Value],
     ) -> Value {
-        let Some(TyKind::Ref(reference)) = target.map(Ty::kind) else {
+        let Some(reference) = target.and_then(mojito_mir::mir::verify::reference_record) else {
             return value;
         };
         let static_origin = reference.origin == mojito_types::origin::Origin::Static;
@@ -261,8 +261,15 @@ impl VmBackend {
                     slot: handle_slot,
                     projection: handle_projection,
                 }) if position + 1 < projection.len() => {
+                    // A dereference of the stored handle is the handle's own
+                    // referent, as a place pointer's is.
+                    let rest = &projection[position + 1..];
+                    let rest = match rest {
+                        [RefProjection::Deref, rest @ ..] => rest,
+                        rest => rest,
+                    };
                     let mut combined = handle_projection.clone();
-                    combined.extend_from_slice(&projection[position + 1..]);
+                    combined.extend_from_slice(rest);
                     return self.canonical_reference_parts(
                         current,
                         current_variables,
@@ -754,6 +761,13 @@ impl VmBackend {
         }
     }
 
+    /// The handle `place` designates through the handle its root slot
+    /// holds, if any. A root whose declaration makes its handle an address
+    /// (`addresses`, [`mojito_mir::mir::MirFunction::holds_address`])
+    /// extends that handle with the place's projections. A handle that is
+    /// the slot's own value (a place pointer, or a reference held by a slot
+    /// declared of reference type) is stepped through only by a
+    /// dereferencing first segment; any other place is the slot's own.
     #[allow(
         clippy::unused_self,
         reason = "TODO: make an associated function or use the receiver"
@@ -761,6 +775,7 @@ impl VmBackend {
     pub(super) fn extend_reference(
         &self,
         root: &Value,
+        addresses: bool,
         place: &MirPlace,
         registers: &[Value],
     ) -> Result<Option<Value>, RuntimeError> {
@@ -769,7 +784,7 @@ impl VmBackend {
                 frame,
                 slot,
                 projection,
-            } => {
+            } if addresses => {
                 let mut projection = projection.clone();
                 projection.extend(place_projection_segments(place, registers)?);
                 Ok(Some(Value::Ref {
@@ -778,9 +793,12 @@ impl VmBackend {
                     projection,
                 }))
             }
-            // A place dereferencing the pointer its root holds designates
-            // the pointee's storage; any other place is the slot's own.
-            Value::PlacePointer {
+            Value::Ref {
+                frame,
+                slot,
+                projection,
+            }
+            | Value::PlacePointer {
                 frame,
                 slot,
                 projection,
@@ -812,14 +830,14 @@ impl VmBackend {
     /// as it does for the whole of a slot holding a pointer value.
     pub(super) fn place_handle(
         &self,
-        declarations: &MirDeclarations,
+        (declarations, addresses): (&MirDeclarations, bool),
         frame_id: FrameId,
         place: &MirPlace,
         registers: &[Value],
         variables: &[Value],
     ) -> Result<Option<Value>, RuntimeError> {
         if let Some(reference) =
-            self.extend_reference(&variables[place.root as usize], place, registers)?
+            self.extend_reference(&variables[place.root as usize], addresses, place, registers)?
         {
             return Ok(Some(reference));
         }
@@ -834,13 +852,13 @@ impl VmBackend {
     /// or parameter's field included, or in frame storage.
     pub(super) fn take_place(
         &mut self,
-        declarations: &MirDeclarations,
+        root: (&MirDeclarations, bool),
         frame_id: FrameId,
         place: &MirPlace,
         registers: &[Value],
         variables: &mut [Value],
     ) -> Result<Value, RuntimeError> {
-        match self.place_handle(declarations, frame_id, place, registers, variables)? {
+        match self.place_handle(root, frame_id, place, registers, variables)? {
             Some(reference) => {
                 let old = self.read_reference(&reference, frame_id, variables)?;
                 self.write_reference(&reference, frame_id, variables, Value::Moved)?;
