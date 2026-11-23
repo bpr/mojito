@@ -1189,13 +1189,13 @@ impl<'a> Flatten<'a> {
             .get(&value.0)
             .cloned()
             .or_else(|| operand.ty());
-        let Some(ty) = ty.filter(|ty| !matches!(ty.kind(), TyKind::Ref(_))) else {
+        let Some(ty) = ty.filter(|_| !self.passes_address(value, operand)) else {
             return (value, None);
         };
         let read = read.or_else(|| self.read_place(value));
         // The read stays: a middle's next link reads `value` again.
         if let Some(place) = read {
-            let address = if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
+            let address = if self.place_holds_reference(&place) {
                 self.address_lowered_operand(site.clone(), (value, Some(place)), mutability)
                     .0
             } else {
@@ -1203,7 +1203,7 @@ impl<'a> Flatten<'a> {
             };
             return (address, None);
         }
-        if !self.materializable(operand, value, &ty) {
+        if !self.materializable(operand, value) {
             return (value, None);
         }
         let (read, place) = self.materialize_operand_in_slot(operand, value, ty.clone());

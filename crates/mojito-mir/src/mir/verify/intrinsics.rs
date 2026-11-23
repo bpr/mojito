@@ -339,7 +339,12 @@ pub(super) fn verify_callable_contract_call(
             for (index, (operand, by_address)) in operands.iter().zip(addressed).enumerate() {
                 if by_address.is_some()
                     && let Some(found) = function.reg_types.get(&operand.register.0)
-                    && !matches!(found.kind(), TyKind::Ref(_))
+                    && operand
+                        .parameter
+                        .and_then(|parameter| params.get(parameter))
+                        .is_none_or(|expected| {
+                            crate::mir::addressed_operand(found, expected).is_none()
+                        })
                 {
                     errors.push(format!(
                         "{prefix}: argument {index} of indirect callable is received by address but passes a {found} value"
@@ -352,8 +357,11 @@ pub(super) fn verify_callable_contract_call(
         )),
     }
     if let Some(found) = function.reg_types.get(&dest.0) {
-        let found_value = match (ref_return.is_some(), found.kind()) {
-            (true, TyKind::Ref(reference)) => {
+        let found_value = match (
+            ref_return.is_some(),
+            crate::mir::addressed_operand(found, ret),
+        ) {
+            (true, Some(reference)) => {
                 if let Some(signature) = ref_return.as_deref() {
                     let mutability_matches = match signature.mutability {
                         mojito_types::origin::SigMutability::Immutable => {
@@ -397,19 +405,19 @@ pub(super) fn verify_callable_contract_call(
                 }
                 &reference.referent
             }
-            (true, _) => {
+            (true, None) => {
                 errors.push(format!(
                     "{prefix}: indirect-call result has type {found}, contract returns a reference to {ret}"
                 ));
                 return;
             }
-            (false, TyKind::Ref(_)) => {
+            (false, Some(_)) => {
                 errors.push(format!(
                     "{prefix}: indirect-call result is a reference, contract returns {ret} by value"
                 ));
                 return;
             }
-            (false, _) => &found.clone(),
+            (false, None) => found,
         };
         if !types_compatible(found_value, ret) {
             errors.push(format!(

@@ -56,7 +56,7 @@ use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
     MirPlace, MirSubscriptArg, Reg, TyArg, UseMode, count_register_reads, destroyed_structs,
     instruction_regions, instruction_regions_mut, instruction_slots, instruction_subscript_call,
-    matched_parameter_arguments, operand_value_ty, supplied_parameter_arguments,
+    matched_parameter_arguments, receiver_value_ty, supplied_parameter_arguments,
 };
 use mojito_ast::ast::InfixOp;
 use mojito_hir::hir::VarId;
@@ -639,7 +639,7 @@ pub fn member_receiver_ty<'f>(
         MirInstr::MultiSet { receiver, .. } => receiver,
         _ => return None,
     };
-    function.reg_types.get(&register.0).map(operand_value_ty)
+    function.reg_types.get(&register.0).map(receiver_value_ty)
 }
 
 /// The parameters `unread_parameters` may remove from `name`: its own

@@ -2631,13 +2631,21 @@ is a value the program spells, passed by value), `mir::call_operands`
 lists a call-shaped instruction's operands, and
 `OperandAddresses::address` gives the storage an operand addresses, none
 for an operand that is no `ref.make`. A pass or verifier
-rule takes an operand's type from its register (`mir::operand_value_ty`
-peels a reference: `receiver_ty`, `member_receiver_ty`, `call_defaults`'
-`Site::of`), its owner and escape from its `ref.make`
+rule recognizes a by-address operand as upstream's `LowerArgConventions`
+does, as a `ref<P>` argument against the value `P` it passes
+(`mir::addressed_operand`, comparing reference depths, so a by-value
+`!lit.ref<Q>` at a `!lit.ref<Q>` parameter is a value): `P` is the
+parameter's type at the call, else the checked expression's type, else
+the operand place's value (`mir::place_value_ty`, the referent of a
+place holding a reference, whose stored handle the call forwards). A
+receiver's or bound callee's value is never a reference, so its
+reference is the operand's own (`mir::addressed_receiver`;
+`mir::receiver_value_ty` peels it: `receiver_ty`, `member_receiver_ty`,
+`call_defaults`' `Site::of`). The call's by-address list, receiver and
+operands with each parameter's type, is `mir::call_by_address_operands`.
+A pass takes an operand's owner and escape from its `ref.make`
 (`call_defaults`' `element_owners`, `callable_values`'
-`rebound_variables`), and its by-address requirement from its type being
-a reference (`verify_callable_contract_call`, `verify_subscript_call`, a
-`def(...)` bound's `__call__` receiver); `verify::instruction_places`
+`rebound_variables`); `verify::instruction_places`
 lists no call's places, since each operand's `ref.make` lists its own. The loan check (`loans.rs` `loan_accesses`), the drop
 facts' by-value loads and reference-result owners (`register_loans.rs`
 `ArgumentPassing::by_value`, `RegisterLoanStep::new`'s receiver seeds),
@@ -2766,8 +2774,10 @@ temporary a `read` receiver takes retains its call-result slot as its
 place (`Flatten::lower_method_receiver`). Where an instance's receiver is
 a compiler-modelled type the elaborator answers itself, the elaborator
 reads each reference operand through ahead of the call
-(`mir::read_addressed_operands`), deciding on the operand's type alone, as
-upstream's `LowerArgConventions` loads a `!lit.ref` at a by-value slot,
+(`mir::read_addressed_operands`): the receiver when it is passed as a
+reference, and each operand the check's recorded by-address verdict
+marks, as upstream's `LowerArgConventions` loads a `ref<P>` argument at a
+by-value `P` slot,
 since the builtin takes values (R2177). That split is upstream's own:
 its IR generation passes a concrete register-passable `read` argument by
 value (`imm`) and a template's `read x: T` by address (`imm_mem`), which

@@ -423,7 +423,7 @@ impl<'a> Flatten<'a> {
                     .cloned()
                     .or_else(|| e.ty())
                 {
-                    Some(ty) if self.materializable(e, argument, &ty) => {
+                    Some(ty) if self.materializable(e, argument) => {
                         self.materialize_operand_in_slot(e, argument, ty)
                     }
                     _ => (argument, None),

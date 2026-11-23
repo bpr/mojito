@@ -4574,7 +4574,7 @@ fn adopt_callee_binders(block: &mut MirBlock, function: &MirFunction) {
             MirInstr::MethodCall { recv, .. } => {
                 mojito_mir::mir::bound_call_contract(instruction, &function.reg_types)
                     .and_then(|_| function.reg_types.get(&recv.0))
-                    .map(mojito_mir::mir::operand_value_ty)
+                    .map(mojito_mir::mir::receiver_value_ty)
                     .and_then(mojito_types::types::callable_contract_ty)
             }
             _ => None,

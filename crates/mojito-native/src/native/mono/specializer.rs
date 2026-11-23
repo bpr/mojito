@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::CheckedCallArgumentSource;
 use mojito_hir::hir::VarId;
 use mojito_types::ct::FuncSymbolRef;
 use mojito_types::param_expr::ParamOp;
@@ -3418,6 +3419,7 @@ impl<'a> Specializer<'a> {
                     param_decls,
                     instantiated_args,
                     spread,
+                    conventions,
                     ..
                 } => {
                     let receiver = function.reg_types.get(&recv.0).ok_or_else(|| {
@@ -3436,11 +3438,28 @@ impl<'a> Specializer<'a> {
                         param_decls.clear();
                         instantiated_args.clear();
                         param_arg_regs.clear();
-                        let operands = std::iter::once(recv).chain(
-                            args.iter_mut()
-                                .chain(kwargs.iter_mut().map(|(_, register)| register)),
-                        );
-                        let loads = mojito_mir::mir::read_addressed_operands(function, operands);
+                        let by_address = |source| {
+                            conventions
+                                .argument(source)
+                                .is_some_and(|argument| argument.by_address)
+                        };
+                        let operands = args
+                            .iter_mut()
+                            .enumerate()
+                            .map(|(index, register)| {
+                                (
+                                    register,
+                                    by_address(CheckedCallArgumentSource::Positional(index)),
+                                )
+                            })
+                            .chain(kwargs.iter_mut().enumerate().map(|(index, (_, register))| {
+                                (
+                                    register,
+                                    by_address(CheckedCallArgumentSource::Keyword(index)),
+                                )
+                            }));
+                        let loads =
+                            mojito_mir::mir::read_addressed_operands(function, recv, operands);
                         if !loads.is_empty() {
                             preludes.push((index, loads));
                         }

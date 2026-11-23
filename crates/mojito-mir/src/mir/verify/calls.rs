@@ -126,14 +126,16 @@ pub(super) fn verify_call_instruction(
             if callable_bound
                 && let Some(contract) = cx
                     .reg_ty(*recv)
-                    .map(super::super::operand_value_ty)
+                    .map(super::super::receiver_value_ty)
                     .and_then(mojito_types::types::callable_contract_ty)
             {
-                if matches!(
-                    cx.reg_ty(*recv).map(Ty::kind),
-                    Some(TyKind::Ref(reference))
-                        if reference.mutability != mojito_types::origin::Mutability::Immutable
-                ) {
+                if cx
+                    .reg_ty(*recv)
+                    .and_then(crate::mir::addressed_receiver)
+                    .is_some_and(|reference| {
+                        reference.mutability != mojito_types::origin::Mutability::Immutable
+                    })
+                {
                     errors.push(format!(
                         "{prefix}: a `def(...)` bound's `__call__` receiver is a mutable reference"
                     ));
@@ -477,11 +479,9 @@ pub(super) fn verify_operand_types(
             )
         );
         let found = cx.reg_ty(operand.register).map(|found| {
-            if borrowed && !matches!(expected.kind(), TyKind::Ref(_)) {
-                crate::mir::operand_value_ty(found)
-            } else {
-                found
-            }
+            crate::mir::addressed_operand(found, expected)
+                .filter(|_| borrowed)
+                .map_or(found, |reference| &reference.referent)
         });
         if let Some(found) = found
             && !types_compatible(found, expected)
@@ -501,7 +501,10 @@ pub(super) fn verify_operand_types(
 /// Require a reference at every operand of a call of `declaration` whose
 /// parameter `by_address_parameter` takes by address (`verify_direct_call`).
 ///
-/// `operands` lists each operand, positional then keyword. A parameter declared as a reference type takes its operand as a value.
+/// `operands` lists each operand, positional then keyword. Each such
+/// operand must be `ref<P>` against its parameter `P`
+/// ([`crate::mir::addressed_operand`]), so a parameter declared as a
+/// reference type takes a reference to a reference.
 pub(super) fn verify_by_address_operands(
     cx: &InstrCx<'_>,
     declaration: &MirFunctionDeclaration,
@@ -511,12 +514,9 @@ pub(super) fn verify_by_address_operands(
     for (index, operand) in operands.iter().enumerate() {
         if let Some(parameter) = operand.parameter
             && crate::mir::by_address_parameter(declaration, cx.declarations, parameter).is_some()
-            && declaration
-                .param_types
-                .get(parameter)
-                .is_some_and(|expected| !matches!(expected.kind(), TyKind::Ref(_)))
+            && let Some(expected) = declaration.param_types.get(parameter)
             && let Some(found) = cx.reg_ty(operand.register)
-            && !matches!(found.kind(), TyKind::Ref(_))
+            && crate::mir::addressed_operand(found, expected).is_none()
         {
             let operand = operand.keyword.map_or_else(
                 || format!("argument {index}"),
@@ -550,7 +550,7 @@ pub(super) fn verify_requirement_call(
     let dispatch = &requirement.dispatch;
     if let Some((receiver, convention)) = receiver
         && let Some(found) = cx.reg_ty(receiver)
-        && !matches!(found.kind(), TyKind::Ref(_))
+        && crate::mir::addressed_receiver(found).is_none()
         && crate::mir::requirement_by_address_receiver(convention, found, cx.declarations).is_some()
     {
         errors.push(format!(
@@ -567,12 +567,9 @@ pub(super) fn verify_requirement_call(
     };
     for (index, operand) in operands.iter().enumerate() {
         if let Some(parameter) = operand.parameter
-            && requirement
-                .param_types
-                .get(parameter)
-                .is_some_and(|expected| !matches!(expected.kind(), TyKind::Ref(_)))
+            && let Some(expected) = requirement.param_types.get(parameter)
             && let Some(found) = cx.reg_ty(operand.register)
-            && !matches!(found.kind(), TyKind::Ref(_))
+            && crate::mir::addressed_operand(found, expected).is_none()
             && crate::mir::requirement_by_address_parameter(
                 requirement,
                 parameter,
@@ -608,7 +605,7 @@ pub(super) fn verify_by_address_receiver(
         return;
     }
     if let Some(found) = cx.reg_ty(receiver)
-        && !matches!(found.kind(), TyKind::Ref(_))
+        && crate::mir::addressed_receiver(found).is_none()
         && crate::mir::by_address_receiver(declaration, found, cx.declarations).is_some()
     {
         errors.push(format!(
@@ -1551,10 +1548,10 @@ fn owner_instance_param_types(
     let own = ParamDecl::self_arguments(decls);
     let instance = operands.iter().find_map(|operand| {
         let expected = declaration.param_types.get(operand.parameter?)?;
-        let (_, arguments) = crate::mir::operand_value_ty(expected)
-            .kind()
-            .as_non_simd_struct()?;
-        let (found_name, found) = crate::mir::operand_value_ty(cx.reg_ty(operand.register)?)
+        let (_, arguments) = expected.kind().as_non_simd_struct()?;
+        let found = cx.reg_ty(operand.register)?;
+        let (found_name, found) = crate::mir::addressed_operand(found, expected)
+            .map_or(found, |reference| &reference.referent)
             .kind()
             .as_non_simd_struct()?;
         (found_name == owner && *arguments == own && *found != own).then_some(found)

@@ -11342,24 +11342,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2507 A MIR by-address operand is recognized by its register's
-  `TyKind::Ref` type, not by the argument against the parameter**
-
-  Upstream's `LowerArgConventions` loads or addresses an argument when it
-  is `ref<P>` and the parameter is `P`. Mojito asks whether the register is
-  a `Ref`, which a merged `!lit.ref` register would also answer yes.
-  - Lowering sites: `call_addresses.rs`'s `operand_value_ty`,
-    `read_addressed_operands`, and `read_operand`, the operand tests in
-    `calls.rs`, `lower_stmt.rs`, `lower_expr/ctrl.rs`, `nested.rs`,
-    `type_construction.rs`, `bound_calls.rs`, and `copy_calls.rs`.
-  - Verifier mirror: the operand tests in `verify/calls.rs` and
-    `verify/intrinsics.rs`.
-  - If the first pass finds more than about 30 sites, land lowering and
-    file the verifier half as its own entry.
-  - Found while landing R2492 (2026-11-22).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2508 MIR verifier rules read a `ref` binding from a slot's
   type**
 
@@ -11387,16 +11369,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   type cannot.
   - `inline_parametric.rs`'s `passes_address` feeds
     `HandleSource::Register` and `handle_place`. Use the call's by-address
-    operands and the callee's `ref_params`.
+    operands (`mir::call_by_address_operands`) and the callee's
+    `ref_params`.
   - `stores_handle` and `HandleSource::Field`: the field's `ref` marker.
   - `bound_place` and `access_bound_parameters_in_place`:
     `caller.binds_reference(root)`.
   - `argument_mutabilities`: `binds_reference` and `ref_params`.
   - `returns_bound_place`'s `is_static`: decide beside R2511's
     `erase_origins` choice.
-  - mono: `bound_value_ty` (`infer.rs`) asks the callee's `ref_params`,
-    and `builtin_copy_receiver` (`substitute.rs`) whether the receiver
-    operand is by-address.
+  - mono: `builtin_copy_receiver` (`substitute.rs`) asks whether the
+    receiver operand is by-address (`mir::call_by_address_operands`).
   - `register_loans.rs`'s subscript arm: the call's `reference_result`, as
     its `MethodCall` arm does.
   - Found while landing R2492 (2026-11-22).
@@ -11410,7 +11392,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   The VM reads through any `Ref`-typed place or register, and picks its
   runtime handle by type.
   - VM read and write paths (decide by `mir::place_holds_reference` with
-    `MirDeclarations::declares_ref_field`, or the by-address operand list): `load_place_value`'s final
+    `MirDeclarations::declares_ref_field`, or the by-address operand list,
+    `mir::call_by_address_operands`): `load_place_value`'s final
     branch, `Store`'s else-branch, `call_operand`, `value_operand`,
     `register_field`, `heap_handle_place`, and `heap_reference_result`.
   - VM handle choice: `address_as` / `pointer_valued` (`vm.rs`) make a
@@ -11420,7 +11403,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `PointerConvert` reads its direction from the checked op
     (`lit.ref.from_pointer` / `to_pointer`), since both sides merge.
   - Pliron: `ctors.rs`'s whole-slot `make_ref` asks `binds_reference`, and
-    `abi.rs`'s `is_reference_operand` the call's by-address operand list.
+    `abi.rs`'s `is_reference_operand` the call's by-address operand list
+    (`mir::call_by_address_operands`).
   - If the VM's two handle values must merge too, file that separately on
     this track: it is internal structure, not a language divergence.
   - Found while landing R2492 (2026-11-22).
@@ -11454,6 +11438,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     the schema and package format bump (`docs/mir-text-format.md`).
   - `verify_function` (`verify/calls.rs`) keeps only "a binding is typed
     as a reference".
+  - Audit the receiver and callee peels R2507 left on the outer
+    reference, merge-safe only while no method is declared on a
+    reference: `mir::addressed_receiver`/`receiver_value_ty` callers,
+    `function_signature` (`call_addresses.rs`), `bound_calls.rs`'s and
+    mono `specializer.rs`'s `peel_refs`, `generic_callable_contract`
+    (`lower_expr/calls.rs`), and `verify/calls.rs`'s `owner_arguments`.
   - Docs: `docs/architecture.md` and `docs/mir-text-format.md`'s "until
     `!lit.ref` folds into `ref`" sentences, `docs/symbol-map.md`'s
     `!lit.ref` row.

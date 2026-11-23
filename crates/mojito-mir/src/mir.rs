@@ -61,9 +61,10 @@ pub use bound_calls::{
 };
 mod call_addresses;
 pub use call_addresses::{
-    BoundOperand, by_address_parameter, by_address_receiver, call_operand_parameters,
+    BoundOperand, ByAddressOperand, CallByAddress, addressed_operand, addressed_receiver,
+    by_address_parameter, by_address_receiver, call_by_address_operands, call_operand_parameters,
     load_register_passable_operands, make_ref_forwards_stored_handle, method_operand_parameters,
-    operand_value_ty, read_addressed_operands, requirement_by_address_parameter,
+    read_addressed_operands, receiver_value_ty, requirement_by_address_parameter,
     requirement_by_address_receiver, requirement_operand_parameters, signature_by_address_operands,
     signature_operand_parameters, subscript_operand_parameters,
     subscript_requirement_operand_parameters,
@@ -933,7 +934,7 @@ impl MirDeclarations {
             return None;
         }
         let bounds = refined_bound.or_else(|| {
-            match receiver.map(|receiver| operand_value_ty(receiver).kind()) {
+            match receiver.map(|receiver| receiver_value_ty(receiver).kind()) {
                 Some(TyKind::Param { bounds, .. }) => Some(bounds.as_slice()),
                 _ => None,
             }
@@ -1450,6 +1451,26 @@ pub fn place_holds_reference(
         _ => base,
     })
     .is_some_and(|base| declares_ref_field(base, field))
+}
+
+/// The value an operand read or addressed at `place` passes.
+///
+/// It is the place's type, or the referent of the reference the place
+/// holds by declaration ([`place_holds_reference`]), which a call forwards
+/// rather than addresses again.
+#[must_use]
+pub fn place_value_ty(
+    place: &MirPlace,
+    binds_root: bool,
+    declares_ref_field: impl Fn(&Ty, &str) -> bool,
+) -> Option<&Ty> {
+    let ty = place.ty.as_ref()?;
+    Some(match ty.kind() {
+        TyKind::Ref(reference) if place_holds_reference(place, binds_root, declares_ref_field) => {
+            &reference.referent
+        }
+        _ => ty,
+    })
 }
 
 fn lower_program(
@@ -3622,6 +3643,13 @@ impl<'a> Flatten<'a> {
     /// declaration ([`place_holds_reference`]).
     fn place_holds_reference(&self, place: &MirPlace) -> bool {
         place_holds_reference(place, self.f.binds_reference(place.root), |base, field| {
+            self.declares_ref_field(base, field)
+        })
+    }
+
+    /// The value an operand at `place` passes ([`place_value_ty`]).
+    fn place_value_ty<'p>(&self, place: &'p MirPlace) -> Option<&'p Ty> {
+        place_value_ty(place, self.f.binds_reference(place.root), |base, field| {
             self.declares_ref_field(base, field)
         })
     }

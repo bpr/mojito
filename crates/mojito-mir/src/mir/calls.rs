@@ -655,8 +655,8 @@ impl<'a> Flatten<'a> {
         else {
             return (value, None);
         };
-        if matches!(ty.kind(), TyKind::Ref(_) | TyKind::Overload(_)) || !self.owned_temporary(value)
-        {
+        let addressed = self.passes_address(value, expression);
+        if addressed || matches!(ty.kind(), TyKind::Overload(_)) || !self.owned_temporary(value) {
             return (value, None);
         }
         let loans = self.aggregate_borrows(expression);
@@ -705,12 +705,7 @@ impl<'a> Flatten<'a> {
                 // `Pointer(to=x)` is a pointer value formed from a place,
                 // not a reference to one.
                 MirInstr::MakeRef { dest, .. } => {
-                    *dest == value
-                        && self
-                            .f
-                            .reg_types
-                            .get(&value.0)
-                            .is_some_and(|ty| !matches!(ty.kind(), TyKind::Ref(_)))
+                    *dest == value && self.f.reg_types.get(&value.0).is_some_and(Ty::is_pointer)
                 }
                 _ => false,
             })
@@ -745,8 +740,15 @@ impl<'a> Flatten<'a> {
         let (register, Some(place)) = &lowered else {
             return lowered;
         };
-        let is_reference = |ty: Option<&Ty>| matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
-        if place.ty.is_none() || is_reference(self.f.reg_types.get(&register.0)) {
+        let Some(value) = self.place_value_ty(place) else {
+            return lowered;
+        };
+        let addressed = self
+            .f
+            .reg_types
+            .get(&register.0)
+            .is_some_and(|operand| addressed_operand(operand, value).is_some());
+        if addressed {
             return lowered;
         }
         if self.place_holds_reference(place) {
@@ -2277,10 +2279,13 @@ impl<'a> Flatten<'a> {
                 (register, Some(place)),
                 mojito_types::origin::Mutability::Mutable,
             );
-            let addressed = matches!(
-                self.f.reg_types.get(&address.0).map(Ty::kind),
-                Some(TyKind::Ref(_))
-            );
+            let addressed = place.as_ref().is_some_and(|place| {
+                self.f
+                    .reg_types
+                    .get(&address.0)
+                    .zip(self.place_value_ty(place))
+                    .is_some_and(|(operand, value)| addressed_operand(operand, value).is_some())
+            });
             return (address, place.filter(|_| !addressed));
         }
         let found = self.operand_definition(|instruction| {
@@ -2385,7 +2390,6 @@ impl<'a> Flatten<'a> {
         place: Option<&MirPlace>,
         getter_mutates: bool,
     ) -> Reg {
-        let is_reference = |ty: Option<&Ty>| matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
         if let Some(place) = place
             && place.ty.is_some()
             && let Some(wanted) = receiver_by_address(setter, receiver.register_passable_read())
@@ -2397,7 +2401,13 @@ impl<'a> Flatten<'a> {
                 self.place_address(receiver.location(), place, wanted)
             };
         }
-        let reload = getter_mutates || is_reference(self.f.reg_types.get(&raw.0));
+        let reload = getter_mutates
+            || self
+                .f
+                .reg_types
+                .get(&raw.0)
+                .and_then(addressed_receiver)
+                .is_some();
         self.reload_augmented_source(raw, &place.cloned(), reload, receiver.location())
     }
 
@@ -2650,10 +2660,13 @@ impl<'a> Flatten<'a> {
         let place = self.hidden_slot_place(variable);
         // A reference-context lowering already handed back a handle to the
         // slot, which the call binds as it stands.
-        if matches!(
-            self.f.reg_types.get(&value.0).map(Ty::kind),
-            Some(TyKind::Ref(_))
-        ) {
+        let addressed = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .zip(self.place_value_ty(&place))
+            .is_some_and(|(operand, value)| addressed_operand(operand, value).is_some());
+        if addressed {
             return (value, Some(place));
         }
         // The slot now owns the temporary, so a use that copies it (a
@@ -3289,16 +3302,29 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// Whether `value`, of type `ty`, which operand `expression` produced,
-    /// is a temporary a hidden slot may own and destroy: a fresh temporary,
-    /// a `^` transfer, or a value the body defines fresh
-    /// ([`Self::owned_temporary`]). A read through a reference, or out of a
-    /// temporary that outlives the read, owns nothing a slot may destroy.
-    pub(in crate::mir) fn materializable(&self, expression: Node<'a>, value: Reg, ty: &Ty) -> bool {
-        !matches!(ty.kind(), TyKind::Ref(_))
+    /// Whether `value`, which operand `expression` produced, is a temporary
+    /// a hidden slot may own and destroy: a fresh temporary, a `^`
+    /// transfer, or a value the body defines fresh
+    /// ([`Self::owned_temporary`]). A reference to the value
+    /// ([`Self::passes_address`]), or a read out of a temporary that
+    /// outlives it, owns nothing a slot may destroy.
+    pub(in crate::mir) fn materializable(&self, expression: Node<'a>, value: Reg) -> bool {
+        !self.passes_address(value, expression)
             && (expression.is_fresh_temporary()
                 || matches!(expression.op(), CheckedOp::Transfer(_))
                 || self.owned_temporary(value))
+    }
+
+    /// Whether `value`, the operand `expression` lowered to, passes a
+    /// reference to the value the expression's checked type names, as
+    /// upstream's `ref<P>` argument for a `P` ([`addressed_operand`]),
+    /// rather than that value.
+    pub(in crate::mir) fn passes_address(&self, value: Reg, expression: Node<'a>) -> bool {
+        self.f
+            .reg_types
+            .get(&value.0)
+            .zip(expression.ty())
+            .is_some_and(|(operand, value)| addressed_operand(operand, &value).is_some())
     }
 
     /// [`Self::materialize_in_slot`] for the temporary operand `expression`

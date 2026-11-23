@@ -203,7 +203,7 @@ pub(super) fn upgrade_call_parameter_lists(
         }
     }
     fn generic_contract(ty: Option<&Ty>) -> Option<&[ParamDecl]> {
-        match ty.map(|ty| operand_value_ty(ty).kind()) {
+        match ty.map(|ty| receiver_value_ty(ty).kind()) {
             Some(TyKind::GenericFunc(generic)) => Some(&generic.decls),
             Some(TyKind::Param {
                 callable_bound: Some(bound),

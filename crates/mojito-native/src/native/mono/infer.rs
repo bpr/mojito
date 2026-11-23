@@ -980,14 +980,11 @@ fn collector_element(pattern: &Ty) -> Option<&Ty> {
 }
 
 /// The type a parameter declared `declared` binds from an operand of type
-/// `operand`: a by-address operand's referent, unless the parameter is
-/// itself a reference.
+/// `operand`: the referent of a `ref<P>` operand at a `P` parameter
+/// ([`mojito_mir::mir::addressed_operand`]).
 fn bound_value_ty<'a>(operand: &'a Ty, declared: &Ty) -> &'a Ty {
-    if matches!(declared.kind(), TyKind::Ref(_)) {
-        operand
-    } else {
-        mojito_mir::mir::operand_value_ty(operand)
-    }
+    mojito_mir::mir::addressed_operand(operand, declared)
+        .map_or(operand, |reference| &reference.referent)
 }
 
 /// The element types of the collector `collector` a call passes: an owned

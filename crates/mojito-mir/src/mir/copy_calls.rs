@@ -26,10 +26,10 @@
 
 use super::{
     FuncRef, MirBlock, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, Reg, UseMode,
-    VarId, fresh_register, instruction_regions_mut,
+    VarId, addressed_operand, fresh_register, instruction_regions_mut,
 };
 use mojito_ast::ast::ArgConvention;
-use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
+use mojito_types::types::{ParamDecl, Ty, TyArg};
 use std::collections::{HashMap, HashSet};
 
 /// A function's declaration, by the function's name.
@@ -87,10 +87,13 @@ fn lower_blocks(
             .flatten();
         match &instruction {
             MirInstr::ReadRef { dest, reference }
-                if matches!(
-                    function.reg_types.get(&reference.0).map(Ty::kind),
-                    Some(TyKind::Ref(_))
-                ) =>
+                if function
+                    .reg_types
+                    .get(&reference.0)
+                    .zip(function.reg_types.get(&dest.0))
+                    .is_some_and(|(reference, value)| {
+                        addressed_operand(reference, value).is_some()
+                    }) =>
             {
                 read_through.insert(dest.0, *reference);
             }

@@ -2353,6 +2353,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowering, the passes after it, the elaborator, and the verifier
+  recognize a by-address call operand as upstream's `LowerArgConventions`
+  does: a `ref<P>` argument against the value `P` its parameter takes
+  (`mir::addressed_operand`), never because its register is a reference.
+  A by-value `!lit.ref` operand at a `!lit.ref` parameter is a value, and
+  the verifier now checks a by-address parameter declared as a reference
+  type instead of skipping it. The call's by-address list is published as
+  `mir::call_by_address_operands`. Accepted programs and their output are
+  unchanged.
+
 - MIR lowering decides whether a place holds a reference — whether a read
   goes through it and a borrow forwards its stored handle — from
   declarations, as upstream does: a whole slot when it is a `ref` binding,

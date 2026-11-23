@@ -10,7 +10,8 @@
 //! member symbols.
 
 use crate::mir::{
-    Const, FuncRef, MirBlock, MirDeclarations, MirInstr, MirParamArg, Reg, instruction_regions_mut,
+    Const, FuncRef, MirBlock, MirDeclarations, MirInstr, MirParamArg, Reg, addressed_operand,
+    instruction_regions_mut,
 };
 use mojito_types::param_expr::ParamRef;
 use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
@@ -54,7 +55,7 @@ impl RegisterTable<'_> {
         else {
             return vec![copy];
         };
-        let (value, read) = self.value_of(value);
+        let (value, read) = self.value_of(value, dest);
         read.into_iter()
             .chain([MirInstr::CopyValue {
                 dest,
@@ -64,14 +65,20 @@ impl RegisterTable<'_> {
             .collect()
     }
 
-    /// Read `source` through, where the construction's operand is a
-    /// reference and its copy reads a value: the fresh register and the
-    /// `ref.read` defining it, or `source` alone when it is no reference.
-    fn value_of(&mut self, source: Reg) -> (Reg, Option<MirInstr>) {
-        let Some(TyKind::Ref(reference)) = self.reg_types.get(&source.0).map(Ty::kind) else {
+    /// Read `source` through, where the construction's operand is
+    /// `ref<P>` against the value `P` its copy into `dest` reads
+    /// ([`addressed_operand`]): the fresh register and the `ref.read`
+    /// defining it, or `source` alone when it passes the value itself.
+    fn value_of(&mut self, source: Reg, dest: Reg) -> (Reg, Option<MirInstr>) {
+        let Some(referent) = self
+            .reg_types
+            .get(&source.0)
+            .zip(self.reg_types.get(&dest.0))
+            .and_then(|(operand, value)| addressed_operand(operand, value))
+            .map(|reference| reference.referent.clone())
+        else {
             return (source, None);
         };
-        let referent = reference.referent.clone();
         let loaded = Reg(*self.n_regs);
         *self.n_regs += 1;
         self.reg_types.insert(loaded.0, referent);

@@ -238,8 +238,11 @@ pub(super) fn verify_subscript_call(
     }
     // A receiver or argument the accessor takes by address is a reference
     // to the caller's storage, which its operand is.
-    let is_reference = |ty: Option<&Ty>| ty.is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)));
-    if call.receiver_requires_place && !is_reference(receiver_ty) {
+    if call.receiver_requires_place
+        && receiver_ty
+            .and_then(crate::mir::addressed_receiver)
+            .is_none()
+    {
         errors.push(format!(
             "{prefix}: selected subscript reference receiver passes no reference"
         ));
@@ -270,7 +273,11 @@ pub(super) fn verify_subscript_call(
             }
             mojito_checked::checked::CheckedCallArgumentSource::Default => None,
         };
-        if argument.requires_place && !is_reference(actual_ty) {
+        if argument.requires_place
+            && actual_ty
+                .and_then(|actual| crate::mir::addressed_operand(actual, &argument.parameter_ty))
+                .is_none()
+        {
             errors.push(format!(
                 "{prefix}: selected subscript mut/ref argument {:?} passes no reference",
                 argument.source
@@ -286,13 +293,11 @@ pub(super) fn verify_subscript_call(
                     | mojito_ast::ast::ArgConvention::Deinit
                     | mojito_ast::ast::ArgConvention::Out
             )
-        ) && !matches!(argument.parameter_ty.kind(), TyKind::Ref(_));
+        );
         let actual_ty = actual_ty.map(|actual| {
-            if borrowed {
-                crate::mir::operand_value_ty(actual)
-            } else {
-                actual
-            }
+            crate::mir::addressed_operand(actual, &argument.parameter_ty)
+                .filter(|_| borrowed)
+                .map_or(actual, |reference| &reference.referent)
         });
         if let Some(actual_ty) = actual_ty
             && !types_compatible(actual_ty, &argument.parameter_ty)

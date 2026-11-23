@@ -34,13 +34,13 @@ use crate::mir::legacy_places::{LegacyCallPlaces, LegacyCursor, LegacyOperandTab
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
     MirSubscriptArg, Proj, Reg, TraitRequirement, count_register_reads, instruction_regions,
-    instruction_regions_mut, mir_place_handle_ty, place_holds_reference,
+    instruction_regions_mut, mir_place_handle_ty, place_holds_reference, place_value_ty,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_hir::hir::VarId;
 use mojito_symbol::symbol::is_initializer_symbol;
-use mojito_types::origin::{Mutability, OriginParamId};
+use mojito_types::origin::{Mutability, OriginParamId, RefTy};
 use mojito_types::types::{FuncTy, Ty, TyKind, erase_origins};
 use std::collections::{BTreeSet, HashMap};
 
@@ -306,12 +306,42 @@ pub fn subscript_requirement_operand_parameters<'i>(
     subscript_operands(instruction, &CallShape::required(requirement))
 }
 
-/// The value an operand of `ty` passes: the referent of a reference.
+/// The value a receiver or callee operand of `ty` passes: the referent of
+/// the reference it is passed as ([`addressed_receiver`]).
 #[must_use]
-pub fn operand_value_ty(ty: &Ty) -> &Ty {
-    match ty.kind() {
-        TyKind::Ref(reference) => &reference.referent,
-        _ => ty,
+pub fn receiver_value_ty(ty: &Ty) -> &Ty {
+    addressed_receiver(ty).map_or(ty, |reference| &reference.referent)
+}
+
+/// The reference an operand of type `operand` passes for a value of type
+/// `value`, as upstream's `ref<P>` argument at a `P` parameter.
+///
+/// `LowerArgConventions` reads such an operand through or forwards it.
+/// `None` when the operand is the value itself, a by-value `!lit.ref<Q>`
+/// at a `!lit.ref<Q>` parameter included.
+#[must_use]
+pub fn addressed_operand<'t>(operand: &'t Ty, value: &Ty) -> Option<&'t RefTy> {
+    match operand.kind() {
+        TyKind::Ref(reference)
+            if reference_depth(&reference.referent) == reference_depth(value) =>
+        {
+            Some(reference)
+        }
+        _ => None,
+    }
+}
+
+/// The reference a receiver, or a bound's callee, operand of type
+/// `operand` passes.
+///
+/// A receiver's value is always a nominal type (a struct, a type
+/// parameter, a trait), since no type declares a method on a reference, so
+/// `ref<Self>` against `Self` is exactly an operand of reference type.
+#[must_use]
+pub fn addressed_receiver(operand: &Ty) -> Option<&RefTy> {
+    match operand.kind() {
+        TyKind::Ref(reference) => Some(reference),
+        _ => None,
     }
 }
 
@@ -375,20 +405,36 @@ pub fn load_register_passable_operands(
 /// receiver is a compiler-modelled type with no witness (`len` of a
 /// `Tuple` through `Sized`), and the template passed the receiver and
 /// each memory-only `read` operand as a `ref.make` of its place, as
-/// lowering forms it. Each operand whose register is a reference becomes
-/// a `ref.read` of it, returned for the caller to splice ahead of the
-/// call, as upstream's `LowerArgConventions` loads a `!lit.ref` at a
-/// by-value slot: the decision is the operand's type alone.
+/// lowering forms it. Each becomes a `ref.read` of its reference, returned
+/// for the caller to splice ahead of the call, as upstream's
+/// `LowerArgConventions` loads a `ref<P>` argument at a by-value `P`
+/// slot: the receiver when it is passed as a reference
+/// ([`addressed_receiver`]), and each regular operand `operands` pairs
+/// with the check's by-address verdict, which the call records
+/// ([`MirArgConventions`](crate::mir::MirArgConventions)) and which
+/// lowering addressed exactly.
 pub fn read_addressed_operands<'r>(
     function: &mut MirFunction,
-    operands: impl IntoIterator<Item = &'r mut Reg>,
+    receiver: &'r mut Reg,
+    operands: impl IntoIterator<Item = (&'r mut Reg, bool)>,
 ) -> Vec<MirInstr> {
+    let referent = |function: &MirFunction, register: &Reg| {
+        function
+            .reg_types
+            .get(&register.0)
+            .and_then(addressed_receiver)
+            .map(|reference| reference.referent.clone())
+    };
+    let mut reads = vec![(referent(function, receiver), receiver)];
+    for (register, by_address) in operands {
+        let read = by_address.then(|| referent(function, register)).flatten();
+        reads.push((read, register));
+    }
     let mut loads = Vec::new();
-    for register in operands {
-        let Some(TyKind::Ref(reference)) = function.reg_types.get(&register.0).map(Ty::kind) else {
+    for (referent, register) in reads {
+        let Some(referent) = referent else {
             continue;
         };
-        let referent = reference.referent.clone();
         let loaded = Reg(function.n_regs);
         function.n_regs += 1;
         function.reg_types.insert(loaded.0, referent);
@@ -402,6 +448,86 @@ pub fn read_addressed_operands<'r>(
         *register = loaded;
     }
     loads
+}
+
+/// How a call receives its receiver and each regular operand by address,
+/// as upstream's `lit.call` operand types encode it: a `!lit.ref<P>` at
+/// each parameter the callee receives by address, `P` elsewhere.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallByAddress {
+    /// The receiver, with the mutability of the reference it is passed as
+    /// (`None` by value).
+    pub receiver: Option<(Reg, Option<Mutability>)>,
+    /// Each regular operand, positional then keyword.
+    pub operands: Vec<ByAddressOperand>,
+}
+
+/// One regular operand of a [`CallByAddress`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ByAddressOperand {
+    pub register: Reg,
+    /// The parameter it binds, `None` for a collector's.
+    pub parameter: Option<usize>,
+    /// The mutability of the reference it is passed as, `None` by value.
+    pub by_address: Option<Mutability>,
+    /// The parameter's type at the call, which a `ref<P>` operand
+    /// addresses ([`addressed_operand`]); `None` for a collector's operand
+    /// and the copy initializer's `copy: Self`.
+    pub parameter_ty: Option<Ty>,
+}
+
+/// The receiver and regular operands `instruction`, a call of `function`,
+/// passes by address.
+///
+/// It reads a direct `call`, a resolved or trait-bound `call.method`, a
+/// checked subscript, a `call.indirect` or `def(...)` bound's `__call__`,
+/// and a type parameter's copy construction, each bound by the contract
+/// [`upgrade_call_operands`] reads. `None` when the instruction binds no
+/// contract.
+#[must_use]
+pub fn call_by_address_operands(
+    function: &MirFunction,
+    instruction: &MirInstr,
+    declarations: &MirDeclarations,
+) -> Option<CallByAddress> {
+    let reg_types = &function.reg_types;
+    let callees = Callees::of(declarations);
+    let bound = bound_call(instruction, &callees, reg_types)?;
+    let receiver = bound.receiver.map(|register| {
+        let by_address = reg_types
+            .get(&register.0)
+            .and_then(|ty| bound.contract.receiver(receiver_value_ty(ty), declarations));
+        (register, by_address)
+    });
+    let operands = bound
+        .operands
+        .iter()
+        .map(|&(register, parameter)| {
+            let parameter_ty = parameter
+                .and_then(|parameter| bound.contract.parameter_ty(parameter))
+                .cloned();
+            let by_address =
+                parameter
+                    .zip(reg_types.get(&register.0))
+                    .and_then(|(parameter, operand)| {
+                        let value = parameter_ty.as_ref().map_or_else(
+                            || receiver_value_ty(operand),
+                            |parameter_ty| {
+                                addressed_operand(operand, parameter_ty)
+                                    .map_or(operand, |reference| &reference.referent)
+                            },
+                        );
+                        bound.contract.parameter(parameter, value, declarations)
+                    });
+            ByAddressOperand {
+                register,
+                parameter,
+                by_address,
+                parameter_ty,
+            }
+        })
+        .collect();
+    Some(CallByAddress { receiver, operands })
 }
 
 /// Whether two places name the same storage, whatever local reference
@@ -637,23 +763,37 @@ impl<'a> Contract<'a> {
         }
     }
 
-    /// Whether the callee receives its regular parameter `parameter` by
-    /// value where its operand may be a reference: an owned one, or a
-    /// `read` one an instance's substitution made register-passable. A
-    /// requirement's parameters are never read here: the elaborator names
-    /// the witness, whose declaration binds them, and writes the copy
-    /// initializer's call itself.
-    fn by_value_parameter(self, parameter: usize, declarations: &MirDeclarations) -> bool {
+    /// The declared type of the regular parameter `parameter`; `None` for
+    /// the copy initializer's `copy: Self`. A requirement spells it over
+    /// `Self`.
+    fn parameter_ty(self, parameter: usize) -> Option<&'a Ty> {
+        match self {
+            Self::Declared(declaration) => declaration.param_types.get(parameter),
+            Self::Required { requirement, .. } => requirement.param_types.get(parameter),
+            Self::Signature(signature) => signature.params.get(parameter),
+            Self::Copy => None,
+        }
+    }
+
+    /// The type of the regular parameter `parameter` when the callee
+    /// receives it by value where its operand may be a reference: an owned
+    /// one, or a `read` one an instance's substitution made
+    /// register-passable. A requirement's parameters are never read here:
+    /// the elaborator names the witness, whose declaration binds them, and
+    /// writes the copy initializer's call itself.
+    fn by_value_parameter(
+        self,
+        parameter: usize,
+        declarations: &MirDeclarations,
+    ) -> Option<&'a Ty> {
         match self {
             Self::Declared(declaration) => by_value_parameter(declaration, declarations, parameter),
-            Self::Required { .. } | Self::Copy => false,
-            Self::Signature(signature) => signature_parameter(signature, parameter).is_some_and(
-                |(convention, reference, ty)| {
-                    !reference
-                        && by_address(convention, false, ty, declarations).is_none()
-                        && !matches!(ty.kind(), TyKind::Ref(_))
-                },
-            ),
+            Self::Required { .. } | Self::Copy => None,
+            Self::Signature(signature) => signature_parameter(signature, parameter)
+                .filter(|(convention, reference, ty)| {
+                    !reference && by_address(*convention, false, ty, declarations).is_none()
+                })
+                .map(|(_, _, ty)| ty),
         }
     }
 }
@@ -867,7 +1007,7 @@ fn bound_call<'i>(
             refined_bound,
             ..
         } => {
-            let receiver_ty = reg_types.get(&recv.0).map(operand_value_ty);
+            let receiver_ty = reg_types.get(&recv.0).map(receiver_value_ty);
             let callable_bound = receiver_ty
                 .and_then(|receiver| callable_bound_requirement(receiver, callee))
                 .map(Contract::Signature);
@@ -1368,7 +1508,7 @@ fn collect(
                             collector.operands,
                         )
                         .into_iter()
-                        .map(|(_, register, place, mutability)| (register, place, mutability)),
+                        .map(|operand| (operand.register, operand.place, operand.mutability)),
                     );
                 }
             }
@@ -1383,8 +1523,8 @@ fn collect(
 /// its callee receives by address, with the place `places` keeps for it:
 /// its position among the operands [`operand_registers_mut`] lists, `None`
 /// for the receiver. A place holding a reference is judged by its
-/// referent, which the operand passes; `operands` may keep only such
-/// places.
+/// referent, which the operand passes ([`place_value_ty`]); `operands` may
+/// keep only such places.
 fn by_address_operands(
     bound: &BoundCall<'_>,
     places: &LegacyCallPlaces,
@@ -1392,22 +1532,28 @@ fn by_address_operands(
     declarations: &MirDeclarations,
     ref_bindings: &BTreeSet<VarId>,
     operands: Operands,
-) -> Vec<(Option<usize>, Reg, MirPlace, Mutability)> {
+) -> Vec<LegacyAddressed> {
     let mut addressed = Vec::new();
     let value_ty = |place: &MirPlace| -> Option<Ty> {
-        let ty = place.ty.as_ref()?;
-        let holds_reference =
-            place_holds_reference(place, ref_bindings.contains(&place.root), |base, field| {
-                declarations.declares_ref_field(base, field)
-            });
-        (operands == Operands::All || holds_reference).then(|| operand_value_ty(ty).clone())
+        let binds_root = ref_bindings.contains(&place.root);
+        let declares_ref_field =
+            |base: &Ty, field: &str| declarations.declares_ref_field(base, field);
+        (operands == Operands::All || place_holds_reference(place, binds_root, declares_ref_field))
+            .then(|| place_value_ty(place, binds_root, declares_ref_field).cloned())
+            .flatten()
     };
     if let Some(register) = bound.receiver
         && let Some(place) = &places.receiver
         && let Some(ty) = value_ty(place)
         && let Some(mutability) = bound.contract.receiver(&ty, declarations)
     {
-        addressed.push((None, register, place.clone(), mutability));
+        addressed.push(LegacyAddressed {
+            position: None,
+            register,
+            place: place.clone(),
+            mutability,
+            value: ty,
+        });
     }
     let operand_places = places.operands(instruction);
     for (position, ((register, parameter), place)) in
@@ -1420,10 +1566,30 @@ fn by_address_operands(
             continue;
         };
         if let Some(mutability) = bound.contract.parameter(*parameter, &ty, declarations) {
-            addressed.push((Some(position), *register, place.clone(), mutability));
+            addressed.push(LegacyAddressed {
+                position: Some(position),
+                register: *register,
+                place: place.clone(),
+                mutability,
+                value: ty,
+            });
         }
     }
     addressed
+}
+
+/// An operand [`by_address_operands`] finds its callee receives by
+/// address.
+struct LegacyAddressed {
+    /// Its position among the operands [`operand_registers_mut`] lists,
+    /// `None` for the receiver.
+    position: Option<usize>,
+    register: Reg,
+    /// The place the artifact keeps for it.
+    place: MirPlace,
+    mutability: Mutability,
+    /// The value it passes ([`place_value_ty`]).
+    value: Ty,
 }
 
 fn rewrite_blocks(block: &mut MirBlock, rewrites: &HashMap<u32, Rewrite>, retired: &[u32]) {
@@ -1497,14 +1663,13 @@ fn address_remaining_in(
             address_remaining_in(region, reg_types, context, cursor, next, types);
         }
         let places = cursor.visit(&block.instrs[index]);
-        let is_value = |register: Reg| {
-            !matches!(
-                reg_types.get(&register.0).map(Ty::kind),
-                Some(TyKind::Ref(_))
-            )
+        let is_value = |operand: &LegacyAddressed| {
+            reg_types
+                .get(&operand.register.0)
+                .is_none_or(|ty| addressed_operand(ty, &operand.value).is_none())
         };
         let instruction = &block.instrs[index];
-        let remaining: Vec<(Option<usize>, Reg, MirPlace, Mutability)> = places
+        let remaining: Vec<LegacyAddressed> = places
             .zip(bound_call(instruction, context.callees, reg_types))
             .map(|(places, bound)| {
                 by_address_operands(
@@ -1518,13 +1683,20 @@ fn address_remaining_in(
             })
             .unwrap_or_default()
             .into_iter()
-            .filter(|(_, register, ..)| is_value(*register))
+            .filter(is_value)
             .collect();
         let mut addresses = Vec::new();
         if !remaining.is_empty() {
             let (receiver, mut operands) = operand_registers_mut(&mut block.instrs[index]);
             let mut receiver = receiver;
-            for (position, register, place, wanted) in remaining {
+            for LegacyAddressed {
+                position,
+                register,
+                place,
+                mutability: wanted,
+                ..
+            } in remaining
+            {
                 let slot = match position {
                     None => receiver.as_deref_mut(),
                     Some(position) => operands.get_mut(position).map(|slot| &mut **slot),
@@ -1569,11 +1741,18 @@ fn forward_read_addresses(
     let mut rewrites: HashMap<u32, Rewrite> = HashMap::new();
     let mut pairs = Vec::new();
     retained_operands(&function.body, &mut cursor, &mut pairs);
-    let is_value = |ty: Option<&Ty>| !matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
     for (operand, place) in pairs {
+        let binds_root = parameters.ref_bindings.contains(&place.root);
+        let declares_ref_field =
+            |base: &Ty, field: &str| declarations.declares_ref_field(base, field);
+        let addressed = function
+            .reg_types
+            .get(&operand.0)
+            .zip(place_value_ty(&place, binds_root, declares_ref_field))
+            .is_some_and(|(ty, value)| addressed_operand(ty, value).is_some());
         if reads.get(operand.0 as usize) != Some(&1)
-            || !is_value(function.reg_types.get(&operand.0))
-            || !is_value(place.ty.as_ref())
+            || addressed
+            || place_holds_reference(&place, binds_root, declares_ref_field)
         {
             continue;
         }
@@ -1746,14 +1925,15 @@ fn load_in_blocks(
                         .get(&register.0)
                         .is_some_and(|ty| by_value_receiver(declaration, ty, context.declarations))
                 });
-                let operands: Vec<bool> = bound
+                let operands: Vec<Option<Ty>> = bound
                     .operands
                     .iter()
                     .map(|(_, parameter)| {
-                        parameter.is_some_and(|parameter| {
+                        parameter.and_then(|parameter| {
                             bound
                                 .contract
                                 .by_value_parameter(parameter, context.declarations)
+                                .cloned()
                         })
                     })
                     .collect();
@@ -1763,12 +1943,17 @@ fn load_in_blocks(
         if let Some((receiver, operands)) = by_value {
             let instruction = &mut block.instrs[index];
             let (receiver_register, registers) = operand_registers_mut(instruction);
-            if receiver && let Some(register) = receiver_register {
-                read_operand(register, reg_types, context, &mut loads);
+            if receiver
+                && let Some(register) = receiver_register
+                && let Some(reference) = reg_types.get(&register.0).and_then(addressed_receiver)
+            {
+                read_operand(register, reference, context, &mut loads);
             }
-            for (register, by_value) in registers.into_iter().zip(operands) {
-                if by_value {
-                    read_operand(register, reg_types, context, &mut loads);
+            for (register, parameter_ty) in registers.into_iter().zip(operands) {
+                if let Some(reference) = parameter_ty.and_then(|parameter_ty| {
+                    addressed_operand(reg_types.get(&register.0)?, &parameter_ty)
+                }) {
+                    read_operand(register, reference, context, &mut loads);
                 }
             }
         }
@@ -1806,7 +1991,7 @@ fn take_register_passable_receiver(
     let MirInstr::MethodCall { recv, .. } = instruction else {
         return;
     };
-    let Some(TyKind::Ref(reference)) = reg_types.get(&recv.0).map(Ty::kind) else {
+    let Some(reference) = reg_types.get(&recv.0).and_then(addressed_receiver) else {
         return;
     };
     let Some(place) = context.made.get(&recv.0) else {
@@ -1827,24 +2012,22 @@ fn take_register_passable_receiver(
     *recv = taken;
 }
 
-/// Whether a callee receives its regular parameter `parameter` by value
-/// where its operand may be a reference: an owned one, or a `read` one an
-/// instance's substitution made register-passable.
-fn by_value_parameter(
-    declaration: &MirFunctionDeclaration,
+/// The type of a callee's regular parameter `parameter` when it receives
+/// it by value where its operand may be a reference: an owned one, or a
+/// `read` one an instance's substitution made register-passable.
+fn by_value_parameter<'d>(
+    declaration: &'d MirFunctionDeclaration,
     declarations: &MirDeclarations,
     parameter: usize,
-) -> bool {
-    !declaration
+) -> Option<&'d Ty> {
+    (!declaration
         .ref_params
         .get(parameter)
         .copied()
         .unwrap_or(true)
-        && by_address_parameter(declaration, declarations, parameter).is_none()
-        && !matches!(
-            declaration.param_types.get(parameter).map(Ty::kind),
-            Some(TyKind::Ref(_))
-        )
+        && by_address_parameter(declaration, declarations, parameter).is_none())
+    .then(|| declaration.param_types.get(parameter))
+    .flatten()
 }
 
 /// Whether a method receives by value the receiver a reference of type
@@ -1855,22 +2038,22 @@ fn by_value_receiver(
     operand_ty: &Ty,
     declarations: &MirDeclarations,
 ) -> bool {
-    matches!(operand_ty.kind(), TyKind::Ref(reference)
-        if matches!(declaration.receiver_convention, None | Some(ArgConvention::Imm))
-            && by_address_receiver(declaration, &reference.referent, declarations).is_none())
+    addressed_receiver(operand_ty).is_some_and(|reference| {
+        matches!(
+            declaration.receiver_convention,
+            None | Some(ArgConvention::Imm)
+        ) && by_address_receiver(declaration, &reference.referent, declarations).is_none()
+    })
 }
 
-/// Read a reference operand through, the `ref.read` going to `loads` and
-/// the operand becoming the value it reads.
+/// Read an operand through the `reference` it passes, the `ref.read` going
+/// to `loads` and the operand becoming the value it reads.
 fn read_operand(
     register: &mut Reg,
-    reg_types: &HashMap<u32, Ty>,
+    reference: &RefTy,
     context: &mut LoadContext<'_, '_>,
     loads: &mut Vec<MirInstr>,
 ) {
-    let Some(TyKind::Ref(reference)) = reg_types.get(&register.0).map(Ty::kind) else {
-        return;
-    };
     let loaded = Reg(*context.next);
     *context.next += 1;
     context
@@ -1907,6 +2090,19 @@ fn retire_made_references(block: &mut MirBlock, retired: &[u32]) {
             retire_made_references(region, retired);
         }
     }
+}
+
+/// The reference layers `ty` nests: each `TyKind::Ref` and `!lit.ref`
+/// (`TyKind::LitRef`) layer, so the count is the same whichever tag a
+/// reference carries. A pointer is a value, not a layer.
+fn reference_depth(ty: &Ty) -> usize {
+    let mut depth = 0;
+    let mut current = ty;
+    while let TyKind::Ref(reference) | TyKind::LitRef(reference) = current.kind() {
+        depth += 1;
+        current = &reference.referent;
+    }
+    depth
 }
 
 #[cfg(test)]

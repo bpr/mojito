@@ -16,7 +16,7 @@
 use super::{
     AddressedOperands, Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration,
     MirInstr, MirPlace, MirSubscriptArg, MirSubscriptCall, MirTerm, OperandAddresses, Reg,
-    TraitRequirement, instruction_regions, operand_value_ty,
+    TraitRequirement, instruction_regions, receiver_value_ty,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_types::types::{FuncTy, Ty, TyKind};
@@ -457,7 +457,7 @@ pub fn receiver_ty<S: BuildHasher>(
     receiver: Reg,
     register_types: &HashMap<u32, Ty, S>,
 ) -> Option<&Ty> {
-    register_types.get(&receiver.0).map(operand_value_ty)
+    register_types.get(&receiver.0).map(receiver_value_ty)
 }
 
 /// The parameters a call binds its arguments to, as a declaration, a

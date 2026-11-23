@@ -1664,7 +1664,7 @@ impl Site {
                     // An addressed receiver is a reference to the
                     // value whose type binds the callee's parameters.
                     Some(
-                        crate::mir::call_addresses::operand_value_ty(
+                        crate::mir::call_addresses::receiver_value_ty(
                             function.reg_types.get(&recv.0)?,
                         )
                         .clone(),

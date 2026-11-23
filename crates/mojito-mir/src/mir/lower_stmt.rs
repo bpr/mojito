@@ -2396,7 +2396,12 @@ impl<'a> Flatten<'a> {
         let Some(ty) = self.f.reg_types.get(&index.0).cloned() else {
             return index;
         };
-        if matches!(ty.kind(), TyKind::Ref(_)) {
+        let addressed = contract
+            .arguments
+            .iter()
+            .find(|argument| argument.source == source)
+            .is_some_and(|argument| addressed_operand(&ty, &argument.parameter_ty).is_some());
+        if addressed {
             return index;
         }
         let lowered = match place {
@@ -2423,14 +2428,17 @@ impl<'a> Flatten<'a> {
         (argument, place): (&MirSubscriptArg, Option<&MirPlace>),
     ) -> MirSubscriptArg {
         let MirSubscriptArg::Index(register) = argument;
-        let is_reference = |ty: Option<&Ty>| matches!(ty.map(Ty::kind), Some(TyKind::Ref(_)));
         match place {
             Some(place)
                 if OperandBinding::of_argument(contract, source)
                     == Some(OperandBinding::Read { by_address: true })
-                    && place.ty.is_some()
-                    && !is_reference(place.ty.as_ref())
-                    && !is_reference(self.f.reg_types.get(&register.0)) =>
+                    && !self.place_holds_reference(place)
+                    && self.place_value_ty(place).is_some_and(|value| {
+                        self.f
+                            .reg_types
+                            .get(&register.0)
+                            .is_none_or(|operand| addressed_operand(operand, value).is_none())
+                    }) =>
             {
                 MirSubscriptArg::Index(self.place_address(
                     location,

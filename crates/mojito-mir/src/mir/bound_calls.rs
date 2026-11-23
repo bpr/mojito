@@ -235,10 +235,11 @@ fn upgrade_bound_receivers_in(
             .and_then(|(instruction, place)| match instruction {
                 MirInstr::MethodCall { recv, .. }
                     if place.is_typed()
-                        && !matches!(
-                            function.reg_types.get(&recv.0).map(Ty::kind),
-                            Some(TyKind::Ref(_))
-                        ) =>
+                        && function
+                            .reg_types
+                            .get(&recv.0)
+                            .and_then(super::addressed_receiver)
+                            .is_none() =>
                 {
                     Some((*recv, place.clone()))
                 }
