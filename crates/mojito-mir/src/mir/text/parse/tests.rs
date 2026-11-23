@@ -2128,6 +2128,7 @@ fn metadata_traits() -> Vec<TraitDeclaration> {
     vec![
         TraitDeclaration {
             name: "Shape".into(),
+            param_decls: vec![TraitDeclaration::self_binder("Shape")],
             refines: vec!["Copyable".into(), "needs quoting!".into()],
             requirements: vec![
                 TraitRequirement {
@@ -2164,6 +2165,7 @@ fn metadata_traits() -> Vec<TraitDeclaration> {
         },
         TraitDeclaration {
             name: "needs quoting!".into(),
+            param_decls: vec![TraitDeclaration::self_binder("needs quoting!")],
             refines: Vec::new(),
             requirements: Vec::new(),
         },
@@ -2212,6 +2214,7 @@ fn a_trait_record_before_requirements_reads_with_none() {
     let mut program = program_with(vec![("main".into(), function_with(Vec::new(), Vec::new()))]);
     program.declarations.traits = vec![TraitDeclaration {
         name: "Shape".into(),
+        param_decls: vec![TraitDeclaration::self_binder("Shape")],
         refines: Vec::new(),
         requirements: Vec::new(),
     }];

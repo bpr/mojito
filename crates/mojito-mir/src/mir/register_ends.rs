@@ -972,6 +972,7 @@ mod tests {
         MirDeclarations {
             traits: vec![TraitDeclaration {
                 name: "Absorber".into(),
+                param_decls: vec![TraitDeclaration::self_binder("Absorber")],
                 refines: Vec::new(),
                 requirements: vec![TraitRequirement {
                     name: "absorb".into(),

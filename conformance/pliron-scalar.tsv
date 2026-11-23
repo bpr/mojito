@@ -1654,6 +1654,7 @@ assets/ok/trait_comptime_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_comptime_requirement_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_calls_later_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_comptime_if.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_default_keyed_per_conformer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_parameter_defaults.mojo	-	ineligible	no-scalar-entry-shape

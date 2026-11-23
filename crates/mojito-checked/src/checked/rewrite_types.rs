@@ -1425,9 +1425,11 @@ impl RewriteTypes for TraitDeclaration {
     fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
         let Self {
             name: _,
+            param_decls,
             refines: _,
             requirements,
         } = self;
+        param_decls.rewrite_types(rewrite);
         requirements.rewrite_types(rewrite);
     }
 }

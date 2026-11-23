@@ -907,16 +907,24 @@ impl Decoder {
     /// before schema 1.44 records no requirements, and one before schema
     /// 1.48 no requirement's signature: its empty dispatch symbol names no
     /// call, so a call through a bound passes its arguments by address.
+    /// A record before schema 1.227 spells no compile-time parameters: its
+    /// trait declares upstream's one, `_Self`.
     fn trait_declaration(&mut self, value: &Value) -> Option<TraitDeclaration> {
         if !matches!(value.kind, ValueKind::Record(..)) {
+            let name = self.symbol(value)?;
             return Some(TraitDeclaration {
-                name: self.symbol(value)?,
+                param_decls: vec![TraitDeclaration::self_binder(&name)],
+                name,
                 refines: Vec::new(),
                 requirements: Vec::new(),
             });
         }
         let fields = self.record(value, "trait").ok()?;
         let name = self.req(value, fields, "name", Self::symbol);
+        let param_decls = self
+            .field(fields, "param_decls")
+            .ok()
+            .map(|value| self.param_decls(value));
         let refines = self.req(value, fields, "refines", |d, v| Some(d.strings(v)));
         let requirements = self
             .field(fields, "requirements")
@@ -1016,9 +1024,11 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
-        self.unknown(fields, &["name", "refines", "requirements"]);
+        self.unknown(fields, &["name", "param_decls", "refines", "requirements"]);
+        let name = name?;
         Some(TraitDeclaration {
-            name: name?,
+            param_decls: param_decls.unwrap_or_else(|| vec![TraitDeclaration::self_binder(&name)]),
+            name,
             refines: refines?,
             requirements,
         })

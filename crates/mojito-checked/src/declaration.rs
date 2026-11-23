@@ -476,13 +476,18 @@ pub struct Witness {
 }
 
 /// A trait declaration as a conformance decision and an overload lookup
-/// read it: its name, the traits it refines, and its own requirements.
+/// read it: its name, its compile-time parameters, the traits it refines,
+/// and its own requirements.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraitDeclaration {
     /// A package record leaves it to its declaration's directory row, so
     /// no other encoding may rely on it.
     #[serde(skip)]
     pub name: String,
+    /// Its compile-time parameters: upstream's trait declares one,
+    /// `_Self: Trait` ([`Self::self_binder`]), the binder its members'
+    /// receivers bind, as a struct's binders reach its methods.
+    pub param_decls: Vec<ParamDecl>,
     /// Its parents, in declaration order.
     pub refines: Vec<String>,
     /// Its own requirements, defaulted or not, in declaration order, one
@@ -493,6 +498,37 @@ pub struct TraitDeclaration {
 }
 
 impl TraitDeclaration {
+    /// The name of a trait's `Self` binder, as upstream's diagnostics
+    /// name it.
+    pub const SELF_BINDER: &'static str = "_Self";
+
+    /// Trait `name`'s one compile-time parameter, `_Self: name`: its slot
+    /// 0, owned by the trait, which its members' `Self` names.
+    pub fn self_binder(name: &str) -> ParamDecl {
+        ParamDecl::Type {
+            id: mojito_types::param_expr::ParamId::new(name, 0),
+            name: Self::SELF_BINDER.to_string(),
+            bounds: vec![name.to_string()],
+            trait_param: None,
+            callable_bound: None,
+            default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        }
+    }
+
+    /// The type trait `name`'s members name `Self` by: its
+    /// [`Self::self_binder`]'s parameter type.
+    pub fn self_type(name: &str) -> Ty {
+        mojito_types::types::TyKind::Param {
+            binder: Self::self_binder(name).binder(),
+            bounds: vec![name.to_string()],
+            callable_bound: None,
+        }
+        .into()
+    }
+
     /// The declaration upstream's `std.builtin` gives the compiler-known
     /// lifecycle trait `name` (`Copyable`, `ImplicitlyCopyable`, `Movable`,
     /// `Deinitable`), which no program or package declares here: its
@@ -505,6 +541,7 @@ impl TraitDeclaration {
                 .into_iter()
                 .map(|name| TraitDeclaration {
                     name: name.to_string(),
+                    param_decls: vec![TraitDeclaration::self_binder(name)],
                     refines: mojito_types::conformance::compiler_trait_parents(name)
                         .iter()
                         .map(ToString::to_string)

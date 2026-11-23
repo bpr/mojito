@@ -167,8 +167,8 @@ fn elaborated_stmt(stmt: &Stmt, packs: Packs<'_>) -> Stmt {
             kind
         }
         // A default is its trait's member, a method of its trait over the
-        // trait's `Self` (`_Self`, no pack): its body is elaborated in place
-        // as that method's, the trait declaring no parameter of its own.
+        // trait's one binder `_Self`, a type and no pack: its body is
+        // elaborated in place as that method's, with no pack in scope.
         StmtKind::Trait { methods, .. } => {
             let mut kind = stmt.kind.clone();
             if let StmtKind::Trait {

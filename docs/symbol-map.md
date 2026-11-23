@@ -716,10 +716,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/trait_defaults.rs` owns trait defaults as upstream's
   `StructEmitter` emits them: each default is its trait's member
   `Trait.m` (`member_symbol`), a method of its trait (`member_method`:
-  first compile-time parameter `_Self`, receiver `self: _Self`, the
-  default's signature and body as spelled). `Checker::check_trait_members`
-  checks every member after the module walk (`check_trait_member`): in its
-  trait's scope (`Checker::enter_trait_scope`, `Self` the `_Self` binder)
+  the default's signature and body as spelled, its receiver `self: _Self`
+  over the trait's binder `TraitDeclaration::self_binder`).
+  `Checker::check_trait_members` checks every member after the module walk
+  (`check_trait_member`): in its trait's scope (`Checker::enter_trait_scope`,
+  which encloses it in the trait's `_Self` as `enter_struct_scope` encloses
+  a struct's methods in its binders, `Self` that binder)
   `register_trait_member` types its signature as a struct method's
   (`compiled_method_signature`) and records it at its trait's method sites
   (`Checker::record_method_sites`) and on its trait's

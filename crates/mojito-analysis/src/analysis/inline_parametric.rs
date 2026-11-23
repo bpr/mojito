@@ -3461,8 +3461,8 @@ fn retype_erased_values(function: &mut MirFunction, block: &mut MirBlock, ty: &T
 }
 
 /// Whether the callee has a shape the splice handles: a receiver of a
-/// declared struct's type ([`nominal_parts`]) or of the callee's own binder
-/// (a trait default's `_Self`) if any, and blocks of plain
+/// declared struct's type ([`nominal_parts`]), of the callee's own binder,
+/// or of its owner's (a trait member's `_Self`) if any, and blocks of plain
 /// or structured control flow, at any depth, with no closure. A
 /// compile-time assertion is spliced with the rest, its binders the call's
 /// arguments, so a concrete caller's instance judges it as the callee's
@@ -3473,7 +3473,9 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
         || callee.param_types.first().is_some_and(|receiver| {
             nominal_parts(receiver).is_some()
                 || matches!(receiver.kind(), TyKind::Param { binder, .. }
-                    if declaration.param_decls.iter().any(|decl| *decl.id() == binder.id))
+                    if declaration.param_decls.iter().any(|decl| *decl.id() == binder.id)
+                        || mojito_symbol::symbol::split_method_symbol(&declaration.lowered_name)
+                            .is_some_and(|(owner, _)| *binder.id.owner == *owner))
         });
     receiver_closed && closed_blocks(&callee.body)
 }

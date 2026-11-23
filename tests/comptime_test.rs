@@ -1593,7 +1593,7 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
     // trait's member `T.d`, a method of its trait over the trait's `Self`,
     // and the conformer's method is a member the check builds over the
     // default's resolved signature, one method call of the trait's member on
-    // its receiver, which binds the member's `_Self`, holding none of the
+    // its receiver, which binds the trait's `_Self`, holding none of the
     // default's body.
     let src = "trait T:\n    def req(self) -> Int:\n        ...\n    def d(self, k: Int = 2) -> Int:\n        var doubled = self.req() * k\n        return doubled\n\n@fieldwise_init\nstruct S(T):\n    var x: Int\n    def req(self) -> Int:\n        return self.x\n";
     let prepared = mojito::comptime::prepare(parse(src).unwrap()).unwrap();
@@ -1692,16 +1692,31 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
         "the wrapper's call is statically resolved to the member: {:#?}",
         wrapper_fn.body.instrs
     );
+    // `_Self` is its trait's binder, enclosing the member, as upstream's
+    // instance names it only in the enclosing-parameter suffix.
+    assert!(
+        declaration.param_decls.is_empty(),
+        "the member declares no `_Self` of its own: {:?}",
+        declaration.param_decls
+    );
+    let trait_declaration = mir
+        .declarations
+        .trait_declaration("T")
+        .expect("MIR declares the trait");
     assert_eq!(
-        declaration.param_decls.first().map(mojito::ParamDecl::name),
-        Some("_Self")
+        trait_declaration
+            .param_decls
+            .iter()
+            .map(|decl| (decl.name(), decl.id().owner.to_string()))
+            .collect::<Vec<_>>(),
+        [("_Self", "T".to_string())]
     );
     assert_eq!(compiler.execute(&compiled).unwrap().output, "6 15\n");
 }
 
 #[test]
 fn a_trait_members_self_resolves_to_its_binder_unrespelled() {
-    // Upstream's name resolution binds a default's `Self` to its member's
+    // Upstream's name resolution binds a default's `Self` to its trait's
     // `_Self` binder: the default keeps the source's `Self` in its body, and
     // its checked signature, at its trait's method sites, types its
     // receiver and its `Self` parameter at the binder.
@@ -1719,14 +1734,31 @@ fn a_trait_members_self_resolves_to_its_binder_unrespelled() {
         method: 1,
         param,
     };
-    let receiver = checked
-        .checked_type_at(&mojito::checked::AnnotationSite::MethodReceiver {
-            module: member.module.clone(),
-            declaration: "T".to_string(),
-            method: 1,
-        })
-        .expect("the member's receiver site");
-    assert_eq!(receiver.to_string(), "_Self");
+    assert!(
+        checked
+            .checked_type_at(&mojito::checked::AnnotationSite::MethodReceiver {
+                module: member.module.clone(),
+                declaration: "T".to_string(),
+                method: 1,
+            })
+            .is_none(),
+        "the receiver is its trait's `Self`, no custom receiver"
+    );
+    let mir = mojito::mir::lower_checked_program(checked);
+    let (_, function) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "T.d")
+        .expect("MIR lowers the trait member");
+    assert!(
+        matches!(
+            function.param_types.first().map(mojito::types::Ty::kind),
+            Some(mojito::types::TyKind::Param { binder, .. })
+                if &*binder.name == "_Self" && &*binder.id.owner == "T"
+        ),
+        "the receiver is the trait's binder: {:?}",
+        function.param_types.first()
+    );
     assert_eq!(
         checked.checked_type_at(&site(0)).map(ToString::to_string),
         Some("_Self".to_string())

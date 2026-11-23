@@ -1272,7 +1272,7 @@ pub fn lower_unit(
                 return;
             };
             lower_struct_member(
-                &StructLowering::new(checked, node.module.as_ref(), &declaration.name),
+                &StructLowering::of_trait(checked, node.module.as_ref(), &declaration.name),
                 StructMember {
                     name: &m.name,
                     lowered: default.symbol.clone(),
@@ -2550,6 +2550,7 @@ fn lower_struct_member<P: DeclaredParam>(
         overloads,
         module,
         name,
+        ..
     } = *structure;
     let module = module.cloned();
     let method_name = m.name;
@@ -2592,19 +2593,14 @@ fn lower_struct_member<P: DeclaredParam>(
         // this declaration order.
         let struct_decls = checked
             .generic_parameters_at(&GenericSite::Struct {
-                module: module.clone(),
+                module,
                 declaration: name.to_string(),
             })
             .map(<[ParamDecl]>::to_vec)
             .unwrap_or_default();
         param_decls = struct_decls.into_iter().chain(param_decls).collect();
     }
-    let struct_declared = checked
-        .generic_parameters_at(&GenericSite::Struct {
-            module,
-            declaration: name.to_string(),
-        })
-        .unwrap_or_default();
+    let struct_declared = &structure.binders();
     // `Self`'s binders: every struct parameter but an origin, each origin's
     // `mut=` binder among them, which a member's types and lifted
     // expressions read.
@@ -2711,12 +2707,13 @@ fn lower_struct_member<P: DeclaredParam>(
     if m.has_self {
         inferred.push(m.self_convention == Some(ArgConvention::Ref));
         names.push("self".to_string());
-        ptys.push(
-            signature
-                .receiver
-                .clone()
-                .unwrap_or_else(|| self_receiver_ty(name, struct_declared)),
-        );
+        ptys.push(signature.receiver.clone().unwrap_or_else(|| {
+            if structure.is_trait {
+                TraitDeclaration::self_type(name)
+            } else {
+                self_receiver_ty(name, struct_declared)
+            }
+        }));
         owned.push(is_owned(&m.self_convention));
         deinit.push(is_deinit(&m.self_convention));
         refp.push(is_ref(&m.self_convention));
@@ -2777,13 +2774,16 @@ fn lower_struct_member<P: DeclaredParam>(
     );
 }
 
-/// The struct a member of which MIR lowers.
+/// The struct or trait a member of which MIR lowers.
 #[derive(Clone, Copy)]
 struct StructLowering<'a> {
     checked: &'a CheckedProgram,
     overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     module: Option<&'a String>,
     name: &'a str,
+    /// Whether `name` is a trait, whose one binder `_Self`
+    /// ([`TraitDeclaration::self_binder`]) encloses its members.
+    is_trait: bool,
 }
 
 impl<'a> StructLowering<'a> {
@@ -2794,7 +2794,35 @@ impl<'a> StructLowering<'a> {
             overloads: checked.overloads(),
             module,
             name,
+            is_trait: false,
         }
+    }
+
+    /// The trait `name` of `module`, as `checked` lowers its members.
+    const fn of_trait(
+        checked: &'a CheckedProgram,
+        module: Option<&'a String>,
+        name: &'a str,
+    ) -> Self {
+        Self {
+            is_trait: true,
+            ..Self::new(checked, module, name)
+        }
+    }
+
+    /// The compile-time parameters enclosing its members: a struct's
+    /// declared ones, a trait's `_Self`.
+    fn binders(&self) -> Vec<ParamDecl> {
+        if self.is_trait {
+            return vec![TraitDeclaration::self_binder(self.name)];
+        }
+        self.checked
+            .generic_parameters_at(&GenericSite::Struct {
+                module: self.module.cloned(),
+                declaration: self.name.to_string(),
+            })
+            .map(<[ParamDecl]>::to_vec)
+            .unwrap_or_default()
     }
 }
 
@@ -5834,6 +5862,16 @@ fn member_defaults(
         .method_instantiations()
         .get(&call.source_span())
         .map_or(&[][..], |instantiation| &instantiation.arguments[..]);
+    // The trait's `_Self` is the wrapper's struct, whose `Self` its
+    // receiver is.
+    let trait_self = mojito_symbol::symbol::split_method_symbol(&wrapper.member)
+        .map(|(trait_name, _)| TraitDeclaration::self_binder(trait_name));
+    let wrapper_self = TyArg::Ty(self_receiver_ty(
+        &wrapper.declaration,
+        declarations
+            .structure(&wrapper.declaration)
+            .map_or(&[][..], |structure| &structure.param_decls),
+    ));
     let defaults = member
         .defaults
         .iter()
@@ -5849,6 +5887,12 @@ fn member_defaults(
                 let arguments = binders
                     .iter()
                     .map(|binder| {
+                        if trait_self
+                            .as_ref()
+                            .is_some_and(|decl| decl.id() == binder.id())
+                        {
+                            return Ok(wrapper_self.clone());
+                        }
                         member
                             .param_decls
                             .iter()

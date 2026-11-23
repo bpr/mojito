@@ -1388,6 +1388,16 @@ one older than 1.225 its `ref_fields`, from the rows written with the
 `ref` tag, not the `lit_ref` one. The package format moves to
 `mojito-package 260` (R2511).
 
+Schema 1.227 gives a `trait` record its compile-time parameters,
+`param_decls`, after `name`: upstream's one `_Self: Trait` binder, owned by
+the trait at slot 0, which encloses each of its members as a struct's
+binders enclose its methods. A trait member's declaration no longer lists
+`_Self` among its own `param_decls`, its receiver is typed by the trait's
+binder, and a wrapper's forwarding `call.method` instantiates no argument
+for it. A reader of an older record, or of a bare trait name, gives the
+trait that one binder. The package format moves to `mojito-package 262`
+(R2216): a trait member's recorded signature no longer holds `_Self`.
+
 The package format moves to `mojito-package 261` (R2215): a trait's
 checker residue records each default's signature as its trait's method
 (`DefaultShape::signature`, over the member's `_Self` binder) in place of

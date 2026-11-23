@@ -304,6 +304,18 @@ impl Specializer<'_> {
             }
             None => (0, 0),
         };
+        // A trait member's receiver binds its trait's `_Self`, not an owner
+        // instance: the receiver's struct is a conformer, never the member's
+        // owner, so its arguments key the instance in the binder's place.
+        let trait_binders = declaration
+            .enclosing
+            .is_none()
+            .then(|| self.trait_owner_binders(target))
+            .flatten();
+        if trait_binders.is_some() {
+            bindings.self_instance = None;
+            owner_covered = 0;
+        }
         // A construction's solved arguments restate its struct's, as its
         // declaration does; a method call's are the method's own. Either
         // holds a value for every declared parameter, origins included.
@@ -512,13 +524,22 @@ impl Specializer<'_> {
             }
         }
         let mut arguments = inherited_arguments;
+        let removed = self.removed_params(target, bindings.reduced);
+        arguments.extend(
+            trait_binders
+                .unwrap_or_default()
+                .iter()
+                .filter(|decl| !removed.contains(decl.id()))
+                .map(|decl| bound_argument(decl, &bindings, target))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
         arguments.extend(match receiver {
-            Some(receiver) if bindings.self_instance.is_none() => self
+            Some(receiver) if bindings.self_instance.is_none() && trait_binders.is_none() => self
                 .uninstanced_owner_arguments(
-                    peel_refs(reg_ty(caller, receiver, owner)?),
-                    &bindings,
-                    target,
-                )?,
+                peel_refs(reg_ty(caller, receiver, owner)?),
+                &bindings,
+                target,
+            )?,
             _ => Vec::new(),
         });
         // The owner-restating prefix (`__init__` prepends the struct's

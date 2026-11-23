@@ -2387,6 +2387,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait's `_Self` is the trait's own compile-time parameter, as upstream
+  declares it, not each default's: `TraitDeclaration::param_decls` holds
+  `_Self` (owner the trait, slot 0), a trait member's declaration lists no
+  `_Self` of its own (`decl { lowered_name: "Greet.hello" … param_decls:
+  [] }`), its receiver is typed by the trait's binder, and a wrapper's
+  forwarding call instantiates nothing for it. The receiver binds it, and
+  the elaborator keys each member instance on it, so two conformers never
+  share one (`assets/ok/trait_default_keyed_per_conformer.mojo`, R2216).
+  MIR schema 1.227; the package format moves to `mojito-package 262`.
 - A trait default is checked and lowered as its trait's method, as upstream
   emits it inside its trait: its signature sits at its trait's method sites
   with its receiver typed by the `_Self` binder, its body is checked in its

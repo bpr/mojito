@@ -3193,6 +3193,7 @@ fn verifier_rejects_a_drop_of_an_argument_a_bound_call_took() {
     let declarations = MirDeclarations {
         traits: vec![TraitDeclaration {
             name: "Absorber".into(),
+            param_decls: vec![TraitDeclaration::self_binder("Absorber")],
             refines: Vec::new(),
             requirements: vec![TraitRequirement {
                 name: "absorb".into(),

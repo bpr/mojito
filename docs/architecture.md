@@ -3320,20 +3320,31 @@ compile-time requirements become part of the refined contract, and a refined
 bound satisfies its ancestors. Trait defaults follow upstream's
 `StructEmitter`: each default is its trait's member `Trait.method` (the
 requirement's binder owner, signature-qualified when overloaded), a method
-of its trait over the trait's `Self`, whose first compile-time parameter
-`_Self` its receiver `self: _Self` binds. It stays in its trait statement:
+of its trait over the trait's `Self`: the trait's one compile-time
+parameter `_Self` (`TraitDeclaration::self_binder`, owner the trait, slot
+0, which `TraitDeclaration::param_decls` carries in MIR as a struct's
+declaration carries its binders), enclosing the member as a struct's
+binders enclose its methods, so the member's own parameter list does not
+hold it and its receiver `self: _Self` binds it. It stays in its trait statement:
 the elaborator elaborates its body in place as its trait's method's, and
 the check checks it once after the source-order walk, in its trait's scope
 (`Checker::enter_trait_scope`, where `Self` is the `_Self` binder) through
 the same `Checker::check_member` as a struct's method, so its body calls any
 module function wherever declared (as at the pin). Its signature is
 recorded at its trait's method sites (`GenericSite::Method`,
-`AnnotationSite::MethodParam`/`MethodReturn`/`MethodReceiver`, keyed by the
+`AnnotationSite::MethodParam`/`MethodReturn`, keyed by the
 trait's name and the method's position), its trait's checked op holds it
 (`CheckedTraitMethod::default`, a `CheckedTraitDefault`), and MIR lowers it
 through `lower_struct_member` as a method with a receiver
-(`LoweringUnit::TraitMember`), its calls on `self` dispatching through the
-bound. A package places it in its trait's declaration record. A trait's
+(`LoweringUnit::TraitMember`, `StructLowering::of_trait`), its receiver
+typed by the trait's binder and its calls on `self` dispatching through the
+bound. MIR's method-owner binder lookup (`mir::method_owner_params`) reads
+a trait member's enclosing binder from its trait's declaration, and the
+elaborator keys each instance of the member on its trait's `_Self`, bound
+from the forwarding call's receiver and leading the member's own arguments
+(`Specializer::trait_owner_binders`), so `Greet.hello`'s instance for a
+conformer `S` is spelled over `[S]` as upstream names it in the
+enclosing-parameter suffix, and two conformers never share one. A package places it in its trait's declaration record. A trait's
 check records each of its defaults in its `TraitInfo` as a
 `trait_defaults::DefaultShape` naming its requirement row by overload
 index, which a package exports in the trait's declaration interface.
@@ -3346,7 +3357,7 @@ qualified as an overload, registers its signature after the struct's
 spelled ones from the default's, with `Self` the conformer and its binders
 owned by the wrapper (`reown_generic_signature`), and, after every trait
 member, checks its body, one method call of the trait's member on the
-receiver, which binds the member's `_Self`, with every argument and
+receiver, which binds the trait's `_Self`, with every argument and
 forwarded binder passed on (`populateDefaultedTraitFunction`). The wrapper is never syntax of
 its struct: its sites follow the spelled methods' indexes, and
 `CheckedProgram::default_wrappers` carries it to MIR, which lowers it
@@ -3374,8 +3385,11 @@ names a member: the check records its signature on its trait's default
 (`DefaultShape::signature`), and a wrapper's forwarding method call selects
 it through the trait's record (`Checker::trait_member_signature`, read by
 `resolve_receiver_method`), own or imported, statically resolved to the
-member's symbol with `_Self` inferred from the receiver as a custom
-receiver type is, as upstream's wrapper names the trait's function. MIR and
+member's symbol with the trait's `_Self` bound to the receiver's type, as a
+struct method's signature is its struct's binders at the receiver's
+arguments, while the member's declared signature, over the binder, decides
+each argument's convention, as upstream's wrapper names the trait's
+function. MIR and
 the VM retain static dispatch and need no trait-object representation.
 
 Associated compile-time members may be monomorphic or parameterized.

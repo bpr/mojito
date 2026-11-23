@@ -946,19 +946,36 @@ impl Checker {
         Ok((self_ty, saved))
     }
 
-    /// Enter the member scope of a trait whose `Self` is `self_ty`, its
-    /// member's `_Self` binder: the trait declares no parameter of its own,
-    /// so nothing else is in scope. Returns the saved outer scope for
-    /// `exit_struct_scope`.
-    pub(super) fn enter_trait_scope(&mut self, self_ty: Ty) -> SavedStructScope {
-        SavedStructScope {
-            type_params: std::mem::take(&mut self.enclosing_type_params),
-            param_decls: std::mem::take(&mut self.enclosing_param_decls),
+    /// Enter the member scope of trait `name`, as [`Self::enter_struct_scope`]
+    /// enters a struct's: its one binder `_Self`
+    /// ([`TraitDeclaration::self_binder`](mojito_checked::declaration::TraitDeclaration::self_binder))
+    /// encloses its members, and `Self` is that binder's type. Returns
+    /// `Self` and the saved outer scope for `exit_struct_scope`.
+    pub(super) fn enter_trait_scope(&mut self, name: &str) -> (Ty, SavedStructScope) {
+        use mojito_checked::declaration::TraitDeclaration;
+        let self_ty = TraitDeclaration::self_type(name);
+        let binder = mojito_ast::ast::TypeParam {
+            name: TraitDeclaration::SELF_BINDER.to_string(),
+            bounds: vec![name.to_string()],
+            value_type: None,
+            callable_bound: None,
+            origin_mutability: None,
+            infer_only: false,
+            keyword_only: false,
+            default: None,
+        };
+        let saved = SavedStructScope {
+            type_params: std::mem::replace(&mut self.enclosing_type_params, vec![binder]),
+            param_decls: std::mem::replace(
+                &mut self.enclosing_param_decls,
+                vec![TraitDeclaration::self_binder(name)],
+            ),
             self_decls: std::mem::take(&mut self.self_decls),
-            self_ty: self.self_ty.replace(self_ty),
+            self_ty: self.self_ty.replace(self_ty.clone()),
             bundled_stdlib: std::mem::replace(&mut self.bundled_stdlib_declaration, false),
             enum_declaration: std::mem::replace(&mut self.enum_declaration, false),
-        }
+        };
+        (self_ty, saved)
     }
 
     pub(super) fn exit_struct_scope(&mut self, saved: SavedStructScope) {
@@ -2845,6 +2862,9 @@ impl Checker {
             .map(
                 |(name, info)| mojito_checked::declaration::TraitDeclaration {
                     name: name.clone(),
+                    param_decls: vec![mojito_checked::declaration::TraitDeclaration::self_binder(
+                        name,
+                    )],
                     refines: info.refines.clone(),
                     requirements: info
                         .requirements

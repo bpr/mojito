@@ -10702,31 +10702,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2216 A trait member's `_Self` is its own compile-time
-  parameter, not its trait's binder**
-
-  A trait member's `_Self` is its own first compile-time parameter (owner
-  `Trait.method`, slot 0), while upstream's is its trait's binder,
-  enclosing the member: at the pin, `Greet::hello($0),_Self`=[S]` names
-  `_Self` only in the enclosing-parameter suffix.
-  - The `_Self` owner becomes the trait, whose declaration
-    (`TraitDeclaration`, `mojito-checked/src/declaration.rs`) gains
-    `param_decls: [_Self]` as a struct's carries its binders; the member's
-    own `param_decls` drop slot 0.
-  - Mono binds a trait's enclosing `_Self` from a resolved `call.method`'s
-    receiver type, as it binds a struct's binders from its receiver.
-  - The forwarding call is already a `call.method` whose receiver binds
-    `_Self` (inferred today through the member signature's custom receiver
-    type, `MethodSig::custom_self`); the binder moving to the trait leaves
-    the call's own instantiation without it.
-  - Probe: `emit-mir` of a trait `Greet` whose default `hello(self)` a
-    conformer `S` inherits shows the member's `has_receiver: true`
-    declaration with `param_decls: [type_param { owner: "Greet.hello",
-    slot: 0, name: _Self … }]`.
-  - Found while landing R595 (2026-11-14).
-  - Depends on R2215.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2217 A trait default's overload key is still spelled from syntax**
 
   Whether a conformer's own method suppresses an inherited default, or two

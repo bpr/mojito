@@ -157,8 +157,8 @@ Upstream checks a trait default as a method of its trait, binds `_Self` as
 the trait's binder, and keys overloads by resolved signatures. Mojito
 checks a default as a module-scope `def` it builds, and finds requirement
 defaults and forwarding calls by syntax.
-- R2215 and R2216 check a member as its trait's method and make `_Self`
-  the trait's binder.
+- R2215 and R2216 (landed) check a member as its trait's method and make
+  `_Self` the trait's binder.
 - R2217 keys a default by its typed signature and deletes the AST
   spelling path in `mojito-symbol`.
 - R758 gives a requirement its checked signature. That fixes a

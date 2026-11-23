@@ -718,7 +718,13 @@ fn method_struct<'a>(
     let (owner, _) = mojito_symbol::symbol::split_method_symbol(root)?;
     declarations
         .structure(owner)
-        .map(|structure| (owner, structure.param_decls.iter().collect()))
+        .map(|structure| &structure.param_decls)
+        .or_else(|| {
+            declarations
+                .trait_declaration(owner)
+                .map(|declaration| &declaration.param_decls)
+        })
+        .map(|decls| (owner, decls.iter().collect()))
 }
 
 /// The slots of `function` that a callable value parameter among `decls`

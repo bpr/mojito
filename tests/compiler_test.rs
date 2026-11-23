@@ -1463,10 +1463,18 @@ fn trait_default_body_is_one_member_node() {
         .expect("the trait's checked node");
     let default = methods[0].default.as_ref().expect("`d` holds its member");
     assert_eq!(default.symbol, checked.trait_members()[0].symbol);
-    assert_eq!(
-        default.signature.receiver.as_ref().map(ToString::to_string),
-        Some("_Self".to_string()),
-        "the member's receiver is its trait's `Self`"
+    assert!(
+        default.signature.receiver.is_none(),
+        "the member's receiver is its trait's `Self`, no custom receiver"
+    );
+    assert!(
+        default
+            .signature
+            .parameters
+            .iter()
+            .all(|decl| decl.name() != "_Self"),
+        "`_Self` is its trait's binder, not the member's: {:?}",
+        default.signature.parameters
     );
     assert!(methods[1].default.is_none(), "`r` declares no default");
     let returns = tables

@@ -195,6 +195,10 @@ fn write_artifact_head(
                 &[
                     ("name", symbol(&declaration.name)),
                     (
+                        "param_decls",
+                        list(declaration.param_decls.iter().map(param_decl)),
+                    ),
+                    (
                         "refines",
                         list(declaration.refines.iter().map(|parent| symbol(parent))),
                     ),

@@ -18,18 +18,33 @@ impl Checker {
         availability_failure: &mut Option<String>,
     ) -> Result<MethodSelection, TypeError> {
         // A wrapper's forwarding call names its trait's member, which only
-        // it reaches: the member's signature, its `_Self` the receiver's
-        // type, as upstream's wrapper calls its trait's function.
-        if let Some(member) = self.trait_member_signature(site.method) {
+        // it reaches: the member's signature with its trait's `_Self` the
+        // receiver's type, as a struct method's signature is its struct's
+        // binders at the receiver's arguments.
+        if let Some((trait_name, member)) = self.trait_member_signature(site.method) {
             let Some((sname, targs)) = self.nominal_struct(site.obj_ty) else {
                 return Ok(Ok(None));
             };
-            return self.resolve_struct_candidates(
-                site,
-                (sname, &targs),
-                (std::slice::from_ref(member), Some(site.method)),
-                availability_failure,
-            );
+            let bound = member_at_receiver(member, trait_name, site.obj_ty);
+            // The member's declared signature, over its trait's binder,
+            // decides each argument's convention, as upstream's generic
+            // signature does before any substitution.
+            return self
+                .resolve_struct_candidates(
+                    site,
+                    (sname, &targs),
+                    (std::slice::from_ref(&bound), Some(site.method)),
+                    availability_failure,
+                )
+                .map(|selection| {
+                    selection.map(|resolution| {
+                        resolution.map(|mut resolution| {
+                            resolution.declared_params.clone_from(&member.params);
+                            resolution.declared_return = Some(member.ret.clone());
+                            resolution
+                        })
+                    })
+                });
         }
         match site.obj_ty.kind() {
             struct_ty if let Some((sname, targs)) = struct_ty.as_non_pointer_struct() => {
@@ -874,4 +889,26 @@ fn collector_element_failure(sig: &MethodSig, failure: &TypeError) -> Option<Str
                  conformance"
             )
         })
+}
+
+/// Trait member signature `member` of trait `trait_name` with the trait's
+/// `_Self` binder bound to `receiver`.
+fn member_at_receiver(member: &MethodSig, trait_name: &str, receiver: &Ty) -> MethodSig {
+    let binder = mojito_checked::declaration::TraitDeclaration::self_binder(trait_name);
+    let subst = mojito_types::types::TySubst::from([(binder.id().clone(), receiver.clone())]);
+    let at = |ty: &Ty| mojito_types::types::substitute(ty, &subst);
+    let mut bound = member.clone();
+    bound.params = bound.params.iter().map(at).collect();
+    bound.ret = at(&bound.ret);
+    for ty in [
+        &mut bound.variadic,
+        &mut bound.kw_variadic,
+        &mut bound.error,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        *ty = at(ty);
+    }
+    bound
 }

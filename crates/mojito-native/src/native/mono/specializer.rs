@@ -2655,17 +2655,43 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
-    /// The binders a body of `template` may name: those of each declaration
-    /// it is nested in, outermost first, then its own.
+    /// The binders a body of `template` may name: its trait's `_Self` when
+    /// it is a trait member or nested in one, then those of each
+    /// declaration it is nested in, outermost first, then its own.
     pub(super) fn binder_scope(&self, template: &str) -> Vec<ParamDecl> {
-        mojito_mir::mir::binder_scope(
-            template,
-            |name| self.declarations.get(name),
-            |name| self.structs.get(name),
-        )
-        .into_iter()
-        .cloned()
-        .collect()
+        self.trait_owner_binders(template)
+            .unwrap_or_default()
+            .iter()
+            .chain(mojito_mir::mir::binder_scope(
+                template,
+                |name| self.declarations.get(name),
+                |name| self.structs.get(name),
+            ))
+            .cloned()
+            .collect()
+    }
+
+    /// The compile-time parameters of the trait whose member `template`
+    /// is, or is nested in: upstream's `_Self`, which encloses the member
+    /// as a struct's binders enclose its methods, so each of its instances
+    /// is keyed on it. `None` for any other function.
+    pub(super) fn trait_owner_binders(&self, template: &str) -> Option<&[ParamDecl]> {
+        let mut root = template;
+        while let Some(enclosing) = self
+            .declarations
+            .get(root)
+            .and_then(|declaration| declaration.enclosing.as_deref())
+        {
+            root = enclosing;
+        }
+        let (owner, _) = mojito_symbol::symbol::split_method_symbol(root)?;
+        if self.structs.get(owner).is_some() {
+            return None;
+        }
+        self.source
+            .declarations
+            .trait_declaration(owner)
+            .map(|declaration| declaration.param_decls.as_slice())
     }
 
     /// Point each closure and function value naming a body nested in
