@@ -4,29 +4,28 @@
 use super::*;
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
-    /// Parses a type annotation. As upstream parses an annotation, one led by
-    /// a name or `None` (`Bool`, `Self.T`, `C.Element`, `Pair[Int]`,
-    /// `type_of(x).T`, `M.Of[Int]()[0]`) is one expression at `**`
-    /// precedence, converted in the annotation's type context
-    /// ([`Expr::annotation_type`]). A `*` pack, a `def` function type, a
-    /// `__generator_type`, and a contextual `ref` reference type keep their
-    /// own forms.
+    /// Parses a type annotation. As upstream parses an annotation, it is one
+    /// expression at `**` precedence (`Bool`, `Self.T`, `Pair[Int]`,
+    /// `type_of(x).T`, `def(Int) -> Int`, `__generator_type[T: AnyType] T`,
+    /// `(Int)`), converted in the annotation's type context
+    /// ([`Expr::annotation_type`]). Only a `*` pack and a contextual `ref`
+    /// reference type keep their own forms.
     pub(super) fn parse_type(&mut self) -> Result<Type, ParseError> {
-        let expression_led = match self.peek_token()? {
-            Some(Token::None) => true,
-            Some(Token::Identifier(id)) => id != "ref",
-            _ => false,
-        };
-        if expression_led {
-            let head = self.parse_prefix()?;
-            return self.annotation_from(head);
-        }
-        match self.next_token()? {
+        self.parse_type_at(Precedence::Power)
+    }
+
+    /// [`Self::parse_type`] with the annotation expression read above `min`:
+    /// a function type's result is a whole expression, read at
+    /// [`Precedence::Walrus`].
+    pub(super) fn parse_type_at(&mut self, min: Precedence) -> Result<Type, ParseError> {
+        let start = self.peek_start();
+        match self.peek_token()? {
             // A variadic type-pack reference in `*args: *ArgTypes`. Inside a
             // struct, current Mojo spells the struct's own pack `*Self.Ts`;
             // the qualified spread keeps its own node so the elaborator can
             // tell it from a bare `*Ts`, which a struct member may not use.
-            Token::Star => {
+            Some(Token::Star) => {
+                self.next_token()?;
                 if !matches!(self.peek_token()?, Some(Token::Identifier(_))) {
                     let name = self.expect_identifier("Expected a type-pack name after '*'")?;
                     return Ok(Type::Named(format!("*{name}"), Vec::new()));
@@ -44,65 +43,55 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     ParseError::Message("Expected a type-pack name after '*'".to_string())
                 })
             }
-            // A function type: `def(types) [effects] -> ret`.
-            Token::Def => self.parse_function_type_tail(),
-            // A generator type: `__generator_type [params] result`.
-            Token::GeneratorType => self.parse_generator_type_tail(),
-            // `ref [origin] T` — a reference type (parametric mutability). The
-            // origin specifier is parsed and discarded; the referent follows.
-            // (`ref` is contextual — a following `[` or type token, not `.`/end.)
-            Token::Identifier(id)
-                if id == "ref"
-                    && matches!(
-                        self.peek_token()?,
-                        Some(Token::LBracket | Token::Identifier(_) | Token::Def | Token::None)
-                    ) =>
-            {
+            Some(Token::Identifier(id)) if id == "ref" => {
+                self.next_token()?;
+                // `ref` is contextual: a following `[` or referent makes a
+                // reference type; otherwise it is an ordinary name.
+                if !matches!(
+                    self.peek_token()?,
+                    Some(
+                        Token::LBracket
+                            | Token::Identifier(_)
+                            | Token::Def
+                            | Token::GeneratorType
+                            | Token::None
+                            | Token::LParen
+                    )
+                ) {
+                    let head = self.node(ExprKind::Identifier("ref".to_string()), start);
+                    return self.annotation_from(head, min);
+                }
+                // `ref [origin] T` — a reference type (parametric
+                // mutability); the referent follows the origin specifier.
                 let origin = self.parse_optional_origin_specifier()?;
                 Ok(Type::Ref {
-                    referent: Box::new(self.parse_type()?),
+                    referent: Box::new(self.parse_type_at(min)?),
                     origin,
                 })
             }
-            // A `ref` no referent follows is an ordinary name.
-            Token::Identifier(id) => {
-                let head = self.node(ExprKind::Identifier(id), self.last_span.0);
-                self.annotation_from(head)
+            _ => {
+                let head = self.parse_prefix()?;
+                self.annotation_from(head, min)
             }
-            token => Err(ParseError::UnexpectedToken(
-                token,
-                "Expected a type name".into(),
-            )),
         }
     }
 
     /// Parses a generator type after its leading `__generator_type` has been
     /// consumed, as upstream's `parseGeneratorType` does: an optional
-    /// parameter list, then the result type expression. A `&` composition
-    /// of traits is that expression whole (`__generator_type[T: Copyable]
-    /// Copyable & Defaultable`), recorded as a `$trait_composition`.
+    /// parameter list, then the result, one whole expression. A trait
+    /// composition (`__generator_type[T: Copyable] Copyable & Defaultable`)
+    /// is the `&` the expression grammar parses, converted by
+    /// [`Expr::composition_type`].
     pub(super) fn parse_generator_type_tail(&mut self) -> Result<Type, ParseError> {
         let params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
             self.parse_type_params()?
         } else {
             Vec::new()
         };
-        let mut members = vec![self.parse_type()?];
-        while matches!(self.peek_token()?, Some(Token::Amp)) {
-            self.next_token()?;
-            members.push(self.parse_type()?);
-        }
-        let result = if members.len() == 1 {
-            members.pop().expect("one generator result")
-        } else {
-            Type::Named(
-                "$trait_composition".to_string(),
-                members
-                    .into_iter()
-                    .map(mojito_ast::ast::ParamArg::Type)
-                    .collect(),
-            )
-        };
+        let expr = self.parse_expression(Precedence::Walrus)?;
+        let result = expr.composition_type().ok_or_else(|| {
+            ParseError::Message("expected a type, found an expression".to_string()).at(expr.span)
+        })?;
         Ok(Type::Generator {
             params,
             result: Box::new(result),
@@ -269,18 +258,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
         }
 
+        // The result is one whole expression, as upstream reads it.
         let ret = if matches!(self.peek_token()?, Some(Token::Arrow)) {
             self.next_token()?;
-            self.parse_type()?
+            self.parse_type_at(Precedence::Walrus)?
         } else {
             Type::None
         };
         // Trailing `where` clauses bind to the innermost function type: a
-        // function-type RETURN type consumes them here through its own
-        // `parse_type` above, matching upstream's rule that a declaration-
-        // level `where` after a function-type result needs the result
-        // parenthesized (Mojito has no parenthesized types, so that spelling
-        // is simply unavailable).
+        // function-type result that is itself a function type consumes them
+        // through its own tail above, matching upstream's rule that a
+        // declaration-level `where` after a function-type result needs the
+        // result parenthesized.
         let where_clauses = self.parse_where_clauses()?;
         Ok(Type::Func {
             type_params,
@@ -493,7 +482,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     ExprKind::Identifier(spelled_bound.clone()),
                     self.last_span.0,
                 );
-                let qualified = self.annotation_from(head)?;
+                let qualified = self.annotation_from(head, Precedence::Power)?;
                 value_type = Some(qualified);
                 spelled_bound
             } else {
@@ -523,8 +512,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let mut bounds = vec![first_bound];
             let mut callable_bound = callable_bound;
             while matches!(self.peek_token()?, Some(Token::Amp)) {
-                // A function type ends the composition: upstream reads its
-                // result as an expression, which takes any later `& Trait`.
+                // A function type ends the composition. One with a result
+                // never reaches here (its result expression takes the `&`);
+                // one without (`def(Int) & Copyable`) is still refused.
                 if callable_bound.is_some() {
                     return Err(ParseError::UnexpectedToken(
                         self.next_token()?,
@@ -618,8 +608,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// Reads the rest of an annotation whose head was just parsed as one
     /// expression at `**` precedence, and converts it in the annotation's
     /// type context.
-    fn annotation_from(&mut self, head: Expr) -> Result<Type, ParseError> {
-        let expr = self.parse_expression_from(head, Precedence::Power)?;
+    fn annotation_from(&mut self, head: Expr, min: Precedence) -> Result<Type, ParseError> {
+        let expr = self.parse_expression_from(head, min)?;
         expr.annotation_type().ok_or_else(|| {
             ParseError::Message("expected a type, found an expression".to_string()).at(expr.span)
         })

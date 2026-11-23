@@ -1331,7 +1331,13 @@ fn rejects_a_generator_type_without_a_result() {
     let mut parser = Parser::new(Lexer::new(
         "def apply[G: __generator_type[Idx: Int]]():\n    pass\n",
     ));
-    assert!(parser.parse_program().is_err());
+    let error = parser
+        .parse_program()
+        .expect_err("a missing generator result");
+    assert!(
+        error.to_string().contains("Expected an expression"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -1526,6 +1532,26 @@ fn parses_pass_in_trait_body() {
         }
         other => panic!("expected a trait, got {other:?}"),
     }
+}
+
+#[test]
+fn a_trait_comptime_member_composition_is_one_expression() {
+    let StmtKind::Trait {
+        comptime_members, ..
+    } = &parse("trait Holder:\n    comptime Element: Copyable & Defaultable\n")[0].kind
+    else {
+        panic!("expected a trait");
+    };
+    assert_eq!(
+        comptime_members[0].ty,
+        Type::Named(
+            "$trait_composition".into(),
+            vec![
+                ParamArg::Type(Type::Named("Copyable".into(), vec![])),
+                ParamArg::Type(Type::Named("Defaultable".into(), vec![])),
+            ]
+        )
+    );
 }
 
 #[test]
@@ -4556,20 +4582,73 @@ fn composes_a_function_type_after_trait_bounds() {
 }
 
 #[test]
-fn a_function_type_ends_a_bound_composition() {
-    // The pin reads the result as an expression, which takes the `&`.
+fn a_function_type_result_takes_a_later_composition() {
+    // The pin reads the result as one expression, which takes the `&`, so
+    // the result is no type.
     for source in [
         "def f[F: def(Int) -> Int & Copyable](f: F):\n    pass\n",
         "def f[F: Copyable & def(Int) -> Int & def(Int) -> Int](f: F):\n    pass\n",
+        "def f(x: def() -> Int == Int):\n    pass\n",
     ] {
-        let error = mojito::parse(source).expect_err("a bound after a function type");
+        let error = mojito::parse(source).expect_err("a composed function-type result");
         assert!(
             error
                 .to_string()
-                .contains("a function type ends a type-parameter bound"),
+                .contains("expected a type, found an expression"),
             "{error}"
         );
     }
+}
+
+#[test]
+fn an_annotation_is_one_expression() {
+    let statements = parse("def g(x: (Int)) -> (Int):\n    return x\n");
+    let StmtKind::Def { params, ret, .. } = &statements[0].kind else {
+        panic!("expected a def");
+    };
+    assert_eq!(params[0].ty, Type::Named("Int".into(), vec![]));
+    assert_eq!(*ret, Some(Type::Named("Int".into(), vec![])));
+    let error = mojito::parse("def g(x: 3):\n    pass\n").expect_err("a value annotation");
+    assert!(
+        error
+            .to_string()
+            .contains("expected a type, found an expression"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_generator_result_composition_is_one_expression() {
+    let composition = |source: &str| {
+        let statements = parse(source);
+        let StmtKind::Comptime { value, .. } = &statements[0].kind else {
+            panic!("expected a comptime");
+        };
+        let ExprKind::TypeValue(Type::Generator { result, .. }) = &value.kind else {
+            panic!("expected a generator type, found {value:?}");
+        };
+        (**result).clone()
+    };
+    let named = |name: &str| ParamArg::Type(Type::Named(name.into(), vec![]));
+    let pair = Type::Named(
+        "$trait_composition".into(),
+        vec![named("Copyable"), named("Defaultable")],
+    );
+    assert_eq!(
+        composition("comptime G = __generator_type[T: AnyType] Copyable & Defaultable\n"),
+        pair
+    );
+    assert_eq!(
+        composition("comptime G = __generator_type[T: AnyType] (Copyable & Defaultable)\n"),
+        pair
+    );
+    assert_eq!(
+        composition("comptime G = __generator_type[T: AnyType] A & B & C\n"),
+        Type::Named(
+            "$trait_composition".into(),
+            vec![named("A"), named("B"), named("C")]
+        )
+    );
 }
 
 #[test]

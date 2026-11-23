@@ -594,23 +594,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Vec::new()
         };
         self.expect(&Token::Colon, "Expected ':' after the comptime member name")?;
-        let first = self.parse_type()?;
-        let mut bounds = vec![first];
-        while matches!(self.peek_token()?, Some(Token::Amp)) {
-            self.next_token()?;
-            bounds.push(self.parse_type()?);
-        }
-        let ty = if bounds.len() == 1 {
-            bounds.pop().expect("one associated member annotation")
-        } else {
-            mojito_ast::ast::Type::Named(
-                "$trait_composition".to_string(),
-                bounds
-                    .into_iter()
-                    .map(mojito_ast::ast::ParamArg::Type)
-                    .collect(),
-            )
-        };
+        // The annotation is one expression; a trait composition is its `&`.
+        let expr = self.parse_expression(Precedence::Walrus)?;
+        let ty = expr.composition_type().ok_or_else(|| {
+            ParseError::Message("expected a type, found an expression".to_string()).at(expr.span)
+        })?;
         let where_clauses = self.parse_where_clauses()?;
         let default = if matches!(self.peek_token()?, Some(Token::Assign)) {
             self.next_token()?;

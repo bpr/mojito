@@ -13362,18 +13362,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2135 Function and generator annotations bypass the expression grammar**
-
-  `parse_type` reads `def(...)` and `__generator_type` with its own arms,
-  where the expression grammar already yields `ExprKind::TypeValue` for
-  them.
-  - `Expr::annotation_type` unwraps them, and a generator result's `&`
-    composition becomes the `Infix(BitAnd)` upstream parses, converted to
-    `$trait_composition`.
-  - After it, `parse_type` is the `ref`/`*` prefixes plus one expression.
-  - Depends on R2134.
-  - Model: Fable, Planned.
-
 - [ ] **R2136 Type-parameter bounds are a third, identifier-led grammar**
 
   `parse_type_params` (`parser/types.rs`) reads a bound (`T: Copyable &
@@ -13397,6 +13385,13 @@ follow-ups the landed producer stages filed come last.
   - The checker's `ty_from_anno` would convert through
     `Expr::annotation_type`, deleting `Type` as a parser product along with
     `Type::Value` and `Type::expression_spelling`.
+  - A type-valued expression the parser cannot convert is rejected where
+    the pin evaluates it (found landing R2135, 2026-11-23).
+  - Probe: `def g(x: def() -> Int if True else Int)` and
+    `comptime H = __generator_type[T: AnyType] Int if True else Int` are
+    "expected a type, found an expression"; the pin accepts both.
+  - Probe: `def g(x: Int if True else Int)` stops at the parser's `**`
+    floor for a plain annotation; the pin reads a whole expression there.
   - Updates `docs/architecture.md` and `docs/symbol-map.md`.
   - Depends on R2136.
   - Model: Fable, Not Planned.

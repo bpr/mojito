@@ -1259,25 +1259,25 @@ Notes:
 
 ```
 type:
-    | annotation_expression       # a name-led or `None`-led expression read as a type
-    | function_type               # a checked function/closure contract or value type
+    | annotation_expression       # any expression read as a type
     | 'ref' [origin_spec] type    # an origin-checked reference type `ref[origin] T` (a direct field, a result; never a type argument)
     | '*' NAME | '*' 'Self' '.' NAME  # a variadic type-pack reference
-    | generator_type               # the type of a parameterized compile-time declaration
-annotation_expression:            # the expression grammar at `**` precedence
-    | (NAME | 'None') annotation_postfix*
-annotation_postfix: '.' NAME | '[' subscript ']' | '(' [call_args] ')'
-generator_type: '__generator_type' [params_decl] '&'.type+
-function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type
+annotation_expression:            # the expression grammar at `**` precedence, including
+    | expression                  # a function_type, a generator_type, and `( expression )`
+generator_type: '__generator_type' [params_decl] expression   # result read at ternary level
+function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* ['->' result_type]
+result_type: 'ref' [origin_spec] type | expression            # read at ternary level
 function_type_param:
     | 'var' '**' NAME ':' type
     | [convention] [NAME ':'] type
 fn_effect: 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 ```
 
-As upstream parses an annotation, one led by a name or `None` is one
-expression (the expression grammar's postfix chain at `**` precedence),
-converted in the annotation's type context (`Expr::annotation_type`):
+As upstream parses an annotation, it is one expression (the expression
+grammar at `**` precedence; a function type's result and a generator type's
+result are whole expressions, read at ternary level), converted in the
+annotation's type context (`Expr::annotation_type`). Only a `*` pack and a
+contextual `ref` keep their own forms:
 
 - `None` is the none type (a bracket operand reads the same expression but
   keeps `None` a value); `Self` is the enclosing type; any other `NAME`,
@@ -1291,6 +1291,8 @@ converted in the annotation's type context (`Expr::annotation_type`):
   projection (`Self[0]`, `M.Buf[3]`, `values.element_types[i]`), and any
   other list applies a member (`M.A[1, 2]`).
 - `type_of(expression)` is the type of its operand.
+- A `def` function type and a `__generator_type` are the type they spell;
+  a parenthesized annotation (`(Int)`) is its operand.
 - Any other call, and a call of an applied member, is a compile-time value
   (a construction, `Pair[Int](1, 2)`, `M.Of[Int]()`), a type only as the
   base of a subscript.
@@ -1350,12 +1352,16 @@ upstream's `__getitem_param__`; the value alone is "expected a type".
 application yields. `__generator_type` is a keyword. It parses into
 `Type::Generator` wherever a type does, and as an expression too (an alias
 body, `comptime Gen = __generator_type[Idx: Int] Int`), as `def` function
-types do. A missing result type is a parse error. The result is a type
-expression, so a `&` composition after it is the whole result
-(`[G: __generator_type[T: Copyable] Copyable & Defaultable]`), never
-further bounds of the parameter it types; it parses into the
-`$trait_composition` node an associated member's composed bound uses, and
-the checker requires each member to be a trait.
+types do. A missing result is a parse error ("Expected an expression").
+The result is one whole expression, so a `&` composition after it is the
+whole result (`[G: __generator_type[T: Copyable] Copyable & Defaultable]`),
+never further bounds of the parameter it types. It converts as a trait
+composition (`Expr::composition_type`, which an associated member's
+annotation uses too): an `&` chain becomes the `$trait_composition` node,
+and the checker requires each member to be a trait. Any other operator
+(`A & B | C`, `Int == Int`) is "expected a type, found an expression". A
+function type's result is a whole expression too, converted as an
+annotation, so `def(Int) -> Int & Copyable` is no type.
 A **member application** `type '.' NAME param_args` reads a type's
 parameterized `comptime` member (`S[Int].Of[Bool]`, `M.Pair[A, B]`,
 `_MLIR.KGENParamListType[Int]`) and parses into `Type::Assoc` with the

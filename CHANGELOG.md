@@ -2426,6 +2426,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every type annotation other than a `*` pack or a contextual `ref` type
+  parses as one expression, as upstream parses it: `def` function types,
+  `__generator_type`, and parenthesized annotations (`x: (Int)`, newly
+  accepted) go through the expression grammar, and a function or generator
+  type's result is a whole expression, so a generator result's `&`
+  composition (and an associated member's) is the `&` operator converted to
+  a trait composition. A function-type result with a later operator
+  (`def(Int) -> Int & Copyable`) or a value annotation (`x: 3`) is now
+  "expected a type, found an expression" (R2135).
+
 - A type annotation led by a name or `None` parses as one expression at
   `**` precedence, as upstream parses an annotation, and converts in the
   annotation's type context (`Expr::annotation_type`): named types, members,

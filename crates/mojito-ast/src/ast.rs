@@ -2396,11 +2396,13 @@ impl Expr {
     /// - `type_of(x)` is [`Type::TypeOf`];
     /// - any other call, or an applied member's construction
     ///   (`Pair[Int](1, 2)`, `M.Of[Int]()`), is the compile-time value it
-    ///   builds ([`Type::Value`]).
+    ///   builds ([`Type::Value`]);
+    /// - a `def` function type or a `__generator_type` is the type it spells.
     ///
     /// Anything else (a method call, a slice, an operator) is no type.
     pub fn annotation_type(&self) -> Option<Type> {
         match &self.kind {
+            ExprKind::TypeValue(ty) => Some(ty.clone()),
             ExprKind::None => Some(Type::None),
             ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
             ExprKind::Identifier(name) if name != "..." && name != CONTEXTUAL_SENTINEL => {
@@ -2455,6 +2457,33 @@ impl Expr {
             }
             _ => None,
         }
+    }
+
+    /// The type an expression spells where upstream composes traits as a
+    /// type (a generator result, an associated member's annotation): an
+    /// `&` chain (`Copyable & Defaultable`), however nested, is a
+    /// `$trait_composition` of its members in source order, each converted
+    /// by [`Self::annotation_type`]; any other expression converts as an
+    /// annotation.
+    pub fn composition_type(&self) -> Option<Type> {
+        let mut members = Vec::new();
+        self.composition_members(&mut members)?;
+        if members.len() == 1 {
+            return members.pop();
+        }
+        Some(Type::Named(
+            "$trait_composition".to_string(),
+            members.into_iter().map(ParamArg::Type).collect(),
+        ))
+    }
+
+    fn composition_members(&self, members: &mut Vec<Type>) -> Option<()> {
+        if let ExprKind::Infix(InfixOp::BitAnd, left, right) = &self.kind {
+            left.composition_members(members)?;
+            return right.composition_members(members);
+        }
+        members.push(self.annotation_type()?);
+        Some(())
     }
 }
 

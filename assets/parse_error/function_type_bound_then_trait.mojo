@@ -1,6 +1,7 @@
-# expect: a function type ends a type-parameter bound
-# A function type's result takes a later `& Trait`, so the traits of a
-# composed bound come before the function type.
+# expect: expected a type, found an expression
+# A function type's result is one whole expression, so a later `& Trait` is
+# part of it and the result is no type: the traits of a composed bound come
+# before the function type.
 def inc(a: Int) -> Int:
     return a + 1
 
