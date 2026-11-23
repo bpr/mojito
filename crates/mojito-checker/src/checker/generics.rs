@@ -2448,9 +2448,8 @@ impl Checker {
                 mojito_ast::ast::ParamArg::Value(expression) => expression,
                 mojito_ast::ast::ParamArg::Named { value, .. } => match value.as_ref() {
                     mojito_ast::ast::ParamArg::Value(expression) => expression,
-                    _ => continue,
+                    mojito_ast::ast::ParamArg::Named { .. } => continue,
                 },
-                mojito_ast::ast::ParamArg::Type(_) => continue,
             };
             if self
                 .eval_associated_ct(expression)
@@ -2847,7 +2846,7 @@ impl Checker {
                 }
                 _ => None,
             },
-            _ => None,
+            ParamArg::Named { .. } => None,
         }
         .unwrap_or_else(|| CtValue::Deferred(binder.binder()))
     }
@@ -2978,7 +2977,6 @@ pub(super) fn origin_mutability_literal(
             ExprKind::Str(_) => Err(mismatch("StringLiteral")),
             _ => Ok(None),
         },
-        ParamArg::Type(_) => Err(mismatch("a type")),
         ParamArg::Named { .. } => Ok(None),
     }
 }

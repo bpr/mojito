@@ -23,7 +23,6 @@
 
 use mojito_ast::ast::{
     Expr, ExprKind, InfixOp, ParamArg, PrefixOp, Stmt, StmtKind, Type, TypeParam, WithItem,
-    subscript_param_args,
 };
 pub use mojito_symbol::symbol::mangle;
 use mojito_types::types::TyKind;
@@ -32,7 +31,7 @@ use mojito_checker::checker::InstalledInterfaces;
 use mojito_common::token::Span;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamContext, ParamExpr};
-use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
+use mojito_types::types::{ParamDecl, Ty, list_type, tuple_type};
 use std::collections::{HashMap, HashSet};
 
 /// An error from compile-time elaboration.
@@ -102,7 +101,6 @@ pub fn prepare_importing(
     auto_parameterize::parameterize_unbound_arguments(&mut own, installed);
     fold_simd_alias_bounds(&mut own, installed);
     fold_kgen_type_parameters(&mut own, installed)?;
-    read_materialize_self_operands(&mut own);
     Ok(own)
 }
 
@@ -163,14 +161,15 @@ fn mk(kind: StmtKind, span: Span) -> Stmt {
 }
 
 /// The alias a `comptime NAME = Ts[index]` statement declares of an element
-/// of a pack `is_pack` accepts, as the type `Ts[index]` it denotes: such an
-/// alias names a parameter expression, so a template carries it as that
-/// dependent element rather than evaluating it with the index unknown. An
-/// enclosing struct's pack is spelled, and asked of `is_pack`, as `Self.Ts`.
+/// of a pack `is_pack` accepts, beside the expression `Ts[index]` it
+/// denotes: such an alias names a parameter expression, so a template
+/// carries it as that dependent element rather than evaluating it with the
+/// index unknown. An enclosing struct's pack is spelled, and asked of
+/// `is_pack`, as `Self.Ts`.
 pub(super) fn pack_element_alias(
     kind: &StmtKind,
     is_pack: &dyn Fn(&str) -> bool,
-) -> Option<(String, Type)> {
+) -> Option<(String, Expr)> {
     let StmtKind::Comptime {
         name,
         type_params,
@@ -181,31 +180,19 @@ pub(super) fn pack_element_alias(
     else {
         return None;
     };
-    let ExprKind::Index { object, index } = &value.kind else {
+    let ExprKind::Index { object, .. } = &value.kind else {
         return None;
     };
     if !type_params.is_empty() || !where_clauses.is_empty() {
         return None;
     }
-    match &object.kind {
-        ExprKind::Identifier(base) if is_pack(base) => Some((
-            name.clone(),
-            Type::Named(base.clone(), subscript_param_args(index)),
-        )),
-        ExprKind::Member { object, field }
-            if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
-                && is_pack(&format!("Self.{field}")) =>
-        {
-            Some((
-                name.clone(),
-                Type::IndexedProjection {
-                    base: Box::new(Type::SelfParam(field.clone())),
-                    index: index.clone(),
-                },
-            ))
-        }
-        _ => None,
-    }
+    let pack = match &object.kind {
+        ExprKind::Identifier(base) => is_pack(base),
+        _ => object
+            .self_member()
+            .is_some_and(|field| is_pack(&format!("Self.{field}"))),
+    };
+    pack.then(|| (name.clone(), value.clone()))
 }
 
 /// The trait metatype `type_of(operand)` denotes when the operand is a
@@ -225,8 +212,16 @@ pub(super) fn any_trait_source_type(operand: &Expr) -> Option<Ty> {
 fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
     match ty {
         Type::Named(name, arguments) if arguments.is_empty() => {
-            if let Some(replacement) = subs(name) {
+            if let Some(replacement) = rewrite::substituted_type(name, subs) {
                 *ty = replacement;
+            }
+        }
+        // A `$trait_composition`'s members are annotations of their own.
+        Type::Named(name, arguments) if name == "$trait_composition" => {
+            for argument in arguments {
+                if let ParamArg::Value(member) = argument {
+                    rewrite::retype_annotation(member, subs);
+                }
             }
         }
         Type::Named(_, arguments) => {
@@ -237,14 +232,14 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
         // `Self.T` — the enclosing struct's own parameter spelled through
         // `Self`, the dominant spelling inside struct bodies.
         Type::SelfParam(name) => {
-            if let Some(replacement) = subs(name) {
+            if let Some(replacement) = rewrite::substituted_type(name, subs) {
                 *ty = replacement;
             }
         }
         Type::Assoc { base, name, args }
             if args.is_empty() && matches!(base.as_ref(), Type::SelfType) =>
         {
-            if let Some(replacement) = subs(name) {
+            if let Some(replacement) = rewrite::substituted_type(name, subs) {
                 *ty = replacement;
             }
         }
@@ -358,201 +353,31 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
 /// which parses as an expression) by the type it spells.
 fn ct_param_argument_type(argument: &ParamArg) -> Option<Ty> {
     match argument {
-        ParamArg::Type(ty) => ct_param_source_type(ty),
-        ParamArg::Value(value)
-            if matches!(
-                value.kind,
-                ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
-            ) =>
-        {
-            ct_param_source_type(&value.type_spelling()?)
-        }
-        _ => None,
+        ParamArg::Value(Expr {
+            kind: ExprKind::TypeValue(ty),
+            ..
+        }) => ct_param_source_type(ty),
+        ParamArg::Value(value) => ct_param_source_type(&value.type_spelling()?),
+        ParamArg::Named { .. } => None,
     }
-}
-
-fn source_type_from_ty_with_origins(
-    ty: &Ty,
-    origin_names: &HashMap<mojito_types::origin::OriginParamId, String>,
-) -> Option<Type> {
-    Some(match ty.kind() {
-        kind if kind.is_int() || kind.is_int_literal() => {
-            Type::Named("Int".to_string(), Vec::new())
-        }
-        kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
-        kind if kind.is_bool() => Type::Named("Bool".to_string(), Vec::new()),
-        kind if let Some(value) = kind.string_literal_value() => Type::Named(
-            mojito_types::types::STRING_LITERAL_TYPE_NAME.to_string(),
-            vec![ParamArg::Value(value.materialize((0, 0))?)],
-        ),
-        kind if kind.is_float64() || kind.is_float_literal() => {
-            Type::Named("Float64".to_string(), Vec::new())
-        }
-        TyKind::None => Type::None,
-        TyKind::KgenString => kgen_string_source_type(),
-        TyKind::KgenDeferred => mlir_source_type("!kgen.deferred"),
-        TyKind::KgenTarget => mlir_source_type("!kgen.target"),
-        TyKind::Index => mlir_source_type("index"),
-        TyKind::I1 => mlir_source_type("i1"),
-        TyKind::Ui8 => mlir_source_type("ui8"),
-        TyKind::KgenDtype => mlir_source_type("!kgen.dtype"),
-        TyKind::KgenAddressSimd {
-            width: mojito_types::types::SimdWidth::Known(width),
-        } => mlir_source_type(&format!("!kgen.simd<{width}, address>")),
-        // A callable has no source spelling a clone could carry.
-        TyKind::Func(_) | TyKind::GenericFunc(_) => return None,
-        TyKind::ComptimeList(element) => Type::Named(
-            "List".to_string(),
-            vec![ParamArg::Type(source_type_from_ty_with_origins(
-                element,
-                origin_names,
-            )?)],
-        ),
-        // Upstream's `_MLIR.KGENParamListType[T]` body.
-        TyKind::ParamList(element) => {
-            let delimiter = |text: &str| {
-                ParamArg::Value(mojito_ast::ast::Expr::from(
-                    mojito_ast::ast::ExprKind::Identifier(text.to_string()),
-                ))
-            };
-            Type::Named(
-                "__mlir_type".to_string(),
-                vec![
-                    delimiter("!kgen.param_list<"),
-                    ParamArg::Type(source_type_from_ty_with_origins(element, origin_names)?),
-                    delimiter(">"),
-                ],
-            )
-        }
-        TyKind::Tuple(elements) => Type::Named(
-            "__RuntimeTuple".to_string(),
-            elements
-                .iter()
-                .map(|element| source_type_from_ty_with_origins(element, origin_names))
-                .collect::<Option<Vec<_>>>()?
-                .into_iter()
-                .map(ParamArg::Type)
-                .collect(),
-        ),
-        // A generated public-Tuple specialization retains its element types
-        // as semantic metadata behind an argument-less symbol. Spell it as the
-        // canonical `Tuple[...]` application, which the checker maps back onto
-        // the discovered specialization, instead of applying the retained
-        // arguments to the erased symbol.
-        struct_ty
-            if let Some((name, _)) = struct_ty.as_non_pointer_struct()
-                && name != mojito_types::types::TUPLE_TYPE_NAME
-                && let Some(elements) = mojito_types::types::tuple_elements(ty) =>
-        {
-            Type::Named(
-                mojito_types::types::TUPLE_TYPE_NAME.to_string(),
-                elements
-                    .into_iter()
-                    .map(|element| source_type_from_ty_with_origins(element, origin_names))
-                    .collect::<Option<Vec<_>>>()?
-                    .into_iter()
-                    .map(ParamArg::Type)
-                    .collect(),
-            )
-        }
-        struct_ty if let Some((name, arguments)) = struct_ty.as_non_pointer_struct() => {
-            Type::Named(
-                name.clone(),
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => {
-                            source_type_from_ty_with_origins(ty, origin_names).map(ParamArg::Type)
-                        }
-                        TyArg::Val(value) => value.materialize((0, 0)).map(ParamArg::Value),
-                        // An origin tail entry spells as the binder it names, with
-                        // its interior or subtree projection, when the clone has
-                        // one in scope, else as upstream's `_` placeholder: a
-                        // concrete place has no source spelling, and the slot
-                        // infers again at the clone's own use sites.
-                        TyArg::Origin(origin) => Some(ParamArg::Value(
-                            binder_origin_spelling(origin, origin_names).unwrap_or_else(|| {
-                                Expr::new(ExprKind::Identifier("_".to_string()), (0, 0))
-                            }),
-                        )),
-                    })
-                    .collect::<Option<Vec<_>>>()?,
-            )
-        }
-        // A symbolic slot has no source spelling; the elaborator only spells
-        // bound instances.
-        kind if let Some((dtype, width)) = kind.as_simd() => Type::Named(
-            "SIMD".to_string(),
-            vec![
-                ParamArg::Value(
-                    mojito_types::types::dtype_value(dtype.known()?).materialize((0, 0))?,
-                ),
-                ParamArg::Value(CtValue::Int(width.known()?).materialize((0, 0))?),
-            ],
-        ),
-        // A vector's storage is spelled through the vector's `_mlir_type`
-        // member, which names it.
-        TyKind::KgenSimd { .. } => Type::Assoc {
-            base: Box::new(source_type_from_ty_with_origins(
-                &mojito_types::types::storage_simd(ty)?,
-                origin_names,
-            )?),
-            name: "_mlir_type".to_string(),
-            args: Vec::new(),
-        },
-        _ => return None,
-    })
-}
-
-/// The source spelling of an origin argument over a binder `origin_names`
-/// names: the binder, then each `._get_owned_interior["tag"]` and
-/// `._subtree` projection upstream spells on it.
-fn binder_origin_spelling(
-    origin: &mojito_types::origin::Origin,
-    origin_names: &HashMap<mojito_types::origin::OriginParamId, String>,
-) -> Option<Expr> {
-    use mojito_types::origin::{Origin, OriginSeg};
-    let (base, path) = match origin {
-        Origin::Projected(base, path) => (&**base, path.as_slice()),
-        other => (other, &[][..]),
-    };
-    let Origin::Param(id) = base else {
-        return None;
-    };
-    let binder = Expr::new(ExprKind::Identifier(origin_names.get(id)?.clone()), (0, 0));
-    path.iter().try_fold(binder, |object, segment| {
-        let member = |object, field: &str| ExprKind::Member {
-            object: Box::new(object),
-            field: field.to_string(),
-        };
-        let kind = match segment {
-            OriginSeg::Interior(tag) => ExprKind::Index {
-                object: Box::new(Expr::new(member(object, "_get_owned_interior"), (0, 0))),
-                index: Box::new(Expr::new(ExprKind::Str(tag.clone()), (0, 0))),
-            },
-            OriginSeg::Subtree => member(object, "_subtree"),
-            OriginSeg::Field(_) | OriginSeg::AnyIndex => return None,
-        };
-        Some(Expr::new(kind, (0, 0)))
-    })
 }
 
 fn substitute_source_param_arg_bindings(argument: &mut ParamArg, subs: rewrite::TypeSubs) {
     match argument {
-        ParamArg::Type(ty) => substitute_source_type_bindings(ty, subs),
         ParamArg::Named { value, .. } => substitute_source_param_arg_bindings(value, subs),
-        // A bracket operand is an expression (`Tuple[T, T]`, `List[Self.T]`);
-        // once a binder it names is concrete it is a type argument.
+        // A bracket operand is an expression (`Tuple[T, T]`, `List[Self.T]`,
+        // `Tuple[*Ts]`); once a binder it names is concrete it is the bound
+        // type's spelling.
         ParamArg::Value(expr) => {
             let binder = match &expr.kind {
                 ExprKind::Identifier(name) => Some(name.as_str()),
                 _ => expr.self_member(),
             };
             if let Some(replacement) = binder.and_then(subs) {
-                *argument = ParamArg::Type(replacement);
+                rewrite::put_replacement(expr, replacement);
             } else if matches!(
                 expr.kind,
-                ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. }
+                ExprKind::Spread(_) | ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. }
             ) {
                 rewrite::substitute_type_bindings_in_expr(expr, subs);
             }
@@ -582,22 +407,18 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
 }
 
 /// The source spelling of upstream's `!kgen.string` type,
-/// `` __mlir_type.`!kgen.string` ``.
-fn kgen_string_source_type() -> Type {
-    mlir_source_type("!kgen.string")
-}
-
-/// The `` __mlir_type.`name` `` spelling.
-fn mlir_source_type(name: &str) -> Type {
-    Type::Assoc {
-        base: Box::new(Type::Named("__mlir_type".to_string(), Vec::new())),
-        name: name.to_string(),
-        args: Vec::new(),
-    }
-}
-
-fn source_type_from_ty(ty: &Ty) -> Option<Type> {
-    source_type_from_ty_with_origins(ty, &HashMap::new())
+/// `` __mlir_type.`!kgen.string` ``, at `span`.
+fn kgen_string_source_type(span: mojito_common::token::Span) -> Expr {
+    Expr::new(
+        ExprKind::Member {
+            object: Box::new(Expr::new(
+                ExprKind::Identifier("__mlir_type".to_string()),
+                span,
+            )),
+            field: "!kgen.string".to_string(),
+        },
+        span,
+    )
 }
 
 mod rewrite;

@@ -2111,7 +2111,6 @@ fn rewrite_args(
 ) {
     for arg in args {
         match arg {
-            ParamArg::Type(ty) => rewrite_type(ty, names, namespaces),
             ParamArg::Value(expr) => rewrite_expr(expr, names, namespaces),
             ParamArg::Named { value, .. } => {
                 rewrite_args(std::slice::from_mut(value), names, namespaces);

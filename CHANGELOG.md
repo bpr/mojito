@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every bracket operand is an expression, as upstream's are (R2539):
+  `ParamArg::Type` is gone, a bracket's pack operand (`Tuple[*Ts]`,
+  `Tuple[*Self.Ts]`) is the spread expression, and the checker and the
+  elaborator spell a checked type as the expression source would write
+  (`mojito_types::ct::source_expr`). No program's behavior changes. The
+  cached package format moves to `mojito-package 270`.
+
 - A pack-spread annotation (`*args: *Ts`, `var *args: *Self.Ts`) parses
   to the spread expression upstream parses, instead of a `*`-prefixed type
   name (R2538); the checker reads the spread as the pack it names, so no

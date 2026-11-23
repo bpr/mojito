@@ -150,7 +150,7 @@ impl Checker {
         if let Some(argument) = param_args.first() {
             let attribute = match argument {
                 mojito_ast::ast::ParamArg::Named { name, .. } => name.as_str(),
-                _ => "",
+                mojito_ast::ast::ParamArg::Value(_) => "",
             };
             return Err(invalid(format!(
                 "attribute '{attribute}' is not an inherent attribute of '{name}'"

@@ -12,8 +12,9 @@ use mojito_ast::ast::FnParam;
 // in scope throughout the clone — shadowed only by a nested declaration's
 // own type parameter of the same name.
 
-/// A binding→concrete-source-type lookup for a dropped-parameter rewrite.
-pub(super) type TypeSubs<'a> = &'a dyn Fn(&str) -> Option<Type>;
+/// A binding→concrete-source-type lookup for a dropped-parameter rewrite:
+/// the expression spelling the type the binding stands for.
+pub(super) type TypeSubs<'a> = &'a dyn Fn(&str) -> Option<Expr>;
 
 pub(super) fn substitute_type_bindings_in_block(body: &mut [Stmt], subs: TypeSubs) {
     for statement in body {
@@ -29,6 +30,44 @@ pub(super) fn substitute_type_bindings_in_expr(e: &mut Expr, subs: TypeSubs) {
     retype_expr(e, subs);
 }
 
+/// The type `subs` binds `name` to, as an annotation's type-context view
+/// reads the replacement expression.
+pub(super) fn substituted_type(name: &str, subs: TypeSubs) -> Option<Type> {
+    subs(name).and_then(|replacement| replacement.annotation_type())
+}
+
+/// Replace `e` by `replacement` at `e`'s occurrence, which keeps its span,
+/// source, and identity; a part `replacement` synthesized without a span
+/// takes `e`'s.
+pub(super) fn put_replacement(e: &mut Expr, mut replacement: Expr) {
+    struct Respan(mojito_common::token::Span);
+    impl mojito_ast::visit::MutVisitor for Respan {
+        fn visit_expr_mut(&mut self, expr: &mut Expr) {
+            if expr.span == mojito_common::token::DUMMY_SPAN {
+                expr.span = self.0;
+            }
+        }
+    }
+    mojito_ast::visit::walk_expr_mut(&mut Respan(e.span), &mut replacement);
+    e.kind = replacement.kind;
+}
+
+/// Substitute a pack spread (`*Ts`, `*Self.Ts`) under the pack's
+/// `*`-prefixed name; whether `subs` answered it.
+pub(super) fn retype_spread(e: &mut Expr, subs: TypeSubs) -> bool {
+    let ExprKind::Spread(operand) = &e.kind else {
+        return false;
+    };
+    let replacement = operand.pack_spread_type().and_then(|pack| match pack {
+        Type::Named(name, _) | Type::SelfParam(name) => subs(&name),
+        _ => None,
+    });
+    replacement.is_some_and(|replacement| {
+        put_replacement(e, replacement);
+        true
+    })
+}
+
 /// Substitutes the type occurrences of dropped bindings in an annotation
 /// slot's expression, position by position as the substitution of the type
 /// it converts to ([`substitute_type_bindings_in_type`]) does: a bare
@@ -37,14 +76,8 @@ pub(super) fn substitute_type_bindings_in_expr(e: &mut Expr, subs: TypeSubs) {
 /// keep their own spelling. A pack spread (`*Ts`, `*Self.Ts`) substitutes
 /// under the pack's `*`-prefixed name.
 pub(super) fn retype_annotation(e: &mut Expr, subs: TypeSubs) {
-    if let ExprKind::Spread(operand) = &e.kind {
-        let replacement = operand.pack_spread_type().and_then(|pack| match pack {
-            Type::Named(name, _) | Type::SelfParam(name) => subs(&name),
-            _ => None,
-        });
-        if let Some(replacement) = replacement {
-            *e = Expr::annotation_of(replacement, e.span);
-        }
+    if matches!(e.kind, ExprKind::Spread(_)) {
+        retype_spread(e, subs);
         return;
     }
     let binder = match &e.kind {
@@ -52,7 +85,7 @@ pub(super) fn retype_annotation(e: &mut Expr, subs: TypeSubs) {
         _ => e.self_member(),
     };
     if let Some(replacement) = binder.and_then(subs) {
-        e.kind = ExprKind::TypeValue(replacement);
+        put_replacement(e, replacement);
         return;
     }
     if e.self_member().is_some() {
@@ -89,7 +122,7 @@ pub(super) fn retype_annotation(e: &mut Expr, subs: TypeSubs) {
                     if let ExprKind::Identifier(name) = &object.kind
                         && let Some(replacement) = subs(name)
                     {
-                        e.kind = ExprKind::TypeValue(replacement);
+                        put_replacement(e, replacement);
                     }
                     return;
                 }
@@ -174,6 +207,10 @@ fn retype_annotation_operand(operand: &mut Expr, subs: TypeSubs) {
             retype_expr(operand, subs);
             return;
         }
+        ExprKind::Spread(_) => {
+            retype_spread(operand, subs);
+            return;
+        }
         _ => {}
     }
     let binder = match &operand.kind {
@@ -181,7 +218,7 @@ fn retype_annotation_operand(operand: &mut Expr, subs: TypeSubs) {
         _ => operand.self_member(),
     };
     if let Some(replacement) = binder.and_then(subs) {
-        operand.kind = ExprKind::TypeValue(replacement);
+        put_replacement(operand, replacement);
     }
 }
 
@@ -501,6 +538,9 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
 }
 
 fn retype_expr(e: &mut Expr, subs: TypeSubs) {
+    if retype_spread(e, subs) {
+        return;
+    }
     retype_bracket_head(e, subs);
     match &mut e.kind {
         ExprKind::Identifier(_) => {}
@@ -726,15 +766,14 @@ fn retype_param_args(args: &mut Vec<ParamArg>, subs: TypeSubs) {
 
 fn retype_param_arg(argument: &mut ParamArg, subs: TypeSubs) {
     match argument {
-        ParamArg::Type(ty) => substitute_type_bindings_in_type(ty, subs),
         ParamArg::Named { value, .. } => retype_param_arg(value, subs),
-        // The parser encodes a bare identifier argument (`pick[T]`) as a value
-        // expression; once the binding is concrete it is a type argument.
+        // A bare binder operand (`pick[T]`) is the bound type once the
+        // binding is concrete.
         ParamArg::Value(expr) => {
             if let ExprKind::Identifier(name) = &expr.kind
                 && let Some(replacement) = subs(name)
             {
-                *argument = ParamArg::Type(replacement);
+                put_replacement(expr, replacement);
             } else {
                 retype_expr(expr, subs);
             }
@@ -742,16 +781,25 @@ fn retype_param_arg(argument: &mut ParamArg, subs: TypeSubs) {
     }
 }
 
+/// The constructor name and bracket operands a substituted type spells,
+/// the head of a `Name[args](...)` call; `None` for a replacement no
+/// constructor head spells.
+fn replacement_head(replacement: &Expr) -> Option<(String, Vec<ParamArg>)> {
+    match &replacement.kind {
+        ExprKind::Identifier(name) => Some((name.clone(), Vec::new())),
+        _ => replacement
+            .bracket_application()
+            .map(|(name, args)| (name.to_string(), args.into_owned())),
+    }
+}
+
 /// Rewrite a constructor/type-application head that names a dropped binding
 /// (`T(…)` / `T[…]`) to the concrete type's own head, prepending the concrete
 /// type's arguments (`List[Int](…)` is head `List` with argument `[Int]`).
 fn retype_head(name: &mut String, args: &mut Vec<ParamArg>, subs: TypeSubs) {
-    let Some(replacement) = subs(name) else {
-        return;
-    };
     // No source constructor head exists (function types, references);
     // leave the call for the checker to report against the clone.
-    let Type::Named(head, head_args) = replacement else {
+    let Some((head, head_args)) = subs(name).as_ref().and_then(replacement_head) else {
         return;
     };
     *name = head;
@@ -765,19 +813,18 @@ fn retype_head(name: &mut String, args: &mut Vec<ParamArg>, subs: TypeSubs) {
 /// type's head, and its own arguments lead the operands.
 fn retype_bracket_head(e: &mut Expr, subs: TypeSubs) {
     use mojito_ast::ast::SubscriptArg;
-    let span = e.span;
     let (ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. }) = &mut e.kind else {
         return;
     };
     let ExprKind::Identifier(name) = &object.kind else {
         return;
     };
-    let Some(Type::Named(head, head_args)) = subs(name) else {
+    let Some((head, head_args)) = subs(name).as_ref().and_then(replacement_head) else {
         return;
     };
     let Some(mut operands) = head_args
         .into_iter()
-        .map(|argument| mojito_ast::ast::subscript_arg(argument, span))
+        .map(mojito_ast::ast::subscript_arg)
         .collect::<Option<Vec<_>>>()
     else {
         return;
@@ -859,7 +906,7 @@ fn retype_method(method: &mut mojito_ast::ast::Method, subs: TypeSubs) {
 fn without_shadowed<'a>(
     subs: TypeSubs<'a>,
     type_params: &[TypeParam],
-) -> impl Fn(&str) -> Option<Type> + 'a {
+) -> impl Fn(&str) -> Option<Expr> + 'a {
     let binders: Vec<String> = type_params
         .iter()
         .map(|parameter| parameter.name.trim_start_matches('*').to_string())
@@ -876,7 +923,7 @@ fn without_shadowed<'a>(
 #[cfg(test)]
 mod tests {
     use super::{retype_annotation, retype_composition, substitute_type_bindings_in_type};
-    use mojito_ast::ast::{Expr, ExprKind, InfixOp, ParamArg, SubscriptArg, Type};
+    use mojito_ast::ast::{Expr, ExprKind, InfixOp, SubscriptArg};
 
     fn name(spelling: &str) -> Box<Expr> {
         Box::new(Expr::from(ExprKind::Identifier(spelling.to_string())))
@@ -893,14 +940,11 @@ mod tests {
         Box::new(Expr::from(ExprKind::Index { object, index }))
     }
 
-    fn list_of_int() -> Type {
-        Type::Named(
-            "List".to_string(),
-            vec![ParamArg::Type(Type::Named("Int".to_string(), Vec::new()))],
-        )
+    fn list_of_int() -> Expr {
+        *index(name("List"), name("Int"))
     }
 
-    fn subs(binder: &str) -> Option<Type> {
+    fn subs(binder: &str) -> Option<Expr> {
         matches!(binder, "T" | "U" | "M").then(list_of_int)
     }
 

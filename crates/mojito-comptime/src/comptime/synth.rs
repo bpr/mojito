@@ -216,14 +216,14 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             decorators: Vec::new(),
             params: vec![mojito_ast::ast::FnParam {
                 name: "hasher".to_string(),
-                ty: Expr::annotation_of(
-                    Type::Named(
-                        "Some".to_string(),
-                        vec![ParamArg::Type(Type::Named(
-                            mojito_checker::checker::hasher_trait(),
-                            Vec::new(),
-                        ))],
-                    ),
+                ty: Expr::new(
+                    ExprKind::Index {
+                        object: Box::new(Expr::new(ExprKind::Identifier("Some".to_string()), span)),
+                        index: Box::new(Expr::new(
+                            ExprKind::Identifier(mojito_checker::checker::hasher_trait()),
+                            span,
+                        )),
+                    },
                     span,
                 ),
                 default: None,
@@ -372,32 +372,6 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
     }
 }
 
-/// `materialize`'s one parameter is a value, so a `Self.n` or
-/// `Self.values[i]` operand the parser read as a type spelling is the value
-/// expression it spells: the member read, or the subscript of one.
-pub(super) fn read_materialize_self_operands(program: &mut [Stmt]) {
-    struct Operands;
-    impl mojito_ast::visit::MutVisitor for Operands {
-        fn visit_expr_mut(&mut self, expr: &mut Expr) {
-            if let ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } = &mut expr.kind
-                && name == "materialize"
-                && args.is_empty()
-                && kwargs.is_empty()
-                && let [ParamArg::Type(operand)] = param_args.as_slice()
-                && let Some(operand) = self_value_operand(operand, expr.span)
-            {
-                param_args[0] = ParamArg::Value(operand);
-            }
-        }
-    }
-    mojito_ast::visit::walk_block_mut(&mut Operands, program);
-}
-
 /// Each trait the program declares, with the traits it refines.
 fn declared_trait_parents(program: &[Stmt]) -> HashMap<String, Vec<String>> {
     program
@@ -445,10 +419,8 @@ pub(super) fn fold_simd_alias_bounds(
         }
         // `Int`, `UInt`, and `Float64` spell their own alias, which value
         // parameter classification reads by name.
-        match source_type_from_ty(ty)? {
-            Type::Named(name, args) if name == "SIMD" => Some(args),
-            _ => None,
-        }
+        mojito_types::ct::source_call_head(ty, mojito_common::token::DUMMY_SPAN)
+            .and_then(|(name, args)| (name == "SIMD").then_some(args))
     };
     let aliases: HashMap<&str, &Expr> = program
         .iter()
@@ -540,7 +512,7 @@ fn simd_positional_args(args: Vec<ParamArg>) -> Option<Vec<ParamArg>> {
                 slots[slot] = Some(*value);
                 continue;
             }
-            arg => {
+            arg @ ParamArg::Value(_) => {
                 while slots.get(position)?.is_some() {
                     position += 1;
                 }
@@ -620,28 +592,6 @@ pub(super) fn fold_kgen_type_parameters(
         mojito_ast::visit::walk_stmt_mut(&mut fold, statement);
     }
     fold.error.map_or(Ok(()), Err)
-}
-
-/// The value expression a `Self.`-rooted type spelling denotes
-/// ([`read_materialize_self_operands`]).
-fn self_value_operand(operand: &Type, span: Span) -> Option<Expr> {
-    match operand {
-        Type::SelfParam(name) if !name.starts_with('*') => Some(Expr::new(
-            ExprKind::Member {
-                object: Box::new(Expr::new(ExprKind::Identifier("Self".to_string()), span)),
-                field: name.clone(),
-            },
-            span,
-        )),
-        Type::IndexedProjection { base, index } => Some(Expr::new(
-            ExprKind::Index {
-                object: Box::new(self_value_operand(base, span)?),
-                index: index.clone(),
-            },
-            span,
-        )),
-        _ => None,
-    }
 }
 
 /// The KGEN type `expr` spells, `` __mlir_type.`!kgen.type` `` or
@@ -726,7 +676,7 @@ impl mojito_ast::visit::MutVisitor for KgenTypeFold<'_> {
                     .value_type
                     .as_ref()
                     .map_or(self.span, |annotation| annotation.span);
-                parameter.value_type = Some(Expr::annotation_of(kgen_string_source_type(), span));
+                parameter.value_type = Some(kgen_string_source_type(span));
                 parameter.bounds = vec!["__mlir_type".to_string()];
             }
             _ => {}

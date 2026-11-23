@@ -3482,12 +3482,12 @@ fn runtime_param_arg_expressions<'a>(
         .filter(|(position, _)| attributes.get(*position).is_none_or(Option::is_none))
         .map(|(_, argument)| match argument {
             mojito_ast::ast::ParamArg::Named { value, .. } => &**value,
-            positional => positional,
+            positional @ mojito_ast::ast::ParamArg::Value(_) => positional,
         })
         .filter(|argument| mojito_ast::call::unbound_marker(argument).is_none())
         .filter_map(|argument| match argument {
             mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
-            mojito_ast::ast::ParamArg::Type(_) | mojito_ast::ast::ParamArg::Named { .. } => None,
+            mojito_ast::ast::ParamArg::Named { .. } => None,
         })
         .collect()
 }

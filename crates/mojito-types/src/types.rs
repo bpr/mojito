@@ -2501,17 +2501,12 @@ pub fn mlir_attribute_spelling(
 /// spelling reads through the struct value itself. `None` for an operand
 /// that reads no `_mlir_value`.
 pub fn mlir_value_operand(arg: &mojito_ast::ast::ParamArg) -> Option<mojito_ast::ast::ParamArg> {
-    use mojito_ast::ast::{Expr, ExprKind, ParamArg, Type};
+    use mojito_ast::ast::{Expr, ExprKind, ParamArg};
     match arg {
         ParamArg::Value(Expr {
             kind: ExprKind::Member { object, field },
             ..
         }) if field == crate::ct::MLIR_VALUE_FIELD => Some(ParamArg::Value((**object).clone())),
-        ParamArg::Type(Type::Assoc { base, name, args })
-            if name == crate::ct::MLIR_VALUE_FIELD && args.is_empty() =>
-        {
-            Some(ParamArg::Type((**base).clone()))
-        }
         _ => None,
     }
 }

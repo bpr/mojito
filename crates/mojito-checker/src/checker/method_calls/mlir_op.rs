@@ -267,7 +267,9 @@ impl Checker {
                         "attribute '{attribute}' is not an inherent attribute of '{name}'"
                     )));
                 }
-                _ => return Err(invalid("op attributes are named")),
+                mojito_ast::ast::ParamArg::Value(_) => {
+                    return Err(invalid("op attributes are named"));
+                }
             }
         }
         let index = match index {
@@ -384,7 +386,9 @@ impl Checker {
                         "attribute '{attribute}' is not an inherent attribute of '{name}'"
                     )));
                 }
-                _ => return Err(invalid("op attributes are named")),
+                mojito_ast::ast::ParamArg::Value(_) => {
+                    return Err(invalid("op attributes are named"));
+                }
             }
         }
         let count = match count {
@@ -465,7 +469,7 @@ impl Checker {
         if let Some(argument) = param_args.first() {
             let attribute = match argument {
                 mojito_ast::ast::ParamArg::Named { name, .. } => name.as_str(),
-                _ => "",
+                mojito_ast::ast::ParamArg::Value(_) => "",
             };
             return Err(invalid(format!(
                 "attribute '{attribute}' is not an inherent attribute of '{name}'"
@@ -519,7 +523,7 @@ impl Checker {
         if let Some(argument) = param_args.first() {
             let attribute = match argument {
                 mojito_ast::ast::ParamArg::Named { name, .. } => name.as_str(),
-                _ => "",
+                mojito_ast::ast::ParamArg::Value(_) => "",
             };
             return Err(invalid(format!(
                 "attribute '{attribute}' is not an inherent attribute of '{name}'"

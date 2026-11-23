@@ -5836,9 +5836,10 @@ A synthesized slot stores the expression source would spell
 (`Expr::annotation_of`). A `def` function type and a `__generator_type`
 are their own expression nodes (`ExprKind::FunctionType`,
 `ExprKind::GeneratorType`), whose parameter types and results are
-annotation expressions. The `SourceType`s left inside the AST are a `ref`
-referent and a bracket's type operand, each held in an
-`ExprKind::TypeValue` or a `ParamArg::Type`.
+annotation expressions, and every bracket operand is an expression. The
+one `SourceType` left inside the AST is the `ExprKind::TypeValue` a
+synthesized slot holds when no expression spells its type
+(`Expr::annotation_of`'s fallback).
 `AnnotationSite` keys declaration
 annotations at the checked boundary, after which HIR, MIR, and the VM carry only
 the resolved `Ty`. In particular, variable initialization and function-entry

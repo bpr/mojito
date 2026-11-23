@@ -1116,15 +1116,12 @@ pub(in crate::checker) fn callable_value_argument(
         .find_map(|(slot, argument)| (slot == Ok(index)).then_some(argument))?;
     let argument = match argument {
         ParamArg::Named { value, .. } => value.as_ref(),
-        positional => positional,
+        positional @ ParamArg::Value(_) => positional,
     };
     if mojito_ast::call::unbound_marker(argument).is_some() {
         return None;
     }
     match argument {
-        ParamArg::Type(mojito_ast::ast::Type::Named(name, arguments)) if arguments.is_empty() => {
-            Some(name.clone())
-        }
         ParamArg::Value(Expr {
             kind: ExprKind::Identifier(name),
             ..

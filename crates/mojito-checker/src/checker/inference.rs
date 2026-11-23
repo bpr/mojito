@@ -1030,7 +1030,7 @@ impl Checker {
                         .iter()
                         .filter_map(|argument| match argument {
                             mojito_ast::ast::ParamArg::Value(value) => Some(value.clone()),
-                            _ => None,
+                            mojito_ast::ast::ParamArg::Named { .. } => None,
                         })
                         .collect();
                     return self.infer_element_call(
@@ -1584,7 +1584,7 @@ impl Checker {
             // the type it names at its own occurrence.
             ExprKind::TypeValue(ty) => {
                 self.type_value(index, ty).ok();
-                Some(mojito_ast::ast::ParamArg::Type(ty.clone()))
+                Some(mojito_ast::ast::ParamArg::Value(index.clone()))
             }
             ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
                 self.type_value(index, &annotation_spelling(index).ok()?)
@@ -2037,8 +2037,8 @@ impl Checker {
                     arguments
                         .iter()
                         .map(|argument| match argument {
-                            TyArg::Ty(ty) => mojito_types::ct::source_type(ty, expression.span)
-                                .map(mojito_ast::ast::ParamArg::Type),
+                            TyArg::Ty(ty) => mojito_types::ct::source_operand(ty, expression.span)
+                                .map(mojito_ast::ast::ParamArg::Value),
                             _ => None,
                         })
                         .collect::<Option<Vec<_>>>()
@@ -3499,6 +3499,6 @@ fn parameter_lambda(argument: &mojito_ast::ast::ParamArg) -> Option<&Expr> {
             Some(expression)
         }
         mojito_ast::ast::ParamArg::Named { value, .. } => parameter_lambda(value),
-        _ => None,
+        mojito_ast::ast::ParamArg::Value(_) => None,
     }
 }

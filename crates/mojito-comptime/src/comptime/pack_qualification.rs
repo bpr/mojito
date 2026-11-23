@@ -49,11 +49,14 @@ pub(super) fn qualify_struct_packs(program: &mut [Stmt]) -> Result<(), ComptimeE
                 return Err(ComptimeError::UnqualifiedStructParam(pack.clone()));
             }
         }
-        let spreads: HashMap<String, Type> = packs
+        let spreads: HashMap<String, Expr> = packs
             .iter()
             .map(|pack| {
-                let spread = format!("*{pack}");
-                (spread.clone(), Type::Named(spread, Vec::new()))
+                let operand = Expr::from(ExprKind::Identifier(pack.clone()));
+                (
+                    format!("*{pack}"),
+                    Expr::from(ExprKind::Spread(Box::new(operand))),
+                )
             })
             .collect();
         if !spreads.is_empty() {

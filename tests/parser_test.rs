@@ -1491,8 +1491,8 @@ fn parses_a_trait_composition_as_a_generator_types_result() {
         Type::Named(
             "$trait_composition".into(),
             vec![
-                ParamArg::Type(Type::Named("Copyable".into(), vec![])),
-                ParamArg::Type(Type::Named("Defaultable".into(), vec![])),
+                ParamArg::Value(*ident("Copyable")),
+                ParamArg::Value(*ident("Defaultable")),
             ],
         )
     );
@@ -1725,8 +1725,8 @@ fn a_trait_comptime_member_composition_is_one_expression() {
         Type::Named(
             "$trait_composition".into(),
             vec![
-                ParamArg::Type(Type::Named("Copyable".into(), vec![])),
-                ParamArg::Type(Type::Named("Defaultable".into(), vec![])),
+                ParamArg::Value(*ident("Copyable")),
+                ParamArg::Value(*ident("Defaultable")),
             ]
         )
     );
@@ -3775,7 +3775,12 @@ fn keeps_the_qualified_pack_spread_apart_from_the_bare_one() {
     else {
         panic!("expected struct declaration")
     };
-    let spread = ParamArg::Type(Type::SelfParam("*Ts".into()));
+    let spread = ParamArg::Value(Expr::from(ExprKind::Spread(Box::new(Expr::from(
+        ExprKind::Member {
+            object: ident("Self"),
+            field: "Ts".into(),
+        },
+    )))));
     assert_eq!(
         view(&fields[0].ty),
         Type::Named("Tuple".into(), vec![spread.clone()])
@@ -4989,7 +4994,7 @@ fn a_generator_result_composition_is_one_expression() {
         };
         generator_type(value).1.composition_type().unwrap()
     };
-    let named = |name: &str| ParamArg::Type(Type::Named(name.into(), vec![]));
+    let named = |name: &str| ParamArg::Value(*ident(name));
     let pair = Type::Named(
         "$trait_composition".into(),
         vec![named("Copyable"), named("Defaultable")],

@@ -348,28 +348,28 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(args)
     }
 
-    /// Parses a single parameter argument. An operand only the type grammar
-    /// spells (a `*` pack) is a `Type`. Every other operand is one
-    /// expression (`Int`, `Foo[Int]`, `L[0] * 2`, `Self.T`, a `def` function
-    /// type, and `None`, which is the `None` value), which the checker
-    /// classifies as a type or a value by what it denotes.
+    /// Parses a single parameter argument: one expression (`Int`,
+    /// `Foo[Int]`, `L[0] * 2`, `Self.T`, a `def` function type, `None`, which
+    /// is the `None` value, or a spread), which the checker classifies as a
+    /// type or a value by what it denotes.
     pub(super) fn parse_param_arg(&mut self) -> Result<mojito_ast::ast::ParamArg, ParseError> {
         use mojito_ast::ast::ParamArg;
-        // A spread: of a pack (`*Ts`, `*Self.Ts`), which stays the pack's own
-        // type node, or of any other type-list expression
-        // (`*Ts.reverse()`, `*TypeList._concat[A.values, B.values]()`).
+        // A spread, of a pack (`*Ts`, `*Self.Ts`) or of any other type-list
+        // expression (`*Ts.reverse()`, `*TypeList._concat[A.values, B.values]()`).
         if matches!(self.peek_token()?, Some(Token::Star)) {
             let start = self.peek_start();
             self.next_token()?; // consume '*'
             if !matches!(self.peek_token()?, Some(Token::Identifier(_))) {
-                let name = self.expect_identifier("Expected a type-pack name after '*'")?;
-                return Ok(ParamArg::Type(Type::Named(format!("*{name}"), Vec::new())));
+                let token = self.next_token()?;
+                return Err(ParseError::UnexpectedToken(
+                    token,
+                    "Expected a type-pack name after '*'".to_string(),
+                ));
             }
             let operand = self.parse_expression(Precedence::Lowest)?;
-            return Ok(match operand.pack_spread_type() {
-                Some(ty) => ParamArg::Type(ty),
-                None => ParamArg::Value(self.node(ExprKind::Spread(Box::new(operand)), start)),
-            });
+            return Ok(ParamArg::Value(
+                self.node(ExprKind::Spread(Box::new(operand)), start),
+            ));
         }
         Ok(ParamArg::Value(self.parse_expression(Precedence::Lowest)?))
     }

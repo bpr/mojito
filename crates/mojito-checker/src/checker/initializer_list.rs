@@ -512,7 +512,7 @@ impl Checker {
             if unbound.kept.contains(&position) {
                 bound[slot] = Some(match argument {
                     ParamArg::Named { value, .. } => &**value,
-                    positional => positional,
+                    positional @ ParamArg::Value(_) => positional,
                 });
             }
         }
@@ -565,7 +565,7 @@ impl Checker {
                     }
                     None => argument.clone(),
                 },
-                positional => spelled(positional).map_or_else(
+                positional @ ParamArg::Value(_) => spelled(positional).map_or_else(
                     || positional.clone(),
                     |value| {
                         applied_binders += 1;
@@ -597,11 +597,8 @@ impl Checker {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        mojito_types::ct::source_type(&ty, object.span)
-            .and_then(|spelled| {
-                self.keyword_spelling(spelled)
-                    .expression_spelling(object.span)
-            })
+        mojito_types::ct::source_expr(&ty, object.span)
+            .map(|spelled| self.keyword_spelling(spelled))
             .or_else(|| self.binder_spelling(&ty, object.span))
             .map(Ok)
     }
@@ -666,10 +663,8 @@ impl Checker {
             return member?.expression_spelling(object.span);
         }
         let ty = self.ty_from_spelling(&spelling).ok()?;
-        if let Some(spelled) = mojito_types::ct::source_type(&ty, object.span) {
-            return self
-                .keyword_spelling(spelled)
-                .expression_spelling(object.span);
+        if let Some(spelled) = mojito_types::ct::source_expr(&ty, object.span) {
+            return Some(self.keyword_spelling(spelled));
         }
         // A type with no closed spelling — an argument applying a function
         // (`T[n=f()]`), or one still a parameter expression (`T[t]`) — is
@@ -691,15 +686,16 @@ impl Checker {
     /// `spelling` with each bracket argument of an infer-only struct
     /// parameter (`CompilationTarget[_mlir_value=…]`) passed by keyword,
     /// since no position binds it.
-    fn keyword_spelling(&self, spelling: SourceType) -> SourceType {
-        let SourceType::Named(name, arguments) = spelling else {
+    fn keyword_spelling(&self, spelling: Expr) -> Expr {
+        let Some((name, arguments)) = spelling.bracket_application() else {
             return spelling;
         };
-        let Some(info) = self.structs.get(&name) else {
-            return SourceType::Named(name, arguments);
+        let Some(info) = self.structs.get(name) else {
+            return spelling;
         };
-        let arguments = arguments
-            .into_iter()
+        let arguments: Vec<_> = arguments
+            .iter()
+            .cloned()
             .zip(info.decls().iter().map(Some).chain(std::iter::repeat(None)))
             .map(|(argument, decl)| match decl {
                 Some(decl) if mojito_ast::call::CompileTimeParam::infer_only(decl) => {
@@ -711,7 +707,7 @@ impl Checker {
                 _ => argument,
             })
             .collect();
-        SourceType::Named(name, arguments)
+        mojito_ast::ast::named_subscript(name, &arguments, spelling.span).unwrap_or(spelling)
     }
 
     /// The type a call of `object.member` constructs when `member` is a
@@ -1020,7 +1016,7 @@ impl Checker {
                         _,
                     ) => return None,
                     (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
-                        ParamArg::Type(mojito_types::ct::source_type(ty, applied.span)?)
+                        ParamArg::Value(mojito_types::ct::source_operand(ty, applied.span)?)
                     }
                     _ => ParamArg::Value(Expr::new(
                         ExprKind::Member {
@@ -1124,14 +1120,14 @@ impl Checker {
                     .instance_construction(expression, expected, args, kwargs)
                     .ok_or_else(unspellable);
             }
-            _ => match mojito_types::ct::source_type(expected, expression.span) {
-                Some(SourceType::Named(name, param_args)) => ExprKind::Call {
+            _ => match mojito_types::ct::source_call_head(expected, expression.span) {
+                Some((name, param_args)) => ExprKind::Call {
                     name,
                     param_args,
                     args,
                     kwargs,
                 },
-                _ => {
+                None => {
                     return self
                         .instance_construction(expression, expected, args, kwargs)
                         .ok_or_else(unspellable);
@@ -1266,7 +1262,7 @@ pub(super) fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
             .iter_mut()
             .filter_map(|argument| match argument {
                 mojito_ast::ast::ParamArg::Value(value) => Some(value),
-                _ => None,
+                mojito_ast::ast::ParamArg::Named { .. } => None,
             })
             .collect(),
         _ => Vec::new(),
@@ -1383,7 +1379,6 @@ fn member_application(callee: &Expr, param_args: &[mojito_ast::ast::ParamArg]) -
     use mojito_ast::ast::{ParamArg, SubscriptArg};
     let value = |argument: &ParamArg| match argument {
         ParamArg::Value(value) => Some(value.clone()),
-        ParamArg::Type(ty) => Some(Expr::new(ExprKind::TypeValue(ty.clone()), callee.span)),
         ParamArg::Named { .. } => None,
     };
     let args = param_args
@@ -1393,7 +1388,7 @@ fn member_application(callee: &Expr, param_args: &[mojito_ast::ast::ParamArg]) -
                 name: name.clone(),
                 value: value(named)?,
             }),
-            positional => value(positional).map(SubscriptArg::Index),
+            positional @ ParamArg::Value(_) => value(positional).map(SubscriptArg::Index),
         })
         .collect::<Option<Vec<_>>>()?;
     Some(Expr::new(

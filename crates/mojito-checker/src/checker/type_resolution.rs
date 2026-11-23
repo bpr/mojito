@@ -294,9 +294,8 @@ pub(super) fn tyarg_is_symbolic(argument: &TyArg) -> bool {
 }
 
 /// The attribute bracket argument `argument` carries once binding resolved
-/// it to `bound`: a type-shaped argument always has one, and a
-/// value-shaped one only when it bound to a type or an origin, a run-time
-/// value having none.
+/// it to `bound`: a pack's spread always has one, and any other argument
+/// only when it bound to a type or an origin, a run-time value having none.
 pub(super) fn bracket_attribute(
     argument: &mojito_ast::ast::ParamArg,
     bound: &TyArg,
@@ -304,7 +303,7 @@ pub(super) fn bracket_attribute(
     use mojito_ast::ast::ParamArg;
     match argument {
         ParamArg::Named { value, .. } => bracket_attribute(value, bound),
-        ParamArg::Type(_) => Some(bound.clone()),
+        argument if argument.spread_pack().is_some() => Some(bound.clone()),
         // A trait, a type list, or a KGEN string has no run-time form, so
         // such an argument is an attribute like a type. So is a compile-time
         // string an application computes, which is the elaborator's frozen
@@ -913,13 +912,6 @@ impl Checker {
                 return self.resolve_generator_param_arg(decl, expected, value);
             }
             ParamArg::Value(expr) => expr.clone(),
-            ParamArg::Type(ty) => ty
-                .expression_spelling(mojito_common::token::Span::default())
-                .ok_or_else(|| TypeError::TypeMismatch {
-                    expected: expected.to_string(),
-                    found: "a type".to_string(),
-                    context: format!("value parameter '{}'", decl.name()),
-                })?,
         };
         let generator = self.compile_dependent_ct_expr(&expr)?;
         if !generator
@@ -1072,7 +1064,6 @@ impl Checker {
         let unknown = || TypeError::UnknownType(name.to_string());
         let operand = |arg: &ParamArg| match arg {
             ParamArg::Value(value) => Some(value.clone()),
-            ParamArg::Type(ty) => ty.expression_spelling(mojito_common::token::Span::default()),
             ParamArg::Named { .. } => None,
         };
         let operands = args
@@ -1625,20 +1616,6 @@ impl Checker {
         }
         let arg = match argument {
             ParamArg::Value(arg) => arg,
-            ParamArg::Type(source)
-                if is_value_parameter(param)
-                    && let Some(read) = self.type_spelled_member_read(source) =>
-            {
-                return Ok(TyArg::Val(self.eval_associated_ct(&read)?));
-            }
-            ParamArg::Type(_) if is_value_parameter(param) => {
-                return Err(TypeError::TypeMismatch {
-                    expected: "a value".to_string(),
-                    found: "a type".to_string(),
-                    context: format!("associated value parameter '{}'", param.name),
-                });
-            }
-            ParamArg::Type(ty) => return self.ty_from_spelling(ty).map(TyArg::Ty),
             ParamArg::Named { name, .. } => {
                 return Err(TypeError::Unsupported(format!(
                     "the keyword argument '{name}=' of an associated member application"
@@ -2016,25 +1993,9 @@ impl Checker {
         }
         // An enclosing pack (`Self.Ts`, `Ts`) spreads as `*Self.Ts` does,
         // and any other type list by its elements.
-        let pack = match &object.kind {
-            ExprKind::Member {
-                object: owner,
-                field,
-            } if matches!(&owner.kind, ExprKind::Identifier(name) if name == "Self") => {
-                Some(ParamArg::Type(SourceType::SelfParam(format!("*{field}"))))
-            }
-            ExprKind::Identifier(name) => Some(ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(format!("*{name}")),
-                ..(**object).clone()
-            })),
-            _ => None,
-        }
-        .filter(|pack| self.pack_spread_argument(pack).is_some());
-        let spread = pack.unwrap_or_else(|| {
-            ParamArg::Value(Expr {
-                kind: ExprKind::Spread(object.clone()),
-                ..values.clone()
-            })
+        let spread = ParamArg::Value(Expr {
+            kind: ExprKind::Spread(object.clone()),
+            ..values.clone()
         });
         let (elements, _) = self.tuple_element_types(std::slice::from_ref(&spread))?;
         Ok(elements)
@@ -2054,7 +2015,6 @@ impl Checker {
     fn mlir_type_operand(&self, element: &mojito_ast::ast::ParamArg) -> Result<Ty, TypeError> {
         use mojito_ast::ast::ParamArg;
         match element {
-            ParamArg::Type(ty) => self.ty_from_spelling(ty),
             ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(name),
                 ..
@@ -2067,6 +2027,13 @@ impl Checker {
             }
             ParamArg::Value(expr) if expr.self_member().is_some() => {
                 self.ty_from_spelling(&expr.type_spelling().ok_or_else(unsupported_mlir_type)?)
+            }
+            ParamArg::Value(Expr {
+                kind: ExprKind::TypeValue(ty),
+                ..
+            }) => self.ty_from_spelling(ty),
+            ParamArg::Value(expr) if let Some(spelled) = expr.type_spelling() => {
+                self.ty_from_spelling(&spelled)
             }
             _ => Err(unsupported_mlir_type()),
         }
@@ -2128,15 +2095,6 @@ impl Checker {
         let expr = match arg {
             ParamArg::Named { value, .. } => return self.trait_type_arg(value),
             ParamArg::Value(expr) => expr,
-            ParamArg::Type(SourceType::Named(name, args)) if args.is_empty() => {
-                return trait_binder(name).or_else(|| {
-                    (name != TYPE_OF_ALL_TYPES
-                        && self.check_trait_name(name).is_ok()
-                        && self.lookup(name).is_none())
-                    .then(|| Ok(TyKind::Trait(vec![name.clone()]).into()))
-                });
-            }
-            ParamArg::Type(_) => return None,
         };
         if let Some(value) = self.trait_value(expr) {
             return Some(value.map(|value| TyKind::Trait(value.traits).into()));
@@ -2164,11 +2122,6 @@ impl Checker {
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<Option<(Ty, DeclaredAttributes)>, TypeError> {
         let existential_trait = args.first().and_then(|argument| match argument {
-            mojito_ast::ast::ParamArg::Type(SourceType::Named(trait_name, trait_args))
-                if trait_args.is_empty() =>
-            {
-                Some(trait_name)
-            }
             mojito_ast::ast::ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(trait_name),
                 ..
@@ -2606,11 +2559,10 @@ impl Checker {
     /// an `Origin` value: a raw read ([`super::reads_raw_origin`]), or a
     /// use of an in-scope origin binder (`r`, `Self.r`) declared raw.
     fn origin_argument_is_raw(&self, value: &mojito_ast::ast::ParamArg) -> bool {
-        use mojito_ast::ast::{ParamArg, Type};
+        use mojito_ast::ast::ParamArg;
         let binder = match value {
-            ParamArg::Type(Type::Named(name, args)) if args.is_empty() => Some(name.as_str()),
             ParamArg::Value(expr) => super::origin_binder_name(expr),
-            _ => None,
+            ParamArg::Named { .. } => None,
         };
         super::reads_raw_origin(value)
             || binder
@@ -3685,7 +3637,10 @@ impl Checker {
                 // A bare or parameterized type argument the parser encoded as a
                 // value expression binds the type, which is its attribute.
                 let ty = match arg {
-                    ParamArg::Type(t) => self.ty_from_spelling(t)?,
+                    // A pack's spread (`*Ts`) binds the pack.
+                    ParamArg::Value(_) if let Some(pack) = arg.spread_pack() => {
+                        self.ty_from_spelling(&pack)?
+                    }
                     // A reflected field type (`reflect[Q].field_at[0].T`,
                     // or a name bound to one) is an `AnyType` value, which
                     // binds only a binder that asks nothing more of it.
@@ -3962,22 +3917,6 @@ impl Checker {
                         context: format!("value parameter '{name}'"),
                     })
                 }
-                ParamArg::Type(source)
-                    if let Some(read) = self.type_spelled_member_read(source) =>
-                {
-                    self.resolve_param_arg(decl, &ParamArg::Value(read))
-                }
-                // A bare parameter name in a value slot.
-                ParamArg::Type(ty)
-                    if let Some(error) = self.bare_struct_param_in_value_slot(ty) =>
-                {
-                    Err(error)
-                }
-                ParamArg::Type(_) => Err(TypeError::TypeMismatch {
-                    expected: "a value".to_string(),
-                    found: "a type".to_string(),
-                    context: format!("value parameter '{name}'"),
-                }),
                 ParamArg::Named { value, .. } => self.resolve_param_arg(decl, value),
             },
         }
@@ -4092,7 +4031,6 @@ impl Checker {
         argument: &mojito_ast::ast::ParamArg,
     ) -> Result<Ty, TypeError> {
         let resolved = match argument {
-            mojito_ast::ast::ParamArg::Type(ty) => self.ty_from_spelling(ty),
             mojito_ast::ast::ParamArg::Value(expression) => {
                 self.denoted_type(expression, &format!("{collection} type argument"))
             }
@@ -4291,7 +4229,7 @@ impl Checker {
         for (argument, &slot) in args.iter().zip(&slots) {
             let value = match argument {
                 ParamArg::Named { value, .. } => value.as_ref(),
-                other => other,
+                other @ ParamArg::Value(_) => other,
             };
             match POINTER_PARAMS[slot].name {
                 "mut" => {
@@ -4354,7 +4292,6 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         use mojito_ast::ast::ParamArg;
         match argument {
-            ParamArg::Type(t) => self.ty_from_spelling(t),
             ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(id),
                 ..
@@ -4504,12 +4441,15 @@ impl Checker {
         }
         let pack = list.as_decl_ref().and_then(|reference| {
             let name = reference.name.trim_start_matches('*');
+            let at = |kind| Expr::new(kind, site.span);
+            let own = at(ExprKind::Member {
+                object: Box::new(at(ExprKind::Identifier("Self".to_string()))),
+                field: name.to_string(),
+            });
+            let bare = at(ExprKind::Identifier(name.to_string()));
             [
-                ParamArg::Type(SourceType::SelfParam(format!("*{name}"))),
-                ParamArg::Value(Expr {
-                    kind: ExprKind::Identifier(format!("*{name}")),
-                    ..site.clone()
-                }),
+                ParamArg::Value(at(ExprKind::Spread(Box::new(own)))),
+                ParamArg::Value(at(ExprKind::Spread(Box::new(bare)))),
             ]
             .iter()
             .find_map(|pack| self.pack_spread_argument(pack).and_then(Result::ok))
@@ -4558,7 +4498,6 @@ impl Checker {
                 continue;
             }
             let element = match arg {
-                mojito_ast::ast::ParamArg::Type(t) => self.ty_from_spelling(t)?,
                 // A bare-identifier arg is reinterpreted as a type (as elsewhere).
                 mojito_ast::ast::ParamArg::Value(Expr {
                     kind: ExprKind::Identifier(id),
@@ -4770,7 +4709,6 @@ impl Checker {
                     }
                 },
             },
-            ParamArg::Type(source) => return Err(type_argument(source)?),
         };
         match self.ct_value_ty(&value, &Ty::error()) {
             Some(ref ty) if let TyKind::AnyTrait(traits) = ty.kind() => {
@@ -4825,7 +4763,6 @@ impl Checker {
         &self,
         arg: &mojito_ast::ast::ParamArg,
     ) -> Option<Result<Ty, TypeError>> {
-        use mojito_ast::ast::ParamArg;
         // The elaborator's pack-qualification pass owns the rule that a member
         // spells its struct's pack `Self.Ts`; a spread it has normalized to
         // the bare spelling still names that pack.
@@ -4840,17 +4777,9 @@ impl Checker {
                 )
             })
         };
-        match arg {
-            ParamArg::Type(anno @ SourceType::SelfParam(name)) if name.starts_with('*') => {
-                Some(self.ty_from_spelling(anno))
-            }
-            ParamArg::Type(SourceType::Named(name, arguments)) if arguments.is_empty() => {
-                pack(name)
-            }
-            ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(name),
-                ..
-            }) => pack(name),
+        match arg.spread_pack()? {
+            anno @ SourceType::SelfParam(_) => Some(self.ty_from_spelling(&anno)),
+            SourceType::Named(name, _) => pack(&name),
             _ => None,
         }
     }
@@ -5192,7 +5121,6 @@ impl Checker {
         context: &str,
     ) -> Result<Ty, TypeError> {
         match arg {
-            mojito_ast::ast::ParamArg::Type(ty) => self.ty_from_spelling(ty),
             mojito_ast::ast::ParamArg::Value(expression)
                 if let Some(reflected) = self.reflected_type_operand(expression).transpose() =>
             {
@@ -5392,54 +5320,10 @@ impl Checker {
                     Err(error) => CtValue::Expr(self.lifted_application(expr).ok_or(error)?),
                 }
             }
-            mojito_ast::ast::ParamArg::Type(source)
-                if let Some(read) = self.type_spelled_member_read(source) =>
-            {
-                self.eval_associated_ct(&read)?
-            }
-            // A type argument in a width slot: the enclosing struct's own
-            // parameter spelled bare, or a type.
-            mojito_ast::ast::ParamArg::Type(ty) => {
-                if let Some(error) = self.bare_struct_param_in_value_slot(ty) {
-                    return Err(error);
-                }
-                return Err(TypeError::BadSimdWidth("a type".to_string()));
-            }
             mojito_ast::ast::ParamArg::Named { .. } => {
                 return Err(TypeError::BadSimdWidth("a named argument".to_string()));
             }
         })
-    }
-
-    /// The read a type-spelled bracket argument denotes in a value slot,
-    /// where upstream's argument is an expression: `Self.T.K` naming a
-    /// compile-time value member (a struct's, or a trait's through
-    /// its own `Self` or a bound). `None` for any other spelling, a type
-    /// parameter or type member among them, which stays a type.
-    pub(super) fn type_spelled_member_read(&self, source: &SourceType) -> Option<Expr> {
-        if !matches!(source, SourceType::Assoc { .. }) {
-            return None;
-        }
-        let read = source.expression_spelling(mojito_common::token::DUMMY_SPAN)?;
-        let ExprKind::Member { object, field } = &read.kind else {
-            return None;
-        };
-        self.type_member_value(object, field)
-            .is_some()
-            .then_some(read)
-    }
-
-    /// Upstream's rejection of the enclosing struct's own parameter spelled
-    /// bare as a type argument in a value slot (`Counter[length]`).
-    pub(super) fn bare_struct_param_in_value_slot(&self, ty: &SourceType) -> Option<TypeError> {
-        match ty {
-            SourceType::Named(name, args)
-                if args.is_empty() && self.is_enclosing_struct_param(name) =>
-            {
-                Some(TypeError::UnqualifiedStructParam(name.clone()))
-            }
-            _ => None,
-        }
     }
 
     /// If `name` is a generic type parameter currently in scope, return its
@@ -5502,22 +5386,20 @@ impl Checker {
     ) -> Result<Vec<String>, TypeError> {
         let mut traits: Vec<String> = Vec::with_capacity(members.len());
         for member in members {
-            let trait_name = match member {
-                mojito_ast::ast::ParamArg::Type(SourceType::Named(name, args))
-                    if args.is_empty() && self.check_trait_name(name).is_ok() =>
-                {
+            let mojito_ast::ast::ParamArg::Value(member) = member else {
+                return Err(TypeError::Unsupported(
+                    "a generator type's result must be a type expression".to_string(),
+                ));
+            };
+            let trait_name = match &member.kind {
+                ExprKind::Identifier(name) if self.check_trait_name(name).is_ok() => {
                     Some(name.clone())
                 }
                 _ => None,
             };
             let Some(trait_name) = trait_name else {
                 let left = if traits.is_empty() {
-                    let mojito_ast::ast::ParamArg::Type(ty) = member else {
-                        return Err(TypeError::Unsupported(
-                            "a generator type's result must be a type expression".to_string(),
-                        ));
-                    };
-                    format!("AnyStruct[{}]", self.resolve_ty_from_anno(ty)?)
+                    format!("AnyStruct[{}]", self.ty_from_anno(member)?)
                 } else {
                     format!("AnyTrait[{}]", traits.join(" & "))
                 };
@@ -5810,7 +5692,6 @@ pub(super) fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) ->
         value = inner;
     }
     match value {
-        mojito_ast::ast::ParamArg::Type(mojito_ast::ast::Type::Named(_, targs)) => targs.is_empty(),
         mojito_ast::ast::ParamArg::Value(expression) => match &expression.kind {
             // An `origin_of` observation, or a conversion of an origin
             // (`ImmOrigin(o)`); the check rejects a call building no origin.
@@ -5836,7 +5717,7 @@ pub(super) fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) ->
             },
             _ => false,
         },
-        _ => false,
+        mojito_ast::ast::ParamArg::Named { .. } => false,
     }
 }
 
@@ -5922,7 +5803,7 @@ fn is_hole_argument(arg: &mojito_ast::ast::ParamArg) -> bool {
             ..
         }) => name == "_",
         mojito_ast::ast::ParamArg::Named { value, .. } => is_hole_argument(value),
-        _ => false,
+        mojito_ast::ast::ParamArg::Value(_) => false,
     }
 }
 

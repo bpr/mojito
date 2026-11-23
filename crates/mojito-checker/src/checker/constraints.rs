@@ -243,18 +243,24 @@ impl Checker {
         {
             let mut bounds = Vec::with_capacity(args.len());
             for argument in args {
-                let mojito_ast::ast::ParamArg::Type(SourceType::Named(bound, bound_args)) =
-                    argument
-                else {
+                let mojito_ast::ast::ParamArg::Value(member) = argument else {
                     return Err(TypeError::Unsupported(
                         "associated type bounds must be trait names".to_string(),
                     ));
                 };
-                if !bound_args.is_empty() {
-                    return Err(TypeError::Unsupported(
-                        "associated type bounds cannot take arguments".to_string(),
-                    ));
-                }
+                let bound = match &member.kind {
+                    ExprKind::Identifier(bound) => bound,
+                    _ if member.bracket_application().is_some() => {
+                        return Err(TypeError::Unsupported(
+                            "associated type bounds cannot take arguments".to_string(),
+                        ));
+                    }
+                    _ => {
+                        return Err(TypeError::Unsupported(
+                            "associated type bounds must be trait names".to_string(),
+                        ));
+                    }
+                };
                 self.check_trait_name(bound)?;
                 if !bounds.iter().any(|existing| existing == bound) {
                     bounds.push(bound.clone());
@@ -532,7 +538,7 @@ impl Checker {
                     (index, value.as_ref())
                 }
                 _ if position < explicit.len() => (position, arg),
-                _ => return Ok(None),
+                ParamArg::Value(_) => return Ok(None),
             };
             match unbound_slot(inner) {
                 Some((Unbound::Rest, spelling)) if position + 1 == args.len() => {
@@ -560,7 +566,7 @@ impl Checker {
                 .filter_map(|(param, slot)| {
                     let arg = match slot.as_ref()? {
                         ParamArg::Named { value, .. } => value.as_ref(),
-                        arg => arg,
+                        arg @ ParamArg::Value(_) => arg,
                     };
                     Some((param.name.clone(), arg.clone()))
                 })
@@ -1022,10 +1028,9 @@ impl Checker {
                             args.iter().find_map(|argument| match argument {
                                 mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
                                     mojito_ast::ast::ParamArg::Value(expr) => Some(expr),
-                                    _ => None,
+                                    mojito_ast::ast::ParamArg::Named { .. } => None,
                                 },
                                 mojito_ast::ast::ParamArg::Value(expr) => Some(expr),
-                                mojito_ast::ast::ParamArg::Type(_) => None,
                             }),
                         )?;
                         self.infer(&construction)?;
@@ -3636,7 +3641,6 @@ impl Checker {
         let kind = mojito_types::types::trivial_predicate_name(name)
             .filter(|_| self.lookup(name).is_none())?;
         let subject = match &*args {
-            [mojito_ast::ast::ParamArg::Type(ty)] => self.ty_from_spelling(ty).map(Some),
             [mojito_ast::ast::ParamArg::Value(value)] => self.comptime_type_operand(value),
             _ => Err(TypeError::Unsupported(format!(
                 "{name}[T] takes exactly one type argument"
@@ -4215,14 +4219,6 @@ impl Checker {
                 ..
             }) => self.build_ct(spliced, recording),
             ParamArg::Value(expr) => self.build_ct(expr, recording),
-            // `Self.value`, a value parameter a bracket parses as a type.
-            ParamArg::Type(source) if let Some(read) = self.type_spelled_member_read(source) => {
-                self.build_ct(&read, recording)
-            }
-            ParamArg::Type(ty) => self
-                .trait_type_arg(operand)
-                .unwrap_or_else(|| self.ty_from_spelling(ty))
-                .map(|ty| self.param_context.type_shape(ty)),
             ParamArg::Named { name, .. } => Err(TypeError::Unsupported(format!(
                 "a keyword operand '{name}=' of a bracketed '__mlir_attr' is not supported"
             ))),
@@ -5302,8 +5298,7 @@ impl Checker {
                     mojito_ast::ast::ParamArg::Value(Expr {
                         kind: ExprKind::Identifier(name),
                         ..
-                    })
-                    | mojito_ast::ast::ParamArg::Type(SourceType::Named(name, _)) => name.as_str(),
+                    }) => name.as_str(),
                     _ => {
                         return Err(TypeError::Unsupported(
                             "TypeList.all_conforms_to requires a trait name".to_string(),
@@ -5330,8 +5325,7 @@ impl Checker {
                     mojito_ast::ast::ParamArg::Value(Expr {
                         kind: ExprKind::Identifier(name),
                         ..
-                    })
-                    | mojito_ast::ast::ParamArg::Type(SourceType::Named(name, _)) => {
+                    }) => {
                         if let Some(kind) = mojito_types::types::trivial_predicate_name(name) {
                             mojito_types::types::PackPredicateRef::Trivial(kind)
                         } else if matches!(self.predicate_alias(name), Some((decls, _)) if decls.len() == 1)
@@ -5557,7 +5551,7 @@ impl Checker {
                     .iter()
                     .map(|argument| match argument {
                         mojito_ast::ast::ParamArg::Value(values) => self.type_list_values(values),
-                        _ => Err(TypeError::Unsupported(
+                        mojito_ast::ast::ParamArg::Named { .. } => Err(TypeError::Unsupported(
                             "TypeList._concat takes the '.values' of type lists".to_string(),
                         )),
                     })
@@ -5883,17 +5877,6 @@ impl Checker {
     ) -> Result<(ConstraintOperand, Option<TyArg>), TypeError> {
         let operand = match argument {
             mojito_ast::ast::ParamArg::Value(expr) => self.constraint_operand(expr)?,
-            mojito_ast::ast::ParamArg::Type(SourceType::Named(name, args))
-                if args.is_empty()
-                    && scalar_type_name(name).is_none()
-                    && let Some(binder) = self.type_binder_in_scope(name) =>
-            {
-                let attribute = self.lookup_tparam(name).map(TyArg::Ty);
-                return Ok((ConstraintOperand::Param(binder), attribute));
-            }
-            mojito_ast::ast::ParamArg::Type(ty) => {
-                ConstraintOperand::Type(self.ty_from_spelling(ty)?)
-            }
             mojito_ast::ast::ParamArg::Named { .. } => {
                 return Err(TypeError::Unsupported(
                     "a comptime predicate takes positional arguments".to_string(),
@@ -7695,15 +7678,14 @@ fn pack_conformance_atom(expr: &Expr) -> Option<(&str, &str)> {
         }
         _ => return None,
     };
-    let trait_name = match param_args.as_slice() {
-        [ParamArg::Type(SourceType::Named(name, arguments))] if arguments.is_empty() => name,
-        [
-            ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(name),
-                ..
-            }),
-        ] => name,
-        _ => return None,
+    let [
+        ParamArg::Value(Expr {
+            kind: ExprKind::Identifier(trait_name),
+            ..
+        }),
+    ] = param_args.as_slice()
+    else {
+        return None;
     };
     Some((pack, trait_name))
 }
@@ -7880,7 +7862,6 @@ fn unbound_slot(arg: &ParamArg) -> Option<(Unbound, &Expr)> {
     match arg {
         ParamArg::Named { value, .. } => unbound_slot(value),
         ParamArg::Value(value) => mojito_ast::call::unbound_marker(arg).map(|slot| (slot, value)),
-        ParamArg::Type(_) => None,
     }
 }
 
@@ -7927,10 +7908,8 @@ impl mojito_ast::visit::MutVisitor for &BoundSiblings {
         let ExprKind::Identifier(name) = &expr.kind else {
             return;
         };
-        match self.0.get(name) {
-            Some(ParamArg::Value(value)) => *expr = value.clone(),
-            Some(ParamArg::Type(ty)) => expr.kind = ExprKind::TypeValue(ty.clone()),
-            _ => {}
+        if let Some(ParamArg::Value(value)) = self.0.get(name) {
+            *expr = value.clone();
         }
     }
 
@@ -7941,14 +7920,10 @@ impl mojito_ast::visit::MutVisitor for &BoundSiblings {
         if !args.is_empty() {
             return;
         }
-        match self.0.get(name.as_str()) {
-            Some(ParamArg::Type(bound)) => *ty = bound.clone(),
-            Some(ParamArg::Value(value)) => {
-                *ty = value
-                    .type_spelling()
-                    .unwrap_or_else(|| SourceType::Value(Box::new(value.clone())));
-            }
-            _ => {}
+        if let Some(ParamArg::Value(value)) = self.0.get(name.as_str()) {
+            *ty = value
+                .type_spelling()
+                .unwrap_or_else(|| SourceType::Value(Box::new(value.clone())));
         }
     }
 }

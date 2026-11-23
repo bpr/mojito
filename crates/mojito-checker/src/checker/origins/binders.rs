@@ -386,10 +386,16 @@ impl Checker {
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<(mojito_types::origin::Origin, bool), TypeError> {
-        self.named_origin_value(&mojito_ast::ast::ParamArg::Type(
-            mojito_ast::ast::Type::Named(name.to_string(), args.to_vec()),
-        ))
-        .unwrap_or_else(|| Err(TypeError::UnknownType(name.to_string())))
+        let span = mojito_common::token::DUMMY_SPAN;
+        let applied = if args.is_empty() {
+            Some(Expr::new(ExprKind::Identifier(name.to_string()), span))
+        } else {
+            mojito_ast::ast::named_subscript(name, args, span)
+        };
+        applied
+            .map(mojito_ast::ast::ParamArg::Value)
+            .and_then(|applied| self.named_origin_value(&applied))
+            .unwrap_or_else(|| Err(TypeError::UnknownType(name.to_string())))
     }
 
     /// Record every module `comptime` whose value is an origin before any
@@ -458,13 +464,6 @@ impl Checker {
         let expression = match argument {
             ParamArg::Value(expression) => expression,
             ParamArg::Named { value, .. } => return self.explicit_origin_argument(value),
-            ParamArg::Type(_) => {
-                return Err(TypeError::TypeMismatch {
-                    expected: "an Origin value".to_string(),
-                    found: "a type".to_string(),
-                    context: "explicit callable origin specialization".to_string(),
-                });
-            }
         };
         if let Some(read) = self.lit_origin_attribute(expression) {
             return read.map(|(origin, _)| origin);
@@ -634,7 +633,7 @@ impl Checker {
         TypeError,
     > {
         use mojito_ast::ast::ParamArg;
-        use mojito_types::origin::{Mutability, Origin};
+        use mojito_types::origin::Mutability;
 
         if let Some(base) = super::raw_origin_argument(argument) {
             return self.resolve_origin_param_arg(&base);
@@ -642,43 +641,12 @@ impl Checker {
         if let Some(error) = super::removed_origin_alias(argument) {
             return Err(error);
         }
-        // A bare origin name spelled as a type argument is an origin name in
-        // an origin slot.
-        let type_arg_name = match argument {
-            ParamArg::Type(mojito_ast::ast::Type::Named(name, targs)) if targs.is_empty() => {
-                Some(name)
-            }
-            _ => None,
-        };
-        if let Some(name) = type_arg_name
-            && let Some((index, decl)) = self.enclosing_origin_type_param(name)
-        {
-            let id = mojito_types::origin::OriginParamId(index);
-            return Ok((
-                Origin::Param(id),
-                Some(super::super::generics::origin_binder_mutability(&decl, id)),
-            ));
-        }
         if let Some(read) = self.named_origin_value(argument) {
             return read.map(|(origin, mutable)| (origin, Some(Mutability::of(mutable))));
-        }
-        if let Some(name) = type_arg_name {
-            return Err(TypeError::TypeMismatch {
-                expected: "origin_of(place) or a builtin Origin value".to_string(),
-                found: format!("'{name}', which names no in-scope Origin parameter"),
-                context: "explicit origin argument".to_string(),
-            });
         }
         let expression = match argument {
             ParamArg::Value(expression) => expression,
             ParamArg::Named { value, .. } => return self.resolve_origin_param_arg(value),
-            ParamArg::Type(_) => {
-                return Err(TypeError::TypeMismatch {
-                    expected: "an Origin value".to_string(),
-                    found: "a type".to_string(),
-                    context: "explicit origin argument".to_string(),
-                });
-            }
         };
         if let Some(error) = super::removed_origin_cast_from(expression) {
             return Err(error);
@@ -795,11 +763,8 @@ impl Checker {
         use mojito_ast::ast::{ParamArg, SourceType};
         let applied_binder = |argument: &ParamArg| -> Option<String> {
             let binder = match argument {
-                ParamArg::Type(mojito_ast::ast::Type::Named(name, targs)) if targs.is_empty() => {
-                    name.as_str()
-                }
                 ParamArg::Value(expression) => origin_binder_name(expression)?,
-                _ => return None,
+                ParamArg::Named { .. } => return None,
             };
             Some(
                 substitution
@@ -1005,7 +970,9 @@ impl Checker {
             for (position, argument) in args.iter().enumerate() {
                 let (binder, value) = match argument {
                     ParamArg::Named { name, value } => (name.clone(), value.as_ref().clone()),
-                    positional => (decl.binders[position].clone(), positional.clone()),
+                    positional @ ParamArg::Value(_) => {
+                        (decl.binders[position].clone(), positional.clone())
+                    }
                 };
                 if !decl.binders.contains(&binder) {
                     return Err(unapplied());
@@ -1098,7 +1065,7 @@ impl Checker {
             for (position, argument) in param_args.iter().enumerate() {
                 let (binder, value) = match argument {
                     ParamArg::Named { name, value } => (name.as_str(), value.as_ref()),
-                    positional => (binders[position].name(), positional),
+                    positional @ ParamArg::Value(_) => (binders[position].name(), positional),
                 };
                 let ParamArg::Value(value) = value else {
                     return Err(mismatch());
@@ -1250,11 +1217,6 @@ impl Checker {
                     kind: ExprKind::Bool(literal),
                     ..
                 }) => return Ok(LitOriginMut::Known(literal)),
-                ParamArg::Type(mojito_ast::ast::Type::Named(name, args))
-                    if args.is_empty() && (name == "True" || name == "False") =>
-                {
-                    return Ok(LitOriginMut::Known(name == "True"));
-                }
                 ParamArg::Value(base) => ParamArg::Value(Expr::new(
                     ExprKind::Member {
                         object: Box::new(base),
@@ -1262,7 +1224,7 @@ impl Checker {
                     },
                     operand_span(&operand),
                 )),
-                _ => operand,
+                ParamArg::Named { .. } => operand,
             },
             None => operand,
         };
@@ -1365,9 +1327,8 @@ fn origin_construction_attribute(value: &Expr) -> Option<&Expr> {
 fn origin_value_use(
     argument: &mojito_ast::ast::ParamArg,
 ) -> Option<(&str, Vec<mojito_ast::ast::ParamArg>)> {
-    use mojito_ast::ast::{ParamArg, Type};
+    use mojito_ast::ast::ParamArg;
     match argument {
-        ParamArg::Type(Type::Named(name, args)) => Some((name, args.clone())),
         ParamArg::Value(Expr {
             kind: ExprKind::Identifier(name),
             ..
@@ -1375,7 +1336,7 @@ fn origin_value_use(
         ParamArg::Value(expr) => expr
             .bracket_application()
             .map(|(name, args)| (name, args.into_owned())),
-        ParamArg::Named { .. } | ParamArg::Type(_) => None,
+        ParamArg::Named { .. } => None,
     }
 }
 
@@ -1384,14 +1345,13 @@ fn substitute_binding(
     argument: mojito_ast::ast::ParamArg,
     bindings: &[(String, mojito_ast::ast::ParamArg)],
 ) -> mojito_ast::ast::ParamArg {
-    use mojito_ast::ast::{ParamArg, Type};
-    let name = match &argument {
-        ParamArg::Value(Expr {
-            kind: ExprKind::Identifier(name),
-            ..
-        }) => name,
-        ParamArg::Type(Type::Named(name, args)) if args.is_empty() => name,
-        _ => return argument,
+    use mojito_ast::ast::ParamArg;
+    let ParamArg::Value(Expr {
+        kind: ExprKind::Identifier(name),
+        ..
+    }) = &argument
+    else {
+        return argument;
     };
     bindings
         .iter()
@@ -1403,6 +1363,6 @@ fn substitute_binding(
 fn operand_span(operand: &mojito_ast::ast::ParamArg) -> mojito_common::token::Span {
     match operand {
         mojito_ast::ast::ParamArg::Value(expr) => expr.span,
-        _ => mojito_common::token::Span::default(),
+        mojito_ast::ast::ParamArg::Named { .. } => mojito_common::token::Span::default(),
     }
 }

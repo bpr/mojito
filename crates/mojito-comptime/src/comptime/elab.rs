@@ -11,9 +11,8 @@ pub(super) type Packs<'p> = Option<&'p HashSet<String>>;
 /// Elaborate the statements of a block whose type packs are `packs`.
 pub(super) fn block(stmts: &[Stmt], packs: Packs<'_>) -> Vec<Stmt> {
     let mut out = Vec::new();
-    // The pack elements the template's aliases denote: their source
-    // spellings, and their parameter expressions as written.
-    let mut element_sources: HashMap<String, Type> = HashMap::new();
+    // The pack elements the template's aliases denote, as their parameter
+    // expressions are written.
     let mut element_aliases: HashMap<String, Expr> = HashMap::new();
     for stmt in stmts {
         // `comptime T = Ts[i]` over a template's own type pack is the
@@ -23,10 +22,7 @@ pub(super) fn block(stmts: &[Stmt], packs: Packs<'_>) -> Vec<Stmt> {
             && let Some((name, element)) =
                 pack_element_alias(&stmt.kind, &|base| packs.contains(base))
         {
-            if let StmtKind::Comptime { value, .. } = &stmt.kind {
-                element_aliases.insert(name.clone(), (*value).clone());
-            }
-            element_sources.insert(name, element);
+            element_aliases.insert(name, element);
             // The check binds the alias too, so a read of it in an
             // expression (`F == Int`) is the element it names.
             out.push(stmt.clone());
@@ -35,12 +31,10 @@ pub(super) fn block(stmts: &[Stmt], packs: Packs<'_>) -> Vec<Stmt> {
         let first_new = out.len();
         let resolved = contextual_comptime(stmt);
         out.push(elaborated_stmt(resolved.as_ref().unwrap_or(stmt), packs));
-        if !element_sources.is_empty() {
-            substitute_type_bindings_in_block(&mut out[first_new..], &|name| {
-                element_sources.get(name).cloned()
-            });
-        }
         if !element_aliases.is_empty() {
+            substitute_type_bindings_in_block(&mut out[first_new..], &|name| {
+                element_aliases.get(name).cloned()
+            });
             spell_aliases_in_conditions(&mut out[first_new..], &element_aliases);
         }
         if let Some(source) = stmt.module.as_deref() {

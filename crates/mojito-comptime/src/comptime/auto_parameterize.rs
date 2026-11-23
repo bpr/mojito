@@ -327,9 +327,15 @@ impl<'a> Declared<'a> {
                 }
                 // A type pack's binder is a pack its argument spreads.
                 Slot::Unbound if let Some(pack) = parameter.name.strip_prefix('*') => {
-                    let binder = format!("*{}", auto_binder_name(pack, owner));
-                    binders.push(binder_for(parameter, &binder, &arguments, span));
-                    ParamArg::Type(Type::Named(binder, Vec::new()))
+                    let binder = auto_binder_name(pack, owner);
+                    binders.push(binder_for(
+                        parameter,
+                        &format!("*{binder}"),
+                        &arguments,
+                        span,
+                    ));
+                    let pack = Expr::new(ExprKind::Identifier(binder), span);
+                    ParamArg::Value(Expr::new(ExprKind::Spread(Box::new(pack)), span))
                 }
                 Slot::Unbound => {
                     let binder = auto_binder_name(&parameter.name, owner);
@@ -454,7 +460,7 @@ impl Slots {
                         None => Slot::Bound((**value).clone()),
                     };
                 }
-                positional => match hole(positional) {
+                positional @ ParamArg::Value(_) => match hole(positional) {
                     Some(Unbound::Rest) => {
                         for index in positions.by_ref() {
                             if matches!(slots[index], Slot::Absent) {
@@ -574,25 +580,20 @@ struct Substitute<'a> {
 
 impl MutVisitor for Substitute<'_> {
     fn visit_expr_mut(&mut self, expr: &mut Expr) {
-        // A spread pack's operand has already read the argument pack's
-        // `*`-prefixed type name; the spread names the pack itself.
+        // A spread pack's operand has already read the argument pack's own
+        // spread; the spread names that pack.
         if let ExprKind::Spread(operand) = &mut expr.kind
-            && let ExprKind::Identifier(name) = &mut operand.kind
-            && let Some(pack) = name.strip_prefix('*')
+            && let ExprKind::Spread(pack) = &mut operand.kind
         {
-            *name = pack.to_string();
+            let pack = std::mem::replace(&mut **pack, Expr::new(ExprKind::None, self.span));
+            **operand = pack;
             return;
         }
         let ExprKind::Identifier(name) = &expr.kind else {
             return;
         };
-        let replacement = match self.arguments.get(name) {
-            Some(ParamArg::Value(value)) => Some(value.clone()),
-            Some(ParamArg::Type(ty)) => ty.expression_spelling(self.span),
-            _ => None,
-        };
-        if let Some(replacement) = replacement {
-            *expr = replacement;
+        if let Some(ParamArg::Value(value)) = self.arguments.get(name) {
+            *expr = value.clone();
         }
     }
 
@@ -603,7 +604,12 @@ impl MutVisitor for Substitute<'_> {
             _ => return,
         };
         let replacement = match self.arguments.get(name.as_str()) {
-            Some(ParamArg::Type(argument)) => Some(argument.clone()),
+            Some(ParamArg::Value(
+                spread @ Expr {
+                    kind: ExprKind::Spread(_),
+                    ..
+                },
+            )) => spread.annotation_type(),
             Some(ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(argument),
                 ..

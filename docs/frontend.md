@@ -433,17 +433,15 @@ FixedBuffer[8]
 SIMD[DType.int32, 4]
 ```
 
-The parser classifies clear type arguments as `ParamArg::Type` and value-like
-arguments as `ParamArg::Value`. Ambiguous bare identifiers are left for the
-checker to reinterpret based on the declaration's parameter kinds.
+Every bracket operand is an expression, as upstream's are: a positional
+operand is a `ParamArg::Value` and a keyword one a `ParamArg::Named`. The
+checker classifies an operand as a type or a value by what it denotes and
+the declaration's parameter kinds.
 
-A leading `*` spreads a type list. A spread of a pack keeps the pack's own
-type node (`*Ts`, `*Self.Ts`); a spread of any other type-list expression
-(`*Ts.reverse()`, `*TypeList._concat[A.values, B.values]()`) is a
-`ParamArg::Value` holding an `ExprKind::Spread`, the node a call argument's
-`*values` uses. A `Self`-rooted chain is parsed as a type first, so one that
-an operator continues (`Self.Ts.length - 1 - i`), and `Self.Ts.values`, are
-rebuilt as the value expressions they are.
+A leading `*` spreads a type list: the operand is an `ExprKind::Spread`, the
+node a call argument's `*values` uses, whether it spreads a pack (`*Ts`,
+`*Self.Ts`, which `ParamArg::spread_pack` names) or any other type-list
+expression (`*Ts.reverse()`, `*TypeList._concat[A.values, B.values]()`).
 
 This is an intentional parser/checker split: the parser handles syntax, while
 the checker knows which parameter positions expect types versus comptime values.

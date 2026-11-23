@@ -60,7 +60,7 @@ enum Precedence {
 
 enum ParsedBracketItem {
     /// One compile-time operand with its own source span.
-    Param(mojito_ast::ast::ParamArg, Span),
+    Param(mojito_ast::ast::ParamArg),
     Slice {
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,

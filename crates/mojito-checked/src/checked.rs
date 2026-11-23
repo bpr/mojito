@@ -6670,15 +6670,12 @@ impl<'a> ArenaBuilder<'a> {
                 [Some(attribute)] => Some(attribute.clone()),
                 _ => None,
             });
-        match (&index.kind, attribute) {
-            (ExprKind::TypeValue(ty), attribute @ Some(_)) => {
-                self.param_arg(&ParamArg::Type(ty.clone()), attribute)
-            }
-            (_, attribute @ Some(_)) => CheckedParamArg::Attribute {
+        match attribute {
+            attribute @ Some(_) => CheckedParamArg::Attribute {
                 value: attribute,
                 applications: self.expression_applications(index),
             },
-            (_, None) => CheckedParamArg::Value(self.expr(index)),
+            None => CheckedParamArg::Value(self.expr(index)),
         }
     }
 
@@ -6688,10 +6685,6 @@ impl<'a> ArenaBuilder<'a> {
         attribute: Option<mojito_types::types::TyArg>,
     ) -> CheckedParamArg {
         match argument {
-            ParamArg::Type(ty) => CheckedParamArg::Attribute {
-                value: attribute,
-                applications: self.type_applications(ty),
-            },
             // A lambda bound as a callable attribute (`g[lambda -> Int: 3]`)
             // still declares its hidden `def` where it is spelled, which
             // the attribute's symbol names: its node is reached, never

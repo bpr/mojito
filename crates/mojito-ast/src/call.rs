@@ -7,7 +7,7 @@
 //! `ParamMatchError::into_type_error`, the checker-facing renderings that
 //! must live beside the types they convert.
 
-use crate::ast::{DeclaredParam, ExprKind, ParamArg, ParamKind, Type};
+use crate::ast::{DeclaredParam, ExprKind, ParamArg, ParamKind};
 use mojito_common::error::TypeError;
 
 #[derive(Clone, Copy)]
@@ -447,8 +447,7 @@ pub fn unbound_marker(argument: &ParamArg) -> Option<Unbound> {
             ExprKind::Identifier(name) => name,
             _ => return None,
         },
-        ParamArg::Type(Type::Named(name, args)) if args.is_empty() => name,
-        ParamArg::Type(_) | ParamArg::Named { .. } => return None,
+        ParamArg::Named { .. } => return None,
     };
     match name.as_str() {
         "_" => Some(Unbound::Hole),
@@ -488,9 +487,9 @@ pub fn bracket_unbound_slots<P: CompileTimeParam>(
 ) -> Result<UnboundSlots, ParamMatchError> {
     let marker = |argument: &ParamArg| match argument {
         ParamArg::Named { value, .. } => unbound_marker(value),
-        positional => unbound_marker(positional),
+        positional @ ParamArg::Value(_) => unbound_marker(positional),
     };
-    let rest = matches!(arguments.last(), Some(last @ (ParamArg::Value(_) | ParamArg::Type(_)))
+    let rest = matches!(arguments.last(), Some(last @ ParamArg::Value(_))
         if unbound_marker(last) == Some(Unbound::Rest));
     let bound = &arguments[..arguments.len() - usize::from(rest)];
     if bound
@@ -532,7 +531,7 @@ pub fn bracket_keywords(arguments: &[ParamArg]) -> Vec<Option<&str>> {
         .iter()
         .map(|argument| match argument {
             ParamArg::Named { name, .. } => Some(name.as_str()),
-            ParamArg::Type(_) | ParamArg::Value(_) => None,
+            ParamArg::Value(_) => None,
         })
         .collect()
 }

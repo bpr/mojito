@@ -585,7 +585,6 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
 
 pub fn walk_param_arg<V: Visitor>(visitor: &mut V, argument: &ParamArg) {
     match argument {
-        ParamArg::Type(ty) => walk_type(visitor, ty),
         ParamArg::Value(value) => walk_expr(visitor, value),
         ParamArg::Named { value, .. } => walk_param_arg(visitor, value),
     }
@@ -1413,7 +1412,6 @@ fn walk_type_children_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
 /// Walk one parameter argument's expressions and types in place.
 pub fn walk_param_arg_mut<V: MutVisitor>(visitor: &mut V, argument: &mut ParamArg) {
     match argument {
-        ParamArg::Type(ty) => walk_type_mut(visitor, ty),
         ParamArg::Value(value) => walk_expr_mut(visitor, value),
         ParamArg::Named { value, .. } => walk_param_arg_mut(visitor, value),
     }

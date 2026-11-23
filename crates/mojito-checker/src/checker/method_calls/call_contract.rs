@@ -329,7 +329,7 @@ fn checked_parameter_arguments(
     let argument = |argument: &mojito_ast::ast::ParamArg, attribute: Option<&TyArg>| {
         let argument = match argument {
             mojito_ast::ast::ParamArg::Named { value, .. } => &**value,
-            argument => argument,
+            argument @ mojito_ast::ast::ParamArg::Value(_) => argument,
         };
         let operand = match (argument, attribute) {
             (mojito_ast::ast::ParamArg::Value(value), None) => Some(value.source_span()),

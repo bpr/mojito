@@ -63,18 +63,6 @@ impl Checker {
                 return dtype;
             }
         }
-        // A bracketed `Float64.dtype` parses as an associated-member type.
-        if let mojito_ast::ast::ParamArg::Type(SourceType::Assoc { base, name, args }) = arg
-            && name == "dtype"
-            && args.is_empty()
-            && let Some(dtype) = self
-                .ty_from_spelling(base)
-                .ok()
-                .as_ref()
-                .and_then(super::indexing::simd_dtype)
-        {
-            return dtype;
-        }
         if let mojito_ast::ast::ParamArg::Value(Expr {
             kind: ExprKind::Identifier(name),
             ..

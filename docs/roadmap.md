@@ -5529,26 +5529,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2133 The checker reads member-chain bracket operands as type
-  syntax**
-
-  Arms still match a `ParamArg::Type(SourceType::Assoc { .. })` operand
-  (`Self.T.K`, `Self.dtype._mlir_value`), which neither the parser nor
-  elaboration produces, where upstream has the expression alone.
-  - Arms: `type_spelled_member_read` and its five call sites
-    (`lower_assoc_application_arg`, `resolve_param_arg`, `slot_value` in
-    `type_resolution.rs`, `param_arg_value_ty` in `declarations.rs`,
-    `bracket_operand` in `constraints.rs`), and `mlir_value_operand`'s
-    `Assoc` arm (`mojito-types/src/types.rs`).
-  - Confirm no producer first: `rg 'ParamArg::Type\(' crates` lists the
-    constructions (parser `*` packs and function types, `retype_param_arg`
-    and `substitute_source_param_arg_bindings` replacements, and
-    `source_type_from_ty_with_origins`).
-  - Done when no arm matches a `ParamArg::Type` holding `Assoc`.
-  - Found while landing R2118 (2026-11-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2116 A value bound to a type parameter reports Mojito's own
   wording**
 
@@ -13392,26 +13372,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2539 A bracket operand can be a parsed type instead of an expression**
-
-  `ParamArg::Type` holds a `Type` operand, which the checker and the
-  elaborator synthesize from checked types, where upstream's bracket
-  operands are all expressions.
-  - Slice 7 of the R2137 plan: delete `ParamArg::Type` (113 sites).
-  - Code that spells a checked `Ty` builds expressions:
-    `mojito_types::ct::source_type`, `comptime.rs::source_type_from_ty`,
-    `kgen_string_source_type`, `mlir_source_type`, the `TypeSubs` callback,
-    and `initializer_list.rs::keyword_spelling`.
-  - If it does not fit a session, land the synthesizers first and file the
-    matches.
-  - Includes a bracket's pack operand (`Tuple[*Ts]`, `Tuple[*Self.Ts]`),
-    which `parse_param_arg` still makes `ParamArg::Type(Named("*Ts"))` or
-    `SelfParam("*Ts")`; it becomes the `ExprKind::Spread` an annotation's
-    pack already is, and `pack_spread_argument` and
-    `type_list_operand`'s pack spelling read it.
-  - Depends on R2535.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2540 `Type` is an AST node**
 
   `mojito_ast::ast::Type`, `ExprKind::TypeValue`, and the `SourceType`
@@ -13419,6 +13379,8 @@ follow-ups the landed producer stages filed come last.
   keeps a second representation of a type that upstream's has not.
   - Slice 8 of the R2137 plan: delete them and
     `Type::expression_spelling`.
+  - Every parsed annotation and bracket operand is already an expression:
+    only `Expr::annotation_of`'s fallback still makes a `TypeValue`.
   - The resolver's classification of an annotation expression moves into
     `type_resolution.rs` as a private borrowed view over `&Expr`, with
     `annotation_type`, `composition_type`, `type_spelling`, and

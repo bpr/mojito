@@ -16,7 +16,7 @@
 use crate::param_expr::{ParamExpr, ParamRef};
 use crate::types::TyKind;
 use crate::types::{Ty, TyArg, dict_elements, list_element, set_element, tuple_elements};
-use mojito_ast::ast::{Expr, ExprKind, KwArg, ParamArg, Type};
+use mojito_ast::ast::{Expr, ExprKind, KwArg, ParamArg, named_subscript};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::Span;
 use std::fmt;
@@ -1652,16 +1652,14 @@ impl CtValue {
                         .collect::<Option<Vec<_>>>()?,
                 ),
                 Some(ty) => {
-                    let Type::Named(name, param_args) = source_type(ty, span)? else {
-                        return None;
-                    };
+                    let (name, param_args) = source_call_head(ty, span)?;
                     // The key and value lists are explicit `List[K](...)`
                     // constructions, which name their element type even
                     // when a list is empty.
                     let args = if entries.is_empty() {
                         Vec::new()
                     } else {
-                        let [ParamArg::Type(key_ty), ParamArg::Type(value_ty), ..] =
+                        let [ParamArg::Value(key_ty), ParamArg::Value(value_ty), ..] =
                             param_args.as_slice()
                         else {
                             return None;
@@ -1694,9 +1692,7 @@ impl CtValue {
                         .collect::<Option<Vec<_>>>()?,
                 ),
                 Some(ty) => {
-                    let Type::Named(name, param_args) = source_type(ty, span)? else {
-                        return None;
-                    };
+                    let (name, param_args) = source_call_head(ty, span)?;
                     let kwargs = if elements.is_empty() {
                         Vec::new()
                     } else {
@@ -1898,36 +1894,41 @@ impl CtValue {
     }
 }
 
-/// The source spelling of a closed type (`Dict[String, Int, Fnv1a]`).
+/// The source expression spelling a closed type (`Dict[String, Int, Fnv1a]`).
 ///
 /// Scalars, nominal structs over type/value arguments, and SIMD, as a
 /// materialized collection type or an initializer list's construction spells
-/// it. Origin arguments and callables have no spelling here.
-pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
-    Some(match ty.kind() {
+/// it: a name is an identifier, an application a subscript of it. Origin
+/// arguments and callables have no spelling here, and neither has the none
+/// type, whose `None` spelling is a value outside an annotation.
+pub fn source_expr(ty: &Ty, span: Span) -> Option<Expr> {
+    let named = |name: &str| Some(Expr::new(ExprKind::Identifier(name.to_string()), span));
+    match ty.kind() {
         // A literal whose type carries its value has no closed spelling:
         // `IntLiteral[v]`'s attribute is no source expression.
-        kind if kind.is_int() => Type::Named("Int".to_string(), Vec::new()),
-        kind if kind.is_uint() => Type::Named("UInt".to_string(), Vec::new()),
-        kind if kind.is_bool() => Type::Named("Bool".to_string(), Vec::new()),
+        kind if kind.is_int() => named("Int"),
+        kind if kind.is_uint() => named("UInt"),
+        kind if kind.is_bool() => named("Bool"),
         // A string literal's type is the closed application of the declared
         // struct, `StringLiteral["text".value]`.
-        kind if let Some(value) = kind.string_literal_value() => Type::Named(
-            "StringLiteral".to_string(),
-            vec![ParamArg::Value(value.materialize(span)?)],
+        kind if let Some(value) = kind.string_literal_value() => named_subscript(
+            "StringLiteral",
+            &[ParamArg::Value(value.materialize(span)?)],
+            span,
         ),
-        kind if kind.is_float64() => Type::Named("Float64".to_string(), Vec::new()),
-        TyKind::None => Type::None,
-        kind if let Some((dtype, width)) = kind.known_simd() => Type::Named(
-            "SIMD".to_string(),
-            vec![
+        kind if kind.is_float64() => named("Float64"),
+        TyKind::None => None,
+        kind if let Some((dtype, width)) = kind.known_simd() => named_subscript(
+            "SIMD",
+            &[
                 ParamArg::Value(crate::types::dtype_value(dtype).materialize(span)?),
                 ParamArg::Value(CtValue::Int(width).materialize(span)?),
             ],
+            span,
         ),
         // A symbolic slot has no source spelling: its declaration is still
         // a template.
-        kind if kind.is_simd() || kind.is_pointer() => return None,
+        kind if kind.is_simd() || kind.is_pointer() => None,
         // A generated public-Tuple specialization keeps its element types
         // behind an argument-less symbol: spell the canonical `Tuple[...]`
         // application, which the checker maps back onto the specialization.
@@ -1935,33 +1936,62 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
             if name != crate::types::TUPLE_TYPE_NAME
                 && let Some(elements) = crate::types::tuple_elements(ty) =>
         {
-            Type::Named(
-                crate::types::TUPLE_TYPE_NAME.to_string(),
-                elements
-                    .into_iter()
-                    .map(|element| source_type(element, span).map(ParamArg::Type))
-                    .collect::<Option<Vec<_>>>()?,
-            )
+            let operands = elements
+                .into_iter()
+                .map(|element| source_operand(element, span).map(ParamArg::Value))
+                .collect::<Option<Vec<_>>>()?;
+            named_subscript(crate::types::TUPLE_TYPE_NAME, &operands, span)
         }
-        TyKind::Struct(name, arguments) => Type::Named(
-            name.clone(),
-            arguments
+        TyKind::Struct(name, arguments) if arguments.is_empty() => named(name),
+        TyKind::Struct(name, arguments) => {
+            let operands = arguments
                 .iter()
-                .map(|argument| match argument {
-                    TyArg::Ty(ty) => Some(ParamArg::Type(source_type(ty, span)?)),
-                    TyArg::Val(value) => Some(ParamArg::Value(value.materialize(span)?)),
-                    // An origin tail entry has no source spelling of its own;
-                    // upstream's `_` placeholder leaves the slot to inference
-                    // at the materialized spelling's use.
-                    TyArg::Origin(_) => Some(ParamArg::Value(Expr::new(
-                        ExprKind::Identifier("_".to_string()),
-                        span,
-                    ))),
+                .map(|argument| {
+                    Some(ParamArg::Value(match argument {
+                        TyArg::Ty(ty) => source_operand(ty, span)?,
+                        TyArg::Val(value) => value.materialize(span)?,
+                        // An origin tail entry has no source spelling of its
+                        // own; upstream's `_` placeholder leaves the slot to
+                        // inference at the materialized spelling's use.
+                        TyArg::Origin(_) => Expr::new(ExprKind::Identifier("_".to_string()), span),
+                    }))
                 })
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        _ => return None,
-    })
+                .collect::<Option<Vec<_>>>()?;
+            named_subscript(name, &operands, span)
+        }
+        _ => None,
+    }
+}
+
+/// [`source_expr`] for a bracket operand, where the none type is spelled
+/// by its MLIR type, `` __mlir_type.`!kgen.none` ``: a `None` operand is
+/// the `None` value.
+pub fn source_operand(ty: &Ty, span: Span) -> Option<Expr> {
+    match ty.kind() {
+        TyKind::None => Some(Expr::new(
+            ExprKind::Member {
+                object: Box::new(Expr::new(
+                    ExprKind::Identifier("__mlir_type".to_string()),
+                    span,
+                )),
+                field: "!kgen.none".to_string(),
+            },
+            span,
+        )),
+        _ => source_expr(ty, span),
+    }
+}
+
+/// The constructor name and bracket operands [`source_expr`] spells `ty`
+/// with, the head of a `Name[args](...)` call.
+pub fn source_call_head(ty: &Ty, span: Span) -> Option<(String, Vec<ParamArg>)> {
+    let spelled = source_expr(ty, span)?;
+    match &spelled.kind {
+        ExprKind::Identifier(name) => Some((name.clone(), Vec::new())),
+        _ => spelled
+            .bracket_application()
+            .map(|(name, args)| (name.to_string(), args.into_owned())),
+    }
 }
 
 /// The exact literal of one integer lane (unsigned lanes exceed `i64`).
@@ -1982,11 +2012,11 @@ fn materialize_refs(vs: &[&CtValue], span: Span) -> Option<Vec<Expr>> {
 }
 
 /// `List[T](elements..., __list_literal__=None)`.
-fn list_construction(element: Type, elements: Vec<Expr>, span: Span) -> Expr {
+fn list_construction(element: Expr, elements: Vec<Expr>, span: Span) -> Expr {
     literal(
         ExprKind::Call {
             name: "List".to_string(),
-            param_args: vec![ParamArg::Type(element)],
+            param_args: vec![ParamArg::Value(element)],
             args: elements,
             kwargs: vec![KwArg {
                 name: "__list_literal__".to_string(),

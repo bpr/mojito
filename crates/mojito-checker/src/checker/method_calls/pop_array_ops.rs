@@ -164,7 +164,9 @@ impl Checker {
                         "attribute '{name}' is not an inherent attribute of '{POP_ARRAY_GEP}'"
                     )));
                 }
-                _ => return Err(invalid("op attributes are named".to_string())),
+                mojito_ast::ast::ParamArg::Value(_) => {
+                    return Err(invalid("op attributes are named".to_string()));
+                }
             }
         }
         let operands = args

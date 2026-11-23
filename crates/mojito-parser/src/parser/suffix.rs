@@ -36,7 +36,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     step,
                 });
             } else {
-                let operand_start = self.peek_start();
                 let mut argument = self.parse_param_arg()?;
                 if matches!(self.peek_token()?, Some(Token::Assign)) {
                     let name = param_argument_name(&argument)?;
@@ -93,7 +92,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                                 step,
                             });
                         }
-                        _ => {
+                        mojito_ast::ast::ParamArg::Named { .. } => {
                             return Err(ParseError::UnexpectedToken(
                                 Token::Colon,
                                 "a slice bound must be an expression".into(),
@@ -101,10 +100,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         }
                     }
                 } else {
-                    items.push(ParsedBracketItem::Param(
-                        argument,
-                        (operand_start, self.last_span.1),
-                    ));
+                    items.push(ParsedBracketItem::Param(argument));
                 }
             }
 
@@ -134,7 +130,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let param_args = items
                 .into_iter()
                 .map(|item| match item {
-                    ParsedBracketItem::Param(argument, _) => argument,
+                    ParsedBracketItem::Param(argument) => argument,
                     ParsedBracketItem::Slice { .. } | ParsedBracketItem::KeywordSlice { .. } => {
                         unreachable!()
                     }
@@ -164,7 +160,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let mut arguments = Vec::with_capacity(items.len());
             for item in items {
                 arguments.push(match item {
-                    ParsedBracketItem::Param(mojito_ast::ast::ParamArg::Value(value), _) => {
+                    ParsedBracketItem::Param(mojito_ast::ast::ParamArg::Value(value)) => {
                         SubscriptArg::Index(value)
                     }
                     ParsedBracketItem::Param(..) => {
@@ -211,13 +207,12 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
 
         // Every other bracket is one subscript node, as upstream's
         // `SubscriptNode`: sema classifies it by its base (a parameter
-        // application, a callable's binding, or `__getitem__`). A type
-        // operand is the type value it spells.
+        // application, a callable's binding, or `__getitem__`).
         let operands = items.into_iter().map(|item| {
-            let ParsedBracketItem::Param(argument, span) = item else {
+            let ParsedBracketItem::Param(argument) = item else {
                 unreachable!("slices were handled above")
             };
-            (argument, span)
+            argument
         });
         let kind = mojito_ast::ast::subscript_application(object, operands, self.last_span)
             .ok_or_else(|| {

@@ -573,7 +573,7 @@ impl Checker {
                 ParamArg::Value(value) => self
                     .compile_dependent_ct_expr(value)
                     .map_err(|_| TypeError::DynamicParameterValue)?,
-                _ => return Err(no_qualified_builtins()),
+                ParamArg::Named { .. } => return Err(no_qualified_builtins()),
             },
             _ => return Err(no_qualified_builtins()),
         };

@@ -1406,9 +1406,6 @@ pub(super) fn typed_lane_op(expr: &Expr) -> Option<(ParamOp, &mojito_ast::ast::P
 fn names_builtin_pair(argument: &mojito_ast::ast::ParamArg, pair: &[&str]) -> bool {
     let named = |name: &str| pair.contains(&name);
     match argument {
-        mojito_ast::ast::ParamArg::Type(ty) => {
-            super::comptime_validation::mlir_source_name(ty).is_some_and(named)
-        }
         mojito_ast::ast::ParamArg::Value(Expr {
             kind: ExprKind::Member { object, field },
             ..

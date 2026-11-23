@@ -333,7 +333,6 @@ impl Checker {
         value: &mojito_ast::ast::ParamArg,
     ) -> Result<Ty, TypeError> {
         match value {
-            mojito_ast::ast::ParamArg::Type(annotation) => self.ty_from_spelling(annotation),
             mojito_ast::ast::ParamArg::Value(expression) => {
                 self.denoted_type(expression, "attribute '_type'")
             }

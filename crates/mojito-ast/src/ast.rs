@@ -124,31 +124,26 @@ pub fn multi_subscript_param_args(args: &[SubscriptArg]) -> Option<Vec<ParamArg>
         .collect()
 }
 
-/// One subscript index as a compile-time argument: a type the subscript
-/// spells (`P.sz[Int]`) is a type argument.
+/// One subscript index as a compile-time argument: the index expression,
+/// as upstream's bracket operands are all expressions.
 pub fn subscript_param_arg(index: &Expr) -> ParamArg {
-    match &index.kind {
-        ExprKind::TypeValue(ty) => ParamArg::Type(ty.clone()),
-        _ => ParamArg::Value(index.clone()),
-    }
+    ParamArg::Value(index.clone())
 }
 
 /// One compile-time argument as the subscript operand that spells it.
 ///
-/// The inverse of [`subscript_param_arg`]: a type argument becomes a
-/// `TypeValue` index at `span`, a named one a keyword operand. `None` for a
-/// named argument whose value is itself named.
-pub fn subscript_arg(argument: ParamArg, span: Span) -> Option<SubscriptArg> {
+/// The inverse of [`subscript_param_arg`]: a named argument becomes a
+/// keyword operand. `None` for a named argument whose value is itself named.
+pub fn subscript_arg(argument: ParamArg) -> Option<SubscriptArg> {
     let index = |argument: ParamArg| match argument {
         ParamArg::Value(value) => Some(value),
-        ParamArg::Type(ty) => Some(Expr::new(ExprKind::TypeValue(ty), span)),
         ParamArg::Named { .. } => None,
     };
     match argument {
         ParamArg::Named { name, value } => {
             index(*value).map(|value| SubscriptArg::Keyword { name, value })
         }
-        argument => index(argument).map(SubscriptArg::Index),
+        argument @ ParamArg::Value(_) => index(argument).map(SubscriptArg::Index),
     }
 }
 
@@ -157,16 +152,16 @@ pub fn subscript_arg(argument: ParamArg, span: Span) -> Option<SubscriptArg> {
 /// [`Expr::bracket_operands`].
 ///
 /// No argument is the empty subscript at `span`, one positional argument an
-/// [`ExprKind::Index`], and any other list an [`ExprKind::MultiIndex`]; each
-/// operand is spelled at its own span. `None` where [`subscript_arg`] is.
+/// [`ExprKind::Index`], and any other list an [`ExprKind::MultiIndex`].
+/// `None` where [`subscript_arg`] is.
 pub fn subscript_application(
     object: Expr,
-    args: impl IntoIterator<Item = (ParamArg, Span)>,
+    args: impl IntoIterator<Item = ParamArg>,
     span: Span,
 ) -> Option<ExprKind> {
     let operands = args
         .into_iter()
-        .map(|(argument, at)| subscript_arg(argument, at))
+        .map(subscript_arg)
         .collect::<Option<Vec<_>>>()?;
     let object = Box::new(object);
     Some(match <[_; 1]>::try_from(operands) {
@@ -190,16 +185,10 @@ pub fn subscript_application(
 }
 
 /// The application `name[args]` at `span`: a [`subscript_application`] of
-/// the identifier `name`, every operand spelled at `span`. `None` where
-/// [`subscript_arg`] is.
+/// the identifier `name`. `None` where [`subscript_arg`] is.
 pub fn named_subscript(name: &str, args: &[ParamArg], span: Span) -> Option<Expr> {
     let object = Expr::new(ExprKind::Identifier(name.to_string()), span);
-    subscript_application(
-        object,
-        args.iter().map(|argument| (argument.clone(), span)),
-        span,
-    )
-    .map(|kind| Expr::new(kind, span))
+    subscript_application(object, args.iter().cloned(), span).map(|kind| Expr::new(kind, span))
 }
 
 /// A type annotation.
@@ -216,7 +205,7 @@ pub enum Type {
     None,
     /// A name that resolves to a `struct` type, optionally applied to parameter
     /// arguments (`Point` is `Named("Point", [])`, `Pair[Int]` is
-    /// `Named("Pair", [Type(Int)])`, `FixedBuffer[8]` is
+    /// `Named("Pair", [Value(Int)])`, `FixedBuffer[8]` is
     /// `Named("FixedBuffer", [Value(Int(8))])`). A bare `Named(name, [])` may also
     /// resolve to a type *parameter* in scope (a `T` inside a generic `def`); the
     /// checker decides. The checker validates the name and the argument kinds.
@@ -454,20 +443,30 @@ impl TypeParam {
 /// A parameter **argument** supplied in a `[...]` list at a use site, i.e. a
 /// `Pair[Int]` / `FixedBuffer[8]`.
 ///
-/// A type parameter takes a `Type`; a value parameter takes a comptime value
-/// `Expr`. The two forms are distinguished by the parser where it can (a
-/// leading type keyword / `Self` is a `Type`); a bare identifier or an
-/// arithmetic expression parses as `Value`, and the checker reinterprets a
-/// lone identifier as a type when the parameter is a type one.
+/// Every operand is an expression, as upstream's bracket operands are; the
+/// checker classifies one as a type or a value by what it denotes.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ParamArg {
-    Type(Type),
     Value(Expr),
     /// A keyword compile-time argument (`name=value`).
     Named {
         name: String,
         value: Box<Self>,
     },
+}
+
+impl ParamArg {
+    /// The pack a positional spread operand of a pack (`*Ts`, `*Self.Ts`)
+    /// names, as [`Expr::pack_spread_type`] spells it.
+    pub fn spread_pack(&self) -> Option<Type> {
+        match self {
+            Self::Value(Expr {
+                kind: ExprKind::Spread(operand),
+                ..
+            }) => operand.pack_spread_type(),
+            _ => None,
+        }
+    }
 }
 
 /// A SIMD element type — the `<dt>` in `SIMD[DType.<dt>, width]`.
@@ -2385,7 +2384,7 @@ impl Expr {
             param_args.iter().find_map(|argument| match argument {
                 ParamArg::Named { name, value } if name == wanted => match value.as_ref() {
                     ParamArg::Value(value) => Some(value),
-                    _ => None,
+                    ParamArg::Named { .. } => None,
                 },
                 _ => None,
             })
@@ -2578,27 +2577,28 @@ impl Expr {
     /// The type an expression spells where upstream composes traits as a
     /// type (a generator result, an associated member's annotation): an
     /// `&` chain (`Copyable & Defaultable`), however nested, is a
-    /// `$trait_composition` of its members in source order, each converted
-    /// by [`Self::annotation_type`]; any other expression converts as an
-    /// annotation.
+    /// `$trait_composition` of its member expressions in source order; any
+    /// other expression converts as an annotation
+    /// ([`Self::annotation_type`]).
     pub fn composition_type(&self) -> Option<Type> {
         let mut members = Vec::new();
         self.composition_members(&mut members)?;
-        if members.len() == 1 {
-            return members.pop();
+        match <[_; 1]>::try_from(members) {
+            Ok([only]) => only.annotation_type(),
+            Err(members) => Some(Type::Named(
+                "$trait_composition".to_string(),
+                members.into_iter().cloned().map(ParamArg::Value).collect(),
+            )),
         }
-        Some(Type::Named(
-            "$trait_composition".to_string(),
-            members.into_iter().map(ParamArg::Type).collect(),
-        ))
     }
 
-    fn composition_members(&self, members: &mut Vec<Type>) -> Option<()> {
+    fn composition_members<'a>(&'a self, members: &mut Vec<&'a Self>) -> Option<()> {
         if let ExprKind::Infix(InfixOp::BitAnd, left, right) = &self.kind {
             left.composition_members(members)?;
             return right.composition_members(members);
         }
-        members.push(self.annotation_type()?);
+        self.annotation_type()?;
+        members.push(self);
         Some(())
     }
 }
@@ -3348,7 +3348,6 @@ fn lambdas_in_condition<'a>(condition: &'a Condition, out: &mut Vec<&'a Expr>) {
 fn lambdas_in_param_args<'a>(args: &'a [ParamArg], out: &mut Vec<&'a Expr>) {
     for arg in args {
         match arg {
-            ParamArg::Type(_) => {}
             ParamArg::Value(value) => lambdas_in_expr(value, out),
             ParamArg::Named { value, .. } => {
                 lambdas_in_param_args(std::slice::from_ref(value.as_ref()), out);
@@ -3684,7 +3683,6 @@ pub fn rekey_syntax(statements: &mut [Stmt]) {
         fn param_args(&mut self, args: &mut [ParamArg]) {
             for arg in args {
                 match arg {
-                    ParamArg::Type(ty) => self.ty(ty),
                     ParamArg::Value(value) => self.expr(value),
                     ParamArg::Named { value, .. } => {
                         self.param_args(std::slice::from_mut(value.as_mut()));

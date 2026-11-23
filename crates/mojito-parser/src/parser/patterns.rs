@@ -719,17 +719,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
             let args = self.parse_param_args()?;
             let span = (start, self.last_span.1);
-            let applied = mojito_ast::ast::subscript_application(
-                head,
-                args.into_iter().map(|argument| (argument, span)),
-                span,
-            )
-            .ok_or_else(|| {
-                ParseError::UnexpectedToken(
-                    Token::RBracket,
-                    "a keyword argument takes one compile-time value".to_string(),
-                )
-            })?;
+            let applied =
+                mojito_ast::ast::subscript_application(head, args, span).ok_or_else(|| {
+                    ParseError::UnexpectedToken(
+                        Token::RBracket,
+                        "a keyword argument takes one compile-time value".to_string(),
+                    )
+                })?;
             head = self.node(applied, start);
             while matches!(self.peek_token()?, Some(Token::Dot)) {
                 self.next_token()?;

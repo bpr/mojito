@@ -10,7 +10,7 @@ use super::*;
 pub(in crate::checker) fn raw_origin_argument(
     argument: &mojito_ast::ast::ParamArg,
 ) -> Option<mojito_ast::ast::ParamArg> {
-    use mojito_ast::ast::{ParamArg, SourceType};
+    use mojito_ast::ast::ParamArg;
     /// The raw attribute an origin value holds, upstream's
     /// `Origin._mlir_origin`.
     const MLIR_ORIGIN_FIELD: &str = "_mlir_origin";
@@ -19,11 +19,6 @@ pub(in crate::checker) fn raw_origin_argument(
             kind: ExprKind::Member { object, field },
             ..
         }) if field == MLIR_ORIGIN_FIELD => Some(ParamArg::Value((**object).clone())),
-        ParamArg::Type(SourceType::Assoc { base, name, args })
-            if name == MLIR_ORIGIN_FIELD && args.is_empty() =>
-        {
-            Some(ParamArg::Type((**base).clone()))
-        }
         _ => None,
     }
 }
@@ -200,9 +195,8 @@ pub(in crate::checker) fn view_return_interior_tags(ret: Option<&Expr>) -> Vec<S
                 mojito_ast::ast::ParamArg::Value(expression) => expression,
                 mojito_ast::ast::ParamArg::Named { value, .. } => match value.as_ref() {
                     mojito_ast::ast::ParamArg::Value(expression) => expression,
-                    _ => return None,
+                    mojito_ast::ast::ParamArg::Named { .. } => return None,
                 },
-                mojito_ast::ast::ParamArg::Type(_) => return None,
             };
             let mut tags = Vec::new();
             while let Some((base, tag)) = interior_origin_syntax(expression) {
@@ -254,13 +248,12 @@ pub(in crate::checker) fn reject_subtree_origin_here(context: &str) -> TypeError
 pub(in crate::checker) fn removed_origin_alias(
     argument: &mojito_ast::ast::ParamArg,
 ) -> Option<TypeError> {
-    use mojito_ast::ast::{ParamArg, SourceType};
+    use mojito_ast::ast::ParamArg;
     let name = match argument {
         ParamArg::Value(Expr {
             kind: ExprKind::Identifier(name),
             ..
         }) => name.as_str(),
-        ParamArg::Type(SourceType::Named(name, arguments)) if arguments.is_empty() => name.as_str(),
         _ => return None,
     };
     let surviving = match name {
@@ -347,7 +340,7 @@ pub(in crate::checker) fn origin_mut_cast_syntax(
     let destination = match destination {
         mojito_ast::ast::ParamArg::Named { name, value } if name == "dest_mut" => value.as_ref(),
         mojito_ast::ast::ParamArg::Named { .. } => return None,
-        positional => positional,
+        positional @ mojito_ast::ast::ParamArg::Value(_) => positional,
     };
     (field == "unsafe_mut_cast" && args.is_empty() && kwargs.is_empty())
         .then_some((object.as_ref(), destination))
@@ -663,7 +656,7 @@ impl Checker {
                     };
                     match value.as_ref() {
                         mojito_ast::ast::ParamArg::Value(expression) => (slot, expression),
-                        _ => continue,
+                        mojito_ast::ast::ParamArg::Named { .. } => continue,
                     }
                 }
                 mojito_ast::ast::ParamArg::Value(expression) => {
@@ -674,10 +667,6 @@ impl Checker {
                         continue;
                     };
                     (slot, expression)
-                }
-                mojito_ast::ast::ParamArg::Type(_) => {
-                    positional.next();
-                    continue;
                 }
             };
             // A struct's own origin binder (`Self.origin`) names no place of
@@ -1038,7 +1027,6 @@ pub(in crate::checker) fn sig_origin_for_binder(
 fn result_origin_roots<'a>(annotation: &'a SourceType, roots: &mut Vec<&'a str>) {
     fn argument_roots<'a>(argument: &'a mojito_ast::ast::ParamArg, roots: &mut Vec<&'a str>) {
         match argument {
-            mojito_ast::ast::ParamArg::Type(ty) => result_origin_roots(ty, roots),
             mojito_ast::ast::ParamArg::Value(expression) => origin_roots(expression, roots),
             mojito_ast::ast::ParamArg::Named { value, .. } => argument_roots(value, roots),
         }
@@ -1101,7 +1089,7 @@ fn cast_sig_mutability(
     destination: &mojito_ast::ast::ParamArg,
     decls: &[ParamDecl],
 ) -> Result<mojito_types::origin::SigMutability, TypeError> {
-    use mojito_ast::ast::{ParamArg, Type};
+    use mojito_ast::ast::ParamArg;
     use mojito_types::origin::SigMutability;
     let flag = |mutable: bool| {
         if mutable {
@@ -1115,11 +1103,6 @@ fn cast_sig_mutability(
             kind: ExprKind::Bool(mutable),
             ..
         }) => return Ok(flag(*mutable)),
-        ParamArg::Type(Type::Named(name, args)) if args.is_empty() => match name.as_str() {
-            "True" => return Ok(flag(true)),
-            "False" => return Ok(flag(false)),
-            name => Some(name),
-        },
         ParamArg::Value(Expr {
             kind: ExprKind::Identifier(name),
             ..

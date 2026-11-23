@@ -1979,7 +1979,7 @@ fn alias_binder_hole(
             name: name.clone(),
             value: Box::new(alias_binder_hole(value, binders)),
         },
-        _ => argument.clone(),
+        ParamArg::Value(_) => argument.clone(),
     }
 }
 

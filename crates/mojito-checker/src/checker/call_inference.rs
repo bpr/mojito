@@ -812,7 +812,7 @@ impl Checker {
             .iter()
             .map(|argument| match argument {
                 mojito_ast::ast::ParamArg::Value(value) => Some(value.clone()),
-                _ => None,
+                mojito_ast::ast::ParamArg::Named { .. } => None,
             })
             .collect::<Option<Vec<_>>>()?;
         let (struct_name, _) = base_ty.kind().as_non_pointer_struct()?;
@@ -1249,7 +1249,7 @@ impl Checker {
                 .iter()
                 .filter_map(|argument| match argument {
                     mojito_ast::ast::ParamArg::Value(value) => Some(value.clone()),
-                    _ => None,
+                    mojito_ast::ast::ParamArg::Named { .. } => None,
                 })
                 .collect();
             let receiver = Expr {
@@ -3037,7 +3037,6 @@ pub(super) fn folded_parameter_attributes(
             mojito_ast::ast::ParamArg::Named { value, .. } => {
                 matches!(&**value, mojito_ast::ast::ParamArg::Value(_))
             }
-            mojito_ast::ast::ParamArg::Type(_) => false,
         };
         if is_value && closed.is_parameter_attribute() {
             folded.bind(index, position, Some(value.clone()));
@@ -3307,7 +3306,7 @@ fn bind_unbound_origin_attributes(
     for (position, (argument, slot)) in listed.iter().zip(slots).enumerate() {
         let argument = match argument {
             mojito_ast::ast::ParamArg::Named { value, .. } => &**value,
-            positional => positional,
+            positional @ mojito_ast::ast::ParamArg::Value(_) => positional,
         };
         if mojito_ast::call::unbound_marker(argument) != Some(mojito_ast::call::Unbound::Hole) {
             continue;

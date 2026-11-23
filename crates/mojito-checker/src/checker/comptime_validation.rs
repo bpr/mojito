@@ -6522,7 +6522,7 @@ impl Checker {
                 raw.as_decl_ref().is_some()
                     && matches!(raw.meta(), mojito_types::param_expr::MetaTy::ParamList(_))
             }),
-            _ => None,
+            ParamArg::Named { .. } => None,
         }
     }
 
@@ -6577,10 +6577,10 @@ impl Checker {
     /// The value pack a bracket argument spreads whole: `*vs` of a `def`'s
     /// or method's own value pack, or `*Self.vs` of the enclosing struct's.
     pub(super) fn value_pack_spread(&self, argument: &ParamArg) -> Option<ParamExpr> {
-        match argument {
+        match argument.spread_pack()? {
             // The struct's own pack arrives here too: pack qualification
             // folds `*Self.vs` onto the bare spread.
-            ParamArg::Type(SourceType::Named(name, args)) if args.is_empty() => {
+            SourceType::Named(name, args) if args.is_empty() => {
                 let name = name.strip_prefix('*')?;
                 self.value_pack_named(&Expr::new(
                     ExprKind::Identifier(name.to_string()),
@@ -6588,9 +6588,7 @@ impl Checker {
                 ))
                 .or_else(|| self.self_value_pack(name))
             }
-            ParamArg::Type(SourceType::SelfParam(name)) => {
-                self.self_value_pack(name.strip_prefix('*')?)
-            }
+            SourceType::SelfParam(name) => self.self_value_pack(name.strip_prefix('*')?),
             _ => None,
         }
     }

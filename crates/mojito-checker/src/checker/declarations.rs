@@ -5696,12 +5696,6 @@ impl Checker {
             mojito_ast::ast::ParamArg::Named { value, .. } => {
                 self.param_arg_value_ty(value, declared)
             }
-            mojito_ast::ast::ParamArg::Type(source)
-                if let Some(read) = self.type_spelled_member_read(source) =>
-            {
-                self.param_arg_value_ty(&mojito_ast::ast::ParamArg::Value(read), declared)
-            }
-            mojito_ast::ast::ParamArg::Type(_) => None,
         }
     }
 
@@ -7002,7 +6996,9 @@ impl Checker {
                         *position,
                         match argument {
                             mojito_ast::ast::ParamArg::Value(_) => Some(value.clone()),
-                            _ => bracket_attribute(argument, &value),
+                            mojito_ast::ast::ParamArg::Named { .. } => {
+                                bracket_attribute(argument, &value)
+                            }
                         },
                     );
                     bind_pack(
@@ -7035,6 +7031,7 @@ impl Checker {
                         kind: ExprKind::Spread(operand),
                         ..
                     }) = argument
+                        && argument.spread_pack().is_none()
                     {
                         values.extend(self.spread_pack_values(operand)?);
                         continue;
@@ -7198,7 +7195,7 @@ fn bracket_bindings<'a>(
         }
         let argument = match argument {
             mojito_ast::ast::ParamArg::Named { value, .. } => &**value,
-            positional => positional,
+            positional @ mojito_ast::ast::ParamArg::Value(_) => positional,
         };
         bound[index].push((position, argument));
     }
