@@ -1492,6 +1492,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An annotation that evaluates to no type reports why the expression fails,
+  as at the pin, instead of "not a compile-time Int constant" (R2543):
+  `x: Copyable & Movable | Copyable` is the missing `__or__`, `x: M.f()` the
+  undeclared `M`, and `-> Self.make()` the missing attribute `make`. A `&`
+  composes traits only when its leftmost operand is a trait, so `Int &
+  Copyable` is `Int`'s `__and__`, and a later non-trait type operand
+  (`Copyable & Int`) is the composition's missing `__and__`.
+
 - A positional `Origin` argument (`o: Origin[True]`) is the pin's "invalid
   call to 'Origin': unexpected parameter", since `Origin`'s `mut` is
   infer-only, where it was read as `mut`

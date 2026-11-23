@@ -1215,7 +1215,7 @@ impl Checker {
             // Any other annotation expression is evaluated in the type
             // context, as upstream's `emitExprType` evaluates it: a
             // conditional of types is a type, a value is "expected a type".
-            SourceType::Value(value) => self.denoted_type(value, "type annotation")?,
+            SourceType::Value(value) => self.annotation_type(value)?,
             // `TypeList[Trait=AnyType, Ts.values]()[i]`: the value's
             // `__getitem_param__[i]`, the path its explicit spelling takes.
             SourceType::IndexedProjection { base, index }

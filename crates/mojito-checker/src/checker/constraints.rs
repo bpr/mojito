@@ -1316,6 +1316,35 @@ impl Checker {
         Ok(mojito_types::types::DependentType::resolve(built))
     }
 
+    /// The type an annotation expression `expr` denotes
+    /// ([`Self::denoted_type`]). An expression the compile-time builder
+    /// cannot read reports why the expression itself fails, as upstream's
+    /// `emitExprType` emits it as an ordinary expression before folding it:
+    /// `Int & Copyable` is an invalid `__and__` call, `M.f()` over an
+    /// undeclared `M` an unknown declaration.
+    pub(super) fn annotation_type(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        self.denoted_type(expr, "type annotation")
+            .map_err(|error| match error {
+                TypeError::NotComptime(_) => self.expression_error(expr).unwrap_or(error),
+                error => error,
+            })
+    }
+
+    /// Whether `name` is a declaration in scope: a variable, a `comptime`
+    /// value, a function, a trait, or any name the compile-time builder
+    /// reads (a type, an alias, a parameter).
+    pub(super) fn declares(&self, name: &str) -> bool {
+        self.lookup(name).is_some()
+            || self.local_comptime_value(name).is_some()
+            || self.overload_sets.is_function(name)
+            || self.traits.contains_key(name)
+            || mojito_types::conformance::COMPILER_TRAITS.contains(&name)
+            || !matches!(
+                self.build_ct_name(name, Recording::Silent),
+                Err(TypeError::NotComptime(unknown)) if unknown == name
+            )
+    }
+
     /// Whether `expr` evaluates to a type, upstream's `emitExprType`
     /// question: a type-shaped expression whose compile-time value has the
     /// type metatype (`Int`, `pair[1, 2]`, `G[3]`), not a value constant
@@ -1364,9 +1393,7 @@ impl Checker {
         {
             return Ok(ty);
         }
-        let depth = self.annotation_depth.replace(0);
-        let typed = self.probe(|| self.infer(operand));
-        self.annotation_depth.set(depth);
+        let typed = self.infer_as_expression(operand);
         // A literal's type carries its value: `type_of("ab")` is
         // `StringLiteral["ab"]`, `type_of(N + 2.5)` over `comptime N = 4`
         // `FloatLiteral[6.5]`, and `type_of(M)` over `comptime M: Int = 4`
@@ -3387,16 +3414,7 @@ impl Checker {
     /// declaration in scope, as upstream rejects the use of an unknown
     /// declaration.
     fn unresolved_head(&self, name: &str) -> TypeError {
-        let declared = self.lookup(name).is_some()
-            || self.local_comptime_value(name).is_some()
-            || self.overload_sets.is_function(name)
-            || self.traits.contains_key(name)
-            || mojito_types::conformance::COMPILER_TRAITS.contains(&name)
-            || !matches!(
-                self.build_ct_name(name, Recording::Silent),
-                Err(TypeError::NotComptime(unknown)) if unknown == name
-            );
-        if declared {
+        if self.declares(name) {
             TypeError::NotComptime(name.to_string())
         } else {
             TypeError::UnknownType(name.to_string())
@@ -3539,6 +3557,21 @@ impl Checker {
                 }
             }
         })
+    }
+
+    /// `expr` typed as an ordinary expression without being evaluated,
+    /// inside a probe and outside any annotation, as upstream emits an
+    /// operand into a block it then erases.
+    fn infer_as_expression(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        let depth = self.annotation_depth.replace(0);
+        let typed = self.probe(|| self.infer(expr));
+        self.annotation_depth.set(depth);
+        typed
+    }
+
+    /// Why `expr` fails as an ordinary expression, if it does.
+    fn expression_error(&self, expr: &Expr) -> Option<TypeError> {
+        self.infer_as_expression(expr).err()
     }
 
     /// The rejection of `object.field` over a declared struct that has no

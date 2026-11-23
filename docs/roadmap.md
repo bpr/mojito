@@ -5072,6 +5072,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     rejects the type as its `self`: "invalid call to '__add__': value
     passed to 'self' cannot be converted from type value 'Int' to an
     instance of 'Int'; did you mean to instantiate 'Int'?".
+  - Probe: the annotation `def f(x: Int & Copyable)` reports
+    "'AnyStruct[Int]' does not implement the '__and__' method", where the
+    pin reports "invalid call to '__and__': value passed to 'self' cannot
+    be converted from 'AnyStruct[Int]' to 'SIMD[dtype, length]'".
   - The `# expect:` lines of the `assets/type_error` fixtures that assert
     `is not defined for` move to the pin's words with the fix.
   - Found while landing R1413 (2026-11-10).
@@ -7716,23 +7720,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `stored[True](Storage[True._mlir_value]())` can then join
     `assets/ok/bool_storage_parameter_fold.mojo`.
   - Found while landing R1955 (2026-11-09).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2543 An annotation that evaluates to no type reports "not a compile-time Int constant"**
-
-  `build_ct` reports any annotation expression it cannot evaluate as a
-  missing `Int` constant, where the pin reports why the expression fails.
-  - Both compilers reject these programs. Only the diagnostic differs.
-  - Probe: `def f(x: Int & Copyable)` and `def f[T: Copyable & Movable |
-    Copyable]()` report "not a compile-time Int constant: Copyable"; the
-    pin reports "invalid call to '__and__'".
-  - Probe: `def f(x: M.f())` reports "not a compile-time Int constant: not
-    an associated comptime expression"; the pin reports "use of unknown
-    declaration 'M'".
-  - Probe: `struct S` with `def f(self) -> Self.make()` reports the same;
-    the pin reports "'S' value has no attribute 'make'".
-  - Found while landing R2137 (2026-11-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

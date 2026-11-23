@@ -112,19 +112,17 @@ impl Checker {
     /// trait constant, or a `&` composition of them (`Copyable & Hashable`,
     /// `MyTr & Hashable`), as upstream evaluates the expression to an
     /// `AnyTrait` value: each trait another one implies is dropped, as
-    /// upstream folds a redundant composition. `None` when it names no
-    /// trait.
+    /// upstream folds a redundant composition. `None` when its leftmost
+    /// operand is no trait: upstream's `&` composes traits only over a
+    /// trait, and any other left operand's `&` is that value's `__and__`
+    /// call (`Int & Copyable`).
     pub(super) fn trait_value(&self, expr: &Expr) -> Option<Result<TraitValue, TypeError>> {
         let names = mojito_ast::ast::trait_conjunction_names(expr)?;
-        let names_trait = |name: &str| {
-            self.check_trait_name(name).is_ok()
-                && self.lookup(name).is_none()
-                && self.value_parameter_in_scope(name).is_none()
-        };
-        if !names
-            .iter()
-            .any(|name| names_trait(name) || self.trait_constant(name).is_some())
-        {
+        let leftmost = names.first()?;
+        let names_trait = self.check_trait_name(leftmost).is_ok()
+            && self.lookup(leftmost).is_none()
+            && self.value_parameter_in_scope(leftmost).is_none();
+        if !names_trait && self.trait_constant(leftmost).is_none() {
             return None;
         }
         Some(self.trait_conjuncts(&names).map(|value| TraitValue {
@@ -246,8 +244,7 @@ impl Checker {
                 }
                 None if !value.ty.is_empty()
                     && self.check_trait_name(name).is_err()
-                    && (self.lookup(name).is_some()
-                        || self.value_parameter_in_scope(name).is_some()) =>
+                    && self.declares(name) =>
                 {
                     return Err(TypeError::MatchPattern(format!(
                         "'{}' does not implement the '__and__' method",

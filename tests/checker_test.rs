@@ -11736,14 +11736,18 @@ fn an_annotation_expression_is_evaluated_in_the_type_context() {
         ("def() -> Int == Int", "expected a type, found a value"),
         (
             "def(Int) -> Int & Copyable",
-            "not a compile-time Int constant",
+            "'AnyStruct[Int]' does not implement the '__and__' method",
+        ),
+        (
+            "Int & Copyable",
+            "'AnyStruct[Int]' does not implement the '__and__' method",
         ),
         (
             "Copyable & Movable | Copyable",
-            "not a compile-time Int constant",
+            "'AnyTrait[Copyable]' does not implement the '__or__' method",
         ),
-        ("M.f()", "not a compile-time Int constant"),
-        ("Pair[Int](1)(2)", "not a compile-time Int constant"),
+        ("M.f()", "Undefined variable 'M'"),
+        ("Pair[Int](1)(2)", "Undefined variable 'Pair'"),
         ("type_of(a, b)", "'type_of' expects 1 argument(s), got 2"),
     ] {
         let source = format!("def f(x: {annotation}):\n    pass\n");
@@ -11755,7 +11759,7 @@ fn an_annotation_expression_is_evaluated_in_the_type_context() {
     assert!(
         error
             .to_string()
-            .contains("not a compile-time Int constant"),
+            .contains("'S' value has no attribute 'make'"),
         "{error}"
     );
 }
