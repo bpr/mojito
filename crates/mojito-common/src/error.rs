@@ -209,6 +209,11 @@ pub enum TypeError {
     /// (`__get_litref_as_mvalue` of a value that is no `!lit.ref`).
     /// Carries the pin's message.
     InvalidAddressOperand(String),
+    /// An operator special method declared where or how the pin rejects
+    /// it: as a global function, as a static method, or with an operand
+    /// count its operator does not take (`'__add__' requires 2 operands`).
+    /// Carries the pin's message.
+    InvalidSpecialMethod(String),
     /// A bare assignment (`x = e` or `a, b = e`) targets a name that is not in
     /// scope. Mojito requires `var` to declare a new variable.
     AssignToUndeclared(String),
@@ -860,7 +865,8 @@ impl fmt::Display for TypeError {
             Self::InvalidDecorator(message)
             | Self::Unavailable(message)
             | Self::InvalidReceiver(message)
-            | Self::InvalidAddressOperand(message) => f.write_str(message),
+            | Self::InvalidAddressOperand(message)
+            | Self::InvalidSpecialMethod(message) => f.write_str(message),
             Self::ImmutableBinding(name) => {
                 write!(f, "expression must be mutable in assignment ('{name}')")
             }

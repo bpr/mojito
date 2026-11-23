@@ -3948,6 +3948,7 @@ impl Checker {
         if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
             return Err(TypeError::ReservedName(name.clone()));
         }
+        super::declarations::check_operator_function(name)?;
         if self.structs.contains_key(name) {
             return Err(TypeError::Redeclaration(name.clone()));
         }

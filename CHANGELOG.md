@@ -1471,6 +1471,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An operator special method is checked against its operator's operand
+  count at its declaration, as at the pin: `def __add__(self, other: Int,
+  k: Int = 50)` in a struct or trait is "'__add__' requires 2 operands"
+  instead of running with `k` defaulted, `__pow__` takes two or three, a
+  static operator method is rejected, and a global function named for one
+  must be a method (`assets/type_error/operator_method_*.mojo`).
+
 - A call through a trait bound that leaves out a defaulted parameter takes
   the requirement's default from the requirement's declaration, as
   upstream's requirement function type carries it, instead of the check

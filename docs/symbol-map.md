@@ -768,6 +768,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and walks a spelled method and a wrapper alike
   (`declarations::{MethodBody, BodyParam}`, `Checker::{bind_receiver,
   bind_parameter, check_method_body}`).
+- The operator special method declaration rule: `mojito-ast::ast::operator_method_operands`
+  gives the operand counts an operator dunder may declare (from
+  `PrefixOp::dunder` and `InfixOp`'s ordinary, reflected, and in-place
+  dunders, plus `__contains__` and `__del__`), and
+  `declarations::check_operator_method` holds a struct method
+  (`Checker::check_method_inner`) and a trait requirement
+  (`traits.rs`) to it and to taking `self`, while
+  `declarations::check_operator_function` rejects a global or nested
+  `def` of that name (`Checker::check_def`), each with the pin's
+  `TypeError::InvalidSpecialMethod` message.
 - `checker/decorators.rs` owns decorator validation:
   `Checker::check_decorators` checks one declaration's decorators against
   its `DecoratorSite` (struct, `def`, method, trait method), as the pin

@@ -2831,6 +2831,36 @@ impl InfixOp {
     }
 }
 
+/// The operand counts operator special method `name` may declare, its
+/// receiver included, or `None` when `name` is no operator method.
+///
+/// One for a prefix operator's dunder and the destructor, two or three for
+/// `__pow__` and `__ipow__` (the third a modulus), and two for every other
+/// binary, reflected, in-place, or membership dunder. Upstream's declaration
+/// check holds such a method to this count and to being a non-static method.
+pub fn operator_method_operands(name: &str) -> Option<std::ops::RangeInclusive<usize>> {
+    let unary = [
+        PrefixOp::Neg,
+        PrefixOp::Not,
+        PrefixOp::Invert,
+        PrefixOp::Pos,
+    ]
+    .into_iter()
+    .any(|op| op.dunder() == name)
+        || name == "__del__";
+    let binary = InfixOp::ALL
+        .into_iter()
+        .any(|op| [op.dunder(), op.reflected_dunder(), op.inplace_dunder()].contains(&Some(name)))
+        || name == "__contains__";
+    if unary {
+        Some(1..=1)
+    } else if matches!(name, "__pow__" | "__ipow__") {
+        Some(2..=3)
+    } else {
+        binary.then_some(2..=2)
+    }
+}
+
 /// Collect the lambda expression nodes in `expr`, outermost first.
 ///
 /// The walk does **not** descend into a collected lambda's own body — inner

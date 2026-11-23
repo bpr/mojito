@@ -352,6 +352,58 @@ pub(super) fn method_arguments(method: &Method) -> Vec<&str> {
         .collect()
 }
 
+/// Upstream's declaration rule for an operator special method `name` (a
+/// struct method or trait requirement, `receiver` when it takes `self`):
+/// its operands, the receiver and every parameter but a named result, must
+/// number what its operator takes, and it must not be static.
+pub(super) fn check_operator_method(
+    name: &str,
+    receiver: bool,
+    params: &[FnParam],
+) -> Result<(), TypeError> {
+    let Some(operands) = mojito_ast::ast::operator_method_operands(name) else {
+        return Ok(());
+    };
+    let count = usize::from(receiver)
+        + params
+            .iter()
+            .filter(|param| !DeclaredParam::is_named_result(*param))
+            .count();
+    let shown = if name == "__del__" {
+        "__deinit__"
+    } else {
+        name
+    };
+    let plural = |n: usize| if n == 1 { "operand" } else { "operands" };
+    let (min, max) = (*operands.start(), *operands.end());
+    let message = if min == max && count != min {
+        Some(format!("'{shown}' requires {min} {}", plural(min)))
+    } else if count < min {
+        Some(format!("'{shown}' requires at least {min} {}", plural(min)))
+    } else if count > max {
+        Some(format!("'{shown}' requires at most {max} {}", plural(max)))
+    } else {
+        (!receiver).then(|| {
+            "special method must not be a static method; remove the static method decorator"
+                .to_string()
+        })
+    };
+    message.map_or(Ok(()), |message| {
+        Err(TypeError::InvalidSpecialMethod(message))
+    })
+}
+
+/// The rule [`check_operator_method`] states for a global or nested
+/// function: an operator special method `name` must be a method.
+pub(super) fn check_operator_function(name: &str) -> Result<(), TypeError> {
+    match mojito_ast::ast::operator_method_operands(name) {
+        Some(_) => Err(TypeError::InvalidSpecialMethod(format!(
+            "'{name}' must be a method, not a global function"
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// The collector part of a method signature — its `*args` and `**kwargs`
 /// collectors and the keyword-only boundary a `*args` collector sets — built
 /// alike for a struct method and a trait requirement, so a witness compares
@@ -2122,6 +2174,7 @@ impl Checker {
         owner: &str,
         effect_key: String,
     ) -> Result<(), TypeError> {
+        check_operator_method(&m.name, m.has_self, &m.params)?;
         self.check_decorators(
             DecoratorSite::Method {
                 init: m.name == "__init__",

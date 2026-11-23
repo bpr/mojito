@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1326
+# swept-count	1330
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -897,6 +897,10 @@ assets/type_error/nonmaterializable_memory_struct.mojo	compile-reject	agree	erro
 assets/type_error/nonmaterializable_on_function.mojo	compile-reject	agree	error: use of unknown declaration '__nonmaterializable'
 assets/type_error/numerics_inf_integral_dtype.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/numerics_nan_integral_dtype.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/operator_method_extra_defaulted_operand.mojo	compile-reject	agree	error: '__add__' requires 2 operands
+assets/type_error/operator_method_global_function.mojo	compile-reject	agree	error: '__neg__' must be a method, not a global function
+assets/type_error/operator_method_pow_operand_range.mojo	compile-reject	agree	error: '__pow__' requires at most 3 operands
+assets/type_error/operator_method_static.mojo	compile-reject	agree	error: special method must not be a static method; remove the static method decorator
 assets/type_error/optional_equatable_requires_element.mojo	compile-reject	agree	error: no matching method in call to '__eq__'
 assets/type_error/optional_init_with_wrong_result.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/optional_legacy_two_arg_constructor.mojo	compile-reject	agree	error: no matching function in initialization

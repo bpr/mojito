@@ -422,6 +422,7 @@ impl Checker {
                 }
             }
             for (index, m) in methods.iter().enumerate() {
+                super::declarations::check_operator_method(&m.name, true, &m.params)?;
                 self.check_decorators(
                     DecoratorSite::TraitMethod {
                         init: m.name == "__init__",

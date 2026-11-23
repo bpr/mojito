@@ -10155,20 +10155,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2531 A binary operator method may declare a defaulted extra
-  parameter**
-
-  `def __add__(self, other: Int, k: Int = 50)` in a trait or a struct is
-  accepted, and `x + 1` through a bound runs it with `k` defaulted, where
-  the pin rejects the declaration with "'__add__' requires 2 operands".
-  - The cause: the check has no declaration rule for an operator method's
-    parameter count, so only a call that binds no slot fails.
-  - Probe: the declaration above, called as `x + 1` over `T: Idx`
-    (Mojito prints `51`).
-  - Found while landing R769 (2026-11-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
