@@ -4287,7 +4287,7 @@ impl Checker {
     pub(super) fn load_compile_time_result(&self, value: &Expr, ty: &Ty, evaluated_below: bool) {
         let span = value.source_span();
         let reference_result = matches!(
-            self.node_facts
+            self.emitter
                 .borrow()
                 .get(&span)
                 .and_then(|facts| facts.adjustment.as_deref()),

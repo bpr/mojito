@@ -3598,7 +3598,7 @@ impl Checker {
         // callee: its arguments compile against that one candidate, so
         // nested overloaded calls stay linear in their depth.
         let resolved = self
-            .node_facts
+            .emitter
             .borrow()
             .get(&expr.source_span())
             .and_then(|facts| facts.overload_target.clone())
@@ -3738,7 +3738,7 @@ impl Checker {
     fn run_time_overload(&self, expr: &Expr) -> Option<String> {
         let span = expr.source_span();
         let recorded = || {
-            self.node_facts
+            self.emitter
                 .borrow()
                 .get(&span)
                 .and_then(|facts| facts.overload_target.clone())

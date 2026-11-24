@@ -6,9 +6,9 @@
 //! reads are still current would record byte-identical facts. Each body
 //! site (a module-level `def`, a struct method) therefore records the log
 //! ranges it wrote into every fact store ([`crate::checker::Checker`]'s
-//! [`FactMap`]/[`FactSet`]/[`FactVec`] fields) and its exact effect reads;
-//! the next pass copies the logged entries instead of inferring when every
-//! read still equals the committed entry.
+//! [`FactMap`]/[`FactSet`]/[`FactVec`] fields and its [`Emitter`]) and its
+//! exact effect reads; the next pass copies the logged entries instead of
+//! inferring when every read still equals the committed entry.
 //!
 //! The copy is exact: every writer of a fact store is a logging method, and
 //! the fresh pass redoes everything outside the body window (declaration
@@ -19,12 +19,13 @@
 //! only verified against.
 
 use super::Checker;
+use super::emit::{EmitMark, Emitter};
 use crate::explicit_destroy::CheckedDeletability;
 use mojito_ast::ast::Stmt;
 use mojito_checked::checked::{
     AnnotationSite, CallThroughEffect, CheckedDefaultWrapper, CheckedTraitMember, ConformanceFacts,
-    DeclarationEffect, DiscoveryResult, ExplicitDestroyInfo, GenericSite, NodeFacts,
-    StructInstantiation, TransferEffect,
+    DeclarationEffect, DiscoveryResult, ExplicitDestroyInfo, GenericSite, StructInstantiation,
+    TransferEffect,
 };
 use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
 use mojito_common::timing;
@@ -160,7 +161,7 @@ pub struct InternalStores {
 #[derive(Debug)]
 pub struct HandoffStores {
     statements: Vec<Stmt>,
-    node_facts: FactMap<SourceSpan, NodeFacts>,
+    emitter: Emitter,
     struct_instantiations: FactVec<StructInstantiation>,
     checked_types: FactMap<AnnotationSite, Ty>,
     generic_parameters: FactMap<GenericSite, Vec<ParamDecl>>,
@@ -181,11 +182,9 @@ impl HandoffStores {
     /// The checked handoff: the occurrence records, less any a cleared
     /// fact left empty.
     fn into_discovery(self) -> DiscoveryResult {
-        let mut node_facts = self.node_facts.into_inner();
-        node_facts.retain(|_, facts| !facts.is_empty());
         DiscoveryResult {
             statements: self.statements,
-            node_facts,
+            node_facts: self.emitter.into_records(),
             struct_instantiations: self.struct_instantiations.into_inner(),
             checked_types: self.checked_types.into_inner(),
             generic_parameters: self.generic_parameters.into_inner(),
@@ -207,11 +206,11 @@ impl HandoffStores {
 /// Every store a body site is measured and copied over: where the carry
 /// holds it (`result` is the checked handoff, `internal` the rest), how it
 /// logs (`map`, `set`, `vec`), its field in the carry, and its field in the
-/// checker. The deletability verdicts are handled by hand beside them.
+/// checker. The deletability verdicts and the emitter's occurrence records
+/// are handled by hand beside them.
 macro_rules! carried_stores {
     ($apply:ident) => {
         $apply! {
-            result map node_facts = node_facts;
             result vec struct_instantiations = struct_instantiations;
             result map checked_types = declaration_types;
             result map generic_parameters = generic_parameters;
@@ -245,6 +244,7 @@ macro_rules! define_marks {
             $($carry: usize,)*
             linear_declarations: usize,
             linear_bindings: usize,
+            emitter: EmitMark,
             /// The identity cursor, its ceiling, and the fresh cursor.
             owner: u32,
             ceiling: Option<u32>,
@@ -300,6 +300,7 @@ macro_rules! define_carry_ops {
                     $($carry: own_mark!(self, $field),)*
                     linear_declarations: deletability.declarations.mark(),
                     linear_bindings: deletability.bindings.mark(),
+                    emitter: self.emitter.borrow().mark(),
                     owner: self.next_owner.get(),
                     ceiling: self.owner_ceiling.get(),
                     fresh: self.fresh_owner_cursor.get(),
@@ -331,6 +332,11 @@ macro_rules! define_carry_ops {
                         .logged(record.range(|marks| marks.linear_bindings)),
                     &from.bindings,
                     &mut deletability.bindings,
+                );
+                self.emitter.get_mut().copy_window(
+                    &previous.result.emitter,
+                    &record.start.emitter,
+                    &record.end.emitter,
                 );
             }
 
@@ -430,12 +436,12 @@ impl Checker {
         self.copy_recorded_facts(&previous, record);
         for site in previous
             .result
-            .node_facts
-            .logged(record.range(|marks| marks.node_facts))
+            .emitter
+            .written(&record.start.emitter, &record.end.emitter)
         {
             if previous
                 .result
-                .node_facts
+                .emitter
                 .get(site)
                 .is_some_and(|facts| facts.closure_storage.is_some())
             {
@@ -581,7 +587,7 @@ fn carried_result(checker: &Checker) -> HandoffStores {
         conformances: mojito_checked::checked::ConformanceFacts::default(),
         overloads: std::sync::Arc::clone(&checker.overload_sets),
         constants: std::sync::Arc::clone(&checker.program_constants),
-        node_facts: interned(checker, checker.node_facts.take()),
+        emitter: interned(checker, checker.emitter.take()),
         struct_instantiations: checker.struct_instantiations.take(),
         checked_types: uniqued(checker, checker.declaration_types.take()),
         generic_parameters: checker.generic_parameters.take(),
@@ -609,12 +615,9 @@ fn uniqued<K: Eq + Hash + Clone>(
 
 /// `records` with each type a record holds the context's own node for it,
 /// as [`uniqued`] does for a table of types.
-fn interned(
-    checker: &Checker,
-    mut records: FactMap<SourceSpan, NodeFacts>,
-) -> FactMap<SourceSpan, NodeFacts> {
+fn interned(checker: &Checker, mut records: Emitter) -> Emitter {
     let context = &checker.param_context;
-    records.retain(|_, facts| {
+    records.for_each_record_mut(|facts| {
         for ty in [
             &mut facts.ty,
             &mut facts.place_ty,
@@ -627,7 +630,6 @@ fn interned(
         {
             *ty = context.intern_ty(ty);
         }
-        true
     });
     records
 }

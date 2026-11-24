@@ -1,8 +1,8 @@
 //! Checked explicit-destruction obligations over structured source CFGs.
 
-use crate::checker::DeclarationTable;
+use crate::checker::{DeclarationTable, Emitter};
 use mojito_ast::ast::{ArgConvention, Condition, Expr, ExprKind, Stmt, StmtKind, TStringPart};
-use mojito_checked::checked::{AnnotationSite, ExplicitDestroyInfo, NodeFacts};
+use mojito_checked::checked::{AnnotationSite, ExplicitDestroyInfo};
 use mojito_checked::fact_store::FactMap;
 use mojito_common::error::TypeError;
 use mojito_common::token::SourceSpan;
@@ -68,7 +68,7 @@ pub struct SpanFacts {
 /// default, its trait's method.
 pub(crate) fn check(
     statements: &[Stmt],
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
     spans: SpanFacts,
@@ -173,7 +173,7 @@ pub(crate) fn check(
 fn check_expr(
     expr: &Expr,
     env: &mut Env,
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     let span = expr.source_span();
@@ -223,7 +223,7 @@ const fn consumes_operands(expr: &Expr) -> bool {
 fn check_operands(
     expr: &Expr,
     env: &mut Env,
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     match &expr.kind {
@@ -562,7 +562,7 @@ fn check_block(
     body: &[Stmt],
     mut env: Env,
     scoped: bool,
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
@@ -699,7 +699,7 @@ fn branch_exits(
     branches: &[(Condition, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Vec<Env>, TypeError> {
@@ -731,7 +731,7 @@ fn check_if(
     branches: &[(Condition, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
@@ -754,7 +754,7 @@ fn check_comptime_if(
     branches: &[(Condition, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
@@ -795,7 +795,7 @@ struct TryBlocks<'a> {
 fn check_try(
     blocks: &TryBlocks<'_>,
     env: Env,
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
@@ -964,7 +964,7 @@ fn ensure_same(before: &Env, after: &Env) -> Result<(), TypeError> {
 fn check_function<'a>(
     params: impl Iterator<Item = (&'a String, Option<ArgConvention>, Option<Linear>)>,
     body: &[Stmt],
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
     mut env: Env,
@@ -1035,7 +1035,7 @@ fn expose_path(
 fn check_stmt(
     stmt: &Stmt,
     mut env: Env,
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
@@ -1317,7 +1317,7 @@ fn check_stmt(
 /// Check one free (top-level or nested) function definition statement.
 fn check_def(
     statement: &Stmt,
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
     outer: &Env,
@@ -1364,7 +1364,7 @@ fn check_comprehension_expr(
     value: &Expr,
     clauses: &[mojito_ast::ast::ComprehensionClause],
     env: &mut Env,
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    node_facts: &Emitter,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     let bindings = node_facts

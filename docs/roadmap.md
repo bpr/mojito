@@ -11766,38 +11766,30 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R764 The check keeps its facts in an occurrence-keyed map, not on
-  nodes it allocated as it checks**
+- [ ] **R765 Emitted nodes hold no ops, and spelled constructions and
+  lifted applications get no emitted node**
 
-  The checker writes `NodeFacts` into `FactMap<SourceSpan, NodeFacts>`,
-  where upstream's emitter sets each attribute on an op it already made.
-  - The lever: a checker `Emitter` (`checker/emit.rs`) allocates a
-    statement's node and its expression nodes when the check enters the
-    statement, and `record_at`/`fact`/`has_fact`/`clear_fact`/`clear_flag`
-    resolve an occurrence to its node through an index, or to a detached
-    record where no node holds it.
-  - Probes truncate the arenas and restore journaled records; a carried
-    body copies its node range relocated with `CheckedOp::map_operands`
-    and `CheckedStmtOp::map_operands`, and replays its index entries.
-  - The handoff stays a span-keyed map read out of the nodes, so MIR text
-    and package bytes must not change.
-  - Plan: `R624-the-check-writes-fact-records-for-plan.md`, slice 2.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R765 Spelled constructions, lifted applications, `with` desugars,
-  lambdas, trait members, and wrappers get their nodes only from the
-  arena builder after the check**
-
-  `ArenaBuilder` still decides these sites from syntax and facts, so the
-  emitter's tables cannot yet replace `finalize`'s.
-  - The lever: allocate each site's nodes where the check decides it,
-    fill declaration ops from the checker's site tables at handoff, and
-    seal `EmittedExpr` into `CheckedExpr` per node.
+  `ArenaBuilder` still decides every op from syntax and facts after the
+  check, so the emitter's nodes cannot yet replace `finalize`'s tables.
+  - Statements and their expressions, `with` desugars, lambdas, trait
+    members, and default wrappers already get `Emitter` nodes
+    (`checker/emit.rs`) when the check enters their statements.
+  - Synthesized occurrences keep detached records: spelled constructions,
+    `SyntaxId::derived` calls such as `__bool__`, match anchors, and
+    `comptime for` steps (`--timings`'s `emit.detached_records`: 1,461 of
+    24,640 records for std, 67 of 196 in
+    `comptime_for_display_over_binder.mojo`).
+  - The lever: allocate each synthesized site's node where the check
+    decides it, set each node's op from the check's facts and site tables,
+    and seal each emitted node into a `CheckedExpr` or `CheckedStmt`.
+  - A carried window then relocates its ops through
+    `CheckedOp::map_operands` and `CheckedStmtOp::map_operands`, which are
+    `pub(crate)` in `mojito-checked` today.
   - Cross-check the sealed tables against `finalize`'s under
     `MOJITO_CHECK_EMITTED=1`, per extracted root, on the probe set with
     and without `MOJITO_STD_PACKAGE=0`.
-  - Plan: `R624-the-check-writes-fact-records-for-plan.md`, slice 3a.
+  - Plan: none; the R624 plan this entry cited was never committed, so
+    plan it in its own session.
   - Depends on R764.
   - Model: Fable, Not Planned.
 
@@ -11814,8 +11806,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and package bytes unchanged.
   - Update `docs/architecture.md` §Stage 3 and `docs/symbol-map.md`, and
     file what stays (detached records, `explicit_destroy` walking syntax).
-  - Plan: `R624-the-check-writes-fact-records-for-plan.md`, slices 3b
-    and 4.
+  - Plan: none; the R624 plan this entry cited was never committed, so
+    plan it in its own session.
   - Depends on R765.
   - Model: Fable, Not Planned.
 

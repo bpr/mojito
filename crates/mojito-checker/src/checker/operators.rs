@@ -667,7 +667,7 @@ impl Checker {
         &self,
         middle: &Expr,
     ) -> Vec<mojito_checked::checked::CheckedCallValueAdjustment> {
-        let mut records = self.node_facts.borrow_mut();
+        let mut records = self.emitter.borrow_mut();
         let Some(facts) = records.get_mut(&middle.source_span()) else {
             return Vec::new();
         };

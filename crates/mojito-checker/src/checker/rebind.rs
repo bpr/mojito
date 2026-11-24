@@ -170,7 +170,7 @@ impl Checker {
     /// generator's MIR carries the equality for the elaborator to judge.
     pub(super) fn record_assignment_rebind(&self, statement: &Stmt, value: &Expr) {
         let assertion = self
-            .node_facts
+            .emitter
             .borrow()
             .get(&statement.source_span())
             .and_then(|facts| facts.rebind_assertion.as_ref())

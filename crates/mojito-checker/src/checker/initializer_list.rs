@@ -365,7 +365,7 @@ impl Checker {
     /// borrows as for lowering.
     pub(super) fn spelled_construction(&self, expression: &Expr) -> Option<Expr> {
         match self
-            .node_facts
+            .emitter
             .borrow()
             .get(&expression.source_span())
             .and_then(|facts| facts.adjustment.as_deref())

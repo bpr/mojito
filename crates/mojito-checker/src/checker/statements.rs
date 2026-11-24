@@ -1055,6 +1055,7 @@ impl Checker {
         let mut asserted = 0;
         let result = stmts.iter().try_for_each(|stmt| {
             if let StmtKind::ComptimeAssert { cond, message } = &stmt.kind {
+                self.emitter.get_mut().enter_statement(stmt);
                 let constraint = self.check_comptime_assert(cond, message.as_ref())?;
                 self.assume_condition(cond, Some(&constraint))?;
                 asserted += 1;
@@ -1512,6 +1513,7 @@ impl Checker {
         ret: Option<&Ty>,
         in_loop: bool,
     ) -> Result<(), TypeError> {
+        self.emitter.get_mut().enter_statement(stmt);
         match &stmt.kind {
             StmtKind::RefDecl { name, value } => {
                 self.infer(value)?;
@@ -2160,7 +2162,7 @@ impl Checker {
                         .unwrap_or_default();
                     self.record_place_write_invalidation(site.clone(), place);
                     if let Some(after_write) = self
-                        .node_facts
+                        .emitter
                         .borrow()
                         .get(&site)
                         .and_then(|facts| facts.interior_invalidations.as_ref())
@@ -4936,7 +4938,7 @@ impl Checker {
     /// occurrence-keyed tables: the augmented store drops what it recorded
     /// at a synthesized receiver.
     fn remove_occurrence_facts(&self, span: &SourceSpan) {
-        self.node_facts.borrow_mut().remove(span);
+        self.emitter.borrow_mut().remove(span);
         self.call_result_origins.borrow_mut().remove(span);
         self.view_result_interiors.borrow_mut().remove(span);
         self.call_parameters.borrow_mut().remove(span);

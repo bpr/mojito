@@ -257,7 +257,7 @@ impl Checker {
                 }
                 let referent = self.infer(place)?;
                 let reference = self
-                    .node_facts
+                    .emitter
                     .borrow()
                     .get(&place.source_span())
                     .and_then(|facts| facts.selected_call.as_deref())
@@ -419,14 +419,14 @@ impl Checker {
                 };
                 let span = place.source_span();
                 let reference = self
-                    .node_facts
+                    .emitter
                     .borrow()
                     .get(&span)
                     .and_then(|facts| facts.selected_call.as_deref())
                     .and_then(|contract| contract.reference_result.clone())
                     .or_else(|| {
                         match self
-                            .node_facts
+                            .emitter
                             .borrow()
                             .get(&span)
                             .and_then(|facts| facts.adjustment.as_deref())
@@ -927,7 +927,7 @@ impl Checker {
         self.clear_fact(&value_source, |facts| facts.conversion_source_borrow.take());
         self.clear_fact(&value_source, |facts| facts.ty.take());
         if matches!(
-            self.node_facts
+            self.emitter
                 .borrow()
                 .get(&value_source)
                 .and_then(|facts| facts.adjustment.as_deref()),
@@ -1594,7 +1594,7 @@ impl Checker {
     pub(super) fn has_index_normalization(&self, expression: &Expr, expected: &Ty) -> bool {
         expected.is_int()
             && self
-                .node_facts
+                .emitter
                 .borrow()
                 .get(&expression.source_span())
                 .and_then(|facts| facts.implicit_conversion.as_ref())

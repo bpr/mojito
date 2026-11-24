@@ -537,7 +537,7 @@ impl Checker {
                 // its source place; the checker recorded the decision when it
                 // typed the call, so a shadowed name cannot match here.
                 if self
-                    .node_facts
+                    .emitter
                     .borrow()
                     .get(&expression.source_span())
                     .and_then(|facts| facts.adjustment.as_deref())
@@ -661,7 +661,7 @@ impl Checker {
             // receiver that is itself the owning place lends that place.
             ExprKind::Slice { object, .. } | ExprKind::MultiIndex { object, .. } => {
                 if matches!(
-                    self.node_facts
+                    self.emitter
                         .borrow()
                         .get(&expression.source_span())
                         .and_then(|facts| facts.adjustment.as_deref()),
@@ -696,7 +696,7 @@ impl Checker {
                 // A method whose selected contract returns an origin-bearing
                 // pointer (`xs.unsafe_ptr()`) carries that rebased origin.
                 if let Some(contract) = self
-                    .node_facts
+                    .emitter
                     .borrow()
                     .get(&expression.source_span())
                     .and_then(|facts| facts.selected_call.as_deref())
@@ -772,7 +772,7 @@ impl Checker {
             owner,
             ..
         }) = self
-            .node_facts
+            .emitter
             .borrow()
             .get(&expression.source_span())
             .and_then(|facts| facts.adjustment.as_deref())

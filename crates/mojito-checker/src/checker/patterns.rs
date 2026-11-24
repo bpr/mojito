@@ -229,7 +229,7 @@ impl Checker {
     /// `comptime assert`, whether its condition folded to `False`; for an
     /// expression statement, whether its value is `Never`.
     pub(super) fn stmt_reach(&self, stmt: &Stmt) -> StmtReach {
-        let facts = self.node_facts.borrow();
+        let facts = self.emitter.borrow();
         if let StmtKind::Expr(expr) = &stmt.kind
             && expr.kgen_param_assert().is_none()
         {

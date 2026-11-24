@@ -177,7 +177,7 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> CallBoundarySnapshot {
-        let records = self.node_facts.borrow();
+        let records = self.emitter.borrow();
         let mut before = HashMap::new();
         for source in std::iter::once(span.clone())
             .chain(args.iter().map(Expr::source_span))
@@ -210,7 +210,7 @@ impl Checker {
             CheckedCallArgumentBoundary, CheckedCallArgumentSource, CheckedCallBoundary,
         };
 
-        let records = self.node_facts.borrow();
+        let records = self.emitter.borrow();
         let argument =
             |source: CheckedCallArgumentSource, expression: &Expr| -> CheckedCallArgumentBoundary {
                 let value_source = expression.source_span();
@@ -272,7 +272,7 @@ impl Checker {
         &self,
         sources: &[SourceSpan],
     ) -> Vec<ValueAdjustmentSnapshot> {
-        let records = self.node_facts.borrow();
+        let records = self.emitter.borrow();
         sources
             .iter()
             .map(|source| {
@@ -294,13 +294,13 @@ impl Checker {
         &self,
         snapshots: &[ValueAdjustmentSnapshot],
     ) {
-        let mut records = self.node_facts.borrow_mut();
+        let mut records = self.emitter.borrow_mut();
         for snapshot in snapshots {
             let restores_any = snapshot.overload_target.is_some()
                 || snapshot.implicit_conversion.is_some()
                 || snapshot.operation.is_some();
             let facts = if restores_any {
-                Some(records.entry(snapshot.source.clone()).or_default())
+                Some(records.record(snapshot.source.clone()))
             } else {
                 records.get_mut(&snapshot.source)
             };
@@ -323,7 +323,7 @@ impl Checker {
         site: &SourceSpan,
         boundary: &mojito_checked::checked::CheckedCallBoundary,
     ) {
-        let mut records = self.node_facts.borrow_mut();
+        let mut records = self.emitter.borrow_mut();
         let mut remove =
             |source: &SourceSpan, facts: &[mojito_checked::checked::InteriorInvalidation]| {
                 if let Some(record) = records.get_mut(source)

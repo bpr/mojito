@@ -1,9 +1,11 @@
 //! The check's facts at an occurrence, held in the occurrence's one
-//! [`NodeFacts`] record, as upstream sets each decided fact as an attribute
-//! on the occurrence's op.
+//! [`NodeFacts`] record on the node the emitter allocated for it (or its
+//! detached record where no node holds it), as upstream sets each decided
+//! fact as an attribute on the occurrence's op.
 //!
-//! Every write goes through the logged store, so a body site's records are
-//! carried and a probe's are undone as any other fact store's entries are.
+//! Every write goes through the emitter, which logs and journals it, so a
+//! body site's records are carried and a probe's are undone as any other
+//! fact store's entries are.
 
 use super::Checker;
 use mojito_checked::checked::NodeFacts;
@@ -13,9 +15,7 @@ use std::cell::RefMut;
 impl Checker {
     /// The record at `span`, created if absent: the write path.
     pub(super) fn record_at(&self, span: SourceSpan) -> RefMut<'_, NodeFacts> {
-        RefMut::map(self.node_facts.borrow_mut(), |facts| {
-            facts.entry(span).or_default()
-        })
+        RefMut::map(self.emitter.borrow_mut(), |emitter| emitter.record(span))
     }
 
     /// One fact recorded at `span`, copied out.
@@ -24,7 +24,7 @@ impl Checker {
         span: &SourceSpan,
         field: impl FnOnce(&NodeFacts) -> Option<&T>,
     ) -> Option<T> {
-        self.node_facts.borrow().get(span).and_then(field).cloned()
+        self.emitter.borrow().get(span).and_then(field).cloned()
     }
 
     /// Whether the record at `span` satisfies `holds`; no record holds
@@ -34,7 +34,7 @@ impl Checker {
         span: &SourceSpan,
         holds: impl FnOnce(&NodeFacts) -> bool,
     ) -> bool {
-        self.node_facts.borrow().get(span).is_some_and(holds)
+        self.emitter.borrow().get(span).is_some_and(holds)
     }
 
     /// Take one fact out of the record at `span`, as upstream removes an
@@ -44,7 +44,7 @@ impl Checker {
         span: &SourceSpan,
         take: impl FnOnce(&mut NodeFacts) -> Option<T>,
     ) -> Option<T> {
-        self.node_facts.borrow_mut().get_mut(span).and_then(take)
+        self.emitter.borrow_mut().get_mut(span).and_then(take)
     }
 
     /// Clear one flag of the record at `span`, returning whether it was set.
@@ -53,7 +53,7 @@ impl Checker {
         span: &SourceSpan,
         flag: impl FnOnce(&mut NodeFacts) -> &mut bool,
     ) -> bool {
-        self.node_facts
+        self.emitter
             .borrow_mut()
             .get_mut(span)
             .is_some_and(|facts| std::mem::take(flag(facts)))

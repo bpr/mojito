@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check sets each fact it decides on the node it allocated for the
+  occurrence when it entered the statement (`checker/emit.rs`'s `Emitter`),
+  as upstream's emitter sets each attribute on an op it already made,
+  instead of in one occurrence-keyed map (R764). An index finds an
+  occurrence's node, and an occurrence no node holds keeps a detached
+  record; probes drop the nodes a losing candidate allocated, a carried
+  body allocates its window's nodes again, and the handoff is read out of
+  the nodes, so MIR text and package bytes are unchanged.
+
 - A member read's object is built once for every reader the compile-time
   builder asks for it (a struct value's field, a type member's base, a
   value's type), as upstream emits the object once, so probing a run-time

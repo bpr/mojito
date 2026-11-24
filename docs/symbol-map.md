@@ -964,25 +964,44 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/body_carry.rs` owns carrying a body's facts from one checker pass
   to the next. `PassCarry` is what `checker.rs:check_program_carrying`
   returns (the `HandoffStores` that `HandoffStores::into_discovery` moves
-  into the `DiscoveryResult`: the occurrence records and the declaration-keyed
-  stores; the checker-internal stores; one
-  `BodyRecord` per site, the identity watermark); `carried_stores!` lists
-  every store a site is measured and copied over, and is also the store
-  list `checker/probe.rs` rolls back; `Checker::carry_body`
+  into the `DiscoveryResult`: the emitter, read out into the occurrence
+  records, and the declaration-keyed stores; the checker-internal stores;
+  one `BodyRecord` per site, the identity watermark); `carried_stores!`
+  lists every logged store a site is measured and copied over, and is also
+  the store list `checker/probe.rs` rolls back, the emitter beside them by
+  hand (`StoreMarks` holds its `EmitMark`, and `copy_recorded_facts` calls
+  `Emitter::copy_window`); `Checker::carry_body`
   serves a site whose record is clean and whose effect reads (recorded by
   `note_body_effect_read` beside each `effect_observations` write) are still
   current, and `enter_body_site`/`leave_body_site` bracket an inferred one
   (from `statements.rs:check_def` at module level and
   `declarations.rs:check_method_inner`); the carry is private to the
   passes of one check (`checker.rs:check_program_carrying`).
-- `checker/node_facts.rs` owns the checker's access to its one
-  per-occurrence store (`Checker::node_facts`, a logged `FactMap` of
-  `NodeFacts`): `record_at` is the write path (the record, created if
-  absent), `fact`/`has_fact` read one fact, and `clear_fact`/`clear_flag`
-  take one out without creating a record. A guard on the store is never
-  held across a call that writes a fact.
+- `checker/emit.rs` owns `Emitter` (`Checker::emitter`), where the check
+  keeps its facts, as upstream's emitters set each decided fact on an op
+  they made: `enter_statement` (from the top of `Checker::check_stmt` and
+  `check_block`'s `comptime assert` arm) allocates a statement node for
+  each statement and an expression node for each expression of a
+  statement's subtree the first time the check enters it, and the index
+  finds an occurrence's node; an occurrence no node holds (a pattern, a
+  destructuring target, a synthesized occurrence, or one written before
+  its statement was entered) keeps a detached record, which moves onto
+  the node allocated for it. `record` is the write path, `get`/`get_mut`/
+  `remove`/`insert`/`iter` mirror a map's; it logs node writes by slot and
+  journals them under a probe (`open_probe`/`roll_back`, which also
+  truncate the arenas and their index entries), `mark`/`written`/
+  `copy_window` measure and copy a body site's window (allocating the
+  window's nodes again), and `into_records` reads the span-keyed handoff
+  out of the nodes and detached records (`--timings` counts
+  `emit.node_records` and `emit.detached_records`).
+- `checker/node_facts.rs` owns the checker's access to its per-occurrence
+  records through the emitter: `record_at` is the write path (the record,
+  created if absent), `fact`/`has_fact` read one fact, and
+  `clear_fact`/`clear_flag` take one out without creating a record. A
+  guard on the emitter is never held across a call that writes a fact.
 - `checker/probe.rs` owns `Checker::probe`: it opens a `ProbeMark` on every
-  carried store, the deletability sets, and `call_bindings` (`ProbeMarks`),
+  carried store, the deletability sets, and `call_bindings`, and an
+  `EmitProbe` on the emitter (`ProbeMarks`),
   runs a speculative check, and rolls every store back. Its callers are
   `call_inference.rs`'s `TyKind::Overload` loop and `generics.rs`'s
   overloaded callable-value branch; each re-runs the selected candidate
@@ -1234,9 +1253,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `HashSet`, or `Vec` that logs every key written, read through `Deref`,
   with `mark`/`logged` for a range of the log, and `ProbeMark` with
   `open_probe`/`roll_back`, which journal every write while a probe is open
-  and undo it. Every checker fact store is one, so `checker/body_carry.rs`
-  can copy exactly what a body wrote and `checker/probe.rs` can undo what
-  an overload candidate wrote.
+  and undo it. Every checker fact store is one, and the emitter
+  (`checker/emit.rs`), which holds the occurrence records on nodes, logs and
+  journals the same way (its detached records are a `FactMap`), so
+  `checker/body_carry.rs` can copy exactly what a body wrote and
+  `checker/probe.rs` can undo what an overload candidate wrote.
 - `explicit_destroy.rs` owns the explicit-destruction analysis, run from
   `checker.rs`'s `run_explicit_destroy` once over the elaborated program,
   where `check_comptime_if` joins the arms of a condition naming a parameter as

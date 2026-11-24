@@ -155,7 +155,7 @@ impl Checker {
                 kwargs,
             } => {
                 let (receiver_convention, receiver_elided) = self
-                    .node_facts
+                    .emitter
                     .borrow()
                     .get(&span)
                     .and_then(|facts| facts.selected_call.as_deref())
@@ -187,7 +187,7 @@ impl Checker {
         use mojito_checked::checked::CheckedCallArgumentSource;
         let parameters = self.call_parameters.borrow();
         let parameters = parameters.get(span);
-        let records = self.node_facts.borrow();
+        let records = self.emitter.borrow();
         let Some(contract) = records
             .get(span)
             .and_then(|facts| facts.selected_call.as_deref())

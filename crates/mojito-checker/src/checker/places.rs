@@ -397,7 +397,7 @@ impl Checker {
         let trivial = self.is_trivial_register_passable(ty);
         if !trivial
             && self
-                .node_facts
+                .emitter
                 .borrow()
                 .get(&source.source_span())
                 .and_then(|facts| facts.adjustment.as_deref())

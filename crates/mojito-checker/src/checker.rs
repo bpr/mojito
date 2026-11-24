@@ -304,8 +304,10 @@ fn check_program_carrying(
 mod argument_memo;
 mod body_carry;
 mod declaration_table;
+mod emit;
 mod member_object_memo;
 pub(crate) use declaration_table::DeclarationTable;
+pub(crate) use emit::Emitter;
 mod interface;
 mod method_table;
 use method_table::MethodTable;
@@ -831,9 +833,11 @@ pub struct Checker {
     /// The declaration currently being checked is an `enum`, whose
     /// generated members name the compiler's case-indexed `__EnumStorage`.
     enum_declaration: bool,
-    /// Every fact the check decided at an occurrence, in the occurrence's one
-    /// record (`node_facts`): the checked handoff, written as it is decided.
-    node_facts: RefCell<FactMap<SourceSpan, mojito_checked::checked::NodeFacts>>,
+    /// Every fact the check decided at an occurrence, set on the node the
+    /// emitter allocated for it when the check entered its statement, or
+    /// on a detached record where no node holds it: the checked handoff,
+    /// written as it is decided.
+    emitter: RefCell<Emitter>,
     /// Free functions decorated `@__unsafe_nested_origins_read_only`; see
     /// [`MethodSig::nested_origins`].
     nested_origins_read_only_functions: declaration_table::DeclarationSet,
@@ -1219,7 +1223,7 @@ impl Checker {
             self_initializing: false,
             bundled_stdlib_declaration: false,
             enum_declaration: false,
-            node_facts: RefCell::new(FactMap::default()),
+            emitter: RefCell::new(Emitter::default()),
             nested_origins_read_only_functions: declaration_table::DeclarationSet::default(),
             trait_bounded_binders: RefCell::new(HashMap::new()),
             call_bindings: RefCell::new(FactMap::default()),
@@ -2775,7 +2779,7 @@ impl Checker {
                 .and_then(|(name, _)| self.self_instance_ty(name))
         };
         let judged: Vec<(SourceSpan, bool, bool, bool, bool)> = {
-            let records = self.node_facts.borrow();
+            let records = self.emitter.borrow();
             records
                 .iter()
                 .filter_map(|(span, facts)| {
@@ -2827,7 +2831,7 @@ impl Checker {
                 .collect()
         };
         let spelled: Vec<SourceSpan> = {
-            let records = self.node_facts.borrow();
+            let records = self.emitter.borrow();
             judged
                 .iter()
                 .filter(|(_, _, _, by_value, _)| *by_value)
@@ -2843,7 +2847,7 @@ impl Checker {
                 )
                 .collect()
         };
-        let mut records = self.node_facts.borrow_mut();
+        let mut records = self.emitter.borrow_mut();
         for (span, indirect, converted, by_value, consumed_by_value) in judged {
             if let Some(facts) = records.get_mut(&span) {
                 facts.indirect_result = indirect;
@@ -2867,7 +2871,7 @@ impl Checker {
     /// result as a retained handle before this distinction is enforced.
     fn check_reference_result_reads(&self) -> Result<(), TypeError> {
         let read_referents: Vec<Ty> = {
-            let records = self.node_facts.borrow();
+            let records = self.emitter.borrow();
             let copyable_reads = self.copyable_reference_result_reads.borrow();
             let discarded = self.discarded_reference_results.borrow();
             let borrowed_receivers = self.borrowed_reference_receivers.borrow();
@@ -2970,7 +2974,7 @@ impl Checker {
         );
         let result =
             self.infer_operator_method_call(&call_span, operand, &receiver_ty, "__bool__", &[]);
-        let facts = self.node_facts.borrow_mut().remove(&call_span);
+        let facts = self.emitter.borrow_mut().remove(&call_span);
         self.call_parameters.borrow_mut().remove(&call_span);
         let Some(result) = result? else {
             return Err(TypeError::MatchPattern(format!(
@@ -3553,7 +3557,7 @@ fn run_explicit_destroy(
     program: &[Stmt],
     struct_types: &HashMap<String, mojito_checked::checked::ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
-    let node_facts = checker.node_facts.borrow();
+    let emitter = checker.emitter.borrow();
     let deletability = checker.explicit_destroy_deletability.borrow();
     // An installed struct's entry is the package build's.
     let types = checker.explicit_destroy_table(struct_types.clone());
@@ -3569,11 +3573,11 @@ fn run_explicit_destroy(
         .partition(|(span, _)| unconsumed.contains(span));
     crate::explicit_destroy::check(
         program,
-        &node_facts,
+        &emitter,
         &deletability,
         &types,
         crate::explicit_destroy::SpanFacts {
-            lent: node_facts
+            lent: emitter
                 .iter()
                 .filter(|(_, facts)| facts.borrowed_read_call_place)
                 .map(|(span, _)| span.clone())
@@ -3592,7 +3596,7 @@ fn run_explicit_destroy(
                         .map(|linear| (span.clone(), linear.clone()))
                 })
                 .collect(),
-            raise_points: node_facts
+            raise_points: emitter
                 .iter()
                 .filter(|(_, facts)| {
                     facts.effects.as_ref().is_some_and(|e| e.raises.is_some())

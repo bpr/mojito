@@ -557,7 +557,7 @@ impl Checker {
             self.record_linear_temporary(expr, ty);
             self.materialize_parameter_read(expr, ty);
             if let Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference }) =
-                self.node_facts
+                self.emitter
                     .borrow()
                     .get(&expr.source_span())
                     .and_then(|facts| facts.adjustment.as_deref())
@@ -600,7 +600,7 @@ impl Checker {
             return self.infer_reference_value(&construction);
         }
         if let Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference }) =
-            self.node_facts
+            self.emitter
                 .borrow()
                 .get(&expr.source_span())
                 .and_then(|facts| facts.adjustment.as_deref())

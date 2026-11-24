@@ -1866,7 +1866,7 @@ pointer to storage its context uniques (`mojito_types::types`):
   uniques, as MLIR's context uniques types beside attributes): every
   recorded expression, place, binding, declaration, and conversion type
   becomes the context's node for it when the check hands its facts off
-  (`body_carry`'s `interned` over the occurrence records, `uniqued` over
+  (`body_carry`'s `interned` over the emitter's records, `uniqued` over
   the declaration types), so lowering, which clones them into registers, shares
   one node per distinct type (`--timings` counts `types.interned` and
   `types.intern_hits`).
@@ -2947,16 +2947,23 @@ captured values.
 
 The passes of one check hand each other a `PassCarry`: the pass's fact
 stores, one record per body site, and its binding-identity watermark. The
-checker writes each fact straight into its occurrence's one `NodeFacts`
-record (`Checker::record_at`, `checker/node_facts.rs`), as upstream sets
-an attribute on the occurrence's op, so the handoff is that store moved
-out, less any record a cleared fact left empty
-(`body_carry.rs`'s `HandoffStores::into_discovery`). An overload
+checker sets each fact on its occurrence's emitted node
+(`Checker::record_at`, `checker/node_facts.rs`), as upstream's emitter
+sets an attribute on an op it already made: the `Emitter`
+(`checker/emit.rs`) allocates a statement's node and its expression nodes
+when the check enters the statement (`Checker::check_stmt`), and an index
+finds an occurrence's node. A detached record holds an occurrence no node
+holds — a pattern, a destructuring target, an occurrence the check
+synthesizes, or one written before its statement is entered, which moves
+onto the node when the statement is. The handoff reads both out, less any
+record a cleared fact left empty (`Emitter::into_records`, from
+`body_carry.rs`'s `HandoffStores::into_discovery`). An overload
 candidate — of a free call or of an overloaded function value — is
 checked inside `Checker::probe` (`checker/probe.rs`): every store
 journals what a write displaces while a probe is open, and closing it
-restores those values and truncates the log, so a losing candidate leaves
-neither a fact nor a logged key, and only the selected candidate's re-run
+restores those values and truncates the log (and the emitter's arenas,
+dropping the nodes the candidate's statements allocated), so a losing
+candidate leaves neither a fact nor a logged key nor a node, and only the selected candidate's re-run
 writes for good. A probe costs what the candidate writes, and probes
 nest. While a construction ranks its `__init__` overloads, an
 expression is typed once (`checker/argument_memo.rs`), as upstream emits
@@ -2967,12 +2974,14 @@ object once for all the read's readers (`checker/member_object_memo.rs`),
 so a field chain `a.x.x…x` builds in time linear in its length. Every
 fact store the checker writes during a body is a logged store
 (`mojito-checked`'s `fact_store.rs`: a map, set, or vector plus the log of
-keys written), so a site — a module-level `def` or a struct method —
+keys written; the emitter logs the node slots it writes beside its
+detached records' `FactMap`), so a site — a module-level `def` or a struct method —
 records the log ranges it spans and the effect entries it read exactly as
 read (`checker/body_carry.rs`). The next transfer pass over the same tree
 starts from the previous pass's committed effect maps and, at a site whose
 reads still equal the committed entries, copies the logged entries instead
-of inferring. Binding identities never
+of inferring (the emitter's window allocates the nodes it allocated again,
+then copies each written occurrence's final record, `Emitter::copy_window`). Binding identities never
 collide: a pass starts its counter at the previous watermark, and a body
 inferred again allocates inside the range it had (`scopes.rs:reserve_owners`)
 so an unchanged prefix keeps its identities. The copy is exact by

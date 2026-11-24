@@ -17,7 +17,12 @@ Status meanings:
 
 Mojito has one production path: source is linked and elaborated, checked into
 typed HIR, lowered to verified MIR, ownership- and liveness-analyzed, drop
-elaborated, and executed by the register VM. The supported CPU surface includes
+elaborated, and executed by the register VM. The check sets each fact it decides on
+the node it allocated for the occurrence when it entered the statement, as
+upstream's emitter sets an attribute on an op it made (R764); a pattern, a
+destructuring target, or an occurrence the check synthesizes keeps a detached
+record until its node is emitted (R765). No program's behavior depends on
+where the facts are kept. The supported CPU surface includes
 exact numeric literals, type/value/origin generics and heterogeneous packs,
 scope-stable and lexical nested-pack specialization, refined and conditional
 traits, recursively lifted typed closure environments, linear whole-pack

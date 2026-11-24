@@ -86,7 +86,7 @@ impl Checker {
         } = call;
         if resolved.mutates_receiver {
             let returned_reference = self
-                .node_facts
+                .emitter
                 .borrow()
                 .get(&object.source_span())
                 .and_then(|facts| facts.adjustment.as_deref())

@@ -118,7 +118,7 @@ impl Checker {
                 if let Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult {
                     reference,
                 }) = self
-                    .node_facts
+                    .emitter
                     .borrow()
                     .get(&expr.source_span())
                     .and_then(|facts| facts.adjustment.as_deref())
@@ -327,7 +327,7 @@ impl Checker {
         self.consumed_parameter_reads
             .borrow_mut()
             .insert(expr.source_span());
-        let mut records = self.node_facts.borrow_mut();
+        let mut records = self.emitter.borrow_mut();
         let Some(facts) = records.get_mut(&expr.source_span()) else {
             return;
         };
@@ -349,7 +349,7 @@ impl Checker {
     /// `comptime` name, read as a run-time value.
     pub(in crate::checker) fn is_parameter_value_read(&self, expr: &Expr) -> bool {
         matches!(
-            self.node_facts
+            self.emitter
                 .borrow()
                 .get(&expr.source_span())
                 .and_then(|facts| facts.adjustment.as_deref()),
@@ -498,7 +498,7 @@ impl Checker {
         &self,
         expr: &Expr,
     ) -> Option<mojito_types::origin::OwnerId> {
-        self.node_facts
+        self.emitter
             .borrow()
             .get(&expr.source_span())
             .and_then(|facts| facts.adjustment.as_deref())
@@ -691,7 +691,7 @@ impl Checker {
             // place, which is the wrong identity for the return contract).
             ExprKind::MethodCall { object, method, .. } => {
                 let recorded = self
-                    .node_facts
+                    .emitter
                     .borrow()
                     .get(&expr.source_span())
                     .and_then(|facts| facts.adjustment.as_deref())
