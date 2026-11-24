@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `union` with an empty-payload case (`case eof()`) runs (R2544): `mem-2-reg`
+  no longer promotes a slot nothing stores as if it held a closure, which turned
+  the read of the zero-element `Tuple`'s never-written `out` slot into a copy
+  naming no copy initializer and failed post-elaboration verification.
+
 - A module-qualified trait bounds a type parameter (R2533): `T: m.Greet`
   and `T: m.Greet & Copyable` (either order) are accepted, as at the pin,
   where the first was "unknown type" and the second a parse error.

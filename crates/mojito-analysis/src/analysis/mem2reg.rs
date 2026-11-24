@@ -20,8 +20,8 @@
 //! A destructor or copy constructor would take the slot's address, so a
 //! type with either is never one, as upstream's never is; a borrow, a
 //! capture, a loan, or a projected place keeps the slot too. A slot of a
-//! function type, or every store of which is a closure, is one too: a
-//! closure is a struct of pointers, trivially register-passable as
+//! function type, or a stored one every store of which is a closure, is
+//! one too: a closure is a struct of pointers, trivially register-passable as
 //! upstream's is, and a call through it needs no stable storage, nor
 //! through a thin function's, so a call through such a slot reads the value
 //! its load or shared borrow defines the callee from, and a shared borrow
@@ -351,18 +351,18 @@ impl Facts {
         entry: &Census,
     ) -> bool {
         let typed = function.var_tys.get(&var);
-        let stores_closures = entry.mentions.iter().all(|(_, mention)| match *mention {
-            Mention::Store(src) => self.closures.contains(&src.0),
-            _ => true,
-        });
+        // A slot nothing stores holds no closure: its reads are of an
+        // undefined value of its own type, promoted only when that type is.
+        let stores_closures = entry
+            .mentions
+            .iter()
+            .any(|(_, mention)| matches!(mention, Mention::Store(_)))
+            && entry.mentions.iter().all(|(_, mention)| match *mention {
+                Mention::Store(src) => self.closures.contains(&src.0),
+                _ => true,
+            });
         let function_typed = typed.is_some_and(|ty| ty.kind().as_func().is_some());
-        let callable_value = function_typed
-            || stores_closures
-                && !entry_stored.contains(&var)
-                && entry
-                    .mentions
-                    .iter()
-                    .any(|(_, mention)| matches!(mention, Mention::Store(_)));
+        let callable_value = function_typed || stores_closures && !entry_stored.contains(&var);
         let identity = typed.is_some_and(|ty| declarations.copy_is_identity(ty));
         // A reference pack's origin is erased in the slot a split
         // `VariadicPack` leaves, so its values match the slot modulo it, and

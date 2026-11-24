@@ -3204,23 +3204,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2544 Copying a `union` value with an empty-payload case fails to
-  elaborate**
-
-  A `union` declaring a case with an empty payload (`case eof()`) cannot be
-  copied: elaboration rejects `Token.eof` with "copy of `Tuple$mono` names
-  no __copyinit__, not its __copyinit__ `Tuple$mono.__copyinit__`".
-  - The empty payload is the zero-element `Tuple`, and the copy the case's
-    constructor emits names no copy initializer while the concrete
-    `Tuple$mono` declares one, so the post-elaboration verifier rejects it.
-  - Probe: `assets/extensions/ok/union_payload_lifecycle.mojo`, which
-    fails under `run` and `emit-mir`.
-  - Probe: `union Token(ImplicitlyCopyable): case eof(); case num(Int)`
-    with `var token: Token = .eof(); var copy = token.copy()`.
-  - Found while landing R2535 (2026-11-23); it fails at `d68f34e96`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
 Track: `calls`.
@@ -5394,16 +5377,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1120 `Tuple[]` is the empty tuple's type**
+- [ ] **R1120 `Tuple[]` in a parameter annotation is not the empty
+  tuple's type**
 
-  Problem: `def f() -> Tuple[]:` fails to parse ("Unexpected token
-  RBracket: Expected an expression"), where the pin spells the empty
-  tuple's type `Tuple[]` and nothing else: `()` is a tuple value ("expected
-  a type, found a tuple value; use 'Tuple[...]' to write a tuple type"),
-  which Mojito already rejects as a type.
-  - Lever: `parse_type` admits an empty argument list on `Tuple`, and the
-    checker resolves it to the zero-element tuple.
-  - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  `def take(var t: Tuple[]):` is rejected with "'t' abandoned without being
+  explicitly destroyed", where the pin binds `Tuple[]` to the zero-element
+  tuple and runs it.
+  - Cause: an empty argument list on a struct whose one parameter is
+    variadic leaves the pack unbound, so the parameter's type is the
+    auto-parameterized `Tuple[*$Ts_t]` (a type mismatch shows it), whose
+    `Deinitable` condition is unproven. Upstream binds the pack to no
+    types.
+  - Probe: `def take(var t: Tuple[]): pass` called as `take(Tuple())`.
+  - Probe: `def take(t: Tuple[]): var x: Int = t` names the type
+    `Tuple[*$Ts_t]` instead of `Tuple[]`.
+  - A result annotation (`def f() -> Tuple[]:`) and a local's
+    (`var u: Tuple[] = Tuple()`) already work.
+  - Found at the 2026-10-17 re-pin; restated while landing R2544
+    (2026-11-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
