@@ -1963,6 +1963,7 @@ assets/extensions/ok/ref_field_ctor_owned_source.mojo	main	exe-differential	sani
 assets/extensions/ok/ref_field_ctor_temporary_explicit_init.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_ctor_temporary_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_drain_mut_method.mojo	main	exe-differential	sanitized
+assets/extensions/ok/ref_field_iteration_and_binding_source.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_mut_origin_element_write.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_mut_origin_subscript_write.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_mut_origin_write_generic_wrapper.mojo	main	exe-differential	sanitized

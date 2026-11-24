@@ -1398,6 +1398,18 @@ for it. A reader of an older record, or of a bare trait name, gives the
 trait that one binder. The package format moves to `mojito-package 262`
 (R2216): a trait member's recorded signature no longer holds `_Self`.
 
+Schema 1.232 gives a `ref.make` one meaning: a borrow of the storage its
+place designates. A place ending at a `ref` field designates the field's
+slot, so a `ref.make` of it is typed `ref (ref T)`, and the handle the field
+stores is a `ref.read` of that borrow, typed as the field declares it, as
+upstream loads a field's `!lit.ref`. In 1.231 a `ref.make` of such a place
+whose destination was typed as the stored handle forwarded the handle
+instead; an older artifact's such `ref.make`s are split as it loads, into a
+fresh borrow of the slot and a `ref.read` of it into the original
+destination (`call_addresses::split_stored_handle_forwards`, after every
+other upgrade). The syntax is unchanged. The package format moves to
+`mojito-package 279` (R2494).
+
 Schema 1.231 gives a `param` type record the optional `trait_param:
 binder {...}` after `callable_bound`, written only for an existential
 `Some[Tr]` whose anonymous binder is bounded by a trait-valued binder
@@ -1618,7 +1630,8 @@ reader kept aside). The package format moves to
 Schema 1.198 passes a by-address operand whose retained place holds a
 reference (a `ref` field, a `ref` binding's slot) as that reference: a
 `ref.make` of the `ref` field's place typed as the stored reference, which
-forwards it, or of the binding's slot through itself, rather than a value
+forwarded it until schema 1.232 split it into a borrow of the slot and a
+`ref.read`, or of the binding's slot through itself, rather than a value
 read through it. The verifier's rule requiring a reference at a `mut` or
 `ref` slot covers these operands. The syntax is unchanged. An older
 artifact's such operands are forwarded as it loads

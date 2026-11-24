@@ -3,7 +3,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::make_ref_forwards_stored_handle;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
@@ -103,8 +102,8 @@ impl FnLowering<'_> {
     }
 
     /// `MakeRef`: materialize a reference to a verified place — its address.
-    /// A place through a local reference forwards (and extends) the stored
-    /// handle.
+    /// A `ref` binding's own slot forwards (and extends) the handle it
+    /// stores.
     pub(super) fn lower_make_ref(
         &mut self,
         ctx: &mut Context,
@@ -124,25 +123,12 @@ impl FnLowering<'_> {
         // handle (reference slots always hold real referent addresses), and
         // the made reference is that stored handle, collapsing the chain
         // like the VM's recursive `Value::Ref` reads. A projected place
-        // whose designated element is itself a reference (a `List[ref T]`
-        // element) instead addresses the slot — its consumers dereference
-        // explicitly.
-        // A projected place ENDING at a stored reference also forwards when
-        // the destination is typed as the stored handle itself (`ref s =
-        // self.src` reborrows): the ref-field slot holds a real referent
-        // address, so the handle is the loaded slot value, not the slot
-        // address. A storage-borrow destination (`ref (ref T)`) keeps the
-        // slot address; its consumers dereference explicitly.
-        // The decision reads the place's checked type, not the type this
-        // walk recomputes, which may spell an origin argument differently.
-        let holds_reference = self.holds_reference(&place);
-        let forwards_stored_handle =
-            !place.proj.is_empty()
-                && self.func.reg_types.get(&dest.0).is_some_and(|made| {
-                    make_ref_forwards_stored_handle(&place, made, holds_reference)
-                });
-        let whole_binding = place.proj.is_empty() && holds_reference;
-        if (whole_binding || forwards_stored_handle)
+        // ending at a stored reference (a `ref` field) instead addresses
+        // the slot, as does one whose designated element is itself a
+        // reference (a `List[ref T]` element): its consumers load the
+        // stored handle with a `ref.read`.
+        if place.proj.is_empty()
+            && self.holds_reference(&place)
             && let TyKind::Ref(reference) = ty.kind()
         {
             self.made_ref_places.insert(

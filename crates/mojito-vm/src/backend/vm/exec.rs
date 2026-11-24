@@ -4,7 +4,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::make_ref_forwards_stored_handle;
 use mojito_mir::mir::verify::instruction_places;
 use mojito_types::types::TyKind;
 use mojito_types::types::storage_simd;
@@ -229,24 +228,7 @@ impl VmBackend {
                     regs,
                     vars,
                 )? {
-                    // A `ref` field (a closure's `mut` capture) forwards the
-                    // handle it stores when the destination is typed as
-                    // that handle, as below.
-                    let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                    regs[dest.0 as usize] = if target.is_some_and(|made| {
-                        make_ref_forwards_stored_handle(
-                            place,
-                            made,
-                            prog.holds_reference(function, place),
-                        )
-                    }) {
-                        match self.read_reference(&handle, frame_id, vars)? {
-                            stored @ (Value::Ref { .. } | Value::Pointer { .. }) => stored,
-                            _ => handle,
-                        }
-                    } else {
-                        handle
-                    };
+                    regs[dest.0 as usize] = handle;
                     return Ok(());
                 }
                 let root = vars[place.root as usize].clone();
@@ -373,24 +355,6 @@ impl VmBackend {
                     projection,
                 };
                 let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                // A projected place ending at a stored reference forwards
-                // the stored handle when the destination is typed as that
-                // handle (`ref s = self.src` reborrows), as the native
-                // lowering loads it.
-                if !place.proj.is_empty()
-                    && target.is_some_and(|made| {
-                        make_ref_forwards_stored_handle(
-                            place,
-                            made,
-                            prog.holds_reference(function, place),
-                        )
-                    })
-                    && let stored @ (Value::Ref { .. } | Value::Pointer { .. }) =
-                        self.read_reference(&handle, frame_id, vars)?
-                {
-                    regs[dest.0 as usize] = stored;
-                    return Ok(());
-                }
                 // A reference to an element reached through a pointer the
                 // place holds (`span._data[i]`) designates the heap element,
                 // as such a call result does: it outlives the storage

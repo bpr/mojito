@@ -250,18 +250,20 @@ fn upgrade_bound_receivers_in(
             continue;
         };
         let binds_root = function.binds_reference(place.root);
-        let (place, handle) = super::call_addresses::stored_handle(
+        let stored = super::call_addresses::stored_handle(
             &place,
             binds_root,
             |base, field| declarations.declares_ref_field(base, field),
             Mutability::Immutable,
-        )
-        .unwrap_or_else(|| {
+        );
+        let (place, handle) = if let Some(stored) = stored {
+            super::call_addresses::legacy_stored_handle(stored)
+        } else {
             let handle =
                 super::mir_place_handle_ty(&place, binds_root, Some(Mutability::Immutable))
                     .unwrap_or_else(Ty::error);
             (place, handle)
-        });
+        };
         let defined = block.instrs[..index]
             .iter()
             .rposition(|instruction| match instruction {

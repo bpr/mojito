@@ -5755,3 +5755,71 @@ fn a_pre_1_224_function_binds_only_its_ref_tagged_slots() {
     let (_, read) = &parsed.program.functions[0];
     assert_eq!(read.ref_bindings, std::collections::BTreeSet::from([0]));
 }
+
+/// Schema 1.232 loads a `ref` field's stored handle out of a borrow of its
+/// slot; a 1.231 `ref.make` of the field typed as that handle forwarded it,
+/// and is read as the slot's borrow and a `ref.read` into its destination.
+#[test]
+fn older_stored_handle_forwards_split_into_a_slot_borrow_and_a_read() {
+    let stored: Ty = TyKind::Ref(RefTy {
+        referent: Ty::int(),
+        origin: Origin::Static,
+        mutability: Mutability::Mutable,
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+    })
+    .into();
+    let holder: Ty = TyKind::Struct("Holder".into(), Vec::new()).into();
+    let mut place = MirPlace::root(0, Some(holder));
+    place.project(Proj::Field("src".into()), stored.clone());
+    let mut program = program_with(vec![(
+        "f".into(),
+        function_with(
+            vec![stored.clone()],
+            vec![MirInstr::MakeRef {
+                dest: Reg(0),
+                place: place.clone(),
+            }],
+        ),
+    )]);
+    program.declarations.structs.push(MirStructDeclaration {
+        name: "Holder".into(),
+        module: String::new(),
+        fields: vec![("src".into(), stored.clone())],
+        ref_fields: vec!["src".into()],
+        fieldwise_init: false,
+        param_decls: Vec::new(),
+        explicit_destructors: HashMap::new(),
+        provided_defaults: Vec::new(),
+        explicit_destroy: None,
+        conformances: Vec::new(),
+        declared: Vec::new(),
+        register_passable: false,
+        associated_types: Vec::new(),
+        parameterized_associated_types: Vec::new(),
+        associated_values: Vec::new(),
+        parameterized_associated_values: Vec::new(),
+        witness_tables: Vec::new(),
+        members: Vec::new(),
+    });
+    let older = legacy_text(&program, 231, &[]);
+    let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let function = &parsed.program.functions[0].1;
+    assert!(
+        matches!(
+            function.body.instrs.as_slice(),
+            [
+                MirInstr::MakeRef { dest: Reg(1), place: slot },
+                MirInstr::ReadRef { dest: Reg(0), reference: Reg(1) },
+            ] if crate::mir::call_addresses::same_storage(slot, &place)
+        ),
+        "{:?}",
+        function.body.instrs
+    );
+    assert!(
+        matches!(function.reg_types[&1].kind(), TyKind::Ref(borrow) if borrow.referent == stored)
+    );
+    assert_eq!(function.reg_types[&0], stored);
+    let current = artifact(write::program(&program).as_bytes(), "unit.mir".to_string())
+        .expect("parse artifact");
+    assert_eq!(current.program.functions[0].1.body.instrs.len(), 1);
+}

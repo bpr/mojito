@@ -189,6 +189,12 @@ impl Decoder {
         if self.minor < 214 {
             crate::mir::nested::upgrade_closure_storage_origins(&mut declarations);
         }
+        // Schema 1.232 loads a `ref` field's stored handle out of its slot
+        // borrow; an older `ref.make` of the field typed as that handle
+        // forwarded it.
+        if self.minor < 232 {
+            crate::mir::call_addresses::split_stored_handle_forwards(&mut functions, &declarations);
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {

@@ -553,7 +553,7 @@ enum Binding {
         argument: Option<Reg>,
     },
     /// A `mut` or `ref` parameter whose caller's place is a `ref` field,
-    /// or a `read` one the call passes a reference register for: a fresh
+    /// or one the call passes a reference register with no place for: a fresh
     /// slot of the handle's type initialized with it, the address the call
     /// passes, and every body place on the parameter goes through the slot
     /// ([`handle_place`]).
@@ -2477,14 +2477,14 @@ fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
 /// otherwise;
 /// an owned parameter, or a `read` one of a type no destructor tears down,
 /// is a fresh slot the argument initializes, and so is a `read` one passed
-/// a trivial copy of a slot; a `read` parameter passed a reference with
-/// no place (a getter's `ref` result, a copy's source read through a
-/// reference) binds that reference as its handle; any other `read`
-/// parameter binds the caller's place the call retained for it or the
-/// argument was loaded from, through a reference the block made included,
-/// as upstream substitutes the argument's address. `None` when the call
-/// retains no place for a `mut` or `ref` one, or a `read` one of a
-/// droppable type is a value no place holds.
+/// a trivial copy of a slot; a parameter passed a reference with no place
+/// (a getter's `ref` result, a copy's source read through a reference, a
+/// `ref` field's stored handle) binds that reference as its handle; any
+/// other `read` parameter binds the caller's place the call retained for
+/// it or the argument was loaded from, through a reference the block made
+/// included, as upstream substitutes the argument's address. `None` when
+/// the call passes a `mut` or `ref` one neither a place nor a reference,
+/// or a `read` one of a droppable type is a value no place holds.
 fn argument_binding(
     (caller, declarations): (&MirFunction, &MirDeclarations),
     callee: &MirFunction,
@@ -2539,13 +2539,11 @@ fn argument_binding(
             _ => Binding::Value(argument),
         });
     }
-    if reference {
-        return None;
-    }
     // A reference the caller passes with no place of its own (a getter's
-    // `ref` result, a copy's source read through a reference) is the
-    // handle the parameter binds, as upstream maps the callee's `!lit.ref`
-    // argument to the caller's value.
+    // `ref` result, a copy's source read through a reference, the handle
+    // a `ref` field stores, loaded out of its slot) is the handle the
+    // parameter binds, as upstream maps the callee's `!lit.ref` argument
+    // to the caller's value.
     if !owned
         && place.is_none()
         && let Some(reference) = addressed_argument(caller, callee, param, argument)
@@ -2554,6 +2552,9 @@ fn argument_binding(
             argument,
             reference.clone(),
         )));
+    }
+    if reference {
+        return None;
     }
     // A `read` argument an instance of a generic caller still passes by
     // the address its template passed (`ref.make` of the place) binds that

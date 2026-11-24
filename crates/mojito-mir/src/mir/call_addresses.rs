@@ -599,68 +599,63 @@ pub fn same_storage(left: &MirPlace, right: &MirPlace) -> bool {
         })
 }
 
-/// The place whose `ref.make` forwards the reference `place` holds, with
-/// that reference's type, for a callee wanting it as mutable as
-/// `mutability`; `None` when `place` holds no reference.
+/// How a place holding a reference lends the reference it holds
+/// ([`stored_handle`]).
+#[derive(Clone, Debug)]
+pub enum StoredHandle {
+    /// A `ref` binding's slot, reached through itself: a `ref.make` of
+    /// `place` typed `handle` is the binding's own handle.
+    Binding { place: MirPlace, handle: Ty },
+    /// A `ref` field: a `ref.make` of `slot` typed `slot_ty` borrows the
+    /// field's slot, and a `ref.read` of that borrow typed `handle`, the
+    /// field's declared type, loads the handle the field stores, as
+    /// upstream loads a field's `!lit.ref`.
+    Field {
+        slot: MirPlace,
+        slot_ty: Ty,
+        handle: Ty,
+    },
+}
+
+/// How `place` lends the reference it holds to a callee wanting it as
+/// mutable as `mutability`; `None` when `place` holds no reference.
 ///
 /// Whether `place` holds one is decided from declarations
 /// ([`place_holds_reference`]): `binds_root` says whether its root is a
 /// `ref` binding, and `declares_ref_field` whether a struct type declares
-/// a field `ref`. A `ref` field's own place forwards its stored handle,
-/// lent immutably when `mutability` is; a `ref` binding's slot is reached
-/// through itself, as a runtime alias's read forms it, and lends its own
-/// handle.
+/// a field `ref`. A `ref` field's handle is read out of its slot at the
+/// type the field declares, whose mutability a call's operand rule weakens
+/// to the callee's; a `ref` binding's slot is reached through itself, as
+/// a runtime alias's read forms it, and lends its own handle as mutable as
+/// `mutability`.
 pub fn stored_handle(
     place: &MirPlace,
     binds_root: bool,
     declares_ref_field: impl Fn(&Ty, &str) -> bool,
     mutability: Mutability,
-) -> Option<(MirPlace, Ty)> {
+) -> Option<StoredHandle> {
     if !place_holds_reference(place, binds_root, declares_ref_field) {
         return None;
     }
-    let TyKind::Ref(stored) = place.ty.as_ref()?.kind() else {
-        return None;
-    };
+    let handle = place
+        .ty
+        .clone()
+        .filter(|ty| matches!(ty.kind(), TyKind::Ref(_)))?;
     if place.proj.is_empty() {
         let mut handle_place = place.clone();
         handle_place.through = place.through.or(Some(place.root));
         let handle = mir_place_handle_ty(&handle_place, binds_root, Some(mutability))?;
-        return Some((handle_place, handle));
+        return Some(StoredHandle::Binding {
+            place: handle_place,
+            handle,
+        });
     }
-    let handle = TyKind::Ref(mojito_types::origin::RefTy {
-        referent: stored.referent.clone(),
-        origin: stored.origin.clone(),
-        mutability: if mutability == Mutability::Immutable {
-            Mutability::Immutable
-        } else {
-            stored.mutability
-        },
-        address_space: stored.address_space.clone(),
+    let slot_ty = mir_place_handle_ty(place, binds_root, Some(Mutability::Immutable))?;
+    Some(StoredHandle::Field {
+        slot: place.clone(),
+        slot_ty,
+        handle,
     })
-    .into();
-    Some((place.clone(), handle))
-}
-
-/// Whether a `ref.make` of `place` whose destination is typed `made`
-/// forwards the reference `place` stores rather than borrowing its slot.
-///
-/// It does when `place` holds a `ref` by declaration (`holds_reference`,
-/// [`place_holds_reference`]) and `made` is that stored handle's type, the
-/// form [`stored_handle`] makes; a destination typed as a borrow of the
-/// slot (`ref (ref T)`) never forwards. Origins erase from the runtime
-/// ABI, so the two referents are compared without them: a spliced place's
-/// root may spell an origin argument its projections do not.
-pub fn make_ref_forwards_stored_handle(place: &MirPlace, made: &Ty, holds_reference: bool) -> bool {
-    if !holds_reference {
-        return false;
-    }
-    match (place.ty.as_ref().map(Ty::kind), made.kind()) {
-        (Some(TyKind::Ref(stored)), TyKind::Ref(made)) => {
-            erase_origins(&made.referent) == erase_origins(&stored.referent)
-        }
-        _ => false,
-    }
 }
 
 /// Upgrade the calls of `functions`, read from an artifact written before
@@ -700,6 +695,26 @@ pub fn upgrade_stored_handles(
     legacy: &LegacyOperandTables,
 ) {
     address_call_operands(functions, declarations, legacy, Operands::StoredHandles);
+}
+
+/// Split each `ref.make` of `functions`, read from an artifact written
+/// before a `ref` field's stored handle was loaded out of its slot, that
+/// forwarded the handle: a fresh borrow of the field's slot, then a
+/// `ref.read` of it into the original destination, retyped as the handle
+/// the field declares ([`StoredHandle::Field`]).
+///
+/// A `ref.make` forwarded when its place ended at a `ref` field and its
+/// destination was typed as the stored handle rather than a borrow of the
+/// slot ([`forwards_stored_handle`]).
+pub fn split_stored_handle_forwards(
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+) {
+    for (_, function) in functions {
+        let mut body = std::mem::take(&mut function.body);
+        split_stored_handle_forwards_in(&mut body, function, declarations);
+        function.body = body;
+    }
 }
 
 /// [`addressed_registers`] over one body, its regions included, whose
@@ -1339,6 +1354,90 @@ enum Operands {
     StoredHandles,
 }
 
+/// The legacy form of `stored`: one `ref.make` of the field's place typed
+/// as its stored handle, which an artifact older than schema 1.232 read as
+/// a forward and [`split_stored_handle_forwards`] splits.
+pub(super) fn legacy_stored_handle(stored: StoredHandle) -> (MirPlace, Ty) {
+    match stored {
+        StoredHandle::Binding { place, handle }
+        | StoredHandle::Field {
+            slot: place,
+            handle,
+            ..
+        } => (place, handle),
+    }
+}
+
+/// Whether a `ref.make` of `place` whose destination is typed `made`
+/// forwarded the reference `place` stores under schema 1.231: `place`
+/// ends at a `ref` field (`holds_reference`) and `made` is that stored
+/// handle's type, its referent compared without origins, which erase from
+/// the runtime ABI.
+fn forwards_stored_handle(place: &MirPlace, made: &Ty, holds_reference: bool) -> bool {
+    if !holds_reference || place.proj.is_empty() {
+        return false;
+    }
+    match (place.ty.as_ref().map(Ty::kind), made.kind()) {
+        (Some(TyKind::Ref(stored)), TyKind::Ref(made)) => {
+            erase_origins(&made.referent) == erase_origins(&stored.referent)
+        }
+        _ => false,
+    }
+}
+
+fn split_stored_handle_forwards_in(
+    block: &mut MirBlock,
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in instruction_regions_mut(&mut block.instrs[index]) {
+            split_stored_handle_forwards_in(region, function, declarations);
+        }
+        let MirInstr::MakeRef { dest, place } = &block.instrs[index] else {
+            index += 1;
+            continue;
+        };
+        let (dest, place) = (*dest, place.clone());
+        let binds_root = function.binds_reference(place.root);
+        let holds_reference = place_holds_reference(&place, binds_root, |base, field| {
+            declarations.declares_ref_field(base, field)
+        });
+        let forwards = function
+            .reg_types
+            .get(&dest.0)
+            .is_some_and(|made| forwards_stored_handle(&place, made, holds_reference));
+        let split = forwards
+            .then(|| stored_handle(&place, binds_root, |_, _| true, Mutability::Immutable))
+            .flatten();
+        let Some(StoredHandle::Field {
+            slot,
+            slot_ty,
+            handle,
+        }) = split
+        else {
+            index += 1;
+            continue;
+        };
+        let span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
+        let borrow = crate::mir::fresh_register(function, slot_ty, span.as_ref());
+        function.reg_types.insert(dest.0, handle);
+        block.instrs[index] = MirInstr::MakeRef {
+            dest: borrow,
+            place: slot,
+        };
+        block.instrs.insert(
+            index + 1,
+            MirInstr::ReadRef {
+                dest,
+                reference: borrow,
+            },
+        );
+        index += 2;
+    }
+}
+
 /// The place an operand addressing `place` makes its reference of, as
 /// mutable as `mutability`, and that reference's type: the stored handle a
 /// place holding one forwards ([`stored_handle`]), else the place's own
@@ -1350,17 +1449,18 @@ fn operand_handle(
     declarations: &MirDeclarations,
 ) -> (MirPlace, Ty) {
     let binds_root = parameters.ref_bindings.contains(&place.root);
-    stored_handle(
+    let stored = stored_handle(
         &place,
         binds_root,
         |base, field| declarations.declares_ref_field(base, field),
         mutability,
-    )
-    .unwrap_or_else(|| {
-        let handle =
-            mir_place_handle_ty(&place, binds_root, Some(mutability)).unwrap_or_else(Ty::error);
-        (place, handle)
-    })
+    );
+    if let Some(stored) = stored {
+        return legacy_stored_handle(stored);
+    }
+    let handle =
+        mir_place_handle_ty(&place, binds_root, Some(mutability)).unwrap_or_else(Ty::error);
+    (place, handle)
 }
 
 /// Pass each by-address call operand in `functions` as a `ref.make` of its
@@ -2242,9 +2342,9 @@ mod tests {
     }
 
     #[test]
-    fn make_ref_forwards_stored_handle_across_origin_spellings() {
+    fn a_legacy_make_ref_forwarded_across_origin_spellings() {
         let place = field_place(reference(list_of_span(Origin::Static)));
-        assert!(make_ref_forwards_stored_handle(
+        assert!(forwards_stored_handle(
             &place,
             &reference(list_of_span(Origin::Unbound)),
             true
@@ -2252,9 +2352,9 @@ mod tests {
     }
 
     #[test]
-    fn make_ref_forwards_stored_handle_only_from_a_declared_reference() {
+    fn a_legacy_make_ref_forwarded_only_from_a_declared_reference() {
         let place = field_place(reference(list_of_span(Origin::Static)));
-        assert!(!make_ref_forwards_stored_handle(
+        assert!(!forwards_stored_handle(
             &place,
             &reference(list_of_span(Origin::Static)),
             false
@@ -2262,16 +2362,12 @@ mod tests {
     }
 
     #[test]
-    fn make_ref_forwards_stored_handle_never_for_a_slot_borrow() {
+    fn a_legacy_make_ref_never_forwarded_a_slot_borrow() {
         let stored = reference(list_of_span(Origin::Static));
         let place = field_place(stored.clone());
-        assert!(!make_ref_forwards_stored_handle(
-            &place,
-            &reference(stored),
-            true
-        ));
+        assert!(!forwards_stored_handle(&place, &reference(stored), true));
         let held = field_place(list_of_span(Origin::Static));
-        assert!(!make_ref_forwards_stored_handle(
+        assert!(!forwards_stored_handle(
             &held,
             &reference(list_of_span(Origin::Static)),
             true
@@ -2283,14 +2379,29 @@ mod tests {
     }
 
     #[test]
-    fn stored_handle_forwards_only_a_declared_ref_field() {
-        let stored = reference(list_of_span(Origin::Static));
-        let mut place = field_place(stored);
+    fn stored_handle_reads_only_a_declared_ref_field_out_of_its_slot() {
+        let stored: Ty = TyKind::Ref(RefTy {
+            referent: list_of_span(Origin::Static),
+            origin: Origin::Static,
+            mutability: Mutability::Mutable,
+            address_space: AddressSpaceSlot::GENERIC,
+        })
+        .into();
+        let mut place = field_place(stored.clone());
         place.root_ty = Some(holder());
         let declares = |base: &Ty, field: &str| *base == holder() && field == "src";
-        let (forwarded, _) = stored_handle(&place, false, declares, Mutability::Mutable)
-            .expect("a `ref` field forwards its stored handle");
-        assert!(same_storage(&forwarded, &place));
+        let lent = stored_handle(&place, false, declares, Mutability::Immutable);
+        assert!(
+            matches!(
+                &lent,
+                Some(StoredHandle::Field { slot, slot_ty, handle })
+                    if same_storage(slot, &place)
+                        && matches!(slot_ty.kind(), TyKind::Ref(borrow) if borrow.referent == stored)
+                        && *handle == stored
+            ),
+            "a `ref` field's handle is read, at its declared mutability, out of a \
+             `ref (ref T)` borrow of its slot: {lent:?}"
+        );
         assert!(stored_handle(&place, false, |_, _| false, Mutability::Mutable).is_none());
     }
 
@@ -2342,9 +2453,15 @@ mod tests {
     fn stored_handle_forwards_only_a_ref_binding_slot() {
         let stored = reference(list_of_span(Origin::Static));
         let place = MirPlace::root(0, Some(stored));
-        let (handle_place, _) = stored_handle(&place, true, |_, _| false, Mutability::Mutable)
-            .expect("a `ref` binding's slot forwards its handle");
-        assert_eq!(handle_place.through, Some(0));
+        let lent = stored_handle(&place, true, |_, _| false, Mutability::Mutable);
+        assert!(
+            matches!(
+                &lent,
+                Some(StoredHandle::Binding { place: handle_place, .. })
+                    if handle_place.through == Some(0)
+            ),
+            "a `ref` binding's slot lends its own handle: {lent:?}"
+        );
         assert!(stored_handle(&place, false, |_, _| false, Mutability::Mutable).is_none());
     }
 

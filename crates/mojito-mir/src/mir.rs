@@ -64,8 +64,8 @@ pub use call_addresses::{
     BoundOperand, ByAddressOperand, CallByAddress, address_parameters, addressed_operand,
     addressed_receiver, addressed_registers, by_address_parameter, by_address_receiver,
     call_by_address_operands, call_operand_parameters, load_register_passable_operands,
-    make_ref_forwards_stored_handle, method_operand_parameters, read_addressed_operands,
-    receiver_value_ty, requirement_by_address_parameter, requirement_by_address_receiver,
+    method_operand_parameters, read_addressed_operands, receiver_value_ty,
+    requirement_by_address_parameter, requirement_by_address_receiver,
     requirement_operand_parameters, signature_by_address_operands, signature_operand_parameters,
     subscript_operand_parameters, subscript_requirement_operand_parameters,
 };
@@ -3831,6 +3831,51 @@ impl<'a> Flatten<'a> {
         })
     }
 
+    /// Whether `place`, spelled from its root's own storage, ends at a
+    /// field declared `ref`, whose slot stores the handle a read of it
+    /// loads.
+    fn place_is_ref_field(&self, place: &MirPlace) -> bool {
+        !place.proj.is_empty() && place.through.is_none() && self.place_holds_reference(place)
+    }
+
+    /// Load the handle the `ref` field `place` stores, as upstream loads
+    /// the field's `!lit.ref`: a `ref.make` of the field's slot, typed
+    /// `ref (ref T)`, and a `ref.read` of that borrow, typed as the field
+    /// declares its handle.
+    fn load_field_handle(&mut self, location: SourceSpan, place: MirPlace) -> Reg {
+        let root = place.root;
+        let slot_ty = mir_place_handle_ty(
+            &place,
+            self.f.binds_reference(root),
+            Some(mojito_types::origin::Mutability::Immutable),
+        )
+        .unwrap_or_else(Ty::error);
+        let handle = place.ty.clone().unwrap_or_else(Ty::error);
+        let borrow = self.fresh_typed(location.clone(), Some(root), slot_ty);
+        self.emit(MirInstr::MakeRef {
+            dest: borrow,
+            place,
+        });
+        self.read_stored_handle(location, root, borrow, handle)
+    }
+
+    /// Emit a `ref.read` of `borrow`, a borrow of a `ref` field's slot in
+    /// `root`, typed `handle`: the handle the field stores.
+    fn read_stored_handle(
+        &mut self,
+        location: SourceSpan,
+        root: VarId,
+        borrow: Reg,
+        handle: Ty,
+    ) -> Reg {
+        let read = self.fresh_typed(location, Some(root), handle);
+        self.emit(MirInstr::ReadRef {
+            dest: read,
+            reference: borrow,
+        });
+        read
+    }
+
     /// The value an operand at `place` passes ([`place_value_ty`]).
     fn place_value_ty<'p>(&self, place: &'p MirPlace) -> Option<&'p Ty> {
         place_value_ty(place, self.f.binds_reference(place.root), |base, field| {
@@ -4508,8 +4553,8 @@ impl<'a> Flatten<'a> {
 
     /// The instructions binding each capture slot of a body taking its
     /// closure's `storage` to a reference to the field keeping it: a
-    /// reference field's stored handle, which a `MakeRef` typed as it
-    /// forwards, else a handle to the owned field.
+    /// reference field's stored handle, read out of a borrow of the field's
+    /// slot, else a handle to the owned field.
     fn capture_storage_prologue(&mut self, storage: &CaptureStorage) -> Vec<MirInstr> {
         let outer = std::mem::take(&mut self.f.body);
         for CaptureField {
@@ -4536,12 +4581,20 @@ impl<'a> Flatten<'a> {
             };
             let mut place = MirPlace::root(storage.slot, Some(storage.ty.clone()));
             place.project(Proj::Field(field.clone()), field_ty.clone());
-            let dest = self.fresh_typed(
-                storage.location.clone(),
-                Some(storage.slot),
-                reference_ty.clone(),
-            );
-            self.emit(MirInstr::MakeRef { dest, place });
+            let dest = if *reference && matches!(field_ty.kind(), TyKind::Ref(_)) {
+                self.load_field_handle(storage.location.clone(), place)
+            } else {
+                let borrow = self.fresh_typed(
+                    storage.location.clone(),
+                    Some(storage.slot),
+                    reference_ty.clone(),
+                );
+                self.emit(MirInstr::MakeRef {
+                    dest: borrow,
+                    place,
+                });
+                borrow
+            };
             self.var_types.insert(*slot, reference_ty.clone());
             self.bind_reference(*slot);
             self.emit(MirInstr::DefVar {

@@ -1944,6 +1944,7 @@ assets/extensions/ok/ref_field_ctor_owned_source.mojo	-	ineligible	no-scalar-ent
 assets/extensions/ok/ref_field_ctor_temporary_explicit_init.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_ctor_temporary_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_drain_mut_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_iteration_and_binding_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_mut_origin_element_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_mut_origin_subscript_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_mut_origin_write_generic_wrapper.mojo	-	ineligible	no-scalar-entry-shape

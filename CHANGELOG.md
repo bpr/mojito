@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `ref.make` has one meaning, a borrow of the storage its place names,
+  as upstream's `!lit.ref` of a field does (R2494). A `ref` field's stored
+  handle is a `ref.read` of a `ref (ref T)` borrow of its slot, typed as
+  the field declares it, wherever lowering takes it: a by-address operand
+  or subscript-store base (`Flatten::forward_stored_handle`,
+  `mir::call_addresses::StoredHandle`), a `ref s = self.src` binding, now
+  a run-time reference binding (`Flatten::bind_stored_handle`), a
+  `for x in self.src` loop's retained source, and a closure's `ref`
+  capture field. `mir::make_ref_forwards_stored_handle` and the
+  forwarding branches of the verifier, the VM's `MakeRef`, and Pliron's
+  `lower_make_ref` are gone. The inliner binds a `mut` or `ref`
+  parameter passed a loaded handle to that register. A loop over a local
+  holder's `ref` field (`for x in w.src`), which failed MIR verification,
+  now runs, its loan on the origin's owner. MIR text moves to schema
+  1.232: an older artifact's forwarding `ref.make` is split on read
+  (`call_addresses::split_stored_handle_forwards`). The package format
+  moves to `mojito-package 279`.
+
 - Syntax the check types only to evaluate it is typed inside an
   evaluation that erases its records, as upstream's parameter evaluator
   erases the ops it emitted speculatively (R2573). `Checker::evaluating`

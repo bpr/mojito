@@ -458,6 +458,17 @@ impl<'a> Flatten<'a> {
     ) {
         let mut loan_place = place.clone();
         let canonical = self.direct_borrow_interior(&mut loan_place, origin);
+        // A `ref` field's source holds the handle its origin names, so the
+        // loop borrows that origin's owner, as upstream's loan is on the
+        // origin rather than on the holder that stores the handle.
+        let ref_field = self.place_is_ref_field(&place);
+        if ref_field {
+            loan_place = if canonical.root == place.root {
+                place.clone()
+            } else {
+                MirPlace::root(canonical.root, self.var_types.get(&canonical.root).cloned())
+            };
+        }
         let interior = canonical
             .path
             .iter()
@@ -474,6 +485,24 @@ impl<'a> Flatten<'a> {
         // The slot holds only a handle: `GetIter` reads it to normalize the
         // iterator (re-rooting a `ref self` `__iter__` at the source), after
         // which dropping the handle is a no-op. The source is never copied.
+        // A `ref` field's source is the handle the field stores, loaded out
+        // of a borrow of its slot as upstream loads the field's `!lit.ref`,
+        // and `__iter__` is called through that handle.
+        let root = place.root;
+        if ref_field {
+            let handle_ty = place.ty.clone().unwrap_or_else(Ty::error);
+            let handle = self.load_field_handle(span.clone(), place);
+            self.var_types.insert(dest, handle_ty.clone());
+            self.bind_reference(dest);
+            self.emit(MirInstr::DefVar {
+                var: dest,
+                src: handle,
+                binding_ty: Some(handle_ty),
+                in_place: false,
+            });
+            self.establish_iteration_loans(dest, span, loan_place, mutable, interior);
+            return;
+        }
         let ref_ty = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
             referent: value_ty,
             origin: mojito_types::origin::Origin::Place(ref_origin),
@@ -483,7 +512,7 @@ impl<'a> Flatten<'a> {
         self.var_types.insert(dest, ref_ty.clone());
         self.f.ref_bindings.insert(dest);
         self.iteration_sources.insert(dest, place.clone());
-        let handle = self.fresh_typed(span.clone(), Some(place.root), ref_ty.clone());
+        let handle = self.fresh_typed(span.clone(), Some(root), ref_ty.clone());
         self.emit(MirInstr::MakeRef {
             dest: handle,
             place,
@@ -494,21 +523,7 @@ impl<'a> Flatten<'a> {
             binding_ty: Some(ref_ty),
             in_place: false,
         });
-        let loans = vec![MirLoan {
-            place: loan_place,
-            mutable,
-            interior,
-            shared: false,
-            setup: false,
-        }];
-        let marker = self.fresh_typed(span, Some(loans[0].place.root), Ty::none());
-        self.emit(MirInstr::EstablishLoans {
-            reference: dest,
-            loans: loans.clone(),
-            marker,
-            dest_interior: None,
-        });
-        self.aggregate_loans.insert(dest, loans);
+        self.establish_iteration_loans(dest, span, loan_place, mutable, interior);
     }
 
     /// Normalize the iterable in `source` into the iterator slot `dest`: a
@@ -599,6 +614,72 @@ impl<'a> Flatten<'a> {
             });
             self.aggregate_loans.insert(reference, loans);
         }
+    }
+
+    /// Bind `ref reference = place` over a `ref` field: the binding takes
+    /// the handle the field stores, loaded out of a borrow of its slot as
+    /// upstream loads the field's `!lit.ref`, and is a run-time reference
+    /// binding whose places are rooted at its own slot. It holds `loans`,
+    /// those the checker proved for the field's referent.
+    fn bind_stored_handle(
+        &mut self,
+        location: SourceSpan,
+        reference: VarId,
+        place: MirPlace,
+        loans: Vec<MirLoan>,
+    ) {
+        let root = place.root;
+        let handle_ty = place.ty.clone().unwrap_or_else(Ty::error);
+        let binding_ty = self
+            .var_types
+            .get(&reference)
+            .filter(|ty| matches!(ty.kind(), TyKind::Ref(_)))
+            .cloned()
+            .unwrap_or(handle_ty);
+        let handle = self.load_field_handle(location.clone(), place);
+        self.var_types.insert(reference, binding_ty.clone());
+        self.bind_reference(reference);
+        self.emit(MirInstr::DefVar {
+            var: reference,
+            src: handle,
+            binding_ty: Some(binding_ty),
+            in_place: false,
+        });
+        let marker = self.fresh_typed(location, Some(root), Ty::none());
+        self.emit(MirInstr::EstablishLoans {
+            reference,
+            loans: reference_binding_loans(&loans),
+            marker,
+            dest_interior: None,
+        });
+        self.aggregate_loans.insert(reference, loans);
+    }
+
+    /// Establish the loan the retained-source slot `dest` holds on
+    /// `place`, its borrowed iteration source.
+    fn establish_iteration_loans(
+        &mut self,
+        dest: VarId,
+        span: SourceSpan,
+        place: MirPlace,
+        mutable: bool,
+        interior: Option<MirInteriorOrigin>,
+    ) {
+        let loans = vec![MirLoan {
+            place,
+            mutable,
+            interior,
+            shared: false,
+            setup: false,
+        }];
+        let marker = self.fresh_typed(span, Some(loans[0].place.root), Ty::none());
+        self.emit(MirInstr::EstablishLoans {
+            reference: dest,
+            loans: loans.clone(),
+            marker,
+            dest_interior: None,
+        });
+        self.aggregate_loans.insert(dest, loans);
     }
 
     /// Decompose a place expression (`x`, `p.a.b`, `xs[i]`, `p.items[i].x`) into a
@@ -3157,6 +3238,10 @@ impl<'a> Flatten<'a> {
                     .filter(|ty| statement_binding.is_some() && matches!(ty.kind(), TyKind::Ref(_)))
                 {
                     self.var_types.insert(reference, reference_ty.clone());
+                }
+                if self.place_is_ref_field(&place) {
+                    self.bind_stored_handle(node.location(), reference, place, loans);
+                    return;
                 }
                 // The slot holds the handle `lit.ref` would be: every read
                 // through the binding addresses its place, and a backend

@@ -2625,14 +2625,23 @@ does not rebind the slot, so `callable_targets` still resolves the
 callable it holds (`rebound_variables`). A retained place that holds a
 reference (a `ref` field, a `ref` binding's slot) passes the reference it
 holds, as upstream passes the `!lit.ref` the field or binding is
-(`Flatten::forward_stored_handle`, `mir::call_addresses::stored_handle`):
-the read through it becomes a forwarding `ref.make` of the `ref` field's
-place, typed as the stored reference, or a `ref.make` of the binding's
-slot through itself, and a subscript store's setter takes the same
-reference of its base. The operand is the only record of the storage a
+(`Flatten::forward_stored_handle`, `mir::call_addresses::stored_handle`,
+`StoredHandle`): the read through a `ref` field becomes a `ref.make` of
+the field's slot, typed `ref (ref T)`, and a `ref.read` of that borrow,
+typed as the field declares its handle, as upstream loads the field's
+`!lit.ref`; the read through a `ref` binding becomes a `ref.make` of its
+slot through itself; and a subscript store's setter takes the same
+reference of its base. A `ref.make` therefore always borrows the storage
+its place designates and never forwards a handle that storage holds: a
+`ref s = self.src` binding, a `for x in self.src` loop's retained source,
+and a closure's `ref` capture field all load the stored handle the same
+way (`Flatten::bind_stored_handle`, `borrow_iteration_source`,
+`capture_storage_prologue`). The operand is the only record of the storage a
 call names: no call-shaped instruction carries a place table beside its
 operands, as upstream's `lit.call` carries none. The inliner binds a
-parameter passed a `ref` field to the handle it stores (`place_binding`).
+parameter passed a `ref` field to the handle it stores (`place_binding`),
+and one passed a reference register with no place, a loaded field
+handle among them, to that register (`HandleSource::Register`).
 Backends read the operand: the VM binds the reference, and Pliron passes
 its pointer as upstream's LLVM lowering passes a `!lit.ref`
 (`call_operand_value`, `by_address_operand`, `lower/abi.rs`); a reference
@@ -2653,7 +2662,7 @@ does, as a `ref<P>` argument against the value `P` it passes
 `!lit.ref<Q>` at a `!lit.ref<Q>` parameter is a value): `P` is the
 parameter's type at the call, else the checked expression's type, else
 the operand place's value (`mir::place_value_ty`, the referent of a
-place holding a reference, whose stored handle the call forwards). A
+place holding a reference, whose stored handle the call loads). A
 receiver's or bound callee's value is never a reference, so its
 reference is the operand's own (`mir::addressed_receiver`;
 `mir::receiver_value_ty` peels it: `receiver_ty`, `member_receiver_ty`,
@@ -2734,7 +2743,10 @@ substitution made concrete) binds nothing and is not yet checked
 artifact older than 1.192 is upgraded as it loads
 (`call_addresses::upgrade_call_operands`), and one older than 1.198 has its
 operands over a place holding a reference forwarded
-(`call_addresses::upgrade_stored_handles`). Every load-time upgrade reads an
+(`call_addresses::upgrade_stored_handles`), and one older than 1.232 has
+each `ref.make` that forwarded a `ref` field's stored handle split into a
+borrow of the slot and a `ref.read` of it
+(`call_addresses::split_stored_handle_forwards`). Every load-time upgrade reads an
 older call's operand places from the reader's side table
 (`mir/legacy_places.rs`, `LegacyOperandTables`), paired with the
 call-shaped instructions of each function in decode order, as an MLIR
@@ -3327,7 +3339,7 @@ member when its field is declared `ref` (`MirStructDeclaration::ref_fields`,
 published from `CheckedField::reference`; `MirDeclarations::declares_ref_field`
 after lowering, `Flatten::declares_ref_field` during it, a package struct's
 read from the package scope), and no element ever does. A handle's type
-(`mir_place_handle_ty`), a stored handle's forwarding (`stored_handle`), a
+(`mir_place_handle_ty`), a stored handle's load (`stored_handle`), a
 `ref`-field store or augmented assignment, register-type closure's
 read-through, and the synthesized copy and move of a `ref` field all ask it,
 never a place's `TyKind::Ref` type. A capture reads through only a captured
@@ -3335,9 +3347,11 @@ never a place's `TyKind::Ref` type. A capture reads through only a captured
 field is a reference field by `CheckedStorageField::reference`.
 
 Both backends decide by the same declarations. The VM and Pliron read
-through, write through, or forward a stored handle only where
+through or write through a stored handle only where
 `place_holds_reference` says a place holds one (`Prog::holds_reference`,
-Pliron's `holds_reference`); a walk chases a handle mid-place only at a
+Pliron's `holds_reference`), and re-borrow one only from a whole `ref`
+binding's slot: a `ref.make` of a `ref` field's place is the slot's
+address, whose handle a `ref.read` loads; a walk chases a handle mid-place only at a
 step `place_step_holds_reference` names, a field declared `ref`
 (`place_crosses_declared_reference`, the VM's `place_crosses_reference`),
 and a whole slot holds an address only when `MirFunction::binds_address`

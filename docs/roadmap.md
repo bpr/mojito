@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2580**.
+Next free ID: **R2583**.
 
 ## Ordered Work
 
@@ -1551,6 +1551,39 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `3a322a838`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2580 A write through a `ref` field while a loop iterates the
+  same field through `mut self` is not rejected**
+
+  `for x in self.src: self.src.append(x)` in a `mut self` method of
+  `struct Walk[o: MutOrigin]` holding `var src: ref[Self.o] List[Int]`
+  checks, and the VM stops with "use after Pointer deallocation".
+  - The same write through the field's owner, `l.append(x)` while
+    `for x in w.src` iterates a local `w = Walk(l)`, is rejected with
+    "use of invalidated interior reference", as it should be.
+  - The loop's interior loan is on the origin the field's handle names, an
+    origin parameter of `self` here; the write's invalidation through the
+    same handle is likely never matched against it.
+  - Probe: the method above over `l = [1]`, called once from `main`.
+  - Found while landing R2494 (2026-11-24); it already fails at
+    `047e77596`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2581 Checking `len(h.r)` over a `ref String` field never ends**
+
+  `print(len(h.r))` over `struct H[o: MutOrigin]` holding `var r:
+  ref[Self.o] String` overflows the checker's stack, where a local
+  `len(s)` reports "`len(String/StringSlice)` is not supported".
+  - The overflow is an unbounded cycle of `origin_place`,
+    `aggregate_origins`, and `conversion_borrow_origins`
+    (`checker/origins/actuals.rs`, `ref_params.rs`) over the converted
+    `ref` field operand.
+  - `h.r.byte_length()` over the same field prints `3`.
+  - Probe: the program above, through `mojito check`.
+  - Found while landing R2494 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2094 A loan named only inside a type argument does not follow a
   move or copy of its holder**
@@ -10265,32 +10298,30 @@ new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **R2494 A `ref.make` of a `ref` field's place means either a
-  borrow of the slot or the stored handle, chosen by its destination type,
-  where upstream loads the field's `!lit.ref`**
+- [ ] **R2582 A `place.load` of a `ref` field's place means either the
+  stored handle or the referent's value, chosen by its destination type,
+  where upstream loads the field's `!lit.ref` and then loads through it**
 
-  Upstream passes a `ref` field by loading the `!lit.ref` value it stores:
-  one op with one meaning. Mojito's `ref.make` of the field's place instead
-  forwards the stored handle when its destination is typed as that handle,
-  and borrows the slot when it is typed `ref (ref T)`; the verifier, the VM,
-  and Pliron each ask `mir::make_ref_forwards_stored_handle` which.
-  - Lower the forward as the slot borrow plus a `ref.read`, the form
-    `len(self.src)` already takes, at every emitter:
-    `Flatten::forward_stored_handle`, `forward_definition`, and
-    `setter_receiver` (`calls.rs`); `stored_handle`, `operand_handle`, and
-    `upgrade_stored_handles` (`call_addresses.rs`); `bound_calls.rs`; and
-    `capture_storage_prologue` (`mir.rs`).
-  - Then delete the predicate and the forwarding branches of the
-    verifier's `verify_reference_instruction`, the VM's `MakeRef` arm, and
-    Pliron's `lower_make_ref`.
-  - It reaches the loans of a `ref.read` result in ownership/liveness, the
-    inliner's `ref.make`/`ref.read` matchers (`inline_parametric.rs`
-    `references_and_returns`, `access_bound_parameters_in_place`), and the
-    MIR text schema version.
-  - Probe: `assets/extensions/ok/ref_field_operand_origin_argument.mojo`
-    and `assets/extensions/ok/ref_field_operand_passes_stored_handle.mojo`
-    print the same after the change.
-  - Found while landing R2484 (2026-11-21).
+  Upstream reads a `ref` field's referent in two ops: a load of the
+  `!lit.ref` the field stores, then a load through it. Mojito's one
+  `place.load` of the field's place reads through the stored handle when
+  its destination is typed as the referent, and loads the handle itself
+  when it is typed as the reference.
+  - Pliron's `LoadPlace` arm (`lower/instr.rs`) and the VM's
+    `load_place_value` both make that choice, from `holds_reference` and
+    the destination's type.
+  - Lower such a read as a `ref.make` of the field's slot, a `ref.read` of
+    the handle, and a `ref.read` (or `place.load` through the handle's
+    binding) of the referent, the form a `ref.make` of the field takes
+    since R2494, at every emitter of a `place.load` over a `ref` field.
+  - Then delete the read-through branches from both backends, and split
+    an older artifact's such loads on read, as
+    `call_addresses::split_stored_handle_forwards` splits a 1.231
+    `ref.make`.
+  - Probe: `print(h.r)` over `var r: ref[Self.o] Int`
+    (`assets/extensions/ok/ref_field_operand_passes_stored_handle.mojo`)
+    prints the same after the change.
+  - Found while landing R2494 (2026-11-24).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

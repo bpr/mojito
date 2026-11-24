@@ -392,23 +392,23 @@ fn verifier_reads_a_whole_pointer_slot_as_the_pointer() {
     );
 }
 
-#[test]
-fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
-    // A projected place ENDING at a stored reference admits the forwarding
-    // interpretation: the destination is typed as the stored handle itself
-    // (`ref s = self.src` reborrows), not as a borrow of the field slot.
-    let stored_ref_place = |mutability: mojito::Mutability| {
-        let mut place = MirPlace::root(
-            0,
-            Some(TyKind::Struct("Holder".to_string(), Vec::new()).into()),
-        );
-        place.project(
-            Proj::Field("src".to_string()),
-            reference_ty(Ty::int(), mutability),
-        );
-        place
-    };
+/// `holder.src`, a field storing a reference of `mutability` to an `Int`.
+fn stored_ref_place(mutability: mojito::Mutability) -> MirPlace {
+    let mut place = MirPlace::root(
+        0,
+        Some(TyKind::Struct("Holder".to_string(), Vec::new()).into()),
+    );
+    place.project(
+        Proj::Field("src".to_string()),
+        reference_ty(Ty::int(), mutability),
+    );
+    place
+}
 
+#[test]
+fn verifier_rejects_make_ref_forwarding_a_stored_reference() {
+    // A `ref.make` of a place ending at a stored reference borrows the
+    // field's slot; one typed as the stored handle itself forwards nothing.
     let forwarded = function(
         block(
             vec![MirInstr::MakeRef {
@@ -420,41 +420,52 @@ fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
         1,
         &[(0, reference_ty(Ty::int(), mojito::Mutability::Immutable))],
     );
-    assert_eq!(verify(&program(forwarded)), Vec::<String>::new());
+    expect_finding(
+        &program(forwarded),
+        "MakeRef destination targets Int, incompatible with place storage",
+    );
+}
 
-    let unrelated_referent = function(
-        block(
-            vec![MirInstr::MakeRef {
-                dest: Reg(0),
-                place: stored_ref_place(mojito::Mutability::Mutable),
-            }],
-            MirTerm::Return(None),
-        ),
-        1,
-        &[(
-            0,
-            reference_ty(Ty::string_literal_of("s"), mojito::Mutability::Immutable),
-        )],
+#[test]
+fn verifier_accepts_a_stored_reference_read_out_of_its_slot() {
+    // `ref.make` borrows the field's slot, `ref (ref mut Int)`, and a
+    // `ref.read` of it loads the stored handle at the type it is stored.
+    let stored = reference_ty(Ty::int(), mojito::Mutability::Mutable);
+    let read_out = |read: Ty| {
+        function(
+            block(
+                vec![
+                    MirInstr::MakeRef {
+                        dest: Reg(1),
+                        place: stored_ref_place(mojito::Mutability::Mutable),
+                    },
+                    MirInstr::ReadRef {
+                        dest: Reg(0),
+                        reference: Reg(1),
+                    },
+                ],
+                MirTerm::Return(None),
+            ),
+            2,
+            &[
+                (0, read),
+                (
+                    1,
+                    reference_ty(stored.clone(), mojito::Mutability::Immutable),
+                ),
+            ],
+        )
+    };
+    assert_eq!(
+        verify(&program(read_out(stored.clone()))),
+        Vec::<String>::new()
     );
     expect_finding(
-        &program(unrelated_referent),
-        "MakeRef destination targets StringLiteral",
-    );
-
-    let stolen_mutability = function(
-        block(
-            vec![MirInstr::MakeRef {
-                dest: Reg(0),
-                place: stored_ref_place(mojito::Mutability::Immutable),
-            }],
-            MirTerm::Return(None),
-        ),
-        1,
-        &[(0, reference_ty(Ty::int(), mojito::Mutability::Mutable))],
-    );
-    expect_finding(
-        &program(stolen_mutability),
-        "MakeRef destination recovers permission unavailable through its source capability",
+        &program(read_out(reference_ty(
+            Ty::string_literal_of("s"),
+            mojito::Mutability::Mutable,
+        ))),
+        "ReadRef result type",
     );
 }
 

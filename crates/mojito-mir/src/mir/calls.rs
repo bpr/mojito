@@ -6,6 +6,7 @@
 use super::call_results::{CValue, OperandBinding};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::call_addresses::StoredHandle;
 use mojito_checked::checked::CheckedCallArgumentSource;
 use mojito_types::types::TyKind;
 
@@ -807,10 +808,12 @@ impl<'a> Flatten<'a> {
 
     /// Pass the reference `place` holds, rather than the value read through
     /// it into `register`, as upstream passes a `ref` field's or a `ref`
-    /// binding's `!lit.ref` as the operand: the read defining `register`
-    /// becomes a `ref.make` of the stored handle ([`Self::stored_handle`]),
-    /// or, where no read of it is found, a fresh one follows. The retained
-    /// place is unchanged.
+    /// binding's `!lit.ref` as the operand ([`Self::stored_handle`]): a
+    /// `ref` field's handle is loaded out of its slot, the read defining
+    /// `register` becoming the slot's borrow and a `ref.read` of it, and a
+    /// `ref` binding's read becomes a `ref.make` of its handle; where no
+    /// read of it is found, a fresh one follows. The retained place is
+    /// unchanged.
     fn forward_stored_handle(
         &mut self,
         location: SourceSpan,
@@ -818,29 +821,66 @@ impl<'a> Flatten<'a> {
         place: &MirPlace,
         wanted: mojito_types::origin::Mutability,
     ) -> Reg {
-        let (handle_place, handle) = self.stored_handle(place, wanted);
-        if self.forward_definition(register, place, &handle_place) {
-            self.f.reg_types.insert(register.0, handle);
-            return register;
+        match self.stored_handle(place, wanted) {
+            Some(StoredHandle::Binding {
+                place: handle_place,
+                handle,
+            }) if self.forward_definition(register, place, &handle_place) => {
+                self.f.reg_types.insert(register.0, handle);
+                register
+            }
+            Some(StoredHandle::Field {
+                slot,
+                slot_ty,
+                handle,
+            }) => {
+                let borrow = self.fresh_typed(location.clone(), Some(slot.root), slot_ty);
+                if self.load_stored_handle_definition(register, &slot, borrow) {
+                    self.f.reg_types.insert(register.0, handle);
+                    return register;
+                }
+                let root = slot.root;
+                self.emit(MirInstr::MakeRef {
+                    dest: borrow,
+                    place: slot,
+                });
+                self.read_stored_handle(location, root, borrow, handle)
+            }
+            stored => self.emit_stored_handle(location, place, stored),
         }
-        self.emit_make_ref(location, handle_place, handle)
     }
 
-    /// The place whose `ref.make` forwards the reference `place` holds,
-    /// with that reference's type
+    /// Emit the reference `place` holds as `stored` lends it: a `ref.make`
+    /// of a `ref` binding's handle, or a `ref` field's slot borrow and a
+    /// `ref.read` of it.
+    fn emit_stored_handle(
+        &mut self,
+        location: SourceSpan,
+        place: &MirPlace,
+        stored: Option<StoredHandle>,
+    ) -> Reg {
+        match stored {
+            Some(StoredHandle::Binding { place, handle }) => {
+                self.emit_make_ref(location, place, handle)
+            }
+            Some(StoredHandle::Field { slot, .. }) => self.load_field_handle(location, slot),
+            None => self.emit_make_ref(location, place.clone(), Ty::error()),
+        }
+    }
+
+    /// How `place` lends the reference it holds
     /// ([`crate::mir::call_addresses::stored_handle`]).
     fn stored_handle(
         &self,
         place: &MirPlace,
         wanted: mojito_types::origin::Mutability,
-    ) -> (MirPlace, Ty) {
+    ) -> Option<StoredHandle> {
         crate::mir::call_addresses::stored_handle(
             place,
             self.f.binds_reference(place.root),
             |base, field| self.declares_ref_field(base, field),
             wanted,
         )
-        .unwrap_or_else(|| (place.clone(), Ty::error()))
     }
 
     /// Emit a `ref.make` of `place` typed `handle`.
@@ -921,6 +961,41 @@ impl<'a> Flatten<'a> {
             dest: register,
             place: handle_place.clone(),
         };
+        true
+    }
+
+    /// Turn the `place.load` of the `ref` field `slot` defining `register`
+    /// into a `ref.make` of the slot into `borrow` and a `ref.read` of that
+    /// borrow into `register`, the field's stored handle.
+    fn load_stored_handle_definition(
+        &mut self,
+        register: Reg,
+        slot: &MirPlace,
+        borrow: Reg,
+    ) -> bool {
+        let found = self.operand_definition(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::LoadPlace { dest, place: read }
+                    if *dest == register
+                        && crate::mir::call_addresses::same_storage(read, slot)
+                        && read.through == slot.through
+            )
+        });
+        let Some((instructions, index)) = found else {
+            return false;
+        };
+        instructions[index] = MirInstr::MakeRef {
+            dest: borrow,
+            place: slot.clone(),
+        };
+        instructions.insert(
+            index + 1,
+            MirInstr::ReadRef {
+                dest: register,
+                reference: borrow,
+            },
+        );
         true
     }
 
@@ -2395,8 +2470,8 @@ impl<'a> Flatten<'a> {
             && let Some(wanted) = receiver_by_address(setter, receiver.register_passable_read())
         {
             return if self.place_holds_reference(place) {
-                let (handle_place, handle) = self.stored_handle(place, wanted);
-                self.emit_make_ref(receiver.location(), handle_place, handle)
+                let stored = self.stored_handle(place, wanted);
+                self.emit_stored_handle(receiver.location(), place, stored)
             } else {
                 self.place_address(receiver.location(), place, wanted)
             };
