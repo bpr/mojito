@@ -7,8 +7,9 @@
 //! An op's operands are other emitted nodes, numbered by their position in
 //! [`EmittedNodes`], not by the checked tables' ids. A field the check
 //! decides after allocation (a declaration's symbol and signature, a call's
-//! parameter grouping, a match's plan) is left empty in the op and stands
-//! as a fact on the node, as an attribute on an op. The seal ([`seal`]),
+//! parameter grouping, a match's plan, a destructuring's leaf bindings) is
+//! left empty in the op and stands as a fact on the node, as an attribute
+//! on an op: every fact the handoff carries sits on a node. The seal ([`seal`]),
 //! which the check runs at its end, composes each op with its node's facts
 //! into the checked tables, and rejects an occurrence the check emitted no
 //! node for ([`Unsealed`]).
@@ -31,10 +32,6 @@ pub struct EmittedNodes {
     /// and a sequence destructuring's by the statement, a loop target's by
     /// the target.
     pub desugars: HashMap<SourceSpan, EmittedDesugar>,
-    /// The records no node holds, by occurrence: a pattern's, a
-    /// destructuring target's, and any other occurrence the check emitted
-    /// no node for (R2569).
-    pub detached: HashMap<SourceSpan, NodeFacts>,
 }
 
 impl EmittedNodes {
@@ -54,22 +51,8 @@ impl EmittedNodes {
         }
     }
 
-    /// The facts the check recorded at the occurrence `at`: its node's when
-    /// one holds it, its detached record otherwise.
-    pub fn facts(&self, at: &SourceSpan) -> Option<&NodeFacts> {
-        match self.index.get(at) {
-            Some(EmittedSlot::Statement(id)) => {
-                self.statements.get(id.0 as usize)?.facts.as_deref()
-            }
-            Some(EmittedSlot::Expression(id)) => {
-                self.expressions.get(id.0 as usize)?.facts.as_deref()
-            }
-            None => self.detached.get(at),
-        }
-    }
-
     /// Every record the check left, by occurrence: the statements' facts,
-    /// then the expressions', then the detached records.
+    /// then the expressions'.
     pub fn records(&self) -> impl Iterator<Item = (&SourceSpan, &NodeFacts)> {
         self.statements
             .iter()
@@ -79,7 +62,6 @@ impl EmittedNodes {
                     .iter()
                     .filter_map(|node| Some((&node.at, node.facts.as_deref()?))),
             )
-            .chain(&self.detached)
     }
 }
 

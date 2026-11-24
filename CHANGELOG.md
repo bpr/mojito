@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every fact the check hands off sits on an emitted node (R2569). A
+  destructuring statement holds its declared leaves' bindings
+  (`NodeFacts::declared_leaves`), which `Seal::target` takes in its
+  target's pre-order, and an `if case`/`while case` plan sits on the
+  condition's value; a pattern's bind leaf records nothing, its `Bind`
+  declaration holding the binding. What is still pending at the end of the
+  check, syntax typed only to evaluate it, is discarded:
+  `EmittedNodes::detached` and `EmittedNodes::facts` are gone, and
+  `--timings` reports `emit.discarded_records` (157 for std) in place of
+  `emit.detached_records`. No accepted program, MIR text, or warning
+  changes, and the package format does not move.
+
 - A checked declaration is its statement node, as upstream's symbol is its
   op (R768). `CheckedDeclaration`, `CheckedDeclKind`, `CheckedDeclId`,
   `CheckedStmt::declaration`, and the walk that copied each declaring

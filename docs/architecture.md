@@ -2971,11 +2971,15 @@ a subscript's key, a type value's type, a match's plan, a destructuring
 loop's binder — is a fact on the node, and the op leaves its field empty;
 each call, subscript, function type, and annotated `var` also holds the
 walk-ordered candidates its lifted applications are chosen from
-(`mojito_checked::emitted`). A detached record holds an occurrence no node
-holds — a pattern, a destructuring target, a derived occurrence no arena
-node is, or one written before its statement is entered, which moves onto
-the node when the statement is. The handoff moves the nodes out, each
-with its facts, and the detached records, less any record a cleared fact
+(`mojito_checked::emitted`). A destructuring statement holds its declared
+leaves' bindings in its target's pre-order, and a `case` condition's plan
+sits on its value, the operand its op names, as an upstream op holds its
+results' attributes. A record written before its statement is entered is
+pending and moves onto the node when the statement is; what is still
+pending when the check ends is syntax the check typed only to evaluate it,
+its result folded into an attribute of the op that holds it, and the
+handoff discards it, so every fact handed off sits on a node. The handoff
+moves the nodes out, each with its facts, less any record a cleared fact
 left empty (`Emitter::into_nodes`, from `body_carry.rs`'s
 `HandoffStores::into_program`), with the check's desugars by node, each
 `for` statement and comprehension clause holding its written target's
@@ -2990,9 +2994,7 @@ post-order, through the composition helpers in `checked.rs`
 (`expression_node`, `apply_spelled`, `parameter_layout`, and
 `Signatures`). An occurrence the check emitted no node or op for is an
 `InvariantViolation` naming the first one, never a placeholder in the
-tables. Three things still reach the seal as syntax: a detached record's
-occurrence, such as a destructuring target's leaf, which `Seal::target`
-reads by span (R2569); the `SpelledConstruction` and `MatchPlan` facts,
+tables. Two things still reach the seal as syntax: the `SpelledConstruction` and `MatchPlan` facts,
 whose construction, tests, and declarations the seal finds by span
 (R2570); and the roots, found by the spans of the spliced root statements
 and of each `CheckedDefaultWrapper::body`, which the seal empties
@@ -3015,7 +3017,7 @@ so a field chain `a.x.x…x` builds in time linear in its length. Every
 fact store the checker writes during a body is a logged store
 (`mojito-checked`'s `fact_store.rs`: a map, set, or vector plus the log of
 keys written; the emitter logs the node slots it writes beside its
-detached records' `FactMap`), so a site — a module-level `def` or a struct method —
+pending records' `FactMap`), so a site — a module-level `def` or a struct method —
 records the log ranges it spans and the effect entries it read exactly as
 read (`checker/body_carry.rs`). The next transfer pass over the same tree
 starts from the previous pass's committed effect maps and, at a site whose

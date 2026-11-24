@@ -11,10 +11,12 @@
 //! roll-back drops the nodes it allocated, ops and all, and restores only
 //! records.
 //!
-//! An index finds an occurrence's node. An occurrence no node holds (a
-//! pattern, a destructuring target, or one written before its statement was
-//! entered) keeps a detached record, which moves onto the node when one is
-//! allocated for it. A span is never in both.
+//! An index finds an occurrence's node. An occurrence no node holds yet
+//! keeps a pending record, which moves onto the node when one is allocated
+//! for it; a span is never in both. What is still pending when the check
+//! ends is syntax the check typed only to evaluate it, whose result it
+//! folded into an attribute of the op that holds it, and the handoff
+//! discards it: every fact handed off is an attribute on an emitted op.
 //!
 //! The emitter logs and journals as the fact stores do (`fact_store`): a
 //! body site's writes are carried by log range, and a probe's writes and
@@ -35,13 +37,13 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
 /// The statement and expression nodes the check has allocated, the index
-/// from occurrence to node, and the detached records.
+/// from occurrence to node, and the pending records.
 #[derive(Debug, Default)]
 pub struct Emitter {
     statements: Vec<EmittedStmt>,
     expressions: Vec<EmittedExpr>,
     index: HashMap<SourceSpan, EmittedSlot>,
-    detached: FactMap<SourceSpan, NodeFacts>,
+    pending: FactMap<SourceSpan, NodeFacts>,
     /// Every node write, in order.
     log: Vec<EmittedSlot>,
     /// Each probed node write's slot and the record it displaced, oldest
@@ -52,22 +54,22 @@ pub struct Emitter {
 
 impl Emitter {
     /// The record at `at`: its node's when one holds the occurrence, its
-    /// detached record otherwise.
+    /// pending record otherwise.
     pub fn get(&self, at: &SourceSpan) -> Option<&NodeFacts> {
         match self.index.get(at) {
             Some(slot) => self.facts(*slot),
-            None => self.detached.get(at),
+            None => self.pending.get(at),
         }
     }
 
-    /// Every record: the nodes' in allocation order, then the detached.
+    /// Every record: the nodes' in allocation order, then the pending.
     pub fn iter(&self) -> impl Iterator<Item = (&SourceSpan, &NodeFacts)> {
         self.statements
             .iter()
             .map(|node| (&node.at, &node.facts))
             .chain(self.expressions.iter().map(|node| (&node.at, &node.facts)))
             .filter_map(|(at, facts)| Some((at, facts.as_deref()?)))
-            .chain(self.detached.iter())
+            .chain(self.pending.iter())
     }
 
     /// Emit `statement` and every statement and expression under it,
@@ -124,7 +126,7 @@ impl Emitter {
     pub(super) fn record(&mut self, at: SourceSpan) -> &mut NodeFacts {
         match self.index.get(&at).copied() {
             Some(slot) => self.write(slot).get_or_insert_default(),
-            None => self.detached.entry(at).or_default(),
+            None => self.pending.entry(at).or_default(),
         }
     }
 
@@ -134,14 +136,14 @@ impl Emitter {
         match self.index.get(at).copied() {
             Some(slot) if self.facts(slot).is_some() => self.write(slot).as_deref_mut(),
             Some(_) => None,
-            None => self.detached.get_mut(at),
+            None => self.pending.get_mut(at),
         }
     }
 
     /// Take the record at `at` out; a removal is journaled, not logged.
     pub(super) fn remove(&mut self, at: &SourceSpan) -> Option<NodeFacts> {
         let Some(slot) = self.index.get(at).copied() else {
-            return self.detached.remove(at);
+            return self.pending.remove(at);
         };
         let removed = self.facts_mut(slot).take();
         if self.probes > 0 && removed.is_some() {
@@ -155,7 +157,7 @@ impl Emitter {
         match self.index.get(&at).copied() {
             Some(slot) => *self.write(slot) = Some(Box::new(facts)),
             None => {
-                self.detached.insert(at, facts);
+                self.pending.insert(at, facts);
             }
         }
     }
@@ -167,7 +169,7 @@ impl Emitter {
             statements: self.statements.len(),
             expressions: self.expressions.len(),
             log: self.log.len(),
-            detached: self.detached.mark(),
+            pending: self.pending.mark(),
         }
     }
 
@@ -181,7 +183,7 @@ impl Emitter {
         self.log[from.log..to.log]
             .iter()
             .map(|slot| self.at(*slot))
-            .chain(self.detached.logged(from.detached..to.detached))
+            .chain(self.pending.logged(from.pending..to.pending))
     }
 
     /// Start journaling writes and allocations; `roll_back(mark)` undoes
@@ -193,14 +195,14 @@ impl Emitter {
             expressions: self.expressions.len(),
             log: self.log.len(),
             undo: self.undo.len(),
-            detached: self.detached.open_probe(),
+            pending: self.pending.open_probe(),
         }
     }
 
     /// Undo every write since `mark` was opened, newest first, then drop
     /// the nodes allocated since, with their ops and index entries, and the
-    /// slots logged since. A detached record a dropped node took is
-    /// restored by the detached store's own roll-back.
+    /// slots logged since. A pending record a dropped node took is
+    /// restored by the pending store's own roll-back.
     pub(super) fn roll_back(&mut self, mark: EmitProbe) {
         for (slot, previous) in self.undo.split_off(mark.undo).into_iter().rev() {
             *self.facts_mut(slot) = previous;
@@ -218,7 +220,7 @@ impl Emitter {
             self.index.remove(&at);
         }
         self.log.truncate(mark.log);
-        self.detached.roll_back(mark.detached);
+        self.pending.roll_back(mark.pending);
         self.probes -= 1;
     }
 
@@ -261,14 +263,16 @@ impl Emitter {
             .chain(self.expressions.iter_mut().map(|node| &mut node.facts))
             .filter_map(|facts| facts.as_deref_mut())
             .for_each(&mut rewrite);
-        self.detached.retain(|_, facts| {
+        self.pending.retain(|_, facts| {
             rewrite(facts);
             true
         });
     }
 
-    /// The emitted nodes, each holding the facts set on it, and the
-    /// detached records, less any record a cleared fact left empty.
+    /// The emitted nodes, each holding the facts set on it, less any
+    /// record a cleared fact left empty. A record still pending is on
+    /// syntax the check typed only to evaluate it, whose result it folded
+    /// into an attribute of the op that holds it: the handoff discards it.
     pub(super) fn into_nodes(self) -> EmittedNodes {
         let (mut on_nodes, mut opless) = (0u64, 0u64);
         let mut seal = |op: bool, facts: &mut Option<Box<NodeFacts>>| {
@@ -286,23 +290,25 @@ impl Emitter {
         for node in &mut expressions {
             seal(node.op.is_some(), &mut node.facts);
         }
-        let mut detached = self.detached.into_inner();
-        detached.retain(|_, facts| !facts.is_empty());
+        let pending = self.pending.into_inner();
+        debug_assert!(
+            pending.values().all(|facts| facts.match_plan.is_none()
+                && facts.match_warnings.is_none()
+                && facts.declared_leaves.is_none()),
+            "a statement's record was left on no node"
+        );
         timing::count("emit.node_records", on_nodes);
-        timing::count("emit.detached_records", detached.len() as u64);
+        timing::count(
+            "emit.discarded_records",
+            pending.values().filter(|facts| !facts.is_empty()).count() as u64,
+        );
         timing::count("emit.opless_nodes", opless);
-        let nodes = EmittedNodes {
+        EmittedNodes {
             expressions,
             statements,
             index: self.index,
             desugars: HashMap::new(),
-            detached: HashMap::new(),
-        };
-        debug_assert!(
-            detached.keys().all(|at| nodes.facts(at).is_none()),
-            "an occurrence held both a node record and a detached one"
-        );
-        EmittedNodes { detached, ..nodes }
+        }
     }
 
     fn facts(&self, slot: EmittedSlot) -> Option<&NodeFacts> {
@@ -328,14 +334,14 @@ impl Emitter {
         }
     }
 
-    /// Allocate a node for `at` unless one holds it, moving its detached
+    /// Allocate a node for `at` unless one holds it, moving its pending
     /// record onto it; the node's slot either way.
     fn allocate(&mut self, at: SourceSpan, kind: ArenaKind) -> EmittedSlot {
         let vacant = match self.index.entry(at) {
             Entry::Occupied(occupied) => return *occupied.get(),
             Entry::Vacant(vacant) => vacant,
         };
-        let facts = self.detached.remove(vacant.key()).map(Box::new);
+        let facts = self.pending.remove(vacant.key()).map(Box::new);
         let at = vacant.key().clone();
         let slot = match kind {
             ArenaKind::Statement => {
@@ -408,7 +414,7 @@ pub(super) struct EmitMark {
     statements: usize,
     expressions: usize,
     log: usize,
-    detached: usize,
+    pending: usize,
 }
 
 /// An emitter's positions when a probe opened.
@@ -418,7 +424,7 @@ pub(super) struct EmitProbe {
     expressions: usize,
     log: usize,
     undo: usize,
-    detached: ProbeMark,
+    pending: ProbeMark,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -598,10 +604,10 @@ mod tests {
         }
     }
 
-    fn records(emitter: Emitter) -> HashMap<SourceSpan, bool> {
+    /// Every record the check can read, pending ones included.
+    fn records(emitter: &Emitter) -> HashMap<SourceSpan, bool> {
         emitter
-            .into_nodes()
-            .records()
+            .iter()
             .map(|(at, facts)| (at.clone(), facts.truthiness_condition))
             .collect()
     }
@@ -662,7 +668,7 @@ mod tests {
                 .index
                 .contains_key(&value(&synthesized).source_span())
         );
-        assert_eq!(records(emitter), records(before));
+        assert_eq!(records(&emitter), records(&before));
     }
 
     #[test]
@@ -704,7 +710,7 @@ mod tests {
         fresh.enter_statement(&entered);
         fresh.copy_window(&previous, &from, &to);
         assert!(fresh.index.contains_key(&synthesized.source_span()));
-        assert_eq!(records(fresh), records(previous));
+        assert_eq!(records(&fresh), records(&previous));
     }
 
     #[test]
@@ -725,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn an_entered_expression_takes_its_detached_record() {
+    fn an_entered_expression_takes_its_pending_record() {
         let construction = truth();
         let mut emitter = Emitter::default();
         emitter
@@ -739,13 +745,34 @@ mod tests {
         let nodes = emitter.into_nodes();
         assert!(
             nodes
-                .facts(&construction.source_span())
+                .expression(&construction.source_span())
+                .and_then(|node| node.facts.as_deref())
                 .is_some_and(|facts| facts.truthiness_condition)
         );
         assert!(matches!(
             nodes.expressions[0].op,
             Some(CheckedOp::Bool(true))
         ));
+    }
+
+    #[test]
+    fn a_record_no_node_takes_is_discarded_at_the_handoff() {
+        let (entered, evaluated) = (statement(), truth());
+        let mut emitter = Emitter::default();
+        emitter.enter_statement(&entered);
+        emitter
+            .record(value(&entered).source_span())
+            .truthiness_condition = true;
+        emitter.record(evaluated.source_span()).truthiness_condition = true;
+        assert!(emitter.get(&evaluated.source_span()).is_some());
+        let nodes = emitter.into_nodes();
+        assert_eq!(
+            nodes
+                .records()
+                .map(|(at, _)| at.clone())
+                .collect::<Vec<_>>(),
+            vec![value(&entered).source_span()]
+        );
     }
 
     #[test]

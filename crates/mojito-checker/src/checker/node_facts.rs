@@ -1,6 +1,6 @@
 //! The check's facts at an occurrence, held in the occurrence's one
 //! [`NodeFacts`] record on the node the emitter allocated for it (or its
-//! detached record where no node holds it), as upstream sets each decided
+//! pending record until a node holds it), as upstream sets each decided
 //! fact as an attribute on the occurrence's op.
 //!
 //! Every write goes through the emitter, which logs and journals it, so a

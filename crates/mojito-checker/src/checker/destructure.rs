@@ -43,14 +43,15 @@ use super::indexing::SubscriptLValue;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{BindingMode, DestructureTarget, DestructureTargetKind, SequenceTarget};
-use mojito_checked::checked::CheckedTupleUnpackElement;
+use mojito_checked::checked::{CheckedTupleUnpackElement, DeclaredLeaf};
 use mojito_types::origin::{Mutability, Origin, OriginPlace, RefTy};
 
 impl Checker {
     /// Check the statement `stmt`, `target = value`. For a tuple target the
     /// value must be a tuple of the target's arity at every tuple level,
-    /// each leaf is declared, written, or discarded, and the plan recording
-    /// each element's read is attached to the value node; a sequence target
+    /// each leaf is declared, written, or discarded, the plan recording
+    /// each element's read is attached to the value node, and the declared
+    /// leaves' bindings to the statement's own; a sequence target
     /// is checked as its desugar (see the module docs).
     pub(super) fn check_destructure(
         &mut self,
@@ -109,13 +110,16 @@ impl Checker {
             }
             source => source,
         };
-        let mut plan = self.destructure_elements(items, &vt, source.as_ref(), value)?;
+        let mut leaves = Vec::new();
+        let mut plan =
+            self.destructure_elements(items, &vt, source.as_ref(), value, &mut leaves)?;
         if let Some(owner) = temporary {
             for element in &mut plan {
                 element.temporary = Some(owner);
             }
         }
         self.record_at(value.source_span()).tuple_unpack_plan = Some(plan);
+        self.record_at(stmt.source_span()).declared_leaves = Some(leaves);
         Ok(())
     }
 
@@ -502,14 +506,16 @@ impl Checker {
 
     /// The plan for the elements of a tuple-typed value `vt`, read through
     /// `source` when it has storage, with each of `items` applied to its
-    /// element. `value` is the expression the tuple came from, for the
-    /// outward-store check.
+    /// element and each declared leaf's binding appended to `leaves` in the
+    /// target's pre-order. `value` is the expression the tuple came from,
+    /// for the outward-store check.
     fn destructure_elements(
         &mut self,
         items: &[DestructureTarget],
         vt: &Ty,
         source: Option<&RefTy>,
         value: &Expr,
+        leaves: &mut Vec<DeclaredLeaf>,
     ) -> Result<Vec<CheckedTupleUnpackElement>, TypeError> {
         let Some(elems) = tuple_elements(vt) else {
             return Err(TypeError::TypeMismatch {
@@ -547,6 +553,7 @@ impl Checker {
                         &element.ty,
                         element.reference.as_ref(),
                         element_value,
+                        leaves,
                     )?;
                 }
                 DestructureTargetKind::Declare {
@@ -556,7 +563,7 @@ impl Checker {
                     self.require_element_copy(element)?;
                     let declared = self.inferred_binding_ty(elem, name)?;
                     self.declare(name, declared)?;
-                    self.record_declared_leaf(item, name);
+                    leaves.push(self.declared_leaf(name));
                 }
                 // A `ref` leaf, or a loop target's bare name, which binds an
                 // immutable reference to its piece, as on the pin, whatever
@@ -574,7 +581,7 @@ impl Checker {
                     reference.mutability = Mutability::Immutable;
                     element.reference = Some(reference.clone());
                     self.declare_reference(name, reference, false)?;
-                    self.record_declared_leaf(item, name);
+                    leaves.push(self.declared_leaf(name));
                 }
                 DestructureTargetKind::Place(place) => {
                     self.destructure_into_place(place, element, elem, element_value)?;
@@ -613,14 +620,12 @@ impl Checker {
         Ok(())
     }
 
-    /// Record a declared leaf's binding and storage type at the leaf's own
-    /// occurrence, which the checked target carries for MIR.
-    fn record_declared_leaf(&self, leaf: &DestructureTarget, name: &str) {
-        if let Some(owner) = self.lookup_owner(name) {
-            self.record_at(leaf.source_span()).binding = Some(owner);
-        }
-        if let Some(storage_ty) = self.lookup(name).cloned() {
-            self.record_at(leaf.source_span()).binding_ty = Some(storage_ty);
+    /// A declared leaf's binding and storage type, which the checked target
+    /// carries for MIR.
+    fn declared_leaf(&self, name: &str) -> DeclaredLeaf {
+        DeclaredLeaf {
+            binding: self.lookup_owner(name),
+            binding_ty: self.lookup(name).cloned(),
         }
     }
 

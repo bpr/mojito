@@ -119,7 +119,8 @@ impl Checker {
     /// `while` branch whose body is `body`: anchor the value, compile the
     /// pattern's commands, and check the body in the scope that holds the
     /// bindings — a sibling branch or the statement after sees none of
-    /// them. The plan is recorded at the pattern.
+    /// them. The plan is recorded on the condition's value, the operand
+    /// the condition's op names.
     pub(super) fn check_case_condition(
         &mut self,
         pattern: &MatchPattern,
@@ -151,7 +152,7 @@ impl Checker {
                     unreachable: Vec::new(),
                 };
                 self.emitter.borrow_mut().enter_plan(&plan);
-                self.record_at(pattern.source_span()).match_plan = Some(plan);
+                self.record_at(value.source_span()).match_plan = Some(plan);
                 Ok(())
             });
         self.pop_scope();
@@ -525,7 +526,6 @@ impl Checker {
                 value: synth.refresh(&binding.value),
             });
             self.check_comptime_declaration(&declaration, &binding.name)?;
-            self.record_at(binding.span.clone()).binding = self.lookup_owner(&binding.name);
             declarations.push(PlannedCommand::Bind {
                 declaration: Box::new(declaration),
                 reads: Vec::new(),
@@ -596,27 +596,15 @@ impl Checker {
     ) -> Result<(), TypeError> {
         match &pattern.kind {
             MatchPatternKind::Wildcard => Ok(()),
-            MatchPatternKind::Bind { name, mode } => self.bind_subject(
-                name,
-                Binding::from(*mode),
-                pattern.source_span(),
-                subject,
-                join,
-                commands,
-            ),
+            MatchPatternKind::Bind { name, mode } => {
+                self.bind_subject(name, Binding::from(*mode), subject, join, commands)
+            }
             MatchPatternKind::As {
                 pattern: inner,
                 name,
             } => {
                 self.compile_pattern(inner, subject, join.reborrow(), commands)?;
-                self.bind_subject(
-                    name,
-                    Binding::As,
-                    pattern.source_span(),
-                    subject,
-                    join,
-                    commands,
-                )
+                self.bind_subject(name, Binding::As, subject, join, commands)
             }
             // `None` parses as a literal but is no literal pattern, as
             // upstream's `SimpleLiteralNode` builds no command for it.
@@ -835,7 +823,6 @@ impl Checker {
                 commands.bindings.push(ComptimeBinding {
                     name: binding.name.clone(),
                     value,
-                    span: binding.span.clone(),
                 });
             }
         }
@@ -1432,7 +1419,6 @@ impl Checker {
         &mut self,
         name: &str,
         binding: Binding,
-        pattern_span: SourceSpan,
         subject: &MatchSubject,
         join: Join<'_>,
         commands: &mut Commands,
@@ -1441,7 +1427,7 @@ impl Checker {
             path: subject.path.clone(),
         });
         if subject.comptime() {
-            return comptime_binding(name, binding, pattern_span, subject, join, commands);
+            return comptime_binding(name, binding, subject, join, commands);
         }
         let (subject, reads) = self.materialize(subject, commands)?;
         let subject = &subject;
@@ -1513,7 +1499,6 @@ impl Checker {
         if binding == Binding::Bare {
             self.make_reference_immutable(name, &declaration, value_span);
         }
-        self.record_at(pattern_span).binding = self.lookup_owner(name);
         commands.program.push(PlannedCommand::Bind {
             declaration: Box::new(declaration),
             reads,
@@ -1784,13 +1769,12 @@ struct ComptimeCase {
     cover: Vec<CoverCommand>,
 }
 
-/// A name a `comptime match` pattern binds, the compile-time value it
-/// denotes, and the binding pattern's location.
+/// A name a `comptime match` pattern binds and the compile-time value it
+/// denotes.
 #[derive(Clone)]
 struct ComptimeBinding {
     name: String,
     value: Expr,
-    span: SourceSpan,
 }
 
 /// How a pattern binds a name: the source modes, and `as`, which keeps the
@@ -1984,7 +1968,6 @@ fn root_bindings(pattern: &MatchPattern) -> usize {
 fn comptime_binding(
     name: &str,
     binding: Binding,
-    pattern_span: SourceSpan,
     subject: &MatchSubject,
     join: Join<'_>,
     commands: &mut Commands,
@@ -2003,7 +1986,6 @@ fn comptime_binding(
             commands.bindings.push(ComptimeBinding {
                 name: name.to_string(),
                 value: subject.value(),
-                span: pattern_span,
             });
             Ok(())
         }

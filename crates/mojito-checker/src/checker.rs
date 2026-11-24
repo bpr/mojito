@@ -831,7 +831,7 @@ pub struct Checker {
     enum_declaration: bool,
     /// Every fact the check decided at an occurrence, set on the node the
     /// emitter allocated for it when the check entered its statement, or
-    /// on a detached record where no node holds it: the checked handoff,
+    /// on a pending record until a node holds it: the checked handoff,
     /// written as it is decided.
     emitter: RefCell<Emitter>,
     /// Free functions decorated `@__unsafe_nested_origins_read_only`; see

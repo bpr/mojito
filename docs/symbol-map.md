@@ -198,8 +198,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `require_mutable_subscript`), recorded in `statement_desugars`. A tuple
   target is the recursive walk of a `DestructureTarget` against the value's tuple type
   (a tuple display typed against the leaves' types, `display_target_ty`),
-  declaring `var`/`ref` leaves (their binding and storage type recorded at
-  the leaf's occurrence, which the checked target carries), writing name and
+  declaring `var`/`ref` leaves (their bindings and storage types recorded
+  on the statement in its target's pre-order, `declared_leaves`, which the
+  checked target carries), writing name and
   place leaves — a nominal subscript leaf with a setter through
   `destructure_into_subscript`, which selects `__setitem__` over a synthetic
   element-typed value as a plain subscript store does — and attaching the
@@ -997,10 +998,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (the `Operations` walk over `checker/emit/ops.rs`'s `Ops`, which maps
   syntax to `CheckedOp`/`CheckedStmtOp`, the fields the check decides
   later left empty for the seal) and never changed; the index finds an
-  occurrence's node, and an occurrence no node holds (a pattern, a
-  destructuring target, a derived occurrence no arena node is, or one
-  written before its statement was entered) keeps a detached record, which
-  moves onto the node allocated for it. `record` is the write path,
+  occurrence's node, and an occurrence no node holds yet keeps a pending
+  record, which moves onto the node allocated for it; a destructuring
+  statement holds its declared leaves' bindings (`NodeFacts::declared_leaves`,
+  `DeclaredLeaf`s in its target's pre-order, which `Seal::target` takes in
+  turn) and a `case` condition's plan sits on its value. `record` is the write path,
   `get`/`get_mut`/`remove`/`insert`/`iter` mirror a map's; it logs node
   writes by slot and journals them under a probe (`open_probe`/`roll_back`,
   which also truncate the arenas, ops and all, and their index entries),
@@ -1008,9 +1010,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (allocating the window's nodes again, each op relocated onto this
   emitter's nodes by `Relocation`, a `NodeMap`), and `into_nodes` moves
   the nodes, each holding its facts (`EmittedExpr::facts`,
-  `EmittedStmt::facts`), and the detached records into `EmittedNodes`,
-  less any record a cleared fact left empty (`--timings` counts `emit.node_records`,
-  `emit.detached_records`, and `emit.opless_nodes`). `Ops` also gives each
+  `EmittedStmt::facts`), into `EmittedNodes`, less any record a cleared
+  fact left empty, and discards what is still pending, syntax the check
+  typed only to evaluate it (`--timings` counts `emit.node_records`,
+  `emit.discarded_records`, and `emit.opless_nodes`). `Ops` also gives each
   `for` statement its written target's occurrence (`EmittedStmt::loop_target`)
   and each comprehension its clauses' (`EmittedExpr::loop_targets`) at
   allocation, which `Relocation` copies.
@@ -1025,9 +1028,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `mojito-checked/src/emitted.rs` owns the emitted nodes as the handoff
   carries them (`EmittedNodes`, `EmittedExpr`, `EmittedStmt`,
   `EmittedSlot`, the desugar table `EmittedNodes::desugars` of
-  `EmittedDesugar`s, and `EmittedNodes::detached`, the records no node
-  holds; `EmittedNodes::facts` reads an occurrence's facts, from its node
-  or detached, and `EmittedNodes::records` yields every record), which
+  `EmittedDesugar`s; `EmittedNodes::records` yields every node's record,
+  and no record sits on no node), which
   `HandoffStores::into_program` hands `emitted/seal.rs`'s public `seal`:
   it composes the checked tables from the nodes, each node's facts read
   off the node (`CheckedTables::new`), sets each default wrapper's
@@ -1307,7 +1309,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `open_probe`/`roll_back`, which journal every write while a probe is open
   and undo it. Every checker fact store is one, and the emitter
   (`checker/emit.rs`), which holds the occurrence records on nodes, logs and
-  journals the same way (its detached records are a `FactMap`), so
+  journals the same way (its pending records are a `FactMap`), so
   `checker/body_carry.rs` can copy exactly what a body wrote and
   `checker/probe.rs` can undo what an overload candidate wrote.
 - `explicit_destroy.rs` owns the explicit-destruction analysis, run from

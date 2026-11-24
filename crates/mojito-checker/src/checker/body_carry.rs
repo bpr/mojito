@@ -650,7 +650,13 @@ fn interned(checker: &Checker, mut records: Emitter) -> Emitter {
         ]
         .into_iter()
         .flatten()
-        {
+        .chain(
+            facts
+                .declared_leaves
+                .iter_mut()
+                .flatten()
+                .filter_map(|leaf| leaf.binding_ty.as_mut()),
+        ) {
             *ty = context.intern_ty(ty);
         }
     });

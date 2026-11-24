@@ -1557,6 +1557,15 @@ pub struct CheckedTupleUnpackElement {
     pub elements: Vec<Self>,
 }
 
+/// A destructuring statement's declared leaf: the binding it introduces and
+/// that binding's storage type, as an upstream op holds its results'
+/// attributes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredLeaf {
+    pub binding: Option<mojito_types::origin::OwnerId>,
+    pub binding_ty: Option<Ty>,
+}
+
 /// One expression in the typed semantic arena.
 ///
 /// A node holds its own operation, as an upstream op does: its opcode and
@@ -4782,7 +4791,7 @@ pub struct OccurrenceIndex {
 
 impl OccurrenceIndex {
     /// The lookups read from the records the check left on its `emitted`
-    /// nodes and detached, beside the `struct_instantiations` it reached.
+    /// nodes, beside the `struct_instantiations` it reached.
     pub fn recorded(
         emitted: &crate::emitted::EmittedNodes,
         struct_instantiations: Vec<StructInstantiation>,
@@ -6565,6 +6574,9 @@ node_facts! {
         /// See [`SemanticAdjustment::ReflectedField`].
         reflected_field: ReflectedFieldStep,
         tuple_unpack_plan: Vec<CheckedTupleUnpackElement>,
+        /// A destructuring statement's declared leaves, in its target's
+        /// pre-order.
+        declared_leaves: Vec<DeclaredLeaf>,
         /// A `match` statement's anchor and commands.
         match_plan: MatchPlan,
         /// A `match` statement's coverage warnings, in case order.

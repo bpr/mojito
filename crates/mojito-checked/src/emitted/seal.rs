@@ -18,10 +18,10 @@ use super::{
 use crate::checked::{
     CheckedCommand, CheckedComprehensionClause, CheckedComprehensionUnpack, CheckedCondition,
     CheckedDef, CheckedDefaultWrapper, CheckedMatchCase, CheckedMethod, CheckedNodeId, CheckedOp,
-    CheckedParamArg, CheckedParameter, CheckedPathRead, CheckedSequenceTarget, CheckedStmtId,
-    CheckedStmtOp, CheckedStruct, CheckedStructComptime, CheckedTables, CheckedTarget,
-    CheckedTargetKind, CheckedTrait, CheckedTraitComptime, CheckedTraitDefault, CheckedTraitMethod,
-    ConformanceFacts, DeclarationSites, MatchPlan, NodeFacts, NodeMap, Outermost, PlannedCommand,
+    CheckedParamArg, CheckedParameter, CheckedPathRead, CheckedStmtId, CheckedStmtOp,
+    CheckedStruct, CheckedStructComptime, CheckedTables, CheckedTarget, CheckedTargetKind,
+    CheckedTrait, CheckedTraitComptime, CheckedTraitDefault, CheckedTraitMethod, ConformanceFacts,
+    DeclarationSites, DeclaredLeaf, MatchPlan, NodeFacts, NodeMap, Outermost, PlannedCommand,
     Signatures, apply_spelled, expression_node, lifted, map_params, parameter_layout,
     spelled_construction, statement_node, subscript_attribute,
 };
@@ -168,14 +168,6 @@ impl NodeMap for Seal<'_> {
 }
 
 impl<'a> Seal<'a> {
-    /// The facts recorded at `at`, an occurrence the seal reaches by its
-    /// written syntax rather than by a node: a destructuring target's leaf
-    /// or a `case` pattern, whose record is detached (R2569).
-    fn facts(&self, at: &SourceSpan) -> &'a NodeFacts {
-        let emitted = self.emitted;
-        held(emitted.facts(at))
-    }
-
     /// The emitted slot of the expression `expression`.
     fn expression_slot(&self, expression: &Expr) -> Option<CheckedNodeId> {
         match self.emitted.index.get(&expression.source_span())? {
@@ -286,40 +278,54 @@ impl<'a> Seal<'a> {
         body
     }
 
-    /// `target` with each declared leaf's binding, read at its occurrence
-    /// in `source`.
-    fn target(&self, target: &CheckedTarget, source: Option<&String>) -> CheckedTarget {
+    /// The target of the destructuring statement at `at`, whose facts are
+    /// `facts`, with each declared leaf's binding: the statement holds its
+    /// leaves' bindings in its target's pre-order, as an op holds its
+    /// results' attributes. A leaf the statement holds no binding for, or
+    /// a binding no leaf takes, seals as missing at `at`. A sequence
+    /// target's leaves are its desugar's declarations.
+    fn destructuring_target(
+        &self,
+        target: &CheckedTarget,
+        facts: &NodeFacts,
+        at: &SourceSpan,
+    ) -> CheckedTarget {
+        let mut leaves = facts.declared_leaves.iter().flatten();
+        let target = self.target(target, &mut leaves, at);
+        if leaves.next().is_some() {
+            self.unsealed.borrow_mut().miss(Some(at));
+        }
+        target
+    }
+
+    fn target<'l>(
+        &self,
+        target: &CheckedTarget,
+        leaves: &mut impl Iterator<Item = &'l DeclaredLeaf>,
+        at: &SourceSpan,
+    ) -> CheckedTarget {
         let kind = match &target.kind {
             CheckedTargetKind::Declare { name, mode, .. } => {
-                let facts = self.facts(&SourceSpan::syntax(
-                    source.cloned(),
-                    target.span,
-                    target.syntax_id,
-                ));
+                let leaf = leaves.next();
+                if leaf.is_none() {
+                    self.unsealed.borrow_mut().miss(Some(at));
+                }
                 CheckedTargetKind::Declare {
                     name: name.clone(),
                     mode: *mode,
-                    binding: facts.binding,
-                    binding_ty: facts.binding_ty.clone(),
+                    binding: leaf.and_then(|leaf| leaf.binding),
+                    binding_ty: leaf.and_then(|leaf| leaf.binding_ty.clone()),
                 }
             }
             CheckedTargetKind::Tuple(items) => CheckedTargetKind::Tuple(
-                items.iter().map(|item| self.target(item, source)).collect(),
-            ),
-            CheckedTargetKind::Sequence(items) => CheckedTargetKind::Sequence(
                 items
                     .iter()
-                    .map(|item| match item {
-                        CheckedSequenceTarget::Element(item) => {
-                            CheckedSequenceTarget::Element(self.target(item, source))
-                        }
-                        CheckedSequenceTarget::Star(item) => {
-                            CheckedSequenceTarget::Star(self.target(item, source))
-                        }
-                    })
+                    .map(|item| self.target(item, leaves, at))
                     .collect(),
             ),
-            kind @ (CheckedTargetKind::Discard | CheckedTargetKind::Place(_)) => kind.clone(),
+            kind @ (CheckedTargetKind::Sequence(_)
+            | CheckedTargetKind::Discard
+            | CheckedTargetKind::Place(_)) => kind.clone(),
         };
         CheckedTarget {
             kind,
@@ -578,7 +584,7 @@ impl<'a> Seal<'a> {
         let node: &EmittedStmt = self.emitted.statements.get(statement.0 as usize)?;
         match node.op.as_ref()? {
             CheckedStmtOp::Destructure { target, value } => Some(CheckedComprehensionUnpack {
-                target: self.target(target, node.at.source.as_ref()),
+                target: self.destructuring_target(target, held(node.facts.as_deref()), &node.at),
                 value: *value,
             }),
             _ => None,
@@ -593,7 +599,6 @@ impl<'a> Seal<'a> {
         op: &CheckedStmtOp,
         facts: &NodeFacts,
     ) -> CheckedStmtOp {
-        let source = node.at.source.as_ref();
         let optional =
             |body: &Option<Vec<CheckedStmtId>>| body.as_ref().map(|body| self.spliced(body));
         match op {
@@ -603,7 +608,7 @@ impl<'a> Seal<'a> {
                 value: *value,
             },
             CheckedStmtOp::Destructure { target, value } => CheckedStmtOp::Destructure {
-                target: self.target(target, source),
+                target: self.destructuring_target(target, facts, &node.at),
                 value: *value,
             },
             CheckedStmtOp::Comptime {
@@ -629,15 +634,15 @@ impl<'a> Seal<'a> {
                 fails: self.expression_facts(*cond).failing_assertion,
             },
             CheckedStmtOp::If { branches, orelse } => CheckedStmtOp::If {
-                branches: self.branches(branches, source),
+                branches: self.branches(branches),
                 orelse: optional(orelse),
             },
             CheckedStmtOp::ComptimeIf { branches, orelse } => CheckedStmtOp::ComptimeIf {
-                branches: self.branches(branches, source),
+                branches: self.branches(branches),
                 orelse: optional(orelse),
             },
             CheckedStmtOp::While { cond, body, orelse } => CheckedStmtOp::While {
-                cond: self.condition(cond, source),
+                cond: self.condition(cond),
                 body: self.spliced(body),
                 orelse: optional(orelse),
             },
@@ -721,27 +726,18 @@ impl<'a> Seal<'a> {
     fn branches(
         &self,
         branches: &[(CheckedCondition, Vec<CheckedStmtId>)],
-        source: Option<&String>,
     ) -> Vec<(CheckedCondition, Vec<CheckedStmtId>)> {
         branches
             .iter()
-            .map(|(condition, body)| (self.condition(condition, source), self.spliced(body)))
+            .map(|(condition, body)| (self.condition(condition), self.spliced(body)))
             .collect()
     }
 
-    /// A `case` condition with the plan the check recorded at its pattern's
-    /// occurrence in `source`.
-    fn condition(&self, condition: &CheckedCondition, source: Option<&String>) -> CheckedCondition {
+    /// A `case` condition with the plan the check recorded on its value.
+    fn condition(&self, condition: &CheckedCondition) -> CheckedCondition {
         match condition {
             CheckedCondition::Case { pattern, value, .. } => {
-                let plan = self
-                    .facts(&SourceSpan::syntax(
-                        source.cloned(),
-                        pattern.span,
-                        pattern.syntax_id,
-                    ))
-                    .match_plan
-                    .as_ref();
+                let plan = self.expression_facts(*value).match_plan.as_ref();
                 let (commands, reads) = self.case_program(plan, 0);
                 CheckedCondition::Case {
                     pattern: pattern.clone(),
@@ -1051,8 +1047,7 @@ mod tests {
     }
 
     /// The tables sealed from `emitted` for the roots `statements`, with
-    /// each of `facts` on the node its occurrence's index names, or else
-    /// detached.
+    /// each of `facts` on the node its occurrence's index names.
     fn sealed(
         emitted: &EmittedNodes,
         statements: &[Stmt],
@@ -1060,13 +1055,10 @@ mod tests {
     ) -> Result<CheckedTables, Unsealed> {
         let mut emitted = emitted.clone();
         for (at, record) in facts {
-            let held = match emitted.index.get(at) {
-                Some(EmittedSlot::Expression(id)) => &mut emitted.expressions[id.0 as usize].facts,
-                Some(EmittedSlot::Statement(id)) => &mut emitted.statements[id.0 as usize].facts,
-                None => {
-                    emitted.detached.insert(at.clone(), record.clone());
-                    continue;
-                }
+            let slot = emitted.index.get(at).expect("a test fact names a node");
+            let held = match *slot {
+                EmittedSlot::Expression(id) => &mut emitted.expressions[id.0 as usize].facts,
+                EmittedSlot::Statement(id) => &mut emitted.statements[id.0 as usize].facts,
             };
             *held = Some(Box::new(record.clone()));
         }
