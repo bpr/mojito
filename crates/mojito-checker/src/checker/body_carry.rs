@@ -21,7 +21,6 @@
 use super::Checker;
 use super::emit::{EmitMark, Emitter};
 use crate::explicit_destroy::CheckedDeletability;
-use mojito_ast::ast::Stmt;
 use mojito_checked::checked::{
     AnnotationSite, CallThroughEffect, CheckedDefaultWrapper, CheckedProgram, CheckedTraitMember,
     ConformanceFacts, DeclarationEffect, DeclarationSites, DeclarationTables, ExplicitDestroyInfo,
@@ -155,10 +154,9 @@ pub struct InternalStores {
 /// The checked handoff's stores, each logged as a body writes it: the
 /// emitted nodes with their records and the four keyed by declaration,
 /// beside what the pass established with them. The final pass's also holds
-/// the roots the seal reaches its root nodes by and the check's desugars.
+/// the check's desugars.
 #[derive(Debug)]
 pub struct HandoffStores {
-    roots: Vec<Stmt>,
     desugars: HashMap<SourceSpan, super::desugar::StatementDesugar>,
     emitter: Emitter,
     struct_instantiations: FactVec<StructInstantiation>,
@@ -195,7 +193,6 @@ impl HandoffStores {
         let mut default_wrappers = self.default_wrappers;
         let tables = mojito_checked::emitted::seal(
             &emitted,
-            &self.roots,
             &mut default_wrappers,
             &sites,
             &self.conformances,
@@ -405,18 +402,16 @@ macro_rules! define_carry_ops {
 carried_stores!(define_carry_ops);
 
 impl Checker {
-    /// Move the final pass's facts into the checked handoff, with `roots`
-    /// as the checked tree, `explicit_destroy_types` as the destruction
-    /// facts the pass established, and `conformances` as the conformance
-    /// facts later phases decide a `where` clause from.
+    /// Move the final pass's facts into the checked handoff, with
+    /// `explicit_destroy_types` as the destruction facts the pass
+    /// established and `conformances` as the conformance facts later phases
+    /// decide a `where` clause from.
     pub(crate) fn into_handoff(
         self,
-        roots: Vec<Stmt>,
         explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
         conformances: ConformanceFacts,
     ) -> HandoffStores {
         HandoffStores {
-            roots,
             desugars: self.statement_desugars.take().into_inner(),
             explicit_destroy_types,
             conformances,
@@ -579,12 +574,11 @@ impl Checker {
 }
 
 /// The checked-handoff fields of a checker, moved out once its lifted
-/// applications are recorded; the roots, the desugars, and the facts only
-/// the final pass establishes are empty here.
+/// applications are recorded; the desugars and the facts only the final
+/// pass establishes are empty here.
 fn carried_result(checker: &Checker) -> HandoffStores {
     checker.record_lifted_applications();
     HandoffStores {
-        roots: Vec::new(),
         desugars: HashMap::new(),
         explicit_destroy_types: HashMap::new(),
         struct_destructors: checker

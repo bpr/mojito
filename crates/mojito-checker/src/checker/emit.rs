@@ -58,6 +58,10 @@ pub struct Emitter {
     probes: u32,
     /// The syntax of each spelled construction, by its root's node.
     constructions: BTreeMap<CheckedNodeId, Expr>,
+    /// The module's root statements' nodes, in source order.
+    roots: Vec<CheckedStmtId>,
+    /// Each default wrapper's body's nodes, by the wrapper's position.
+    wrapper_bodies: BTreeMap<usize, Vec<CheckedStmtId>>,
 }
 
 impl Emitter {
@@ -100,6 +104,27 @@ impl Emitter {
             EmittedSlot::Statement(id) => Some(*id),
             EmittedSlot::Expression(_) => None,
         }
+    }
+
+    /// Emit the module's root statement `statement` as [`Self::enter_statement`]
+    /// does, and hold its node as the module's next root.
+    pub(super) fn enter_root(&mut self, statement: &Stmt) {
+        let slot = self.enter_statement(statement);
+        self.roots.push(slot.unwrap_or(EmittedNodes::MISSING));
+    }
+
+    /// Emit the body statements of default wrapper `wrapper`, the
+    /// wrapper's position among the check's, and hold their nodes as its
+    /// body.
+    pub(super) fn enter_wrapper_body(&mut self, wrapper: usize, body: &[Stmt]) {
+        let slots = body
+            .iter()
+            .map(|statement| {
+                self.enter_statement(statement)
+                    .unwrap_or(EmittedNodes::MISSING)
+            })
+            .collect();
+        self.wrapper_bodies.insert(wrapper, slots);
     }
 
     /// Emit `expression` and every statement and expression under it that
@@ -339,6 +364,8 @@ impl Emitter {
             expressions,
             statements,
             index: self.index,
+            roots: self.roots,
+            wrapper_bodies: self.wrapper_bodies,
             desugars: HashMap::new(),
         }
     }

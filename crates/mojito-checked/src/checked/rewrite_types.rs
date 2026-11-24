@@ -1335,7 +1335,6 @@ impl RewriteTypes for CheckedDefaultWrapper {
             positional_only: _,
             keyword_only: _,
             signature,
-            body: _,
         } = self;
         signature.rewrite_types(rewrite);
     }

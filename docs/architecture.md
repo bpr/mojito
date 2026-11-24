@@ -3003,10 +3003,14 @@ post-order, through the composition helpers in `checked.rs`
 `InvariantViolation` naming the first one, never a placeholder in the
 tables; a spelled-construction record on a sugar the seal does not
 replace is one too, so no emitted node reaches the tables as a record.
-One thing still reaches the seal as syntax: the roots, found by the spans
-of the spliced root statements and of each `CheckedDefaultWrapper::body`,
-which the seal empties (R2571). `explicit_destroy` also still walks the
-spliced syntax with span-keyed facts (R751). An overload
+The seal reads no syntax: the module's roots and each default wrapper's
+body are the nodes the check entered for them (`EmittedNodes::roots`,
+recorded as `check_module_block` enters each root statement, and
+`EmittedNodes::wrapper_bodies`, by the wrapper's position), as upstream's
+module op holds its body ops, and the seal splices each root's desugar
+as it does every body's. `explicit_destroy` still walks the spliced
+syntax with span-keyed facts (R751), the one reader left of the syntax
+half of `desugar::splice_desugars`. An overload
 candidate — of a free call or of an overloaded function value — is
 checked inside `Checker::probe` (`checker/probe.rs`): every store
 journals what a write displaces while a probe is open, and closing it

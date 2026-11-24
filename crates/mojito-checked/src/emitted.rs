@@ -12,7 +12,9 @@
 //! on an op: every fact the handoff carries sits on a node. The seal ([`seal`]),
 //! which the check runs at its end, composes each op with its node's facts
 //! into the checked tables, and rejects an occurrence the check emitted no
-//! node for ([`Unsealed`]).
+//! node for ([`Unsealed`]). The module's root statements and each default
+//! wrapper's body are the nodes the check entered for them, as upstream's
+//! module op holds its body ops and a wrapper's function op its body.
 
 mod seal;
 
@@ -20,7 +22,7 @@ pub use seal::seal;
 
 use crate::checked::{CheckedNodeId, CheckedOp, CheckedStmtId, NodeFacts};
 use mojito_common::token::SourceSpan;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Every node the check emitted, and the index from occurrence to node.
 #[derive(Debug, Clone, Default)]
@@ -28,6 +30,14 @@ pub struct EmittedNodes {
     pub expressions: Vec<EmittedExpr>,
     pub statements: Vec<EmittedStmt>,
     pub index: HashMap<SourceSpan, EmittedSlot>,
+    /// The module's root statements' nodes, in source order: what the
+    /// module op holds. A root no statement node holds is
+    /// [`EmittedNodes::MISSING`].
+    pub roots: Vec<CheckedStmtId>,
+    /// Each default wrapper's body's nodes, by the wrapper's position among
+    /// the check's wrappers: what its function op holds. A wrapper the
+    /// check never entered has none.
+    pub wrapper_bodies: BTreeMap<usize, Vec<CheckedStmtId>>,
     /// The check's desugars, keyed as it keys them: a `with` statement's
     /// and a sequence destructuring's by the statement, a loop target's by
     /// the target.
@@ -35,6 +45,10 @@ pub struct EmittedNodes {
 }
 
 impl EmittedNodes {
+    /// The slot a root or body statement takes when no statement node
+    /// holds its occurrence: the seal rejects it.
+    pub const MISSING: CheckedStmtId = CheckedStmtId(u32::MAX);
+
     /// The expression node emitted for the occurrence `at`.
     pub fn expression(&self, at: &SourceSpan) -> Option<&EmittedExpr> {
         match self.index.get(at)? {

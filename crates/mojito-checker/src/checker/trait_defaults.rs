@@ -564,11 +564,12 @@ impl Checker {
             let Some(declaration) = super::overload_support::struct_declaration(stmt) else {
                 continue;
             };
-            let wrappers: Vec<DefaultWrapper> = self
+            let wrappers: Vec<(usize, DefaultWrapper)> = self
                 .default_wrappers
                 .iter()
-                .filter(|wrapper| wrapper.inherited_by(&declaration))
-                .cloned()
+                .enumerate()
+                .filter(|(_, wrapper)| wrapper.inherited_by(&declaration))
+                .map(|(position, wrapper)| (position, wrapper.clone()))
                 .collect();
             if wrappers.is_empty() {
                 continue;
@@ -580,12 +581,15 @@ impl Checker {
                     .or_default() += 1;
             }
             let (self_ty, saved) = self.enter_struct_scope(&declaration)?;
-            let checked = wrappers.iter().try_for_each(|wrapper| {
+            let checked = wrappers.iter().try_for_each(|(position, wrapper)| {
                 let overload_index = overload_indices
                     .entry(wrapper.shape.method.clone())
                     .or_default();
                 let index = *overload_index;
                 *overload_index += 1;
+                self.emitter
+                    .get_mut()
+                    .enter_wrapper_body(*position, &wrapper.body);
                 self.check_default_wrapper(&self_ty, wrapper, index)
             });
             self.exit_struct_scope(saved);
@@ -623,7 +627,6 @@ impl Checker {
                 positional_only: wrapper.shape.positional_only,
                 keyword_only: wrapper.shape.keyword_only,
                 signature: mojito_checked::checked::CheckedSignature::default(),
-                body: wrapper.body.clone(),
             })
             .collect()
     }

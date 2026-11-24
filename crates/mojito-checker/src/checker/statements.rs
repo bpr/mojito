@@ -399,7 +399,8 @@ impl Checker {
         result
     }
 
-    /// Check the module's statements in source order. A constant whose
+    /// Check the module's statements in source order, each the module's
+    /// next root node. A constant whose
     /// initializer the check lifts (`comptime D = {"a": f(1)}`) is declared
     /// ahead of the first declaration after which its initializer types, so
     /// a body declared before the constant reads it, as at the pin. Every
@@ -428,6 +429,7 @@ impl Checker {
             // `ret = None` marks "not inside a function", so a top-level
             // `return` is rejected; `in_loop = false` likewise rejects a
             // top-level `break`.
+            self.emitter.get_mut().enter_root(stmt);
             self.check_block(std::slice::from_ref(stmt), None, false)?;
         }
         self.check_trait_members(stmts)?;

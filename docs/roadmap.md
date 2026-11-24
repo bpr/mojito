@@ -11801,23 +11801,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2571 The seal finds the module's and each default wrapper's root
-  nodes by syntax spans, where upstream's module op holds its body ops**
-
-  `Seal::roots` looks up each spliced root statement of
-  `HandoffStores::roots` and each `CheckedDefaultWrapper::body`
-  statement by its span, so both cross the handoff as syntax.
-  - The seal empties each wrapper's body once sealed; the root
-    statements stay in `HandoffStores`.
-  - The lever: the emitter records the root and wrapper-body slots as the
-    check enters them, and the seal reads those.
-  - Then `HandoffStores::roots` and `CheckedDefaultWrapper::body`
-    go, and with R751 so can the syntax half of
-    `desugar::splice_desugars`.
-  - Found while landing R766 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2572 `CheckedProgram` keeps span-keyed copies of per-occurrence
   facts that no lowering reads, where upstream's op holds its attributes**
 
@@ -13243,9 +13226,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Its plan must split the move into one-session slices, each filed as
     its own entry before any lands.
   - Probe: `run_explicit_destroy` (`checker.rs`) walks the spliced
-    syntax `splice_desugars` returns, with span-keyed facts; with the
-    seal's roots (R2571) it is one of the two readers keeping that
-    syntax half alive.
+    syntax `splice_desugars` returns, with span-keyed facts; it is the
+    one reader keeping that syntax half alive, which can go with it.
   - Found while landing R749 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.

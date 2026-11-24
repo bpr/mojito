@@ -277,7 +277,8 @@ fn check_program_carrying(
         context.interfaces = Some(checker.export_interfaces(&expanded));
     }
     // Context managers and sequence destructuring are desugared by the
-    // checker; later phases see only the ordinary statements it checked.
+    // checker; the explicit-destroy walk sees only the ordinary statements
+    // it checked, as the seal splices them into the checked tables.
     desugar::splice_desugars(&mut expanded, &checker.statement_desugars.borrow());
     let explicit_destroy_types = {
         let _finish = timing::span("explicit_destroy");
@@ -294,7 +295,7 @@ fn check_program_carrying(
         checker.conformance_facts()
     };
     let _carry = timing::span("carry");
-    Ok(checker.into_handoff(expanded, explicit_destroy_types, conformances))
+    Ok(checker.into_handoff(explicit_destroy_types, conformances))
 }
 
 mod argument_memo;

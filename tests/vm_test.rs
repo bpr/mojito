@@ -2118,3 +2118,15 @@ fn reborrowed_ref_field_receiver_reads_its_own_member() {
     );
     assert_eq!(out, "7\n");
 }
+
+/// A module-scope `with` statement and sequence destructuring run as the
+/// statements the check desugared them into: the seal splices each root
+/// node's desugar, reaching the roots as the nodes the check entered.
+#[test]
+fn module_scope_desugars_run_their_spliced_statements() {
+    let out = run(
+        "struct Ctx:\n    def __init__(out self):\n        pass\n\n    def __enter__(self) -> Int:\n        print(\"enter\")\n        return 3\n\n    def __exit__(self):\n        print(\"exit\")\n\nvar a = 1\nvar b = 2\na, b = b, a\nprint(a, b)\nwith Ctx() as c:\n    print(c)\n",
+    )
+    .expect("the module runs");
+    assert_eq!(out, "2 1\nenter\n3\nexit\n");
+}

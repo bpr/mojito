@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The seal reaches the module's root statements and each default
+  wrapper's body as the nodes the check entered for them, as upstream's
+  module op holds its body ops (R2571). The emitter records each root as
+  `check_module_block` enters it (`EmittedNodes::roots`) and each
+  wrapper's body by the wrapper's position
+  (`EmittedNodes::wrapper_bodies`), and the seal splices each root's
+  desugar as it does every body's: `HandoffStores::roots`,
+  `CheckedDefaultWrapper::body`, and `Seal::{roots, root_slot}` are gone,
+  and a wrapper whose body the check never entered is `Unsealed`. No
+  accepted program, MIR text, or package byte changes.
+
 - A fact naming another operation names its emitted node, as an upstream
   op names its operands' values (R2570). A spelled sugar's
   `SemanticAdjustment::SpelledConstruction` holds its construction's node,

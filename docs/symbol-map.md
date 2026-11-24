@@ -978,7 +978,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   stores, one `BodyRecord` per site, the identity watermark), and
   `checker.rs:check_program_carrying` returns the final pass's
   `HandoffStores` (`Checker::into_handoff`: the emitter, the
-  declaration-keyed stores, the roots, and the check's
+  declaration-keyed stores, and the check's
   `statement_desugars`); `carried_stores!`
   lists every logged store a site is measured and copied over, and is also
   the store list `checker/probe.rs` rolls back, the emitter beside them by
@@ -1042,8 +1042,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and no record sits on no node), which
   `HandoffStores::into_program` hands `emitted/seal.rs`'s public `seal`:
   it composes the checked tables from the nodes, each node's facts read
-  off the node (`CheckedTables::new`), sets each default wrapper's
-  signature, and takes each wrapper's body, or answers `Unsealed`, the count and first
+  off the node (`CheckedTables::new`), and sets each default wrapper's
+  signature, or answers `Unsealed`, the count and first
   location of the occurrences no emitted node or op holds, which
   `into_program` reports as an `InvariantViolation`. The seal's composition helpers live in
   `checked.rs`: `expression_node`, `statement_node`, `spelled_construction`,
@@ -1057,8 +1057,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   seals in the sugar's place, and a spelled sugar the seal does not
   replace (`emitted::substituted`) is `Unsealed`; a `MatchPlan`'s anchor,
   commands, reads, and conditions are emitted slots the seal takes as
-  they are (`Seal::case_program`), and only the roots are found by span
-  (`Seal::root_slot`).
+  they are (`Seal::case_program`). The module's roots are
+  `EmittedNodes::roots`, which `statements.rs:check_module_block` records
+  through `Emitter::enter_root` as it enters each root statement, and each
+  default wrapper's body is `EmittedNodes::wrapper_bodies`, recorded by
+  `Emitter::enter_wrapper_body` from `check_default_wrappers` by the
+  wrapper's position, as upstream's module op holds its body ops: the seal
+  finds no node by span, and a root no statement node holds
+  (`EmittedNodes::MISSING`) or a wrapper whose body was never entered is
+  `Unsealed`.
 - `checker/node_facts.rs` owns the checker's access to its per-occurrence
   records through the emitter: `record_at` is the write path (the record,
   created if absent), `fact`/`has_fact` read one fact, and
@@ -1310,8 +1317,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   nodes' adjustments); and the `DeclarationTables`, the program-level
   tables. It infers and composes nothing; it runs
   `collect_closure_uses`. The seal reads each node's facts off the node
-  (a record encodes as the list of the facts it holds) and empties each
-  `CheckedDefaultWrapper::body` once sealed. A declaration is its
+  (a record encodes as the list of the facts it holds), and reaches the
+  module's and each wrapper's root nodes as the nodes the check entered
+  for them (`EmittedNodes::{roots, wrapper_bodies}`). A declaration is its
   statement node, holding its binding and that binding's type, with a
   `def`'s function type its site's (`CheckedProgram::function_type`); a
   `def`'s explicit captures are its op's (`CheckedDef::captures`). The seal runs once per

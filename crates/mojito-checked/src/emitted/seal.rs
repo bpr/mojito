@@ -12,9 +12,7 @@
 //! a node reached twice is sealed twice: HIR, MIR, and the package read the
 //! ids in that order.
 
-use super::{
-    EmittedDesugar, EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt, Unsealed, substituted,
-};
+use super::{EmittedDesugar, EmittedExpr, EmittedNodes, EmittedStmt, Unsealed, substituted};
 use crate::checked::{
     CheckedCommand, CheckedComprehensionClause, CheckedComprehensionUnpack, CheckedCondition,
     CheckedDef, CheckedDefaultWrapper, CheckedMatchCase, CheckedMethod, CheckedNodeId, CheckedOp,
@@ -25,22 +23,21 @@ use crate::checked::{
     apply_spelled, expression_node, lifted, map_params, parameter_layout, spelled_construction,
     statement_node, subscript_attribute,
 };
-use mojito_ast::ast::{BindingMode, Stmt};
+use mojito_ast::ast::BindingMode;
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
 use mojito_types::types::TyArg;
 use std::cell::RefCell;
 
-/// The checked tables of `roots` and of `wrappers`' bodies, sealed from
-/// `emitted`.
+/// The checked tables of `emitted`'s roots and of `wrappers`' bodies, the
+/// nodes the check entered for each, sealed from `emitted`.
 ///
 /// Each node's op is composed with its facts, a declaration's symbol and
 /// signature read from `sites` and a fieldwise constructor's from
-/// `conformances`. Each wrapper's signature is set and its body, whose
-/// nodes the tables hold, taken. An occurrence the check emitted no node or
-/// op for leaves the tables [`Unsealed`].
+/// `conformances`. Each wrapper's signature is set. An occurrence the check
+/// emitted no node or op for, or a wrapper whose body it never entered,
+/// leaves the tables [`Unsealed`].
 pub fn seal(
     emitted: &EmittedNodes,
-    roots: &[Stmt],
     wrappers: &mut [CheckedDefaultWrapper],
     sites: &DeclarationSites,
     conformances: &ConformanceFacts,
@@ -70,10 +67,15 @@ pub fn seal(
         functions: 0,
         unsealed: RefCell::new(Unsealed::default()),
     };
-    let roots = seal.roots(roots);
-    let wrapper_roots = wrappers
-        .iter_mut()
-        .map(|wrapper| seal.roots(&std::mem::take(&mut wrapper.body)))
+    let roots = seal.block(&emitted.roots);
+    let wrapper_roots = (0..wrappers.len())
+        .map(|index| {
+            let Some(body) = emitted.wrapper_bodies.get(&index) else {
+                seal.unsealed.get_mut().miss(None);
+                return Vec::new();
+            };
+            seal.block(body)
+        })
         .collect();
     let unsealed = seal.unsealed.into_inner();
     if unsealed.count > 0 {
@@ -168,17 +170,6 @@ impl NodeMap for Seal<'_> {
 }
 
 impl<'a> Seal<'a> {
-    /// The emitted slot of the root statement `statement`, or one no node
-    /// holds, which seals as missing at `statement`.
-    fn root_slot(&self, statement: &Stmt) -> CheckedStmtId {
-        if let Some(EmittedSlot::Statement(id)) = self.emitted.index.get(&statement.source_span()) {
-            *id
-        } else {
-            self.unsealed.borrow_mut().locate(&statement.source_span());
-            CheckedStmtId(u32::MAX)
-        }
-    }
-
     /// The outermost lifted applications among `candidates`, the emitted
     /// nodes under an operand in walk order.
     fn outermost(&self, candidates: Option<&Vec<CheckedNodeId>>) -> Vec<CheckedNodeId> {
@@ -845,23 +836,6 @@ impl<'a> Seal<'a> {
         }
     }
 
-    /// The sealed nodes of a root list's `statements`.
-    fn roots(&mut self, statements: &[Stmt]) -> Vec<CheckedStmtId> {
-        let slots: Vec<CheckedStmtId> = statements
-            .iter()
-            .filter_map(|statement| {
-                let slot = self.root_slot(statement);
-                if slot.0 == u32::MAX {
-                    self.unsealed.borrow_mut().count += 1;
-                    None
-                } else {
-                    Some(slot)
-                }
-            })
-            .collect();
-        self.block(&slots)
-    }
-
     /// A placeholder for an expression no emitted node or op holds, at
     /// `at` where the seal knows it: the walk stays total, and the tables
     /// are rejected.
@@ -901,10 +875,10 @@ fn held(facts: Option<&NodeFacts>) -> &NodeFacts {
 mod tests {
     use super::seal;
     use crate::checked::{
-        BracketBinding, BracketBound, CheckedCommand, CheckedMatchCase, CheckedOp, CheckedParamArg,
-        CheckedParameter, CheckedPathRead, CheckedPattern, CheckedPatternKind, CheckedStmtOp,
-        CheckedTables, ConformanceFacts, DeclarationSites, MatchEmission, MatchPlan, NodeFacts,
-        SemanticAdjustment,
+        BracketBinding, BracketBound, CheckedCommand, CheckedDefaultWrapper, CheckedMatchCase,
+        CheckedOp, CheckedParamArg, CheckedParameter, CheckedPathRead, CheckedPattern,
+        CheckedPatternKind, CheckedStmtOp, CheckedTables, ConformanceFacts, DeclarationSites,
+        MatchEmission, MatchPlan, NodeFacts, SemanticAdjustment,
     };
     use crate::emitted::Unsealed;
     use crate::emitted::{EmittedDesugar, EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt};
@@ -974,8 +948,9 @@ mod tests {
         }
     }
 
-    /// The tables sealed from `emitted` for the roots `statements`, with
-    /// each of `facts` on the node its occurrence's index names.
+    /// The tables sealed from `emitted` with the roots the nodes of
+    /// `statements`, each of `facts` on the node its occurrence's index
+    /// names.
     fn sealed(
         emitted: &EmittedNodes,
         statements: &[Stmt],
@@ -990,9 +965,17 @@ mod tests {
             };
             *held = Some(Box::new(record.clone()));
         }
+        emitted.roots = statements
+            .iter()
+            .map(
+                |statement| match emitted.index.get(&statement.source_span()) {
+                    Some(EmittedSlot::Statement(id)) => *id,
+                    _ => EmittedNodes::MISSING,
+                },
+            )
+            .collect();
         seal(
             &emitted,
-            statements,
             &mut [],
             &DeclarationSites::default(),
             &ConformanceFacts::default(),
@@ -1110,7 +1093,7 @@ mod tests {
             })
         };
         let (inner, outer) = (with(&mut syntax), with(&mut syntax));
-        let mut scope = syntax.stmt(StmtKind::Scope(vec![outer.clone()]));
+        let scope = syntax.stmt(StmtKind::Scope(vec![outer.clone()]));
         let mut emitted = Emitted::default();
         let slots: Vec<_> = [&first, &second, &third]
             .into_iter()
@@ -1137,7 +1120,6 @@ mod tests {
                 binder: None,
             },
         );
-        scope.kind = StmtKind::Scope(vec![first, second, third]);
         let sealed = sealed(&emitted.0, &[scope], &HashMap::new()).expect("every node was emitted");
         assert_eq!(
             sealed.statements.len(),
@@ -1208,16 +1190,54 @@ mod tests {
 
     #[test]
     fn a_root_with_no_emitted_node_is_unsealed() {
-        let statement = Syntax::default().stmt(StmtKind::Pass);
-        let Err(unsealed) = sealed(
-            &EmittedNodes::default(),
-            &[statement.clone()],
-            &HashMap::new(),
+        let emitted = EmittedNodes {
+            roots: vec![EmittedNodes::MISSING],
+            ..EmittedNodes::default()
+        };
+        let Err(unsealed) = seal(
+            &emitted,
+            &mut [],
+            &DeclarationSites::default(),
+            &ConformanceFacts::default(),
         ) else {
             unreachable!("a root with no node cannot seal")
         };
         assert_eq!(unsealed.count, 1);
-        assert_eq!(unsealed.first, Some(statement.source_span()));
+    }
+
+    #[test]
+    fn a_wrapper_whose_body_the_check_never_entered_is_unsealed() {
+        let mut wrapper = CheckedDefaultWrapper {
+            module: None,
+            declaration: "S".to_string(),
+            method: "f".to_string(),
+            method_index: 0,
+            lowered_name: "S.f".to_string(),
+            member: "T.f".to_string(),
+            self_convention: None,
+            params: Vec::new(),
+            positional_only: None,
+            keyword_only: None,
+            signature: crate::checked::CheckedSignature::default(),
+        };
+        let mut emitted = Emitted::default();
+        let statement = Syntax::default().stmt(StmtKind::Pass);
+        let slot = emitted.stmt(&statement, CheckedStmtOp::Pass);
+        let sealed = |emitted: &EmittedNodes, wrapper: &mut CheckedDefaultWrapper| {
+            seal(
+                emitted,
+                std::slice::from_mut(wrapper),
+                &DeclarationSites::default(),
+                &ConformanceFacts::default(),
+            )
+        };
+        let Err(unsealed) = sealed(&emitted.0, &mut wrapper) else {
+            unreachable!("a wrapper with no body cannot seal")
+        };
+        assert_eq!(unsealed.count, 1);
+        emitted.0.wrapper_bodies.insert(0, vec![slot]);
+        let tables = sealed(&emitted.0, &mut wrapper).expect("the body was entered");
+        assert_eq!(tables.wrapper_roots(0), &[crate::checked::CheckedStmtId(0)]);
     }
 
     #[test]

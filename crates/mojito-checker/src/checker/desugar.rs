@@ -2,8 +2,10 @@
 //! statement (`with_stmt.rs`), a sequence destructuring assignment
 //! (`destructure.rs`), and a destructuring loop target (`destructure.rs`).
 //! Each desugar is checked in place, recorded by its statement (a loop
-//! target's by the target), and spliced into the final checked tree, so
-//! HIR, MIR, and the backends see only the ordinary statements. A loop
+//! target's by the target), and the seal splices its statements' nodes in
+//! the desugared statement's place, so HIR, MIR, and the backends see only
+//! the ordinary statements; [`splice_desugars`] splices the syntax the same
+//! way for `explicit_destroy`'s walk. A loop
 //! target's desugar names the hidden binder the loop binds instead: a `for`
 //! statement starts its body with the target's statements, and a
 //! comprehension clause keeps its one tuple `Destructure` as the clause's

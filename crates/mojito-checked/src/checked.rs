@@ -1,6 +1,5 @@
 //! Checked semantic handoff between the frontend and lowering.
 
-use mojito_ast::ast::Stmt;
 use mojito_ast::ast::{
     ArgConvention, BindingMode, CollectionKind, Expr, ExprKind, ImportNames, InfixOp,
     MethodProvenance, ParamKind, PrefixOp,
@@ -4671,12 +4670,6 @@ pub struct CheckedDefaultWrapper {
     pub keyword_only: Option<usize>,
     /// Its checked signature, read from its member sites by the seal.
     pub signature: CheckedSignature,
-    /// The check's syntax of the body, which the seal finds the body's
-    /// root nodes by and empties once sealed, as a
-    /// package unit never holds it: its nodes are the
-    /// [`CheckedTables::wrapper_roots`].
-    #[serde(skip)]
-    pub body: Vec<Stmt>,
 }
 
 impl CheckedDefaultWrapper {
