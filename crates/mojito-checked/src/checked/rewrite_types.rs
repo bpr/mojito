@@ -15,15 +15,15 @@ use super::{
     CheckedAugmentedSubscript, CheckedCallArgument, CheckedCallArgumentBoundary,
     CheckedCallBoundary, CheckedCallContract, CheckedCallValueAdjustment, CheckedCapture,
     CheckedClosureStorage, CheckedClosureUses, CheckedCompareLink, CheckedComprehensionBinding,
-    CheckedComprehensionClause, CheckedComprehensionUnpack, CheckedDeclaration, CheckedDef,
-    CheckedDefaultWrapper, CheckedElementInvocation, CheckedExpr, CheckedField,
-    CheckedIterationBinding, CheckedIteratorCall, CheckedMethod, CheckedOp, CheckedParamArg,
-    CheckedParameter, CheckedProgram, CheckedSequenceTarget, CheckedSignature, CheckedSliceLiteral,
-    CheckedStmt, CheckedStmtOp, CheckedStorageField, CheckedStruct, CheckedSubscriptWriteBack,
-    CheckedTables, CheckedTarget, CheckedTargetKind, CheckedTruthinessCall,
-    CheckedTupleUnpackElement, ComptimeIteration, ConformanceFacts, ConversionMaterialization,
-    DeclarationEffect, EffectFacts, GenericInstantiation, IterationProtocol, MethodInstantiation,
-    OmittedSliceOperand, ReflectedFieldStep, SemanticAdjustment, StructInstantiation,
+    CheckedComprehensionClause, CheckedComprehensionUnpack, CheckedDef, CheckedDefaultWrapper,
+    CheckedElementInvocation, CheckedExpr, CheckedField, CheckedIterationBinding,
+    CheckedIteratorCall, CheckedMethod, CheckedOp, CheckedParamArg, CheckedParameter,
+    CheckedProgram, CheckedSequenceTarget, CheckedSignature, CheckedSliceLiteral, CheckedStmt,
+    CheckedStmtOp, CheckedStorageField, CheckedStruct, CheckedSubscriptWriteBack, CheckedTables,
+    CheckedTarget, CheckedTargetKind, CheckedTruthinessCall, CheckedTupleUnpackElement,
+    ComptimeIteration, ConformanceFacts, ConversionMaterialization, DeclarationEffect, EffectFacts,
+    GenericInstantiation, IterationProtocol, MethodInstantiation, OmittedSliceOperand,
+    ReflectedFieldStep, SemanticAdjustment, StructInstantiation,
 };
 use crate::declaration::{
     ParameterizedAssociatedType, ParameterizedAssociatedValue, TraitDeclaration, TraitRequirement,
@@ -988,7 +988,6 @@ impl RewriteTypes for CheckedStmt {
             syntax_id: _,
             binding: _,
             binding_ty,
-            declaration: _,
         } = self;
         op.rewrite_types(rewrite);
         binding_ty.rewrite_types(rewrite);
@@ -1252,21 +1251,6 @@ impl RewriteTypes for CheckedComprehensionBinding {
     }
 }
 
-impl RewriteTypes for CheckedDeclaration {
-    fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
-        let Self {
-            id: _,
-            kind: _,
-            name: _,
-            location: _,
-            binding: _,
-            ty,
-            children: _,
-        } = self;
-        ty.rewrite_types(rewrite);
-    }
-}
-
 impl RewriteTypes for CheckedClosureStorage {
     fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
         let Self {
@@ -1329,13 +1313,11 @@ impl RewriteTypes for CheckedTables {
         let Self {
             expressions,
             statements,
-            declarations,
             roots: _,
             wrapper_roots: _,
         } = self;
         expressions.rewrite_types(rewrite);
         statements.rewrite_types(rewrite);
-        declarations.rewrite_types(rewrite);
     }
 }
 

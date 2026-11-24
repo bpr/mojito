@@ -301,9 +301,9 @@ fn same_named_nested_defs_in_distinct_blocks_receive_distinct_lifted_symbols() {
          \x20           return value\n\
          \x20       return choose(1)\n\
          \x20   else:\n\
-         \x20       def choose(value: Int) -> Int:\n\
-         \x20           return value + 1\n\
-         \x20       return choose(1)\n",
+         \x20       def choose(value: Int, step: Int) -> Int:\n\
+         \x20           return value + step\n\
+         \x20       return choose(1, 1)\n",
     );
     assert!(names.contains("outer$choose$decl0"), "{names:?}");
     assert!(names.contains("outer$choose$decl1"), "{names:?}");

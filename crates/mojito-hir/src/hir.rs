@@ -1916,15 +1916,11 @@ impl Lower {
         });
 
         self.scopes.push(HashMap::new());
-        let declaration = s
-            .declaration
-            .and_then(|id| checked.declaration(id))
-            .expect("checked for-loop binding declaration");
-        let binding = declaration
+        let binding = s
             .binding
             .expect("checked for-loop binding has a stable owner");
         let v = self.declare_binding(var, Some(binding));
-        debug_assert_eq!(declaration.ty.as_ref(), Some(&binding_plan.binding_ty));
+        debug_assert_eq!(s.binding_ty.as_ref(), Some(&binding_plan.binding_ty));
         let raw_var = self.var(&format!("$yield{}", self.vars.len()));
         let label = self.label();
         // The yielded slot is not listed: the binding always consumes it.

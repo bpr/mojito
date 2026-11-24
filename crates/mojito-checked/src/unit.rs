@@ -837,7 +837,6 @@ mod tests {
             syntax_id: statement.syntax_id,
             binding: None,
             binding_ty: None,
-            declaration: None,
         });
         let unit = CheckedUnit::extracted(
             &LoweringUnit::Function {

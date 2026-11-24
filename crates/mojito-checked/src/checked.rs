@@ -2391,8 +2391,6 @@ pub struct CheckedStmt {
     pub binding: Option<mojito_types::origin::OwnerId>,
     /// The checked type of a binding the statement introduces.
     pub binding_ty: Option<Ty>,
-    /// The declaration the statement makes.
-    pub declaration: Option<CheckedDeclId>,
 }
 
 impl CheckedStmt {
@@ -4063,39 +4061,6 @@ pub struct CheckedComprehensionBinding {
     pub deinitable: bool,
 }
 
-pub use mojito_types::types::CheckedDeclId;
-
-/// Declaration identity is independent of declaration spelling.
-///
-/// Future classes, pattern binders, coroutine state declarations, and
-/// generated declarations can add variants without changing consumers of the
-/// common metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[non_exhaustive]
-pub enum CheckedDeclKind {
-    Function,
-    Struct,
-    Trait,
-    Binding,
-    CompileTime,
-}
-
-/// A declaration the check made. It encodes as [`CheckedExpr`] does,
-/// behind an encoding mask.
-#[derive(Debug, Clone)]
-pub struct CheckedDeclaration {
-    /// Its index in its tables, which an encoding leaves to its position.
-    pub id: CheckedDeclId,
-    pub kind: CheckedDeclKind,
-    pub name: String,
-    pub location: SourceSpan,
-    /// Stable value-binding identity for declarations which introduce a runtime
-    /// name. This is independent of spelling and therefore survives shadowing.
-    pub binding: Option<mojito_types::origin::OwnerId>,
-    pub ty: Option<Ty>,
-    pub children: Vec<CheckedDeclId>,
-}
-
 /// The storage struct of a capture-list closure, as the check derived it
 /// from the closure's captures: one field per capture, in capture order,
 /// and the conformances upstream's `liftClosure` gives it.
@@ -4284,8 +4249,7 @@ pub enum WalkResult {
     Skip,
 }
 
-/// The whole program's checked expression and statement nodes and its
-/// declarations.
+/// The whole program's checked expression and statement nodes.
 ///
 /// Every function's HIR and MIR lowering shares them through one `Arc`:
 /// lowering a function never copies program-wide tables. A package unit
@@ -4297,8 +4261,6 @@ pub struct CheckedTables {
     pub expressions: Vec<CheckedExpr>,
     /// Indexed by `CheckedStmtId`.
     pub statements: Vec<CheckedStmt>,
-    /// Indexed by `CheckedDeclId`.
-    pub declarations: Vec<CheckedDeclaration>,
     /// The module's root statement nodes, in order.
     roots: Vec<CheckedStmtId>,
     /// Each default wrapper's root statements, parallel to
@@ -4309,10 +4271,6 @@ pub struct CheckedTables {
 impl CheckedTables {
     pub fn expression(&self, id: CheckedNodeId) -> Option<&CheckedExpr> {
         self.expressions.get(id.0 as usize)
-    }
-
-    pub fn declaration(&self, id: CheckedDeclId) -> Option<&CheckedDeclaration> {
-        self.declarations.get(id.0 as usize)
     }
 
     pub fn statement(&self, id: CheckedStmtId) -> Option<&CheckedStmt> {
@@ -4427,8 +4385,7 @@ impl CheckedTables {
 
     /// The tables of one lowering unit: the statement `root` and every node
     /// under it, held as a struct member's unit holds its struct when
-    /// `shell` says so, then the statements of a wrapper's `body`, and the
-    /// declarations the copied statements make.
+    /// `shell` says so, then the statements of a wrapper's `body`.
     ///
     /// The nodes are copied in the order the check builds them, children
     /// before their parent, each renumbered by its position in the copy:
@@ -4449,11 +4406,6 @@ impl CheckedTables {
             (Some(shell), Some(statement)) => copy.shell(statement, shell),
             _ => copy.statement(root),
         };
-        let mut declared: Vec<CheckedDeclId> = copy
-            .statements
-            .iter()
-            .filter_map(|statement| statement.declaration)
-            .collect();
         let wrapper_roots = if body.is_empty() {
             Vec::new()
         } else {
@@ -4463,40 +4415,12 @@ impl CheckedTables {
                     .collect(),
             ]
         };
-        declared.sort_unstable();
-        declared.dedup();
-        let renumbered: HashMap<CheckedDeclId, CheckedDeclId> = declared
-            .iter()
-            .enumerate()
-            .map(|(position, id)| (*id, CheckedDeclId(position as u32)))
-            .collect();
-        let declarations = declared
-            .iter()
-            .filter_map(|id| self.declaration(*id))
-            .map(|declaration| CheckedDeclaration {
-                id: renumbered[&declaration.id],
-                children: declaration
-                    .children
-                    .iter()
-                    .filter_map(|child| renumbered.get(child).copied())
-                    .collect(),
-                ..declaration.clone()
-            })
-            .collect();
-        let mut tables =
-            Self::undeclared(copy.expressions, copy.statements, vec![root], wrapper_roots);
-        for statement in &mut tables.statements {
-            statement.declaration = statement
-                .declaration
-                .and_then(|id| renumbered.get(&id).copied());
-        }
-        tables.declarations = declarations;
-        tables
+        Self::new(copy.expressions, copy.statements, vec![root], wrapper_roots)
     }
 
     /// The tables of `expressions` and `statements` under `roots` and each
-    /// default wrapper's `wrapper_roots`, which declare nothing yet.
-    pub(crate) const fn undeclared(
+    /// default wrapper's `wrapper_roots`.
+    pub(crate) const fn new(
         expressions: Vec<CheckedExpr>,
         statements: Vec<CheckedStmt>,
         roots: Vec<CheckedStmtId>,
@@ -4505,34 +4429,9 @@ impl CheckedTables {
         Self {
             expressions,
             statements,
-            declarations: Vec::new(),
             roots,
             wrapper_roots,
         }
-    }
-
-    /// Make the declarations of the statements under the roots, then of
-    /// the trait members whose `def` nodes are `members`, each declaring
-    /// statement naming its own: in source preorder, the lambdas of a
-    /// statement's own expressions before it, and a declaration before the
-    /// ones its bodies make. A function's type is `function_ty`'s.
-    pub(crate) fn declare(&mut self, function_ty: &dyn Fn(&CheckedStmt) -> Option<Ty>) {
-        let mut declarer = Declarer {
-            tables: self,
-            function_ty,
-            declarations: Vec::new(),
-            declared: Vec::new(),
-        };
-        declarer.block(&self.roots);
-        let Declarer {
-            declarations,
-            declared,
-            ..
-        } = declarer;
-        for (statement, declaration) in declared {
-            self.statements[statement.0 as usize].declaration = Some(declaration);
-        }
-        self.declarations = declarations;
     }
 
     /// The tables with each node's identity its position.
@@ -4542,9 +4441,6 @@ impl CheckedTables {
         }
         for (index, statement) in self.statements.iter_mut().enumerate() {
             statement.id = CheckedStmtId(index as u32);
-        }
-        for (index, declaration) in self.declarations.iter_mut().enumerate() {
-            declaration.id = CheckedDeclId(index as u32);
         }
         self
     }
@@ -4721,146 +4617,6 @@ impl CheckedTables {
                         .any(|body| self.body_breaks_loop(body)),
                 })
         })
-    }
-}
-
-/// The declarations [`CheckedTables::declare`] makes, being made.
-struct Declarer<'t> {
-    tables: &'t CheckedTables,
-    function_ty: &'t dyn Fn(&CheckedStmt) -> Option<Ty>,
-    declarations: Vec<CheckedDeclaration>,
-    /// Each declaring statement and its declaration.
-    declared: Vec<(CheckedStmtId, CheckedDeclId)>,
-}
-
-impl Declarer<'_> {
-    /// The declarations `statements` make, the ones their bodies make
-    /// held as their children.
-    fn block(&mut self, statements: &[CheckedStmtId]) -> Vec<CheckedDeclId> {
-        let mut ids = Vec::new();
-        for id in statements {
-            let Some(node) = self.tables.statement(*id) else {
-                continue;
-            };
-            for lambda in self.lambdas(&node.op) {
-                if let Some(def) = self.tables.statement(lambda)
-                    && let CheckedStmtOp::Def(declaration) = &def.op
-                {
-                    ids.push(self.declaration(
-                        def,
-                        CheckedDeclKind::Function,
-                        &declaration.name,
-                        &[&declaration.body],
-                    ));
-                }
-            }
-            let (kind, name, bodies): (_, _, Vec<&[CheckedStmtId]>) = match &node.op {
-                CheckedStmtOp::Def(declaration) => (
-                    CheckedDeclKind::Function,
-                    &declaration.name,
-                    vec![&declaration.body],
-                ),
-                CheckedStmtOp::Struct(declaration) => (
-                    CheckedDeclKind::Struct,
-                    &declaration.name,
-                    declaration
-                        .methods
-                        .iter()
-                        .map(|method| method.body.as_slice())
-                        .collect(),
-                ),
-                CheckedStmtOp::Trait(declaration) => (
-                    CheckedDeclKind::Trait,
-                    &declaration.name,
-                    declaration
-                        .methods
-                        .iter()
-                        .filter_map(|method| Some(method.default.as_ref()?.body.as_slice()))
-                        .collect(),
-                ),
-                CheckedStmtOp::VarDecl { name, .. } | CheckedStmtOp::RefDecl { name, .. } => {
-                    (CheckedDeclKind::Binding, name, Vec::new())
-                }
-                CheckedStmtOp::For { var, .. } | CheckedStmtOp::ComptimeFor { var, .. } => {
-                    (CheckedDeclKind::Binding, var, node.op.bodies())
-                }
-                CheckedStmtOp::Try {
-                    except: Some((Some(name), _)),
-                    ..
-                } => (CheckedDeclKind::Binding, name, node.op.bodies()),
-                CheckedStmtOp::Comptime { name, .. } => {
-                    (CheckedDeclKind::CompileTime, name, Vec::new())
-                }
-                // A control-flow statement declares nothing; its bodies'
-                // declarations are its block's.
-                op => {
-                    for body in op.bodies() {
-                        ids.extend(self.block(body));
-                    }
-                    continue;
-                }
-            };
-            ids.push(self.declaration(node, kind, name, &bodies));
-        }
-        ids
-    }
-
-    /// The declaration of kind `kind` and name `name` the statement `node`
-    /// makes, whose children are the declarations of `bodies`.
-    fn declaration(
-        &mut self,
-        node: &CheckedStmt,
-        kind: CheckedDeclKind,
-        name: &str,
-        bodies: &[&[CheckedStmtId]],
-    ) -> CheckedDeclId {
-        let id = CheckedDeclId(self.declarations.len() as u32);
-        let ty = match kind {
-            CheckedDeclKind::Function => (self.function_ty)(node),
-            CheckedDeclKind::Binding | CheckedDeclKind::CompileTime => node.binding_ty.clone(),
-            CheckedDeclKind::Struct | CheckedDeclKind::Trait => None,
-        };
-        self.declarations.push(CheckedDeclaration {
-            id,
-            kind,
-            name: name.to_string(),
-            location: node.location(),
-            binding: node.binding,
-            ty,
-            children: Vec::new(),
-        });
-        self.declared.push((node.id, id));
-        let children = bodies.iter().flat_map(|body| self.block(body)).collect();
-        self.declarations[id.0 as usize].children = children;
-        id
-    }
-
-    /// The `def` nodes of the lambdas in `op`'s own expressions, a
-    /// declaration's signature's and a constant's constraints excepted, in
-    /// source order; a lambda in a lambda is its `def`'s body's.
-    fn lambdas(&self, op: &CheckedStmtOp) -> Vec<CheckedStmtId> {
-        let expressions = match op {
-            CheckedStmtOp::Comptime { value, .. } => vec![*value],
-            CheckedStmtOp::Def(_) | CheckedStmtOp::Struct(_) | CheckedStmtOp::Trait(_) => {
-                Vec::new()
-            }
-            op => op.expressions(),
-        };
-        let mut lambdas = Vec::new();
-        for expression in expressions {
-            self.tables.walk_expression(expression, &mut |node| {
-                if let Walked::Expression(CheckedExpr {
-                    op: CheckedOp::Lambda { def },
-                    ..
-                }) = node
-                {
-                    lambdas.push(*def);
-                    return WalkResult::SkipBodies;
-                }
-                WalkResult::Advance
-            });
-        }
-        lambdas
     }
 }
 
@@ -5623,6 +5379,15 @@ impl CheckedProgram {
         self.checked_types.get(site)
     }
 
+    /// The function type of the `def` whose statement node is `statement`.
+    pub fn function_type(&self, statement: &CheckedStmt) -> Option<&Ty> {
+        self.checked_type_at(&AnnotationSite::FunctionType {
+            module: statement.module.clone(),
+            declaration: statement.span,
+            syntax: statement.syntax_id,
+        })
+    }
+
     pub fn generic_parameters_at(
         &self,
         site: &GenericSite,
@@ -5667,18 +5432,10 @@ impl CheckedProgram {
         &mut self.tables
     }
 
-    pub fn declarations(&self) -> &[CheckedDeclaration] {
-        &self.tables.declarations
-    }
-
-    /// The shared expression/declaration tables that HIR and MIR lowering
+    /// The shared expression and statement tables that HIR and MIR lowering
     /// borrow per function.
     pub const fn tables(&self) -> &Arc<CheckedTables> {
         &self.tables
-    }
-
-    pub fn declaration(&self, id: CheckedDeclId) -> Option<&CheckedDeclaration> {
-        self.tables.declaration(id)
     }
 
     pub fn expression(&self, id: CheckedNodeId) -> Option<&CheckedExpr> {
@@ -6062,7 +5819,6 @@ pub(crate) fn statement_node(
         syntax_id,
         binding: facts.statement_binding,
         binding_ty: facts.binding_ty.clone(),
-        declaration: None,
     }
 }
 

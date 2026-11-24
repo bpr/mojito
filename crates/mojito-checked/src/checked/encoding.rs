@@ -3,7 +3,7 @@
 //! node holds, then its always-present parts, then those attributes alone,
 //! in the mask's bit order. An absent attribute writes nothing.
 
-use super::{CheckedDeclaration, CheckedExpr, CheckedStmt, EffectFacts, ValueCategory};
+use super::{CheckedExpr, CheckedStmt, EffectFacts, ValueCategory};
 
 masked_node! {
     CheckedExpr {
@@ -39,23 +39,7 @@ masked_node! {
         }
         attributes {
             binding,
-            declaration,
             binding_ty,
-        }
-    }
-}
-
-masked_node! {
-    CheckedDeclaration {
-        parts {
-            kind,
-            name,
-            location,
-        }
-        attributes {
-            binding,
-            children,
-            ty,
         }
     }
 }

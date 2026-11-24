@@ -736,20 +736,16 @@ fn analyze_node(
         .tables()
         .statement(node)
         .expect("a nested def names a node of its tables");
-    let (declaration, def) = checked_nested_declaration(checked, node);
+    let def = def_of(checked, node);
     let name = &def.name;
-    let binding = declaration
+    let binding = statement
         .binding
         .expect("checked nested function has no value binding");
 
     let captures = analyze_captures(def);
     let children = analyze_root_children(checked, &def.body, None);
     let callable_ty = checked
-        .checked_type_at(&AnnotationSite::FunctionType {
-            module: statement.module.clone(),
-            declaration: statement.span,
-            syntax: statement.syntax_id,
-        })
+        .function_type(statement)
         .cloned()
         .map(mir_nested_callable_ty);
 
@@ -1928,29 +1924,6 @@ fn analyze_captures(def: &mojito_checked::checked::CheckedDef) -> Vec<NestedCapt
             binds_reference: capture.binds_reference,
         })
         .collect()
-}
-
-/// The checked declaration of the nested `def` at statement node `node`,
-/// and its node's `def`.
-fn checked_nested_declaration(
-    checked: &mojito_checked::checked::CheckedProgram,
-    node: CheckedStmtId,
-) -> (
-    &mojito_checked::checked::CheckedDeclaration,
-    &mojito_checked::checked::CheckedDef,
-) {
-    let declaration = checked
-        .tables()
-        .statement(node)
-        .and_then(|node| node.declaration)
-        .and_then(|id| checked.declaration(id))
-        .expect("checked nested function declaration is missing");
-    let def = def_of(checked, node);
-    debug_assert!(
-        declaration.kind == mojito_checked::checked::CheckedDeclKind::Function
-            && declaration.name == def.name
-    );
-    (declaration, def)
 }
 
 /// The `def` of the nested declaration at statement node `node`.

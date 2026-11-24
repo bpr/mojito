@@ -52,9 +52,8 @@ pub use artifact::{ArtifactRunError, run_artifact};
 pub use ast::{Dtype, Expr, ImportName, ImportNames, InfixOp, Param, PrefixOp, Stmt, TypeParam};
 pub use backend::{Backend, BackendKind};
 pub use checked::{
-    CheckedCapture, CheckedConst, CheckedDeclId, CheckedDeclKind, CheckedDeclaration, CheckedExpr,
-    CheckedNodeId, CheckedProgram, EffectFacts, IterationMode, IterationProtocol,
-    SemanticAdjustment, ValueCategory,
+    CheckedCapture, CheckedConst, CheckedExpr, CheckedNodeId, CheckedProgram, EffectFacts,
+    IterationMode, IterationProtocol, SemanticAdjustment, ValueCategory,
 };
 pub use checker::{Checker, check, check_program};
 pub use compiler::{

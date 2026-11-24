@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A checked declaration is its statement node, as upstream's symbol is its
+  op (R768). `CheckedDeclaration`, `CheckedDeclKind`, `CheckedDeclId`,
+  `CheckedStmt::declaration`, and the walk that copied each declaring
+  node's binding and type into a side table are gone; HIR's `for`
+  binding, MIR's nested `def`s and local `ref` declarations, and the
+  closure-use collection read the node, and a `def`'s function type is
+  its site's (`CheckedProgram::function_type`). No accepted program, MIR
+  text, or warning changes; the package format moves to
+  `mojito-package 277`.
+
 - The check seals its own module: the final pass's handoff seals the
   emitted nodes, each now holding its facts as an op holds its
   attributes, into declared checked tables, and `CheckedProgram::new`

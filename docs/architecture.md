@@ -181,7 +181,7 @@ import (every compilation that links the bundled library):
   struct as a shell naming the member alone): its expression and
   statement nodes, each carrying its own op, type, and attributes as
   upstream's ops do and encoding only the attributes it has, behind an
-  encoding mask, as an MLIR bytecode op does, and its declarations, beside the facts of the unit's
+  encoding mask, as an MLIR bytecode op does, beside the facts of the unit's
   own declaration sites. A member's struct's parameter list is not in its
   record: the importer gives it from the struct's declaration record. The
   encoding numbers each occurrence densely within the unit and the
@@ -2942,11 +2942,13 @@ parameters, declaration effects, declaration symbols), an
 `OccurrenceIndex` (the warnings and the span-keyed per-occurrence
 lookups), and the `DeclarationTables` (the program-level tables); it
 infers and composes nothing. `CheckedProgram` holds no syntax: it is the
-checked nodes, the site facts, and the declaration-level tables. Its declarations
-are made by a walk over the statement nodes (`CheckedTables::declare`),
-each declaring node naming its own, and a `def`'s explicit captures are
-its op's (`CheckedDef::captures`), as upstream's closure op holds its
-captured values.
+checked nodes, the site facts, and the declaration-level tables. A
+declaration is its statement node, whose op names what it declares and
+which holds the binding it introduces and that binding's type, as
+upstream's symbol is its op; a `def`'s function type is its
+`FunctionType` site's (`CheckedProgram::function_type`), and its explicit
+captures are its op's (`CheckedDef::captures`), as upstream's closure op
+holds its captured values.
 
 The stale passes of one check hand the next a `PassCarry`: the pass's
 fact stores, one record per body site, and its binding-identity
@@ -3034,14 +3036,13 @@ an explicit semantic arena. Every checked expression has a `CheckedNodeId`, its
 own operation (`CheckedOp`: the node's `ExprKind` with each child expression
 replaced by the child's node, so its operands are its child edges and a type
 operand is the attribute the check resolved), its occurrence, resolved runtime type, value/place/type category, stable owner identity for
-binding uses, extensible effect facts, and a list of semantic adjustments. Checked
-declarations have independent `CheckedDeclId` identities. A statement is a
+binding uses, extensible effect facts, and a list of semantic adjustments. A statement is a
 checked node too (`CheckedStmt`, with a `CheckedStmtId`): its own operation
 (`CheckedStmtOp`: its `StmtKind` with each expression operand a node and each
 body a list of statement nodes, so `if`, `while`, `for`, `try`, `with`, and
 the compile-time forms stay structured as upstream's `hlcf` keeps them), its
-occurrence, the binding it introduces with that binding's type, and its
-declaration. A declaration's op holds what the check resolved for it, never
+occurrence, and the binding it introduces with that binding's type; a
+declaring statement is the declaration, with no table beside it. A declaration's op holds what the check resolved for it, never
 its signature as written, as upstream's function op holds its symbol and its
 resolved function type: a `def`'s and a method's op hold the symbol it lowers
 to (a nested `def`'s own name, which its enclosing lowering qualifies), a

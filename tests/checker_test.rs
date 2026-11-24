@@ -83,6 +83,44 @@ fn own_expressions(
         .filter(|expression| !from_library(expression.source.as_deref()))
 }
 
+/// The name the statement `op` declares, as upstream's symbol op names
+/// itself.
+fn declared_name(op: &mojito::checked::CheckedStmtOp) -> Option<&str> {
+    use mojito::checked::CheckedStmtOp;
+    match op {
+        CheckedStmtOp::Def(def) => Some(&def.name),
+        CheckedStmtOp::Struct(declaration) => Some(&declaration.name),
+        CheckedStmtOp::Trait(declaration) => Some(&declaration.name),
+        CheckedStmtOp::VarDecl { name, .. }
+        | CheckedStmtOp::RefDecl { name, .. }
+        | CheckedStmtOp::Comptime { name, .. }
+        | CheckedStmtOp::Try {
+            except: Some((Some(name), _)),
+            ..
+        }
+        | CheckedStmtOp::For { var: name, .. }
+        | CheckedStmtOp::ComptimeFor { var: name, .. } => Some(name),
+        _ => None,
+    }
+}
+
+/// The statement nodes outside the bundled library that declare `name`, in
+/// order: the program's symbols named `name`, found by walking its ops as
+/// upstream's `SymbolTable` is built.
+fn own_declaring<'c>(
+    checked: &'c mojito::checked::CheckedProgram,
+    name: &str,
+) -> Vec<&'c mojito::checked::CheckedStmt> {
+    checked
+        .tables()
+        .statements
+        .iter()
+        .filter(|node| {
+            !from_library(node.module.as_deref()) && declared_name(&node.op) == Some(name)
+        })
+        .collect()
+}
+
 /// Like [`ok`], with the standard library linked.
 fn ok_std(source: &str) {
     check_with_std(source).expect("expected the program to type-check");
@@ -143,16 +181,10 @@ fn accepts_lexical_capture_downward_funarg() {
 
 #[test]
 fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities() {
-    let source = "def main():\n    var values: List[Int] = [40]\n    var marker = 1\n    if True:\n        def choose() -> Int:\n            return 1\n        print(choose())\n    if True:\n        def choose() -> Int:\n            return 42\n        print(choose())\n    def inspect() {var marker}:\n        pass\n    def take() {var values^}:\n        pass\n";
+    let source = "def main():\n    var values: List[Int] = [40]\n    var marker = 1\n    if True:\n        def choose() -> Int:\n            return 1\n        print(choose())\n    if True:\n        def choose(x: Int) -> Int:\n            return x\n        print(choose(42))\n    def inspect() {var marker}:\n        pass\n    def take() {var values^}:\n        pass\n";
     let checked = checked_with_std(source).expect("check");
 
-    let choices: Vec<_> = checked
-        .declarations()
-        .iter()
-        .filter(|declaration| {
-            declaration.name == "choose" && !from_library(declaration.location.source.as_deref())
-        })
-        .collect();
+    let choices = own_declaring(&checked, "choose");
     assert_eq!(choices.len(), 2);
     assert_ne!(choices[0].id, choices[1].id);
     assert_ne!(choices[0].binding, choices[1].binding);
@@ -166,13 +198,8 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
     assert_eq!(call_bindings.len(), 2);
     assert_ne!(call_bindings[0], call_bindings[1]);
 
-    let values = checked
-        .declarations()
-        .iter()
-        .find(|declaration| {
-            declaration.name == "values" && !from_library(declaration.location.source.as_deref())
-        })
-        .and_then(|declaration| declaration.binding)
+    let values = own_declaring(&checked, "values")[0]
+        .binding
         .expect("values binding");
     let def_named = |name: &str| {
         checked
@@ -197,13 +224,8 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
                 && capture.kind == mojito::ast::CaptureKind::Move
     ));
     assert_eq!(take.captures[0].ty, mojito::types::list_type(Ty::int()));
-    let marker = checked
-        .declarations()
-        .iter()
-        .find(|declaration| {
-            declaration.name == "marker" && !from_library(declaration.location.source.as_deref())
-        })
-        .and_then(|declaration| declaration.binding)
+    let marker = own_declaring(&checked, "marker")[0]
+        .binding
         .expect("marker binding");
     let inspect = def_named("inspect");
     assert!(matches!(
@@ -226,25 +248,30 @@ fn checked_boundary_keys_template_source_provenance_by_occurrence() {
     // no instance of `outer` is declared above MIR.
     assert!(
         checked
-            .declarations()
+            .tables()
+            .statements
             .iter()
-            .all(|declaration| !declaration.name.starts_with("outer$"))
+            .filter_map(|node| declared_name(&node.op))
+            .all(|name| !name.starts_with("outer$"))
     );
-    let template = checked
-        .declarations()
-        .iter()
-        .find(|declaration| declaration.name == "outer")
-        .expect("outer's template");
-    let mut pending = template.children.clone();
-    let mut xs = Vec::new();
-    while let Some(id) = pending.pop() {
-        let declaration = checked.declaration(id).expect("a child declaration");
-        if declaration.name == "x" {
-            xs.push(declaration);
+    let template = match &own_declaring(&checked, "outer")
+        .first()
+        .expect("outer's template")
+        .op
+    {
+        mojito::checked::CheckedStmtOp::Def(def) => def,
+        op => panic!("outer declares {op:?}"),
+    };
+    let mut xs = 0;
+    checked.tables().walk(&template.body, &mut |node| {
+        if let mojito::checked::Walked::Statement(statement) = node
+            && declared_name(&statement.op) == Some("x")
+        {
+            xs += 1;
         }
-        pending.extend(declaration.children.iter().copied());
-    }
-    assert_eq!(xs.len(), 1);
+        mojito::checked::WalkResult::Advance
+    });
+    assert_eq!(xs, 1);
 
     let mut locations = std::collections::HashSet::new();
     for expression in own_expressions(&checked) {
@@ -6656,14 +6683,10 @@ fn user_iterator_protocol_typing() {
 fn raising_iterator_protocol_uses_typed_stop_iteration_without_len() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(3):\n        print(value)\n";
     let checked = checked_with_std(source).expect("check value-yielding iterator");
-    let value = checked
-        .declarations()
-        .iter()
-        .find(|declaration| {
-            declaration.name == "value" && !from_library(declaration.location.source.as_deref())
-        })
+    let value = *own_declaring(&checked, "value")
+        .first()
         .expect("loop binding");
-    assert_eq!(value.ty.as_ref(), Some(&Ty::int()));
+    assert_eq!(value.binding_ty.as_ref(), Some(&Ty::int()));
 
     let error = err(
         "@fieldwise_init\nstruct OtherError:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    def __next__(mut self) raises OtherError -> Int:\n        raise OtherError(0)\n        return self.current\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(self.end)\n\ndef main():\n    for value in C(3):\n        print(value)\n",
@@ -6679,13 +6702,11 @@ fn raising_iterator_protocol_uses_typed_stop_iteration_without_len() {
 fn raising_reference_iterator_preserves_the_reference_loop_binding_type() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter[origin_of(self.value)]:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
     let checked = checked_with_std(source).expect("check reference-yielding iterator");
-    let item = checked
-        .declarations()
-        .iter()
-        .find(|declaration| declaration.name == "item")
+    let item = *own_declaring(&checked, "item")
+        .first()
         .expect("loop binding");
     assert!(matches!(
-        item.ty.as_ref().map(Ty::kind),
+        item.binding_ty.as_ref().map(Ty::kind),
         Some(mojito::TyKind::Ref(reference)) if reference.referent.is_int()
     ));
 }
@@ -11426,19 +11447,20 @@ fn function_and_method_param_lists_declare_origin_binders_in_place() {
 }
 
 #[test]
-fn a_ref_contract_names_its_origin_binder_and_a_call_binds_it_from_the_ref_arguments() {
+fn a_ref_contract_names_its_origin_binder_and_a_call_binds_it_to_the_union_it_names() {
     // `pick`'s type names its binder `o` in each `ref [o]` contract, as
-    // upstream's does, and the call binds `o` from both `ref` arguments.
-    let source = "def pick[o: Origin](ref [o] a: Int, ref [o] b: Int) -> ref [o] Int:\n    return b\n\ndef main():\n    var x = 1\n    var y = 2\n    ref both = pick(x, y)\n    print(both)\n";
+    // upstream's does, and the call binds `o` to the union its explicit
+    // argument names, as the pin requires when the two arguments lend
+    // different places.
+    let source = "def pick[o: Origin](ref [o] a: Int, ref [o] b: Int) -> ref [o] Int:\n    return b\n\ndef main():\n    var x = 1\n    var y = 2\n    ref both = pick[origin_of(x, y)](x, y)\n    print(both)\n";
     let checked = checked_with_std(source).expect("check a binder-named ref contract");
     let declared = |name: &str| {
-        checked
-            .declarations()
-            .iter()
-            .find(|declaration| {
-                declaration.name == name && !from_library(declaration.location.source.as_deref())
+        own_declaring(&checked, name)
+            .first()
+            .and_then(|node| match node.op {
+                mojito::checked::CheckedStmtOp::Def(_) => checked.function_type(node).cloned(),
+                _ => node.binding_ty.clone(),
             })
-            .and_then(|declaration| declaration.ty.clone())
             .unwrap_or_else(|| panic!("declaration '{name}'"))
     };
     let pick = declared("pick");
@@ -11479,21 +11501,17 @@ fn a_callee_origin_binder_bound_from_an_argument_roots_its_reference_result() {
     let source = "struct S:\n    def __init__(out self):\n        pass\n    def read[o: ImmOrigin](self, r: Pointer[Int, o]) -> ref[o] Int:\n        return r[]\n\ndef read[T: ImplicitlyCopyable & Movable, o: ImmOrigin](r: Pointer[T, o]) -> ref[o] T:\n    return r[]\n\ndef main():\n    var x = 222\n    ref generic = read(Pointer(to=x))\n    ref method = S().read(Pointer(to=x))\n    print(generic, method)\n";
     let checked = checked_with_std(source).expect("check origin-binder reference results");
     for name in ["generic", "method"] {
-        let binding = checked
-            .declarations()
-            .iter()
-            .find(|declaration| {
-                declaration.name == name && !from_library(declaration.location.source.as_deref())
-            })
+        let binding = *own_declaring(&checked, name)
+            .first()
             .unwrap_or_else(|| panic!("binding '{name}'"));
         assert!(
             matches!(
-                binding.ty.as_ref().map(Ty::kind),
+                binding.binding_ty.as_ref().map(Ty::kind),
                 Some(mojito::TyKind::Ref(reference))
                     if matches!(reference.origin, mojito::origin::Origin::Place(_))
             ),
             "'{name}' has type {:?}",
-            binding.ty
+            binding.binding_ty
         );
     }
 }

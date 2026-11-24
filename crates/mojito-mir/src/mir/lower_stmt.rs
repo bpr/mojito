@@ -3151,15 +3151,12 @@ impl<'a> Flatten<'a> {
                 // derived place is accessed. Retain that `ref T` declaration
                 // type so MIR verification can prove `place.through` instead of
                 // treating the analytical alias slot as untyped storage.
-                if let Some(reference_ty) = statement_binding.and_then(|binding| {
-                    self.checked
-                        .declarations
-                        .iter()
-                        .find(|declaration| declaration.binding == Some(binding))
-                        .and_then(|declaration| declaration.ty.clone())
-                        .filter(|ty| matches!(ty.kind(), TyKind::Ref(_)))
-                }) {
-                    self.var_types.insert(reference, reference_ty);
+                if let Some(reference_ty) = node
+                    .binding_ty
+                    .as_ref()
+                    .filter(|ty| statement_binding.is_some() && matches!(ty.kind(), TyKind::Ref(_)))
+                {
+                    self.var_types.insert(reference, reference_ty.clone());
                 }
                 // The slot holds the handle `lit.ref` would be: every read
                 // through the binding addresses its place, and a backend

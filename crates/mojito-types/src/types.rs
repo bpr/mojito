@@ -8317,25 +8317,6 @@ pub fn is_stdlib_file_descriptor_struct(name: &str) -> bool {
     name == "RawFileDescriptor" || name.ends_with("file$descriptor$RawFileDescriptor")
 }
 
-/// Identity of one checked declaration, stable across the checked program.
-///
-/// Defined here (below the checked handoff) so symbol mangling can spell
-/// declaration-qualified names without depending on the handoff crate.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    serde::Serialize,
-    serde::Deserialize,
-)]
-pub struct CheckedDeclId(pub u32);
-
 /// The canonical spelling of a trait composition.
 ///
 /// Each trait appears once, ordered by name descending, as the pin displays

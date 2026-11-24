@@ -16,15 +16,14 @@ use super::{
     EmittedDesugar, EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt, Unsealed, substituted,
 };
 use crate::checked::{
-    AnnotationSite, CheckedCommand, CheckedComprehensionClause, CheckedComprehensionUnpack,
-    CheckedCondition, CheckedDef, CheckedDefaultWrapper, CheckedMatchCase, CheckedMethod,
-    CheckedNodeId, CheckedOp, CheckedParamArg, CheckedParameter, CheckedPathRead,
-    CheckedSequenceTarget, CheckedStmtId, CheckedStmtOp, CheckedStruct, CheckedStructComptime,
-    CheckedTables, CheckedTarget, CheckedTargetKind, CheckedTrait, CheckedTraitComptime,
-    CheckedTraitDefault, CheckedTraitMethod, ConformanceFacts, DeclarationSites, MatchPlan,
-    NodeFacts, NodeMap, Outermost, PlannedCommand, Signatures, apply_spelled, expression_node,
-    lifted, map_params, parameter_layout, spelled_construction, statement_node,
-    subscript_attribute,
+    CheckedCommand, CheckedComprehensionClause, CheckedComprehensionUnpack, CheckedCondition,
+    CheckedDef, CheckedDefaultWrapper, CheckedMatchCase, CheckedMethod, CheckedNodeId, CheckedOp,
+    CheckedParamArg, CheckedParameter, CheckedPathRead, CheckedSequenceTarget, CheckedStmtId,
+    CheckedStmtOp, CheckedStruct, CheckedStructComptime, CheckedTables, CheckedTarget,
+    CheckedTargetKind, CheckedTrait, CheckedTraitComptime, CheckedTraitDefault, CheckedTraitMethod,
+    ConformanceFacts, DeclarationSites, MatchPlan, NodeFacts, NodeMap, Outermost, PlannedCommand,
+    Signatures, apply_spelled, expression_node, lifted, map_params, parameter_layout,
+    spelled_construction, statement_node, subscript_attribute,
 };
 use mojito_ast::ast::{BindingMode, Expr, Stmt};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
@@ -32,7 +31,7 @@ use mojito_types::types::TyArg;
 use std::cell::RefCell;
 
 /// The checked tables of `roots` and of `wrappers`' bodies, sealed from
-/// `emitted` and declared.
+/// `emitted`.
 ///
 /// Each node's op is composed with its facts, a declaration's symbol and
 /// signature read from `sites` and a fieldwise constructor's from
@@ -80,20 +79,13 @@ pub fn seal(
     if unsealed.count > 0 {
         return Err(unsealed);
     }
-    let mut tables = CheckedTables::undeclared(seal.nodes, seal.statements, roots, wrapper_roots);
     drop(expressions_span);
-    let _declarations = mojito_common::timing::span("declarations");
-    tables.declare(&|node| {
-        sites
-            .checked_types
-            .get(&AnnotationSite::FunctionType {
-                module: node.module.clone(),
-                declaration: node.span,
-                syntax: node.syntax_id,
-            })
-            .cloned()
-    });
-    Ok(tables)
+    Ok(CheckedTables::new(
+        seal.nodes,
+        seal.statements,
+        roots,
+        wrapper_roots,
+    ))
 }
 
 /// The tables being sealed. A [`NodeMap`] from emitted slots to the sealed

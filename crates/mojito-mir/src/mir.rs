@@ -22,7 +22,7 @@
 use mojito_ast::ast::DeclaredParam;
 use mojito_ast::ast::{ArgConvention, Dtype, InfixOp, ParamKind, PrefixOp};
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
-use mojito_checked::checked::{AnnotationSite, GenericSite};
+use mojito_checked::checked::GenericSite;
 use mojito_checked::checked::{
     CheckedConst, CheckedNodeId, CheckedOp, CheckedParamArg, CheckedProgram, CheckedStmt,
     CheckedStmtId, CheckedStmtOp, WalkResult, Walked,

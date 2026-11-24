@@ -176,19 +176,27 @@ impl CheckedTables {
     /// Each call through a closure one of `storages` types, with the
     /// `__call__` of its storage: a call naming a binding the closure
     /// types, invoking an expression it types, or naming the `__call__`
-    /// method of an expression it types.
-    fn storage_calls(&self, storages: &HashMap<String, Ty>) -> Vec<(CheckedNodeId, String)> {
-        let mut bindings: HashMap<OwnerId, &Ty> = HashMap::new();
-        for statement in &self.statements {
-            if let (Some(binding), Some(ty)) = (statement.binding, &statement.binding_ty) {
-                bindings.insert(binding, ty);
-            }
-        }
-        for declaration in &self.declarations {
-            if let (Some(binding), Some(ty)) = (declaration.binding, &declaration.ty) {
-                bindings.entry(binding).or_insert(ty);
-            }
-        }
+    /// method of an expression it types. A binding's type is its
+    /// statement's, and a `def`'s is `function_ty`'s.
+    fn storage_calls<'t>(
+        &'t self,
+        storages: &HashMap<String, Ty>,
+        function_ty: &dyn Fn(&CheckedStmt) -> Option<&'t Ty>,
+    ) -> Vec<(CheckedNodeId, String)> {
+        let bindings: HashMap<OwnerId, &Ty> = self
+            .statements
+            .iter()
+            .filter_map(|statement| {
+                let ty = statement
+                    .binding_ty
+                    .as_ref()
+                    .or_else(|| match statement.op {
+                        CheckedStmtOp::Def(_) => function_ty(statement),
+                        _ => None,
+                    })?;
+                Some((statement.binding?, ty))
+            })
+            .collect();
         self.expressions
             .iter()
             .filter_map(|node| {
@@ -379,7 +387,10 @@ impl CheckedProgram {
         if storages.is_empty() {
             return;
         }
-        for (id, target) in self.tables().storage_calls(&storages) {
+        let calls = self
+            .tables()
+            .storage_calls(&storages, &|statement| self.function_type(statement));
+        for (id, target) in calls {
             self.retarget_call(id, target);
         }
         self.rewrite_types(&mut ClosureStorageTypes(&storages));
@@ -397,13 +408,7 @@ impl CheckedProgram {
                 };
                 let storage = def.storage.as_ref()?;
                 let uses = storage.uses.as_ref()?;
-                let nested = nested_storage(self.checked_type_at(
-                    &crate::checked::AnnotationSite::FunctionType {
-                        module: statement.module.clone(),
-                        declaration: statement.span,
-                        syntax: statement.syntax_id,
-                    },
-                )?)?;
+                let nested = nested_storage(self.function_type(statement)?)?;
                 Some((
                     nested.to_string(),
                     TyKind::Struct(
@@ -775,9 +780,7 @@ impl Collector<'_> {
             if let Some(uses) = &uses
                 && let Some(binding) = tables
                     .statement(*node)
-                    .and_then(|statement| statement.declaration)
-                    .and_then(|id| tables.declaration(id))
-                    .and_then(|declaration| declaration.binding)
+                    .and_then(|statement| statement.binding)
             {
                 registry.insert(
                     binding,

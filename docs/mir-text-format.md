@@ -1411,6 +1411,12 @@ leading-dot chain reaches the arena as the construction rooted at its base
 type, so no `$contextual` node needs one. The package format moves to
 `mojito-package 276` (R2568).
 
+A checked unit no longer encodes declarations beside its nodes, and a
+statement's mask no longer names a `declaration`: a declaration is its
+statement node, whose op names what it declares and which holds the
+binding and its type, as upstream's symbol is its op. The package format
+moves to `mojito-package 277` (R768).
+
 Schema 1.230 gives a trait `requirement` record its parameters'
 `defaults` after `param_types`, encoded as a `decl`'s are: the attribute a
 call through the bound that leaves the slot out materializes, whatever the
@@ -3082,14 +3088,14 @@ mojito-package 82
   to), a
   wrapper's or trait default's declaration less its body, and the unit's
   `CheckedTables` (format 37): its checked expression and statement
-  nodes and its declarations, each node holding its own op, type, and
+  nodes, each node holding its own op, type, and
   attributes as the check left them, as upstream's body is typed ops; its
   root statements and a wrapper's; and each location a spelled sugar was
   written at, beside the node of the construction the check spelled for
   it. The nodes are a module `def`, a trait default's declaration, a
   module constant, or a struct shell holding only its name and the one
   method (none for a wrapper). A node's identity is its position, given
-  back on decode. Each expression, statement, and declaration node
+  back on decode. Each expression and statement node
   encodes as an MLIR bytecode op does behind its `OpEncodingMask`
   (`checked::encoding`, format 50): an encoding mask (a `u16` varint),
   then its always-present parts, then only the attributes the mask
@@ -3100,9 +3106,7 @@ mojito-package 82
   `binding_ty`, `effects`, `comprehension_bindings`, and
   `call_transfers`, most frequent first, so a common node's mask is
   one byte. A statement's parts are its op, span, module, and syntax id,
-  bits 0–2 naming `binding`, `declaration`, and `binding_ty`; a
-  declaration's are its kind, name, and location, bits 0–2 naming
-  `binding`, `children`, and `ty`. No statement or expression is encoded
+  bits 0–1 naming `binding` and `binding_ty`. No statement or expression is encoded
   as syntax: a declaration op encodes its symbol, its registered name for
   a method, and its checked signature (its compile-time parameters, each
   declared parameter's type, its result type, and its effect), a `def` op

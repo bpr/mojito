@@ -1119,10 +1119,10 @@ change that needs a new `MJRT_ABI_VERSION`.
     lowers that `mut` argument is not yet probed with `--emit llvm`.
   - Pinned by `pliron_backend_test::unsupported_constructs_produce_contextual_diagnostics`.
   - Cause: `MirFunction::ref_params` is `Vec<bool>` and
-    `returns_reference` is `bool`, as are `CheckedDeclaration`'s two fields.
+    `returns_reference` is `bool`, as are `FunctionDeclaration`'s two fields.
     Only a function type's `RefSig` carries a space.
   - Lever: carry each `ref` parameter's and the result's
-    `AddressSpaceSlot` from the checker into `CheckedDeclaration` and
+    `AddressSpaceSlot` from the checker into `FunctionDeclaration` and
     `MirFunction`, with a MIR text schema bump and mono substitution.
     `module_env.rs::declare_function`, the call operands, closure thunks,
     and the `calls.rs` contract ABI then read it.
@@ -11837,24 +11837,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R767 (2026-11-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R768 `CheckedDeclaration` repeats what the statement nodes hold,
-  where upstream's symbol is its op**
-
-  Each declaration's kind, name, binding, and type are its statement
-  node's, and only HIR's `for` binding and MIR's nested `def`s read it.
-  - The lever: those two readers read the node, and
-    `CheckedDeclaration`, `CheckedDeclKind`, `CheckedStmt::declaration`,
-    `CheckedTables::declarations`, and `CheckedTables::declare` go.
-  - A nested `def` sharing its name with a sibling is named by its
-    position among same-named siblings, not by the global
-    `CheckedDeclId`, which a package unit renumbers: a library function
-    with two same-named nested `def`s would be refused by
-    `refuse_unequal_units` (argued from the code, not reproduced).
-  - The package format moves.
-  - Found while landing R625 (2026-10-13).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R611 A package unit's facts name the package check's binding
   owners**
