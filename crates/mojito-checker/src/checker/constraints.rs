@@ -41,6 +41,25 @@ pub(super) fn literal_convert_op(shape: &str) -> Option<ParamOp> {
     }
 }
 
+/// Why a declaration's body did not lower as a type template
+/// ([`Checker::lower_parameterized_member`]).
+pub(super) enum MemberBodyError {
+    /// The body evaluated to a value: it is a value body.
+    NotAType,
+    /// The body did not evaluate at all, for this reason.
+    Failed(TypeError),
+}
+
+impl MemberBodyError {
+    /// The error a declaration that requires a type reports.
+    pub(super) fn into_error(self) -> TypeError {
+        match self {
+            Self::NotAType => not_a_type("type annotation"),
+            Self::Failed(error) => error,
+        }
+    }
+}
+
 impl Checker {
     /// Evaluate a compile-time `Int` expression: literals, `comptime` constants,
     /// and `+ - * // % **` / unary `-`. Rejects anything non-comptime (a value
@@ -358,43 +377,44 @@ impl Checker {
                     }
                     return Ok::<_, TypeError>((Some(value), None));
                 }
-                // A value annotation declares a value body; without one, a
-                // body that does not lower as a type is a value, as an
-                // unannotated generic alias's is.
-                let as_type = match requirement {
-                    Some(CtMemberReq::Value(_)) => Err(unsupported_assoc_body()),
-                    _ if !spells_type_body(&member.value) => Err(unsupported_assoc_body()),
-                    _ => {
-                        let decls = own_decls.clone();
-                        self.lower_parameterized_member(
-                            &member_owner,
-                            &decls,
-                            member_scope.clone(),
-                            &member.params,
-                            &member.value,
-                        )
-                        .map(|template| MemberTemplate::Type { decls, template })
+                // A value annotation declares a value body; without one, the
+                // body is evaluated under its binders, and a type result is
+                // the type template, as upstream keeps it.
+                let as_type = (!matches!(requirement, Some(CtMemberReq::Value(_)))).then(|| {
+                    let decls = own_decls.clone();
+                    self.lower_parameterized_member(
+                        &member_owner,
+                        &decls,
+                        member_scope.clone(),
+                        &member.params,
+                        &member.value,
+                    )
+                    .map(|template| MemberTemplate::Type { decls, template })
+                });
+                let template = match as_type {
+                    Some(Ok(template)) => template,
+                    Some(Err(error)) if matches!(requirement, Some(CtMemberReq::Type { .. })) => {
+                        return Err(error.into_error());
                     }
-                };
-                let template = match (as_type, &requirement) {
-                    (Ok(template), _) => template,
-                    (Err(error), Some(CtMemberReq::Type { .. })) => return Err(error),
-                    (Err(type_error), _) => {
+                    attempt => {
                         let declared = match &requirement {
                             Some(CtMemberReq::Value(ty)) => Some(ty),
                             _ => None,
                         };
-                        // A body spelled as a type reports why it is not
-                        // one, unless its annotation declares a value.
-                        let spelled_as_type = declared.is_none() && spells_type_body(&member.value);
                         // A value member is a generator over its whole
                         // declared list, as upstream's is: an application
                         // binds an origin binder in its slot.
                         let decls = self.classify_param_list(&member_owner, &member.params)?;
                         match self.lower_parametric_value(&decls, &member.value, declared) {
                             Ok(body) => MemberTemplate::Value { decls, body },
-                            Err(_) if spelled_as_type => return Err(type_error),
-                            Err(error) => return Err(error),
+                            // A body that evaluated neither to a type nor
+                            // to a value reports why it did not evaluate.
+                            Err(value_error) => {
+                                return Err(match attempt {
+                                    Some(Err(MemberBodyError::Failed(type_error))) => type_error,
+                                    _ => value_error,
+                                });
+                            }
                         }
                     }
                 };
@@ -761,8 +781,9 @@ impl Checker {
                 .any(|parent| self.trait_requires_comptime_member(parent, member))
     }
 
-    /// Lower the type-valued body of a parameterized associated type — or a
-    /// generic top-level comptime alias — to its symbolic template. The
+    /// Lower the body of a parameterized associated type — or a generic
+    /// top-level comptime alias — to its symbolic type template, or answer
+    /// that it evaluates to a value ([`MemberBodyError::NotAType`]). The
     /// declaration's own parameters are put in scope (any enclosing struct's
     /// parameters already are), so type parameters resolve to `TyKind::Param`, value
     /// parameters to `CtValue::Expr`, and origin parameters to `Origin::Param`;
@@ -774,7 +795,7 @@ impl Checker {
         scope: HashMap<String, Ty>,
         params: &[mojito_ast::ast::TypeParam],
         body: &Expr,
-    ) -> Result<Ty, TypeError> {
+    ) -> Result<Ty, MemberBodyError> {
         // Member type parameters resolve as `TyKind::Param` (via the `tparams` scope
         // the caller built, like a generic def's parameters); origin parameters
         // resolve to `Origin::Param` via `enclosing_type_params`; value
@@ -797,14 +818,19 @@ impl Checker {
                 .map(|(template, attributes)| {
                     self.record_declared_attributes(body.source_span(), &attributes);
                     template
-                }),
+                })
+                .map_err(MemberBodyError::Failed),
             // A function type with its own binders (`def[dtype: DType,
             // width: SIMDLength, //](SIMD[dtype, width]) thin -> …`) is the
             // parametric function type a callable bound's is.
-            ExprKind::FunctionType(callable) if !callable.type_params.is_empty() => {
-                self.lower_anonymous_callable_type(&format!("$callable:{owner}"), callable, params)
-            }
-            _ => self.emit_expr_type(body),
+            ExprKind::FunctionType(callable) if !callable.type_params.is_empty() => self
+                .lower_anonymous_callable_type(&format!("$callable:{owner}"), callable, params)
+                .map_err(MemberBodyError::Failed),
+            _ => match self.body_type(body) {
+                Ok(Some(template)) => Ok(template),
+                Ok(None) => Err(MemberBodyError::NotAType),
+                Err(error) => Err(MemberBodyError::Failed(error)),
+            },
         };
         if let Ok(template) = &template
             && body.is_type_expression()
@@ -1277,53 +1303,26 @@ impl Checker {
     /// a value ("expected a type, not a value"). Builds silently: the caller
     /// records once the type is accepted.
     pub(super) fn denoted_type(&self, expr: &Expr, context: &str) -> Result<Ty, TypeError> {
-        let built = self
-            .build_ct(expr, Recording::Silent)
-            .map_err(|error| self.missing_type_member(expr).unwrap_or(error))?;
-        if *built.meta() != MetaTy::Type {
-            if let Some(ty) = self.holed_alias_type(expr)? {
-                return Ok(ty);
-            }
-            if let Some(error) = self.missing_type_member(expr) {
-                return Err(error);
-            }
-            return Err(TypeError::TypeMismatch {
-                expected: "a type".to_string(),
-                found: "a value".to_string(),
-                context: context.to_string(),
-            });
-        }
-        Ok(mojito_types::types::DependentType::resolve(built))
+        self.denotation(expr)?.ok_or_else(|| not_a_type(context))
     }
 
     /// The type an annotation expression `expr` denotes
-    /// ([`Self::denoted_type`]). A name chain whose head names nothing
-    /// (`Undeclared`, `Undeclared[Int]`, `Undeclared.Inner`) is an unknown
-    /// type; a head that names a declaration keeps the builder's own
-    /// failure. Any other expression the compile-time builder cannot read
-    /// reports why the expression itself fails, as upstream's
-    /// `emitExprType` emits it as an ordinary expression before folding it:
-    /// `Int & Copyable` is an invalid `__and__` call, `M.f()` over an
-    /// undeclared `M` an unknown declaration.
+    /// ([`Self::denoted_type`]), its build failure read as
+    /// [`Self::annotation_failure`] reads it. Any other expression the
+    /// compile-time builder cannot read reports why the expression itself
+    /// fails, as upstream's `emitExprType` emits it as an ordinary
+    /// expression before folding it: `Int & Copyable` is an invalid
+    /// `__and__` call, `M.f()` over an undeclared `M` an unknown
+    /// declaration.
     pub(super) fn annotation_type(&self, expr: &Expr) -> Result<Ty, TypeError> {
-        self.denoted_type(expr, "type annotation")
-            .map_err(|error| match error {
-                TypeError::NotComptime(unbound) => match annotation_head(expr) {
-                    Some(head)
-                        if head == unbound
-                            || matches!(self.build_ct_name(head, Recording::Silent),
-                                Err(TypeError::UnknownType(name) | TypeError::NotComptime(name))
-                                    if name == head) =>
-                    {
-                        TypeError::UnknownType(head.to_string())
-                    }
-                    Some(head) if self.declares(head) => TypeError::NotComptime(unbound),
-                    _ => self
-                        .expression_error(expr)
-                        .unwrap_or(TypeError::NotComptime(unbound)),
-                },
-                error => error,
-            })
+        self.denotation(expr)
+            .map_err(|error| match self.annotation_failure(expr, error) {
+                AnnotationFailure::Reported(error) => error,
+                AnnotationFailure::Unread(unbound) => self
+                    .expression_error(expr)
+                    .unwrap_or(TypeError::NotComptime(unbound)),
+            })?
+            .ok_or_else(|| not_a_type("type annotation"))
     }
 
     /// Whether `name` is a declaration in scope: a variable, a `comptime`
@@ -3704,6 +3703,62 @@ impl Checker {
         self.infer_as_expression(expr).err()
     }
 
+    /// What `expr` builds to under the scopes open: `Some` type, or `None`
+    /// when it builds to a value. Builds silently: the caller records once
+    /// the type is accepted. A value that reads a type's member the type
+    /// lacks, or an alias left holed, answers as [`Self::denoted_type`]
+    /// reports it.
+    fn denotation(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
+        let built = self
+            .build_ct(expr, Recording::Silent)
+            .map_err(|error| self.missing_type_member(expr).unwrap_or(error))?;
+        if *built.meta() == MetaTy::Type {
+            return Ok(Some(mojito_types::types::DependentType::resolve(built)));
+        }
+        if let Some(ty) = self.holed_alias_type(expr)? {
+            return Ok(Some(ty));
+        }
+        self.missing_type_member(expr).map_or(Ok(None), Err)
+    }
+
+    /// The type a declaration's body evaluates to under its binders, or
+    /// `None` when it evaluates to a value, as upstream emits the body and
+    /// keeps a type result. Unlike an annotation's ([`Self::annotation_type`]),
+    /// a body the builder cannot read keeps the builder's failure: a value
+    /// binder is no runtime variable.
+    fn body_type(&self, body: &Expr) -> Result<Option<Ty>, TypeError> {
+        self.at_annotation_depth(body, || {
+            self.denotation(body)
+                .map_err(|error| match self.annotation_failure(body, error) {
+                    AnnotationFailure::Reported(error) => error,
+                    AnnotationFailure::Unread(unbound) => TypeError::NotComptime(unbound),
+                })
+        })
+    }
+
+    /// How a type expression's build failure reads. A name chain whose
+    /// head names nothing (`Undeclared`, `Undeclared[Int]`,
+    /// `Undeclared.Inner`) is an unknown type; a head that names a
+    /// declaration keeps the builder's own failure; any other unread name
+    /// is left to the caller.
+    fn annotation_failure(&self, expr: &Expr, error: TypeError) -> AnnotationFailure {
+        let TypeError::NotComptime(unbound) = error else {
+            return AnnotationFailure::Reported(error);
+        };
+        AnnotationFailure::Reported(match annotation_head(expr) {
+            Some(head)
+                if head == unbound
+                    || matches!(self.build_ct_name(head, Recording::Silent),
+                        Err(TypeError::UnknownType(name) | TypeError::NotComptime(name))
+                            if name == head) =>
+            {
+                TypeError::UnknownType(head.to_string())
+            }
+            Some(head) if self.declares(head) => TypeError::NotComptime(unbound),
+            _ => return AnnotationFailure::Unread(unbound),
+        })
+    }
+
     /// The rejection of `object.field` over a declared struct that has no
     /// member `field` yet: before the struct's members register (a trait's
     /// signature reading one) it is the read a deferred declaration waits
@@ -3978,9 +4033,18 @@ impl Checker {
                     .to_string(),
             )
         })??;
-        let operand = self.comptime_type_operand(subject)?.ok_or_else(|| {
-            TypeError::NotComptime("conforms_to takes a type as its first argument".to_string())
-        })?;
+        // A subject naming no declaration is the read's own failure, as
+        // upstream reports an unknown declaration.
+        let operand = self
+            .comptime_type_operand(subject)?
+            .ok_or_else(|| match &subject.kind {
+                ExprKind::Identifier(name) if !self.declares(name) => {
+                    TypeError::NotComptime(name.clone())
+                }
+                _ => TypeError::NotComptime(
+                    "conforms_to takes a type as its first argument".to_string(),
+                ),
+            })?;
         let context = &self.param_context;
         let Some(subject) = self.conformance_subject(&operand) else {
             let conforms = !mojito_types::conformance::reflects_no_conformance(&operand)
@@ -7268,6 +7332,16 @@ impl Checker {
     }
 }
 
+/// The rejection of a value where only a type is accepted, upstream's
+/// "expected a type, not a value".
+fn not_a_type(context: &str) -> TypeError {
+    TypeError::TypeMismatch {
+        expected: "a type".to_string(),
+        found: "a value".to_string(),
+        context: context.to_string(),
+    }
+}
+
 /// The conjuncts of a proposition: the operands of a canonical `and`, or the
 /// proposition itself.
 /// Whether [`Checker::eval_associated_ct`]'s builder records what a read
@@ -7515,40 +7589,6 @@ pub(super) enum TypeListReceiver {
     Derived(ParamExpr),
 }
 
-/// Whether a `comptime` body is spelled as a type, which
-/// `check_struct_associated` and a generic alias lower as a type template
-/// before trying a value: a bare name (`Element`, `Self`), a type
-/// application (`List[T]`, `Fixed[n]`), a function or generator type, a
-/// subscript of the struct's own member (`Self.values[idx]`) or of a
-/// compile-time construction, a member of `Self` or of a construction
-/// (`S[2]().H`), or another type's member or its application
-/// (`R.Of[Bool]`, `_MLIR.KGENParamListType[Self.type]`). A bracketed
-/// attribute (`__mlir_attr[...]`) is a compile-time value, whatever its
-/// type.
-pub(super) fn spells_type_body(value: &Expr) -> bool {
-    match &value.kind {
-        ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } | ExprKind::Identifier(_) => {
-            true
-        }
-        _ if let Some((name, _)) = value.bracket_application() => name != "__mlir_attr",
-        ExprKind::Index { object, .. }
-            if object.self_member().is_some() || matches!(object.kind, ExprKind::Call { .. }) =>
-        {
-            true
-        }
-        ExprKind::Member { object, .. }
-            if object.is_self_annotation()
-                || matches!(
-                    object.kind,
-                    ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-                ) =>
-        {
-            true
-        }
-        _ => spells_member_read(value),
-    }
-}
-
 /// The pack a `.values` projection names: `Ts.values` (a `def`'s own pack)
 /// or `Self.Ts.values` (a struct's pack inside its members).
 pub(super) fn pack_values_projection(expression: &Expr) -> Option<&str> {
@@ -7626,8 +7666,13 @@ fn raw_origin_value_unsupported(found: &str) -> TypeError {
     ))
 }
 
-fn unsupported_assoc_body() -> TypeError {
-    TypeError::Unsupported("a parameterized associated type must be defined by a type".to_string())
+/// How a type expression's build failure reads
+/// ([`Checker::annotation_failure`]).
+enum AnnotationFailure {
+    /// The failure the expression reports.
+    Reported(TypeError),
+    /// A name the builder could not read outside any name chain.
+    Unread(String),
 }
 
 /// Every parameter a predicate-alias body references must be declared, so an
@@ -8164,21 +8209,6 @@ fn spells_member_root(base: &Expr) -> bool {
     }
 }
 
-/// Whether `expr` reads a member through a type as an expression: the
-/// member (`M.E`, `S[Int].X`) or its application (`S[Int].Of[Bool]`,
-/// `M.Pair[A, B]`, `M.Buf[n]`), or an index into it.
-fn spells_member_read(expr: &Expr) -> bool {
-    let member = |object: &Expr| matches!(&object.kind, ExprKind::Member { object: base, .. } if spells_member_root(base));
-    match &expr.kind {
-        ExprKind::Member { object, .. } => spells_member_root(object),
-        ExprKind::Index { object, .. } => member(object),
-        ExprKind::MultiIndex { object, args } => {
-            member(object) && multi_subscript_param_args(args).is_some()
-        }
-        _ => false,
-    }
-}
-
 /// The member object and the one positional index of a subscript of a
 /// member (`Self.IteratorType[o]`, `values.Ts[i]`). `None` for any other
 /// expression.
@@ -8198,45 +8228,8 @@ fn member_subscript(expr: &Expr) -> Option<(&Expr, &Expr)> {
 
 #[cfg(test)]
 mod body_spelling_tests {
-    use super::super::expr_builders::{
-        add, call, conditional, ident, index, int, member, multi_index,
-    };
-    use super::{spells_member_root, spells_type_body};
-
-    #[test]
-    fn a_body_spelled_as_a_type_lowers_as_a_template() {
-        for body in [
-            ident("Int"),
-            ident("Self"),
-            index(ident("List"), ident("T")),
-            member(ident("Self"), "T"),
-            index(member(ident("Self"), "values"), int(0)),
-            index(call("TypeList", vec![]), int(1)),
-            member(call("S", vec![]), "H"),
-            member(ident("M"), "E"),
-            index(member(index(ident("S"), ident("Int")), "Of"), ident("Bool")),
-            member(
-                index(member(ident("C"), "IteratorType"), ident("o")),
-                "Element",
-            ),
-            member(call("type_of", vec![ident("x")]), "T"),
-        ] {
-            assert!(spells_type_body(&body), "{body:?}");
-        }
-    }
-
-    #[test]
-    fn a_value_body_is_no_type_spelling() {
-        for body in [
-            int(3),
-            call("f", vec![]),
-            add(ident("a"), ident("b")),
-            conditional(ident("Int"), ident("Int")),
-            index(ident("__mlir_attr"), ident("x")),
-        ] {
-            assert!(!spells_type_body(&body), "{body:?}");
-        }
-    }
+    use super::super::expr_builders::{call, ident, index, int, member, multi_index};
+    use super::spells_member_root;
 
     #[test]
     fn a_member_root_is_read_whatever_its_case() {

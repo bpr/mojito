@@ -3,6 +3,7 @@
 //! type lowering. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
 use super::comptime_validation::ComptimeTest;
+use super::constraints::MemberBodyError;
 use super::decorators::DecoratorSite;
 use super::indexing::SubscriptLValue;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -1019,13 +1020,6 @@ impl Checker {
             return Ok(());
         }
         self.check_generic_comptime_alias(name, type_params, ty.as_ref(), where_clauses, value)
-    }
-
-    /// Whether an alias body spells a type, or else evaluates to one (`Int
-    /// if c else String`), as upstream's alias declaration evaluates its
-    /// body and keeps a type result as the alias's type.
-    fn alias_body_is_type(&self, value: &Expr) -> bool {
-        super::constraints::spells_type_body(value) || self.denotes_type_value(value)
     }
 
     /// Whether `value` builds to a generator (`Twice`, `S.k` read
@@ -4744,14 +4738,9 @@ impl Checker {
             };
             constraints.push(constraint);
         }
-        // A body is a type expression, a Bool proposition (a predicate
-        // alias), or a compile-time value expression. Some Bool bodies parse
-        // as type applications (`IsTriviallyCopyable[T]` is an `Index` shape),
-        // so a body that parses as a type but fails to lower falls back to the
-        // predicate path; a genuine type error is reported when neither path
-        // accepts. A body that is not a proposition is a value, lowered to
-        // its template over the alias's binders, as is any body a value
-        // annotation declares.
+        // A body evaluates to a type, a Bool proposition (a predicate alias),
+        // or a compile-time value, lowered to its template over the alias's
+        // binders, as is any body a value annotation declares.
         // A generic origin value's attribute holds its binder, which only
         // an application closes.
         let origin_value = !decls.is_empty() && self.origin_values.contains_key(name);
@@ -4759,54 +4748,50 @@ impl Checker {
             if origin_value {
                 return Ok(AliasBody::OriginValue);
             }
-            Ok(match (self.alias_body_is_type(value), &declared) {
-                // A `Bool` annotation admits a proposition as well as a value.
-                (_, Some(declared)) => {
-                    match self.lower_parametric_value(&decls, value, Some(declared)) {
-                        Ok(body) => AliasBody::Value(body),
-                        Err(error) => match self.compile_predicate_alias_body(&decls, value) {
-                            Ok(constraint) if declared.kind().is_bool() => {
-                                AliasBody::Predicate(Box::new(constraint))
-                            }
-                            _ => return Err(error),
-                        },
-                    }
-                }
-                (true, None) => {
-                    match self.lower_parameterized_member(
-                        name,
-                        &decls,
-                        type_scope(&decls),
-                        type_params,
-                        value,
-                    ) {
-                        Ok(template) => AliasBody::Type(template),
-                        // A type-shaped body over a pack (`Ts.length`, `vs[0]`)
-                        // may still be a proposition or a value.
-                        Err(type_error) => match self.compile_predicate_alias_body(&decls, value) {
-                            Ok(constraint) => AliasBody::Predicate(Box::new(constraint)),
-                            Err(_) => AliasBody::Value(
-                                self.lower_parametric_value(&decls, value, None)
-                                    .map_err(|_| type_error)?,
-                            ),
-                        },
-                    }
-                }
-                (false, None) => match self.compile_predicate_alias_body(&decls, value) {
-                    Ok(constraint) => AliasBody::Predicate(Box::new(constraint)),
-                    Err(predicate_error) => {
-                        match self.lower_parametric_value(&decls, value, None) {
-                            Ok(body) => AliasBody::Value(body),
-                            Err(error)
-                                if matches!(&predicate_error, TypeError::Unsupported(message)
-                                if message.starts_with("a generic comptime alias must be defined by")) =>
-                            {
-                                return Err(error);
-                            }
-                            Err(_) => return Err(predicate_error),
+            // A `Bool` annotation admits a proposition as well as a value.
+            if let Some(declared) = &declared {
+                return match self.lower_parametric_value(&decls, value, Some(declared)) {
+                    Ok(body) => Ok(AliasBody::Value(body)),
+                    Err(error) => match self.compile_predicate_alias_body(&decls, value) {
+                        Ok(constraint) if declared.kind().is_bool() => {
+                            Ok(AliasBody::Predicate(Box::new(constraint)))
                         }
-                    }
-                },
+                        _ => Err(error),
+                    },
+                };
+            }
+            // Without one, the body is evaluated under its binders, and a
+            // type result is the alias's type, as upstream keeps it.
+            let type_error = match self.lower_parameterized_member(
+                name,
+                &decls,
+                type_scope(&decls),
+                type_params,
+                value,
+            ) {
+                Ok(template) => return Ok(AliasBody::Type(template)),
+                Err(MemberBodyError::NotAType) => None,
+                Err(MemberBodyError::Failed(type_error)) => Some(type_error),
+            };
+            let predicate_error = match self.compile_predicate_alias_body(&decls, value) {
+                Ok(constraint) => return Ok(AliasBody::Predicate(Box::new(constraint))),
+                Err(predicate_error) => predicate_error,
+            };
+            let value_error = match self.lower_parametric_value(&decls, value, None) {
+                Ok(body) => return Ok(AliasBody::Value(body)),
+                Err(value_error) => value_error,
+            };
+            // A body that did not evaluate (`Ts.length` may build only as a
+            // value) reports why; one that evaluated to a value reports why
+            // it is no proposition, unless no proposition was in question.
+            Err(match type_error {
+                Some(type_error) => type_error,
+                None if matches!(&predicate_error, TypeError::Unsupported(message)
+                    if message.starts_with("a generic comptime alias must be defined by")) =>
+                {
+                    value_error
+                }
+                None => predicate_error,
             })
         })();
         // A struct no bracket list can leave open as a generator alias (its

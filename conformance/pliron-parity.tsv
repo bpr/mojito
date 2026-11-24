@@ -180,6 +180,7 @@ assets/ok/comptime_assert_open_false_ends_path.mojo	main	exe-differential	saniti
 assets/ok/comptime_assert_proves_conformance.mojo	main	exe-differential	sanitized
 assets/ok/comptime_assert_proves_proposition.mojo	main	exe-differential	sanitized
 assets/ok/comptime_assert_static_string_message.mojo	main	exe-differential	sanitized
+assets/ok/comptime_body_type_by_value.mojo	main	exe-differential	sanitized
 assets/ok/comptime_call_callee_shapes.mojo	main	exe-differential	sanitized
 assets/ok/comptime_call_signature.mojo	main	exe-differential	sanitized
 assets/ok/comptime_collections.mojo	main	exe-differential	sanitized

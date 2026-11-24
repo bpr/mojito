@@ -617,22 +617,28 @@ impl Checker {
 
     /// The type `annotation` denotes, upstream's `emitExprType`: the one
     /// compile-time builder in the type context, where the `None` value is
-    /// the none type. An annotation that is not itself a name or a bracket
-    /// application opens a nesting level, as an application opens its own
-    /// ([`Self::applied_type`]), so only the outermost application may
-    /// leave its origin slots to inference.
+    /// the none type, at the annotation's nesting level
+    /// ([`Self::at_annotation_depth`]), so only the outermost application
+    /// may leave its origin slots to inference.
     pub(super) fn emit_expr_type(&self, annotation: &Expr) -> Result<Ty, TypeError> {
         if matches!(annotation.kind, ExprKind::None) {
             return Ok(Ty::none());
         }
+        self.at_annotation_depth(annotation, || self.annotation_type(annotation))
+    }
+
+    /// Run `emit` for the type expression `annotation` at its nesting
+    /// level: one that is not itself a name or a bracket application opens
+    /// a level, as an application opens its own ([`Self::applied_type`]).
+    pub(super) fn at_annotation_depth<R>(&self, annotation: &Expr, emit: impl FnOnce() -> R) -> R {
         if matches!(annotation.kind, ExprKind::Identifier(_))
             || annotation.bracket_application().is_some()
         {
-            return self.annotation_type(annotation);
+            return emit();
         }
         let depth = self.annotation_depth.get();
         self.annotation_depth.set(depth + 1);
-        let built = self.annotation_type(annotation);
+        let built = emit();
         self.annotation_depth.set(depth);
         built
     }

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameterized struct `comptime` member or generic alias body is
+  evaluated under its binders, and a type result is the type template, as
+  upstream keeps it (R2557), instead of being classified as a type by its
+  spelling (`spells_type_body` and `alias_body_is_type` are gone). A
+  member `comptime U[n: Int] = Int if n > 0 else Float64` now witnesses a
+  trait's `comptime U[n: Int]: AnyType`, where it was rejected as not
+  matching the requirement (`assets/ok/comptime_body_type_by_value.mojo`).
+  A body that evaluates to neither a type nor a value reports the name
+  the builder could not read, and a type requirement met by a value body
+  reports "expected a type, found a value".
+
 - An origin binder's `mut=` argument is built by the one builder, as any
   `Bool` parameter argument is (R2556), so a method binder
   `t: Origin[mut=Self.mut]` types as `Origin[mut=mut]` over the struct's

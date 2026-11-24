@@ -8449,6 +8449,26 @@ fn generic_comptime_aliases_reject_unsupported_shapes() {
 }
 
 #[test]
+fn a_comptime_body_that_does_not_evaluate_reports_its_unread_name() {
+    // The body is evaluated under its binders, as upstream evaluates it: a
+    // name it cannot read is reported, not a value binder read as a
+    // runtime variable.
+    let alias = "comptime U[n: Int] = Int if n > 0 else Undeclared\n\ndef main():\n    var x: U[1] = 1\n    print(x)\n";
+    let member = "struct S:\n    comptime U[n: Int] = Int if n > 0 else Undeclared\n\ndef main():\n    var x: S.U[1] = 1\n    print(x)\n";
+    for source in [alias, member] {
+        let error = check_with_std(source).expect_err("an undeclared branch is rejected");
+        assert!(
+            matches!(&error, TypeError::NotComptime(name) if name == "Undeclared"),
+            "{error:?}"
+        );
+    }
+    // A conditional whose branches are a type and a value is no type and
+    // no value, as at the pin.
+    let mixed = "comptime U[n: Int] = Int if n > 0 else 3\n\ndef main():\n    var x: U[1] = 1\n    print(x)\n";
+    check_with_std(mixed).expect_err("a type branch and a value branch do not unify");
+}
+
+#[test]
 fn parameterized_comptime_values_bind_at_each_application() {
     // A struct's value member over its pack and its value parameter, read
     // through a symbolic struct argument and by a later member.

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2561**.
+Next free ID: **R2564**.
 
 ## Ordered Work
 
@@ -10199,6 +10199,24 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2563 A type annotation the builder cannot read reports a value
+  binder or an undeclared name as an undefined variable**
+
+  `def f[n: Int](x: Int if n > 0 else Undeclared)` reports "Undefined
+  variable 'n'", where the pin reports "use of unknown declaration
+  'Undeclared'".
+  - Cause: `constraints.rs::annotation_type`'s `AnnotationFailure::Unread`
+    arm types the annotation as a runtime expression (`expression_error`),
+    in which a value binder is no variable.
+  - Probe: a field `var x: Int if Self.n > 0 else Undeclared` in
+    `struct S[n: Int]` reports "Undefined variable 'Undeclared'"; the pin
+    reports the unknown declaration.
+  - A parameterized `comptime` body already keeps the builder's failure
+    (`body_type`).
+  - Found while landing R2557 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -13428,28 +13446,45 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2557 A `comptime` member or generic alias body is classified as a
-  type by its spelling before it is lowered**
+- [ ] **R2561 A parameterized member whose `__mlir_attr` body is a type
+  lowers as a value template**
 
-  `constraints.rs::check_struct_associated` and
-  `statements.rs::check_generic_comptime_alias` choose between a type
-  template and a value body by `constraints.rs::spells_type_body`, a test
-  of the body's shape, where upstream evaluates the body under its binders
-  and keeps a type result as a type.
-  - Sites: the `as_type` and `spelled_as_type` choices in
-    `check_struct_associated`, and `statements.rs::alias_body_is_type`.
-  - Probe: `comptime U[n: Int] = Int if n > 0 else Float64`, as a struct
-    member and as a module alias, runs as at the pin, but as a
-    `MemberTemplate::Value` whose result is a type, a second template kind
-    for one body upstream lowers one way.
-  - Lever: try `lower_parameterized_member` under the binders for every
-    body, keep a metatype result as the type template, and fall back to
-    value lowering; choose the reported error by which lowering got
-    furthest, not by the spelling.
-  - Risk: `lower_parameterized_member` records attributes and
-    `type_operand` facts on success, so a body tried as a type and kept as
-    a value must leave no records.
-  - Found while landing R2550 (2026-11-23).
+  `TypeList.__getitem_param__` and `TypeList._get_type_at_index`
+  (`stdlib/std/builtin/variadics.mojo`) evaluate to a type at the pin, but
+  stay `MemberTemplate::Value`, a second template kind that
+  `type_resolution.rs::type_valued_member` reads in type position.
+  - Cause: `constraints.rs::lower_parameterized_member`'s
+    `parameter_application` arm sends `__mlir_attr[...]` to `applied_type`,
+    which answers `UnknownType("__mlir_attr")` before the builder sees the
+    body.
+  - Probe: `TypeList.of[Trait=AnyType, Int, Bool].__getitem_param__[1]` as
+    an annotation; trace `check_struct_associated`'s template kind.
+  - Probe: a failing `__mlir_attr` member body whose value lowering also
+    fails reports "unknown type '__mlir_attr'" instead of the value error.
+  - Lever: fall back to `body_type` when `applied_type` names the head
+    unknown, as `named_type` falls back to `value_headed_type`.
+  - Then move `type_valued_member`'s `SIMDLength` conversion
+    (`simd_length_of_lanes`) into `resolve_parameterized_member`'s value
+    binding, and delete `type_valued_member` and the
+    `MemberTemplate::Value` type-position arm.
+  - Found while landing R2557 (2026-11-24).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2562 A parameter-free module `comptime` is registered as a type
+  alias by its spelling**
+
+  `statements.rs::register_module_alias` decides whether
+  `comptime X = body` is a type alias by `subscript_application`,
+  `member_application`, `is_type_expression`, and then `denotes_type` /
+  `denotes_type_value`, where upstream evaluates the body and keeps a type
+  result.
+  - Lever: after the value-constant, function, generator, and reflection
+    exclusions, ask `lower_parameterized_member`'s typed outcome
+    (`MemberBodyError::NotAType`) as `check_generic_comptime_alias` does.
+  - Probe: `comptime X = Int if True else Float64`, read as `var a: X = 3`,
+    runs at the pin; trace which registration path takes it.
+  - Found while landing R2557 (2026-11-24).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
