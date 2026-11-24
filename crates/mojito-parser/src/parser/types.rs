@@ -519,7 +519,7 @@ fn sentinel_error(at: &Expr) -> ParseError {
 /// A type-parameter bound's expression, classified into the fields of
 /// [`mojito_ast::ast::TypeParam`].
 struct TypeParamBound {
-    bounds: Vec<String>,
+    bounds: Vec<Expr>,
     value_type: Option<Expr>,
     callable_bound: Option<Expr>,
     origin_mutability: Option<Expr>,
@@ -527,14 +527,14 @@ struct TypeParamBound {
 
 /// Classifies a type-parameter bound by its expression shape:
 ///
-/// - an `&` composition is a list of trait names with at most one function
-///   type (the callable bound), in any position;
+/// - an `&` composition is its members, as expressions the check requires
+///   to be traits, with at most one function type (the callable bound), in
+///   any position;
 /// - a lone function type is the callable bound;
 /// - a lone name (a trait, `Self`, an origin alias) is the one bound;
 /// - `Origin[mut=e]` is an origin binder of mutability `e`;
-/// - any other type is the parameter's value type, beside its spelled head.
+/// - any other type is the parameter's value type.
 fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
-    const FUNCTION_TYPE: &str = "<function type>";
     let mut members = Vec::new();
     bound_members(expr, &mut members);
     let mut bound = TypeParamBound {
@@ -545,20 +545,19 @@ fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
     };
     if let [member] = members.as_slice() {
         if matches!(member.kind, ExprKind::FunctionType(_)) {
-            bound.bounds.push(FUNCTION_TYPE.to_string());
             bound.callable_bound = Some((*member).clone());
             return Ok(bound);
         }
         reject_sentinel(member)?;
-        if let ExprKind::Identifier(name) = &member.kind {
-            bound.bounds.push(name.clone());
+        let named = |name: &str| Expr::new(ExprKind::Identifier(name.to_string()), member.span);
+        if let ExprKind::Identifier(_) = &member.kind {
+            bound.bounds.push((*member).clone());
         } else if let Some(mutability) = origin_binder_mutability(member) {
-            bound.bounds.push("Origin".to_string());
+            bound.bounds.push(named("Origin"));
             bound.origin_mutability = Some(mutability);
         } else if let Some(name) = empty_application(member) {
-            bound.bounds.push(name.to_string());
+            bound.bounds.push(named(name));
         } else {
-            bound.bounds.push(bound_spelling(member));
             bound.value_type = Some((*member).clone());
         }
         return Ok(bound);
@@ -571,22 +570,14 @@ fn type_param_bound(expr: &Expr) -> Result<TypeParamBound, ParseError> {
                 )
                 .at(member.span));
             }
-            bound.bounds.push(FUNCTION_TYPE.to_string());
             bound.callable_bound = Some(member.clone());
             continue;
         }
         reject_sentinel(member)?;
-        let name = match &member.kind {
-            ExprKind::Identifier(name) if name != "Self" => Some(name.as_str()),
-            _ => empty_application(member),
-        };
-        let Some(name) = name else {
-            return Err(ParseError::Message(
-                "expected a trait name in a type-parameter bound composition".to_string(),
-            )
-            .at(member.span));
-        };
-        bound.bounds.push(name.to_string());
+        bound.bounds.push(match empty_application(member) {
+            Some(name) => Expr::new(ExprKind::Identifier(name.to_string()), member.span),
+            None => member.clone(),
+        });
     }
     Ok(bound)
 }
@@ -623,23 +614,5 @@ fn origin_binder_mutability(member: &Expr) -> Option<Expr> {
             }
         }
         _ => None,
-    }
-}
-
-/// The spelled head recorded beside a value type: `Self.NAME`, the root
-/// name of a qualified or applied type, `type_of`, `__generator_type`, or
-/// `None`.
-fn bound_spelling(expr: &Expr) -> String {
-    if let Some(field) = expr.self_member() {
-        return format!("Self.{field}");
-    }
-    match &expr.kind {
-        ExprKind::Identifier(name) | ExprKind::Call { name, .. } => name.clone(),
-        ExprKind::Member { object, .. }
-        | ExprKind::Index { object, .. }
-        | ExprKind::MultiIndex { object, .. } => bound_spelling(object),
-        ExprKind::GeneratorType { .. } => "__generator_type".to_string(),
-        ExprKind::None => "None".to_string(),
-        _ => "<type expression>".to_string(),
     }
 }

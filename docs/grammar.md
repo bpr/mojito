@@ -445,18 +445,23 @@ A bound is one expression, as upstream parses it (`|`, `==`, `not`, and a
 ternary are inside it), converted in the type context as an annotation is
 and classified:
 
-- an `&` composition (however parenthesized) of trait names, with at most
-  one function type in any position, is the bound list and its callable
-  bound (`T: (Copyable & Movable)`, `F: def(Int) & Copyable`, `F: (def(Int)
-  -> Int) & ImplicitlyCopyable`); a second function type is the pin's
-  "trait composition must not contain more than one closure type", and any
-  other member "expected a trait name in a type-parameter bound
-  composition";
+- an `&` composition (however parenthesized), with at most one function
+  type in any position, is the bound's members, each kept as its
+  expression, and its callable bound (`T: (Copyable & Movable)`, `T:
+  m.Greet & Copyable`, `F: def(Int) & Copyable`, `F: (def(Int) -> Int) &
+  ImplicitlyCopyable`); a second function type is the pin's "trait
+  composition must not contain more than one closure type"; the check
+  requires every other member to be a trait, and a member that is not is
+  the left operand's missing `__and__`, as at the pin (`x: List[Int] &
+  Copyable` is "'AnyStruct[List[Int]]' does not implement the '__and__'
+  method");
 - a lone function type is the callable bound;
 - a lone name (a trait, `Self`, `ImmOrigin`) is the one bound;
 - `Origin[mut=e]` is an origin binder of mutability `e`;
 - any other type (`Self.T`, `M.A`, `SIMD[...]`, `type_of(x)`, `None`, a
-  generator type) is the value type, beside its spelled head.
+  generator type) is the value type. Linking resolves a module-qualified
+  name (`T: m.Greet`, `v: m.V`) to the declaration it names, so the check
+  classifies it by what it resolves to, as `from m import Greet` spells it.
 
 An expression no type converts from is "expected a type, found an
 expression".

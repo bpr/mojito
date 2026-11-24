@@ -913,7 +913,7 @@ fn parses_generic_struct_header_and_self_param_field() {
             type_params: vec![TypeParam {
                 value_type: None,
                 name: "T".into(),
-                bounds: vec!["Copyable".into(), "Movable".into()],
+                bounds: vec![*ident("Copyable"), *ident("Movable")],
                 callable_bound: None,
                 origin_mutability: None,
                 infer_only: false,
@@ -963,7 +963,7 @@ fn parses_generic_def_with_type_param_signature() {
             type_params: vec![TypeParam {
                 value_type: None,
                 name: "T".into(),
-                bounds: vec!["AnyType".into()],
+                bounds: vec![*ident("AnyType")],
                 callable_bound: None,
                 origin_mutability: None,
                 infer_only: false,
@@ -1198,7 +1198,7 @@ fn parses_a_method_value_parameter_typed_by_self_param() {
     };
     let parameter = &methods[0].type_params[0];
     assert_eq!(parameter.name, "v");
-    assert_eq!(parameter.bounds, ["Self.T"]);
+    assert_eq!(parameter.spelled_head().as_deref(), Some("Self.T"));
     assert_eq!(parameter.value_type, Some(parse_expr("Self.T")));
 }
 
@@ -1365,13 +1365,13 @@ fn parses_trait_valued_parameters_spelled_type_of() {
     let StmtKind::Struct { type_params, .. } = &statements[0].kind else {
         panic!("expected struct");
     };
-    assert_eq!(type_params[0].bounds, ["type_of"]);
+    assert_eq!(type_params[0].spelled_head().as_deref(), Some("type_of"));
     assert!(type_params[0].infer_only);
     assert_eq!(
         type_params[0].value_type,
         Some(parse_expr("type_of(Copyable & Hashable)"))
     );
-    assert_eq!(type_params[1].bounds, ["Int"]);
+    assert_eq!(type_params[1].bound_names().collect::<Vec<_>>(), ["Int"]);
     let StmtKind::Def {
         type_params, body, ..
     } = &statements[1].kind
@@ -1404,7 +1404,10 @@ fn parses_generator_types_as_parameter_types_and_alias_bodies() {
     let StmtKind::Def { type_params, .. } = &statements[1].kind else {
         panic!("expected def");
     };
-    assert_eq!(type_params[0].bounds, ["__generator_type"]);
+    assert_eq!(
+        type_params[0].spelled_head().as_deref(),
+        Some("__generator_type")
+    );
     let (params, result) = generator_type(type_params[0].value_type.as_ref().unwrap());
     assert_eq!(params.len(), 2);
     assert_eq!(result, *ident("T"));
@@ -1422,7 +1425,10 @@ fn parses_a_trait_composition_as_a_generator_types_result() {
         panic!("expected def");
     };
     assert_eq!(type_params.len(), 2);
-    assert_eq!(type_params[0].bounds, ["__generator_type"]);
+    assert_eq!(
+        type_params[0].spelled_head().as_deref(),
+        Some("__generator_type")
+    );
     let (_, result) = generator_type(type_params[0].value_type.as_ref().unwrap());
     assert_eq!(result, parse_expr("Copyable & Defaultable"));
 }
@@ -1467,7 +1473,10 @@ fn parses_a_bare_type_of_bound_as_a_bound_name() {
     let StmtKind::Def { type_params, .. } = &statements[0].kind else {
         panic!("expected def");
     };
-    assert_eq!(type_params[0].bounds, ["type_of"]);
+    assert_eq!(
+        type_params[0].bound_names().collect::<Vec<_>>(),
+        ["type_of"]
+    );
     assert_eq!(type_params[0].value_type, None);
 }
 
@@ -1932,7 +1941,7 @@ fn parses_value_parameter_header() {
                 &vec![TypeParam {
                     value_type: None,
                     name: "size".into(),
-                    bounds: vec!["Int".into()],
+                    bounds: vec![*ident("Int")],
                     callable_bound: None,
                     origin_mutability: None,
                     infer_only: false,
@@ -3940,7 +3949,10 @@ fn parses_origin_unions_parameters_and_reference_bindings() {
     };
     assert_eq!(type_params[0].name, "is_mutable");
     assert_eq!(type_params[1].name, "origin");
-    assert_eq!(type_params[1].bounds, vec!["Origin"]);
+    assert_eq!(
+        type_params[1].bound_names().collect::<Vec<_>>(),
+        vec!["Origin"]
+    );
     assert!(type_params[0].infer_only);
     assert!(!type_params[1].infer_only);
     assert!(type_params[1].origin_mutability.is_some());
@@ -3963,12 +3975,18 @@ fn records_imm_and_mut_origin_binders_as_spelled() {
     let StmtKind::Struct { type_params, .. } = &stmts[0].kind else {
         panic!("expected a struct");
     };
-    assert_eq!(type_params[1].bounds, vec!["ImmOrigin"]);
+    assert_eq!(
+        type_params[1].bound_names().collect::<Vec<_>>(),
+        vec!["ImmOrigin"]
+    );
     assert!(type_params[1].origin_mutability.is_none());
     let StmtKind::Def { type_params, .. } = &stmts[1].kind else {
         panic!("expected a def");
     };
-    assert_eq!(type_params[0].bounds, vec!["MutOrigin"]);
+    assert_eq!(
+        type_params[0].bound_names().collect::<Vec<_>>(),
+        vec!["MutOrigin"]
+    );
     assert!(type_params[0].origin_mutability.is_none());
 }
 
@@ -4679,7 +4697,7 @@ fn retains_callable_parameter_bounds_and_thin_effects() {
         panic!("expected a def");
     };
     assert_eq!(type_params.len(), 2);
-    assert_eq!(type_params[0].bounds, vec!["<function type>"]);
+    assert!(type_params[0].bounds.is_empty());
     let callable = function_type(type_params[0].callable_bound.as_ref().unwrap());
     assert!(!callable.thin);
     assert_eq!(callable.ret, *ident("Int"));
@@ -4697,8 +4715,8 @@ fn composes_a_function_type_after_trait_bounds() {
         panic!("expected a def");
     };
     assert_eq!(
-        type_params[0].bounds,
-        vec!["ImplicitlyCopyable", "RegisterPassable", "<function type>"]
+        type_params[0].bound_names().collect::<Vec<_>>(),
+        vec!["ImplicitlyCopyable", "RegisterPassable"]
     );
     assert!(type_params[0].infer_only);
     let callable = function_type(type_params[0].callable_bound.as_ref().unwrap());
@@ -4754,9 +4772,16 @@ fn parses_a_type_parameter_bound_as_one_expression() {
         };
         type_params[0].clone()
     };
-    assert_eq!(params("def f[x: (Int)]():\n    pass\n").bounds, ["Int"]);
     assert_eq!(
-        params("def f[T: (Copyable & Movable)]():\n    pass\n").bounds,
+        params("def f[x: (Int)]():\n    pass\n")
+            .bound_names()
+            .collect::<Vec<_>>(),
+        ["Int"]
+    );
+    assert_eq!(
+        params("def f[T: (Copyable & Movable)]():\n    pass\n")
+            .bound_names()
+            .collect::<Vec<_>>(),
         ["Copyable", "Movable"]
     );
     assert_eq!(
@@ -4764,7 +4789,7 @@ fn parses_a_type_parameter_bound_as_one_expression() {
         Some(Expr::from(ExprKind::None))
     );
     let callable = params("def f[F: def(Int) & Copyable]():\n    pass\n");
-    assert_eq!(callable.bounds, ["<function type>", "Copyable"]);
+    assert_eq!(callable.bound_names().collect::<Vec<_>>(), ["Copyable"]);
     assert!(matches!(
         callable.callable_bound.as_ref().map(|bound| &bound.kind),
         Some(ExprKind::FunctionType(_))
@@ -4773,10 +4798,10 @@ fn parses_a_type_parameter_bound_as_one_expression() {
     let StmtKind::Def { type_params, .. } = &statements[0].kind else {
         panic!("expected a def");
     };
-    assert_eq!(type_params[1].bounds, ["Origin"]);
+    assert_eq!(type_params[1].bound_names().collect::<Vec<_>>(), ["Origin"]);
     assert!(type_params[1].origin_mutability.is_some());
     let alias = params("def f[o: ImmOrigin]():\n    pass\n");
-    assert_eq!(alias.bounds, ["ImmOrigin"]);
+    assert_eq!(alias.bound_names().collect::<Vec<_>>(), ["ImmOrigin"]);
     assert_eq!(alias.origin_mutability, None);
 }
 
@@ -4810,20 +4835,29 @@ fn a_type_parameter_bound_no_spelling_converts_is_its_expression() {
 }
 
 #[test]
-fn rejects_a_type_parameter_bound_composition_of_no_traits() {
-    for (source, message) in [
-        (
-            "def f[x: List[Int] & Copyable]():\n    pass\n",
-            "expected a trait name in a type-parameter bound composition",
-        ),
-        (
-            "def f[F: def(Int) & def(Float64)]():\n    pass\n",
-            "trait composition must not contain more than one closure type",
-        ),
-    ] {
-        let error = mojito::parse(source).expect_err(source);
-        assert!(error.to_string().contains(message), "{source}: {error}");
-    }
+fn keeps_every_type_parameter_bound_composition_member() {
+    // Each `&` member is the expression upstream evaluates; the check, not
+    // the parser, requires it to be a trait.
+    let statements = parse("def f[x: List[Int] & Copyable, T: m.Greet & Copyable]():\n    pass\n");
+    let StmtKind::Def { type_params, .. } = &statements[0].kind else {
+        panic!("expected a def");
+    };
+    assert_eq!(
+        type_params[0].bounds,
+        [parse_expr("List[Int]"), *ident("Copyable")]
+    );
+    assert_eq!(
+        type_params[1].bounds,
+        [parse_expr("m.Greet"), *ident("Copyable")]
+    );
+    let source = "def f[F: def(Int) & def(Float64)]():\n    pass\n";
+    let error = mojito::parse(source).expect_err(source);
+    assert!(
+        error
+            .to_string()
+            .contains("trait composition must not contain more than one closure type"),
+        "{source}: {error}"
+    );
 }
 
 #[test]
@@ -5196,7 +5230,7 @@ fn normalizes_del_and_keeps_trait_spellings_at_parse_time() {
         panic!("expected a def");
     };
     assert_eq!(
-        type_params[0].bounds,
+        type_params[0].bound_names().collect::<Vec<_>>(),
         vec!["Movable", "ImplicitlyDeletable"]
     );
 }
@@ -5253,7 +5287,7 @@ fn parses_fully_explicit_lambda() {
             vec![TypeParam {
                 value_type: None,
                 name: "N".into(),
-                bounds: vec!["Int".into()],
+                bounds: vec![*ident("Int")],
                 callable_bound: None,
                 origin_mutability: None,
                 infer_only: false,

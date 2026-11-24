@@ -514,9 +514,16 @@ fn requirement_type(requirement: &CtMemberReq) -> String {
             }
             let params = params
                 .iter()
-                .map(|param| match param.bounds.as_slice() {
-                    [] => param.name.clone(),
-                    bounds => format!("{}: {}", param.name, bounds.join(" & ")),
+                .map(|param| {
+                    let bound = match param.spelled_head() {
+                        Some(head) if param.value_type.is_some() => head.into_owned(),
+                        _ => param.bound_names().collect::<Vec<_>>().join(" & "),
+                    };
+                    if bound.is_empty() {
+                        param.name.clone()
+                    } else {
+                        format!("{}: {bound}", param.name)
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join(", ");

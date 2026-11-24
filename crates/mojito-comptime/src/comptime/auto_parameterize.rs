@@ -203,10 +203,17 @@ impl<'a> Declared<'a> {
                 (Some(annotation), _) => {
                     self.rebind(annotation, &parameter.name, &in_scope, &mut binders);
                 }
-                (None, [only]) => {
-                    let spelled = Expr::new(ExprKind::Identifier(only.clone()), span);
+                (
+                    None,
+                    [
+                        spelled @ Expr {
+                            kind: ExprKind::Identifier(_),
+                            ..
+                        },
+                    ],
+                ) => {
                     parameter.value_type =
-                        self.bind(&spelled, &parameter.name, &in_scope, &mut binders, span);
+                        self.bind(spelled, &parameter.name, &in_scope, &mut binders, span);
                 }
                 _ => {}
             }
@@ -559,12 +566,17 @@ fn binder_for(
     let bounds = parameter
         .bounds
         .iter()
-        .map(|bound| match arguments.get(bound) {
-            Some(ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(argument),
-                ..
-            })) => argument.clone(),
-            _ => bound.clone(),
+        .map(|bound| {
+            let ExprKind::Identifier(name) = &bound.kind else {
+                return bound.clone();
+            };
+            match arguments.get(name) {
+                Some(ParamArg::Value(Expr {
+                    kind: ExprKind::Identifier(argument),
+                    ..
+                })) => Expr::new(ExprKind::Identifier(argument.clone()), bound.span),
+                _ => bound.clone(),
+            }
         })
         .collect();
     TypeParam {

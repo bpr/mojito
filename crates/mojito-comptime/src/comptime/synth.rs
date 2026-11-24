@@ -445,12 +445,12 @@ pub(super) fn fold_simd_alias_bounds(
         };
         for parameter in type_params {
             if parameter.value_type.is_none()
-                && let [only] = parameter.bounds.as_slice()
+                && let Some(only) = parameter.lone_bound()
                 && let Some(args) = own.get(only).cloned().or_else(|| imported(only))
                 && let Some(annotation) = mojito_ast::ast::named_subscript("SIMD", &args, span)
             {
                 parameter.value_type = Some(annotation);
-                parameter.bounds = vec!["SIMD".to_string()];
+                parameter.bounds = Vec::new();
             }
         }
     }
@@ -632,15 +632,14 @@ impl KgenTypeFold<'_> {
                     _ => None,
                 }
             }
-            None => match parameter.bounds.as_slice() {
-                [only] => self.module_aliases.get(only).cloned().or_else(|| {
+            None => parameter.lone_bound().and_then(|only| {
+                self.module_aliases.get(only).cloned().or_else(|| {
                     self.installed?
                         .type_alias(only)
                         .filter(|ty| matches!(ty.kind(), TyKind::TypeType | TyKind::KgenString))
                         .cloned()
-                }),
-                _ => None,
-            },
+                })
+            }),
         }
     }
 }
@@ -649,8 +648,7 @@ impl mojito_ast::visit::MutVisitor for KgenTypeFold<'_> {
     fn visit_type_param_mut(&mut self, parameter: &mut TypeParam) {
         if parameter.value_type.is_none()
             && parameter
-                .bounds
-                .iter()
+                .bound_names()
                 .any(|bound| bound == TYPE_OF_ALL_TYPES)
         {
             self.error.get_or_insert_with(|| {
@@ -662,8 +660,14 @@ impl mojito_ast::visit::MutVisitor for KgenTypeFold<'_> {
         }
         match self.denoted(parameter).as_ref().map(Ty::kind) {
             Some(TyKind::TypeType) => {
-                parameter.value_type = None;
-                parameter.bounds = vec![TYPE_OF_ALL_TYPES.to_string()];
+                let span = parameter
+                    .value_type
+                    .take()
+                    .map_or(self.span, |annotation| annotation.span);
+                parameter.bounds = vec![Expr::new(
+                    ExprKind::Identifier(TYPE_OF_ALL_TYPES.to_string()),
+                    span,
+                )];
             }
             Some(TyKind::KgenString) => {
                 let span = parameter
@@ -671,7 +675,7 @@ impl mojito_ast::visit::MutVisitor for KgenTypeFold<'_> {
                     .as_ref()
                     .map_or(self.span, |annotation| annotation.span);
                 parameter.value_type = Some(kgen_string_source_type(span));
-                parameter.bounds = vec!["__mlir_type".to_string()];
+                parameter.bounds = Vec::new();
             }
             _ => {}
         }

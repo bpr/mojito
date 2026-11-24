@@ -173,10 +173,9 @@ pub(super) fn binder_view(binder: &mojito_ast::ast::TypeParam) -> Option<Annotat
             }],
         ));
     }
-    match binder.bounds.as_slice() {
-        [only] => Some(AnnotationView::Named(only.clone(), Vec::new())),
-        _ => None,
-    }
+    binder
+        .lone_bound()
+        .map(|only| AnnotationView::Named(only.to_string(), Vec::new()))
 }
 
 /// A trait `comptime` member's annotation viewed in its type context,
@@ -1883,7 +1882,7 @@ impl Checker {
         }
         // A `!kgen.type` binder takes a trait as a type
         // (`_MLIR.KGENParamListType[Tr]`).
-        if matches!(param.bounds.as_slice(), [only] if only == TYPE_OF_ALL_TYPES)
+        if param.lone_bound() == Some(TYPE_OF_ALL_TYPES)
             && let Some(ty) = self.trait_type_arg(argument)
         {
             return ty.map(TyArg::Ty);
@@ -5782,7 +5781,9 @@ fn type_is_symbolic(ty: &Ty) -> bool {
 /// Whether a parameterized member's own parameter is a value (`n: Int`).
 pub(super) fn is_value_parameter(param: &mojito_ast::ast::TypeParam) -> bool {
     param.value_type.is_some()
-        || matches!(param.bounds.as_slice(), [only] if scalar_type_name(only).is_some())
+        || param
+            .lone_bound()
+            .is_some_and(|only| scalar_type_name(only).is_some())
 }
 
 /// The literal address space `N` an MLIR type spelling's text ends with
@@ -6439,7 +6440,10 @@ mod annotation_view_tests {
     fn a_binder_views_its_value_type_origin_or_lone_bound() {
         let binder = |bounds: &[&str], value_type, origin_mutability| TypeParam {
             name: "x".into(),
-            bounds: bounds.iter().map(|bound| (*bound).to_string()).collect(),
+            bounds: bounds
+                .iter()
+                .map(|bound| Expr::from(ExprKind::Identifier((*bound).to_string())))
+                .collect(),
             value_type,
             callable_bound: None,
             origin_mutability,

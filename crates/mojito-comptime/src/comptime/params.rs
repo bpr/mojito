@@ -59,27 +59,27 @@ pub(super) fn classify_ct_param(
     {
         return Some(value(TyKind::ParamList(element).into()));
     }
-    if let [only] = tp.bounds.as_slice()
+    if let Some(only) = tp.lone_bound()
         && let Some(ty) =
             ct_value_param_type(only).or_else(|| sibling_type_binder(tp, only, siblings, owner))
     {
         return Some(value(ty));
     }
     let trait_param = tp
-        .bounds
-        .iter()
+        .bound_names()
         .find_map(|bound| sibling_trait_binder(tp, bound, siblings, owner));
     let bounds = match &trait_param {
         Some((binder, declared)) => declared
             .iter()
-            .chain(tp.bounds.iter().filter(|bound| **bound != *binder.name))
-            .fold(Vec::new(), |mut bounds, bound| {
-                if !bounds.contains(bound) {
-                    bounds.push(bound.clone());
+            .map(String::as_str)
+            .chain(tp.bound_names().filter(|bound| **bound != *binder.name))
+            .fold(Vec::new(), |mut bounds: Vec<String>, bound| {
+                if !bounds.iter().any(|known| known == bound) {
+                    bounds.push(bound.to_string());
                 }
                 bounds
             }),
-        None => tp.bounds.clone(),
+        None => tp.bound_names().map(str::to_string).collect(),
     };
     Some(ParamDecl::Type {
         id: elaborated_binder(tp, siblings, owner),

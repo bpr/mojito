@@ -625,9 +625,9 @@ impl Checker {
             || params.iter().any(|param| {
                 let value_type = param.value_type.as_ref().and_then(annotation_view);
                 let named = match &value_type {
-                    Some(AnnotationView::Named(name, _)) => Some(name),
+                    Some(AnnotationView::Named(name, _)) => Some(name.as_str()),
                     Some(_) => None,
-                    None => param.bounds.first().filter(|_| param.bounds.len() == 1),
+                    None => param.lone_bound(),
                 };
                 named.is_some_and(|name| {
                     let unregistered_struct = self.declared_structs.contains(name)

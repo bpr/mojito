@@ -318,6 +318,41 @@ fn linking_renames_names_inside_a_generator_type() {
 }
 
 #[test]
+fn a_module_qualified_trait_bound_binds_a_type_parameter() {
+    // `m.Greet` names the trait as `from m import Greet` does, lone or
+    // composed in either order, and `m.V` a struct-typed value parameter.
+    let d = TempDir::new();
+    d.write(
+        "m.mojo",
+        "trait Greet:\n    def greet(self) -> Int: ...\n\n\
+         @fieldwise_init\nstruct G(Greet, Copyable, Movable):\n    var x: Int\n\
+         \x20   def greet(self) -> Int:\n        return self.x\n\n\
+         @fieldwise_init\nstruct V(ImplicitlyCopyable, Movable):\n    var n: Int\n",
+    );
+    for (name, import, spelled) in [
+        ("qualified.mojo", "import m\nfrom m import G", "m."),
+        ("selective.mojo", "from m import Greet, G, V", ""),
+    ] {
+        let main = d.write(
+            name,
+            &format!(
+                "{import}\nimport m as mm\n\n\
+                 def lone[T: {spelled}Greet](t: T) -> Int:\n    return t.greet()\n\n\
+                 def left[T: {spelled}Greet & Copyable](t: T) -> Int:\n    return t.greet()\n\n\
+                 def right[T: Copyable & {spelled}Greet](t: T) -> Int:\n    return t.greet()\n\n\
+                 struct W[T: {spelled}Greet & Copyable]:\n    pass\n\n\
+                 def value[v: {spelled}V]() -> Int:\n    return v.n\n\n\
+                 def bounded[T: {spelled}Greet](t: T) -> Int where conforms_to(T, mm.Greet):\n\
+                 \x20   return t.greet()\n\n\
+                 def main():\n    print(lone(G(1)), left(G(2)), right(G(3)))\n\
+                 \x20   print(value[mm.V(4)](), bounded(G(5)))\n"
+            ),
+        );
+        assert_eq!(run(&main).unwrap(), "1 2 3\n4 5\n", "{import}");
+    }
+}
+
+#[test]
 fn transitive_and_dotted_imports() {
     let d = TempDir::new();
     d.write(

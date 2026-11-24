@@ -2048,16 +2048,23 @@ impl<'p> Linker<'p> {
     }
 }
 
+/// Rewrites a type parameter's expressions. A lone value type that is a
+/// module-qualified name (`T: m.Greet`) the namespace resolves to a
+/// declaration's identity is that name, as `from m import Greet` spells it,
+/// and the check classifies the bound by what it names.
 fn rewrite_type_param(
     parameter: &mut mojito_ast::ast::TypeParam,
     names: &HashMap<String, String>,
     namespaces: &HashMap<String, HashMap<String, String>>,
 ) {
     for bound in &mut parameter.bounds {
-        rename(bound, names);
+        rewrite_expr(bound, names, namespaces);
     }
     if let Some(ty) = &mut parameter.value_type {
         rewrite_expr(ty, names, namespaces);
+        if matches!(ty.kind, ExprKind::Identifier(_)) {
+            parameter.bounds = parameter.value_type.take().into_iter().collect();
+        }
     }
     if let Some(ty) = &mut parameter.callable_bound {
         rewrite_expr(ty, names, namespaces);

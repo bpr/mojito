@@ -1806,7 +1806,7 @@ fn a_kgen_type_parameter_prepares_as_a_type_of_all_types_binder() {
     let src = "comptime KT = __mlir_type.`!kgen.type`\n\nstruct M:\n    comptime K = __mlir_type.`!kgen.type`\n    comptime L[e: Self.K] = __mlir_type[`!kgen.param_list<`, e, `>`]\n\ndef f[A: __mlir_type.`!kgen.type`, B: KT, C: M.K, n: Int]():\n    pass\n";
     let prepared = mojito::comptime::prepare(parse(src).unwrap()).unwrap();
     let binder = |parameter: &mojito::ast::TypeParam| {
-        parameter.value_type.is_none() && parameter.bounds == ["__TypeOfAllTypes"]
+        parameter.value_type.is_none() && parameter.lone_bound() == Some("__TypeOfAllTypes")
     };
     let function = prepared
         .iter()
@@ -1863,7 +1863,7 @@ fn a_kgen_string_parameter_prepares_as_a_value_binder_of_its_spelling() {
         function.iter().map(kgen_string).collect::<Vec<_>>(),
         [true, true, true, true, false]
     );
-    assert_eq!(function[4].bounds, ["__TypeOfAllTypes"]);
+    assert_eq!(function[4].lone_bound(), Some("__TypeOfAllTypes"));
 }
 
 #[test]
@@ -2024,9 +2024,9 @@ fn prepare_keeps_an_origin_alias_bound_as_spelled() {
             _ => None,
         })
         .expect("the def");
-    assert_eq!(type_params[0].bounds, vec!["P"]);
-    assert_eq!(type_params[1].bounds, vec!["B"]);
-    assert_eq!(type_params[2].bounds, vec!["Copyable"]);
+    assert_eq!(type_params[0].lone_bound(), Some("P"));
+    assert_eq!(type_params[1].lone_bound(), Some("B"));
+    assert_eq!(type_params[2].lone_bound(), Some("Copyable"));
     assert!(
         type_params
             .iter()

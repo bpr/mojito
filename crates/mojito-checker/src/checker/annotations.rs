@@ -280,7 +280,7 @@ pub(super) fn member_type_scope(
                 p.name.clone(),
                 TyKind::Param {
                     binder: member_binder(owner, slot, &p.name),
-                    bounds: p.bounds.clone(),
+                    bounds: p.bound_names().map(str::to_string).collect(),
                     callable_bound: None,
                 }
                 .into(),

@@ -246,17 +246,23 @@ pub type OriginSpec = Vec<Expr>;
 /// `def` header.
 ///
 /// Syntactically uniform (`NAME: X`): it is a **type parameter** when `X` is
-/// one or more trait names (`T: Copyable & Movable`) or a **value parameter**
+/// one or more traits (`T: Copyable & Movable`) or a **value parameter**
 /// when `X` is a concrete type (`n: Int`). The checker classifies by resolving
-/// `bounds` — a single entry naming a type means a value parameter; trait
-/// names mean a type parameter. The checker retains and validates the declared
+/// `bounds` — a single member naming a type means a value parameter; traits
+/// mean a type parameter. The checker retains and validates the declared
 /// value type; runtime materialization is governed by `CtValue::materialize`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TypeParam {
     /// The source name. A leading `*` is retained for a variadic type pack.
     pub name: String,
-    /// The trait bound(s), or (for a value parameter) the single value type name.
-    pub bounds: Vec<String>,
+    /// The `&` members of the bound, each the expression upstream evaluates
+    /// in the type context, other than a function type (the
+    /// [`Self::callable_bound`]): trait names, a name the check classifies
+    /// by what it resolves to (a trait, a trait constant, a scalar or struct
+    /// type), or a composition member the check rejects as no trait. Empty
+    /// when [`Self::value_type`] is set. The generic AST walkers do not visit
+    /// these members; the linker rewrites them as annotations.
+    pub bounds: Vec<Expr>,
     /// The annotation expression of a syntactically unambiguous value
     /// parameter such as `items: List[Int]`, which the checker converts in
     /// its type context. Scalar value parameters are classified semantically.
@@ -282,12 +288,43 @@ pub struct TypeParam {
 }
 
 impl TypeParam {
+    /// The bound members that are names, in source order.
+    pub fn bound_names(&self) -> impl Iterator<Item = &str> {
+        self.bounds.iter().filter_map(|member| match &member.kind {
+            ExprKind::Identifier(name) => Some(name.as_str()),
+            _ => None,
+        })
+    }
+
+    /// The one bound member's name, when the bound is exactly one name.
+    pub fn lone_bound(&self) -> Option<&str> {
+        match self.bounds.as_slice() {
+            [
+                Expr {
+                    kind: ExprKind::Identifier(name),
+                    ..
+                },
+            ] => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The bound's spelled head: the [`Self::value_type`]'s head
+    /// (`Self.NAME`, the root name of a qualified or applied type,
+    /// `type_of`, `__generator_type`, or `None`), else the lone bound name.
+    pub fn spelled_head(&self) -> Option<Cow<'_, str>> {
+        match &self.value_type {
+            Some(value_type) => Some(spelled_head(value_type)),
+            None => self.lone_bound().map(Cow::Borrowed),
+        }
+    }
+
     /// Whether this parameter is semantic-only origin metadata: an `Origin` or
     /// `OriginSet` parameter, or the infer-only `Bool` binding one's
     /// mutability ([`Self::is_origin_mutability_binder`]). Such a parameter
     /// is inferred from places rather than occupying a binder slot.
     pub fn is_erased_origin_param(&self, siblings: &[Self]) -> bool {
-        matches!(self.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+        matches!(self.spelled_head().as_deref(), Some("Origin" | "OriginSet"))
             || self.is_origin_mutability_binder(siblings)
     }
 
@@ -308,7 +345,7 @@ impl TypeParam {
     /// of occupying a source-visible value-parameter slot.
     pub fn is_origin_mutability_binder(&self, siblings: &[Self]) -> bool {
         self.infer_only
-            && matches!(self.bounds.as_slice(), [only] if only == "Bool")
+            && self.lone_bound() == Some("Bool")
             && self.value_type.is_none()
             && siblings.iter().any(|peer| {
                 matches!(
@@ -3712,6 +3749,22 @@ thread_local! {
 
 fn decoded_source() -> Option<String> {
     DECODING_SOURCE.with_borrow(Clone::clone)
+}
+
+/// The spelled head of a type-parameter value type ([`TypeParam::spelled_head`]).
+fn spelled_head(expr: &Expr) -> Cow<'_, str> {
+    if let Some(field) = expr.self_member() {
+        return Cow::Owned(format!("Self.{field}"));
+    }
+    match &expr.kind {
+        ExprKind::Identifier(name) | ExprKind::Call { name, .. } => Cow::Borrowed(name),
+        ExprKind::Member { object, .. }
+        | ExprKind::Index { object, .. }
+        | ExprKind::MultiIndex { object, .. } => spelled_head(object),
+        ExprKind::GeneratorType { .. } => Cow::Borrowed("__generator_type"),
+        ExprKind::None => Cow::Borrowed("None"),
+        _ => Cow::Borrowed("<type expression>"),
+    }
 }
 
 /// [`Stmt::module`] as its encoding carries it.

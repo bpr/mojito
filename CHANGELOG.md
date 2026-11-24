@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A module-qualified trait bounds a type parameter (R2533): `T: m.Greet`
+  and `T: m.Greet & Copyable` (either order) are accepted, as at the pin,
+  where the first was "unknown type" and the second a parse error.
+  `TypeParam::bounds` keeps each `&` member as its expression, the linker
+  turns a lone qualified name it resolves into that name bound, and the
+  check classifies each member by what it names; a member that is no trait
+  (`x: List[Int] & Copyable`) is now the pin's "'AnyStruct[List[Int]]' does
+  not implement the '__and__' method" instead of a parse error. The cached
+  package format moves to 273.
+
 - The checker types an annotation with the one compile-time builder
   (R2541): `Checker::emit_expr_type`, upstream's `emitExprType`, builds the
   annotation expression with `build_ct` in the type context instead of

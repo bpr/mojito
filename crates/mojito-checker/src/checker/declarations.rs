@@ -1096,15 +1096,13 @@ impl Checker {
             }
             // The removed `SIMDSize` width spelling (upstream hard removal,
             // 2026-08) gets a targeted migration diagnostic.
-            if let [only] = tp.bounds.as_slice()
-                && only == "SIMDSize"
-            {
+            if tp.lone_bound() == Some("SIMDSize") {
                 return Err(TypeError::Unsupported(
                     "'SIMDSize' was removed; use 'SIMDLength'".to_string(),
                 ));
             }
             // A lone bound that names a scalar type marks a value parameter.
-            if let [only] = tp.bounds.as_slice()
+            if let Some(only) = tp.lone_bound()
                 && let Some(vty) = scalar_type_name(only)
             {
                 if !(vty.is_int()
@@ -1115,7 +1113,7 @@ impl Checker {
                 {
                     return Err(TypeError::BadValueParamType {
                         name: tp.name.clone(),
-                        ty: only.clone(),
+                        ty: only.to_string(),
                     });
                 }
                 let decl = self.value_param_decl(tp, binder_id(decls.len()), vty)?;
@@ -1124,10 +1122,10 @@ impl Checker {
             }
             // A lone bound naming a registered struct is a struct-typed
             // value parameter (`[e: Extent]`, `[w: SIMDLength]`).
-            if let [only] = tp.bounds.as_slice()
+            if let Some(only) = tp.lone_bound()
                 && self.structs.contains_key(only)
             {
-                let ty = TyKind::Struct(only.clone(), Vec::new());
+                let ty = TyKind::Struct(only.to_string(), Vec::new());
                 let decl = self.value_param_decl(tp, binder_id(decls.len()), ty.into())?;
                 self.push_value_param(&mut decls, decl);
                 continue;
@@ -1135,7 +1133,7 @@ impl Checker {
             // A lone bound naming an alias of a generator type (`G: Gen` over
             // `comptime Gen = __generator_type[Idx: Int] Int`) is a value
             // parameter of that type.
-            if let [only] = tp.bounds.as_slice()
+            if let Some(only) = tp.lone_bound()
                 && let Some(ty) = self.generator_type_alias(only)
             {
                 let decl = self.value_param_decl(tp, binder_id(decls.len()), ty)?;
@@ -1145,7 +1143,7 @@ impl Checker {
             // A lone bound naming an earlier type binder of this list is a
             // value parameter of that type (`[T: AnyType, //, v: T]`): the
             // list is a telescope, each binder in scope for the ones after it.
-            if let [only] = tp.bounds.as_slice()
+            if let Some(only) = tp.lone_bound()
                 && let Some(ty) = sibling_type_binder(&decls, only)
             {
                 let decl = self.value_param_decl(tp, binder_id(decls.len()), ty)?;
@@ -1167,18 +1165,19 @@ impl Checker {
             // bound beside the other traits, and each use site checks the
             // trait the binder receives.
             let trait_param = tp
-                .bounds
-                .iter()
+                .bound_names()
                 .find_map(|bound| self.trait_binder(&decls, bound));
             let mut trait_bounds = trait_param
                 .as_ref()
                 .map(|(_, declared)| declared.clone())
                 .unwrap_or_default();
-            for bound in &tp.bounds {
-                if bound == "<function type>"
-                    || trait_param
-                        .as_ref()
-                        .is_some_and(|(binder, _)| *binder.name == **bound)
+            for (position, member) in tp.bounds.iter().enumerate() {
+                let ExprKind::Identifier(bound) = &member.kind else {
+                    return Err(self.composition_member_error(&tp.bounds[..position], member));
+                };
+                if trait_param
+                    .as_ref()
+                    .is_some_and(|(binder, _)| *binder.name == **bound)
                 {
                     continue;
                 }
@@ -1334,6 +1333,28 @@ impl Checker {
         result
     }
 
+    /// The error for a bound composition member that is no trait name,
+    /// after the members `before` it: the left operand's missing `__and__`,
+    /// as upstream evaluates the composition left to right.
+    fn composition_member_error(&self, before: &[Expr], member: &Expr) -> TypeError {
+        let left = if before.is_empty() {
+            match self.ty_from_anno(member) {
+                Ok(ty) => format!("AnyStruct[{ty}]"),
+                Err(error) => return error,
+            }
+        } else {
+            let names: Vec<&str> = before
+                .iter()
+                .filter_map(|member| match &member.kind {
+                    ExprKind::Identifier(name) => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            format!("AnyTrait[{}]", names.join(" & "))
+        };
+        TypeError::MatchPattern(format!("'{left}' does not implement the '__and__' method"))
+    }
+
     /// The generator type an unparameterized alias names (`comptime Gen =
     /// __generator_type[Idx: Int] Int`). `None` for any other name.
     fn generator_type_alias(&self, name: &str) -> Option<Ty> {
@@ -1356,16 +1377,14 @@ impl Checker {
         tp: &mojito_ast::ast::TypeParam,
         earlier: &[ParamDecl],
     ) -> Option<Ty> {
-        let [only] = tp.bounds.as_slice() else {
-            return None;
-        };
+        let only = tp.lone_bound()?;
         if self.check_trait_name(only).is_ok()
             || tp.callable_bound.is_some()
             || self.trait_binder(earlier, only).is_some()
         {
             return None;
         }
-        self.ty_from_spelling(&AnnotationView::Named(only.clone(), Vec::new()))
+        self.ty_from_spelling(&AnnotationView::Named(only.to_string(), Vec::new()))
             .ok()
             .filter(|ty| !matches!(ty.kind(), TyKind::Trait(_) | TyKind::AnyTrait(_)))
     }
@@ -1388,8 +1407,8 @@ impl Checker {
         if tp.callable_bound.is_some() || tp.name.starts_with('*') {
             return Ok(None);
         }
-        let mutability = match tp.bounds.as_slice() {
-            [only] if tp.value_type.is_none() && self.check_trait_name(only).is_ok() => {
+        let mutability = match tp.lone_bound() {
+            Some(only) if self.check_trait_name(only).is_ok() => {
                 return Ok(None);
             }
             _ => {

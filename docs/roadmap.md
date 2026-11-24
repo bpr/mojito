@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2551**.
+Next free ID: **R2553**.
 
 ## Ordered Work
 
@@ -6343,6 +6343,51 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `comptime AB = A & B`, `trait C(AB)`, `struct S(C)`, then
     `need_b(S(1))` over `need_b[T: B]` prints at the pin.
   - Found while landing R1171 (2026-11-12).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2551 A conformance or refinement list holds names, not expressions**
+
+  A module-qualified trait in a struct's conformance list or a trait's
+  refinement list is a parse error, where upstream parses each entry as an
+  expression and evaluates it to a trait.
+  - `items.rs::parse_trait_composition` reads identifiers into
+    `Vec<String>` (`Struct::conforms`, `Trait::refines`), so neither the
+    linker's namespace rewrite (`module.rs::rewrite_expr`) nor the check
+    ever sees `m.Greet`.
+  - Lever: keep each entry as its expression, as R2533 did for
+    `TypeParam::bounds`, so the linker resolves a qualified entry to the
+    trait's identity and the check classifies it by what it names.
+    R2145 wants the same entries evaluated to trait values.
+  - Probe: `import tr as m` (a module declaring `trait Greet`), then
+    `struct S(m.Greet, Copyable)` implementing `greet` stops with
+    "Expected ')' after the conformance list"; the pin prints `7` for
+    `print(S(7).greet())`.
+  - Probe: `trait H(m.Greet): pass` is the same parse error; the pin
+    accepts it.
+  - Probe: `struct S(not m.Greet)` and a conditional `m.Greet where …`
+    entry read the same list.
+  - Found while landing R2533 (2026-11-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2552 `Some` takes only a lone trait name**
+
+  `Some[Greet & Copyable]` is "unknown type 'Some'", where the pin takes
+  any trait value as `Some`'s argument.
+  - `Checker::builtin_applied_type` (`type_resolution.rs`) recognizes
+    `Some[X]` only when `X` is one `Identifier` naming a trait, so a
+    composition, a function type, or anything else falls through to an
+    unknown `Some`.
+  - Lever: evaluate the argument to its trait value (the composition's
+    traits, a callable bound) and make the synthetic binder's bounds that
+    value, as upstream's `Some` binds its trait parameter.
+  - Probe: `def g(t: Some[Greet & Copyable]) -> Int: return t.greet()`
+    called with a conforming `G(2)` prints `2` at the pin; it is the same
+    error for `Some[m.Greet & Copyable]`.
+  - Probe: `def f(g: Some[def(var Int)])` is the same error (R813 waits on
+    it).
+  - Found while landing R2533 (2026-11-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13439,23 +13484,6 @@ follow-ups the landed producer stages filed come last.
     types every annotation with `emit_expr_type`.
   - Depends on R2549.
   - Model: Fable, Planned.
-
-- [ ] **R2533 A module-qualified trait bound is a value type**
-
-  `TypeParam::bounds` holds bound names as strings, so a qualified trait
-  (`T: tr.Greet`) converts to an associated-member value type, where the
-  pin resolves the member to the trait and binds a type parameter.
-  - Probe: `import tr` (a module declaring `trait Greet`), then `def
-    f[T: tr.Greet](t: T)` is "unknown type '__module$tr$Greet'"; the pin
-    accepts it.
-  - Probe: `def f[T: tr.Greet & Copyable](t: T)` is "expected a trait name
-    in a type-parameter bound composition"; the pin accepts it.
-  - Fix: classify a bound member by what it resolves to at the check (a
-    trait through the module's namespace), not by its spelling, either
-    through R2137's expression AST or a qualified-name bound spelling the
-    linker rewrites.
-  - Depends on R2136.
-  - Model: Fable, Not Planned.
 
 - [ ] **R2338 `dead-argument-elimination` keeps a method's dead receiver**
 

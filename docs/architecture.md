@@ -981,6 +981,13 @@ later phase sees the statement, and a `debug_assert` the program declares
 does not capture it, as at the pin. A program checked without linking keeps
 the statement, and the checker rejects it explicitly.
 
+A type-parameter bound's members are rewritten as annotations, and a lone
+value-type bound that a module's namespace resolves to a declaration's
+identity (`T: m.Greet`, `v: m.V`) becomes that name bound
+(`module.rs::rewrite_type_param`), as `from m import Greet` spells it, so the
+check classifies it by what it names, as upstream resolves the member
+through the module.
+
 An absolute import of `std.*` resolves at the bundled library's root alone
 (the package's module table, or a development build's library source),
 never beside the importer or under a search root, as upstream's toolchain

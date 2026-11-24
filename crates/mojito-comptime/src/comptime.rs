@@ -254,10 +254,9 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
     match &expr.kind {
         ExprKind::Identifier(name) => {
             let sibling = siblings.iter().find(|sibling| sibling.name == *name)?;
-            let ty = match (&sibling.value_type, sibling.bounds.as_slice()) {
-                (Some(source), _) => ct_param_source_type(source)?,
-                (None, [only]) => ct_value_param_type(only)?,
-                _ => return None,
+            let ty = match &sibling.value_type {
+                Some(source) => ct_param_source_type(source)?,
+                None => ct_value_param_type(sibling.lone_bound()?)?,
             };
             Some(context.decl_ref(
                 elaborated_binder(sibling, siblings, owner),

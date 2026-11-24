@@ -587,7 +587,12 @@ impl Checker {
                     param.name
                 )));
             }
-            if param.bounds.iter().any(|name| bound.0.contains_key(name)) {
+            if param
+                .spelled_head()
+                .into_iter()
+                .chain(param.bound_names().map(Into::into))
+                .any(|name| bound.0.contains_key(&*name))
+            {
                 return Err(TypeError::Unsupported(format!(
                     "the unbound parameter '{}' of '{struct_name}' whose bound names a \
                      bound parameter",
@@ -7654,7 +7659,9 @@ pub(super) enum AssocParamKind {
 
 pub(super) fn assoc_param_kind(param: &mojito_ast::ast::TypeParam) -> AssocParamKind {
     if param.value_type.is_some()
-        || matches!(param.bounds.as_slice(), [only] if scalar_type_name(only).is_some())
+        || param
+            .lone_bound()
+            .is_some_and(|only| scalar_type_name(only).is_some())
     {
         AssocParamKind::Value
     } else {

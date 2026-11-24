@@ -2912,7 +2912,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   classifies it by its expression shape (`type_param_bound`: an identifier,
   an empty application `Name[]`, an `Origin[mut=e]` binder, a function
   type, or otherwise a value type) into bounds, a callable bound, an
-  origin mutability, or a value type. The elaborator matches expression
+  origin mutability, or a value type. `TypeParam::bounds` keeps every `&`
+  member as its expression, read through `TypeParam::{bound_names,
+  lone_bound, spelled_head}` (`ast.rs`; `spelled_head` is a value type's
+  head, else the lone name); the linker's `module.rs::rewrite_type_param`
+  rewrites the members and turns a lone value type it resolves to a
+  declaration's identity (`T: m.Greet`) into that name bound, and the
+  check's `Checker::composition_member_error` (`declarations.rs`) rejects
+  a member that is no name with the pin's missing `__and__`. The elaborator matches expression
   shapes too (`comptime.rs:applied_name`, `Expr::{is_sentinel,
   spread_pack_name}`), never the `Type` view.
   A callable bound (`F: def[width: SIMDLength](...) -> ...`) keys as its

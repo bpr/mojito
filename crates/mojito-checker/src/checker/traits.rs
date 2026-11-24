@@ -1044,7 +1044,9 @@ impl Checker {
         let self_ty = TraitDeclaration::self_type(name);
         let binder = mojito_ast::ast::TypeParam {
             name: TraitDeclaration::SELF_BINDER.to_string(),
-            bounds: vec![name.to_string()],
+            bounds: vec![mojito_ast::ast::Expr::from(ExprKind::Identifier(
+                name.to_string(),
+            ))],
             value_type: None,
             callable_bound: None,
             origin_mutability: None,
@@ -2246,7 +2248,7 @@ impl Checker {
                                         "$placeholder:{}",
                                         param.name
                                     )),
-                                    bounds: param.bounds.clone(),
+                                    bounds: param.bound_names().map(str::to_string).collect(),
                                     callable_bound: None,
                                 }
                                 .into(),
@@ -4468,11 +4470,7 @@ impl Checker {
         let contextual = match &value_type {
             Some(AnnotationView::Named(name, _)) => Some(name.as_str()),
             Some(_) => None,
-            None => param
-                .bounds
-                .first()
-                .filter(|_| param.bounds.len() == 1)
-                .map(String::as_str),
+            None => param.lone_bound(),
         };
         let mut reads = Reads {
             checker: self,
