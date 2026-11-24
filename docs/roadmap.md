@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2564**.
+Next free ID: **R2565**.
 
 ## Ordered Work
 
@@ -862,6 +862,16 @@ How much generic instantiation multiplies a program, and proof that a pass
 which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
+
+- [ ] **R2564 1 fixture stopped elaborating after batch 6**
+
+  The instantiation ratchet finds `assets/ok` fixtures that elaborated at the last baseline and now fail to compile.
+  - Probe: `assets/ok/nested_operands_type_once.mojo` (timeout: killed after 120 s).
+  - Ratchet log: `target/run-batches/20261120-073546/batch6-ratchet.log`.
+  - Fix the regression, or delete this entry and file one entry per cause in the track that owns it.
+  - Filed by `scripts/run-batches` (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2523 Concrete instructions grew by 306273 instructions (+5.48%) over batch 4**
 
