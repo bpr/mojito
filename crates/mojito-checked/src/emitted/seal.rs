@@ -21,11 +21,11 @@ use crate::checked::{
     CheckedParamArg, CheckedParameter, CheckedPathRead, CheckedStmtId, CheckedStmtOp,
     CheckedStruct, CheckedStructComptime, CheckedTables, CheckedTarget, CheckedTargetKind,
     CheckedTrait, CheckedTraitComptime, CheckedTraitDefault, CheckedTraitMethod, ConformanceFacts,
-    DeclarationSites, DeclaredLeaf, MatchPlan, NodeFacts, NodeMap, Outermost, PlannedCommand,
-    Signatures, apply_spelled, expression_node, lifted, map_params, parameter_layout,
-    spelled_construction, statement_node, subscript_attribute,
+    DeclarationSites, DeclaredLeaf, MatchPlan, NodeFacts, NodeMap, Outermost, Signatures,
+    apply_spelled, expression_node, lifted, map_params, parameter_layout, spelled_construction,
+    statement_node, subscript_attribute,
 };
-use mojito_ast::ast::{BindingMode, Expr, Stmt};
+use mojito_ast::ast::{BindingMode, Stmt};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
 use mojito_types::types::TyArg;
 use std::cell::RefCell;
@@ -112,12 +112,12 @@ impl NodeMap for Seal<'_> {
             return self.missing_expression(Some(&node.at));
         };
         let facts = held(node.facts.as_deref());
-        if substituted(op)
-            && let Some((construction, lifted)) = spelled_construction(facts)
-        {
-            let Some(construction) = self.expression_slot(construction) else {
-                return self.missing_expression(Some(&construction.source_span()));
-            };
+        if let Some((construction, lifted)) = spelled_construction(facts) {
+            // Only a substituted sugar hands its construction off: an
+            // emitted slot never reaches the sealed tables as a record.
+            if !substituted(op) {
+                return self.missing_expression(Some(&node.at));
+            }
             let id = self.expression(construction);
             apply_spelled(&mut self.nodes[id.0 as usize], facts, lifted);
             return id;
@@ -168,26 +168,9 @@ impl NodeMap for Seal<'_> {
 }
 
 impl<'a> Seal<'a> {
-    /// The emitted slot of the expression `expression`.
-    fn expression_slot(&self, expression: &Expr) -> Option<CheckedNodeId> {
-        match self.emitted.index.get(&expression.source_span())? {
-            EmittedSlot::Expression(id) => Some(*id),
-            EmittedSlot::Statement(_) => None,
-        }
-    }
-
-    /// The emitted slot of the planned expression `expression`, or one no
-    /// node holds, which seals as missing at `expression`.
-    fn planned_expression(&self, expression: &Expr) -> CheckedNodeId {
-        self.expression_slot(expression).unwrap_or_else(|| {
-            self.unsealed.borrow_mut().locate(&expression.source_span());
-            CheckedNodeId(u32::MAX)
-        })
-    }
-
-    /// The emitted slot of the planned statement `statement`, or one no
-    /// node holds, which seals as missing at `statement`.
-    fn planned_statement(&self, statement: &Stmt) -> CheckedStmtId {
+    /// The emitted slot of the root statement `statement`, or one no node
+    /// holds, which seals as missing at `statement`.
+    fn root_slot(&self, statement: &Stmt) -> CheckedStmtId {
         if let Some(EmittedSlot::Statement(id)) = self.emitted.index.get(&statement.source_span()) {
             *id
         } else {
@@ -361,71 +344,17 @@ impl<'a> Seal<'a> {
 
     /// One case's planned commands and path reads, as emitted slots.
     fn case_program(
-        &self,
         plan: Option<&MatchPlan>,
         index: usize,
     ) -> (Vec<CheckedCommand>, Vec<CheckedPathRead>) {
-        let reads = plan
-            .and_then(|plan| plan.reads.get(index))
-            .map(|reads| {
-                reads
-                    .iter()
-                    .map(|read| CheckedPathRead {
-                        path: read.path,
-                        declaration: self.planned_statement(&read.declaration),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let commands = plan
-            .and_then(|plan| plan.cases.get(index))
-            .map(|commands| {
-                commands
-                    .iter()
-                    .map(|command| self.command(command))
-                    .collect()
-            })
-            .unwrap_or_default();
-        (commands, reads)
-    }
-
-    fn command(&self, planned: &PlannedCommand) -> CheckedCommand {
-        match planned {
-            PlannedCommand::Equal { test, reads } => CheckedCommand::Equal {
-                test: self.planned_expression(test),
-                reads: reads.clone(),
-            },
-            PlannedCommand::ListLength { test, reads } => CheckedCommand::ListLength {
-                test: self.planned_expression(test),
-                reads: reads.clone(),
-            },
-            PlannedCommand::EnumTag {
-                tag,
-                test,
-                case,
-                reads,
-            } => CheckedCommand::EnumTag {
-                tag: self.planned_statement(tag),
-                test: self.planned_expression(test),
-                case: *case,
-                reads: reads.clone(),
-            },
-            PlannedCommand::Bind { declaration, reads } => CheckedCommand::Bind {
-                declaration: self.planned_statement(declaration),
-                reads: reads.clone(),
-            },
-            PlannedCommand::Alternatives(alternatives) => CheckedCommand::Alternatives(
-                alternatives
-                    .iter()
-                    .map(|commands| {
-                        commands
-                            .iter()
-                            .map(|command| self.command(command))
-                            .collect()
-                    })
-                    .collect(),
-            ),
-        }
+        (
+            plan.and_then(|plan| plan.cases.get(index))
+                .cloned()
+                .unwrap_or_default(),
+            plan.and_then(|plan| plan.reads.get(index))
+                .cloned()
+                .unwrap_or_default(),
+        )
     }
 
     /// An expression op as its node holds it once sealed, its operands
@@ -654,7 +583,7 @@ impl<'a> Seal<'a> {
             CheckedStmtOp::Match { cases, .. } => {
                 let plan = facts.match_plan.as_ref();
                 CheckedStmtOp::Match {
-                    anchor: self.anchor(plan),
+                    anchor: Self::anchor(plan),
                     cases: self.cases(cases, plan),
                     emission: plan.map(|plan| plan.emission.clone()).unwrap_or_default(),
                 }
@@ -662,7 +591,7 @@ impl<'a> Seal<'a> {
             CheckedStmtOp::ComptimeMatch { cases, .. } => {
                 let plan = facts.match_plan.as_ref();
                 CheckedStmtOp::ComptimeMatch {
-                    anchor: self.anchor(plan),
+                    anchor: Self::anchor(plan),
                     cases: self.cases(cases, plan),
                 }
             }
@@ -718,9 +647,8 @@ impl<'a> Seal<'a> {
             .map_or(&NodeFacts::EMPTY, |node| held(node.facts.as_deref()))
     }
 
-    fn anchor(&self, plan: Option<&MatchPlan>) -> Option<CheckedStmtId> {
-        plan.and_then(|plan| plan.anchor.as_ref())
-            .map(|anchor| self.planned_statement(anchor))
+    fn anchor(plan: Option<&MatchPlan>) -> Option<CheckedStmtId> {
+        plan.and_then(|plan| plan.anchor)
     }
 
     fn branches(
@@ -738,11 +666,11 @@ impl<'a> Seal<'a> {
         match condition {
             CheckedCondition::Case { pattern, value, .. } => {
                 let plan = self.expression_facts(*value).match_plan.as_ref();
-                let (commands, reads) = self.case_program(plan, 0);
+                let (commands, reads) = Self::case_program(plan, 0);
                 CheckedCondition::Case {
                     pattern: pattern.clone(),
                     value: *value,
-                    anchor: self.anchor(plan),
+                    anchor: Self::anchor(plan),
                     commands,
                     reads,
                 }
@@ -759,16 +687,15 @@ impl<'a> Seal<'a> {
             .iter()
             .enumerate()
             .map(|(index, case)| {
-                let (commands, reads) = self.case_program(plan, index);
+                let (commands, reads) = Self::case_program(plan, index);
                 CheckedMatchCase {
                     pattern: case.pattern.clone(),
                     commands,
                     reads,
                     guard: case.guard.filter(|_| !comptime),
                     condition: plan
-                        .and_then(|plan| plan.conditions.get(index))
-                        .and_then(Option::as_ref)
-                        .map(|condition| self.planned_expression(condition)),
+                        .and_then(|plan| plan.conditions.get(index).copied())
+                        .flatten(),
                     body: self.spliced(&case.body),
                     unreachable: plan
                         .and_then(|plan| plan.unreachable.get(index).copied())
@@ -923,7 +850,7 @@ impl<'a> Seal<'a> {
         let slots: Vec<CheckedStmtId> = statements
             .iter()
             .filter_map(|statement| {
-                let slot = self.planned_statement(statement);
+                let slot = self.root_slot(statement);
                 if slot.0 == u32::MAX {
                     self.unsealed.borrow_mut().count += 1;
                     None
@@ -974,14 +901,15 @@ fn held(facts: Option<&NodeFacts>) -> &NodeFacts {
 mod tests {
     use super::seal;
     use crate::checked::{
-        BracketBinding, BracketBound, CheckedOp, CheckedParamArg, CheckedParameter, CheckedStmtOp,
-        CheckedTables, ConformanceFacts, DeclarationSites, NodeFacts, SemanticAdjustment,
-        SpelledConstruction,
+        BracketBinding, BracketBound, CheckedCommand, CheckedMatchCase, CheckedOp, CheckedParamArg,
+        CheckedParameter, CheckedPathRead, CheckedPattern, CheckedPatternKind, CheckedStmtOp,
+        CheckedTables, ConformanceFacts, DeclarationSites, MatchEmission, MatchPlan, NodeFacts,
+        SemanticAdjustment,
     };
     use crate::emitted::Unsealed;
     use crate::emitted::{EmittedDesugar, EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt};
     use mojito_ast::ast::{Expr, ExprKind, ParamArg, Stmt, StmtKind};
-    use mojito_common::token::{SourceSpan, SyntaxId};
+    use mojito_common::token::{SourceSpan, Span, SyntaxId};
     use mojito_types::types::{Ty, TyArg};
     use std::collections::HashMap;
 
@@ -1237,7 +1165,7 @@ mod tests {
         let statement = syntax.stmt(StmtKind::Expr(sugar.clone()));
         let mut emitted = Emitted::default();
         let sugar_slot = emitted.expr(&sugar, CheckedOp::Int(5u64.into()), Vec::new());
-        emitted.expr(
+        let construction_slot = emitted.expr(
             &construction,
             CheckedOp::Identifier("x".to_string()),
             Vec::new(),
@@ -1248,7 +1176,7 @@ mod tests {
                 sugar.source_span(),
                 NodeFacts {
                     adjustment: Some(Box::new(SemanticAdjustment::SpelledConstruction {
-                        construction: SpelledConstruction(Box::new(construction.clone())),
+                        construction: construction_slot,
                     })),
                     implicit_conversion: Some("convert".to_string()),
                     ..NodeFacts::default()
@@ -1290,5 +1218,133 @@ mod tests {
         };
         assert_eq!(unsealed.count, 1);
         assert_eq!(unsealed.first, Some(statement.source_span()));
+    }
+
+    #[test]
+    fn a_spelled_construction_on_an_unsubstituted_op_is_unsealed() {
+        let mut syntax = Syntax::default();
+        let construction = syntax.expr(ExprKind::Identifier("x".to_string()));
+        let sugar = syntax.expr(ExprKind::Identifier("s".to_string()));
+        let statement = syntax.stmt(StmtKind::Expr(sugar.clone()));
+        let mut emitted = Emitted::default();
+        let sugar_slot = emitted.expr(&sugar, CheckedOp::None, Vec::new());
+        let construction_slot = emitted.expr(
+            &construction,
+            CheckedOp::Identifier("x".to_string()),
+            Vec::new(),
+        );
+        emitted.stmt(&statement, CheckedStmtOp::Expr(sugar_slot));
+        let facts = HashMap::from([(
+            sugar.source_span(),
+            NodeFacts {
+                adjustment: Some(Box::new(SemanticAdjustment::SpelledConstruction {
+                    construction: construction_slot,
+                })),
+                ..NodeFacts::default()
+            },
+        )]);
+        let Err(unsealed) = sealed(&emitted.0, &[statement], &facts) else {
+            unreachable!("an emitted slot cannot reach the sealed tables as a record")
+        };
+        assert_eq!(unsealed.count, 1);
+        assert_eq!(unsealed.first, Some(sugar.source_span()));
+    }
+
+    #[test]
+    fn a_match_plan_seals_the_nodes_it_names() {
+        let mut syntax = Syntax::default();
+        let unused = syntax.expr(ExprKind::Identifier("unused".to_string()));
+        let test = syntax.expr(ExprKind::Bool(true));
+        let anchor = syntax.stmt(StmtKind::Pass);
+        let read = syntax.stmt(StmtKind::Pass);
+        let bind = syntax.stmt(StmtKind::Pass);
+        let body = syntax.stmt(StmtKind::Pass);
+        let statement = syntax.stmt(StmtKind::Pass);
+        let mut emitted = Emitted::default();
+        emitted.expr(
+            &unused,
+            CheckedOp::Identifier("unused".to_string()),
+            Vec::new(),
+        );
+        let test_slot = emitted.expr(&test, CheckedOp::Bool(true), Vec::new());
+        let bind_slot = emitted.stmt(&bind, CheckedStmtOp::Pass);
+        let read_slot = emitted.stmt(&read, CheckedStmtOp::Pass);
+        let anchor_slot = emitted.stmt(&anchor, CheckedStmtOp::Pass);
+        let body_slot = emitted.stmt(&body, CheckedStmtOp::Pass);
+        emitted.stmt(
+            &statement,
+            CheckedStmtOp::Match {
+                anchor: None,
+                cases: vec![CheckedMatchCase {
+                    pattern: CheckedPattern {
+                        kind: CheckedPatternKind::Wildcard,
+                        span: Span::default(),
+                        syntax_id: SyntaxId(0),
+                    },
+                    commands: Vec::new(),
+                    reads: Vec::new(),
+                    guard: None,
+                    condition: None,
+                    body: vec![body_slot],
+                    unreachable: false,
+                }],
+                emission: MatchEmission::default(),
+            },
+        );
+        let facts = HashMap::from([(
+            statement.source_span(),
+            NodeFacts {
+                match_plan: Some(MatchPlan {
+                    anchor: Some(anchor_slot),
+                    cases: vec![vec![
+                        CheckedCommand::Equal {
+                            test: test_slot,
+                            reads: vec![0],
+                        },
+                        CheckedCommand::Bind {
+                            declaration: bind_slot,
+                            reads: Vec::new(),
+                        },
+                    ]],
+                    reads: vec![vec![CheckedPathRead {
+                        path: 0,
+                        declaration: read_slot,
+                    }]],
+                    emission: MatchEmission::default(),
+                    conditions: Vec::new(),
+                    concluded: true,
+                    unreachable: vec![false],
+                }),
+                ..NodeFacts::default()
+            },
+        )]);
+        let sealed = sealed(&emitted.0, &[statement], &facts).expect("every node was emitted");
+        let Some(CheckedStmtOp::Match {
+            anchor: Some(sealed_anchor),
+            cases,
+            ..
+        }) = sealed.statements.last().map(|statement| &statement.op)
+        else {
+            unreachable!("the root seals as a match with its plan's anchor")
+        };
+        let statement_span =
+            |id: crate::checked::CheckedStmtId| sealed.statements[id.0 as usize].span;
+        assert_eq!(statement_span(*sealed_anchor), anchor.span);
+        let [
+            CheckedCommand::Equal {
+                test: sealed_test, ..
+            },
+            CheckedCommand::Bind {
+                declaration: sealed_bind,
+                ..
+            },
+        ] = cases[0].commands.as_slice()
+        else {
+            unreachable!("the case holds its plan's commands")
+        };
+        assert_ne!(*sealed_test, test_slot);
+        assert_eq!(sealed.expressions[sealed_test.0 as usize].span, test.span);
+        assert_eq!(statement_span(*sealed_bind), bind.span);
+        assert_eq!(statement_span(cases[0].reads[0].declaration), read.span);
     }
 }

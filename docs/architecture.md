@@ -2959,10 +2959,17 @@ sets an attribute on an op it already made: the `Emitter`
 (`checker/emit.rs`) allocates a statement's node and its expression nodes
 when the check enters the statement (`Checker::check_stmt`), a spelled
 construction's when the check records it
-(`Checker::record_spelled_construction`), and a match plan's anchor, tests,
-reads, and `comptime match` conditions when it records the plan
-(`Emitter::enter_plan`, from `checker/patterns.rs`), and an index finds an
-occurrence's node. Each node holds its op from the moment it is allocated,
+(`Checker::record_spelled_construction`, through
+`Emitter::enter_construction`, which keeps the construction's syntax
+beside its node for the check's own reads and never hands it off), and a
+match test's or `comptime match` condition's when the check plans it
+(`checker/patterns.rs`), and an index finds an occurrence's node. A fact
+naming another operation names its node, as an upstream op names its
+operands' values: a spelled sugar's `SpelledConstruction` record names
+its construction's node, and a `MatchPlan`'s anchor, commands
+(`CheckedCommand`), path reads (`CheckedPathRead`), and conditions name
+the nodes the check entered for them; `Emitter::copy_window` relocates
+those nodes with the records it carries (`NodeFacts::map_operands`). Each node holds its op from the moment it is allocated,
 as upstream's emitter creates an op when it emits it: the op is its
 syntax's operation with each operand the node allocated for it
 (`checker/emit/ops.rs`), and it never changes. What the check decides
@@ -2994,11 +3001,11 @@ post-order, through the composition helpers in `checked.rs`
 (`expression_node`, `apply_spelled`, `parameter_layout`, and
 `Signatures`). An occurrence the check emitted no node or op for is an
 `InvariantViolation` naming the first one, never a placeholder in the
-tables. Two things still reach the seal as syntax: the `SpelledConstruction` and `MatchPlan` facts,
-whose construction, tests, and declarations the seal finds by span
-(R2570); and the roots, found by the spans of the spliced root statements
-and of each `CheckedDefaultWrapper::body`, which the seal empties
-(R2571). `explicit_destroy` also still walks the
+tables; a spelled-construction record on a sugar the seal does not
+replace is one too, so no emitted node reaches the tables as a record.
+One thing still reaches the seal as syntax: the roots, found by the spans
+of the spliced root statements and of each `CheckedDefaultWrapper::body`,
+which the seal empties (R2571). `explicit_destroy` also still walks the
 spliced syntax with span-keyed facts (R751). An overload
 candidate — of a free call or of an overloaded function value — is
 checked inside `Checker::probe` (`checker/probe.rs`): every store

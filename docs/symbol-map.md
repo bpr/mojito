@@ -258,13 +258,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   contextual `{field=p}` (`compile_field_patterns`), compiles each field
   over `subject.field`; a sequence pattern (`compile_sequence_pattern`)
   gates the subject on its declared `Sized` conformance, pushes one
-  `PlannedCommand::ListLength` test (the call to
+  `CheckedCommand::ListLength` test (the call to
   `std.builtin._stubs.list_length_matches`, named by `builtin_stub`), and
   compiles each element's pattern over an unread element subject — a
   `Step::SequenceElement`, `SequenceFromEnd`, or the star's
   `SequenceSlice`, spelled by `spell` — which
   `materialize` declares at the first command that needs it as a hidden
-  `$elem<id>` (a `PlannedRead` in `Commands::reads`, its path numbered by
+  `$elem<id>` (a `CheckedPathRead` in `Commands::reads`, its path numbered by
   the statement's `PathTable`: `ref` over a reference result, keeping the
   subject's capability when some case binds by reference
   (`MatchSubject::mutable_reads`), `var` over an owned one, moved into a
@@ -281,9 +281,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `check_enum_owner`) through `enum_case_index` / `enum_case_payload`
   over the conformer's folded `_sum_case_names` / `_union_case_types`
   (`sum_type_list`, through `constraints.rs`'s `struct_value_member`),
-  pushes a `PlannedCommand::EnumTag` (`enum_tag_test`: the discriminant
+  pushes a `CheckedCommand::EnumTag` (`enum_tag_test`: the discriminant
   `var $tag<id> = subject._get_sum_discriminant()` and its test `$tag<id>
-  == case`, checked as `CheckedCommand::EnumTag`), and compiles its payload pattern over a
+  == case`), and compiles its payload pattern over a
   `Step::EnumPayload` read (`subject._unsafe_get_union_payload[case]()`), which `materialize` reads along the path like
   an element; over any other subject a bare head is an `equality_test`;
   a `|` pattern (`compile_or_pattern`) compiles each
@@ -292,8 +292,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   compared) — keeps each case's commands in pattern order, one per
   coverage command (`Commands::program`), checks the guard once the
   bindings exist, and attaches the `MatchPlan` (anchor statement, per-case
-  `PlannedCommand`s and `PlannedRead`s, `Alternatives` nested, and the
-  `MatchEmission`) at the statement's facts; `MatchSubject` is the projected subject (the hidden
+  `CheckedCommand`s and `CheckedPathRead`s, `Alternatives` nested, and the
+  `MatchEmission`) at the statement's facts, each operand the node the
+  check entered for it: a synthesized statement's from its check
+  (`emitted_statement`), a runtime test's once `push_test` types it and a
+  `comptime match` condition's when the plan is recorded
+  (`emitted_expression`), as upstream's `PatternCommand`s hold values; `MatchSubject` is the projected subject (the hidden
   name, a path of `Step`s, the projection's type, whether the whole
   subject is a temporary and whether its projections are of one, whether
   it is the root, whether it is an owned path read, and the path's
@@ -546,7 +550,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   __list_literal__=None)`; `infer_initializer_list` checks it, a parameter
   argument resolves it in the display's place (`resolve_param_arg`), and it
   records
-  `SemanticAdjustment::SpelledConstruction` (`record_spelled_construction`,
+  `SemanticAdjustment::SpelledConstruction`, naming the construction's
+  node (`record_spelled_construction`,
   shared with t-strings and with `infer_initializer_call`, which spells an
   explicit `T[ps].__init__[ks](…)` over a type-spelling receiver as the
   construction `T[ps](…)`, its bracket the type's, and keeps `[ks]` in the
@@ -991,10 +996,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   top of `Checker::check_stmt` and `check_block`'s `comptime assert` arm)
   allocates a statement node for each statement and an expression node for
   each expression of a statement's subtree the first time the check enters
-  it, `enter_expression` a spelled construction's
-  (`Checker::record_spelled_construction`), and `enter_plan` a match plan's
-  synthesized anchor, tests, reads, and conditions (`checker/patterns.rs`'s
-  three plan writers), each node given its op once its subtree is allocated
+  it, `enter_expression` a synthesized match test's or condition's
+  (`checker/patterns.rs`), and `enter_construction` a spelled
+  construction's (`Checker::record_spelled_construction`), keeping its
+  syntax in `constructions` by node for the check's own reads
+  (`construction`, behind `Checker::spelled_construction`); each returns
+  the root's node, which the fact naming it holds, each node given its op once its subtree is allocated
   (the `Operations` walk over `checker/emit/ops.rs`'s `Ops`, which maps
   syntax to `CheckedOp`/`CheckedStmtOp`, the fields the check decides
   later left empty for the seal) and never changed; the index finds an
@@ -1008,11 +1015,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   which also truncate the arenas, ops and all, and their index entries),
   `mark`/`written`/`copy_window` measure and copy a body site's window
   (allocating the window's nodes again, each op relocated onto this
-  emitter's nodes by `Relocation`, a `NodeMap`), and `into_nodes` moves
+  emitter's nodes by `Relocation`, a `NodeMap`, which also relocates the
+  nodes a copied record names, `NodeFacts::map_operands`, and carries a
+  construction's syntax), `roll_back` drops the constructions a probe
+  entered, and `into_nodes` moves
   the nodes, each holding its facts (`EmittedExpr::facts`,
   `EmittedStmt::facts`), into `EmittedNodes`, less any record a cleared
   fact left empty, and discards what is still pending, syntax the check
-  typed only to evaluate it (`--timings` counts `emit.node_records`,
+  typed only to evaluate it, and the constructions' syntax (`--timings` counts `emit.node_records`,
   `emit.discarded_records`, and `emit.opless_nodes`). `Ops` also gives each
   `for` statement its written target's occurrence (`EmittedStmt::loop_target`)
   and each comprehension its clauses' (`EmittedExpr::loop_targets`) at
@@ -1040,8 +1050,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `apply_spelled`, `parameter_layout`, `subscript_attribute`, `lifted` and
   `Outermost`, `map_params`, and `Signatures`' `function`, `method`,
   `function_symbol`, `method_symbol`, and `fields`. `NodeMap`,
-  `CheckedOp::map_operands`, and `CheckedStmtOp::map_operands`
-  (`checked.rs`) are public for the emitter's relocation.
+  `CheckedOp::map_operands`, `CheckedStmtOp::map_operands`,
+  `MatchPlan::map_operands`, and `NodeFacts::map_operands` (`checked.rs`)
+  are public for the emitter's relocation. A sugar's
+  `SpelledConstruction` names its construction's node, which the seal
+  seals in the sugar's place, and a spelled sugar the seal does not
+  replace (`emitted::substituted`) is `Unsealed`; a `MatchPlan`'s anchor,
+  commands, reads, and conditions are emitted slots the seal takes as
+  they are (`Seal::case_program`), and only the roots are found by span
+  (`Seal::root_slot`).
 - `checker/node_facts.rs` owns the checker's access to its per-occurrence
   records through the emitter: `record_at` is the write path (the record,
   created if absent), `fact`/`has_fact` read one fact, and

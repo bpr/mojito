@@ -536,15 +536,11 @@ impl Checker {
     /// (`print(n)`, `g(n)` over `g(*xs: Int)`). A spelled construction is
     /// judged at the initializer it calls.
     fn passes_by_reference(&self, span: &SourceSpan, name: Option<&str>, args: &[Expr]) -> bool {
-        let site = match self
-            .fact(span, |facts| facts.adjustment.as_ref())
-            .as_deref()
-        {
-            Some(mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
-                construction,
-            }) => construction.0.source_span(),
-            _ => span.clone(),
-        };
+        let site = self
+            .emitter
+            .borrow()
+            .construction(span)
+            .map_or_else(|| span.clone(), Expr::source_span);
         self.declared_collector(&site, name)
             .is_some_and(|positional| args.len() > positional)
     }

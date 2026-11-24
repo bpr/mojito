@@ -24,7 +24,7 @@ impl Checker {
         record: bool,
     ) -> Result<Ty, TypeError> {
         let ty = self.infer_with_expected(&construction, expected, record)?;
-        self.record_spelled_construction(expression, construction, &ty);
+        self.record_spelled_construction(expression, construction, &ty)?;
         Ok(ty)
     }
 
@@ -337,15 +337,15 @@ impl Checker {
     }
 
     /// Record that the sugar `expression` checked as `construction` of type
-    /// `ty`: the sugar answers with the construction's type, and the checked
-    /// arena hands HIR the construction in the sugar's place.
+    /// `ty`: the sugar answers with the construction's type, and its record
+    /// names the construction's node, which the checked arena hands HIR in
+    /// the sugar's place.
     pub(super) fn record_spelled_construction(
         &self,
         expression: &Expr,
         construction: Expr,
         ty: &Ty,
-    ) {
-        self.emitter.borrow_mut().enter_expression(&construction);
+    ) -> Result<(), TypeError> {
         let value = self
             .record_at(expression.source_span())
             .comptime_condition
@@ -353,29 +353,28 @@ impl Checker {
         if let Some(value) = value {
             self.record_condition_through_spellings(&construction, &value);
         }
+        let node = self
+            .emitter
+            .borrow_mut()
+            .enter_construction(construction)
+            .ok_or_else(|| {
+                TypeError::InvariantViolation("a spelled construction has no node".into())
+            })?;
         self.record_at(expression.source_span()).ty = Some(ty.clone());
         self.record_at(expression.source_span()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
-                construction: mojito_checked::checked::SpelledConstruction(Box::new(construction)),
-            },
+            mojito_checked::checked::SemanticAdjustment::SpelledConstruction { construction: node },
         ));
+        Ok(())
     }
 
     /// The construction the checker spelled for the sugar `expression`, when
     /// it spelled one: the expression is that construction for places and
     /// borrows as for lowering.
     pub(super) fn spelled_construction(&self, expression: &Expr) -> Option<Expr> {
-        match self
-            .emitter
+        self.emitter
             .borrow()
-            .get(&expression.source_span())
-            .and_then(|facts| facts.adjustment.as_deref())
-        {
-            Some(mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
-                construction,
-            }) => Some(construction.0.as_ref().clone()),
-            _ => None,
-        }
+            .construction(&expression.source_span())
+            .cloned()
     }
 
     /// Whether `name` names a module `comptime` alias of a type over its
@@ -1043,7 +1042,7 @@ impl Checker {
                 .insert(spelled.source_span(), initializer_args);
         }
         let ty = self.infer(&spelled)?;
-        self.record_spelled_construction(expression, spelled, &ty);
+        self.record_spelled_construction(expression, spelled, &ty)?;
         Ok(ty)
     }
 

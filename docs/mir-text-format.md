@@ -1417,6 +1417,13 @@ statement node, whose op names what it declares and which holds the
 binding and its type, as upstream's symbol is its op. The package format
 moves to `mojito-package 277` (R768).
 
+A spelled construction's `SpelledConstruction` adjustment names its
+construction's node rather than carrying the construction's syntax, as an
+op names its operand's value. No sealed node holds one, since the arena
+hands off the construction in the sugar's place, but the adjustment's
+schema changes, so the package format moves to `mojito-package 278`
+(R2570).
+
 Schema 1.230 gives a trait `requirement` record its parameters'
 `defaults` after `param_types`, encoded as a `decl`'s are: the attribute a
 call through the bound that leaves the slot out materializes, whatever the

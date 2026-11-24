@@ -909,8 +909,9 @@ impl Checker {
             },
             call.span,
         );
-        Some(self.infer(&spelled).inspect(|ty| {
-            self.record_spelled_construction(call, spelled, ty);
+        Some(self.infer(&spelled).and_then(|ty| {
+            self.record_spelled_construction(call, spelled, &ty)
+                .map(|()| ty)
         }))
     }
 
@@ -988,8 +989,9 @@ impl Checker {
         match self.infer(&spelled) {
             // A type parameter whose bounds declare no `__call__`.
             Err(TypeError::NoSuchMethod { .. }) if bound => None,
-            result => Some(result.inspect(|ty| {
-                self.record_spelled_construction(call, spelled, ty);
+            result => Some(result.and_then(|ty| {
+                self.record_spelled_construction(call, spelled, &ty)
+                    .map(|()| ty)
             })),
         }
     }

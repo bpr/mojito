@@ -1335,7 +1335,7 @@ impl Checker {
                     element: element.clone(),
                 },
             ));
-            self.record_spelled_construction(call, take, &element);
+            self.record_spelled_construction(call, take, &element)?;
             return Ok(element);
         }
         let operand = single_address_operand(name, param_args, args, kwargs)?;

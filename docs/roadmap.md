@@ -11792,27 +11792,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `param_arg_value_ty`), and `staged_simd_construction`'s source-less
     syntax.
   - Probe: the concluding `comptime match` case's conjoined condition
-    (`simd.mojo:3542`), which `enter_plan` never enters.
+    (`simd.mojo:3542`), which no plan names and so no node holds.
   - The lever: return the resolution and type from the typing
     (`infer_method_call`, `infer_construction_of`) instead of recording it
     on syntax no op holds; then `emit.discarded_records` is 0 and
     `into_nodes` can assert no record is pending.
   - Found while landing R2569 (2026-11-24).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R2570 The `SpelledConstruction` and `MatchPlan` facts carry
-  syntax, where an upstream op names its operands' values**
-
-  `SpelledConstruction` holds a `Box<Expr>` and a `MatchPlan`'s anchor,
-  tests, reads, and conditions hold `Expr`s and `Stmt`s, which the seal
-  maps to emitted nodes by their spans.
-  - Probe: `Seal::expression_slot` for a spelled construction.
-  - Probe: `Seal::planned_expression` and `Seal::planned_statement` for a
-    plan's tests, conditions, anchor, tag, bind, and read declarations.
-  - The lever: `Emitter::enter_expression` and `Emitter::enter_plan`
-    return the slots they allocate, and the facts hold those slots.
-  - Found while landing R766 (2026-11-24).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

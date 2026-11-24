@@ -502,7 +502,7 @@ impl Checker {
             },
         );
         let ty = self.infer(&construction)?;
-        self.record_spelled_construction(&sugar, construction, &ty);
+        self.record_spelled_construction(&sugar, construction, &ty)?;
         Ok(Some(ty))
     }
 

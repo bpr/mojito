@@ -1569,7 +1569,7 @@ impl Checker {
             let written = spelled.as_ref().unwrap_or(message);
             let ty = self.infer(written)?;
             if let Some(construction) = &spelled {
-                self.record_spelled_construction(message, construction.clone(), &ty);
+                self.record_spelled_construction(message, construction.clone(), &ty)?;
             }
             let stringish = ty.is_string_literal()
                 || matches!(ty.kind(), TyKind::KgenString)
@@ -6427,8 +6427,9 @@ impl Checker {
             },
             call.span,
         );
-        Some(self.infer(&invocation).inspect(|ty| {
-            self.record_spelled_construction(call, invocation, ty);
+        Some(self.infer(&invocation).and_then(|ty| {
+            self.record_spelled_construction(call, invocation, &ty)
+                .map(|()| ty)
         }))
     }
 
@@ -6468,10 +6469,10 @@ impl Checker {
             },
             &mut spelled,
         );
-        Some(
-            self.infer(&spelled)
-                .inspect(|ty| self.record_spelled_construction(expression, spelled, ty)),
-        )
+        Some(self.infer(&spelled).and_then(|ty| {
+            self.record_spelled_construction(expression, spelled, &ty)
+                .map(|()| ty)
+        }))
     }
 
     /// The raw parameter list a bracket argument names: any compile-time

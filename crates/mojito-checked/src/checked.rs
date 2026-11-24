@@ -1390,9 +1390,10 @@ pub enum SemanticAdjustment {
     /// spells and checks the construction under an identity derived from
     /// the sugar's, so the sugar keeps the type its context sees and the
     /// construction its own facts; the checked arena hands HIR the
-    /// construction in the sugar's place.
+    /// construction in the sugar's place. `construction` is the emitted
+    /// node of the construction, as an op names its operand's value.
     SpelledConstruction {
-        construction: SpelledConstruction,
+        construction: CheckedNodeId,
     },
     /// Construct an origin-bearing pointer to existing checked storage
     /// (`Pointer(to=place)`). The checked pointer type retains the
@@ -1522,16 +1523,6 @@ pub struct CheckedSliceLiteral {
 pub struct OmittedSliceOperand {
     pub conversion: Option<(String, Ty)>,
 }
-
-/// The construction a sugar checked as.
-///
-/// See [`SemanticAdjustment::SpelledConstruction`]. Equality is the expression's
-/// structural equality, an equivalence on parsed syntax (a literal is never
-/// NaN).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SpelledConstruction(pub Box<Expr>);
-
-impl Eq for SpelledConstruction {}
 
 /// One element of a tuple being destructured: how it is read from the
 /// tuple, and, when the target nests a tuple at that position, the plan
@@ -3699,33 +3690,67 @@ pub struct CommandRef {
 /// The check's plan for one `match`, recorded at the statement.
 ///
 /// It holds the declaration anchoring the subject, each case's commands
-/// and path reads, which the checked program's nodes are built from, how
-/// the cases are emitted, and whether the cases cover every value of the
-/// subject, so that nothing falls through. A `comptime match`'s plan also
-/// holds each case's compile-time condition.
+/// and path reads, how the cases are emitted, and whether the cases cover
+/// every value of the subject, so that nothing falls through. A `comptime
+/// match`'s plan also holds each case's compile-time condition. Each
+/// operand is the emitted node the check made for it, as upstream's
+/// `PatternCommand`s hold values.
 #[derive(Debug, Clone)]
 pub struct MatchPlan {
     /// `ref $match<id> = subject` or `var $match<id> = subject`; for a
     /// `comptime match`, `comptime $match<id> = subject`, or none when the
     /// subject is a compile-time name the cases read directly.
-    pub anchor: Option<Stmt>,
+    pub anchor: Option<CheckedStmtId>,
     /// Per case, its command list; a `comptime match` case's is its
     /// bindings alone (`comptime name = path`), its tests being its
     /// condition.
-    pub cases: Vec<Vec<PlannedCommand>>,
+    pub cases: Vec<Vec<CheckedCommand>>,
     /// Per case, its path reads, which its commands name by index.
-    pub reads: Vec<Vec<PlannedRead>>,
+    pub reads: Vec<Vec<CheckedPathRead>>,
     /// How a runtime `match`'s cases are emitted; empty for a `comptime
     /// match` and a `case` condition.
     pub emission: MatchEmission,
     /// Per `comptime match` case, the conjunction of its tests and its
     /// guard, a compile-time `Bool` (none when the case always matches);
     /// empty for a runtime `match`.
-    pub conditions: Vec<Option<Expr>>,
+    pub conditions: Vec<Option<CheckedNodeId>>,
     pub concluded: bool,
     /// Per case, whether earlier cases cover every value it matches, so
     /// that it is never reached (empty for a `case` condition).
     pub unreachable: Vec<bool>,
+}
+
+impl MatchPlan {
+    /// The plan with every node it names replaced through `map`.
+    #[must_use]
+    pub fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        Self {
+            anchor: self.anchor.map(|anchor| map.statement(anchor)),
+            cases: self
+                .cases
+                .iter()
+                .map(|commands| {
+                    commands
+                        .iter()
+                        .map(|command| command.map_operands(map))
+                        .collect()
+                })
+                .collect(),
+            reads: self
+                .reads
+                .iter()
+                .map(|reads| reads.iter().map(|read| read.map_operands(map)).collect())
+                .collect(),
+            emission: self.emission.clone(),
+            conditions: self
+                .conditions
+                .iter()
+                .map(|condition| condition.map(|condition| map.expression(condition)))
+                .collect(),
+            concluded: self.concluded,
+            unreachable: self.unreachable.clone(),
+        }
+    }
 }
 
 /// A nonfatal diagnostic the check recorded at a source location: the
@@ -3734,41 +3759,6 @@ pub struct MatchPlan {
 pub struct Warning {
     pub message: String,
     pub span: SourceSpan,
-}
-
-/// One step of a planned case: the synthesized syntax the check recorded
-/// facts for, with the chain of the case's path reads it needs.
-#[derive(Debug, Clone)]
-pub enum PlannedCommand {
-    /// The comparison `$match<id> == value`.
-    Equal { test: Expr, reads: Vec<u32> },
-    /// The length test `list_length_matches($match<id>, arity, True)`.
-    ListLength { test: Expr, reads: Vec<u32> },
-    /// The discriminant `var $tag<id> = $match<id>._get_sum_discriminant()`
-    /// and the case test `$tag<id> == case`.
-    EnumTag {
-        tag: Box<Stmt>,
-        test: Expr,
-        case: usize,
-        reads: Vec<u32>,
-    },
-    /// The declaration `ref name = $match<id>` or `var name = $match<id>`,
-    /// or a later `|` alternative's assignment to the first's binding.
-    Bind {
-        declaration: Box<Stmt>,
-        reads: Vec<u32>,
-    },
-    /// The alternatives of a `|` pattern, each a command list of its own.
-    Alternatives(Vec<Vec<Self>>),
-}
-
-/// One planned path read: the match-wide id of its path, and its
-/// declaration (`ref $elem<id> = parent[i]`, `var $elem<id> = parent[i]`,
-/// or `ref $elem<id> = parent._unsafe_get_union_payload[case]()`).
-#[derive(Debug, Clone)]
-pub struct PlannedRead {
-    pub path: u32,
-    pub declaration: Stmt,
 }
 
 /// A checked `case` pattern: the source pattern
@@ -5836,15 +5826,15 @@ pub(crate) fn statement_node(
 /// a compile-time application.
 pub(crate) fn spelled_construction(
     facts: &NodeFacts,
-) -> Option<(&Expr, Option<SemanticAdjustment>)> {
+) -> Option<(CheckedNodeId, Option<SemanticAdjustment>)> {
     match facts.adjustment.as_deref()? {
-        SemanticAdjustment::SpelledConstruction { construction } => Some((&construction.0, None)),
+        SemanticAdjustment::SpelledConstruction { construction } => Some((*construction, None)),
         SemanticAdjustment::ComptimeApplication {
             operation: Some(operation),
             application,
         } => match &**operation {
             SemanticAdjustment::SpelledConstruction { construction } => Some((
-                &construction.0,
+                *construction,
                 Some(SemanticAdjustment::ComptimeApplication {
                     operation: None,
                     application: application.clone(),
@@ -6670,6 +6660,40 @@ node_facts! {
         /// `False`: no instance reaching the assertion completes past it,
         /// as the pin's constraint-failure terminator ends a return path.
         failing_assertion,
+    }
+}
+
+impl NodeFacts {
+    /// Replace every node the facts name through `map`: a spelled sugar's
+    /// construction, nested in the operation records that hold one, and a
+    /// match plan's operands, as an op's operands are relocated with it.
+    pub fn map_operands(&mut self, map: &mut dyn NodeMap) {
+        if let Some(adjustment) = self.adjustment.as_deref_mut() {
+            map_adjustment_operands(adjustment, map);
+        }
+        if let Some(plan) = &self.match_plan {
+            self.match_plan = Some(plan.map_operands(map));
+        }
+    }
+}
+
+/// [`NodeFacts::map_operands`] for one operation record and the records
+/// nested in it.
+fn map_adjustment_operands(adjustment: &mut SemanticAdjustment, map: &mut dyn NodeMap) {
+    match adjustment {
+        SemanticAdjustment::SpelledConstruction { construction } => {
+            *construction = map.expression(*construction);
+        }
+        SemanticAdjustment::ReceiverFromFirstArgument { inner: Some(inner) }
+        | SemanticAdjustment::ComptimeApplication {
+            operation: Some(inner),
+            ..
+        }
+        | SemanticAdjustment::ComptimeDisplay {
+            construction: inner,
+            ..
+        } => map_adjustment_operands(inner, map),
+        _ => {}
     }
 }
 

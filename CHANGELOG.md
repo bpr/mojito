@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A fact naming another operation names its emitted node, as an upstream
+  op names its operands' values (R2570). A spelled sugar's
+  `SemanticAdjustment::SpelledConstruction` holds its construction's node,
+  and a `MatchPlan`'s anchor, commands (`CheckedCommand`), path reads
+  (`CheckedPathRead`), and `comptime match` conditions hold the nodes the
+  check entered for them, so the seal finds none of them by span:
+  `PlannedCommand`, `PlannedRead`, `Emitter::enter_plan`, and
+  `Seal::{expression_slot, planned_expression}` are gone. The emitter keeps
+  a construction's syntax beside its node for the check's own reads and
+  relocates the nodes a carried record names (`NodeFacts::map_operands`);
+  a spelled-construction record on a sugar the seal does not replace is
+  now `Unsealed`. No accepted program, MIR text, or warning changes; the
+  package format moves to `mojito-package 278`.
+
 - Every fact the check hands off sits on an emitted node (R2569). A
   destructuring statement holds its declared leaves' bindings
   (`NodeFacts::declared_leaves`), which `Seal::target` takes in its

@@ -2044,7 +2044,7 @@ impl Checker {
             let rewritten = with_contextual_root(expression, &root);
             let ty = self.infer_with_expected(&rewritten, expected, record)?;
             if record {
-                self.record_spelled_construction(expression, rewritten, &ty);
+                self.record_spelled_construction(expression, rewritten, &ty)?;
             }
             return Ok(ty);
         }

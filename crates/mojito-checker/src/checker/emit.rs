@@ -1,9 +1,11 @@
 //! The check's emitted nodes: one per statement and expression occurrence,
 //! allocated when the check enters the statement that holds it, or the
-//! construction it spells, or the match tests it plans, each holding its op
-//! and carrying the facts the check decides there, as upstream's emitters
-//! create each op when they emit it and set each decided fact on it as an
-//! attribute.
+//! construction it spells, or a match test or condition it plans, each
+//! holding its op and carrying the facts the check decides there, as
+//! upstream's emitters create each op when they emit it and set each
+//! decided fact on it as an attribute. A fact that names another operation
+//! (a spelled sugar's construction, a match plan's commands) holds that
+//! operation's node, as an op names its operands' values.
 //!
 //! A node's op is set when the node is allocated, from its syntax, with its
 //! operands the nodes allocated for its operands (`ops`), and never changes:
@@ -21,20 +23,24 @@
 //! The emitter logs and journals as the fact stores do (`fact_store`): a
 //! body site's writes are carried by log range, and a probe's writes and
 //! allocations are undone when it rolls back.
+//!
+//! The syntax of each construction the check spelled stays here, beside
+//! its node, for the check's own reads of it, as upstream's parser keeps
+//! its tree while the ops name values: it never crosses the handoff.
 
 mod ops;
 
 use mojito_ast::ast::{Expr, Stmt};
 use mojito_ast::visit::{self, Visitor};
 use mojito_checked::checked::{
-    CheckedNodeId, CheckedStmtId, MatchPlan, NodeFacts, NodeMap, PlannedCommand,
+    CheckedNodeId, CheckedStmtId, NodeFacts, NodeMap, SemanticAdjustment,
 };
 use mojito_checked::emitted::{EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt};
 use mojito_checked::fact_store::{FactMap, ProbeMark};
 use mojito_common::timing;
 use mojito_common::token::SourceSpan;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, HashMap};
 
 /// The statement and expression nodes the check has allocated, the index
 /// from occurrence to node, and the pending records.
@@ -50,6 +56,8 @@ pub struct Emitter {
     /// first.
     undo: Vec<(EmittedSlot, Option<Box<NodeFacts>>)>,
     probes: u32,
+    /// The syntax of each spelled construction, by its root's node.
+    constructions: BTreeMap<CheckedNodeId, Expr>,
 }
 
 impl Emitter {
@@ -73,9 +81,11 @@ impl Emitter {
     }
 
     /// Emit `statement` and every statement and expression under it,
-    /// unless the check entered it before.
-    pub(super) fn enter_statement(&mut self, statement: &Stmt) {
-        if !self.index.contains_key(&statement.source_span()) {
+    /// unless the check entered it before: the statement's node either way,
+    /// none only when an expression holds its occurrence.
+    pub(super) fn enter_statement(&mut self, statement: &Stmt) -> Option<CheckedStmtId> {
+        let at = statement.source_span();
+        if !self.index.contains_key(&at) {
             let start = self.allocated();
             visit::walk_stmt(&mut Allocation(self), statement);
             visit::walk_stmt(
@@ -86,12 +96,19 @@ impl Emitter {
                 statement,
             );
         }
+        match self.index.get(&at)? {
+            EmittedSlot::Statement(id) => Some(*id),
+            EmittedSlot::Expression(_) => None,
+        }
     }
 
     /// Emit `expression` and every statement and expression under it that
-    /// no node holds yet: a construction the check spelled.
-    pub(super) fn enter_expression(&mut self, expression: &Expr) {
-        if !self.index.contains_key(&expression.source_span()) {
+    /// no node holds yet (a synthesized test or condition, a construction
+    /// the check spelled): the expression's node, none only when a
+    /// statement holds its occurrence.
+    pub(super) fn enter_expression(&mut self, expression: &Expr) -> Option<CheckedNodeId> {
+        let at = expression.source_span();
+        if !self.index.contains_key(&at) {
             let start = self.allocated();
             visit::walk_expr(&mut Allocation(self), expression);
             visit::walk_expr(
@@ -102,23 +119,28 @@ impl Emitter {
                 expression,
             );
         }
+        match self.index.get(&at)? {
+            EmittedSlot::Expression(id) => Some(*id),
+            EmittedSlot::Statement(_) => None,
+        }
     }
 
-    /// Emit the syntax match `plan` synthesized: its anchor, each command's
-    /// test and declaration, each path read, and each `comptime match`
-    /// case's condition.
-    pub(super) fn enter_plan(&mut self, plan: &MatchPlan) {
-        if let Some(anchor) = &plan.anchor {
-            self.enter_statement(anchor);
-        }
-        for command in plan.cases.iter().flatten() {
-            self.enter_command(command);
-        }
-        for read in plan.reads.iter().flatten() {
-            self.enter_statement(&read.declaration);
-        }
-        for condition in plan.conditions.iter().flatten() {
-            self.enter_expression(condition);
+    /// Emit the construction the check spelled for a sugar, keeping its
+    /// syntax beside its node: the node the sugar's record names.
+    pub(super) fn enter_construction(&mut self, construction: Expr) -> Option<CheckedNodeId> {
+        let id = self.enter_expression(&construction)?;
+        self.constructions.entry(id).or_insert(construction);
+        Some(id)
+    }
+
+    /// The syntax of the construction the check spelled for the sugar at
+    /// `sugar`, when it spelled one.
+    pub(super) fn construction(&self, sugar: &SourceSpan) -> Option<&Expr> {
+        match self.get(sugar)?.adjustment.as_deref()? {
+            SemanticAdjustment::SpelledConstruction { construction } => {
+                self.constructions.get(construction)
+            }
+            _ => None,
         }
     }
 
@@ -219,6 +241,8 @@ impl Emitter {
         {
             self.index.remove(&at);
         }
+        self.constructions
+            .split_off(&CheckedNodeId(slot_position(mark.expressions)));
         self.log.truncate(mark.log);
         self.pending.roll_back(mark.pending);
         self.probes -= 1;
@@ -227,8 +251,9 @@ impl Emitter {
     /// Copy the window `from..to` of `previous`, another pass over the same
     /// program: allocate every node it allocated there that this emitter
     /// lacks, with its op relocated onto this emitter's nodes, then set the
-    /// final record of every occurrence it wrote there. A record removed
-    /// after the window is not copied.
+    /// final record of every occurrence it wrote there, with the nodes it
+    /// names relocated too. A record removed after the window is not
+    /// copied.
     pub(super) fn copy_window(&mut self, previous: &Self, from: &EmitMark, to: &EmitMark) {
         let start = self.allocated();
         for node in &previous.statements[from.statements..to.statements] {
@@ -248,10 +273,16 @@ impl Emitter {
         for position in from.expressions..to.expressions {
             relocation.expression(CheckedNodeId(slot_position(position)));
         }
-        for at in previous.written(from, to) {
-            if let Some(facts) = previous.get(at) {
-                self.insert(at.clone(), facts.clone());
-            }
+        let records: Vec<(SourceSpan, NodeFacts)> = previous
+            .written(from, to)
+            .filter_map(|at| {
+                let mut facts = previous.get(at)?.clone();
+                facts.map_operands(&mut relocation);
+                Some((at.clone(), facts))
+            })
+            .collect();
+        for (at, facts) in records {
+            self.insert(at, facts);
         }
     }
 
@@ -272,7 +303,8 @@ impl Emitter {
     /// The emitted nodes, each holding the facts set on it, less any
     /// record a cleared fact left empty. A record still pending is on
     /// syntax the check typed only to evaluate it, whose result it folded
-    /// into an attribute of the op that holds it: the handoff discards it.
+    /// into an attribute of the op that holds it: the handoff discards it,
+    /// as it does the constructions' syntax.
     pub(super) fn into_nodes(self) -> EmittedNodes {
         let (mut on_nodes, mut opless) = (0u64, 0u64);
         let mut seal = |op: bool, facts: &mut Option<Box<NodeFacts>>| {
@@ -386,24 +418,6 @@ impl Emitter {
             self.undo.push((slot, previous));
         }
         self.facts_mut(slot)
-    }
-
-    fn enter_command(&mut self, command: &PlannedCommand) {
-        match command {
-            PlannedCommand::Equal { test, .. } | PlannedCommand::ListLength { test, .. } => {
-                self.enter_expression(test);
-            }
-            PlannedCommand::EnumTag { tag, test, .. } => {
-                self.enter_statement(tag);
-                self.enter_expression(test);
-            }
-            PlannedCommand::Bind { declaration, .. } => self.enter_statement(declaration),
-            PlannedCommand::Alternatives(alternatives) => {
-                for command in alternatives.iter().flatten() {
-                    self.enter_command(command);
-                }
-            }
-        }
     }
 }
 
@@ -540,6 +554,12 @@ impl NodeMap for Relocation<'_> {
             node.applications = applications;
             node.loop_targets.clone_from(&previous.loop_targets);
         }
+        if let Some(construction) = pass.constructions.get(&id) {
+            self.this
+                .constructions
+                .entry(here)
+                .or_insert_with(|| construction.clone());
+        }
         here
     }
 
@@ -580,7 +600,10 @@ mod tests {
         BindingMode, DestructureTarget, DestructureTargetKind, Expr, ExprKind, InfixOp, ParamArg,
         Stmt, StmtKind,
     };
-    use mojito_checked::checked::{CheckedOp, CheckedParamArg};
+    use mojito_checked::checked::{
+        CheckedCommand, CheckedNodeId, CheckedOp, CheckedParamArg, CheckedStmtId, MatchEmission,
+        MatchPlan, SemanticAdjustment,
+    };
     use mojito_checked::emitted::{EmittedNodes, EmittedSlot};
     use mojito_common::token::{SourceSpan, Span};
     use std::collections::HashMap;
@@ -737,10 +760,10 @@ mod tests {
         emitter
             .record(construction.source_span())
             .truthiness_condition = true;
-        emitter.enter_expression(&construction);
+        let slot = emitter.enter_expression(&construction);
         assert!(matches!(
             emitter.index.get(&construction.source_span()),
-            Some(EmittedSlot::Expression(_))
+            Some(EmittedSlot::Expression(id)) if Some(*id) == slot
         ));
         let nodes = emitter.into_nodes();
         assert!(
@@ -847,6 +870,107 @@ mod tests {
         ));
         assert_eq!(args, &vec![slot(&argument)]);
         assert_eq!(node.applications, vec![vec![slot(&parameter)]]);
+    }
+
+    /// Record at `sugar` that it spells the construction at `slot`.
+    fn spell(emitter: &mut Emitter, sugar: &Expr, slot: CheckedNodeId) {
+        emitter.record(sugar.source_span()).adjustment =
+            Some(Box::new(SemanticAdjustment::SpelledConstruction {
+                construction: slot,
+            }));
+    }
+
+    fn expression_node_of(emitter: &Emitter, expression: &Expr) -> Option<CheckedNodeId> {
+        match emitter.index.get(&expression.source_span())? {
+            EmittedSlot::Expression(id) => Some(*id),
+            EmittedSlot::Statement(_) => None,
+        }
+    }
+
+    fn statement_node_of(emitter: &Emitter, statement: &Stmt) -> Option<CheckedStmtId> {
+        match emitter.index.get(&statement.source_span())? {
+            EmittedSlot::Statement(id) => Some(*id),
+            EmittedSlot::Expression(_) => None,
+        }
+    }
+
+    #[test]
+    fn a_rolled_back_construction_leaves_no_syntax_for_its_sugar() {
+        let (entered, sugar, construction) = (statement(), truth(), truth());
+        let mut emitter = Emitter::default();
+        emitter.enter_statement(&entered);
+        let probe = emitter.open_probe();
+        let slot = emitter
+            .enter_construction(construction.clone())
+            .expect("a construction is an expression");
+        spell(&mut emitter, &sugar, slot);
+        assert_eq!(
+            emitter.construction(&sugar.source_span()),
+            Some(&construction)
+        );
+        emitter.roll_back(probe);
+        assert!(emitter.construction(&sugar.source_span()).is_none());
+        assert!(emitter.constructions.is_empty());
+    }
+
+    #[test]
+    fn a_copied_window_relocates_the_nodes_its_records_name() {
+        let (entered, matched, bound) = (statement(), statement(), statement());
+        let (sugar, construction, test) = (truth(), truth(), truth());
+        let mut previous = Emitter::default();
+        previous.enter_statement(&entered);
+        let from = previous.mark();
+        let slot = previous
+            .enter_construction(construction.clone())
+            .expect("a construction is an expression");
+        spell(&mut previous, &sugar, slot);
+        previous.enter_statement(&matched);
+        let anchor = previous.enter_statement(&bound);
+        let tested = previous
+            .enter_expression(&test)
+            .expect("a test is an expression");
+        previous.record(matched.source_span()).match_plan = Some(MatchPlan {
+            anchor,
+            cases: vec![vec![CheckedCommand::Equal {
+                test: tested,
+                reads: Vec::new(),
+            }]],
+            reads: vec![Vec::new()],
+            emission: MatchEmission::default(),
+            conditions: Vec::new(),
+            concluded: false,
+            unreachable: Vec::new(),
+        });
+        let to = previous.mark();
+
+        let mut fresh = Emitter::default();
+        fresh.enter_statement(&statement());
+        fresh.enter_statement(&entered);
+        fresh.copy_window(&previous, &from, &to);
+        let spelled = match fresh
+            .get(&sugar.source_span())
+            .and_then(|facts| facts.adjustment.as_deref())
+        {
+            Some(SemanticAdjustment::SpelledConstruction { construction }) => Some(*construction),
+            _ => None,
+        };
+        assert_eq!(spelled, expression_node_of(&fresh, &construction));
+        assert_ne!(spelled, Some(slot));
+        assert_eq!(
+            fresh.construction(&sugar.source_span()),
+            Some(&construction)
+        );
+        let plan = fresh
+            .get(&matched.source_span())
+            .and_then(|facts| facts.match_plan.as_ref())
+            .expect("the plan was copied");
+        assert_eq!(plan.anchor, statement_node_of(&fresh, &bound));
+        assert_ne!(plan.anchor, anchor);
+        assert!(matches!(
+            plan.cases[0].as_slice(),
+            [CheckedCommand::Equal { test: relocated, .. }]
+                if Some(*relocated) == expression_node_of(&fresh, &test) && *relocated != tested
+        ));
     }
 
     fn for_statement(target: DestructureTarget) -> Stmt {

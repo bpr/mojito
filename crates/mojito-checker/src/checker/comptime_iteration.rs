@@ -55,7 +55,7 @@ impl Checker {
             .ok_or_else(|| {
                 TypeError::InvariantViolation("a comptime for iterator names no function".into())
             })?;
-        self.record_spelled_construction(source, call, &iterator_ty);
+        self.record_spelled_construction(source, call, &iterator_ty)?;
         self.record_at(source.source_span()).comptime_iteration =
             Some(Box::new(mojito_checked::checked::ComptimeIteration {
                 binder: reference.clone(),

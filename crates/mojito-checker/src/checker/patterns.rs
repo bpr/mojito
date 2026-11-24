@@ -53,7 +53,9 @@ use super::desugar::Synth;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{BindingMode, MatchCase, MatchPattern, MatchPatternKind, SequencePattern};
-use mojito_checked::checked::{MatchEmission, MatchPlan, PlannedCommand, PlannedRead};
+use mojito_checked::checked::{
+    CheckedCommand, CheckedNodeId, CheckedPathRead, CheckedStmtId, MatchEmission, MatchPlan,
+};
 
 impl Checker {
     /// Check `match subject:` with its `cases`: anchor the subject, compile
@@ -77,7 +79,7 @@ impl Checker {
             .anchor_subject(&synth, &name, subject, read_only, ret, in_loop)
             .and_then(|(anchor, ty, temporary)| {
                 let subject = MatchSubject::root(&synth, &paths, &name, ty, temporary);
-                self.check_match_cases(stmt, &subject, anchor, cases, ret, in_loop)
+                self.check_match_cases(stmt, &subject, &anchor, cases, ret, in_loop)
             });
         self.pop_scope();
         checked
@@ -143,7 +145,7 @@ impl Checker {
                 self.check_block(body, ret, in_loop)?;
                 let (program, reads, _) = commands.into_parts();
                 let plan = MatchPlan {
-                    anchor: Some(anchor),
+                    anchor: Some(self.emitted_statement(&anchor)?),
                     cases: vec![program],
                     reads: vec![reads],
                     emission: MatchEmission::default(),
@@ -151,7 +153,6 @@ impl Checker {
                     concluded: false,
                     unreachable: Vec::new(),
                 };
-                self.emitter.borrow_mut().enter_plan(&plan);
                 self.record_at(value.source_span()).match_plan = Some(plan);
                 Ok(())
             });
@@ -309,7 +310,7 @@ impl Checker {
         &mut self,
         stmt: &Stmt,
         subject: &MatchSubject,
-        anchor: Stmt,
+        anchor: &Stmt,
         cases: &[MatchCase],
         ret: Option<&Ty>,
         in_loop: bool,
@@ -348,7 +349,7 @@ impl Checker {
             .flatten()
             .collect::<HashSet<_>>();
         let plan = MatchPlan {
-            anchor: Some(anchor),
+            anchor: Some(self.emitted_statement(anchor)?),
             cases: programs,
             reads,
             emission,
@@ -356,7 +357,6 @@ impl Checker {
             concluded: verdict.concluding.is_some(),
             unreachable: verdict.unreachable,
         };
-        self.emitter.borrow_mut().enter_plan(&plan);
         let mut facts = self.record_at(stmt.source_span());
         facts.match_plan = Some(plan);
         facts.match_warnings = (!verdict.warnings.is_empty()).then_some(verdict.warnings);
@@ -478,8 +478,20 @@ impl Checker {
             .chain(fall_through)
             .flatten()
             .collect::<HashSet<_>>();
+        // The concluding case's condition, dropped above, is no node.
+        let conditions = conditions
+            .iter()
+            .map(|condition| {
+                condition
+                    .as_ref()
+                    .map(|condition| self.emitted_expression(condition))
+                    .transpose()
+            })
+            .collect::<Result<_, _>>()?;
         let plan = MatchPlan {
-            anchor,
+            anchor: anchor
+                .map(|anchor| self.emitted_statement(&anchor))
+                .transpose()?,
             reads: vec![Vec::new(); programs.len()],
             cases: programs,
             emission: MatchEmission::default(),
@@ -487,7 +499,6 @@ impl Checker {
             concluded: verdict.concluding.is_some(),
             unreachable: verdict.unreachable,
         };
-        self.emitter.borrow_mut().enter_plan(&plan);
         let mut facts = self.record_at(stmt.source_span());
         facts.match_plan = Some(plan);
         // A `comptime if case` branch reports no coverage warning, as
@@ -526,8 +537,8 @@ impl Checker {
                 value: synth.refresh(&binding.value),
             });
             self.check_comptime_declaration(&declaration, &binding.name)?;
-            declarations.push(PlannedCommand::Bind {
-                declaration: Box::new(declaration),
+            declarations.push(CheckedCommand::Bind {
+                declaration: self.emitted_statement(&declaration)?,
                 reads: Vec::new(),
             });
         }
@@ -726,7 +737,7 @@ impl Checker {
         }
         commands
             .program
-            .push(PlannedCommand::Alternatives(programs));
+            .push(CheckedCommand::Alternatives(programs));
         commands.cover.push(CoverCommand::Or(covers));
         Ok(())
     }
@@ -927,7 +938,7 @@ impl Checker {
             ],
             kwargs: Vec::new(),
         });
-        self.push_test(test, subject, commands, |test| PlannedCommand::ListLength {
+        self.push_test(test, subject, commands, |test| CheckedCommand::ListLength {
             test,
             reads,
         })?;
@@ -995,9 +1006,9 @@ impl Checker {
                 let index = u32::try_from(commands.reads.len()).map_err(|_| {
                     TypeError::InvariantViolation("too many pattern path reads".into())
                 })?;
-                commands.reads.push(PlannedRead {
+                commands.reads.push(CheckedPathRead {
                     path: subject.paths.id(&key),
-                    declaration,
+                    declaration: self.emitted_statement(&declaration)?,
                 });
                 commands.cached.insert(key, (index, read.clone()));
                 (index, read)
@@ -1317,13 +1328,14 @@ impl Checker {
             value: discriminant,
         });
         self.check_stmt(&tag, None, false)?;
+        let tag = self.emitted_statement(&tag)?;
         let test = synth.expr(ExprKind::Infix(
             InfixOp::Eq,
             Box::new(synth.identifier(&name)),
             Box::new(synth.int(case)),
         ));
-        self.push_test(test, subject, commands, |test| PlannedCommand::EnumTag {
-            tag: Box::new(tag),
+        self.push_test(test, subject, commands, |test| CheckedCommand::EnumTag {
+            tag,
             test,
             case,
             reads,
@@ -1350,7 +1362,7 @@ impl Checker {
             Box::new(value.clone()),
         ));
         self.register_named_bindings(&test)?;
-        self.push_test(test, &subject, commands, |test| PlannedCommand::Equal {
+        self.push_test(test, &subject, commands, |test| CheckedCommand::Equal {
             test,
             reads,
         })
@@ -1359,20 +1371,23 @@ impl Checker {
     /// Push the test `test` over `subject`: a `Bool` the case's program
     /// branches on, or in compile-time mode a conjunct of the case's
     /// condition, a compile-time `Bool` whose dynamic operand is the pin's
-    /// `match subject` rejection.
+    /// `match subject` rejection. A runtime test is emitted once typed, and
+    /// its command names its node.
     fn push_test(
         &self,
         test: Expr,
         subject: &MatchSubject,
         commands: &mut Commands,
-        planned: impl FnOnce(Expr) -> PlannedCommand,
+        planned: impl FnOnce(CheckedNodeId) -> CheckedCommand,
     ) -> Result<(), TypeError> {
         if subject.comptime() {
             self.check_comptime_condition(&test, ComptimeTest::MatchSubject)?;
             commands.conditions.push(test);
         } else {
             self.expect_bool(&test, "case pattern")?;
-            commands.program.push(planned(test));
+            commands
+                .program
+                .push(planned(self.emitted_expression(&test)?));
         }
         Ok(())
     }
@@ -1461,8 +1476,8 @@ impl Checker {
                     value,
                 });
                 self.check_stmt(&assignment, None, false)?;
-                commands.program.push(PlannedCommand::Bind {
-                    declaration: Box::new(assignment),
+                commands.program.push(CheckedCommand::Bind {
+                    declaration: self.emitted_statement(&assignment)?,
                     reads,
                 });
                 return Ok(());
@@ -1499,11 +1514,29 @@ impl Checker {
         if binding == Binding::Bare {
             self.make_reference_immutable(name, &declaration, value_span);
         }
-        commands.program.push(PlannedCommand::Bind {
-            declaration: Box::new(declaration),
+        commands.program.push(CheckedCommand::Bind {
+            declaration: self.emitted_statement(&declaration)?,
             reads,
         });
         Ok(())
+    }
+
+    /// The node of a statement the check synthesized for a plan and
+    /// entered when it checked it, which the plan names.
+    fn emitted_statement(&self, statement: &Stmt) -> Result<CheckedStmtId, TypeError> {
+        self.emitter
+            .borrow_mut()
+            .enter_statement(statement)
+            .ok_or_else(|| TypeError::InvariantViolation("a planned statement has no node".into()))
+    }
+
+    /// The node of a test or condition the check synthesized for a plan,
+    /// emitted here, which the plan names.
+    fn emitted_expression(&self, expression: &Expr) -> Result<CheckedNodeId, TypeError> {
+        self.emitter
+            .borrow_mut()
+            .enter_expression(expression)
+            .ok_or_else(|| TypeError::InvariantViolation("a planned expression has no node".into()))
     }
 }
 
@@ -1712,9 +1745,9 @@ enum Reading {
 /// `bindings` instead.
 #[derive(Default)]
 struct Commands {
-    program: Vec<PlannedCommand>,
+    program: Vec<CheckedCommand>,
     cover: Vec<CoverCommand>,
-    reads: Vec<PlannedRead>,
+    reads: Vec<CheckedPathRead>,
     cached: HashMap<Vec<Step>, (u32, Read)>,
     conditions: Vec<Expr>,
     bindings: Vec<ComptimeBinding>,
@@ -1723,7 +1756,7 @@ struct Commands {
 impl Commands {
     /// The command list the case runs, its path reads, and the shapes
     /// coverage reads.
-    fn into_parts(self) -> (Vec<PlannedCommand>, Vec<PlannedRead>, Vec<CoverCommand>) {
+    fn into_parts(self) -> (Vec<CheckedCommand>, Vec<CheckedPathRead>, Vec<CoverCommand>) {
         (self.program, self.reads, self.cover)
     }
 }
@@ -1763,7 +1796,7 @@ impl PathTable {
 /// One checked `comptime match` case: its binding declarations, its
 /// condition (none when it always matches), and the shapes coverage reads.
 struct ComptimeCase {
-    declarations: Vec<PlannedCommand>,
+    declarations: Vec<CheckedCommand>,
     condition: Option<Expr>,
     constraint: Option<GenericConstraint>,
     cover: Vec<CoverCommand>,

@@ -77,7 +77,7 @@ impl Checker {
             expression.span,
         );
         let ty = self.infer(&construction)?;
-        self.record_spelled_construction(expression, construction, &ty);
+        self.record_spelled_construction(expression, construction, &ty)?;
         Ok(ty)
     }
 }

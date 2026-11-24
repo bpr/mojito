@@ -2831,16 +2831,7 @@ impl Checker {
             judged
                 .iter()
                 .filter(|(_, _, _, by_value, _)| *by_value)
-                .filter_map(
-                    |(span, ..)| match records.get(span)?.adjustment.as_deref() {
-                        Some(
-                            mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
-                                construction,
-                            },
-                        ) => Some(construction.0.source_span()),
-                        _ => None,
-                    },
-                )
+                .filter_map(|(span, ..)| records.construction(span).map(Expr::source_span))
                 .collect()
         };
         let mut records = self.emitter.borrow_mut();
