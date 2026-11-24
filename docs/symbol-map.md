@@ -640,12 +640,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mut`/`ref` argument places and solving a reference result's origin over
   the argument slots via `solve_call_origins_with_bool_bindings`, as a free
   call does, and alias-checking;
-  both method paths and the constructor paths record
-  `checked::MethodInstantiation`s, which name the method's template
-  (`method_calls/resolution.rs:record_method_call_instantiation`); the
-  method-call, static, and constructor paths also record every closed
-  generic-struct application reached from a non-bundled source
-  (`record_struct_instantiation` → `checked::StructInstantiation`), and
+  both method paths and the constructor paths record a generic method's
+  solved arguments as the call's `NodeFacts::method_instantiation`
+  (`method_calls/resolution.rs:record_method_call_instantiation`), which
+  the seal turns into its `SemanticAdjustment::InstantiatedArguments`, and
   `call_inference.rs::existing_def_clone` retargets an inferred bound-generic
   call to an already-declared def clone; `unify_through_callable_bounds`
   solves an infer-only type parameter through a callable-bounded sibling)
@@ -1311,11 +1309,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `CheckContext`): the sealed, declared `CheckedTables`; the
   `DeclarationSites` they were sealed with (annotation types, generic
   parameters, declaration effects, declaration symbols, which the program
-  does not keep); an `OccurrenceIndex`, the warnings and the span-keyed
-  per-occurrence lookups (`OccurrenceIndex::recorded` reads them from the
-  emitted records, `OccurrenceIndex::installed` from a package unit's
-  nodes' adjustments); and the `DeclarationTables`, the program-level
-  tables. It infers and composes nothing; it runs
+  does not keep); an `OccurrenceIndex`, the warnings
+  (`OccurrenceIndex::recorded` reads them from the emitted records; a
+  package unit records none); and the `DeclarationTables`, the
+  program-level tables. Every other per-occurrence fact (a call's resolved
+  callable, its instantiated arguments, an implicit conversion and its
+  type) is its node's adjustment, as upstream's op holds its attributes,
+  and nothing keeps a copy by span. It infers and composes nothing; it runs
   `collect_closure_uses`. The seal reads each node's facts off the node
   (a record encodes as the list of the facts it holds), and reaches the
   module's and each wrapper's root nodes as the nodes the check entered
@@ -1328,8 +1328,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `StructShell` for a member's struct and the `NodeMap` that
   `CheckedOp::map_operands`/`CheckedStmtOp::map_operands` renumber
   operands through, in build order).
-- `fact_store.rs` owns `FactMap`, `FactSet`, and `FactVec`: a `HashMap`,
-  `HashSet`, or `Vec` that logs every key written, read through `Deref`,
+- `fact_store.rs` owns `FactMap` and `FactSet`: a `HashMap` or
+  `HashSet` that logs every key written, read through `Deref`,
   with `mark`/`logged` for a range of the log, and `ProbeMark` with
   `open_probe`/`roll_back`, which journal every write while a probe is open
   and undo it. Every checker fact store is one, and the emitter
@@ -2552,8 +2552,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   checker records as `SemanticAdjustment::ParamValue`), and `infer_call` binds a
   `def`'s own type parameters from the arguments the checker solved, which
   `SemanticAdjustment::InstantiatedArguments` carries into
-  `MirInstr::Call::instantiated_args`, and a method's own from a
-  `checked::MethodInstantiation` into `MirInstr::MethodCall::instantiated_args`,
+  `MirInstr::Call::instantiated_args`, and a method's own from the call's
+  `NodeFacts::method_instantiation`, sealed as the same adjustment, into
+  `MirInstr::MethodCall::instantiated_args`,
   inferred value parameters included, which take no slot; a construction's
   record, `Checker::record_construction_instantiation`
   (`checker/declarations.rs`), holds the struct's arguments then the

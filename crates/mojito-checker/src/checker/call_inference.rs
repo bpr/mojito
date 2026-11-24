@@ -6,7 +6,6 @@ use super::constraints::LACKING_EVIDENCE;
 use super::origins::CallValues;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_symbol::symbol::TypeKey;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 use mojito_types::types::{POINTER_TYPE_NAME, TyKind};
 
@@ -1368,9 +1367,6 @@ impl Checker {
                 record.generic_instantiation =
                     Some(mojito_checked::checked::GenericInstantiation {
                         callee: function.symbol,
-                        parameter_names: Vec::new(),
-                        parameter_types: Vec::new(),
-                        variadic: None,
                         arguments,
                     });
             }
@@ -2329,9 +2325,9 @@ impl Checker {
         tyargs: &[TyArg],
         (binders, declared): (&[ParamDecl], Vec<TyArg>),
     ) -> Result<(), TypeError> {
-        let Some(func) = generic.as_generic_func() else {
+        if generic.as_generic_func().is_none() {
             return Ok(());
-        };
+        }
         self.validate_mutability_clauses(name, binders, &declared)?;
         if param_args.is_empty()
             && let Some(clone) = self.existing_def_clone(name, decls, tyargs)
@@ -2342,13 +2338,6 @@ impl Checker {
             self.record_at(span.clone()).generic_instantiation =
                 Some(mojito_checked::checked::GenericInstantiation {
                     callee: name.to_string(),
-                    parameter_names: func.names.clone(),
-                    parameter_types: func
-                        .params
-                        .iter()
-                        .map(|ty| TypeKey::from_ty(ty).as_str().to_string())
-                        .collect(),
-                    variadic: mojito_symbol::symbol::VariadicKey::from_callable(generic),
                     arguments: declared,
                 });
         }

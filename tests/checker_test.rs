@@ -65,6 +65,27 @@ fn checked_source_with_std(source: &str, file: &str) -> Result<CheckedSource, Ty
     }
 }
 
+/// The callable the check resolved each node of `checked` to, by the
+/// occurrence the node was checked at: its `ResolveCallable` attribute.
+fn resolved_callables(
+    checked: &mojito::checked::CheckedProgram,
+) -> std::collections::HashMap<mojito::SourceSpan, String> {
+    checked
+        .expressions()
+        .iter()
+        .filter_map(|node| {
+            node.adjustments
+                .iter()
+                .find_map(|adjustment| match adjustment {
+                    mojito::SemanticAdjustment::ResolveCallable(target) => {
+                        Some((node.location(), target.clone()))
+                    }
+                    _ => None,
+                })
+        })
+        .collect()
+}
+
 /// Whether `source`, a checked node's module path, is the bundled library's:
 /// against the cached package a program holds no library node, but a run
 /// that checks the library from source (no package, or
@@ -320,10 +341,7 @@ fn occurrence_keys_preserve_public_lookup_from_unique_input_syntax() {
         _ => panic!("expected expression statement"),
     };
     assert_eq!(
-        checked
-            .checked()
-            .overload_targets()
-            .get(&call.source_span()),
+        resolved_callables(checked.checked()).get(&call.source_span()),
         Some(&"pick$ov$Int".to_string())
     );
 }
@@ -361,16 +379,15 @@ fn nominal_callable_rejects_a_value_result_for_a_reference_result_contract() {
 fn nominal_callable_selects_the_contract_matching_same_arity_overload() {
     let source = "@fieldwise_init\nstruct Choose(def(Int) -> Int):\n    def __call__(self, value: Bool) -> Int:\n        return 0\n\n    def __call__(self, value: Int) -> Int:\n        return value + 1\n\ndef invoke[F: def(Int) -> Int](callback: F) -> Int:\n    return callback(41)\n\ndef increment(value: Int) -> Int:\n    return value + 1\n\ndef main():\n    print(Choose()(41))\n    print(invoke(increment))\n";
     let checked = checked_with_std(source).expect("check overloaded nominal callable");
+    let targets = resolved_callables(&checked);
     assert!(
-        checked
-            .overload_targets()
+        targets
             .values()
             .any(|target| target == "Choose.__call__$ov$Int"),
         "the concrete callable target must retain the selected Int overload"
     );
     assert!(
-        checked
-            .overload_targets()
+        targets
             .values()
             .any(|target| target == "__trait_dispatch.__call__$ov$Int"),
         "the def-typed parameter call must retain its contract signature"
@@ -1255,19 +1272,28 @@ fn rejects_type_arguments_on_non_generic_struct() {
 
 #[test]
 fn generic_call_sites_record_their_resolved_instantiations() {
-    // Every bound-generic call site retains its resolved application (callee
-    // plus exact compile-time arguments) for the elaborator — explicit and
-    // inferred alike. A string literal argument materializes as `String`,
-    // so the program links the prelude.
+    // Every bound-generic call node carries its resolved compile-time
+    // arguments as its attribute for the elaborator — explicit and inferred
+    // alike. A string literal argument materializes as `String`, so the
+    // program links the prelude.
     let checked = checked_with_std(
         "def pick[T: Movable](var x: T) -> T:\n    return x^\n\ndef main():\n    var a = pick[Int](1)\n    var b = pick(\"s\")\n",
     )
     .expect("check");
     let picks: Vec<String> = checked
-        .generic_instantiations()
-        .values()
-        .filter(|instantiation| instantiation.callee == "pick")
-        .map(|instantiation| format!("{:?}", instantiation.arguments))
+        .expressions()
+        .iter()
+        .filter(|node| matches!(&node.op, mojito::checked::CheckedOp::Call { name, .. } if name == "pick"))
+        .filter_map(|node| {
+            node.adjustments
+                .iter()
+                .find_map(|adjustment| match adjustment {
+                    SemanticAdjustment::InstantiatedArguments(arguments) => {
+                        Some(format!("{arguments:?}"))
+                    }
+                    _ => None,
+                })
+        })
         .collect();
     assert_eq!(picks.len(), 2, "got {picks:?}");
     assert!(

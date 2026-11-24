@@ -572,37 +572,13 @@ impl Checker {
                 Some(selected.param_decls.clone());
         }
         if let Some(arguments) = &selected.instantiation {
-            // The receiver instance (`Box[Int].has[Bool]()`, the type
-            // `type_of(b)` denotes, or the one a bare name was solved at)
-            // keys the request, like a method call on one.
-            let receiver_targs = receiver
-                .and_then(mojito_types::types::nominal_parts)
-                .map_or_else(
-                    || receiver_binding.arguments.clone(),
-                    |(_, arguments)| arguments.to_vec(),
-                );
-            let owner_arguments = self
-                .instance_arguments(sname, &receiver_targs)
-                .unwrap_or_default();
-            let source_method = method.split('$').next().unwrap_or(method);
-            let overload = selected
-                .lowered_name
-                .as_deref()
-                .and_then(mojito_symbol::symbol::overload_qualifier)
-                .map(str::to_string);
             self.record_dtype_parameter_arguments(param_args, arguments);
-            self.record_at(span.clone()).method_instantiation =
-                Some(mojito_checked::checked::MethodInstantiation {
-                    owner: sname.to_string(),
-                    owner_arguments,
-                    method: source_method.to_string(),
-                    parameter_names: selected.parameter_names.clone(),
-                    overload,
-                    arguments: selected
-                        .declared_instantiation
-                        .clone()
-                        .unwrap_or_else(|| arguments.clone()),
-                });
+            self.record_at(span.clone()).method_instantiation = Some(
+                selected
+                    .declared_instantiation
+                    .clone()
+                    .unwrap_or_else(|| arguments.clone()),
+            );
             self.record_folded_bracket_attributes(
                 &span,
                 &crate::checker::call_inference::folded_parameter_attributes(
@@ -610,17 +586,6 @@ impl Checker {
                     param_args,
                     arguments,
                 ),
-            );
-        }
-        // An explicit receiver instance (`Dict[String, Int].fromkeys(...)`)
-        // records its instantiation.
-        if let Some((_, tyargs)) = receiver.and_then(mojito_types::types::nominal_parts) {
-            self.record_struct_instantiation(sname, &tyargs, span.source.as_deref());
-        } else if !struct_targs.is_empty() {
-            self.record_struct_instantiation(
-                sname,
-                &receiver_binding.arguments,
-                span.source.as_deref(),
             );
         }
         self.finish_static_call(

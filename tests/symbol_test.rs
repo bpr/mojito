@@ -7,7 +7,6 @@
 use mojito::Ty;
 use std::collections::HashSet;
 
-use mojito::checker::resolve_overload_targets;
 use mojito::mir::lower_program;
 use mojito::parse;
 
@@ -17,6 +16,29 @@ fn linked_program(src: &str) -> Vec<mojito::Stmt> {
     let linked =
         mojito::link_source(src, std::path::Path::new("symbol_test.mojo")).expect("link error");
     mojito::elaborate(linked).expect("elaborate")
+}
+
+/// The callable the check resolved each call of `program` to, by the
+/// occurrence its node was checked at: the node's `ResolveCallable`
+/// attribute.
+fn resolved_callables(
+    program: &[mojito::Stmt],
+) -> std::collections::HashMap<mojito::SourceSpan, String> {
+    mojito::check_program(program)
+        .expect("check error")
+        .expressions()
+        .iter()
+        .filter_map(|node| {
+            node.adjustments
+                .iter()
+                .find_map(|adjustment| match adjustment {
+                    mojito::SemanticAdjustment::ResolveCallable(target) => {
+                        Some((node.location(), target.clone()))
+                    }
+                    _ => None,
+                })
+        })
+        .collect()
 }
 
 /// The lowered function names `lower_program` emits for `src`.
@@ -54,7 +76,7 @@ fn keyword_variadic_role_is_part_of_callable_identity() {
     assert!(names.contains("route$ov$$kwv$Int"), "{names:?}");
 
     let program = linked_program(source);
-    let targets = resolve_overload_targets(&program).expect("check error");
+    let targets = resolved_callables(&program);
     for target in targets
         .values()
         .filter(|target| target.starts_with("route$ov$"))
@@ -82,7 +104,7 @@ fn generic_keyword_variadic_role_is_part_of_callable_identity() {
     );
 
     let program = linked_program(source);
-    let targets = resolve_overload_targets(&program).expect("check error");
+    let targets = resolved_callables(&program);
     let route_targets: HashSet<_> = targets
         .values()
         .filter(|target| target.starts_with("route$ov$"))
@@ -106,7 +128,7 @@ fn parameterized_annotation_type_parameters_spell_their_bounds() {
     );
 
     let program = linked_program(source);
-    let targets = resolve_overload_targets(&program).expect("check error");
+    let targets = resolved_callables(&program);
     let pick_targets: HashSet<_> = targets
         .values()
         .filter(|target| target.starts_with("pick$ov$"))
@@ -340,7 +362,7 @@ fn checker_recorded_callees_name_real_mir_functions() {
          \x20   var b: Box = Box(5)\n\
          \x20   print(b.get(), b.get(Point(3)))\n";
     let program = linked_program(src);
-    let targets = resolve_overload_targets(&program).expect("check error");
+    let targets = resolved_callables(&program);
     let names: HashSet<String> = lower_program(&program)
         .expect("type error")
         .functions
@@ -385,7 +407,7 @@ fn self_typed_overload_keys_agree_between_declaration_and_call() {
          \x20   var q: Pair = Pair(2)\n\
          \x20   print(p.merge(q), p.merge(5))\n";
     let program = linked_program(src);
-    let targets = resolve_overload_targets(&program).expect("check error");
+    let targets = resolved_callables(&program);
     let names: HashSet<String> = lower_program(&program)
         .expect("type error")
         .functions
@@ -421,8 +443,7 @@ fn self_typed_overload_keys_agree_between_declaration_and_call() {
 
 /// The program's own recorded callees: the bundled library's are its package's.
 fn own_call_targets(program: &[mojito::Stmt]) -> Vec<String> {
-    resolve_overload_targets(program)
-        .expect("check error")
+    resolved_callables(program)
         .into_iter()
         .filter(|(site, _)| {
             !site
@@ -673,7 +694,7 @@ fn mlir_typed_overload_keys_agree_between_declaration_and_call() {
          \x20   var a = Index(mlir_value=Int(3).__mlir_index__())\n\
          \x20   print(Int(mlir_value=a._mlir_value), Int(mlir_value=Index(5)._mlir_value))\n";
     let program = linked_program(src);
-    let targets = resolve_overload_targets(&program).expect("check error");
+    let targets = resolved_callables(&program);
     let names: HashSet<String> = lower_program(&program)
         .expect("type error")
         .functions
@@ -713,7 +734,7 @@ fn type_of_parameter_overload_keys_agree_between_declaration_and_call() {
          def main():\n\
          \x20   print(pick(1, 2), pick(True, False))\n";
     let program = linked_program(src);
-    let targets = resolve_overload_targets(&program).expect("check error");
+    let targets = resolved_callables(&program);
     let names: HashSet<String> = lower_program(&program)
         .expect("type error")
         .functions
@@ -796,7 +817,7 @@ fn collector_position_is_part_of_callable_identity() {
     let source = "def route(a: Int, *rest: Int) -> Int:\n    return 1\n\ndef route(*rest: Int, a: Int) -> Int:\n    return 2\n\ndef main():\n    print(route(1, 2))\n    print(route(2, a=1))\n";
     let names = lowered_names(source);
     let program = linked_program(source);
-    let targets = resolve_overload_targets(&program).expect("check error");
+    let targets = resolved_callables(&program);
     let route_targets: HashSet<_> = targets
         .values()
         .filter(|target| target.starts_with("route$ov$"))

@@ -636,25 +636,13 @@ impl Checker {
             // call does: the elaborator instantiates its template per
             // call.
             if let Some(arguments) = &selected.instantiation {
-                let source_method = method.split('$').next().unwrap_or(method);
-                let overload = selected
-                    .lowered_name
-                    .as_deref()
-                    .and_then(mojito_symbol::symbol::overload_qualifier)
-                    .map(str::to_string);
                 self.record_dtype_parameter_arguments(param_args, arguments);
-                self.record_at(span.clone()).method_instantiation =
-                    Some(mojito_checked::checked::MethodInstantiation {
-                        owner: sname.to_string(),
-                        owner_arguments: Vec::new(),
-                        method: source_method.to_string(),
-                        parameter_names: selected.parameter_names.clone(),
-                        overload,
-                        arguments: selected
-                            .declared_instantiation
-                            .clone()
-                            .unwrap_or_else(|| arguments.clone()),
-                    });
+                self.record_at(span.clone()).method_instantiation = Some(
+                    selected
+                        .declared_instantiation
+                        .clone()
+                        .unwrap_or_else(|| arguments.clone()),
+                );
                 self.record_folded_bracket_attributes(
                     span,
                     &crate::checker::call_inference::folded_parameter_attributes(

@@ -56,6 +56,27 @@ fn declaration_count(program: &[mojito::Stmt], expected: &str) -> usize {
         .count()
 }
 
+/// The callable the check resolved each node of `checked` to, by the
+/// occurrence the node was checked at: its `ResolveCallable` attribute.
+fn resolved_callables(
+    checked: &mojito::checked::CheckedProgram,
+) -> std::collections::HashMap<mojito::SourceSpan, String> {
+    checked
+        .expressions()
+        .iter()
+        .filter_map(|node| {
+            node.adjustments
+                .iter()
+                .find_map(|adjustment| match adjustment {
+                    mojito::SemanticAdjustment::ResolveCallable(target) => {
+                        Some((node.location(), target.clone()))
+                    }
+                    _ => None,
+                })
+        })
+        .collect()
+}
+
 #[test]
 fn implicit_prelude_loads_each_core_collection_identity_once() {
     let d = TempDir::new();
@@ -570,8 +591,8 @@ fn linked_expression_locations_include_their_source_module() {
         .expect("compile linked modules");
     let checked = program.checked();
 
-    let sources: std::collections::HashSet<_> = checked
-        .overload_targets()
+    let targets = resolved_callables(checked);
+    let sources: std::collections::HashSet<_> = targets
         .keys()
         .filter_map(|location| location.source.as_deref())
         .collect();

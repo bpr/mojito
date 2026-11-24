@@ -3219,9 +3219,6 @@ impl Checker {
         self.record_at(span.clone()).generic_instantiation =
             Some(mojito_checked::checked::GenericInstantiation {
                 callee: name.to_string(),
-                parameter_names: Vec::new(),
-                parameter_types: Vec::new(),
-                variadic: None,
                 arguments: tyargs.to_vec(),
             });
         let [TyArg::Val(pack @ CtValue::Tuple(_))] = tyargs else {
@@ -3284,7 +3281,7 @@ impl Checker {
         span: &SourceSpan,
         name: &str,
         bracket: (&[ParamDecl], &[mojito_ast::ast::ParamArg]),
-        (own, parameter_names): (&[ParamDecl], &[String]),
+        own: &[ParamDecl],
         (arguments, own_declared): (&[TyArg], &[TyArg]),
     ) {
         if arguments.is_empty() && own_declared.is_empty() {
@@ -3317,9 +3314,6 @@ impl Checker {
         self.record_at(span.clone()).generic_instantiation =
             Some(mojito_checked::checked::GenericInstantiation {
                 callee: name.to_string(),
-                parameter_names: parameter_names.to_vec(),
-                parameter_types: Vec::new(),
-                variadic: None,
                 arguments,
             });
     }
@@ -3886,7 +3880,7 @@ impl Checker {
                     span,
                     name,
                     (&info.params, param_args),
-                    (&selected.param_decls, &selected.parameter_names),
+                    &selected.param_decls,
                     (
                         selected.instantiation.as_deref().unwrap_or_default(),
                         selected
@@ -4066,7 +4060,7 @@ impl Checker {
                     span,
                     name,
                     (&info.params, param_args),
-                    (&sig.declared, &sig.names),
+                    &sig.declared,
                     (
                         &tyargs
                             .iter()
@@ -4076,7 +4070,6 @@ impl Checker {
                         &own.declared,
                     ),
                 );
-                self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 let mut bound = Vec::with_capacity(args.len());
                 for (i, pty) in struct_bound.iter().enumerate() {
                     let expected = own.apply(self, pty)?;
@@ -4542,7 +4535,6 @@ impl Checker {
                 {
                     return specialized;
                 }
-                self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 // Rebuild the packed bound used during scoring: regular slots in
                 // slot order (skipping defaults), then variadic overflow. The
                 // `expected` indices address into this same layout. Overflow
@@ -4604,7 +4596,7 @@ impl Checker {
                     span,
                     name,
                     (&info.params, param_args),
-                    (&sig.declared, &sig.names),
+                    &sig.declared,
                     (
                         &tyargs
                             .iter()
@@ -4771,7 +4763,7 @@ impl Checker {
             span,
             name,
             (&info.params, param_args),
-            (&[], &field_names),
+            &[],
             (&tyargs, &[]),
         );
         let origin_bindings =
@@ -5906,7 +5898,7 @@ impl Checker {
             span,
             name,
             (&info.params, param_args),
-            (&sig.declared, &sig.names),
+            &sig.declared,
             (
                 &tyargs
                     .iter()

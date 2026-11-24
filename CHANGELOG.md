@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `CheckedProgram` keeps no span-keyed copy of a node's facts, as
+  upstream's op holds its attributes (R2572). `OccurrenceIndex` holds only
+  the warnings; the `overload_targets`, `generic_instantiations`,
+  `method_instantiations`, `struct_instantiations`, `implicit_conversions`,
+  and `implicit_conversion_type` getters, `checker::resolve_overload_targets`,
+  the checker's struct-instantiation store (`StructInstantiation`,
+  `record_struct_instantiation`, `FactVec`), and the write-only fields of
+  the instantiation records are gone: a method call's record is its
+  arguments, and `GenericInstantiation` keeps its callee and arguments.
+  Tests read a call's resolved callable and arguments from its node's
+  adjustments. No accepted program, MIR text, or package byte changes.
+
 - The seal reaches the module's root statements and each default
   wrapper's body as the nodes the check entered for them, as upstream's
   module op holds its body ops (R2571). The emitter records each root as

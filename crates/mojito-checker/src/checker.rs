@@ -29,7 +29,7 @@ use constraints::ConstraintEnvironment;
 use declarations::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use generics::*;
-use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
+use mojito_checked::fact_store::{FactMap, FactSet};
 use mojito_types::types::TyKind;
 use mojito_types::types::{
     FuncTy, GenericFuncTy, TransferSet, VariantIndex, same_generic_callable,
@@ -316,15 +316,6 @@ use body_carry::{HandoffStores, PassCarry};
 pub use overload_support::is_bundled_module_source;
 mod trait_defaults;
 mod traits_support;
-
-/// Type-check a program and return the concrete lowered callee chosen for
-/// every overloaded call site.
-///
-/// MIR lowering uses this side table so source calls like `f(x)` can lower to
-/// a signature-specific function even when overloads share the same arity.
-pub fn resolve_overload_targets(stmts: &[Stmt]) -> Result<HashMap<SourceSpan, String>, TypeError> {
-    Ok(check_program(stmts)?.overload_targets().clone())
-}
 
 /// The bundled `std/builtin/_enum.mojo`, whose source an `enum`'s
 /// generated storage writes carry: they mark the result initialized and
@@ -846,9 +837,6 @@ pub struct Checker {
     /// The types a generic `def` call solved for the callee's binders, held
     /// from the call's typing until its transfer replay takes them.
     call_bindings: RefCell<FactMap<SourceSpan, TySubst>>,
-    /// Every generic-struct application reached as a constructor target or
-    /// method-call receiver, a checked fact of the call.
-    struct_instantiations: RefCell<FactVec<mojito_checked::checked::StructInstantiation>>,
     /// Per-body accumulation frames for inferred loan-transfer effects.
     transfer_frames: RefCell<Vec<TransferFrame>>,
     /// Inferred per-callable transfer effects, keyed by callable name
@@ -1224,7 +1212,6 @@ impl Checker {
             nested_origins_read_only_functions: declaration_table::DeclarationSet::default(),
             trait_bounded_binders: RefCell::new(HashMap::new()),
             call_bindings: RefCell::new(FactMap::default()),
-            struct_instantiations: RefCell::new(FactVec::default()),
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects.into()),
             resolving_parameter_annotation: std::cell::Cell::new(false),
@@ -2993,10 +2980,7 @@ impl Checker {
         self.record_at(operand.source_span()).truthiness_call =
             Some(Box::new(mojito_checked::checked::CheckedTruthinessCall {
                 call,
-                instantiated_args: facts
-                    .method_instantiation
-                    .map(|instantiation| instantiation.arguments)
-                    .unwrap_or_default(),
+                instantiated_args: facts.method_instantiation.unwrap_or_default(),
                 raise_conversion: facts.raise_conversion,
             }));
         Ok(())

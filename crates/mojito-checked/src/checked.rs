@@ -420,66 +420,9 @@ pub struct CheckedIteratorCall {
 /// arguments, then the selected constructor's own, in the layout the
 /// constructor's declaration restates them (`Counter[4](1)` calls
 /// `Counter[4].__init__`).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenericInstantiation {
     pub callee: String,
-    /// The selected overload's runtime parameter names, in declaration order,
-    /// as the callee's own signature lists them (regular parameters, with an
-    /// `out` named result excluded). This is how a specialization request
-    /// names one overload of an overloaded template, exactly as
-    /// [`MethodInstantiation::parameter_names`] does for a method. Overloads
-    /// that differ only in their parameter *types* share a name list and are
-    /// told apart by [`Self::parameter_types`].
-    pub parameter_names: Vec<String>,
-    /// The same parameters' declared types, mangled as
-    /// `mojito_symbol::symbol::TypeKey` so they compare directly against the
-    /// declaration's own annotations. This breaks a tie between overloads
-    /// sharing a parameter-name list (`f[T](a: T)` beside `f(a: String)`); a
-    /// family ambiguous under both lists is told apart by [`Self::variadic`].
-    pub parameter_types: Vec<String>,
-    /// The selected overload's `*args` collector, which neither list spells:
-    /// two type-pack overloads can agree on every regular parameter and differ
-    /// only in where the collector sits or in its pack's bounds.
-    pub variadic: Option<mojito_symbol::symbol::VariadicKey>,
-    pub arguments: Vec<mojito_types::types::TyArg>,
-}
-
-/// One resolved application of a struct method that declares its own
-/// compile-time parameters (`v.isa[Int]()`, `v.set(3)` inferring `T`).
-///
-/// The receiver struct as checked, the source method name, and the method's
-/// declaration-order arguments from `resolve_use_params`.
-///
-/// The compiler's discovery loop replays closed recordings on specialized
-/// variadic structs as per-call method clones.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MethodInstantiation {
-    pub owner: String,
-    /// The receiver instance's declaration-order type arguments when `owner`
-    /// is an ordinary generic struct reached at a closed instance
-    /// (`Optional[Int]`): the per-call clone then lives on the template with
-    /// the instance's arguments baked before the call's. Empty for a
-    /// specialized variadic struct or a non-generic struct.
-    pub owner_arguments: Vec<mojito_types::types::TyArg>,
-    pub method: String,
-    /// The selected overload's runtime parameter names, in declaration order.
-    pub parameter_names: Vec<String>,
-    /// The selected overload's signature qualifier (`$ov$T$Int`) when the
-    /// method is overloaded: two same-arity overloads that share their
-    /// parameter names mint only the selected one's clone.
-    pub overload: Option<String>,
-    pub arguments: Vec<mojito_types::types::TyArg>,
-}
-
-/// One closed application of an ordinary generic struct the checker reached as
-/// a constructor target or method-call receiver (`Optional[Int]`): the
-/// template name and its declaration-order arguments.
-///
-/// The compiler's discovery loop replays closed recordings as
-/// per-instantiation method clones appended to the template.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructInstantiation {
-    pub template: String,
     pub arguments: Vec<mojito_types::types::TyArg>,
 }
 
@@ -4759,26 +4702,18 @@ pub struct DeclarationTables {
     pub trait_members: Vec<CheckedTraitMember>,
 }
 
-/// The per-occurrence lookups a checked program keeps beside its nodes.
+/// The warnings a checked program keeps beside its nodes: every other
+/// per-occurrence fact sits on its node as an adjustment.
 #[derive(Debug, Clone, Default)]
 pub struct OccurrenceIndex {
     /// Every warning the check recorded, in source order.
     warnings: Vec<Warning>,
-    overload_targets: HashMap<SourceSpan, String>,
-    generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
-    method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
-    implicit_conversions: HashMap<SourceSpan, String>,
-    implicit_conversion_types: HashMap<SourceSpan, Ty>,
-    struct_instantiations: Vec<StructInstantiation>,
 }
 
 impl OccurrenceIndex {
-    /// The lookups read from the records the check left on its `emitted`
-    /// nodes, beside the `struct_instantiations` it reached.
-    pub fn recorded(
-        emitted: &crate::emitted::EmittedNodes,
-        struct_instantiations: Vec<StructInstantiation>,
-    ) -> Self {
+    /// The warnings read from the records the check left on its `emitted`
+    /// nodes.
+    pub fn recorded(emitted: &crate::emitted::EmittedNodes) -> Self {
         // Each statement's warnings in the order the check emitted them, the
         // statements in source order: an enclosing `match`'s come before a
         // nested one's, as upstream emits them.
@@ -4792,49 +4727,7 @@ impl OccurrenceIndex {
                 .into_iter()
                 .flat_map(|(_, warnings)| warnings.iter().cloned())
                 .collect(),
-            overload_targets: fact_index(emitted, |facts| facts.overload_target.as_ref()),
-            generic_instantiations: fact_index(emitted, |facts| {
-                facts.generic_instantiation.as_ref()
-            }),
-            method_instantiations: fact_index(emitted, |facts| facts.method_instantiation.as_ref()),
-            implicit_conversions: fact_index(emitted, |facts| facts.implicit_conversion.as_ref()),
-            implicit_conversion_types: fact_index(emitted, |facts| {
-                facts.implicit_conversion_type.as_ref()
-            }),
-            struct_instantiations,
         }
-    }
-
-    /// The location lookups read from the adjustments of `tables`' nodes,
-    /// as a package unit holds them; the instantiation lookups, which only
-    /// whole-program passes read, are empty.
-    pub(crate) fn installed(tables: &CheckedTables) -> Self {
-        let mut index = Self::default();
-        for node in &tables.expressions {
-            let location = node.location();
-            for adjustment in &node.adjustments {
-                match adjustment {
-                    SemanticAdjustment::ResolveCallable(target) => {
-                        index
-                            .overload_targets
-                            .insert(location.clone(), target.clone());
-                    }
-                    SemanticAdjustment::ImplicitConversion(target)
-                    | SemanticAdjustment::IndexNormalization { target } => {
-                        index
-                            .implicit_conversions
-                            .insert(location.clone(), target.clone());
-                    }
-                    SemanticAdjustment::ConversionResultType(ty) => {
-                        index
-                            .implicit_conversion_types
-                            .insert(location.clone(), ty.clone());
-                    }
-                    _ => {}
-                }
-            }
-        }
-        index
     }
 }
 
@@ -4844,13 +4737,6 @@ impl OccurrenceIndex {
 pub struct CheckedProgram {
     /// Every warning the check recorded, in source order.
     warnings: Vec<Warning>,
-    compatibility_overload_targets: HashMap<SourceSpan, String>,
-    generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
-    method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
-    struct_instantiations: Vec<StructInstantiation>,
-    compatibility_implicit_conversions: HashMap<SourceSpan, String>,
-    /// The converted-to checked type of each implicit conversion site.
-    implicit_conversion_types: HashMap<SourceSpan, Ty>,
     checked_types: HashMap<AnnotationSite, Ty>,
     generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
     tables: Arc<CheckedTables>,
@@ -5267,15 +5153,13 @@ impl CheckedProgram {
     }
 
     /// The program of one package unit: its checked `tables` as the
-    /// package holds them, its declaration-site facts `sites`, and
-    /// and `wrapper` when it is one.
+    /// package holds them, its declaration-site facts `sites`, and the
+    /// default `wrapper` when it is one.
     ///
     /// It holds the unit's nodes and no syntax, as upstream's package
     /// holds each body as its IR: no statements, and no wrapper's body,
-    /// whose nodes are the tables'. The
-    /// location maps unit lowering reads are built from the nodes'
-    /// attributes; the instantiation tables, which only whole-program
-    /// passes read, are empty.
+    /// whose nodes are the tables'. Every per-occurrence fact is its
+    /// node's attribute, and the unit records no warning.
     pub fn installed(
         tables: CheckedTables,
         sites: DeclarationSites,
@@ -5283,12 +5167,10 @@ impl CheckedProgram {
         constants: Arc<crate::package::ProgramConstants>,
         wrapper: Option<CheckedDefaultWrapper>,
     ) -> Self {
-        let tables = tables.reindexed();
-        let occurrences = OccurrenceIndex::installed(&tables);
         Self::assembled(
-            tables,
+            tables.reindexed(),
             sites,
-            occurrences,
+            OccurrenceIndex::default(),
             DeclarationTables {
                 explicit_destroy_types: HashMap::new(),
                 struct_destructors: HashMap::new(),
@@ -5326,45 +5208,6 @@ impl CheckedProgram {
     /// it imports. Every declaration's symbol spells a constant from here.
     pub const fn constants(&self) -> &Arc<crate::package::ProgramConstants> {
         &self.constants
-    }
-
-    /// Checker-selected lowered callable name at each resolved call site.
-    pub const fn overload_targets(&self) -> &HashMap<SourceSpan, String> {
-        &self.compatibility_overload_targets
-    }
-
-    /// The resolved generic application at each bound-generic call site: the
-    /// source callee and the exact compile-time arguments `resolve_use_params`
-    /// selected (types, values, and origins, symbolic entries included).
-    /// Recorded so instantiation discovery can monomorphize call sites the
-    /// elaborator cannot re-infer on its own.
-    pub const fn generic_instantiations(&self) -> &HashMap<SourceSpan, GenericInstantiation> {
-        &self.generic_instantiations
-    }
-
-    /// The resolved compile-time arguments per generic method call site,
-    /// retained for per-call method specialization discovery.
-    pub const fn method_instantiations(&self) -> &HashMap<SourceSpan, MethodInstantiation> {
-        &self.method_instantiations
-    }
-
-    /// Every generic-struct application reached as a constructor target or
-    /// method-call receiver, retained for per-instantiation method-clone
-    /// discovery (the driver keeps the closed ones).
-    pub fn struct_instantiations(&self) -> &[StructInstantiation] {
-        &self.struct_instantiations
-    }
-
-    /// Checker-selected converting constructor for an expression used in a
-    /// context that permits a user-defined implicit conversion.
-    pub const fn implicit_conversions(&self) -> &HashMap<SourceSpan, String> {
-        &self.compatibility_implicit_conversions
-    }
-
-    /// The checked type an implicit conversion at `span` converts to (the
-    /// constructed type with its arguments, e.g. `Optional[Int]`).
-    pub fn implicit_conversion_type(&self, span: &SourceSpan) -> Option<&Ty> {
-        self.implicit_conversion_types.get(span)
     }
 
     pub fn checked_type_at(&self, site: &AnnotationSite) -> Option<&Ty> {
@@ -5414,10 +5257,8 @@ impl CheckedProgram {
         }
         if !retargeted {
             node.adjustments
-                .push(SemanticAdjustment::ResolveCallable(target.clone()));
+                .push(SemanticAdjustment::ResolveCallable(target));
         }
-        self.compatibility_overload_targets
-            .insert(node.location(), target);
     }
 
     pub(crate) const fn tables_mut(&mut self) -> &mut Arc<CheckedTables> {
@@ -5491,15 +5332,7 @@ impl CheckedProgram {
             declaration_effects,
             declaration_symbols: _,
         } = sites;
-        let OccurrenceIndex {
-            warnings,
-            overload_targets,
-            generic_instantiations,
-            method_instantiations,
-            implicit_conversions,
-            implicit_conversion_types,
-            struct_instantiations,
-        } = occurrences;
+        let OccurrenceIndex { warnings } = occurrences;
         let DeclarationTables {
             explicit_destroy_types,
             struct_destructors,
@@ -5513,12 +5346,6 @@ impl CheckedProgram {
         } = declarations;
         Self {
             warnings,
-            compatibility_overload_targets: overload_targets,
-            generic_instantiations,
-            method_instantiations,
-            struct_instantiations,
-            compatibility_implicit_conversions: implicit_conversions,
-            implicit_conversion_types,
             checked_types,
             generic_parameters,
             tables: Arc::new(tables),
@@ -6334,10 +6161,8 @@ fn node_adjustments(facts: &NodeFacts, op: &CheckedOp) -> Vec<SemanticAdjustment
         adjustments.push(SemanticAdjustment::InstantiatedArguments(
             instantiation.arguments.clone(),
         ));
-    } else if let Some(instantiation) = &facts.method_instantiation {
-        adjustments.push(SemanticAdjustment::InstantiatedArguments(
-            instantiation.arguments.clone(),
-        ));
+    } else if let Some(arguments) = &facts.method_instantiation {
+        adjustments.push(SemanticAdjustment::InstantiatedArguments(arguments.clone()));
     } else if let Some(arguments) = &facts.bound_instantiation {
         adjustments.push(SemanticAdjustment::InstantiatedArguments(arguments.clone()));
     }
@@ -6445,17 +6270,6 @@ pub fn materialized_borrow_owner(
     })
 }
 
-/// One fact of every occurrence of `emitted` that holds it, by occurrence.
-fn fact_index<V: Clone>(
-    emitted: &crate::emitted::EmittedNodes,
-    fact: impl Fn(&NodeFacts) -> Option<&V>,
-) -> HashMap<SourceSpan, V> {
-    emitted
-        .records()
-        .filter_map(|(span, facts)| Some((span.clone(), fact(facts)?.clone())))
-        .collect()
-}
-
 /// Write `map` sorted by key, so a record encodes the same bytes in every
 /// build.
 fn sorted<V: serde::Serialize, S: serde::Serializer>(
@@ -6502,7 +6316,9 @@ node_facts! {
         /// The callable a call or name resolved to.
         overload_target: String,
         generic_instantiation: GenericInstantiation,
-        method_instantiation: MethodInstantiation,
+        /// The compile-time arguments of a call of a struct method that
+        /// declares its own (`v.isa[Int]()`), in declaration order.
+        method_instantiation: Vec<mojito_types::types::TyArg>,
         /// The compile-time arguments a call through a trait bound applies
         /// to its requirement's declared parameters, as upstream's call
         /// binds every parameter of the requirement function it applies.

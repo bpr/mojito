@@ -11801,29 +11801,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2572 `CheckedProgram` keeps span-keyed copies of per-occurrence
-  facts that no lowering reads, where upstream's op holds its attributes**
-
-  `OccurrenceIndex` copies overload targets, generic and method
-  instantiations, and implicit conversions and their types out of the
-  records into maps by span, though the sealed nodes hold the same facts as
-  adjustments.
-  - Probe: `overload_targets()` and `generic_instantiations()` are read
-    only by tests (`checker_test`, `compiler_test`, `module_test`) and
-    `checker::resolve_overload_targets`, itself read only by
-    `tests/symbol_test.rs`.
-  - Probe: `method_instantiations()`, `struct_instantiations()`,
-    `implicit_conversions()`, and `implicit_conversion_type()` have no
-    callers.
-  - Probe: `CheckedProgram::retarget_call` keeps the overload-target copy
-    in step with the node it retargets.
-  - The lever: the tests read the nodes' adjustments, the dead getters and
-    their checker stores go, and `OccurrenceIndex` shrinks to the
-    warnings.
-  - Found while landing R767 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R611 A package unit's facts name the package check's binding
   owners**
 

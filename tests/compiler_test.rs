@@ -2,6 +2,27 @@ use mojito::Ty;
 use mojito::checked::{CheckedStmtOp, WalkResult, Walked};
 use mojito::{Compiler, CompilerError, SemanticAdjustment, ValueCategory};
 
+/// The callable the check resolved each node of `checked` to, by the
+/// occurrence the node was checked at: its `ResolveCallable` attribute.
+fn resolved_callables(
+    checked: &mojito::checked::CheckedProgram,
+) -> std::collections::HashMap<mojito::SourceSpan, String> {
+    checked
+        .expressions()
+        .iter()
+        .filter_map(|node| {
+            node.adjustments
+                .iter()
+                .find_map(|adjustment| match adjustment {
+                    mojito::SemanticAdjustment::ResolveCallable(target) => {
+                        Some((node.location(), target.clone()))
+                    }
+                    _ => None,
+                })
+        })
+        .collect()
+}
+
 #[test]
 fn compiler_driver_runs_the_authoritative_pipeline() {
     let compiler = Compiler::default();
@@ -209,7 +230,7 @@ fn generic_struct_methods_are_instantiated_per_instance() {
             std::path::Path::new("/tmp/mojito_generic_struct_instances.mojo"),
         )
         .expect("compile the generic struct");
-    let targets = program.checked().overload_targets();
+    let targets = resolved_callables(program.checked());
     assert!(
         targets
             .values()
@@ -273,7 +294,7 @@ fn overloaded_constructor_family_is_instantiated_as_one_overload_set() {
         .expect("compile the constructor family");
     // The nested `def` lifts beside the member that declares it.
     let family = |name: &str| name.starts_with("Box.__init__$ov$") && !name.ends_with("$same");
-    let targets = program.checked().overload_targets();
+    let targets = resolved_callables(program.checked());
     let selected: std::collections::BTreeSet<&str> = targets
         .values()
         .map(String::as_str)

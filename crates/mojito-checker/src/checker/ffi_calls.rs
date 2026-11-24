@@ -135,9 +135,6 @@ impl Checker {
         self.record_at(span.clone()).generic_instantiation =
             Some(mojito_checked::checked::GenericInstantiation {
                 callee: "external_call".to_string(),
-                parameter_names: Vec::new(),
-                parameter_types: Vec::new(),
-                variadic: None,
                 arguments,
             });
         Ok(ret)

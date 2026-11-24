@@ -605,7 +605,6 @@ impl Checker {
             self.clear_fact(&span, |facts| facts.declared_result.take());
             let instantiated_args = self
                 .clear_fact(&span, |facts| facts.method_instantiation.take())
-                .map(|instantiation| instantiation.arguments)
                 .unwrap_or_default();
             self.call_parameters.borrow_mut().remove(&span);
             let interior_invalidations = self

@@ -2053,8 +2053,8 @@ demands of its own parameters is a fact about the template.
 A method with compile-time parameters of its own is a generator, as in the
 pin: its binders are its struct's followed by its own, its template crosses
 MIR, and `native::mono` instantiates it per call. The checker records each
-call's solved arguments (`checked::MethodInstantiation`, a literal argument
-at its own type, as a `def`'s), MIR carries them on the call
+call's solved arguments on its node (`SemanticAdjustment::InstantiatedArguments`,
+a literal argument at its own type, as a `def`'s), MIR carries them on the call
 (`MirInstr::MethodCall::instantiated_args`, text schema 1.22, beside the
 inferred value parameters passed as named arguments), and the elaborator
 binds the method's own binders from them and its struct's from the
@@ -2171,11 +2171,10 @@ parameters symbolic, and `native::mono` instantiates below MIR.
 Methods with their own compile-time parameters (`def isa[T: AnyType](self)`,
 a constructor `__init__[T: AnyType, //, F: def() -> T](out self, *,
 init_with: F)`) are served by their templates. The checker's method paths
-record a `MethodInstantiation` (receiver struct, method, declaration-order
-arguments; an infer-only `T` also solves through a callable-bounded
-sibling's contract), which the driver reads for the instances the method's
-body reaches (`TemplateReach::method_call`), and `native::mono` instantiates
-the template's MIR per call. A call whose arguments stay symbolic (inside
+record the call's declaration-order arguments on its node (an infer-only
+`T` also solves through a callable-bounded sibling's contract), MIR carries
+them on the call, and `native::mono` instantiates the template's MIR per
+call. A call whose arguments stay symbolic (inside
 a generic body) is instantiated where the body's own instance is.
 
 An *ordinary* generic struct (`struct Optional[T: AnyType]`, every parameter
@@ -2219,10 +2218,7 @@ call or subscript through a bound at a struct instance to the member its
 template's witness table records for the requirement
 (`Specializer::witness`), as upstream's specialization folds
 `#kgen.get_witness`; a struct recording none is an elaboration error, and
-no dispatch name is composed. The checker still records every closed
-application it reaches as a constructor target or method-call receiver
-(`StructInstantiation`), a checked fact nothing above the waist turns into a
-request. Copying, moving, destruction, and the by-name dispatches the
+no dispatch name is composed. Copying, moving, destruction, and the by-name dispatches the
 backends perform on a runtime struct name (a writer's `write_string`
 under `$write_formatted`, and `len`/`abs`/`Bool`/
 `Int` and the prefix operators through their dunders) select the method by
@@ -2939,8 +2935,8 @@ attributes, into the checked tables and declares them
 `CheckedProgram::new` then takes the sealed tables beside the
 `DeclarationSites` they were sealed with (annotation types, generic
 parameters, declaration effects, declaration symbols), an
-`OccurrenceIndex` (the warnings and the span-keyed per-occurrence
-lookups), and the `DeclarationTables` (the program-level tables); it
+`OccurrenceIndex` (the warnings; every other per-occurrence fact is its
+node's adjustment), and the `DeclarationTables` (the program-level tables); it
 infers and composes nothing. `CheckedProgram` holds no syntax: it is the
 checked nodes, the site facts, and the declaration-level tables. A
 declaration is its statement node, whose op names what it declares and
@@ -3213,12 +3209,6 @@ ABI. Non-exhaustive declaration/category/adjustment families and independent chi
 edges allow future pattern binders, class declarations and dispatch, coroutine
 suspension, generators, or continuation resume edges without pretending those are
 ordinary calls or exceptions.
-
-The older compatibility query remains available to focused tests:
-
-```rust
-checker::resolve_overload_targets(program: &[Stmt]) -> Result<HashMap<Span, String>, TypeError>
-```
 
 The checker consumes the parsed AST and rejects programs that the later compiler
 does not want to reason about.

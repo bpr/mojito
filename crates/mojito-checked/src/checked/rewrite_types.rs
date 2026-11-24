@@ -22,8 +22,7 @@ use super::{
     CheckedStmtOp, CheckedStorageField, CheckedStruct, CheckedSubscriptWriteBack, CheckedTables,
     CheckedTarget, CheckedTargetKind, CheckedTruthinessCall, CheckedTupleUnpackElement,
     ComptimeIteration, ConformanceFacts, ConversionMaterialization, DeclarationEffect, EffectFacts,
-    GenericInstantiation, IterationProtocol, MethodInstantiation, OmittedSliceOperand,
-    ReflectedFieldStep, SemanticAdjustment, StructInstantiation,
+    IterationProtocol, OmittedSliceOperand, ReflectedFieldStep, SemanticAdjustment,
 };
 use crate::declaration::{
     ParameterizedAssociatedType, ParameterizedAssociatedValue, TraitDeclaration, TraitRequirement,
@@ -46,12 +45,6 @@ impl CheckedProgram {
     pub(crate) fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
         let Self {
             warnings: _,
-            compatibility_overload_targets: _,
-            generic_instantiations,
-            method_instantiations,
-            struct_instantiations,
-            compatibility_implicit_conversions: _,
-            implicit_conversion_types,
             checked_types,
             generic_parameters,
             tables,
@@ -66,10 +59,6 @@ impl CheckedProgram {
             default_wrappers,
             trait_members: _,
         } = self;
-        generic_instantiations.rewrite_types(rewrite);
-        method_instantiations.rewrite_types(rewrite);
-        struct_instantiations.rewrite_types(rewrite);
-        implicit_conversion_types.rewrite_types(rewrite);
         checked_types.rewrite_types(rewrite);
         generic_parameters.rewrite_types(rewrite);
         std::sync::Arc::get_mut(tables)
@@ -362,44 +351,6 @@ impl RewriteTypes for CheckedIteratorCall {
         result_ty.rewrite_types(rewrite);
         reference_result.rewrite_types(rewrite);
         raises.rewrite_types(rewrite);
-    }
-}
-
-impl RewriteTypes for GenericInstantiation {
-    fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
-        let Self {
-            callee: _,
-            parameter_names: _,
-            parameter_types: _,
-            variadic: _,
-            arguments,
-        } = self;
-        arguments.rewrite_types(rewrite);
-    }
-}
-
-impl RewriteTypes for MethodInstantiation {
-    fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
-        let Self {
-            owner: _,
-            owner_arguments,
-            method: _,
-            parameter_names: _,
-            overload: _,
-            arguments,
-        } = self;
-        owner_arguments.rewrite_types(rewrite);
-        arguments.rewrite_types(rewrite);
-    }
-}
-
-impl RewriteTypes for StructInstantiation {
-    fn rewrite_types(&mut self, rewrite: &mut dyn TyRewrite) {
-        let Self {
-            template: _,
-            arguments,
-        } = self;
-        arguments.rewrite_types(rewrite);
     }
 }
 

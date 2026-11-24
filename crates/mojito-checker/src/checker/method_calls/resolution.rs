@@ -165,47 +165,27 @@ impl Checker {
         })
     }
 
-    /// Record a generic method's resolved compile-time arguments, and a
-    /// concrete generic-struct receiver's instantiation, as the call's
-    /// checked facts.
+    /// Record a generic method's resolved compile-time arguments as the
+    /// call's checked facts.
     pub(super) fn record_method_call_instantiation(
         &self,
         site: MethodCallSite<'_>,
         resolved: &MethodCallResolution,
     ) {
         let MethodCallSite {
-            span,
-            method,
-            call,
-            obj_ty,
-            ..
+            span, call, obj_ty, ..
         } = site;
         let param_args = call.param_args;
-        if let (Some((sname, targs)), Some(arguments)) =
-            (self.nominal_struct(obj_ty), &resolved.instantiation)
+        if self.nominal_struct(obj_ty).is_some()
+            && let Some(arguments) = &resolved.instantiation
         {
-            // On a closed instance of an ordinary generic struct the
-            // instantiation is keyed by the instance: its arguments come
-            // before the call's.
-            let owner_arguments = self.instance_arguments(sname, &targs).unwrap_or_default();
-            let overload = resolved
-                .lowered_name
-                .as_deref()
-                .and_then(mojito_symbol::symbol::overload_qualifier)
-                .map(str::to_string);
             self.record_dtype_parameter_arguments(param_args, arguments);
-            self.record_at(span.clone()).method_instantiation =
-                Some(mojito_checked::checked::MethodInstantiation {
-                    owner: sname.to_string(),
-                    owner_arguments,
-                    method: method.to_string(),
-                    parameter_names: resolved.parameter_names.clone(),
-                    overload,
-                    arguments: resolved
-                        .declared_instantiation
-                        .clone()
-                        .unwrap_or_else(|| arguments.clone()),
-                });
+            self.record_at(span.clone()).method_instantiation = Some(
+                resolved
+                    .declared_instantiation
+                    .clone()
+                    .unwrap_or_else(|| arguments.clone()),
+            );
             self.record_folded_bracket_attributes(
                 span,
                 &crate::checker::call_inference::folded_parameter_attributes(
@@ -229,11 +209,6 @@ impl Checker {
                     .clone()
                     .unwrap_or_else(|| arguments.clone()),
             );
-        }
-        if let Some((sname, targs)) = obj_ty.kind().as_non_pointer_struct()
-            && !targs.is_empty()
-        {
-            self.record_struct_instantiation(sname, targs, span.source.as_deref());
         }
     }
 

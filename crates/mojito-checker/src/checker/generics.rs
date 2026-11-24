@@ -1771,9 +1771,6 @@ impl Checker {
                 self.record_at(span.clone()).generic_instantiation =
                     Some(mojito_checked::checked::GenericInstantiation {
                         callee: target.clone(),
-                        parameter_names: Vec::new(),
-                        parameter_types: Vec::new(),
-                        variadic: None,
                         arguments: instance_arguments,
                     });
             }
@@ -1861,79 +1858,6 @@ impl Checker {
             (specialized, target)
         };
         Ok(Some((selected, instance_arguments, target)))
-    }
-
-    /// Record a generic-struct application reached as a constructor target or
-    /// method-call receiver.
-    pub(super) fn record_struct_instantiation(
-        &self,
-        template: &str,
-        arguments: &[TyArg],
-        source: Option<&str>,
-    ) {
-        // Unstamped bundled code is checked for every program, and a
-        // synthesized node has no source at all: neither is user-reachable
-        // code, so an instance seen only there is not a fact of this program.
-        if source.is_none() || super::overload_support::is_bundled_module_source(source) {
-            return;
-        }
-        let Some(arguments) = self.instance_arguments(template, arguments) else {
-            return;
-        };
-        let mut recorded = self.struct_instantiations.borrow_mut();
-        if !recorded
-            .iter()
-            .any(|existing| existing.template == template && existing.arguments == arguments)
-        {
-            recorded.push(mojito_checked::checked::StructInstantiation {
-                template: template.to_string(),
-                arguments,
-            });
-        }
-    }
-
-    /// The materialized declaration-order arguments of a closed instance of
-    /// an ordinary generic struct, which key a call's instantiation record,
-    /// or `None` when the application keys none. Only a struct whose
-    /// parameters are all plain type or value parameters qualifies: packs,
-    /// callable-bounded parameters, and origin binders key none, as does a
-    /// `StringLiteral` or an open value argument.
-    pub(super) fn instance_arguments(
-        &self,
-        template: &str,
-        arguments: &[TyArg],
-    ) -> Option<Vec<TyArg>> {
-        let info = self.structs.get(template)?;
-        let bakeable = !info.decls().is_empty()
-            && info.decls().iter().all(|decl| {
-                matches!(
-                    decl,
-                    ParamDecl::Type {
-                        variadic: false,
-                        callable_bound: None,
-                        ..
-                    } | ParamDecl::Value {
-                        variadic: false,
-                        ..
-                    }
-                )
-            })
-            && info.decls().len() == arguments.len()
-            && !info
-                .params
-                .iter()
-                .any(|decl| decl.is_origin() || decl.is_origin_mutability_binder(&info.params))
-            && arguments.iter().all(|argument| match argument {
-                TyArg::Ty(ty) => !mojito_types::types::contains_string_literal(ty),
-                TyArg::Val(value) => mojito_symbol::symbol::specialization_value_is_closed(value),
-                TyArg::Origin(_) => false,
-            });
-        bakeable.then(|| {
-            arguments
-                .iter()
-                .map(materialized_instantiation_argument)
-                .collect()
-        })
     }
 
     /// The type an argument solves its parameter's binders from, before

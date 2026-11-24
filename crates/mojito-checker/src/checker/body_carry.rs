@@ -6,7 +6,7 @@
 //! reads are still current would record byte-identical facts. Each body
 //! site (a module-level `def`, a struct method) therefore records the log
 //! ranges it wrote into every fact store ([`crate::checker::Checker`]'s
-//! [`FactMap`]/[`FactSet`]/[`FactVec`] fields and its [`Emitter`]) and its
+//! [`FactMap`]/[`FactSet`] fields and its [`Emitter`]) and its
 //! exact effect reads; the next pass copies the logged entries instead of
 //! inferring when every read still equals the committed entry.
 //!
@@ -24,9 +24,9 @@ use crate::explicit_destroy::CheckedDeletability;
 use mojito_checked::checked::{
     AnnotationSite, CallThroughEffect, CheckedDefaultWrapper, CheckedProgram, CheckedTraitMember,
     ConformanceFacts, DeclarationEffect, DeclarationSites, DeclarationTables, ExplicitDestroyInfo,
-    GenericSite, OccurrenceIndex, StructInstantiation, TransferEffect,
+    GenericSite, OccurrenceIndex, TransferEffect,
 };
-use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
+use mojito_checked::fact_store::{FactMap, FactSet};
 use mojito_common::error::TypeError;
 use mojito_common::timing;
 use mojito_common::token::SourceSpan;
@@ -159,7 +159,6 @@ pub struct InternalStores {
 pub struct HandoffStores {
     desugars: HashMap<SourceSpan, super::desugar::StatementDesugar>,
     emitter: Emitter,
-    struct_instantiations: FactVec<StructInstantiation>,
     checked_types: FactMap<AnnotationSite, Ty>,
     generic_parameters: FactMap<GenericSite, Vec<ParamDecl>>,
     declaration_effects: FactMap<AnnotationSite, DeclarationEffect>,
@@ -198,8 +197,7 @@ impl HandoffStores {
             &self.conformances,
         )
         .map_err(|unsealed| TypeError::InvariantViolation(unsealed.to_string()))?;
-        let occurrences =
-            OccurrenceIndex::recorded(&emitted, self.struct_instantiations.into_inner());
+        let occurrences = OccurrenceIndex::recorded(&emitted);
         Ok(CheckedProgram::new(
             tables,
             sites,
@@ -221,13 +219,12 @@ impl HandoffStores {
 
 /// Every store a body site is measured and copied over: where the carry
 /// holds it (`result` is the checked handoff, `internal` the rest), how it
-/// logs (`map`, `set`, `vec`), its field in the carry, and its field in the
+/// logs (`map`, `set`), its field in the carry, and its field in the
 /// checker. The deletability verdicts and the emitter's occurrence records
 /// are handled by hand beside them.
 macro_rules! carried_stores {
     ($apply:ident) => {
         $apply! {
-            result vec struct_instantiations = struct_instantiations;
             result map checked_types = declaration_types;
             result map generic_parameters = generic_parameters;
             result map declaration_effects = declaration_effects;
@@ -277,9 +274,6 @@ macro_rules! copy_store {
     };
     (set $keys:expr, $from:expr, $to:expr) => {
         copy_set($keys, $from, $to)
-    };
-    (vec $keys:expr, $from:expr, $to:expr) => {
-        $to.extend($keys.iter().cloned())
     };
 }
 
@@ -605,7 +599,6 @@ fn carried_result(checker: &Checker) -> HandoffStores {
         overloads: std::sync::Arc::clone(&checker.overload_sets),
         constants: std::sync::Arc::clone(&checker.program_constants),
         emitter: interned(checker, checker.emitter.take()),
-        struct_instantiations: checker.struct_instantiations.take(),
         checked_types: uniqued(checker, checker.declaration_types.take()),
         generic_parameters: checker.generic_parameters.take(),
         declaration_effects: checker.declaration_effects.take(),
