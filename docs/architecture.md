@@ -987,6 +987,10 @@ identity (`T: m.Greet`, `v: m.V`) becomes that name bound
 (`module.rs::rewrite_type_param`), as `from m import Greet` spells it, so the
 check classifies it by what it names, as upstream resolves the member
 through the module.
+A struct's conformance entries (and their conditions' keys) and a trait's
+refinement entries are rewritten as expressions in the declaration's outer
+scope, so a module-qualified entry (`struct S(m.Greet)`) becomes the trait's
+name the same way.
 
 An absolute import of `std.*` resolves at the bundled library's root alone
 (the package's module table, or a development build's library source),

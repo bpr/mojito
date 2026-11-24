@@ -46,6 +46,11 @@ fn parse(source: &str) -> Vec<Stmt> {
     parser.parse_program().expect("parse error")
 }
 
+/// The names a conformance or refinement list's entries spell.
+fn names(entries: &[Expr]) -> Vec<&str> {
+    mojito::ast::trait_entry_names(entries).collect()
+}
+
 /// Parse a single bare-expression statement and return its expression.
 fn parse_expr(source: &str) -> Expr {
     let stmts = parse(source);
@@ -1179,10 +1184,7 @@ fn parses_struct_conformance_list() {
     let stmts = parse("@fieldwise_init\nstruct Duck(Copyable, Quackable):\n    var name: String\n");
     match &stmts[0].kind {
         StmtKind::Struct { conforms, .. } => {
-            assert_eq!(
-                conforms,
-                &vec!["Copyable".to_string(), "Quackable".to_string()]
-            );
+            assert_eq!(names(conforms), ["Copyable", "Quackable"]);
         }
         other => panic!("expected a struct, got {other:?}"),
     }
@@ -1492,9 +1494,9 @@ fn retains_conditional_struct_conformance_predicates() {
     else {
         panic!("expected struct");
     };
-    assert_eq!(conforms, &["Writable"]);
+    assert_eq!(names(conforms), ["Writable"]);
     assert_eq!(conformance_conditions.len(), 1);
-    assert_eq!(conformance_conditions[0].0, "Writable");
+    assert_eq!(conformance_conditions[0].0.identifier(), Some("Writable"));
 }
 
 #[test]
@@ -1509,12 +1511,12 @@ fn reads_not_conformance_as_never_condition() {
     else {
         panic!("expected struct");
     };
-    assert_eq!(conforms, &["Other", "Movable", "Deinitable"]);
+    assert_eq!(names(conforms), ["Other", "Movable", "Deinitable"]);
     assert_eq!(conformance_conditions.len(), 2);
-    assert_eq!(conformance_conditions[0].0, "Movable");
+    assert_eq!(conformance_conditions[0].0.identifier(), Some("Movable"));
     assert!(conformance_conditions[0].1.is_never_condition());
     assert_eq!(conformance_conditions[0].1.never_condition_reason(), None);
-    assert_eq!(conformance_conditions[1].0, "Deinitable");
+    assert_eq!(conformance_conditions[1].0.identifier(), Some("Deinitable"));
     assert_eq!(
         conformance_conditions[1].1.never_condition_reason(),
         Some("call close()")
@@ -1534,10 +1536,10 @@ fn reads_composition_conformance_entries_per_trait() {
     else {
         panic!("expected struct");
     };
-    assert_eq!(conforms, &["A", "B", "C", "D", "E"]);
+    assert_eq!(names(conforms), ["A", "B", "C", "D", "E"]);
     let conditioned: Vec<_> = conformance_conditions
         .iter()
-        .map(|(name, _)| name.as_str())
+        .filter_map(|(entry, _)| entry.identifier())
         .collect();
     assert_eq!(conditioned, ["A", "B", "C", "D", "E"]);
     assert!(!conformance_conditions[2].1.is_never_condition());
@@ -1548,7 +1550,35 @@ fn reads_composition_conformance_entries_per_trait() {
     let StmtKind::Trait { refines, .. } = &statements[1].kind else {
         panic!("expected trait");
     };
-    assert_eq!(refines, &["A", "B"]);
+    assert_eq!(names(refines), ["A", "B"]);
+}
+
+#[test]
+fn keeps_module_qualified_conformance_entries_as_expressions() {
+    let statements = parse(
+        "struct S(m.Greet & Copyable, not m.Other):\n    pass\ntrait H(m.Greet):\n    pass\n",
+    );
+    let qualified = |entry: &Expr, trait_name: &str| {
+        matches!(&entry.kind, ExprKind::Member { object, field }
+            if field == trait_name && object.identifier() == Some("m"))
+    };
+    let StmtKind::Struct {
+        conforms,
+        conformance_conditions,
+        ..
+    } = &statements[0].kind
+    else {
+        panic!("expected struct");
+    };
+    assert_eq!(conforms.len(), 3);
+    assert!(qualified(&conforms[0], "Greet"));
+    assert_eq!(conforms[1].identifier(), Some("Copyable"));
+    assert!(qualified(&conforms[2], "Other"));
+    assert!(qualified(&conformance_conditions[0].0, "Other"));
+    let StmtKind::Trait { refines, .. } = &statements[1].kind else {
+        panic!("expected trait");
+    };
+    assert!(matches!(refines.as_slice(), [entry] if qualified(entry, "Greet")));
 }
 
 #[test]
@@ -1620,7 +1650,7 @@ fn parses_trait_inheritance_list() {
         StmtKind::Trait {
             refines, methods, ..
         } => {
-            assert_eq!(refines, &vec!["Animal".to_string(), "Named".to_string()]);
+            assert_eq!(names(refines), ["Animal", "Named"]);
             assert_eq!(methods[0].default_body, None); // `...` is a pure requirement
         }
         other => panic!("expected a trait, got {other:?}"),
@@ -1637,7 +1667,7 @@ fn parses_pass_in_trait_body() {
             comptime_members,
             ..
         } => {
-            assert_eq!(refines, &vec!["Sized".to_string()]);
+            assert_eq!(names(refines), ["Sized"]);
             assert!(methods.is_empty() && comptime_members.is_empty());
         }
         other => panic!("expected a trait, got {other:?}"),
@@ -5218,11 +5248,11 @@ fn normalizes_del_and_keeps_trait_spellings_at_parse_time() {
     else {
         panic!("expected a struct");
     };
+    assert_eq!(names(conforms), ["Movable", "ImplicitlyDeletable"]);
     assert_eq!(
-        conforms,
-        &vec!["Movable".to_string(), "ImplicitlyDeletable".to_string()]
+        conformance_conditions[0].0.identifier(),
+        Some("ImplicitlyDeletable")
     );
-    assert_eq!(conformance_conditions[0].0, "ImplicitlyDeletable");
     assert_eq!(methods[0].name, "__deinit__");
 
     let stmts = parse("def consume[T: Movable & ImplicitlyDeletable](var value: T):\n    pass\n");

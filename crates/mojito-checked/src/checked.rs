@@ -6890,7 +6890,9 @@ impl<'a> ArenaBuilder<'a> {
             } => {
                 let conformance_conditions = conformance_conditions
                     .iter()
-                    .map(|(name, value)| (name.clone(), self.expr(value)))
+                    .filter_map(|(entry, value)| {
+                        Some((entry.identifier()?.to_string(), self.expr(value)))
+                    })
                     .collect();
                 let where_clauses = values(self, where_clauses);
                 let associated = associated
@@ -6957,7 +6959,7 @@ impl<'a> ArenaBuilder<'a> {
                     .collect();
                 CheckedStmtOp::Struct(Box::new(CheckedStruct {
                     name: name.clone(),
-                    conforms: conforms.clone(),
+                    conforms: entry_names(conforms),
                     conformance_conditions,
                     where_clauses,
                     fields,
@@ -7009,7 +7011,7 @@ impl<'a> ArenaBuilder<'a> {
                     .collect();
                 CheckedStmtOp::Trait(Box::new(CheckedTrait {
                     name: name.clone(),
-                    refines: refines.clone(),
+                    refines: entry_names(refines),
                     methods,
                     comptime_members,
                 }))
@@ -7866,6 +7868,14 @@ fn spliced_loop_binding(target: &mojito_ast::ast::DestructureTarget) -> (String,
         .loop_binding()
         .expect("the checker's splice leaves every loop target one declared leaf");
     (name.to_string(), mode)
+}
+
+/// The trait names of a checked conformance or refinement list, whose every
+/// entry the check required to name a trait.
+fn entry_names(entries: &[mojito_ast::ast::Expr]) -> Vec<String> {
+    mojito_ast::ast::trait_entry_names(entries)
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]

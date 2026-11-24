@@ -61,6 +61,13 @@ pub fn is_unavailable(decorators: &[Decorator]) -> bool {
         .any(|decorator| decorator.path.len() == 1 && decorator.path[0] == "unavailable")
 }
 
+/// The names a conformance or refinement list's entries spell, in source
+/// order, skipping an entry that is no name: the check rejects that one
+/// when it classifies the list.
+pub fn trait_entry_names(entries: &[Expr]) -> impl Iterator<Item = &str> {
+    entries.iter().filter_map(Expr::identifier)
+}
+
 /// Whether a declaration carries a decorator that bears on its body or its
 /// identity. `@__unsafe_nested_origins_read_only` does not: it states a
 /// contract to the declaration's callers only.
@@ -1936,15 +1943,19 @@ pub enum StmtKind {
         decorators: Vec<Decorator>,
         /// Type parameters (`[T: Trait]`); empty for a non-generic struct.
         type_params: Vec<TypeParam>,
-        /// Traits this struct declares conformance to (`struct S(A, B):`); empty
-        /// if none. Nominal — a `[T: A]` bound is satisfied only if `A` is here.
-        conforms: Vec<String>,
+        /// Traits this struct declares conformance to (`struct S(A, B):`),
+        /// each `&` member of an entry its own expression, as upstream
+        /// evaluates each entry to a trait; empty if none. The linker turns a
+        /// module-qualified entry into the name of the trait it resolves to,
+        /// and the check rejects an entry that names no trait ([`trait_entry_names`]).
+        /// Nominal — a `[T: A]` bound is satisfied only if `A` is here.
+        conforms: Vec<Expr>,
         /// The nominal closure trait's annotation expression (`def(...) ->
         /// ...`), when declared.
         callable_conformance: Option<Expr>,
         /// Conditions attached to entries in `conforms`, represented as
-        /// `(trait_name, comptime predicate)`. An absent entry is unconditional.
-        conformance_conditions: Vec<(String, Expr)>,
+        /// `(trait entry, comptime predicate)`. An absent entry is unconditional.
+        conformance_conditions: Vec<(Expr, Expr)>,
         /// Trailing declaration constraint (`struct S[...] where ...:`).
         where_clauses: Vec<Expr>,
         fields: Vec<Param>,
@@ -1967,7 +1978,9 @@ pub enum StmtKind {
     /// they are not parsed.)
     Trait {
         name: String,
-        refines: Vec<String>,
+        /// The refined traits, each `&` member of an entry its own
+        /// expression, as for a struct's `conforms`.
+        refines: Vec<Expr>,
         methods: Vec<TraitMethod>,
         comptime_members: Vec<TraitComptime>,
     },
@@ -2183,6 +2196,14 @@ impl Expr {
             self.kind,
             ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. }
         )
+    }
+
+    /// The name this expression is, when it is a bare identifier.
+    pub fn identifier(&self) -> Option<&str> {
+        match &self.kind {
+            ExprKind::Identifier(name) => Some(name),
+            _ => None,
+        }
     }
 
     /// Whether this annotation is the enclosing type `Self`.

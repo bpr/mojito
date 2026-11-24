@@ -7,6 +7,7 @@ use super::decorators::DecoratorSite;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::explicit_destroy::Linear;
+use mojito_ast::ast::trait_entry_names;
 use mojito_checked::declaration::{Witness, WitnessTable};
 use mojito_symbol::symbol::{OverloadLookup, TRAIT_DISPATCH, qualified_method_symbol};
 use mojito_types::conformance::{
@@ -84,6 +85,21 @@ impl Checker {
         } else {
             Err(TypeError::UnknownTrait(name.to_string()))
         }
+    }
+
+    /// The trait names a conformance or refinement list spells, each entry
+    /// an expression upstream evaluates to a trait. The linker has turned a
+    /// module-qualified entry into its trait's name, so an entry that is
+    /// still no name names no trait: a type, or a member no module declares.
+    pub(super) fn trait_entries<'e>(&self, entries: &'e [Expr]) -> Result<Vec<&'e str>, TypeError> {
+        entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .identifier()
+                    .ok_or_else(|| self.non_trait_entry_error(entry))
+            })
+            .collect()
     }
 
     /// A trait spelled as a stored type (`var x: AnyType`, `case c(Tr)`),
@@ -307,7 +323,7 @@ impl Checker {
     pub(super) fn check_trait(
         &mut self,
         name: &str,
-        refines: &[String],
+        refines: &[Expr],
         methods: &[mojito_ast::ast::TraitMethod],
         comptime_members: &[TraitComptime],
         module: Option<&str>,
@@ -315,6 +331,12 @@ impl Checker {
         if self.traits.contains_key(name) || self.structs.contains_key(name) {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
+        let refines = self
+            .trait_entries(refines)?
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let refines = refines.as_slice();
         for parent in refines {
             self.check_trait_name(parent)?;
             if COMPILER_TRAITS.contains(&parent.as_str())
@@ -777,6 +799,7 @@ impl Checker {
         if self.structs.contains_key(name) || self.traits.contains_key(name) {
             return Err(TypeError::Redeclaration(name.to_string()));
         }
+        self.trait_entries(declaration.conforms)?;
         let decls = match self.classify_param_list(name, type_params) {
             Ok(decls) => decls,
             Err(error) => {
@@ -805,7 +828,7 @@ impl Checker {
                     conditional_deinitable: declaration
                         .conformance_conditions
                         .iter()
-                        .any(|(trait_name, _)| trait_name == "Deinitable"),
+                        .any(|(entry, _)| entry.identifier() == Some("Deinitable")),
                 },
                 declaration.decorators,
             )?
@@ -831,18 +854,20 @@ impl Checker {
                         declaration.methods,
                     ),
                 ),
-                conforms: declaration.conforms.to_vec(),
+                conforms: trait_entry_names(declaration.conforms)
+                    .map(str::to_string)
+                    .collect(),
                 callable_conformance: None,
                 callable_target: None,
                 witness_tables: Vec::new(),
                 conformance_conditions: declaration
                     .conformance_conditions
                     .iter()
-                    .map(|(trait_name, condition)| {
-                        (
-                            trait_name.clone(),
+                    .filter_map(|(entry, condition)| {
+                        Some((
+                            entry.identifier()?.to_string(),
                             HeaderCondition::Pending(condition.clone()),
-                        )
+                        ))
                     })
                     .collect(),
                 fields: Vec::new(),
@@ -1235,7 +1260,10 @@ impl Checker {
                     })
                     .collect::<Vec<_>>()
             });
-            self.check_struct_associated(declaration.associated, declaration.conforms, &conditions)?
+            let conforms = trait_entry_names(declaration.conforms)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            self.check_struct_associated(declaration.associated, &conforms, &conditions)?
         };
         if let Some(info) = self.structs.get_mut(name) {
             info.associated.clone_from(&associated_values);
@@ -1303,7 +1331,7 @@ impl Checker {
             // A `Tuple` spreading a pack is `Deinitable` only where every
             // element is, so the pack's bound must prove it too.
             if !declaration.name.contains('$')
-                && !declaration.conforms.iter().any(|tr| tr == "Deinitable")
+                && !trait_entry_names(declaration.conforms).any(|tr| tr == "Deinitable")
             {
                 let undestroyable = match ty.kind() {
                     TyKind::Param { binder, bounds, .. }
@@ -1849,7 +1877,7 @@ impl Checker {
         &mut self,
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
-        for tr in declaration.conforms {
+        for tr in self.trait_entries(declaration.conforms)? {
             self.check_trait_name(tr)?;
         }
         self.reject_value_field_self_containment(declaration.name)?;
@@ -1870,16 +1898,16 @@ impl Checker {
         // exist, recording each one's witness table. A conformance opted
         // out with `not` (its condition `False`) has no requirements to
         // meet, as upstream's never-satisfied conformance.
-        let conforms = declaration
-            .conforms
-            .iter()
+        let conforms = trait_entry_names(declaration.conforms)
             .filter(|tr| {
                 !declaration
                     .conformance_conditions
                     .iter()
-                    .any(|(opted, condition)| opted == *tr && condition.is_never_condition())
+                    .any(|(opted, condition)| {
+                        opted.identifier() == Some(*tr) && condition.is_never_condition()
+                    })
             })
-            .cloned()
+            .map(str::to_string)
             .collect::<Vec<_>>();
         if let Some(cases) = declaration.enum_cases {
             self.check_enum_payload_conformances(name, cases, &conforms)?;
@@ -3194,8 +3222,8 @@ impl Checker {
         declaration: &StructDeclaration<'_>,
     ) -> Result<(), TypeError> {
         let mut seen: Vec<&str> = Vec::new();
-        let repeated = declaration.conforms.iter().filter(|trait_name| {
-            let repeat = seen.contains(&trait_name.as_str());
+        let repeated = trait_entry_names(declaration.conforms).filter(|trait_name| {
+            let repeat = seen.contains(trait_name);
             seen.push(trait_name);
             repeat
         });
@@ -3204,15 +3232,13 @@ impl Checker {
         };
         let decls = info.decls().into_owned();
         for trait_name in repeated {
-            let written = declaration
-                .conforms
-                .iter()
+            let written = trait_entry_names(declaration.conforms)
                 .filter(|listed| *listed == trait_name)
                 .count();
             let conditions = declaration
                 .conformance_conditions
                 .iter()
-                .filter(|(conditioned, _)| conditioned == trait_name)
+                .filter(|(conditioned, _)| conditioned.identifier() == Some(trait_name))
                 .map(|(_, condition)| {
                     self.in_param_scope(&decls, |this| this.compile_condition(&decls, condition))
                         .map(|compiled| self.fold_closed_constraint(compiled).canonical())
@@ -3223,7 +3249,7 @@ impl Checker {
             let mut all = conditions.iter().chain(unconditioned.as_ref());
             let first = all.next();
             if all.any(|condition| Some(condition) != first) {
-                return Err(TypeError::RepeatedConformance(trait_name.clone()));
+                return Err(TypeError::RepeatedConformance(trait_name.to_string()));
             }
         }
         Ok(())
@@ -4696,6 +4722,15 @@ impl Checker {
                 .collect()
         })
     }
+
+    /// The error for a conformance entry that is no name: the error its
+    /// evaluation gives, or the type it names, which is no trait.
+    fn non_trait_entry_error(&self, entry: &Expr) -> TypeError {
+        match self.ty_from_anno(entry) {
+            Ok(ty) => TypeError::UnknownTrait(ty.to_string()),
+            Err(error) => error,
+        }
+    }
 }
 
 /// Whether the declared trait `candidate` refines `required`, directly or
@@ -4985,11 +5020,11 @@ fn requirement_binder_owner(trait_name: &str, member: &str) -> String {
 /// `trait_name where (False, "reason")` condition, as upstream attaches it
 /// to the conformance it synthesizes.
 fn opt_out_reason(
-    conditions: &[(String, mojito_ast::ast::Expr)],
+    conditions: &[(mojito_ast::ast::Expr, mojito_ast::ast::Expr)],
     trait_name: &str,
 ) -> Option<String> {
     conditions
         .iter()
-        .filter(|(name, _)| name == trait_name)
+        .filter(|(entry, _)| entry.identifier() == Some(trait_name))
         .find_map(|(_, condition)| condition.never_condition_reason().map(str::to_string))
 }

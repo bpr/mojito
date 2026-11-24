@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A module-qualified trait is a conformance or refinement list entry
+  (R2551): `struct S(m.Greet, Copyable)`, `trait H(m.Greet)`, `not m.Greet`,
+  and `m.Greet where C` are accepted, as at the pin, where each was a parse
+  error. `Struct::conforms`, its conformance conditions, and
+  `Trait::refines` keep each `&` member as its expression, the linker turns
+  a qualified entry into the trait's name, and the check rejects an entry
+  that names no trait. The cached package format moves to 274.
+
 - A `union` with an empty-payload case (`case eof()`) runs (R2544): `mem-2-reg`
   no longer promotes a slot nothing stores as if it held a closure, which turned
   the read of the zero-element `Tuple`'s never-written `out` slot into a copy

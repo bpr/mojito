@@ -2568,8 +2568,13 @@ fn rewrite_stmt(
                     rewrite_expr(a, names, namespaces);
                 }
             }
-            for c in conforms {
-                rename(c, names);
+            // A module-qualified entry (`m.Greet`) becomes the name of the
+            // trait it resolves to, as `from m import Greet` spells it.
+            for entry in conforms
+                .iter_mut()
+                .chain(conformance_conditions.iter_mut().map(|(entry, _)| entry))
+            {
+                rewrite_expr(entry, names, namespaces);
             }
             let (names, namespaces) = &without_parameter_names(names, namespaces, type_params);
             for tp in type_params {
@@ -2578,8 +2583,7 @@ fn rewrite_stmt(
             if let Some(callable) = callable_conformance {
                 rewrite_expr(callable, names, namespaces);
             }
-            for (conformance, condition) in conformance_conditions {
-                rename(conformance, names);
+            for (_, condition) in conformance_conditions {
                 rewrite_expr(condition, names, namespaces);
             }
             for condition in where_clauses {
@@ -2655,8 +2659,8 @@ fn rewrite_stmt(
             comptime_members,
         } => {
             rename(name, names);
-            for r in refines {
-                rename(r, names);
+            for entry in refines {
+                rewrite_expr(entry, names, namespaces);
             }
             for m in methods {
                 rewrite_trait_method(m, names, namespaces);

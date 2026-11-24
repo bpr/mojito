@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use mojito_ast::ast::{
     ArgConvention, DeclaredParam, Expr, ExprKind, KwArg, Method, MethodProvenance, ParamArg,
-    ParamKind, Stmt, StmtKind, TraitMethod, TypeParam,
+    ParamKind, Stmt, StmtKind, TraitMethod, TypeParam, trait_entry_names,
 };
 use mojito_ast::call::CompileTimeParam;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
@@ -224,17 +224,17 @@ pub(super) fn inherited_defaults(
     // A default is as available as the conformances reaching it: always,
     // when one of them holds unconditionally.
     let mut reached: Vec<(String, DefaultShape)> = Vec::new();
-    let mut conditions: HashMap<(String, usize), Option<&String>> = HashMap::new();
+    let mut conditions: HashMap<(String, usize), Option<&str>> = HashMap::new();
     // A conformance opted out with `not` (its condition `False`) brings no
     // defaults: it never holds.
-    for conformance in conforms {
+    for conformance in trait_entry_names(conforms) {
         let entry = conformance_conditions
             .iter()
-            .find(|(trait_name, _)| trait_name == conformance);
+            .find(|(trait_name, _)| trait_name.identifier() == Some(conformance));
         if entry.is_some_and(|(_, condition)| condition.is_never_condition()) {
             continue;
         }
-        let condition = entry.map(|(trait_name, _)| trait_name);
+        let condition = entry.map(|_| conformance);
         let mut through = Vec::new();
         defaults_for(conformance, traits, &mut HashSet::new(), &mut through)?;
         for (trait_name, default) in through {
@@ -258,7 +258,7 @@ pub(super) fn inherited_defaults(
                 .get(&(trait_name.clone(), default.declared_at))
                 .copied()
                 .flatten()
-                .cloned();
+                .map(str::to_string);
             (trait_name, default, condition)
         })
         .collect())
@@ -312,7 +312,13 @@ impl Checker {
                     refines,
                     methods,
                     ..
-                } => Some((name.as_str(), (refines.clone(), default_shapes(methods)))),
+                } => Some((
+                    name.as_str(),
+                    (
+                        trait_entry_names(refines).map(str::to_string).collect(),
+                        default_shapes(methods),
+                    ),
+                )),
                 _ => None,
             })
             .collect();

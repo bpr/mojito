@@ -7,6 +7,7 @@ use super::decorators::DecoratorSite;
 use super::indexing::SubscriptLValue;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_ast::ast::trait_entry_names;
 use mojito_common::timing;
 use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::types::TyKind;
@@ -217,8 +218,7 @@ impl Checker {
             else {
                 continue;
             };
-            if refines
-                .iter()
+            if trait_entry_names(refines)
                 .any(|parent| trait_is_deferred(stmts, &deferred_traits, parent))
             {
                 deferred_traits.push(index);
@@ -750,8 +750,7 @@ impl Checker {
                     index += 1;
                     continue;
                 };
-                if refines
-                    .iter()
+                if trait_entry_names(refines)
                     .any(|parent| trait_is_deferred(stmts, deferred, parent))
                     || self
                         .check_trait(
@@ -800,8 +799,7 @@ impl Checker {
                     deferred.remove(index);
                     continue;
                 };
-                let parent_waits = refines
-                    .iter()
+                let parent_waits = trait_entry_names(refines)
                     .any(|parent| trait_is_deferred(stmts, deferred, parent));
                 if !parent_waits
                     && self
@@ -5015,8 +5013,9 @@ fn conforms_to_deferred(
                 declaration
                     .conformance_conditions
                     .iter()
-                    .map(|(name, _)| name),
+                    .map(|(entry, _)| entry),
             )
+            .filter_map(Expr::identifier)
             .any(|name| trait_is_deferred(stmts, deferred, name))
 }
 

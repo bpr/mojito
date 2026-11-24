@@ -225,8 +225,14 @@ fn linking_rewrites_conditional_conformance_and_where_clause_names() {
     else {
         unreachable!()
     };
-    assert_eq!(conforms, std::slice::from_ref(&trait_name));
-    assert_eq!(conformance_conditions[0].0, trait_name);
+    assert_eq!(
+        mojito::ast::trait_entry_names(conforms).collect::<Vec<_>>(),
+        [trait_name.as_str()]
+    );
+    assert_eq!(
+        conformance_conditions[0].0.identifier(),
+        Some(trait_name.as_str())
+    );
     let condition_names_trait = |condition: &mojito::Expr| {
         matches!(
             &condition.kind,

@@ -27,7 +27,9 @@
 
 use std::fmt::Write;
 
-use mojito_ast::ast::{EnumCase, Expr, ExprKind, Stmt, StmtKind, SumCases, SumKind};
+use mojito_ast::ast::{
+    EnumCase, Expr, ExprKind, Stmt, StmtKind, SumCases, SumKind, trait_entry_names,
+};
 use mojito_ast::visit::{MutVisitor, walk_annotation_mut, walk_block_mut};
 use mojito_common::error::ParseError;
 use mojito_common::token::Span;
@@ -62,12 +64,13 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
         };
         let kind = cases.kind;
         let opted_out = |conformance: &str| {
-            conformance_conditions
-                .iter()
-                .any(|(opted, condition)| opted == conformance && condition.is_never_condition())
+            conformance_conditions.iter().any(|(opted, condition)| {
+                opted.identifier() == Some(conformance) && condition.is_never_condition()
+            })
         };
         let declares = |conformance: &str| {
-            conforms.iter().any(|written| written == conformance) && !opted_out(conformance)
+            trait_entry_names(conforms).any(|written| written == conformance)
+                && !opted_out(conformance)
         };
         check_member_names(kind, cases, associated, methods)?;
         check_case_payloads(kind, declares("TrivialRegisterPassable"), cases, name, span)?;
@@ -132,15 +135,18 @@ pub fn synthesize_enum_members(program: &mut [Stmt], source: &str) -> Result<(),
             && let Some(implicit) = implicit_value_conformance(opted_out)
             && !declares(implicit)
         {
-            conforms.push(implicit.to_string());
+            conforms.push(Expr::new(ExprKind::Identifier(implicit.to_string()), span));
         }
-        conforms.push(
-            match kind {
-                SumKind::Enum => ENUM_TRAIT,
-                SumKind::Union => UNION_TRAIT,
-            }
-            .to_string(),
-        );
+        conforms.push(Expr::new(
+            ExprKind::Identifier(
+                match kind {
+                    SumKind::Enum => ENUM_TRAIT,
+                    SumKind::Union => UNION_TRAIT,
+                }
+                .to_string(),
+            ),
+            span,
+        ));
         fields.extend(generated_fields);
         associated.extend(generated_associated);
         methods.extend(generated_methods);

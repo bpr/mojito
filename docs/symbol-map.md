@@ -2919,7 +2919,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   rewrites the members and turns a lone value type it resolves to a
   declaration's identity (`T: m.Greet`) into that name bound, and the
   check's `Checker::composition_member_error` (`declarations.rs`) rejects
-  a member that is no name with the pin's missing `__and__`. The elaborator matches expression
+  a member that is no name with the pin's missing `__and__`. A struct's
+  conformance list and a trait's refinement list keep each `&` member of
+  an entry as its expression too (`Struct::{conforms,
+  conformance_conditions}`, `Trait::refines`), parsed by
+  `items.rs::parse_trait_composition` and read through
+  `ast::trait_entry_names`; the linker rewrites each entry as an
+  expression, and `Checker::trait_entries` (`traits.rs`) rejects an entry
+  that is still no name. The elaborator matches expression
   shapes too (`comptime.rs:applied_name`, `Expr::{is_sentinel,
   spread_pack_name}`), never the `Type` view.
   A callable bound (`F: def[width: SIMDLength](...) -> ...`) keys as its

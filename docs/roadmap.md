@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2553**.
+Next free ID: **R2554**.
 
 ## Ordered Work
 
@@ -6337,31 +6337,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2551 A conformance or refinement list holds names, not expressions**
-
-  A module-qualified trait in a struct's conformance list or a trait's
-  refinement list is a parse error, where upstream parses each entry as an
-  expression and evaluates it to a trait.
-  - `items.rs::parse_trait_composition` reads identifiers into
-    `Vec<String>` (`Struct::conforms`, `Trait::refines`), so neither the
-    linker's namespace rewrite (`module.rs::rewrite_expr`) nor the check
-    ever sees `m.Greet`.
-  - Lever: keep each entry as its expression, as R2533 did for
-    `TypeParam::bounds`, so the linker resolves a qualified entry to the
-    trait's identity and the check classifies it by what it names.
-    R2145 wants the same entries evaluated to trait values.
-  - Probe: `import tr as m` (a module declaring `trait Greet`), then
-    `struct S(m.Greet, Copyable)` implementing `greet` stops with
-    "Expected ')' after the conformance list"; the pin prints `7` for
-    `print(S(7).greet())`.
-  - Probe: `trait H(m.Greet): pass` is the same parse error; the pin
-    accepts it.
-  - Probe: `struct S(not m.Greet)` and a conditional `m.Greet where …`
-    entry read the same list.
-  - Found while landing R2533 (2026-11-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2552 `Some` takes only a lone trait name**
 
   `Some[Greet & Copyable]` is "unknown type 'Some'", where the pin takes
@@ -6379,6 +6354,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `def f(g: Some[def(var Int)])` is the same error (R813 waits on
     it).
   - Found while landing R2533 (2026-11-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2553 The parser judges a conformance list's listed-and-opted-out traits by spelling**
+
+  A trait listed and opted out under two spellings (`struct S(Greet, not
+  m.Greet)` with `from tr import Greet`) passes the parse and stops at the
+  check as "trait '__module$tr$Greet' appears multiple times in the
+  conformance list with different constraints", where upstream judges the
+  entries by the traits they evaluate to.
+  - `items.rs::parse_struct_conformance` compares entry expressions before
+    linking, so only an identical spelling meets the rule; the check's
+    `check_repeated_conformances` then sees the resolved names and reports
+    the identity, not the spelled name.
+  - Lever: move the listed-and-opted-out and opted-out-twice rules into
+    the check, over the resolved trait names, keeping the pin's wording,
+    and spell a trait in the diagnostic by its source name.
+  - Probe: the shape above; the pin rejects it, so the message to match
+    is the pin's for this exact program.
+  - Probe: `struct S(not Greet, not m.Greet)`, opted out twice.
+  - Found while landing R2551 (2026-11-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -652,8 +652,7 @@ required unsolved parameter is an error.
 struct_def: decorators 'struct' NAME [params_decl] [conformance] where_clause* ':' struct_block
 conformance: '(' ','.conditional_conformance+ ')'
 conditional_conformance: trait_composition ['where' expression] | 'not' trait_composition ['else' STRING]
-trait_composition: '&'.trait_term+
-trait_term: NAME | '(' trait_composition ')'
+trait_composition: expression    # each '&' member one trait entry
 struct_block: NEWLINE INDENT struct_member+ DEDENT
 struct_member: field | struct_comptime | method
 field: 'var' NAME ':' field_type NEWLINE
@@ -697,6 +696,12 @@ takes the whole composition, so `not (A & B)` and `not A & B` both opt out
 of each (with the `else` reason, if any, on each). A trait's refinement list
 (`trait C(A & B):`) accepts compositions the same way. A `comptime` constant
 bound to a composition is not yet a list entry (R2145).
+
+Each entry is an expression, as upstream parses it, kept in the AST as its
+`&` members (`Struct::conforms`, `Trait::refines`). Linking resolves a
+module-qualified member (`struct S(m.Greet)`, `trait H(m.Greet)`, `not
+m.Greet`, `m.Greet where C`) to the name of the trait it names, as `from m
+import Greet` spells it; the check rejects a member that names no trait.
 
 Struct declarations, methods, and associated `comptime` members accept the same
 trailing `where` clauses as free functions. An associated `comptime` member

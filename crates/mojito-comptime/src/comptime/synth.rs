@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_ast::ast::trait_entry_names;
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 
 /// Materialize the `Copyable` trait's default `copy` method (current Mojo:
@@ -27,7 +28,7 @@ pub(super) fn synthesize_copyable_copy(
 ) {
     let declared = declared_trait_parents(program);
     let copyable =
-        |conformance: &String| conformance_reaches(&declared, installed, conformance, "Copyable");
+        |conformance: &str| conformance_reaches(&declared, installed, conformance, "Copyable");
     for statement in program {
         let span = statement.span;
         let module = statement.module.clone();
@@ -40,7 +41,7 @@ pub(super) fn synthesize_copyable_copy(
         else {
             continue;
         };
-        if !conforms.iter().any(copyable) || methods.iter().any(|m| m.name == "copy") {
+        if !trait_entry_names(conforms).any(copyable) || methods.iter().any(|m| m.name == "copy") {
             continue;
         }
         let copy_constructor = methods
@@ -65,16 +66,17 @@ pub(super) fn synthesize_copyable_copy(
         // unconditionally when it declares `Copyable` without a condition,
         // under a refining conformance's condition when only that declares
         // it.
-        let declares_copyable = conforms.iter().any(|conformance| conformance == "Copyable");
-        let gate = conformance_conditions
-            .iter()
-            .find(|(trait_name, _)| trait_name == "Copyable")
-            .or_else(|| {
-                conformance_conditions
-                    .iter()
-                    .find(|(trait_name, _)| !declares_copyable && copyable(trait_name))
-            })
-            .map(|(trait_name, _)| trait_name.clone());
+        let declares_copyable =
+            trait_entry_names(conforms).any(|conformance| conformance == "Copyable");
+        let conditioned = || {
+            conformance_conditions
+                .iter()
+                .filter_map(|(entry, _)| entry.identifier())
+        };
+        let gate = conditioned()
+            .find(|trait_name| *trait_name == "Copyable")
+            .or_else(|| conditioned().find(|trait_name| !declares_copyable && copyable(trait_name)))
+            .map(str::to_string);
         // The body keeps its struct's module, as a linked source body does,
         // so a specialization traces its copy to this template.
         let mut body = vec![mk(StmtKind::Return(Some(result)), span)];
@@ -155,11 +157,11 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
         else {
             continue;
         };
-        if !conforms.iter().any(|conformance| conformance == "Hashable")
+        if !trait_entry_names(conforms).any(|conformance| conformance == "Hashable")
             || conformance_conditions
                 .iter()
                 .any(|(trait_name, condition)| {
-                    trait_name == "Hashable" && condition.is_never_condition()
+                    trait_name.identifier() == Some("Hashable") && condition.is_never_condition()
                 }) || methods.iter().any(|method| {
             method.name == "__hash__"
                 && matches!(
@@ -203,8 +205,9 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
         };
         let gate = conformance_conditions
             .iter()
-            .find(|(trait_name, _)| trait_name == "Hashable")
-            .map(|(trait_name, _)| trait_name.clone());
+            .filter_map(|(entry, _)| entry.identifier())
+            .find(|trait_name| *trait_name == "Hashable")
+            .map(str::to_string);
         methods.push(mojito_ast::ast::Method {
             name: "__hash__".to_string(),
             type_params: Vec::new(),
@@ -274,7 +277,7 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
                     || applied_name(&parameter.ty).is_some_and(|(named, _)| named == *name)
             )
         };
-        if !conforms.iter().any(|conformance| equatable(conformance))
+        if !trait_entry_names(conforms).any(equatable)
             || methods
                 .iter()
                 .any(|method| method.name == "__eq__" && takes_self(method))
@@ -327,18 +330,19 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
         // The member is as available as the struct's `Equatable`
         // conformance: unconditionally when it declares `Equatable` without
         // a condition, under `Comparable`'s when only that refines it.
-        let declares_equatable = conforms
-            .iter()
-            .any(|conformance| conformance == "Equatable");
-        let gate = conformance_conditions
-            .iter()
-            .find(|(trait_name, _)| trait_name == "Equatable")
+        let declares_equatable =
+            trait_entry_names(conforms).any(|conformance| conformance == "Equatable");
+        let conditioned = || {
+            conformance_conditions
+                .iter()
+                .filter_map(|(entry, _)| entry.identifier())
+        };
+        let gate = conditioned()
+            .find(|trait_name| *trait_name == "Equatable")
             .or_else(|| {
-                conformance_conditions
-                    .iter()
-                    .find(|(trait_name, _)| !declares_equatable && trait_name == "Comparable")
+                conditioned().find(|trait_name| !declares_equatable && *trait_name == "Comparable")
             })
-            .map(|(trait_name, _)| trait_name.clone());
+            .map(str::to_string);
         methods.push(mojito_ast::ast::Method {
             name: "__eq__".to_string(),
             type_params: Vec::new(),
@@ -374,7 +378,10 @@ fn declared_trait_parents(program: &[Stmt]) -> HashMap<String, Vec<String>> {
     program
         .iter()
         .filter_map(|statement| match &statement.kind {
-            StmtKind::Trait { name, refines, .. } => Some((name.clone(), refines.clone())),
+            StmtKind::Trait { name, refines, .. } => Some((
+                name.clone(),
+                trait_entry_names(refines).map(str::to_string).collect(),
+            )),
             _ => None,
         })
         .collect()
