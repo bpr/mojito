@@ -52,7 +52,8 @@ pub struct PassCarry {
 
 impl PassCarry {
     pub fn into_result(self) -> DiscoveryResult {
-        self.result.into_discovery()
+        self.result
+            .into_discovery(&self.internal.statement_desugars)
     }
 
     /// The committed effect maps, the next pass's seeds.
@@ -180,16 +181,21 @@ pub struct HandoffStores {
 
 impl HandoffStores {
     /// The checked handoff: the occurrence records, less any a cleared
-    /// fact left empty, and the emitted nodes under
-    /// `MOJITO_CHECK_EMITTED=1`.
-    fn into_discovery(self) -> DiscoveryResult {
-        let (node_facts, emitted) = self.emitter.into_parts();
+    /// fact left empty, and under `MOJITO_CHECK_EMITTED=1` the emitted
+    /// nodes, holding the check's `desugars` by node.
+    fn into_discovery(
+        self,
+        desugars: &HashMap<SourceSpan, super::desugar::StatementDesugar>,
+    ) -> DiscoveryResult {
+        let (node_facts, mut emitted) = self.emitter.into_parts();
+        let switched = std::env::var_os("MOJITO_CHECK_EMITTED").is_some();
+        if switched {
+            emitted.desugars = emitted_desugars(&emitted.index, desugars);
+        }
         DiscoveryResult {
             statements: self.statements,
             node_facts,
-            emitted: std::env::var_os("MOJITO_CHECK_EMITTED")
-                .is_some()
-                .then_some(emitted),
+            emitted: switched.then_some(emitted),
             struct_instantiations: self.struct_instantiations.into_inner(),
             checked_types: self.checked_types.into_inner(),
             generic_parameters: self.generic_parameters.into_inner(),
@@ -677,4 +683,40 @@ fn stale_reads(
         .map(|(callee, _)| callee.as_str())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Each of the check's `desugars` with its statements' nodes in `index`;
+/// a statement no node holds is counted (`emit.seal.unemitted_desugars`)
+/// and left out.
+fn emitted_desugars(
+    index: &HashMap<SourceSpan, mojito_checked::emitted::EmittedSlot>,
+    desugars: &HashMap<SourceSpan, super::desugar::StatementDesugar>,
+) -> HashMap<SourceSpan, mojito_checked::emitted::EmittedDesugar> {
+    let mut unemitted = 0u64;
+    let converted = desugars
+        .iter()
+        .map(|(at, desugar)| {
+            let statements = desugar
+                .statements
+                .iter()
+                .filter_map(|statement| {
+                    let slot = match index.get(&statement.source_span()) {
+                        Some(mojito_checked::emitted::EmittedSlot::Statement(id)) => Some(*id),
+                        _ => None,
+                    };
+                    unemitted += u64::from(slot.is_none());
+                    slot
+                })
+                .collect();
+            (
+                at.clone(),
+                mojito_checked::emitted::EmittedDesugar {
+                    statements,
+                    binder: desugar.binder.clone(),
+                },
+            )
+        })
+        .collect();
+    timing::count("emit.seal.unemitted_desugars", unemitted);
+    converted
 }

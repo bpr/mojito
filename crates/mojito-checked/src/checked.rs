@@ -5507,7 +5507,14 @@ impl CheckedProgram {
         let arena =
             build_checked_expressions(&statements, &node_facts, &default_wrappers, signatures);
         if let Some(emitted) = &emitted {
-            crate::emitted::cross_check(emitted, &arena.nodes, &arena.statements, &node_facts);
+            let (sealed, missing) = crate::emitted::seal(
+                emitted,
+                &statements,
+                &default_wrappers,
+                &node_facts,
+                signatures,
+            );
+            crate::emitted::compare(&sealed, &arena, missing);
         }
         drop(expressions_span);
         let declarations_span = mojito_common::timing::span("declarations");
@@ -5853,13 +5860,17 @@ pub(crate) struct Signatures<'a> {
 }
 
 impl Signatures<'_> {
-    /// The checked signature of the free `def` `statement`, of `arity`
-    /// declared parameters.
-    fn function(&self, statement: &Stmt, arity: usize) -> CheckedSignature {
-        let (module, declaration, syntax) =
-            (&statement.module, statement.span, statement.syntax_id);
+    /// The checked signature of the free `def` declared at `declaration`
+    /// (with identity `syntax`) in `module`, of `arity` declared parameters.
+    pub(crate) fn function(
+        &self,
+        module: Option<&String>,
+        declaration: Span,
+        syntax: SyntaxId,
+        arity: usize,
+    ) -> CheckedSignature {
         let result = AnnotationSite::FunctionReturn {
-            module: module.clone(),
+            module: module.cloned(),
             declaration,
             syntax,
         };
@@ -5867,7 +5878,7 @@ impl Signatures<'_> {
             parameters: self
                 .generic_parameters
                 .get(&GenericSite::Function {
-                    module: module.clone(),
+                    module: module.cloned(),
                     declaration,
                     syntax,
                 })
@@ -5877,7 +5888,7 @@ impl Signatures<'_> {
                 .map(|param| {
                     self.checked_types
                         .get(&AnnotationSite::FunctionParam {
-                            module: module.clone(),
+                            module: module.cloned(),
                             declaration,
                             syntax,
                             param,
@@ -5893,7 +5904,7 @@ impl Signatures<'_> {
 
     /// The checked signature of the member `method` of struct
     /// `declaration`, of `arity` declared parameters.
-    fn method(
+    pub(crate) fn method(
         &self,
         module: Option<&String>,
         declaration: &str,
@@ -5939,12 +5950,313 @@ impl Signatures<'_> {
                 .cloned(),
         }
     }
+
+    /// The symbol the `def` named `name`, declared at `declaration` (with
+    /// identity `syntax`) in `module` inside `functions` function bodies,
+    /// lowers to, as the check names its owner: a module `def`'s the check
+    /// spelled from its typed signature when its name is overloaded, its
+    /// own name otherwise.
+    pub(crate) fn function_symbol(
+        &self,
+        functions: usize,
+        module: Option<&String>,
+        declaration: Span,
+        syntax: SyntaxId,
+        name: &str,
+    ) -> String {
+        if functions > 0 {
+            return name.to_string();
+        }
+        self.declaration_symbols
+            .get(&GenericSite::Function {
+                module: module.cloned(),
+                declaration,
+                syntax,
+            })
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    /// The symbol method `position` of struct `structure` in `module`,
+    /// registered as `registered`, lowers to: the one the check spelled
+    /// from its typed signature when its name is overloaded,
+    /// `Struct.method` otherwise.
+    pub(crate) fn method_symbol(
+        &self,
+        module: Option<&String>,
+        structure: &str,
+        position: usize,
+        registered: &str,
+    ) -> String {
+        self.declaration_symbols
+            .get(&GenericSite::Method {
+                module: module.cloned(),
+                declaration: structure.to_string(),
+                method: position,
+            })
+            .cloned()
+            .unwrap_or_else(|| format!("{structure}.{registered}"))
+    }
+
+    /// The fields of struct `structure` in `module`, `declared` as written,
+    /// with their checked types and fieldwise-initializer conventions.
+    pub(crate) fn fields(
+        &self,
+        module: Option<&String>,
+        structure: &str,
+        declared: impl Iterator<Item = (String, bool)>,
+    ) -> Vec<CheckedField> {
+        let conventions = self.fieldwise_conventions.get(structure);
+        let ref_params = self.fieldwise_ref_params.get(structure);
+        declared
+            .enumerate()
+            .map(|(field, (name, reference))| CheckedField {
+                name,
+                reference,
+                fieldwise_convention: conventions
+                    .and_then(|conventions| conventions.get(field).copied().flatten()),
+                fieldwise_ref: ref_params
+                    .and_then(|ref_params| ref_params.get(field).cloned().flatten()),
+                ty: self
+                    .checked_types
+                    .get(&AnnotationSite::StructField {
+                        module: module.cloned(),
+                        declaration: structure.to_string(),
+                        field,
+                    })
+                    .cloned(),
+            })
+            .collect()
+    }
+}
+
+/// The node `id` of an expression whose op is `op`, located at `at`
+/// (span, source, identity), with the facts `facts` the check recorded at
+/// it. A bracket is classified by `bracket_base`, the name its written
+/// base spells ([`Expr::bracket_application`]).
+pub(crate) fn expression_node(
+    id: CheckedNodeId,
+    op: CheckedOp,
+    at: (Span, Option<String>, SyntaxId),
+    facts: &NodeFacts,
+    bracket_base: Option<&str>,
+) -> CheckedExpr {
+    let (span, source, syntax_id) = at;
+    CheckedExpr {
+        id,
+        adjustments: node_adjustments(facts, &op),
+        category: value_category(facts, &op, bracket_base),
+        op,
+        span,
+        source,
+        syntax_id,
+        ty: facts.ty.clone(),
+        place_ty: facts.place_ty.clone(),
+        binding_ty: facts.binding_ty.clone(),
+        binding: facts.binding,
+        effects: facts.effects.clone().unwrap_or_default(),
+        comprehension_bindings: facts.comprehension_bindings.clone().unwrap_or_default(),
+        call_transfers: facts.call_transfers.clone().unwrap_or_default(),
+    }
+}
+
+/// The node `id` of a statement whose op is `op`, located at `at` (span,
+/// module, identity), with the facts `facts` the check recorded at it.
+pub(crate) fn statement_node(
+    id: CheckedStmtId,
+    op: CheckedStmtOp,
+    at: (Span, Option<String>, SyntaxId),
+    facts: &NodeFacts,
+) -> CheckedStmt {
+    let (span, module, syntax_id) = at;
+    CheckedStmt {
+        id,
+        op,
+        span,
+        module,
+        syntax_id,
+        binding: facts.statement_binding,
+        binding_ty: facts.binding_ty.clone(),
+        declaration: None,
+    }
+}
+
+/// The construction the check spelled for a sugar whose `facts` these are,
+/// and the lift its construction takes when the check lifted the sugar as
+/// a compile-time application.
+pub(crate) fn spelled_construction(
+    facts: &NodeFacts,
+) -> Option<(&Expr, Option<SemanticAdjustment>)> {
+    match facts.adjustment.as_deref()? {
+        SemanticAdjustment::SpelledConstruction { construction } => Some((&construction.0, None)),
+        SemanticAdjustment::ComptimeApplication {
+            operation: Some(operation),
+            application,
+        } => match &**operation {
+            SemanticAdjustment::SpelledConstruction { construction } => Some((
+                &construction.0,
+                Some(SemanticAdjustment::ComptimeApplication {
+                    operation: None,
+                    application: application.clone(),
+                }),
+            )),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Give the node of a spelled sugar's construction what the sugar's
+/// `facts` record of its use, and the sugar's `lifted` lift. A conversion
+/// the sugar takes converts its construction, a `for` loop iterates the
+/// construction it spells, a `comptime for` steps it, and `and`/`or` tests
+/// its truth. A place the sugar spells (an address builtin's dereference)
+/// is the place a `mut` or `ref` argument retains and a `ref` binding or
+/// result borrows. A binding the sugar initializes is initialized by its
+/// construction.
+pub(crate) fn apply_spelled(
+    constructed: &mut CheckedExpr,
+    facts: &NodeFacts,
+    lifted: Option<SemanticAdjustment>,
+) {
+    let place_uses = facts
+        .call_place_use
+        .then_some(SemanticAdjustment::RetainCallPlace)
+        .into_iter()
+        .chain(facts.reference_value_use.map(|writable| {
+            if writable {
+                SemanticAdjustment::BorrowMutable
+            } else {
+                SemanticAdjustment::BorrowShared
+            }
+        }));
+    let loops = facts
+        .iteration_protocol
+        .iter()
+        .map(|protocol| SemanticAdjustment::Iterate((**protocol).clone()))
+        .chain(
+            facts
+                .comptime_iteration
+                .iter()
+                .map(|iteration| SemanticAdjustment::ComptimeIteration(iteration.clone())),
+        );
+    let truthiness = facts
+        .truthiness_condition
+        .then(|| SemanticAdjustment::Truthiness(facts.truthiness_call.clone()));
+    let initialization = facts
+        .pointee_initialization
+        .clone()
+        .map(|element| SemanticAdjustment::PointerWrite { element });
+    if constructed.binding_ty.is_none() {
+        constructed.binding_ty.clone_from(&facts.binding_ty);
+    }
+    constructed.adjustments.extend(
+        conversion_adjustments(facts)
+            .into_iter()
+            .chain(place_uses)
+            .chain(loops)
+            .chain(truthiness)
+            .chain(lifted)
+            .chain(initialization),
+    );
+}
+
+/// A call's compile-time parameters as the binder `binding` laid out its
+/// `count` written bracket arguments: per declared parameter, in
+/// declaration order, its declaration and the source position and
+/// attribute of each argument bound to it (an argument bound twice counts
+/// at its first place), then one parameter bound to no declaration per
+/// argument bound to none.
+pub(crate) fn parameter_layout(
+    binding: Option<&BracketBinding>,
+    count: usize,
+) -> Vec<ParameterLayout> {
+    let mut placed = vec![false; count];
+    let (slots, declarations) = binding.map_or((&[][..], &[][..]), |binding| {
+        (&binding.slots, &binding.declarations)
+    });
+    let mut parameters: Vec<ParameterLayout> = slots
+        .iter()
+        .enumerate()
+        .map(|(index, slot)| {
+            let bound = slot
+                .iter()
+                .filter(|bound| {
+                    bound.position < count && !std::mem::replace(&mut placed[bound.position], true)
+                })
+                .map(|bound| (bound.position, bound.attribute.clone()))
+                .collect();
+            (declarations.get(index).cloned().flatten(), bound)
+        })
+        .collect();
+    parameters.extend(
+        placed
+            .iter()
+            .enumerate()
+            .filter(|(_, placed)| !**placed)
+            .map(|(position, _)| (None, vec![(position, None)])),
+    );
+    parameters
+}
+
+/// One declared parameter's layout ([`parameter_layout`]).
+pub(crate) type ParameterLayout = (
+    Option<String>,
+    Vec<(usize, Option<mojito_types::types::TyArg>)>,
+);
+
+/// The attribute a subscript whose `facts` these are binds as its key when
+/// it is a type-keyed accessor call (`v[Int]`, upstream's
+/// `v.__getitem_param__[Int]()`, whose one bracket argument the check
+/// recorded at the subscript).
+pub(crate) fn subscript_attribute(facts: &NodeFacts) -> Option<mojito_types::types::TyArg> {
+    facts
+        .selected_call
+        .as_deref()
+        .filter(|contract| {
+            contract.arguments.is_empty() && contract.target.contains(".__getitem_param__")
+        })
+        .and(facts.parameter_attributes.as_ref())
+        .and_then(|binding| match binding.source_order().as_slice() {
+            [Some(attribute)] => Some(attribute.clone()),
+            _ => None,
+        })
+}
+
+/// Whether the check named a lifted function for the expression whose
+/// `facts` these are ([`SemanticAdjustment::ComptimeApplication`]).
+pub(crate) fn lifted(facts: &NodeFacts) -> bool {
+    matches!(
+        facts.adjustment.as_deref(),
+        Some(SemanticAdjustment::ComptimeApplication { .. })
+    )
+}
+
+/// The outermost of a walk's lifted applications, chosen in walk order:
+/// one nested in an application already chosen is lowered with it.
+#[derive(Default)]
+pub(crate) struct Outermost {
+    last: Option<Span>,
+}
+
+impl Outermost {
+    /// Whether the expression at `span`, `lifted` or not, is chosen.
+    pub(crate) fn admits(&mut self, span: Span, lifted: bool) -> bool {
+        let nested = self
+            .last
+            .is_some_and(|outer| outer.0 <= span.0 && span.1 <= outer.1);
+        let admitted = lifted && !nested;
+        if admitted {
+            self.last = Some(span);
+        }
+        admitted
+    }
 }
 
 /// The checked arena of `statements` and of `default_wrappers`' bodies,
 /// each node holding the facts `facts` recorded at its occurrence, each declaration op's symbol and
 /// signature read from `signatures`.
-fn build_checked_expressions<'a>(
+pub(crate) fn build_checked_expressions<'a>(
     statements: &[Stmt],
     facts: &'a HashMap<SourceSpan, NodeFacts>,
     default_wrappers: &[CheckedDefaultWrapper],
@@ -5970,12 +6282,13 @@ fn build_checked_expressions<'a>(
     }
 }
 
-/// What [`build_checked_expressions`] builds.
-struct CheckedArena {
-    nodes: Vec<CheckedExpr>,
-    statements: Vec<CheckedStmt>,
-    roots: Vec<CheckedStmtId>,
-    wrapper_roots: Vec<Vec<CheckedStmtId>>,
+/// What [`build_checked_expressions`] builds, and what the seal makes of
+/// the emitted nodes (`emitted::seal`).
+pub(crate) struct CheckedArena {
+    pub(crate) nodes: Vec<CheckedExpr>,
+    pub(crate) statements: Vec<CheckedStmt>,
+    pub(crate) roots: Vec<CheckedStmtId>,
+    pub(crate) wrapper_roots: Vec<Vec<CheckedStmtId>>,
 }
 
 /// A unit's nodes being copied out of its program's tables
@@ -6220,64 +6533,23 @@ impl<'a> ArenaBuilder<'a> {
     }
 
     fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
-        use ExprKind::{Identifier, Index, Member, MultiIndex};
         if let Some(node) = self.spelled_construction(expression) {
             return node;
         }
         let op = self.op(expression);
         let facts = self.facts(&expression.source_span());
-        let adjustments = node_adjustments(facts, expression);
-        let variant_projection = matches!(
-            facts.adjustment.as_deref(),
-            Some(SemanticAdjustment::VariantProject { .. })
-        );
-        let resolved_callable_value = facts.overload_target.is_some();
-        let ty = facts.ty.clone();
-        let place_ty = facts.place_ty.clone();
-        let binding_ty = facts.binding_ty.clone();
-        let binding = facts.binding;
-        // A bracket is classified by its base, as upstream's `SubscriptNode`
-        // is: a type's application denotes the type, recorded (when at all)
-        // as the base's own instance, a static receiver's type.
-        let type_application = binding.is_none()
-            && place_ty.is_none()
-            && expression.bracket_application().is_some_and(|(name, _)| {
-                ty.as_ref().is_none_or(|ty| {
-                    mojito_types::types::nominal_parts(ty).is_some_and(|(own, _)| own == name)
-                })
-            });
-        let category = match expression.kind {
-            Index { .. } | MultiIndex { .. } if variant_projection => ValueCategory::Place,
-            Index { .. } | MultiIndex { .. } if resolved_callable_value => ValueCategory::Value,
-            Index { .. } | MultiIndex { .. } if type_application => ValueCategory::Type,
-            // Expressions retained only inside constraints, reflection, and
-            // other erased parameter metadata are deliberately absent from
-            // the runtime type/place maps. They still cross the checked
-            // boundary as explicit compile-time nodes rather than being
-            // mislabeled as untyped runtime places.
-            _ if ty.is_none() && place_ty.is_none() && binding.is_none() => {
-                ValueCategory::CompileTime
-            }
-            Identifier(_) | Member { .. } | Index { .. } => ValueCategory::Place,
-            _ => ValueCategory::Value,
-        };
         let id = CheckedNodeId(self.nodes.len() as u32);
-        self.nodes.push(CheckedExpr {
+        self.nodes.push(expression_node(
             id,
             op,
-            span: expression.span,
-            source: expression.source.clone(),
-            syntax_id: expression.syntax_id,
-            ty,
-            place_ty,
-            binding_ty,
-            category,
-            binding,
-            effects: facts.effects.clone().unwrap_or_default(),
-            adjustments,
-            comprehension_bindings: facts.comprehension_bindings.clone().unwrap_or_default(),
-            call_transfers: facts.call_transfers.clone().unwrap_or_default(),
-        });
+            (
+                expression.span,
+                expression.source.clone(),
+                expression.syntax_id,
+            ),
+            facts,
+            expression.bracket_application().map(|(name, _)| name),
+        ));
         id
     }
 
@@ -6311,79 +6583,10 @@ impl<'a> ArenaBuilder<'a> {
         ) {
             return None;
         }
-        let (construction, lifted) = match self
-            .facts(&expression.source_span())
-            .adjustment
-            .as_deref()?
-        {
-            SemanticAdjustment::SpelledConstruction { construction } => (construction, None),
-            SemanticAdjustment::ComptimeApplication {
-                operation: Some(operation),
-                application,
-            } => match &**operation {
-                SemanticAdjustment::SpelledConstruction { construction } => (
-                    construction,
-                    Some(SemanticAdjustment::ComptimeApplication {
-                        operation: None,
-                        application: application.clone(),
-                    }),
-                ),
-                _ => return None,
-            },
-            _ => return None,
-        };
-        let node = self.expr(&construction.0);
-        // A conversion the sugar takes converts its construction, a `for`
-        // loop iterates the construction it spells, a `comptime for` steps
-        // it, and `and`/`or` tests its truth. A place the sugar spells (an
-        // address builtin's dereference) is the place a `mut` or `ref`
-        // argument retains and a `ref` binding or result borrows. A binding
-        // the sugar initializes is initialized by its construction.
         let facts = self.facts(&expression.source_span());
-        let conversions = conversion_adjustments(facts);
-        let place_uses: Vec<SemanticAdjustment> = facts
-            .call_place_use
-            .then_some(SemanticAdjustment::RetainCallPlace)
-            .into_iter()
-            .chain(facts.reference_value_use.map(|writable| {
-                if writable {
-                    SemanticAdjustment::BorrowMutable
-                } else {
-                    SemanticAdjustment::BorrowShared
-                }
-            }))
-            .collect();
-        let truthiness = facts
-            .truthiness_condition
-            .then(|| SemanticAdjustment::Truthiness(facts.truthiness_call.clone()));
-        let loops: Vec<SemanticAdjustment> = facts
-            .iteration_protocol
-            .iter()
-            .map(|protocol| SemanticAdjustment::Iterate((**protocol).clone()))
-            .chain(
-                facts
-                    .comptime_iteration
-                    .iter()
-                    .map(|iteration| SemanticAdjustment::ComptimeIteration(iteration.clone())),
-            )
-            .collect();
-        let initialization = facts
-            .pointee_initialization
-            .clone()
-            .map(|element| SemanticAdjustment::PointerWrite { element });
-        let binding_ty = facts.binding_ty.clone();
-        let constructed = &mut self.nodes[node.0 as usize];
-        if constructed.binding_ty.is_none() {
-            constructed.binding_ty = binding_ty;
-        }
-        self.nodes[node.0 as usize].adjustments.extend(conversions);
-        self.nodes[node.0 as usize].adjustments.extend(place_uses);
-        self.nodes[node.0 as usize].adjustments.extend(loops);
-        self.nodes[node.0 as usize].adjustments.extend(truthiness);
-        self.nodes[node.0 as usize].adjustments.extend(lifted);
-        self.nodes[node.0 as usize]
-            .adjustments
-            .extend(initialization);
+        let (construction, lifted) = spelled_construction(facts)?;
+        let node = self.expr(construction);
+        apply_spelled(&mut self.nodes[node.0 as usize], facts, lifted);
         Some(node)
     }
 
@@ -6627,38 +6830,16 @@ impl<'a> ArenaBuilder<'a> {
             .facts(&expression.source_span())
             .parameter_attributes
             .as_ref();
-        let mut placed = vec![false; arguments.len()];
-        let mut parameters = Vec::new();
-        let (slots, declarations) = binding.map_or((&[][..], &[][..]), |binding| {
-            (&binding.slots, &binding.declarations)
-        });
-        for (index, slot) in slots.iter().enumerate() {
-            let mut parameter = CheckedParameter {
-                declaration: declarations.get(index).cloned().flatten(),
-                arguments: Vec::new(),
-            };
-            for bound in slot {
-                let Some(argument) = arguments.get(bound.position) else {
-                    continue;
-                };
-                if std::mem::replace(&mut placed[bound.position], true) {
-                    continue;
-                }
-                parameter
-                    .arguments
-                    .push(self.param_arg(argument, bound.attribute.clone()));
-            }
-            parameters.push(parameter);
-        }
-        for (argument, placed) in arguments.iter().zip(placed) {
-            if !placed {
-                parameters.push(CheckedParameter {
-                    declaration: None,
-                    arguments: vec![self.param_arg(argument, None)],
-                });
-            }
-        }
-        parameters
+        parameter_layout(binding, arguments.len())
+            .into_iter()
+            .map(|(declaration, bound)| CheckedParameter {
+                declaration,
+                arguments: bound
+                    .into_iter()
+                    .map(|(position, attribute)| self.param_arg(&arguments[position], attribute))
+                    .collect(),
+            })
+            .collect()
     }
 
     /// The key of subscript `expression`, `index`: the attribute the
@@ -6667,19 +6848,7 @@ impl<'a> ArenaBuilder<'a> {
     /// bracket argument it recorded at the subscript), else the index's
     /// node.
     fn subscript_key(&mut self, expression: &Expr, index: &Expr) -> CheckedParamArg {
-        let facts = self.facts(&expression.source_span());
-        let attribute = facts
-            .selected_call
-            .as_deref()
-            .filter(|contract| {
-                contract.arguments.is_empty() && contract.target.contains(".__getitem_param__")
-            })
-            .and(facts.parameter_attributes.as_ref())
-            .and_then(|binding| match binding.source_order().as_slice() {
-                [Some(attribute)] => Some(attribute.clone()),
-                _ => None,
-            });
-        match attribute {
+        match subscript_attribute(self.facts(&expression.source_span())) {
             attribute @ Some(_) => CheckedParamArg::Attribute {
                 value: attribute,
                 applications: self.expression_applications(index),
@@ -6736,6 +6905,7 @@ impl<'a> ArenaBuilder<'a> {
     ) -> Vec<CheckedNodeId> {
         let mut applied = LiftedApplications {
             facts: self.facts,
+            outermost: Outermost::default(),
             found: Vec::new(),
         };
         walk(&mut applied);
@@ -6830,16 +7000,16 @@ impl<'a> ArenaBuilder<'a> {
         let op = self.stmt_op(statement);
         let facts = self.facts(&statement.source_span());
         let id = CheckedStmtId(self.statements.len() as u32);
-        self.statements.push(CheckedStmt {
+        self.statements.push(statement_node(
             id,
             op,
-            span: statement.span,
-            module: statement.module.clone(),
-            syntax_id: statement.syntax_id,
-            binding: facts.statement_binding,
-            binding_ty: facts.binding_ty.clone(),
-            declaration: None,
-        });
+            (
+                statement.span,
+                statement.module.clone(),
+                statement.syntax_id,
+            ),
+            facts,
+        ));
         id
     }
 
@@ -6869,8 +7039,19 @@ impl<'a> ArenaBuilder<'a> {
                 ..
             } => CheckedStmtOp::Def(Box::new(CheckedDef {
                 name: name.clone(),
-                symbol: self.function_symbol(statement, name),
-                signature: self.signatures.function(statement, params.len()),
+                symbol: self.signatures.function_symbol(
+                    self.functions,
+                    statement.module.as_ref(),
+                    statement.span,
+                    statement.syntax_id,
+                    name,
+                ),
+                signature: self.signatures.function(
+                    statement.module.as_ref(),
+                    statement.span,
+                    statement.syntax_id,
+                    params.len(),
+                ),
                 params: self.fn_params(params),
                 positional_only: *positional_only,
                 keyword_only: *keyword_only,
@@ -6923,7 +7104,12 @@ impl<'a> ArenaBuilder<'a> {
                     .map(|(position, method)| {
                         let registered =
                             mojito_symbol::symbol::lifecycle_method_name(method).to_string();
-                        let symbol = self.method_symbol(statement, name, position, &registered);
+                        let symbol = self.signatures.method_symbol(
+                            statement.module.as_ref(),
+                            name,
+                            position,
+                            &registered,
+                        );
                         CheckedMethod {
                             name: method.name.clone(),
                             registered,
@@ -6948,29 +7134,13 @@ impl<'a> ArenaBuilder<'a> {
                         }
                     })
                     .collect();
-                let conventions = self.signatures.fieldwise_conventions.get(name);
-                let ref_params = self.signatures.fieldwise_ref_params.get(name);
-                let fields = fields
-                    .iter()
-                    .enumerate()
-                    .map(|(field, declared)| CheckedField {
-                        name: declared.name.clone(),
-                        reference: declared.reference.is_some(),
-                        fieldwise_convention: conventions
-                            .and_then(|conventions| conventions.get(field).copied().flatten()),
-                        fieldwise_ref: ref_params
-                            .and_then(|ref_params| ref_params.get(field).cloned().flatten()),
-                        ty: self
-                            .signatures
-                            .checked_types
-                            .get(&AnnotationSite::StructField {
-                                module: statement.module.clone(),
-                                declaration: name.clone(),
-                                field,
-                            })
-                            .cloned(),
-                    })
-                    .collect();
+                let fields = self.signatures.fields(
+                    statement.module.as_ref(),
+                    name,
+                    fields
+                        .iter()
+                        .map(|declared| (declared.name.clone(), declared.reference.is_some())),
+                );
                 CheckedStmtOp::Struct(Box::new(CheckedStruct {
                     name: name.clone(),
                     conforms: entry_names(conforms),
@@ -6993,7 +7163,12 @@ impl<'a> ArenaBuilder<'a> {
                     .enumerate()
                     .map(|(index, method)| CheckedTraitMethod {
                         name: method.name.clone(),
-                        symbol: self.method_symbol(statement, name, index, &method.name),
+                        symbol: self.signatures.method_symbol(
+                            statement.module.as_ref(),
+                            name,
+                            index,
+                            &method.name,
+                        ),
                         signature: self.signatures.method(
                             statement.module.as_ref(),
                             name,
@@ -7282,76 +7457,70 @@ impl<'a> ArenaBuilder<'a> {
         self.functions -= 1;
         body
     }
+}
 
-    /// The symbol the `def` `statement` named `name` lowers to, as the
-    /// check names its owner: a module `def`'s the check spelled from its
-    /// typed signature when its name is overloaded, its own name otherwise.
-    fn function_symbol(&self, statement: &Stmt, name: &str) -> String {
-        if self.functions > 0 {
-            return name.to_string();
+/// The value category of a node whose op is `op`, from the `facts` the
+/// check recorded at it. A bracket is classified by its base, as
+/// upstream's `SubscriptNode` is: a type's application denotes the type,
+/// recorded (when at all) as the base's own instance, a static receiver's
+/// type; `bracket_base` is the name its written base spells.
+fn value_category(facts: &NodeFacts, op: &CheckedOp, bracket_base: Option<&str>) -> ValueCategory {
+    let bracket = matches!(op, CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. });
+    let type_application = facts.binding.is_none()
+        && facts.place_ty.is_none()
+        && bracket_base.is_some_and(|name| {
+            facts.ty.as_ref().is_none_or(|ty| {
+                mojito_types::types::nominal_parts(ty).is_some_and(|(own, _)| own == name)
+            })
+        });
+    match op {
+        _ if bracket
+            && matches!(
+                facts.adjustment.as_deref(),
+                Some(SemanticAdjustment::VariantProject { .. })
+            ) =>
+        {
+            ValueCategory::Place
         }
-        self.signatures
-            .declaration_symbols
-            .get(&GenericSite::Function {
-                module: statement.module.clone(),
-                declaration: statement.span,
-                syntax: statement.syntax_id,
-            })
-            .cloned()
-            .unwrap_or_else(|| name.to_string())
-    }
-
-    /// The symbol method `position` of struct `structure`, registered as
-    /// `registered`, lowers to: the one the check spelled from its typed
-    /// signature when its name is overloaded, `Struct.method` otherwise.
-    fn method_symbol(
-        &self,
-        statement: &Stmt,
-        structure: &str,
-        position: usize,
-        registered: &str,
-    ) -> String {
-        self.signatures
-            .declaration_symbols
-            .get(&GenericSite::Method {
-                module: statement.module.clone(),
-                declaration: structure.to_string(),
-                method: position,
-            })
-            .cloned()
-            .unwrap_or_else(|| format!("{structure}.{registered}"))
+        _ if bracket && facts.overload_target.is_some() => ValueCategory::Value,
+        _ if bracket && type_application => ValueCategory::Type,
+        // Expressions retained only inside constraints, reflection, and
+        // other erased parameter metadata are deliberately absent from
+        // the runtime type/place maps. They still cross the checked
+        // boundary as explicit compile-time nodes rather than being
+        // mislabeled as untyped runtime places.
+        _ if facts.ty.is_none() && facts.place_ty.is_none() && facts.binding.is_none() => {
+            ValueCategory::CompileTime
+        }
+        CheckedOp::Identifier(_) | CheckedOp::Member { .. } | CheckedOp::Index { .. } => {
+            ValueCategory::Place
+        }
+        _ => ValueCategory::Value,
     }
 }
 
-/// The adjustments the check's `facts` at `expression` record, in the
-/// order lowering applies them.
 /// The outermost expressions of a walked annotation or bracket argument
 /// the check named a lifted function for.
 struct LiftedApplications<'a> {
     facts: &'a HashMap<SourceSpan, NodeFacts>,
+    outermost: Outermost,
     found: Vec<Expr>,
 }
 
 impl mojito_ast::visit::Visitor for LiftedApplications<'_> {
     fn visit_expr(&mut self, expression: &Expr) {
-        let nested = self.found.last().is_some_and(|outer| {
-            outer.span.0 <= expression.span.0 && expression.span.1 <= outer.span.1
-        });
-        if !nested
-            && matches!(
-                self.facts
-                    .get(&expression.source_span())
-                    .and_then(|facts| facts.adjustment.as_deref()),
-                Some(SemanticAdjustment::ComptimeApplication { .. })
-            )
-        {
+        let lifted = self
+            .facts
+            .get(&expression.source_span())
+            .is_some_and(lifted);
+        if self.outermost.admits(expression.span, lifted) {
             self.found.push(expression.clone());
         }
     }
 }
 
 /// `params` with each default replaced by `map`'s node.
-fn map_params(map: &mut dyn NodeMap, params: &[CheckedFnParam]) -> Vec<CheckedFnParam> {
+pub(crate) fn map_params(map: &mut dyn NodeMap, params: &[CheckedFnParam]) -> Vec<CheckedFnParam> {
     params
         .iter()
         .map(|param| CheckedFnParam {
@@ -7407,7 +7576,9 @@ fn conversion_adjustments(facts: &NodeFacts) -> Vec<SemanticAdjustment> {
     adjustments
 }
 
-fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustment> {
+/// The adjustments the check's `facts` at a node whose op is `op` record,
+/// in the order lowering applies them.
+fn node_adjustments(facts: &NodeFacts, op: &CheckedOp) -> Vec<SemanticAdjustment> {
     let mut adjustments = Vec::new();
     if let Some(target) = &facts.overload_target {
         adjustments.push(SemanticAdjustment::ResolveCallable(target.clone()));
@@ -7427,7 +7598,7 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     }
     // A `^` the checker bound to a read parameter or receiver lends
     // its place and does not move it.
-    if matches!(expression.kind, ExprKind::Transfer(_)) && !facts.borrowed_read_call_place {
+    if matches!(op, CheckedOp::Transfer(_)) && !facts.borrowed_read_call_place {
         adjustments.push(SemanticAdjustment::Transfer(
             facts.transfer_verdict.unwrap_or(TransferVerdict::PlaceMove),
         ));
@@ -7488,20 +7659,20 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     }
     if facts.indirect_result
         && matches!(
-            expression.kind,
-            ExprKind::Call { .. }
-                | ExprKind::Invoke { .. }
-                | ExprKind::MethodCall { .. }
-                | ExprKind::Prefix(..)
-                | ExprKind::Infix(..)
-                | ExprKind::Index { .. }
-                | ExprKind::Slice { .. }
-                | ExprKind::MultiIndex { .. }
-                | ExprKind::ListLit(_)
-                | ExprKind::BraceLit(_)
-                | ExprKind::InitializerList { .. }
-                | ExprKind::TupleLit(_)
-                | ExprKind::Comprehension { .. }
+            op,
+            CheckedOp::Call { .. }
+                | CheckedOp::Invoke { .. }
+                | CheckedOp::MethodCall { .. }
+                | CheckedOp::Prefix(..)
+                | CheckedOp::Infix(..)
+                | CheckedOp::Index { .. }
+                | CheckedOp::Slice { .. }
+                | CheckedOp::MultiIndex { .. }
+                | CheckedOp::ListLit(_)
+                | CheckedOp::BraceLit(_)
+                | CheckedOp::InitializerList { .. }
+                | CheckedOp::TupleLit(_)
+                | CheckedOp::Comprehension { .. }
         )
     {
         adjustments.push(SemanticAdjustment::IndirectResult);

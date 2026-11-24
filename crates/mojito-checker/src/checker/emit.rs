@@ -312,6 +312,7 @@ impl Emitter {
                 expressions,
                 statements,
                 index: self.index,
+                desugars: HashMap::new(),
             },
         )
     }
@@ -356,6 +357,7 @@ impl Emitter {
                         at,
                         op: None,
                         applications: Vec::new(),
+                        loop_target: None,
                     },
                     facts,
                 });
@@ -368,6 +370,7 @@ impl Emitter {
                         at,
                         op: None,
                         applications: Vec::new(),
+                        loop_targets: Vec::new(),
                     },
                     facts,
                 });
@@ -488,10 +491,11 @@ impl Visitor for Operations<'_> {
         let ops = ops::Ops {
             index: &self.emitter.index,
         };
-        if let Ok((op, applications)) = ops.statement(statement) {
+        if let Ok(op) = ops.statement(statement) {
             let node = &mut self.emitter.statements[position].node;
-            node.op = Some(op);
-            node.applications = applications;
+            node.op = Some(op.op);
+            node.applications = op.applications;
+            node.loop_target = op.loop_target;
         }
     }
 
@@ -507,10 +511,11 @@ impl Visitor for Operations<'_> {
         let ops = ops::Ops {
             index: &self.emitter.index,
         };
-        if let Ok((op, applications)) = ops.expression(expression) {
+        if let Ok(op) = ops.expression(expression) {
             let node = &mut self.emitter.expressions[position].node;
-            node.op = Some(op);
-            node.applications = applications;
+            node.op = Some(op.op);
+            node.applications = op.applications;
+            node.loop_targets = op.loop_targets;
         }
     }
 }
@@ -550,6 +555,7 @@ impl NodeMap for Relocation<'_> {
             let node = &mut self.this.expressions[position].node;
             node.op = op;
             node.applications = applications;
+            node.loop_targets.clone_from(&previous.loop_targets);
         }
         here
     }
@@ -574,6 +580,7 @@ impl NodeMap for Relocation<'_> {
             let node = &mut self.this.statements[position].node;
             node.op = op;
             node.applications = applications;
+            node.loop_target.clone_from(&previous.loop_target);
         }
         here
     }
@@ -597,7 +604,10 @@ fn slot_position(position: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::Emitter;
-    use mojito_ast::ast::{Expr, ExprKind, InfixOp, ParamArg, Stmt, StmtKind};
+    use mojito_ast::ast::{
+        BindingMode, DestructureTarget, DestructureTargetKind, Expr, ExprKind, InfixOp, ParamArg,
+        Stmt, StmtKind,
+    };
     use mojito_checked::checked::{CheckedOp, CheckedParamArg};
     use mojito_checked::emitted::{EmittedNodes, EmittedSlot};
     use mojito_common::token::{SourceSpan, Span};
@@ -841,6 +851,71 @@ mod tests {
         ));
         assert_eq!(args, &vec![slot(&argument)]);
         assert_eq!(node.applications, vec![vec![slot(&parameter)]]);
+    }
+
+    fn for_statement(target: DestructureTarget) -> Stmt {
+        Stmt::new(
+            StmtKind::For {
+                target,
+                iter: Expr::new(ExprKind::Identifier("xs".to_string()), Span::default()),
+                body: vec![statement()],
+                orelse: None,
+            },
+            Span::default(),
+        )
+    }
+
+    fn tuple_target() -> DestructureTarget {
+        let leaf = |name: &str| {
+            DestructureTarget::new(
+                DestructureTargetKind::Declare {
+                    name: name.to_string(),
+                    mode: BindingMode::Immutable,
+                },
+                Span::default(),
+            )
+        };
+        DestructureTarget::new(
+            DestructureTargetKind::Tuple(vec![leaf("a"), leaf("b")]),
+            Span::default(),
+        )
+    }
+
+    #[test]
+    fn an_entered_for_statement_holds_its_loop_targets_occurrence() {
+        let target = tuple_target();
+        let looped = for_statement(target.clone());
+        let mut emitter = Emitter::default();
+        emitter.enter_statement(&looped);
+        let (_, nodes) = emitter.into_parts();
+        let node = nodes
+            .statement(&looped.source_span())
+            .expect("the loop was emitted");
+        assert_eq!(node.loop_target, Some(target.source_span()));
+    }
+
+    #[test]
+    fn a_copied_window_keeps_a_relocated_loops_target() {
+        let target = tuple_target();
+        let (entered, looped) = (statement(), for_statement(target.clone()));
+        let mut previous = Emitter::default();
+        previous.enter_statement(&entered);
+        let from = previous.mark();
+        previous.enter_statement(&looped);
+        let to = previous.mark();
+
+        let mut fresh = Emitter::default();
+        fresh.enter_statement(&entered);
+        fresh.copy_window(&previous, &from, &to);
+        let (_, nodes) = fresh.into_parts();
+        let node = nodes
+            .statement(&looped.source_span())
+            .expect("the loop was copied");
+        assert_eq!(node.loop_target, Some(target.source_span()));
+        assert!(matches!(
+            node.op,
+            Some(mojito_checked::checked::CheckedStmtOp::For { .. })
+        ));
     }
 
     #[test]

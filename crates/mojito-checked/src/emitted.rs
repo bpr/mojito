@@ -8,13 +8,16 @@
 //! [`EmittedNodes`], not by the checked arena's ids. A field the check
 //! decides after allocation (a declaration's symbol and signature, a call's
 //! parameter grouping, a match's plan) is left empty in the op and stands
-//! as a fact on the node. Nothing reads these ops yet but
-//! `MOJITO_CHECK_EMITTED=1`'s comparison with the checked arena
-//! ([`cross_check`]).
+//! as a fact on the node. Under `MOJITO_CHECK_EMITTED=1` the seal
+//! ([`seal`]) composes each op with its node's facts into checked tables,
+//! and [`compare`] checks them against the arena built from the records.
+
+mod seal;
+
+pub(crate) use seal::seal;
 
 use crate::checked::{
-    CheckedComprehensionClause, CheckedExpr, CheckedNodeId, CheckedOp, CheckedParamArg,
-    CheckedStmt, CheckedStmtId, NodeFacts, NodeMap, SemanticAdjustment,
+    CheckedArena, CheckedExpr, CheckedNodeId, CheckedOp, CheckedStmt, CheckedStmtId,
 };
 use mojito_common::timing;
 use mojito_common::token::SourceSpan;
@@ -26,6 +29,10 @@ pub struct EmittedNodes {
     pub expressions: Vec<EmittedExpr>,
     pub statements: Vec<EmittedStmt>,
     pub index: HashMap<SourceSpan, EmittedSlot>,
+    /// The check's desugars, keyed as it keys them: a `with` statement's
+    /// and a sequence destructuring's by the statement, a loop target's by
+    /// the target.
+    pub desugars: HashMap<SourceSpan, EmittedDesugar>,
 }
 
 impl EmittedNodes {
@@ -59,6 +66,9 @@ pub struct EmittedExpr {
     /// type), the nodes under it in walk order: the candidates the
     /// applications are chosen from.
     pub applications: Vec<Vec<CheckedNodeId>>,
+    /// A comprehension's clauses' written loop targets, `None` for an `if`
+    /// clause: the occurrence a target's desugar is keyed by.
+    pub loop_targets: Vec<Option<SourceSpan>>,
 }
 
 /// One emitted statement node.
@@ -70,6 +80,18 @@ pub struct EmittedStmt {
     /// A variable declaration's annotation's nodes in walk order, the
     /// candidates its lifted applications are chosen from.
     pub applications: Vec<CheckedNodeId>,
+    /// A `for` statement's written loop target: the occurrence its
+    /// desugar is keyed by.
+    pub loop_target: Option<SourceSpan>,
+}
+
+/// One desugar the check made: the nodes of the statements that replace
+/// the statement, or, for a loop target, that run first in each iteration
+/// of a loop binding `binder`.
+#[derive(Debug, Clone)]
+pub struct EmittedDesugar {
+    pub statements: Vec<CheckedStmtId>,
+    pub binder: Option<String>,
 }
 
 /// A node's arena and position in it.
@@ -79,129 +101,57 @@ pub enum EmittedSlot {
     Expression(CheckedNodeId),
 }
 
-/// Compare the emitted nodes with the checked arena's `expressions` and
-/// `statements`, built from the check's `facts`: every arena node has an
-/// emitted node of its kind at its occurrence, holding an op of its
-/// variant, and an expression op the syntax alone decides equals the
-/// arena's once both name their operands by occurrence. Each kind of
-/// mismatch is counted (`emit.check.*`) and its first five are printed.
-pub(crate) fn cross_check(
-    emitted: &EmittedNodes,
-    expressions: &[CheckedExpr],
-    statements: &[CheckedStmt],
-    facts: &HashMap<SourceSpan, NodeFacts>,
-) {
-    let mut report = Report::default();
-    let mut locations = Locations::default();
-    for statement in statements {
-        let at = statement.location();
-        match emitted.statement(&at).map(|node| node.op.as_ref()) {
-            None => report.note("emit.check.unemitted", &at, String::new),
-            Some(None) => report.note("emit.check.opless", &at, String::new),
-            Some(Some(op))
-                if std::mem::discriminant(op) != std::mem::discriminant(&statement.op) =>
-            {
-                report.note("emit.check.variant_mismatches", &at, || {
-                    format!("emitted {op:?}\n  arena {:?}", statement.op)
-                });
-            }
-            Some(Some(_)) => {}
-        }
+/// Compare the tables `sealed` from the emitted nodes, `missing` of whose
+/// nodes the seal found no emitted node for, with the tables `built` from
+/// the check's records, whole: node for node by id, and their roots. Each
+/// kind of difference is counted (`emit.seal.*`) and its first five are
+/// printed; a difference shifts every later id, so the first is the one to
+/// read.
+pub(crate) fn compare(sealed: &CheckedArena, built: &CheckedArena, missing: u64) {
+    let expressions = differences(
+        "emit.seal.expression_mismatches",
+        &sealed.nodes,
+        &built.nodes,
+        CheckedExpr::location,
+    );
+    let statements = differences(
+        "emit.seal.statement_mismatches",
+        &sealed.statements,
+        &built.statements,
+        CheckedStmt::location,
+    );
+    let roots = u64::from(sealed.roots != built.roots)
+        + u64::from(sealed.wrapper_roots != built.wrapper_roots);
+    if roots > 0 {
+        eprintln!(
+            "emit.seal.root_mismatches:\n  sealed {:?} {:?}\n  built  {:?} {:?}",
+            sealed.roots, sealed.wrapper_roots, built.roots, built.wrapper_roots
+        );
     }
-    for expression in expressions {
-        let at = expression.location();
-        let op = match emitted.expression(&at).map(|node| node.op.as_ref()) {
-            None => {
-                report.note("emit.check.unemitted", &at, String::new);
-                continue;
-            }
-            Some(None) => {
-                report.note("emit.check.opless", &at, String::new);
-                continue;
-            }
-            Some(Some(op)) => op,
-        };
-        if std::mem::discriminant(op) != std::mem::discriminant(&expression.op) {
-            report.note("emit.check.variant_mismatches", &at, || {
-                format!("emitted {op:?}\n  arena {:?}", expression.op)
-            });
-            continue;
-        }
-        if !syntactic(op) {
-            continue;
-        }
-        let ours = comparable(op.map_operands(&mut EmittedOperands {
-            emitted,
-            facts,
-            locations: &mut locations,
-        }));
-        let theirs = comparable(expression.op.map_operands(&mut ArenaOperands {
-            expressions,
-            statements,
-            locations: &mut locations,
-        }));
-        let (ours, theirs) = (format!("{ours:?}"), format!("{theirs:?}"));
-        report.compared += 1;
-        if ours != theirs {
-            report.note("emit.check.op_mismatches", &at, || {
-                format!("emitted {ours}\n  arena {theirs}")
-            });
-        }
+    for (kind, count) in [
+        ("emit.seal.missing", missing),
+        ("emit.seal.expressions", built.nodes.len() as u64),
+        ("emit.seal.statements", built.statements.len() as u64),
+        ("emit.seal.expression_mismatches", expressions),
+        ("emit.seal.statement_mismatches", statements),
+        ("emit.seal.root_mismatches", roots),
+    ] {
+        timing::count(kind, count);
     }
-    report.finish();
-}
-
-/// Whether the syntax alone decides the emitted op `op`, once a call's
-/// parameter grouping and a subscript's key are set aside: not a type
-/// value, whose type and applications are the check's, nor a comprehension
-/// whose written target is no one name, which the arena reads after its
-/// desugar is spliced.
-fn syntactic(op: &CheckedOp) -> bool {
-    match op {
-        CheckedOp::TypeValue { .. } => false,
-        CheckedOp::Comprehension { clauses, .. } => clauses.iter().all(|clause| match clause {
-            CheckedComprehensionClause::For { var, .. } => !var.is_empty(),
-            CheckedComprehensionClause::If(_) => true,
-        }),
-        _ => true,
+    for (kind, count) in [
+        ("emit.seal.missing", missing),
+        ("emit.seal.expression_mismatches", expressions),
+        ("emit.seal.statement_mismatches", statements),
+        ("emit.seal.root_mismatches", roots),
+    ] {
+        if count > 0 {
+            eprintln!("{kind}: {count}");
+        }
     }
 }
 
-/// `op` with the fields the check decides after allocation cleared.
-fn comparable(op: CheckedOp) -> CheckedOp {
-    match op {
-        CheckedOp::Call {
-            name, args, kwargs, ..
-        } => CheckedOp::Call {
-            name,
-            param_args: Vec::new(),
-            args,
-            kwargs,
-        },
-        CheckedOp::Invoke {
-            callee,
-            args,
-            kwargs,
-            ..
-        } => CheckedOp::Invoke {
-            callee,
-            param_args: Vec::new(),
-            args,
-            kwargs,
-        },
-        CheckedOp::Index { object, .. } => CheckedOp::Index {
-            object,
-            index: CheckedParamArg::Attribute {
-                value: None,
-                applications: Vec::new(),
-            },
-        },
-        op => op,
-    }
-}
-
-/// Whether a sugar whose emitted op is `op` is one the arena replaces by
-/// the construction the check spelled for it.
+/// Whether a sugar whose emitted op is `op` is one the sealed tables
+/// replace by the construction the check spelled for it.
 const fn substituted(op: &CheckedOp) -> bool {
     matches!(
         op,
@@ -223,144 +173,29 @@ const fn substituted(op: &CheckedOp) -> bool {
     )
 }
 
-/// Occurrences numbered in the order they are first named: an operand of
-/// either side becomes its occurrence's number.
-#[derive(Default)]
-struct Locations {
-    expressions: HashMap<SourceSpan, u32>,
-    statements: HashMap<SourceSpan, u32>,
-}
-
-impl Locations {
-    fn expression(&mut self, at: SourceSpan) -> CheckedNodeId {
-        let next = self.expressions.len() as u32;
-        CheckedNodeId(*self.expressions.entry(at).or_insert(next))
-    }
-
-    fn statement(&mut self, at: SourceSpan) -> CheckedStmtId {
-        let next = self.statements.len() as u32;
-        CheckedStmtId(*self.statements.entry(at).or_insert(next))
-    }
-}
-
-/// An emitted op's operands named by occurrence: a spelled sugar's by its
-/// construction's, which the arena holds in its place.
-struct EmittedOperands<'a> {
-    emitted: &'a EmittedNodes,
-    facts: &'a HashMap<SourceSpan, NodeFacts>,
-    locations: &'a mut Locations,
-}
-
-impl EmittedOperands<'_> {
-    /// The occurrence the arena holds for the emitted expression at `at`.
-    fn substitute(&self, mut at: SourceSpan) -> SourceSpan {
-        while let Some(node) = self.emitted.expression(&at)
-            && node.op.as_ref().is_some_and(substituted)
-            && let Some(construction) = self
-                .facts
-                .get(&at)
-                .and_then(|facts| facts.adjustment.as_deref())
-                .and_then(spelled_construction)
-            && construction != at
-        {
-            at = construction;
-        }
-        at
-    }
-}
-
-impl NodeMap for EmittedOperands<'_> {
-    fn expression(&mut self, id: CheckedNodeId) -> CheckedNodeId {
-        let Some(node) = self.emitted.expressions.get(id.0 as usize) else {
-            return CheckedNodeId(u32::MAX);
-        };
-        let at = self.substitute(node.at.clone());
-        self.locations.expression(at)
-    }
-
-    fn statement(&mut self, id: CheckedStmtId) -> CheckedStmtId {
-        match self.emitted.statements.get(id.0 as usize) {
-            Some(node) => self.locations.statement(node.at.clone()),
-            None => CheckedStmtId(u32::MAX),
-        }
-    }
-}
-
-/// The occurrence of the construction a sugar's `adjustment` spelled.
-fn spelled_construction(adjustment: &SemanticAdjustment) -> Option<SourceSpan> {
-    match adjustment {
-        SemanticAdjustment::SpelledConstruction { construction } => {
-            Some(construction.0.source_span())
-        }
-        SemanticAdjustment::ComptimeApplication {
-            operation: Some(operation),
-            ..
-        } => match &**operation {
-            SemanticAdjustment::SpelledConstruction { construction } => {
-                Some(construction.0.source_span())
-            }
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// An arena op's operands named by occurrence.
-struct ArenaOperands<'a> {
-    expressions: &'a [CheckedExpr],
-    statements: &'a [CheckedStmt],
-    locations: &'a mut Locations,
-}
-
-impl NodeMap for ArenaOperands<'_> {
-    fn expression(&mut self, id: CheckedNodeId) -> CheckedNodeId {
-        match self.expressions.get(id.0 as usize) {
-            Some(node) => self.locations.expression(node.location()),
-            None => CheckedNodeId(u32::MAX),
-        }
-    }
-
-    fn statement(&mut self, id: CheckedStmtId) -> CheckedStmtId {
-        match self.statements.get(id.0 as usize) {
-            Some(node) => self.locations.statement(node.location()),
-            None => CheckedStmtId(u32::MAX),
-        }
-    }
-}
-
-/// The mismatches found, by kind.
-#[derive(Default)]
-struct Report {
-    counts: HashMap<&'static str, u64>,
-    /// How many expression ops were compared whole.
-    compared: u64,
-}
-
-impl Report {
-    /// Count one mismatch of `kind` at `at`, printing it with `detail`
-    /// while it is among its kind's first five.
-    fn note(&mut self, kind: &'static str, at: &SourceSpan, detail: impl FnOnce() -> String) {
-        let count = self.counts.entry(kind).or_default();
-        *count += 1;
-        if *count <= 5 {
-            eprintln!("{kind}: {at:?}\n  {}", detail());
-        }
-    }
-
-    /// Count every kind, a kind with no mismatch as zero.
-    fn finish(self) {
-        timing::count("emit.check.compared", self.compared);
-        for kind in [
-            "emit.check.unemitted",
-            "emit.check.opless",
-            "emit.check.variant_mismatches",
-            "emit.check.op_mismatches",
-        ] {
-            let count = self.counts.get(kind).copied().unwrap_or(0);
-            timing::count(kind, count);
-            if count > 0 {
-                eprintln!("{kind}: {count}");
+/// How many nodes of `sealed` and `built` differ by id, a node one side
+/// lacks counting as a difference; the first five are printed under
+/// `kind` at their `location`.
+fn differences<T: std::fmt::Debug>(
+    kind: &str,
+    sealed: &[T],
+    built: &[T],
+    location: impl Fn(&T) -> SourceSpan,
+) -> u64 {
+    let mut count = 0u64;
+    for (id, node) in built.iter().enumerate() {
+        let theirs = format!("{node:?}");
+        let ours = sealed.get(id).map(|node| format!("{node:?}"));
+        if ours.as_deref() != Some(theirs.as_str()) {
+            count += 1;
+            if count <= 5 {
+                eprintln!(
+                    "{kind}: id {id} at {:?}\n  sealed {}\n  built  {theirs}",
+                    location(node),
+                    ours.as_deref().unwrap_or("(none)")
+                );
             }
         }
     }
+    count + sealed.len().saturating_sub(built.len()) as u64
 }

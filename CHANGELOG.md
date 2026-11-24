@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check's emitted nodes are sealed into checked tables: each node's op
+  is composed with its facts and its declaration's sites, each spelled
+  sugar's position holds its construction, and the check's desugars are
+  spliced into every body, as upstream's emitter leaves each op final
+  (R2567). The seal shares the arena builder's composition helpers and
+  runs only under `MOJITO_CHECK_EMITTED=1`, which now compares the sealed
+  tables with the arena whole (`emit.seal.*` under `--timings`, replacing
+  `emit.check.*`); they are equal on std and on every fixture of the
+  corpus's checked folders. No accepted program, MIR text, or package
+  byte changes.
+
 - A leading-dot chain (`.red`, `.of(7).brighten()`) is checked as the
   construction spelled for it, rooted at the expected type's base under
   identities derived from the written chain's, as upstream emits a

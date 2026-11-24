@@ -2971,11 +2971,19 @@ node is, or one written before its statement is entered, which moves onto
 the node when the statement is. The handoff reads the records out, less
 any a cleared fact left empty (`Emitter::into_parts`, from `body_carry.rs`'s
 `HandoffStores::into_discovery`); nothing reads the ops yet but
-`MOJITO_CHECK_EMITTED=1`, under which `CheckedProgram::new` checks that every
-checked-arena node has an emitted node of its kind and op variant at its
-occurrence, and that every expression op the syntax alone decides equals the
-arena's (`emitted::cross_check`, counted as `emit.check.*` under
-`--timings`). An overload
+`MOJITO_CHECK_EMITTED=1`, under which the handoff also carries the check's
+desugars by node, each `for` statement and comprehension clause holding its
+written target's occurrence, and `CheckedProgram::new` seals the emitted
+nodes into checked tables (`emitted::seal`): the seal composes each node's
+op with its facts and its declaration's sites (a call's parameters as its
+binder laid them out, a subscript's key, a type value's type, a symbol and
+signature, a match's and a `case`'s plan), puts each spelled sugar's
+construction in its place, splices the check's desugars into every body,
+and numbers the nodes post-order as the arena builder does, through the
+composition helpers both share (`expression_node`, `apply_spelled`,
+`parameter_layout`, and `Signatures`). It then compares the tables with the
+arena builder's, whole, node for node (`emitted::compare`, counted as
+`emit.seal.*` under `--timings`). An overload
 candidate — of a free call or of an overloaded function value — is
 checked inside `Checker::probe` (`checker/probe.rs`): every store
 journals what a write displaces while a probe is open, and closing it

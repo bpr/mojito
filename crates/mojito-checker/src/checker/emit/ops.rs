@@ -8,9 +8,11 @@
 //! default, a call holds one parameter per written bracket argument, a
 //! subscript's key is its index's node, a type value holds no type, a
 //! `case`'s and a `match`'s plan is absent, and a destructuring loop's
-//! binder is unnamed until its desugar is spliced. The arena builder stays
-//! the oracle `MOJITO_CHECK_EMITTED=1` compares these ops with until the
-//! emitted nodes replace it, so the two mappings live side by side.
+//! binder is unnamed until its desugar is spliced. The seal
+//! (`mojito_checked::emitted`) fills those fields from the facts, and the
+//! arena builder stays the oracle `MOJITO_CHECK_EMITTED=1` compares the
+//! sealed tables with until they replace it, so the two mappings live side
+//! by side.
 
 use super::EmittedSlot;
 use mojito_ast::ast::{
@@ -32,12 +34,23 @@ use mojito_checked::declaration::InlineLevel;
 use mojito_common::token::SourceSpan;
 use std::collections::HashMap;
 
-/// An expression op and its candidate lists
-/// ([`mojito_checked::emitted::EmittedExpr::applications`]).
-pub(super) type ExpressionOp = (CheckedOp, Vec<Vec<CheckedNodeId>>);
+/// An expression op, its candidate lists
+/// ([`mojito_checked::emitted::EmittedExpr::applications`]), and its
+/// clauses' loop targets
+/// ([`mojito_checked::emitted::EmittedExpr::loop_targets`]).
+pub(super) struct ExpressionOp {
+    pub(super) op: CheckedOp,
+    pub(super) applications: Vec<Vec<CheckedNodeId>>,
+    pub(super) loop_targets: Vec<Option<SourceSpan>>,
+}
 
-/// A statement op and its candidate list.
-pub(super) type StatementOp = (CheckedStmtOp, Vec<CheckedNodeId>);
+/// A statement op, its candidate list, and its loop target
+/// ([`mojito_checked::emitted::EmittedStmt::loop_target`]).
+pub(super) struct StatementOp {
+    pub(super) op: CheckedStmtOp,
+    pub(super) applications: Vec<CheckedNodeId>,
+    pub(super) loop_target: Option<SourceSpan>,
+}
 
 /// An operand of the syntax being given its op has no node.
 #[derive(Debug, Clone, Copy)]
@@ -52,6 +65,7 @@ impl Ops<'_> {
     /// `expression`'s op, or `Missing` when an operand has no node.
     pub(super) fn expression(&self, expression: &Expr) -> Result<ExpressionOp, Missing> {
         let mut applications = Vec::new();
+        let mut loop_targets = Vec::new();
         let op = match &expression.kind {
             ExprKind::Int(value) => CheckedOp::Int(value.clone()),
             ExprKind::Float(value) => CheckedOp::Float(value.clone()),
@@ -146,7 +160,13 @@ impl Ops<'_> {
                 value: self.expr(value)?,
                 clauses: clauses
                     .iter()
-                    .map(|clause| self.comprehension_clause(clause))
+                    .map(|clause| {
+                        loop_targets.push(match clause {
+                            ComprehensionClause::For { target, .. } => Some(target.source_span()),
+                            ComprehensionClause::If(_) => None,
+                        });
+                        self.comprehension_clause(clause)
+                    })
                     .collect::<Result<_, _>>()?,
             },
             ExprKind::IfExpr {
@@ -199,12 +219,17 @@ impl Ops<'_> {
                 def: self.stmt(def)?,
             },
         };
-        Ok((op, applications))
+        Ok(ExpressionOp {
+            op,
+            applications,
+            loop_targets,
+        })
     }
 
     /// `statement`'s op, or `Missing` when an operand has no node.
     pub(super) fn statement(&self, statement: &Stmt) -> Result<StatementOp, Missing> {
         let mut applications = Vec::new();
+        let mut loop_target = None;
         let op = match &statement.kind {
             StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => {
                 self.declaration(statement)?
@@ -303,6 +328,7 @@ impl Ops<'_> {
                 orelse,
             } => {
                 let (var, binding) = loop_binding(target);
+                loop_target = Some(target.source_span());
                 CheckedStmtOp::For {
                     var,
                     binding,
@@ -351,7 +377,11 @@ impl Ops<'_> {
             StmtKind::Break => CheckedStmtOp::Break,
             StmtKind::Continue => CheckedStmtOp::Continue,
         };
-        Ok((op, applications))
+        Ok(StatementOp {
+            op,
+            applications,
+            loop_target,
+        })
     }
 
     fn expr(&self, expression: &Expr) -> Result<CheckedNodeId, Missing> {

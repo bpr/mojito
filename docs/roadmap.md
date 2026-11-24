@@ -11766,42 +11766,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2567 The emitted nodes are not sealed into checked tables, so
-  `finalize`'s arena is still the only one**
-
-  The check's nodes hold ops, but nothing composes an op with its node's
-  facts and the site tables into a `CheckedExpr` or `CheckedStmt`.
-  - The lever: a seal walks the emitted nodes from the roots in
-    `map_operands` order and renumbers them; R765's planning probe found
-    this reproduces `ArenaBuilder`'s ids exactly on std and every
-    `assets/ok` fixture.
-  - It decides what `ArenaBuilder` decides from facts: `param_args`
-    regrouped by `parameter_attributes`, the subscript key, lifted
-    applications over the captured candidate lists
-    (`EmittedExpr::applications`), spelled-construction substitution and
-    its adjustments, the category, `node_adjustments`, declaration symbols
-    and signatures, match plans, and desugar splicing
-    (`statement_desugars`).
-  - `node_adjustments` and the category read `ExprKind`; give them the op
-    instead, so the arena builder and the seal share them.
-  - Done when `MOJITO_CHECK_EMITTED=1` compares the sealed tables with
-    `finalize`'s, whole, with no difference, on the probe set with and
-    without `MOJITO_STD_PACKAGE=0` and over the CLI sweep of the corpus.
-  - Plan: none; plan it in its own session
-    (`R765-emitted-nodes-hold-no-ops-and-plan.md` lists every fact the
-    seal reads).
-  - Depends on R2568 (the comparison cannot be clean while an occurrence
-    holds two syntaxes).
-  - Model: Fable, Not Planned.
-
 - [ ] **R766 The checked handoff is still gathered from fact records by
   `finalize` and `build_checked_expressions`, where upstream's parser
   emits typed ops as it checks**
 
   `CheckedProgram::new` walks the syntax again after the check to build
   the nodes.
-  - The lever: `HandoffStores::into_discovery` hands over the sealed
-    emitted tables, and `CheckedProgram::new` takes them as they are.
+  - The lever: `CheckedProgram::new` takes the tables `emitted::seal`
+    makes of the emitted nodes in place of `build_checked_expressions`'
+    (they are equal on std and the corpus under `MOJITO_CHECK_EMITTED=1`),
+    so the emitted nodes and the desugar table cross the handoff always.
   - Done when `finalize`, `build_checked_expressions`, `ArenaBuilder`,
     `CheckedArena`, and `LiftedApplications` are deleted, with MIR text
     and package bytes unchanged.
@@ -11812,7 +11786,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     written ids under syntax no entered statement holds.
   - It also includes the `SpelledConstruction` and `MatchPlan` facts, which
     still carry syntax (`Box<Expr>`, `Stmt`) where an upstream op names its
-    operands' values.
+    operands' values: the seal maps them to nodes by their spans.
+  - And the seal's roots, found by each spliced root statement's and wrapper
+    body statement's span.
   - Plan: none; the R624 plan this entry cited was never committed, so
     plan it in its own session.
   - Depends on R765, R2567 (the sealed tables it hands over).

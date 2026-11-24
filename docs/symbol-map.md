@@ -1007,12 +1007,26 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   emitter's nodes by `Relocation`, a `NodeMap`), and `into_parts` reads the
   span-keyed handoff out of the nodes and detached records beside the
   nodes themselves (`--timings` counts `emit.node_records`,
-  `emit.detached_records`, and `emit.opless_nodes`).
+  `emit.detached_records`, and `emit.opless_nodes`). `Ops` also gives each
+  `for` statement its written target's occurrence (`EmittedStmt::loop_target`)
+  and each comprehension its clauses' (`EmittedExpr::loop_targets`) at
+  allocation, which `Relocation` copies.
+- `checker/body_carry.rs`'s `PassCarry::into_result` hands
+  `HandoffStores::into_discovery` the check's `statement_desugars`, which
+  it converts to emitted slots (`emitted_desugars`, counting
+  `emit.seal.unemitted_desugars`) under `MOJITO_CHECK_EMITTED=1`.
 - `mojito-checked/src/emitted.rs` owns the emitted nodes as the handoff
   carries them (`EmittedNodes`, `EmittedExpr`, `EmittedStmt`,
-  `EmittedSlot`), kept in `DiscoveryResult::emitted` only under
-  `MOJITO_CHECK_EMITTED=1`, and `cross_check`, which `CheckedProgram::new`
-  runs against the checked arena then (`emit.check.*` counters). `NodeMap`,
+  `EmittedSlot`, and the desugar table `EmittedNodes::desugars` of
+  `EmittedDesugar`s), kept in `DiscoveryResult::emitted` only under
+  `MOJITO_CHECK_EMITTED=1`, and `compare`, which `CheckedProgram::new` runs
+  then on the tables `emitted/seal.rs`'s `seal` makes of the nodes and the
+  arena `build_checked_expressions` builds (`emit.seal.*` counters). The
+  seal and `ArenaBuilder` share the composition helpers in `checked.rs`:
+  `expression_node`, `statement_node`, `spelled_construction`,
+  `apply_spelled`, `parameter_layout`, `subscript_attribute`, `lifted` and
+  `Outermost`, `map_params`, and `Signatures`' `function`, `method`,
+  `function_symbol`, `method_symbol`, and `fields`. `NodeMap`,
   `CheckedOp::map_operands`, and `CheckedStmtOp::map_operands`
   (`checked.rs`) are public for the emitter's relocation.
 - `checker/node_facts.rs` owns the checker's access to its per-occurrence
