@@ -832,14 +832,6 @@ impl Checker {
     /// ([`Self::applied_type`]), so only the outermost application may
     /// leave its origin slots to inference.
     pub(super) fn emit_expr_type(&self, annotation: &Expr) -> Result<Ty, TypeError> {
-        let view = annotation_view_of(annotation)?;
-        if let Some(reflected) = self.reflected_type_annotation(&view)? {
-            return Ok(reflected);
-        }
-        // R2547 moves these shapes onto the builder.
-        if unbuilt_annotation(annotation, &view) {
-            return self.ty_from_spelling(&view);
-        }
         if matches!(annotation.kind, ExprKind::None) {
             return Ok(Ty::none());
         }
@@ -1486,79 +1478,8 @@ impl Checker {
                 }
                 _ => self.annotation_type(value)?,
             },
-            // `TypeList[Trait=AnyType, Ts.values]()[i]`: the value's
-            // `__getitem_param__[i]`, the path its explicit spelling takes.
-            AnnotationView::IndexedProjection { base, index }
-                if let AnnotationView::Value(value) = base.as_ref() =>
-            {
-                let ty = self.compile_time_value_type(value)?;
-                self.parameterized_assoc_application(
-                    &ty,
-                    "__getitem_param__",
-                    &[mojito_ast::ast::subscript_param_arg(index)],
-                )?
-                .ok_or_else(|| TypeError::NotIndexable(ty.to_string()))?
-            }
-            // `Self.Ts[index]` (or a `def`'s own `Ts[index]`) while the pack
-            // is still a parameter: the dependent element type.
-            AnnotationView::IndexedProjection { base, index }
-                if let Some(pack) = self.unbound_pack_type(base) =>
-            {
-                self.pack_element_type(&pack, index)?
-            }
             AnnotationView::IndexedProjection { base, index } => {
-                // A parameterized associated-type application such as
-                // `Self.IteratorType[origin_of(self)]` is spelled like a dependent
-                // index but names a parameterized associated member; resolve it as
-                // an application rather than compile-time sequence indexing.
-                let application = match base.as_ref() {
-                    // `Self.IteratorType[..]` — the abstract trait `Self` in a trait
-                    // method, or the concrete struct when a conformer spells the
-                    // application as its own return type. Use the concrete `Self`
-                    // (a registered struct) when available so the member resolves
-                    // concretely; otherwise the trait's abstract `Self`.
-                    AnnotationView::SelfParam(name) => {
-                        let base = match &self.self_ty {
-                            Some(ty)
-                                if ty.is_simd()
-                                    || ty.is_pointer()
-                                    || ty.kind().is_non_pointer_struct() =>
-                            {
-                                ty.clone()
-                            }
-                            _ => Ty::self_type(),
-                        };
-                        if self.declared_member(&base, name) {
-                            Some(self.member_application(
-                                &base,
-                                name,
-                                &[mojito_ast::ast::subscript_param_arg(index)],
-                            )?)
-                        } else {
-                            self.parameterized_assoc_application(
-                                &base,
-                                name,
-                                &[mojito_ast::ast::subscript_param_arg(index)],
-                            )?
-                        }
-                    }
-                    // `C.IteratorType[..]` — a bounded type parameter or other base.
-                    // If the base does not name a type (e.g. `values.element_types`
-                    // where `values` is a value binding), this is not an
-                    // associated-type application; fall through to dependent
-                    // sequence indexing instead of surfacing a "not a type" error.
-                    AnnotationView::Assoc {
-                        base: inner, name, ..
-                    } => self.member_index_application(inner, name, index)?,
-                    _ => None,
-                };
-                if let Some(applied) = application {
-                    applied
-                } else {
-                    let elements = self.dependent_type_sequence(base)?;
-                    let index = self.compile_dependent_ct_expr(index)?;
-                    self.resolve_dependent_index(elements, &index, &DependentValues::default())?
-                }
+                self.indexed_projection_type(base, index)?
             }
         })
     }
@@ -1595,6 +1516,69 @@ impl Checker {
                 .map(|member| member.params.clone()),
             _ => None,
         }
+    }
+
+    /// The type an indexed projection `base[index]` denotes: a compile-time
+    /// value's `__getitem_param__[index]` (`TypeList[Trait=AnyType,
+    /// Ts.values]()[i]`), an unbound pack's dependent element (`Self.Ts[i]`),
+    /// a parameterized member application (`Self.IteratorType[o]`,
+    /// `C.IteratorType[o]`), or else an index into a dependent type
+    /// sequence (`values.Ts[i]`).
+    pub(super) fn indexed_projection_type(
+        &self,
+        base: &AnnotationView,
+        index: &Expr,
+    ) -> Result<Ty, TypeError> {
+        if let AnnotationView::Value(value) = base {
+            let ty = self.compile_time_value_type(value)?;
+            return self
+                .parameterized_assoc_application(
+                    &ty,
+                    "__getitem_param__",
+                    &[mojito_ast::ast::subscript_param_arg(index)],
+                )?
+                .ok_or_else(|| TypeError::NotIndexable(ty.to_string()));
+        }
+        if let Some(pack) = self.unbound_pack_type(base) {
+            return self.pack_element_type(&pack, index);
+        }
+        // A parameterized member application is spelled like a dependent
+        // index; it resolves as an application rather than as sequence
+        // indexing.
+        let application = match base {
+            // `Self.IteratorType[..]`: the concrete `Self` (a registered
+            // struct) when there is one, so the member resolves concretely;
+            // otherwise a trait's abstract `Self`.
+            AnnotationView::SelfParam(name) => {
+                let base = match &self.self_ty {
+                    Some(ty)
+                        if ty.is_simd() || ty.is_pointer() || ty.kind().is_non_pointer_struct() =>
+                    {
+                        ty.clone()
+                    }
+                    _ => Ty::self_type(),
+                };
+                let args = [mojito_ast::ast::subscript_param_arg(index)];
+                if self.declared_member(&base, name) {
+                    Some(self.member_application(&base, name, &args)?)
+                } else {
+                    self.parameterized_assoc_application(&base, name, &args)?
+                }
+            }
+            // `C.IteratorType[..]` over a bounded type parameter or another
+            // base; a base that names no type (`values.element_types` over a
+            // value binding) falls through to dependent sequence indexing.
+            AnnotationView::Assoc {
+                base: inner, name, ..
+            } => self.member_index_application(inner, name, index)?,
+            _ => None,
+        };
+        if let Some(applied) = application {
+            return Ok(applied);
+        }
+        let elements = self.dependent_type_sequence(base)?;
+        let index = self.compile_dependent_ct_expr(index)?;
+        self.resolve_dependent_index(elements, &index, &DependentValues::default())
     }
 
     /// Resolve a parameterized associated-type application `base.name[args]`.
@@ -6158,17 +6142,6 @@ fn projection_index(bracket: &Expr) -> Option<&Expr> {
             _ => None,
         },
         _ => None,
-    }
-}
-
-/// Whether `annotation` is one of the shapes [`Checker::emit_expr_type`]
-/// still types with the resolver (R2547): an index into a type sequence,
-/// `type_of`, an applied member, or a pack spread.
-const fn unbuilt_annotation(annotation: &Expr, view: &AnnotationView) -> bool {
-    match view {
-        AnnotationView::IndexedProjection { .. } | AnnotationView::TypeOf(_) => true,
-        AnnotationView::Assoc { args, .. } => !args.is_empty(),
-        _ => matches!(annotation.kind, ExprKind::Spread(_)),
     }
 }
 

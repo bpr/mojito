@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every annotation is typed by the one compile-time builder (R2547): an
+  index into a type sequence (`Self.Ts[0]`, `values.Ts[i]`,
+  `TypeList[...]()[i]`), `type_of(x)`, an applied member
+  (`Self.IteratorType[origin_of(self)]`, `C.IteratorType[o]`), a pack spread
+  (`*args: *Ts`), and a reflected handle's `.T` no longer take the
+  resolver's second evaluator in `Checker::emit_expr_type`. A `TypeList`
+  element read binds a literal index as `Int`, as upstream's
+  `__getitem_param__[idx: Int]` does. A reflected field type spelled inline
+  in an annotation (`var d: reflect[P].field_at[1].T`) now runs, as at the
+  pin, where it was "unknown type 'reflect'".
+
 - `Some[X]` takes any trait value or function type (R2552):
   `Some[Greet & Copyable]`, `Some[m.Greet & Copyable]`, a trait constant,
   `Some[def(var Int)]`, and `Some[def[T: Writer](mut T)]` are accepted, as at

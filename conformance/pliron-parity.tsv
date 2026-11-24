@@ -1232,6 +1232,7 @@ assets/ok/reflection_field_ref.mojo	main	exe-differential	sanitized
 assets/ok/reflection_field_ref_generic.mojo	main	exe-differential	sanitized
 assets/ok/reflection_field_type_arguments.mojo	main	exe-differential	sanitized
 assets/ok/reflection_field_type_construction.mojo	main	exe-differential	sanitized
+assets/ok/reflection_handle_annotation.mojo	main	exe-differential	sanitized
 assets/ok/reflection_homogeneous_field_type.mojo	main	exe-differential	sanitized
 assets/ok/reflection_list_materialized_whole.mojo	main	exe-differential	sanitized
 assets/ok/reflection_module_and_member_handles.mojo	main	exe-differential	sanitized

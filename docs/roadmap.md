@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2555**.
+Next free ID: **R2556**.
 
 ## Ordered Work
 
@@ -13402,23 +13402,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2547 Index, `type_of`, applied-member, and pack-spread annotations bypass the one builder**
-
-  `Checker::emit_expr_type` still sends four annotation shapes to the
-  resolver's `resolve_ty_from_anno_at_depth` (its `unbuilt_annotation`
-  gate), where upstream's `emitExprType` builds every annotation.
-  - The shapes are an index into a type sequence
-    (`values.element_types[i]`, `Self.Ts[0]`, `TypeList[...]()[i]`),
-    `type_of(x)`, an applied member (`Self.IteratorType[origin_of(self)]`,
-    `C.IteratorType[o]`), and a pack spread (`*Ts`, `*Self.Ts`).
-  - `reflected_type_annotation` and `handle_from_annotation` still take the
-    view, so `emit_expr_type` views every annotation first.
-  - Compare both paths on these shapes (an `R2541_PROBE`-style logging
-    differential in `emit_expr_type`, as R2541 ran on the other shapes),
-    move each disagreeing arm into `build_ct`, then delete the gate.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R2548 The resolver's leaves and bracket operands read an annotation view**
 
   `ty_from_spelling`, `resolve_ty_from_anno`, and
@@ -13431,9 +13414,15 @@ follow-ups the landed producer stages filed come last.
     `origins/binders.rs`, `method_calls/type_receivers.rs`,
     `constraints.rs`).
   - `member_type`, `member_base`, `member_index_application`,
-    `dependent_type_sequence`, `unbound_pack_type`, and `value_base_type`
-    take the base expression; `constraints.rs::member_through_type` and
-    `denoted_type`'s value-member check then stop viewing the object.
+    `dependent_type_sequence`, `unbound_pack_type`, `value_base_type`, and
+    `indexed_projection_type` take the base expression;
+    `constraints.rs::member_through_type`, `denoted_type`'s value-member
+    check, and `build_ct_rest`'s member-subscript arm then stop viewing the
+    object.
+  - `reflection.rs::{reflected_type_annotation, handle_from_annotation}`
+    go with the dispatcher: `applied_type`'s synthesized `Named` read
+    becomes `reflected_type_operand` on the application expression, as the
+    builder already reads a handle's `.T`.
   - `build_ct`'s `&` of trait operands builds the trait composition, so
     `composition_view` and `$trait_composition` go.
   - `build_ct_rest`'s member-type fallback stops using `member_view_of`.

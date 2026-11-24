@@ -1231,6 +1231,7 @@ assets/ok/reflection_field_ref.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_field_ref_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_field_type_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_field_type_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reflection_handle_annotation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_homogeneous_field_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_list_materialized_whole.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_module_and_member_handles.mojo	-	ineligible	no-scalar-entry-shape

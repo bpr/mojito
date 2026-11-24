@@ -5838,10 +5838,13 @@ second representation of a type. The checker types an annotation as
 upstream's `emitExprType` does, with the one compile-time builder:
 `Checker::emit_expr_type` is `annotation_type` (`denoted_type` over
 `build_ct`) in the type context, where the `None` value is the none type, so
-the parser rejects no annotation for its shape. An index into a type
-sequence, `type_of`, an applied member, and a pack spread still go to the
-resolver's dispatcher (`resolve_ty_from_anno_at_depth`) until R2547 moves
-them, and structural readers still classify an annotation through the
+the parser rejects no annotation for its shape. That holds for every
+annotation: an index into a type sequence or an applied member
+(`Self.IteratorType[origin_of(self)]`, `values.Ts[i]`) is the builder's
+member subscript over `Checker::indexed_projection_type`, a pack spread
+(`*Ts`) is the pack it names, and a reflected handle's `.T` is the
+builder's reflection read, so `emit_expr_type` neither views nor resolves.
+Structural readers still classify an annotation through the
 checker's borrowed view, `type_resolution.rs::AnnotationView`
 (`annotation_view`), until R2549 and R2550 retire it. Every annotation slot (`var` and `comptime` annotations, struct and
 trait `comptime` members, struct fields, union payloads, a parameter's type,

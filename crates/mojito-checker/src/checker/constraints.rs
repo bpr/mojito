@@ -3469,6 +3469,13 @@ impl Checker {
     /// a struct subject and a query node for a symbolic one), or a
     /// positioned application, else the shape's rejection.
     fn build_ct_rest(&self, expr: &Expr, recording: Recording) -> Result<ParamExpr, TypeError> {
+        // A pack spread in the type context (`*args: *Ts`) is the pack it
+        // names while that pack is still a parameter.
+        if matches!(expr.kind, ExprKind::Spread(_))
+            && let Some(pack) = self.pack_spread_argument(&ParamArg::Value(expr.clone()))
+        {
+            return Ok(self.param_context.type_shape(pack?));
+        }
         if let Some(predicate) = self.dtype_predicate_value(expr, recording) {
             return predicate;
         }
@@ -3539,6 +3546,13 @@ impl Checker {
         if let Some(value) = self.eval_reflection_expr(expr)? {
             return self.ct_param(value);
         }
+        // A reflected field handle's `.T` (`reflect[P].field_at[1].T`,
+        // `s.field["x"].T`, `f.T` over a bound handle) is the field's type.
+        if matches!(&expr.kind, ExprKind::Member { field, .. } if field == "T")
+            && let Some(reflected) = self.reflected_type_operand(expr)?
+        {
+            return Ok(self.param_context.type_shape(reflected));
+        }
         // A type's type member (`Meta.KGENTypeType`, `S[Int].Of[Bool]`) is
         // the type it names.
         if matches!(expr.kind, ExprKind::Member { .. })
@@ -3568,38 +3582,60 @@ impl Checker {
         if let Ok(Some(proposition)) = self.compile_typelist_proposition(expr) {
             return self.pack_proposition_value(&proposition);
         }
-        self.positioned_application(expr).ok_or_else(|| {
-            if self.probing_literal.get() {
-                return TypeError::NotComptime("not an exact literal".to_string());
+        if let Some(applied) = self.positioned_application(expr) {
+            return Ok(applied);
+        }
+        // A subscript of a member that names no compile-time value is an
+        // indexed projection: a parameterized member's application
+        // (`Self.IteratorType[origin_of(self)]`, `C.IteratorType[o]`) or an
+        // index into a dependent type sequence (`values.Ts[i]`). A
+        // selection on a bound reflection handle (`s.field_at[0]`) is the
+        // handle value the reflection reader owns.
+        if let Some((object, index)) = member_subscript(expr)
+            && let Some(base) =
+                annotation_view(object).filter(|base| !matches!(base, AnnotationView::Value(_)))
+            && !matches!(self.reflection_handle(expr), Ok(Some(_)))
+        {
+            return Ok(self
+                .param_context
+                .type_shape(self.indexed_projection_type(&base, index)?));
+        }
+        Err(self.ct_expression_rejection(expr))
+    }
+
+    /// Why the compile-time expression `expr`, which no parameter
+    /// expression arm claims, is rejected.
+    fn ct_expression_rejection(&self, expr: &Expr) -> TypeError {
+        if self.probing_literal.get() {
+            return TypeError::NotComptime("not an exact literal".to_string());
+        }
+        if let Some(violated) = self.violated_application_constraint(expr) {
+            return violated;
+        }
+        match (self.calls_raising_application(expr), &expr.kind) {
+            (Some(function), _) => TypeError::BadCall {
+                func: function.to_string(),
+                reason: "cannot call raising function in type parameter".to_string(),
+            },
+            (None, ExprKind::Member { .. }) if let Some(found) = self.raw_origin_read(expr) => {
+                raw_origin_value_unsupported(&found)
             }
-            if let Some(violated) = self.violated_application_constraint(expr) {
-                return violated;
+            (None, ExprKind::Member { object, field }) => self
+                .undeclared_struct_member(object, field)
+                .unwrap_or_else(|| {
+                    TypeError::NotComptime(
+                        "unsupported associated comptime member access".to_string(),
+                    )
+                }),
+            (None, ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. })
+                if let ExprKind::Identifier(name) = &object.kind =>
+            {
+                self.unresolved_head(name)
             }
-            match (self.calls_raising_application(expr), &expr.kind) {
-                (Some(function), _) => TypeError::BadCall {
-                    func: function.to_string(),
-                    reason: "cannot call raising function in type parameter".to_string(),
-                },
-                (None, ExprKind::Member { .. }) if let Some(found) = self.raw_origin_read(expr) => {
-                    raw_origin_value_unsupported(&found)
-                }
-                (None, ExprKind::Member { object, field }) => self
-                    .undeclared_struct_member(object, field)
-                    .unwrap_or_else(|| {
-                        TypeError::NotComptime(
-                            "unsupported associated comptime member access".to_string(),
-                        )
-                    }),
-                (None, ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. })
-                    if let ExprKind::Identifier(name) = &object.kind =>
-                {
-                    self.unresolved_head(name)
-                }
-                (None, _) => {
-                    TypeError::NotComptime("not an associated comptime expression".to_string())
-                }
+            (None, _) => {
+                TypeError::NotComptime("not an associated comptime expression".to_string())
             }
-        })
+        }
     }
 
     /// `expr` typed as an ordinary expression without being evaluated,
@@ -3855,6 +3891,15 @@ impl Checker {
                                 found: "a runtime value".to_string(),
                                 context: "TypeList index".to_string(),
                             })?;
+                    // The index binds `__getitem_param__[idx: Int]`'s
+                    // parameter, so a literal is materialized as `Int`.
+                    let index = match index.as_constant() {
+                        Some(literal @ CtValue::IntLiteral(_)) => literal
+                            .clone()
+                            .materialize_as(&Ty::int())
+                            .map_or(Ok(index), |int| self.ct_param(int))?,
+                        _ => index,
+                    };
                     self.param_context
                         .list_get(&list, &index)
                         .map_err(param_error)
@@ -8202,6 +8247,7 @@ fn lit_struct_field(value: &str, ty: &Ty, field: &str) -> Result<CtValue, TypeEr
         context: format!("{field} in a '#lit.struct' attribute"),
     })
 }
+
 /// The name an annotation's name chain is rooted at: `M` of `M`,
 /// `M[Int]`, `M.Inner`, or `M[Int].Inner[0]`. `None` for any other
 /// expression (a call, an operator, a conditional).
@@ -8214,4 +8260,21 @@ fn annotation_head(expr: &Expr) -> Option<&str> {
         | ExprKind::MultiIndex { object, .. } => annotation_head(object),
         _ => None,
     }
+}
+
+/// The member object and the one positional index of a subscript of a
+/// member (`Self.IteratorType[o]`, `values.Ts[i]`). `None` for any other
+/// expression.
+fn member_subscript(expr: &Expr) -> Option<(&Expr, &Expr)> {
+    let (object, index) = match &expr.kind {
+        ExprKind::Index { object, index } if !matches!(index.kind, ExprKind::EmptySubscript) => {
+            (object, index.as_ref())
+        }
+        ExprKind::MultiIndex { object, args } => match args.as_slice() {
+            [SubscriptArg::Index(index)] => (object, index),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    matches!(object.kind, ExprKind::Member { .. }).then_some((object.as_ref(), index))
 }
