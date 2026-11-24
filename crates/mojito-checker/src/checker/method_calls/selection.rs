@@ -106,7 +106,7 @@ impl Checker {
             };
             if let Some(declared) = resolved.param_types.get(index) {
                 let mut actual = self.infer_with_expected(expression, declared, true)?;
-                let expected = &self.existential_argument_ty(declared, &actual);
+                let expected = &self.existential_argument_ty(declared, Some(expression), &actual);
                 if expected != declared {
                     actual = self.infer_with_expected(expression, expected, true)?;
                 }
@@ -392,7 +392,7 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             let mut actual = self.infer_with_expected(expression, &params[index], false)?;
-            let expected = self.existential_argument_ty(&params[index], &actual);
+            let expected = self.existential_argument_ty(&params[index], Some(expression), &actual);
             if expected != params[index] {
                 actual = self.infer_with_expected(expression, &expected, false)?;
             }

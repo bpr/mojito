@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2554**.
+Next free ID: **R2555**.
 
 ## Ordered Work
 
@@ -6337,23 +6337,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2552 `Some` takes only a lone trait name**
+- [ ] **R2554 `Some` does not take a symbolic trait value**
 
-  `Some[Greet & Copyable]` is "unknown type 'Some'", where the pin takes
-  any trait value as `Some`'s argument.
-  - `Checker::builtin_applied_type` (`type_resolution.rs`) recognizes
-    `Some[X]` only when `X` is one `Identifier` naming a trait, so a
-    composition, a function type, or anything else falls through to an
-    unknown `Some`.
-  - Lever: evaluate the argument to its trait value (the composition's
-    traits, a callable bound) and make the synthetic binder's bounds that
-    value, as upstream's `Some` binds its trait parameter.
-  - Probe: `def g(t: Some[Greet & Copyable]) -> Int: return t.greet()`
-    called with a conforming `G(2)` prints `2` at the pin; it is the same
-    error for `Some[m.Greet & Copyable]`.
-  - Probe: `def f(g: Some[def(var Int)])` is the same error (R813 waits on
-    it).
-  - Found while landing R2533 (2026-11-23).
+  `def show[Tr: type_of(Writable)](t: Some[Tr])` is "unknown type 'Some'",
+  where upstream's `Some` takes any trait value, a trait-valued binder's
+  among them.
+  - An existential's binder is a `TyKind::Param` whose `bounds` are closed
+    trait names, so `Checker::existential_type` (`type_resolution.rs`) has
+    no form for a trait the binder learns only at instantiation.
+  - A declared binder carries that bound as `ParamDecl::Type::trait_param`,
+    checked by `Checker::validate_trait_parameter_bounds`; the existential
+    has no declaration to carry it.
+  - Probe: the line above, called as `show[Writable](3)`.
+  - Probe: `def m(self, t: Some[Self.Tr])` in `struct S[Tr:
+    type_of(AnyType)]`.
+  - Found while landing R2552 (2026-11-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13797,14 +13795,13 @@ residue found inside a task moves to the task that owns its fix.
   upstream calls `FormatStruct(...).params(TypeNames[Self.type]())
   .fields(write_fields)` with a capturing `def write_fields`.
   - The bundled `FormatStruct` (`std/format/_utils.mojo`) has no
-    `fields(fields_fn: Some[def[T: Writer](mut T)])` overload, and
-    `Some[def[...](...)]` is rejected with "unknown type 'Some'".
+    `fields(fields_fn: Some[def[T: Writer](mut T)])` overload, though the
+    checker accepts its parameter type.
   - The bundled collections' `write_repr_to` bodies write by hand too.
   - `IndexList.write_repr_to` is omitted (`stdlib/std/utils/index.mojo`):
     restore it with its `import std.format._utils as fmt`.
   - Done when they and `ParameterList` use upstream's builder text.
-  - Probe: `def f(g: Some[def(var Int)])` is the same "unknown type
-    'Some'". `List`, `Array`, `Set`, `Dict`, and `StringDict`
+  - Probe: `List`, `Array`, `Set`, `Dict`, and `StringDict`
     `deinit_with` and `Set`/`Dict` `clear_with` spell an explicit
     `[F: def(var Self.T)]` binder where upstream spells
     `Some[def(var Self.T)]`; respell them when it lands (found while

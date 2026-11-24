@@ -1782,8 +1782,16 @@ impl Checker {
         ) {
             return true;
         }
-        if let TyKind::Param { bounds, .. } = to.kind()
+        if let TyKind::Param {
+            bounds,
+            callable_bound,
+            ..
+        } = to.kind()
             && bounds.iter().all(|bound| self.conforms_to(from, bound))
+            && callable_bound.as_ref().is_none_or(|contract| {
+                self.declared_callable_contract(from)
+                    .is_some_and(|declared| callable_bound_accepts(&declared, contract))
+            })
         {
             return true;
         }

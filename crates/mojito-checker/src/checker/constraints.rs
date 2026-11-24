@@ -3294,7 +3294,12 @@ impl Checker {
     /// generic or not, applied to its enclosing binders with its own left
     /// open ([`Self::nested_callable_symbol`]). `None` for any other argument,
     /// which binds the bound as it did before.
-    fn inflate_function_argument(&self, argument: &Expr, found: &Ty, expected: &Ty) -> Option<Ty> {
+    pub(super) fn inflate_function_argument(
+        &self,
+        argument: &Expr,
+        found: &Ty,
+        expected: &Ty,
+    ) -> Option<Ty> {
         let TyKind::Param {
             callable_bound: Some(contract),
             ..

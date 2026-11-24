@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Some[X]` takes any trait value or function type (R2552):
+  `Some[Greet & Copyable]`, `Some[m.Greet & Copyable]`, a trait constant,
+  `Some[def(var Int)]`, and `Some[def[T: Writer](mut T)]` are accepted, as at
+  the pin, where each was "unknown type 'Some'". The argument evaluates to its
+  traits or its function type, which bound the anonymous binder; a function
+  argument binds a callable bound at its inflated type, and a type parameter's
+  callable bound now takes part in coercion, so a run-time function value or a
+  mismatched signature is rejected.
+
 - A module-qualified trait is a conformance or refinement list entry
   (R2551): `struct S(m.Greet, Copyable)`, `trait H(m.Greet)`, `not m.Greet`,
   and `m.Greet where C` are accepted, as at the pin, where each was a parse

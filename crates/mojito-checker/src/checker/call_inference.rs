@@ -531,21 +531,25 @@ impl Checker {
     /// `param`: an existential `Some[Trait]` is the anonymous `[T: Trait]`
     /// binder upstream desugars it to, which the argument deduces through
     /// [`Self::deduced_ty`] (a literal materializes or defaults) when the
-    /// deduced type conforms. Any other parameter, or a deduction that does
-    /// not conform, keeps `param`.
-    pub(super) fn existential_argument_ty(&self, param: &Ty, actual: &Ty) -> Ty {
-        let TyKind::Param {
-            binder,
-            callable_bound: None,
-            ..
-        } = param.kind()
-        else {
+    /// deduced type conforms. A `Some[def(...)]` binder deduces a function
+    /// `argument` at its inflated type, as a declared `def(...)` bound
+    /// binds it ([`Self::callable_bound_argument`]). Any other parameter,
+    /// or a deduction that does not conform, keeps `param`.
+    pub(super) fn existential_argument_ty(
+        &self,
+        param: &Ty,
+        argument: Option<&Expr>,
+        actual: &Ty,
+    ) -> Ty {
+        let TyKind::Param { binder, .. } = param.kind() else {
             return param.clone();
         };
         if !is_existential_binder(binder) {
             return param.clone();
         }
-        let deduced = self.deduced_ty(actual);
+        let deduced = argument
+            .and_then(|argument| self.inflate_function_argument(argument, actual, param))
+            .unwrap_or_else(|| self.deduced_ty(actual));
         if self.value_coerces(&deduced, param) {
             deduced
         } else {
@@ -1774,7 +1778,7 @@ impl Checker {
             };
             let mut arg_ty = self.infer_with_expected(arg, &params[i], true)?;
             reject_generic_function_value(name, &names[i], arg, &arg_ty, &params[i])?;
-            let expected = self.existential_argument_ty(&params[i], &arg_ty);
+            let expected = self.existential_argument_ty(&params[i], Some(arg), &arg_ty);
             if expected != params[i] {
                 arg_ty = self.infer_with_expected(arg, &expected, true)?;
             }
@@ -2519,7 +2523,7 @@ impl Checker {
             .resolve_explicit_use_params(name, decls, bracket, &patterns, actuals)
             .map_err(|failure| self.collector_element_failure(name, decls, failure))?;
         for (pattern, actual) in patterns.iter().zip(actuals) {
-            let deduced = self.existential_argument_ty(pattern, actual);
+            let deduced = self.existential_argument_ty(pattern, None, actual);
             bind_existential(&mut bound.subst, pattern, &deduced);
         }
         bind_unbound_origin_attributes(

@@ -322,11 +322,11 @@ pub(super) fn existential_at_slot(ty: Ty, slot: usize) -> Ty {
         TyKind::Param {
             binder,
             bounds,
-            callable_bound: None,
+            callable_bound,
         } if is_existential_binder(binder) && binder.id.slot == 0 => TyKind::Param {
             binder: existential_slot_binder(binder, slot),
             bounds: bounds.clone(),
-            callable_bound: None,
+            callable_bound: callable_bound.clone(),
         }
         .into(),
         _ => ty,

@@ -2372,34 +2372,16 @@ impl Checker {
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<Option<(Ty, DeclaredAttributes)>, TypeError> {
-        let existential_trait = args.first().and_then(|argument| match argument {
-            mojito_ast::ast::ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(trait_name),
-                ..
-            }) => Some(trait_name),
-            _ => None,
-        });
         if name == "__mlir_type" {
             return self
                 .mlir_applied_type(args)
                 .map(|ty| Some((ty, DeclaredAttributes::default())));
         }
         if name == "Some"
-            && args.len() == 1
-            && let Some(trait_name) = existential_trait
-            && (COMPILER_TRAITS.contains(&trait_name.as_str())
-                || self.traits.contains_key(trait_name)
-                || self.predeclared_traits.contains(trait_name))
+            && let [mojito_ast::ast::ParamArg::Value(argument)] = args
+            && let Some(existential) = self.existential_type(argument)?
         {
-            return Ok(Some((
-                TyKind::Param {
-                    binder: synthetic_binder(&format!("Some[{trait_name}]")),
-                    bounds: vec![trait_name.clone()],
-                    callable_bound: None,
-                }
-                .into(),
-                DeclaredAttributes::default(),
-            )));
+            return Ok(Some((existential, DeclaredAttributes::default())));
         }
         if name == "Never" && args.is_empty() {
             return Ok(Some((Ty::never(), DeclaredAttributes::default())));
@@ -2476,6 +2458,38 @@ impl Checker {
             return Ok(Some((Ty::dtype(), DeclaredAttributes::default())));
         }
         Ok(None)
+    }
+
+    /// The anonymous type binder upstream's `Some[X]` binds its trait
+    /// parameter to: `X` evaluated to its trait value (a trait, a trait
+    /// constant, a `&` composition) bounds it by those traits, and a
+    /// function type bounds it as a callable (`Some[def(var Int)]`).
+    /// `None` when `X` is neither.
+    fn existential_type(&self, argument: &Expr) -> Result<Option<Ty>, TypeError> {
+        let (spelling, bounds, callable_bound) =
+            if let ExprKind::FunctionType(callable) = &argument.kind {
+                let bound = self.function_type(callable)?;
+                (bound.to_string(), Vec::new(), Some(bound))
+            } else if let ExprKind::Identifier(trait_name) = &argument.kind
+                && (COMPILER_TRAITS.contains(&trait_name.as_str())
+                    || self.traits.contains_key(trait_name)
+                    || self.predeclared_traits.contains(trait_name))
+            {
+                (trait_name.clone(), vec![trait_name.clone()], None)
+            } else if let Some(value) = self.trait_value(argument) {
+                let traits = value?.traits;
+                (traits.join(" & "), traits, None)
+            } else {
+                return Ok(None);
+            };
+        Ok(Some(
+            TyKind::Param {
+                binder: synthetic_binder(&format!("Some[{spelling}]")),
+                bounds,
+                callable_bound,
+            }
+            .into(),
+        ))
     }
 
     /// Resolve a struct application's explicit compile-time arguments over

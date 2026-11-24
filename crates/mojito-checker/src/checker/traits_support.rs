@@ -467,7 +467,7 @@ fn with_existential_binders(method: &MethodSig) -> MethodSig {
         let TyKind::Param {
             binder,
             bounds,
-            callable_bound: None,
+            callable_bound,
         } = param.kind()
         else {
             continue;
@@ -478,10 +478,11 @@ fn with_existential_binders(method: &MethodSig) -> MethodSig {
         let binder = existential_slot_binder(binder, slot);
         let id = binder.id.clone();
         let bounds = bounds.clone();
+        let callable_bound = callable_bound.clone();
         *param = TyKind::Param {
             binder,
             bounds: bounds.clone(),
-            callable_bound: None,
+            callable_bound: callable_bound.clone(),
         }
         .into();
         lifted.declared.push(ParamDecl::Type {
@@ -489,7 +490,7 @@ fn with_existential_binders(method: &MethodSig) -> MethodSig {
             name: String::new(),
             bounds,
             trait_param: None,
-            callable_bound: None,
+            callable_bound,
             default: None,
             infer_only: false,
             variadic: false,
