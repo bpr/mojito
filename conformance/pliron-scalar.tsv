@@ -1380,6 +1380,7 @@ assets/ok/slice_string_native.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/some_composition_and_callable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/some_indexer_user_subscript.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/some_parameter_literal_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/some_trait_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_from_array.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_generic_free_def_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_implicit_from_list.mojo	-	ineligible	no-scalar-entry-shape

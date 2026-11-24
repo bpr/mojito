@@ -611,6 +611,7 @@ impl<'a> Flatten<'a> {
                         },
                         bounds: Vec::new(),
                         callable_bound: None,
+                        trait_param: None,
                     }
                     .into()
                 }),

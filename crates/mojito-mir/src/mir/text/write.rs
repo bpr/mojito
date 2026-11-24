@@ -2368,9 +2368,9 @@ fn ty_value(ty: &Ty) -> String {
             binder,
             bounds,
             callable_bound,
-        } => record(
-            "param",
-            &[
+            trait_param,
+        } => {
+            let mut entries = vec![
                 ("owner", quote(&binder.id.owner)),
                 ("slot", binder.id.slot.to_string()),
                 ("name", symbol(&binder.name)),
@@ -2379,8 +2379,14 @@ fn ty_value(ty: &Ty) -> String {
                     "callable_bound",
                     option(callable_bound.as_ref().map(ty_value)),
                 ),
-            ],
-        ),
+            ];
+            // Schema 1.231 names an existential's trait-valued bound,
+            // written only when it has one.
+            if let Some(trait_param) = trait_param {
+                entries.push(("trait_param", binder_ref(trait_param)));
+            }
+            record("param", &entries)
+        }
         TyKind::Assoc { base, name, args } => record(
             "assoc",
             &[

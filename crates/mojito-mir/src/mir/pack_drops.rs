@@ -256,6 +256,7 @@ mod tests {
                 binder: ParamRef::unbound("*Ts"),
                 bounds: Vec::new(),
                 callable_bound: None,
+                trait_param: None,
             }
             .into(),
         ])

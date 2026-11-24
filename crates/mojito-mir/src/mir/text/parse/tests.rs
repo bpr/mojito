@@ -237,6 +237,7 @@ fn type_families_reprint_byte_identically() {
                     binder: test_binder("T"),
                     bounds: vec!["Copyable".into(), "Movable".into()],
                     callable_bound: Some(func_ty.clone()),
+                    trait_param: None,
                 }
                 .into(),
                 TyKind::Assoc {
@@ -244,6 +245,7 @@ fn type_families_reprint_byte_identically() {
                         binder: test_binder("C"),
                         bounds: vec!["Iterable".into()],
                         callable_bound: None,
+                        trait_param: None,
                     }
                     .into(),
                     name: "IteratorType".into(),
@@ -1912,6 +1914,7 @@ fn declaration_metadata_reprints_byte_identically() {
                 },
                 bounds: Vec::new(),
                 callable_bound: None,
+                trait_param: None,
             }
             .into(),
         )],
@@ -1933,6 +1936,7 @@ fn declaration_metadata_reprints_byte_identically() {
                                 binder: test_binder("U"),
                                 bounds: Vec::new(),
                                 callable_bound: None,
+                                trait_param: None,
                             }
                             .into(),
                         ),
@@ -1954,6 +1958,7 @@ fn declaration_metadata_reprints_byte_identically() {
                             binder: test_binder("T"),
                             bounds: vec!["HasK".into()],
                             callable_bound: None,
+                            trait_param: None,
                         }
                         .into(),
                     ),
@@ -2197,6 +2202,7 @@ fn generator_read() -> ParamExpr {
                 binder: test_binder("T"),
                 bounds: vec!["HasGet".into()],
                 callable_bound: None,
+                trait_param: None,
             }
             .into(),
         ),
@@ -2607,6 +2613,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
         binder: binder.clone(),
         bounds: vec!["Hasher".into()],
         callable_bound: None,
+        trait_param: None,
     };
     let instrs = vec![
         MirInstr::ConstructTypeParam {
@@ -2719,6 +2726,7 @@ fn type_expression_constructions_round_trip() {
                 binder: test_binder("T"),
                 bounds: vec!["AnyType".into()],
                 callable_bound: None,
+                trait_param: None,
             }
             .into(),
         ),
@@ -3109,6 +3117,35 @@ fn trait_types_and_trait_parameter_bounds_round_trip() {
         TyKind::GenericFunc(generic) => assert_eq!(generic.decls, decls),
         other => panic!("expected a generic function type, read {other}"),
     }
+}
+
+/// Schema 1.231 gives an existential `Some[Tr]` binder's type its
+/// trait-valued bound `trait_param: binder {...}`, written only when present.
+#[test]
+fn existential_trait_parameter_bound_round_trips() {
+    let existential: Ty = TyKind::Param {
+        binder: test_binder("Some[Tr]"),
+        bounds: vec!["Writable".into()],
+        callable_bound: None,
+        trait_param: Some(Box::new(test_binder("Tr"))),
+    }
+    .into();
+    let closed: Ty = TyKind::Param {
+        binder: test_binder("T"),
+        bounds: vec!["Writable".into()],
+        callable_bound: None,
+        trait_param: None,
+    }
+    .into();
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![existential.clone(), closed], Vec::new()),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert_eq!(text.matches("trait_param: binder").count(), 1, "{text}");
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    assert_eq!(parsed.program.functions[0].1.reg_types[&0], existential);
 }
 
 /// Schema 1.209 gives a struct instance an argument for each origin's
@@ -4031,6 +4068,7 @@ fn symbolic_variant_index_round_trips() {
             binder: test_binder("T"),
             bounds: Vec::new(),
             callable_bound: None,
+            trait_param: None,
         }
         .into(),
     );
@@ -4114,6 +4152,7 @@ fn param_apply_list_get_and_reflect_round_trip() {
                 },
                 bounds: vec!["AnyType".into()],
                 callable_bound: None,
+                trait_param: None,
             }
             .into(),
         ),

@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Some[X]` takes a trait-valued binder (R2554): `def show[Tr:
+  type_of(Writable)](t: Some[Tr])` and `def m(self, t: Some[Self.Tr])` in
+  `struct S[Tr: type_of(AnyType)]` are accepted, as at the pin, where each
+  was "unknown type 'Some'". `TyKind::Param` gains `trait_param`, the
+  trait-valued binder an existential's anonymous binder is bounded by, which
+  a substitution binding that binder replaces with the trait it receives, so
+  a call checks the argument against `show[Writable & Copyable]`'s bound or
+  the receiver's `S[Writable]`. A generic callee's existential now refuses
+  an argument outside its bound (`f[1](NW())` over `def f[n: Int](t:
+  Some[Writable])`), which was accepted. MIR text moves to schema 1.231 and
+  the cached package format to 275.
+
 - The checker's `AnnotationView` is gone (R2550): the constraint,
   compile-time-validation, and initializer-list readers read the annotation
   or `comptime` body expression, as upstream's do, and a reader asking

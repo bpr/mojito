@@ -1094,6 +1094,7 @@ mod tests {
             },
             bounds: vec!["Absorber".into()],
             callable_bound: None,
+            trait_param: None,
         });
         let call = method_call(Reg(0), dispatch, vec![Reg(1)], None);
         let function = function_of(Vec::new(), vec![(0, bound)]);
@@ -1116,6 +1117,7 @@ mod tests {
             },
             bounds: vec!["Absorber".into()],
             callable_bound: None,
+            trait_param: None,
         });
         let add = MirInstr::BinOp {
             op: mojito_ast::ast::InfixOp::Add,

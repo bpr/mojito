@@ -270,6 +270,7 @@ fn sibling_type_binder(
             },
             bounds,
             callable_bound: None,
+            trait_param: None,
         }
         .into(),
     )

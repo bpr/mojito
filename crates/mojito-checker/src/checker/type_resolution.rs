@@ -2149,9 +2149,23 @@ impl Checker {
     /// The anonymous type binder upstream's `Some[X]` binds its trait
     /// parameter to: `X` evaluated to its trait value (a trait, a trait
     /// constant, a `&` composition) bounds it by those traits, and a
-    /// function type bounds it as a callable (`Some[def(var Int)]`).
-    /// `None` when `X` is neither.
+    /// function type bounds it as a callable (`Some[def(var Int)]`). A
+    /// trait-valued binder (`Some[Tr]` over `Tr: type_of(Writable)`,
+    /// `Some[Self.Tr]`) bounds it symbolically: by the binder's declared
+    /// trait set, until a substitution binds the trait it receives.
+    /// `None` when `X` is none of these.
     fn existential_type(&self, argument: &Expr) -> Result<Option<Ty>, TypeError> {
+        if let Some((trait_param, declared)) = self.trait_valued_argument(argument) {
+            return Ok(Some(
+                TyKind::Param {
+                    binder: trait_param_existential_binder(&trait_param),
+                    bounds: declared,
+                    callable_bound: None,
+                    trait_param: Some(Box::new(trait_param)),
+                }
+                .into(),
+            ));
+        }
         let (spelling, bounds, callable_bound) =
             if let ExprKind::FunctionType(callable) = &argument.kind {
                 let bound = self.function_type(callable)?;
@@ -2173,9 +2187,20 @@ impl Checker {
                 binder: synthetic_binder(&format!("Some[{spelling}]")),
                 bounds,
                 callable_bound,
+                trait_param: None,
             }
             .into(),
         ))
+    }
+
+    /// The trait-valued binder `argument` builds to (`Tr`, `Self.Tr`), with
+    /// its declared trait set, as the one compile-time builder reads it.
+    fn trait_valued_argument(&self, argument: &Expr) -> Option<(ParamRef, Vec<String>)> {
+        let built = self.compile_dependent_ct_expr(argument).ok()?;
+        let Some(TyKind::AnyTrait(declared)) = built.meta().as_value().map(Ty::kind) else {
+            return None;
+        };
+        Some((built.as_decl_ref()?.clone(), declared.clone()))
     }
 
     /// Resolve a struct application's explicit compile-time arguments over
@@ -2648,6 +2673,18 @@ impl Checker {
                 }
                 None => ty.clone(),
             },
+            // An existential over a trait-valued binder (`Some[Tr]`) is
+            // bounded by the trait the use binds it to.
+            TyKind::Param {
+                trait_param: Some(_),
+                ..
+            } if !values.is_empty() => mojito_types::types::replace_parameters(
+                &self.param_context,
+                ty,
+                &values.bindings,
+                0,
+            )
+            .map_err(param_error)?,
             // A symbolic lane dtype or width closes under the use's bindings
             // and re-canonicalizes: `Scalar[dt]` at `dt = DType.float64` is
             // `Float64`.
@@ -3399,12 +3436,14 @@ impl Checker {
                 binder,
                 bounds,
                 callable_bound,
+                trait_param,
             } => TyKind::Param {
                 binder: binder.clone(),
                 bounds: bounds.clone(),
                 callable_bound: callable_bound
                     .as_ref()
                     .map(|bound| self.resolve_assoc_ty(bound)),
+                trait_param: trait_param.clone(),
             }
             .into(),
             TyKind::Assoc { base, name, args } => {

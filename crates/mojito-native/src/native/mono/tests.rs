@@ -278,6 +278,7 @@ fn structural_inference_rejects_conflicting_solutions() {
         },
         bounds: vec![],
         callable_bound: None,
+        trait_param: None,
     });
     let mut bindings = Bindings::default();
     unify(&parameter, &Ty::int(), &mut bindings).unwrap();
@@ -321,6 +322,7 @@ fn same_spelled_binders_of_two_declarations_bind_apart() {
             binder: binder(owner),
             bounds: vec![],
             callable_bound: None,
+            trait_param: None,
         })
     };
     let mut bindings = Bindings::default();
@@ -530,6 +532,7 @@ fn substitution_resolves_nested_type_and_value_arguments() {
                     },
                     bounds: vec![],
                     callable_bound: None,
+                    trait_param: None,
                 }
                 .into(),
             ),

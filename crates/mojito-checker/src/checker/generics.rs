@@ -546,12 +546,14 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             binder,
             bounds,
             callable_bound,
+            trait_param,
         } => TyKind::Param {
             binder: binder.clone(),
             bounds: bounds.clone(),
             callable_bound: callable_bound
                 .as_ref()
                 .map(|bound| substitute_self(bound, replacement)),
+            trait_param: trait_param.clone(),
         }
         .into(),
         struct_ty if let Some((name, args)) = struct_ty.as_non_pointer_struct() => {
@@ -813,11 +815,16 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         )
         .into(),
         // A callable contract closes over the parameters its signature
-        // names, its own binders excepted (`def(Scalar[Self.dtype])`).
-        TyKind::Func(_) | TyKind::GenericFunc(_) => {
-            mojito_types::types::replace_parameters(&context, ty, bindings, 0)
-                .unwrap_or_else(|_| ty.clone())
-        }
+        // names, its own binders excepted (`def(Scalar[Self.dtype])`), and
+        // an existential over a trait-valued binder (`Some[Self.Tr]`) is
+        // bounded by the trait it binds.
+        TyKind::Func(_)
+        | TyKind::GenericFunc(_)
+        | TyKind::Param {
+            trait_param: Some(_),
+            ..
+        } => mojito_types::types::replace_parameters(&context, ty, bindings, 0)
+            .unwrap_or_else(|_| ty.clone()),
         // A symbolic lane dtype or width closes the same way and
         // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
         // A symbolic literal value closes the same way.

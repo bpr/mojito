@@ -321,6 +321,7 @@ impl ApplicableFunction {
                     binder: binder(slot, decl.name()),
                     bounds: bounds.clone(),
                     callable_bound: callable_bound.clone(),
+                    trait_param: None,
                 };
                 Some((id.clone(), ty.into()))
             })
@@ -7051,6 +7052,7 @@ impl Checker {
                 binder: pack_element_view_binder(&name),
                 bounds,
                 callable_bound: None,
+                trait_param: None,
             }
             .into(),
         )

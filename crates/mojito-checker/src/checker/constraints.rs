@@ -6233,6 +6233,7 @@ impl Checker {
                     binder: param.clone(),
                     bounds: Vec::new(),
                     callable_bound: None,
+                    trait_param: None,
                 }
                 .into(),
             )

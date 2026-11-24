@@ -532,6 +532,7 @@ impl TraitDeclaration {
             binder: Self::self_binder(name).binder(),
             bounds: vec![name.to_string()],
             callable_bound: None,
+            trait_param: None,
         }
         .into()
     }
@@ -1187,6 +1188,7 @@ mod tests {
             binder,
             bounds: Vec::new(),
             callable_bound: None,
+            trait_param: None,
         }
         .into()
     }

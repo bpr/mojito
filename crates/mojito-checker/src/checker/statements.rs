@@ -3420,6 +3420,7 @@ impl Checker {
                         binder: synthetic_binder(&dependent_projection_spelling(&param.ty)),
                         bounds: vec!["Movable".to_string()],
                         callable_bound: None,
+                        trait_param: None,
                     }
                     .into()
                 })

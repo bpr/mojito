@@ -928,6 +928,16 @@ pub enum TyKind {
         /// signature is needed both to validate specializations and to type
         /// calls through `F` inside the generic body.
         callable_bound: Option<Ty>,
+        /// The trait-valued binder whose value bounds this one, upstream's
+        /// symbolic `ParamType` metatype: an existential `Some[Tr]` over
+        /// `Tr: type_of(Writable)`, whose anonymous binder has no
+        /// declaration to carry it (a declared binder's lives on its
+        /// [`ParamDecl::Type::trait_param`]). `bounds` then holds that
+        /// binder's declared trait set; a rewrite binding the binder
+        /// replaces them with the trait it receives
+        /// ([`rewrite_trait_param`]). Boxed, as the node is sized for its
+        /// common variants.
+        trait_param: Option<Box<ParamRef>>,
     },
     /// A symbolic associated type lookup such as `C.Element` where `C` is an
     /// opaque type parameter. It may resolve to a concrete type once `C` is
@@ -4833,6 +4843,7 @@ impl ParamDecl {
                     binder: self.binder(),
                     bounds: bounds.clone(),
                     callable_bound: callable_bound.clone(),
+                    trait_param: None,
                 }
                 .into(),
             ),
@@ -6970,6 +6981,7 @@ pub fn canonical_generic_signature(
                         },
                         bounds: bounds.clone(),
                         callable_bound: canonical_callable_bound.clone(),
+                        trait_param: None,
                     }
                     .into(),
                 );
@@ -7304,6 +7316,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             binder,
             bounds,
             callable_bound,
+            trait_param,
         } => subst.get(&binder.id).cloned().unwrap_or_else(|| {
             TyKind::Param {
                 binder: binder.clone(),
@@ -7311,6 +7324,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                 callable_bound: callable_bound
                     .as_ref()
                     .map(|bound| substitute(bound, subst)),
+                trait_param: trait_param.clone(),
             }
             .into()
         }),
@@ -7584,15 +7598,21 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             binder,
             bounds,
             callable_bound,
-        } => match rewrite.param(binder) {
-            Some(replacement) => replacement,
-            None => TyKind::Param {
-                binder: binder.clone(),
-                bounds: bounds.clone(),
-                callable_bound: optional(callable_bound, rewrite)?,
+            trait_param,
+        } => {
+            if let Some(replacement) = rewrite.param(binder) {
+                return Ok(replacement);
             }
-            .into(),
-        },
+            let (bounds, trait_param) =
+                rewrite_trait_param(bounds, trait_param.as_deref(), rewrite);
+            TyKind::Param {
+                binder: binder.clone(),
+                bounds,
+                callable_bound: optional(callable_bound, rewrite)?,
+                trait_param: trait_param.map(Box::new),
+            }
+            .into()
+        }
         kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
             rewrite_ty(element, rewrite)?,
             origin,
@@ -9019,8 +9039,9 @@ pub fn rewrite_decl(
     })
 }
 
-/// The bound of a type binder bounded by the trait-valued binder
-/// `trait_param` (upstream's symbolic `ParamType`), declared `bounds`, once
+/// The bound of a type binder (a declaration, or an existential's
+/// `TyKind::Param`) bounded by the trait-valued binder `trait_param`
+/// (upstream's symbolic `ParamType`), declared `bounds`, once
 /// `rewrite` rewrites that binder: the trait it binds, which then bounds
 /// the binder alone, or the binder it forwards to. A rewrite that does not
 /// read the binder leaves it.
@@ -9953,6 +9974,7 @@ fn bind_reowned(bindings: &mut ParamBindings, decl: &ParamDecl, reowned: &ParamR
                 binder: reowned.clone(),
                 bounds: bounds.clone(),
                 callable_bound: callable_bound.clone(),
+                trait_param: None,
             });
             bindings.bind_type(declared.id.clone(), ty.clone());
             // A type pack's list binder is read as a list too
@@ -10063,6 +10085,7 @@ fn generator_binder_renaming(from: &[ParamDecl], to: &[ParamDecl]) -> TySubst {
                     },
                     bounds: bounds.clone(),
                     callable_bound: None,
+                    trait_param: None,
                 }
                 .into(),
             )),
@@ -10504,6 +10527,7 @@ mod parameter_replacement_tests {
                 binder,
                 bounds: Vec::new(),
                 callable_bound: None,
+                trait_param: None,
             }
             .into()
         };
@@ -10601,6 +10625,7 @@ mod parameter_replacement_tests {
             },
             bounds: Vec::new(),
             callable_bound: None,
+            trait_param: None,
         }
         .into();
         let subst: TySubst = [(ParamId::new("callee", 0), pack)].into_iter().collect();
@@ -10741,6 +10766,7 @@ mod struct_field_types_tests {
                 binder: p.binder(),
                 bounds: vec!["Copyable".to_string()],
                 callable_bound: None,
+                trait_param: None,
             }),
         )];
         let at = |arguments: &[TyArg]| {
@@ -10781,6 +10807,7 @@ mod struct_field_types_tests {
                 binder: pack.binder(),
                 bounds: vec!["TrivialRegisterPassable".to_string()],
                 callable_bound: None,
+                trait_param: None,
             })])),
         )];
         let at = |arguments: &[TyArg]| {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2558**.
+Next free ID: **R2559**.
 
 ## Ordered Work
 
@@ -6173,6 +6173,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   parameter 'Tr' of 'g' from the arguments", as do `S[Int, Bool]` over
   `struct S[Tr: type_of(AnyType), //, *Ts: Tr]` and `f(3)` over `def f[Tr:
   type_of(AnyType), //, T: Tr](x: T)`.
+  - Probe: `show(3)` over `def show[Tr: type_of(Writable)](t: Some[Tr])`
+    prints `3` at the pin; the existential's argument infers `Tr` as a
+    declared binder's would.
   - The pin infers `Tr` as the join of the arguments' metatypes: one
     argument gives its own struct metatype (`AnyStruct[Int]`, or
     `AnyStruct[IntLiteral[3]]` from `f(3)`), several give the traits every
@@ -6336,21 +6339,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2554 `Some` does not take a symbolic trait value**
+- [ ] **R2558 Binding a trait-valued binder drops the closed traits composed beside it**
 
-  `def show[Tr: type_of(Writable)](t: Some[Tr])` is "unknown type 'Some'",
-  where upstream's `Some` takes any trait value, a trait-valued binder's
-  among them.
-  - An existential's binder is a `TyKind::Param` whose `bounds` are closed
-    trait names, so `Checker::existential_type` (`type_resolution.rs`) has
-    no form for a trait the binder learns only at instantiation.
-  - A declared binder carries that bound as `ParamDecl::Type::trait_param`,
-    checked by `Checker::validate_trait_parameter_bounds`; the existential
-    has no declaration to carry it.
-  - Probe: the line above, called as `show[Writable](3)`.
-  - Probe: `def m(self, t: Some[Self.Tr])` in `struct S[Tr:
-    type_of(AnyType)]`.
-  - Found while landing R2552 (2026-11-23).
+  `g[Writable](NC(1))` over `def g[Tr: type_of(AnyType), T: Tr &
+  Copyable](t: T)` runs, though `NC` is no `Copyable`; the pin rejects it
+  ("argument type 'NC' does not conform to trait 'Copyable'").
+  - A binder bounded by `Tr & Copyable` keeps one bound set, Tr's declared
+    traits merged with `Copyable`, beside `trait_param` naming `Tr`.
+  - `rewrite_trait_param` (`mojito-types/src/types.rs`) replaces that whole
+    set with the trait `Tr` receives, so the closed member is lost: it
+    cannot tell which bounds were Tr's.
+  - Upstream's bound is the symbolic trait value `Tr & Copyable` itself,
+    which substitution folds to `Writable & Copyable`.
+  - Probe: the call above.
+  - Probe: `def show[Tr: type_of(Writable)](t: Some[Tr & Copyable])`,
+    called as `show[Writable](3)`, prints `3` at the pin and is "unknown
+    type 'Some'": `Checker::existential_type` takes a lone trait-valued
+    binder only, since an existential bounded by the composition would
+    lose `Copyable` the same way.
+  - Found while landing R2554 (2026-11-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

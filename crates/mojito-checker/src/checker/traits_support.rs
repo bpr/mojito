@@ -468,6 +468,7 @@ fn with_existential_binders(method: &MethodSig) -> MethodSig {
             binder,
             bounds,
             callable_bound,
+            trait_param,
         } = param.kind()
         else {
             continue;
@@ -479,17 +480,19 @@ fn with_existential_binders(method: &MethodSig) -> MethodSig {
         let id = binder.id.clone();
         let bounds = bounds.clone();
         let callable_bound = callable_bound.clone();
+        let trait_param = trait_param.clone();
         *param = TyKind::Param {
             binder,
             bounds: bounds.clone(),
             callable_bound: callable_bound.clone(),
+            trait_param: trait_param.clone(),
         }
         .into();
         lifted.declared.push(ParamDecl::Type {
             id,
             name: String::new(),
             bounds,
-            trait_param: None,
+            trait_param: trait_param.map(|binder| *binder),
             callable_bound,
             default: None,
             infer_only: false,

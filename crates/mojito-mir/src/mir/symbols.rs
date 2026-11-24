@@ -717,6 +717,7 @@ mod tests {
             },
             bounds: Vec::new(),
             callable_bound: None,
+            trait_param: None,
         }));
         assert_eq!(table.function_uses(&function), Vec::<&str>::new());
     }

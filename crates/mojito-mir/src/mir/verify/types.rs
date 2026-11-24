@@ -405,11 +405,13 @@ pub(super) fn instantiate_checked_type(
             binder,
             bounds,
             callable_bound,
+            trait_param,
         } => type_arguments.get(&binder.id).cloned().unwrap_or_else(|| {
             TyKind::Param {
                 binder: binder.clone(),
                 bounds: bounds.clone(),
                 callable_bound: callable_bound.clone(),
+                trait_param: trait_param.clone(),
             }
             .into()
         }),

@@ -1209,6 +1209,7 @@ pub(super) mod tests {
                 binder: binder("f", 0, "flag"),
                 bounds: Vec::new(),
                 callable_bound: None,
+                trait_param: None,
             }
             .into(),
         ]);
@@ -1248,6 +1249,7 @@ pub(super) mod tests {
                     binder: binder("g", 0, "T"),
                     bounds: Vec::new(),
                     callable_bound: None,
+                    trait_param: None,
                 }
                 .into(),
             )],
@@ -1524,6 +1526,7 @@ pub(super) mod tests {
             binder: binder("g", 0, "T"),
             bounds: Vec::new(),
             callable_bound: None,
+            trait_param: None,
         }
         .into()
     }
@@ -1648,6 +1651,7 @@ pub(super) mod tests {
             binder: binder("S.get", slot, "T"),
             bounds: Vec::new(),
             callable_bound: None,
+            trait_param: None,
         };
         let decls = |ty: Ty| {
             vec![

@@ -4504,6 +4504,7 @@ mod tests {
             binder: mojito_types::param_expr::ParamRef::unbound("T"),
             bounds: Vec::new(),
             callable_bound: None,
+            trait_param: None,
         });
         let folds = |source: Ty, dest: Ty| {
             let reg_types = HashMap::from([(0, source), (1, dest)]);
@@ -4542,6 +4543,7 @@ mod tests {
                 binder: mojito_types::param_expr::ParamRef::unbound("T"),
                 bounds: Vec::new(),
                 callable_bound: None,
+                trait_param: None,
             })
         };
         let structure =
@@ -4824,6 +4826,7 @@ mod tests {
                 binder: mojito_types::param_expr::ParamRef::unbound("T"),
                 bounds: bounds.iter().map(|&bound| bound.into()).collect(),
                 callable_bound: None,
+                trait_param: None,
             })
         };
         assert!(declarations.register_passable(&param(&["Copyable", "RegisterPassable"])));

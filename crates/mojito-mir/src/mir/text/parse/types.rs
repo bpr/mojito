@@ -111,9 +111,23 @@ impl Decoder {
                     let callable_bound = self.req(value, fields, "callable_bound", |d, v| {
                         Some(d.option_ty(Some(v)))
                     })?;
+                    // Schema 1.231; written only for an existential bounded
+                    // by a trait-valued binder.
+                    let trait_param = self
+                        .field(fields, "trait_param")
+                        .ok()
+                        .and_then(|v| self.binder_ref(v))
+                        .map(Box::new);
                     self.unknown(
                         fields,
-                        &["owner", "slot", "name", "bounds", "callable_bound"],
+                        &[
+                            "owner",
+                            "slot",
+                            "name",
+                            "bounds",
+                            "callable_bound",
+                            "trait_param",
+                        ],
                     );
                     TyKind::Param {
                         binder: mojito_types::param_expr::ParamRef {
@@ -122,6 +136,7 @@ impl Decoder {
                         },
                         bounds,
                         callable_bound,
+                        trait_param,
                     }
                     .into()
                 }

@@ -3367,6 +3367,7 @@ fn assert_type_parameter(ty: &Ty, name: &str, bounds: &[&str]) {
             binder,
             bounds: found,
             callable_bound: None,
+            trait_param: None,
         } => {
             assert_eq!(binder.name.as_ref(), name);
             assert_eq!(found, bounds);

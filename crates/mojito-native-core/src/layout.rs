@@ -634,6 +634,7 @@ mod tests {
                 binder,
                 bounds: Vec::new(),
                 callable_bound: None,
+                trait_param: None,
             }),
             Ty::new(TyKind::Infer),
             Ty::new(TyKind::SelfType),

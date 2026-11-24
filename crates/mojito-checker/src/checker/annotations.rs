@@ -207,6 +207,7 @@ pub(super) fn type_parameter(decl: &ParamDecl) -> Option<Ty> {
                 binder: decl.binder(),
                 bounds: bounds.clone(),
                 callable_bound: callable_bound.clone(),
+                trait_param: None,
             }
             .into(),
         ),
@@ -282,6 +283,7 @@ pub(super) fn member_type_scope(
                     binder: member_binder(owner, slot, &p.name),
                     bounds: p.bound_names().map(str::to_string).collect(),
                     callable_bound: None,
+                    trait_param: None,
                 }
                 .into(),
             )
@@ -296,6 +298,18 @@ pub(super) fn synthetic_binder(name: &str) -> ParamRef {
     ParamRef {
         id: ParamId::new(&format!("{SYNTHETIC_BINDER_PREFIX}{name}"), 0),
         name: name.into(),
+    }
+}
+
+/// The binder of the existential `Some[Tr]` over the trait-valued binder
+/// `trait_param`: spelled as written, and identified by that binder, so
+/// two signatures' `Some[Tr]` over different `Tr` binders are different
+/// parameters.
+pub(super) fn trait_param_existential_binder(trait_param: &ParamRef) -> ParamRef {
+    let ParamId { owner, slot } = &trait_param.id;
+    ParamRef {
+        id: ParamId::new(&format!("{SYNTHETIC_BINDER_PREFIX}Some[{owner}.{slot}]"), 0),
+        name: format!("Some[{}]", trait_param.name).into(),
     }
 }
 
@@ -323,10 +337,12 @@ pub(super) fn existential_at_slot(ty: Ty, slot: usize) -> Ty {
             binder,
             bounds,
             callable_bound,
+            trait_param,
         } if is_existential_binder(binder) && binder.id.slot == 0 => TyKind::Param {
             binder: existential_slot_binder(binder, slot),
             bounds: bounds.clone(),
             callable_bound: callable_bound.clone(),
+            trait_param: trait_param.clone(),
         }
         .into(),
         _ => ty,

@@ -536,6 +536,7 @@ mod tests {
             },
             bounds: Vec::new(),
             callable_bound: None,
+            trait_param: None,
         }
         .into()
     }

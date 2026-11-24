@@ -1398,6 +1398,14 @@ for it. A reader of an older record, or of a bare trait name, gives the
 trait that one binder. The package format moves to `mojito-package 262`
 (R2216): a trait member's recorded signature no longer holds `_Self`.
 
+Schema 1.231 gives a `param` type record the optional `trait_param:
+binder {...}` after `callable_bound`, written only for an existential
+`Some[Tr]` whose anonymous binder is bounded by a trait-valued binder
+(`Tr: type_of(Writable)`), upstream's symbolic `ParamType` metatype: its
+`bounds` hold that binder's declared trait set, which a substitution
+binding the binder replaces with the trait it receives. An older record
+has none. The package format moves to `mojito-package 275` (R2554).
+
 Schema 1.230 gives a trait `requirement` record its parameters'
 `defaults` after `param_types`, encoded as a `decl`'s are: the attribute a
 call through the bound that leaves the slot out materializes, whatever the

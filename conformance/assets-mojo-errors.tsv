@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1332
+# swept-count	1335
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -1171,6 +1171,9 @@ assets/type_error/size_of_requires_one_type.mojo	compile-reject	agree	error: no 
 assets/type_error/size_of_target_not_compilation_target.mojo	compile-reject	agree	error: no matching function in call to 'size_of'
 assets/type_error/slice_literal_ambiguous.mojo	compile-reject	agree	error: ambiguous call to '__getitem__'
 assets/type_error/slice_two_argument_none.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/some_generic_callee_unmet.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 't' cannot be converted from 'NW' to 'T', argument type 'NW' does not conform to trait 'Writable'
+assets/type_error/some_trait_parameter_method_unmet.mojo	compile-reject	agree	error: invalid call to 'm': value passed to 't' cannot be converted from 'NW' to 'T', argument type 'NW' does not conform to trait 'Writable'
+assets/type_error/some_trait_parameter_unmet.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 't' cannot be converted from 'NW' to 'T', argument type 'NW' does not conform to trait 'Writable'
 assets/type_error/span_implicit_return_escape.mojo	runs	subset	the pin runs it;Mojito rejects: escapes storage
 assets/type_error/span_parameter_display_element_mismatch.mojo	compile-reject	agree	error: invalid call to 'f': failed to infer parameter 'mut'
 assets/type_error/span_ref_binding_register_passable.mojo	compile-reject	agree	error: value of type 'Span[Int, origin_of(values["element"])]' doesn't have a memory origin in 'ref' binding

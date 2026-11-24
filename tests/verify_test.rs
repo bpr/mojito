@@ -3224,6 +3224,7 @@ fn verifier_rejects_a_drop_of_an_argument_a_bound_call_took() {
         },
         bounds: vec!["Absorber".into()],
         callable_bound: None,
+        trait_param: None,
     });
     let absorb = MirInstr::MethodCall {
         conventions: mojito::mir::MirArgConventions::default(),

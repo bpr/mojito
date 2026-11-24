@@ -2273,6 +2273,7 @@ impl Checker {
                                     )),
                                     bounds: param.bound_names().map(str::to_string).collect(),
                                     callable_bound: None,
+                                    trait_param: None,
                                 }
                                 .into(),
                             )),
@@ -4585,6 +4586,7 @@ impl Checker {
             binder,
             bounds,
             callable_bound,
+            trait_param,
         } = ty.kind()
         {
             if matches!(bounds.as_slice(), [only] if only == TYPE_OF_ALL_TYPES) {
@@ -4595,6 +4597,7 @@ impl Checker {
                 "Movable" => callable_bound.is_some(),
                 "Deinitable" => {
                     callable_bound.is_some()
+                        || trait_param.is_some()
                         || self.trait_bounded_binders.borrow().contains_key(&binder.id)
                 }
                 _ => false,

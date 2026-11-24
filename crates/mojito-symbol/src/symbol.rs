@@ -1493,6 +1493,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
             binder,
             bounds,
             callable_bound,
+            trait_param,
         } => {
             let mut result = encode_identifier(&binder.name);
             for bound in bounds {
@@ -1502,6 +1503,10 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
             if let Some(callable) = callable_bound {
                 result.push_str("$Callable$");
                 result.push_str(&ty_raw_in(callable, self_ty, mode));
+            }
+            if let Some(trait_param) = trait_param {
+                result.push_str("$TraitParam$");
+                result.push_str(&encode_identifier(&trait_param.name));
             }
             result
         }

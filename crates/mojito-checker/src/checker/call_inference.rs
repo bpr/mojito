@@ -2522,9 +2522,31 @@ impl Checker {
         let mut bound = self
             .resolve_explicit_use_params(name, decls, bracket, &patterns, actuals)
             .map_err(|failure| self.collector_element_failure(name, decls, failure))?;
+        // An existential over a trait-valued binder (`Some[Tr]`) deduces
+        // against the trait the call binds that binder to.
+        let symbolic = |pattern: &Ty| {
+            matches!(
+                pattern.kind(),
+                TyKind::Param {
+                    trait_param: Some(_),
+                    ..
+                }
+            )
+        };
+        let values = patterns
+            .iter()
+            .any(symbolic)
+            .then(|| DependentValues::own(&self.param_context, decls, &bound.arguments));
         for (pattern, actual) in patterns.iter().zip(actuals) {
-            let deduced = self.existential_argument_ty(pattern, None, actual);
-            bind_existential(&mut bound.subst, pattern, &deduced);
+            let pattern = match &values {
+                Some(values) if symbolic(pattern) => self.resolve_dependent_ty(pattern, values)?,
+                _ => pattern.clone(),
+            };
+            let deduced = self.existential_argument_ty(&pattern, None, actual);
+            if deduced == pattern {
+                self.check_existential_solution(&pattern, &bound.subst)?;
+            }
+            bind_existential(&mut bound.subst, &pattern, &deduced);
         }
         bind_unbound_origin_attributes(
             name,
@@ -2533,6 +2555,39 @@ impl Checker {
             origins.as_ref(),
         )?;
         Ok(SolvedCall { bound, origins })
+    }
+
+    /// Reject the type the call's solve bound the existential `pattern`'s
+    /// anonymous binder to when it misses one of the binder's trait
+    /// bounds, as a declared binder's solution is checked: the argument
+    /// deduced no conforming type ([`Self::existential_argument_ty`]).
+    fn check_existential_solution(&self, pattern: &Ty, subst: &TySubst) -> Result<(), TypeError> {
+        let TyKind::Param {
+            binder,
+            bounds,
+            callable_bound: None,
+            ..
+        } = pattern.kind()
+        else {
+            return Ok(());
+        };
+        let Some(solved) = subst
+            .get(&binder.id)
+            .filter(|solved| *solved != pattern && is_existential_binder(binder))
+        else {
+            return Ok(());
+        };
+        bounds
+            .iter()
+            .find(|bound| !self.conforms_to(solved, bound))
+            .map_or(Ok(()), |bound| {
+                Err(TypeError::TraitNotSatisfied {
+                    param: binder.name.to_string(),
+                    ty: solved.to_string(),
+                    trait_name: bound.clone(),
+                    reason: self.trait_failure_reason(solved, bound),
+                })
+            })
     }
 
     /// Reject an argument binding an origin binder to an immutable origin

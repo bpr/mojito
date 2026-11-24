@@ -1630,6 +1630,7 @@ fn bind_params_applies_a_member_read_and_waits_on_a_parameter() {
             },
             bounds: vec!["HasGet".to_string()],
             callable_bound: None,
+            trait_param: None,
         }
         .into(),
     );
@@ -2097,6 +2098,7 @@ fn answer_propositions_folds_the_operators_above_an_answered_proposition() {
             },
             bounds: vec!["AnyType".to_string()],
             callable_bound: None,
+            trait_param: None,
         }
         .into(),
     );
