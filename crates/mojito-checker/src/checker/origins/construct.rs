@@ -1135,8 +1135,8 @@ impl Checker {
                     mutability: mojito_types::types::OriginMutability::Binder(binder),
                     ..
                 } if *origin == id && &*binder.name != "_" => self
-                    .value_parameter_in_scope(&binder.name)
-                    .or_else(|| self.own_struct_binder_read(binder)),
+                    .own_struct_binder_read(binder)
+                    .or_else(|| self.value_parameter_in_scope(&binder.name)),
                 _ => None,
             })
     }

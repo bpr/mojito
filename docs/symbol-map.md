@@ -3661,7 +3661,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   classify it through `origin_binder_decl` with its siblings in scope, and
   `Checker::is_origin_metadata`/`declares_origin_metadata` add the `mut=`
   binder one names; `generics::origin_binder_mutability` gives a
-  reference's mutability through it.
+  reference's mutability through it. The classification reads an origin
+  binder's mutability from its built `Origin[mut=…]` type's `mut` argument
+  (`Checker::origin_annotation_mutability`, `declarations.rs`): a sibling
+  binder by its name, an enclosing struct's binder (`Origin[mut=Self.mut]`)
+  by its identity. A bracket's `mut=` argument is built by the one builder
+  as any `Bool` argument (`Checker::origin_mutability_argument_value`,
+  `generics.rs`), and an origin's `mut=` binder reads the enclosing
+  struct's own binder through `Checker::own_struct_binder_read` before any
+  bare name (`Checker::origin_mutability_binder_read`,
+  `origins/construct.rs`).
   `Checker::classify_params` returns the argument view
   (`ParamDecl::{argument_binders, argument_decls, argument_view}`), which
   every consumer aligning binders with arguments reads, while a body's

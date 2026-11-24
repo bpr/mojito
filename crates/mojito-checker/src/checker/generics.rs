@@ -2832,9 +2832,11 @@ impl Checker {
     }
 
     /// The value an explicit `mut=` keyword `argument` gives the origin's
-    /// mutability binder `binder`: a literal's `Bool`, the read of a value
-    /// binder in scope, and [`CtValue::Deferred`] for `_` or a spelling
-    /// that names no binder in scope, which the slot then infers.
+    /// mutability binder `binder`, built as any `Bool` parameter argument
+    /// is, as upstream binds it: a literal folds to its `Bool`, a binder
+    /// read (`m`, `Self.mut`) stays symbolic, and `_` or a spelling the
+    /// builder cannot build is [`CtValue::Deferred`], which the slot then
+    /// infers.
     fn origin_mutability_argument_value(
         &self,
         binder: &ParamDecl,
@@ -2846,14 +2848,11 @@ impl Checker {
             value = inner;
         }
         match value {
-            ParamArg::Value(expression) => match &expression.kind {
-                ExprKind::Bool(literal) => Some(CtValue::Bool(*literal)),
-                ExprKind::Identifier(name) if name != "_" => {
-                    self.value_parameter_in_scope(name).map(CtValue::Expr)
-                }
-                _ => None,
-            },
-            ParamArg::Named { .. } => None,
+            ParamArg::Value(expression) if expression.identifier() != Some("_") => self
+                .compile_dependent_ct_expr(expression)
+                .ok()
+                .map(ParamExpr::into_value),
+            _ => None,
         }
         .unwrap_or_else(|| CtValue::Deferred(binder.binder()))
     }

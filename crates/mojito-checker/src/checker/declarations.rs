@@ -1444,11 +1444,6 @@ impl Checker {
         &self,
         tp: &mojito_ast::ast::TypeParam,
     ) -> Result<Option<OriginBinderType>, TypeError> {
-        if let Some(binder) = self.enclosing_self_mutability(tp) {
-            return Ok(Some(OriginBinderType::Origin(OriginMutability::Binder(
-                binder,
-            ))));
-        }
         let Some(resolved) = self.binder_annotation_type(tp) else {
             return Ok(None);
         };
@@ -1504,7 +1499,16 @@ impl Checker {
             Some(TyArg::Val(CtValue::Expr(mutability)))
                 if let Some(binder) = mutability.as_decl_ref() =>
             {
-                OriginMutability::Binder(ParamRef::unbound(&binder.name))
+                // A sibling binder is named by its spelling while its list is
+                // classified; an enclosing struct's binder keeps its identity.
+                let enclosing = self
+                    .self_struct_params()
+                    .is_some_and(|params| params.iter().any(|decl| *decl.id() == binder.id));
+                OriginMutability::Binder(if enclosing {
+                    binder.clone()
+                } else {
+                    ParamRef::unbound(&binder.name)
+                })
             }
             // A mutability left to inference, spelled as upstream spells an
             // unbound parameter.
@@ -1558,32 +1562,6 @@ impl Checker {
             (None, None) => (tp.lone_bound()?, Cow::Borrowed(&[][..])),
         };
         self.is_library_origin(name).then_some(args)
-    }
-
-    /// The enclosing struct's `Bool` binder an `Origin[mut=Self.mut]`
-    /// annotation of a method's list names, as upstream's method signature
-    /// keeps the struct's parameter symbolic until a receiver binds it.
-    fn enclosing_self_mutability(&self, tp: &mojito_ast::ast::TypeParam) -> Option<ParamRef> {
-        let args = self.origin_application(tp)?;
-        let Some(mojito_ast::ast::ParamArg::Value(expression)) = origin_mut_source(&args) else {
-            return None;
-        };
-        let field = expression.self_member()?;
-        self.enclosing_param_decls
-            .iter()
-            .find_map(|decl| match decl {
-                ParamDecl::Value {
-                    id,
-                    name,
-                    ty,
-                    variadic: false,
-                    ..
-                } if name == field && ty.is_bool() => Some(ParamRef {
-                    id: id.clone(),
-                    name: name.as_str().into(),
-                }),
-                _ => None,
-            })
     }
 
     /// The slot of the library `Origin`'s `mut` binder in its declared

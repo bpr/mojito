@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An origin binder's `mut=` argument is built by the one builder, as any
+  `Bool` parameter argument is (R2556), so a method binder
+  `t: Origin[mut=Self.mut]` types as `Origin[mut=mut]` over the struct's
+  own binder instead of leaving `Origin`'s `mut` deferred, and the binder's
+  classification reads that argument rather than re-reading the annotation's
+  `Self.mut` spelling (`enclosing_self_mutability` is gone). A non-`Bool`
+  read such as `Origin[mut=Self.n]` over `n: Int` is now rejected at the
+  annotation with the pin's type mismatch
+  (`assets/type_error/origin_mutability_rejects_non_bool_self_member.mojo`).
+
 - A struct conformance list's listed-and-opted-out and opted-out-twice
   rules move from the parser to the check (R2553), which judges entries by
   the traits they resolve to, as upstream does: `struct S(Writable, not

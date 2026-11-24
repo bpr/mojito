@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2559**.
+Next free ID: **R2561**.
 
 ## Ordered Work
 
@@ -10180,6 +10180,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R2560 A bracket origin of symbolic mutability converts to a binder
+  of another symbolic mutability**
+
+  `Pointer(to=x).unsafe_origin_cast[o.unsafe_mut_cast[not m]()]()` inside
+  `def k[m: Bool, //, o: Origin[mut=m]](ref[o] x: Int)` checks and runs,
+  where nightly `1.3.0.dev2026111316` rejects it: "value passed to
+  'target_origin' cannot be converted from 'Origin[mut=(xor m, True)]' to
+  'Origin[mut=m]'".
+  - `generics.rs::convert_bracket_origin` compares a binder's symbolic
+    `mut=` against the argument's mutability only when the argument's is a
+    known `Mutable`/`Immutable`, so two symbolic mutabilities never
+    mismatch.
+  - Probe: the call above, printing `p[]` from `k(a)` over `var a = 1`;
+    Mojito prints `1`. The pinned `dev2026110105` was not available to
+    probe.
+  - Found while landing R2556 (2026-11-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -13387,25 +13406,27 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2556 A method binder's `Origin[mut=Self.mut]` types with
-  `Origin`'s `mut` unbound**
+- [ ] **R2559 An `unsafe_mut_cast` destination and an `Origin` `mut=`
+  recovery are read by their spelling, not built**
 
-  The builder types a method binder `o: Origin[mut=Self.mut]` as
-  `Origin[mut=<deferred Origin.mut>]`, where upstream binds `Origin`'s
-  `mut` to the enclosing struct's `mut` parameter.
-  - So `declarations.rs::enclosing_self_mutability` reads the binder's
-    expression for the `Self.mut` read instead of the emitted type's
-    `mut` argument, as upstream's binder classification does.
-  - Probe: log `binder_annotation_type(tp)` where
-    `enclosing_self_mutability` fires and run
-    `assets/ok/method_self_mut_origin_binder.mojo`: the library
-    `Pointer`'s and the fixture's `S`'s binders both type with
-    `Val(Deferred(ParamRef { owner: "Origin", slot: 0 }))`.
-  - Once the emitted type carries the struct's binder, the reader takes
-    its `mut` argument and goes.
-  - Found while landing R2549 (2026-11-23).
+  `origins/sig.rs::cast_sig_mutability` accepts an `o.unsafe_mut_cast[d]()`
+  destination in a `ref` clause only as a `Bool` literal, an identifier, or
+  `Self.<field>`, where upstream builds `d` as any `Bool` parameter
+  expression.
+  - The same spelling read is `declarations.rs::origin_mut_argument`, which
+    `origin_annotation_mutability`'s `Err` arm uses when the builder rejects
+    the annotation.
+  - Probe: `def h[m: Bool, //, o: Origin[mut=m]](ref[o] x: Int) ->
+    ref[o.unsafe_mut_cast[not m]()] Int: return x` is "unsupported feature:
+    an 'unsafe_mut_cast' in a reference origin clause whose mutability is
+    neither a Bool literal nor a Bool binder in scope". Nightly
+    `1.3.0.dev2026111316` (the pinned `dev2026110105` was not available to
+    probe) builds it and rejects the return instead: "cannot return
+    reference with incompatible origin mutability: 'm' vs '(xor m, True)'",
+    which is R2387's check.
+  - Found while landing R2556 (2026-11-23).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2557 A `comptime` member or generic alias body is classified as a
   type by its spelling before it is lowered**
