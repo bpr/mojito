@@ -553,9 +553,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   construction (`infer_spelled`: `Self(…)` as the struct's, an alias's)
   takes the entry over, `infer_construction_of` binds it to the selected
   initializer's own parameters and marks it bound, and an unbound list (a
-  type parameter's construction) is rejected as unsupported), which `mojito-checked`'s arena builder answers at
+  type parameter's construction) is rejected as unsupported, and with the
+  leading-dot chain, which `infer_with_expected` checks as
+  `inference.rs:with_contextual_root`'s resolution, rooted at the base type
+  with every spine node under an identity derived from the written one),
+  which `mojito-checked`'s arena builder answers at
   the sugar's location; the sugar's node operand is that construction, so
-  HIR lowers it in the sugar's place. A contextual type with no closed
+  HIR lowers it in the sugar's place, and the construction carries the
+  sugar's `binding_ty`, initializing the binding the sugar initializes. A contextual type with no closed
   spelling (over a type parameter, a symbolic `SIMD`, a raw list, an origin
   argument, or a reflected field type) is constructed as itself:
   `instance_construction` spells a bare call of the struct and records the

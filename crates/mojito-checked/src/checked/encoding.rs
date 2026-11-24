@@ -23,7 +23,6 @@ masked_node! {
             adjustments,
             binding_ty,
             effects,
-            contextual_base,
             comprehension_bindings,
             call_transfers,
         }
@@ -304,7 +303,6 @@ mod tests {
             binding_ty: None,
             category: ValueCategory::Place,
             binding: None,
-            contextual_base: None,
             effects: EffectFacts::default(),
             adjustments: Vec::new(),
             comprehension_bindings: Vec::new(),
@@ -350,7 +348,6 @@ mod tests {
             binding_ty: Some(Ty::int()),
             category: ValueCategory::CompileTime,
             binding: Some(OwnerId(4)),
-            contextual_base: Some("Int".to_string()),
             effects: EffectFacts {
                 raises: None,
                 may_suspend: true,

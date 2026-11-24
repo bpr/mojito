@@ -5365,24 +5365,15 @@ struct NestedCapture {
 }
 
 /// The runtime spelling of name node `node`: the slot HIR resolved it to,
-/// a `$contextual` root's resolved base type, else `None`, for a name
-/// spelled as written or a node that is not a name.
+/// else `None`, for a name spelled as written or a node that is not a name.
 fn name_spelling(
     slots: &HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
     vars: &[String],
     node: &mojito_checked::checked::CheckedExpr,
 ) -> Option<String> {
-    if let Some(slot) = slots.get(&node.id) {
-        return vars.get(*slot as usize).cloned();
-    }
-    match &node.op {
-        mojito_checked::checked::CheckedOp::Identifier(name)
-            if name == mojito_ast::ast::CONTEXTUAL_SENTINEL =>
-        {
-            node.contextual_base.clone()
-        }
-        _ => None,
-    }
+    slots
+        .get(&node.id)
+        .and_then(|slot| vars.get(*slot as usize).cloned())
 }
 
 /// Whether some raise in the lowered body `block`, at any depth, names the

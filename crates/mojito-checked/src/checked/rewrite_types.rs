@@ -829,7 +829,6 @@ impl RewriteTypes for CheckedExpr {
             binding_ty,
             category: _,
             binding: _,
-            contextual_base: _,
             effects,
             adjustments,
             comprehension_bindings,
@@ -1494,7 +1493,6 @@ mod tests {
             binding_ty: Some(TyKind::Tuple(vec![Ty::int()]).into()),
             category: ValueCategory::Place,
             binding: None,
-            contextual_base: None,
             effects: EffectFacts::default(),
             adjustments: vec![SemanticAdjustment::MaterializeLiteral {
                 target: Ty::int(),

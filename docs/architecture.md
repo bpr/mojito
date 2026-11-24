@@ -4544,6 +4544,14 @@ point `__make_tstring` (named by its linked module path, never looked up in
 user scope) and records it as `SemanticAdjustment::SpelledConstruction`, the
 adjustment an initializer list's construction shares; the checked arena and
 HIR hand MIR the call in the literal's place, so MIR has no t-string form.
+A leading-dot chain (`.red`, `.of(7).brighten()`) is a spelled construction
+the same way: upstream emits it as the member of the base type's reference,
+so the checker checks the chain rooted at the expected type's base, every
+spine node under an identity derived from the written one
+(`with_contextual_root`), and records that resolution as the chain's
+`SpelledConstruction`; no `$contextual` sentinel reaches the arena. A
+construction carries its sugar's `binding_ty`, so a binding the sugar
+initializes is initialized in place by the construction.
 
 ### If
 

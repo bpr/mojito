@@ -1154,8 +1154,9 @@ Notes:
   `takes_color(.of(7))`, `[.red(), .of(3)]` under a `List[Color]` annotation,
   `return .red()` — upstream 2026-08): the parser builds the chain over a
   compiler-internal `$contextual` base; the checker resolves it against the
-  expected type (concrete structs only) and re-checks the spelled form with
-  spans preserved, and HIR substitutes the base name physically. Without a
+  expected type (concrete structs only) and checks the chain rooted at the
+  base type, under identities derived from the written chain's, as the
+  construction spelled for it; the arena hands HIR that construction. Without a
   contextual type the form rejects with a targeted diagnostic. Implemented
   first slice: static-method calls with postfix chains in expected-type
   positions, and bare `.member` comptime value members (`return .RED`, read

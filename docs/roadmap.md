@@ -11766,32 +11766,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2568 A leading-dot chain is checked as a clone under the written
-  occurrences' identities, so its root occurrence holds two syntaxes**
-
-  The emitted node of a `$contextual` root holds `Identifier("$contextual")`
-  while a construction spelled from the resolved clone holds the base type's
-  name at the same occurrence.
-  - `with_contextual_root` (`checker/inference.rs`) replaces the root with
-    the expected type's name and keeps every syntax id, so the clone's
-    facts land on the written nodes.
-  - A construction spelled from the clone reuses those ids: the
-    `__getattr_param__` call `.red` stands for
-    (`indexing.rs:getattr_param_spelling`) holds `Identifier("Color")`
-    where the emitter set `Identifier("$contextual")` when it entered the
-    statement.
-  - Upstream resolves a leading dot when it emits the member, so the root's
-    op is the base type's reference and no sentinel op exists.
-  - The lever: give the resolved root an identity derived from the written
-    one, as `comptime for`'s `__iter__` receiver is, and read the base's
-    facts from that node.
-  - Probe: `MOJITO_CHECK_EMITTED=1 mojito --timings check
-    assets/ok/getattr_param_member.mojo` reports 3
-    `emit.check.op_mismatches`, at `.red`, `pick[.red]`, and `pick[.green]`.
-  - Found while landing R765 (2026-11-24).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2567 The emitted nodes are not sealed into checked tables, so
   `finalize`'s arena is still the only one**
 

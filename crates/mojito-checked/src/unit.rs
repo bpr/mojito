@@ -823,7 +823,6 @@ mod tests {
             binding_ty: None,
             category: ValueCategory::Value,
             binding: None,
-            contextual_base: None,
             effects: EffectFacts::default(),
             adjustments: Vec::new(),
             comprehension_bindings: Vec::new(),

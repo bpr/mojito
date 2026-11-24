@@ -806,17 +806,14 @@ impl Lower {
 
     /// Record the slot each local name under `id` reads in this frame's
     /// scopes. Compile-time parameter arguments, t-string parts, and a
-    /// lambda's `def` name no slot of this frame, so the walk skips them,
-    /// as a `$contextual` leading-dot root, which names its base type.
+    /// lambda's `def` name no slot of this frame, so the walk skips them.
     fn resolve_names(&mut self, id: CheckedNodeId) {
         let checked = Arc::clone(&self.checked);
         let Some(node) = checked.expression(id) else {
             return;
         };
         let name = match &node.op {
-            CheckedOp::Identifier(name) if name != mojito_ast::ast::CONTEXTUAL_SENTINEL => {
-                Some(name)
-            }
+            CheckedOp::Identifier(name) => Some(name),
             _ => None,
         };
         if let Some(name) = name

@@ -10188,6 +10188,44 @@ fn leading_dot_bracket_argument_takes_its_parameter_type() {
 }
 
 #[test]
+fn leading_dot_chain_is_checked_as_its_resolved_construction() {
+    let source = "@fieldwise_init\nstruct Color(Copyable, Movable):\n    var value: Int\n\n    @staticmethod\n    def of(v: Int) -> Color:\n        return Color(v)\n\n    def brighten(self) -> Color:\n        return Color(self.value + 100)\n\ndef main():\n    var b: Color = .of(7).brighten()\n    print(b.value)\n";
+    let checked = checked_with_std(source).expect("a leading-dot chain checks");
+    let op = |id| checked.expression(id).map(|expression| &expression.op);
+    assert!(
+        own_expressions(&checked).all(|expression| !matches!(
+            &expression.op,
+            mojito::checked::CheckedOp::Identifier(name) if name == "$contextual"
+        )),
+        "no checked node is the leading-dot sentinel"
+    );
+    let (object, binding_ty) = own_expressions(&checked)
+        .find_map(|expression| match &expression.op {
+            mojito::checked::CheckedOp::MethodCall { object, method, .. }
+                if method == "brighten" =>
+            {
+                Some((*object, expression.binding_ty.clone()))
+            }
+            _ => None,
+        })
+        .expect("the resolved chain's outer call");
+    assert!(
+        binding_ty.is_some(),
+        "the construction initializes the binding"
+    );
+    let root = match op(object) {
+        Some(mojito::checked::CheckedOp::MethodCall { object, method, .. }) if method == "of" => {
+            op(*object)
+        }
+        other => panic!("the inner call is `.of(7)`: {other:?}"),
+    };
+    assert!(
+        matches!(root, Some(mojito::checked::CheckedOp::Identifier(name)) if name == "Color"),
+        "the chain is rooted at the base type: {root:?}"
+    );
+}
+
+#[test]
 fn value_parameter_field_read_is_a_parameter_value() {
     let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n\n    def __deinit__(deinit self):\n        pass\n\ndef f[q: Q]():\n    print(q.a)\n\ndef main():\n    f[Q(8)]()\n";
     let checked = checked_with_std(source).expect("check");

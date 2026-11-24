@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A leading-dot chain (`.red`, `.of(7).brighten()`) is checked as the
+  construction spelled for it, rooted at the expected type's base under
+  identities derived from the written chain's, as upstream emits a
+  leading-dot member on the base type's reference (R2568). The arena hands
+  HIR that construction, so no `$contextual` node reaches it and the
+  `contextual_base` fact HIR and MIR substituted is gone (package format
+  276); the written root no longer holds two syntaxes, so
+  `MOJITO_CHECK_EMITTED=1` reports no op mismatch on
+  `getattr_param_member.mojo`. A spelled construction now carries its
+  sugar's binding type, so `var col: Color = .red` and `var p: P = {1, 2}`
+  initialize their binding as the spelled form does.
+
 - Each node the check emits holds its op from the moment it is allocated,
   its operands the nodes allocated for them, as upstream's emitter creates
   an op when it emits it (R765). The check now also emits the nodes of the

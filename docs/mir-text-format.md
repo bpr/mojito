@@ -1406,6 +1406,11 @@ binder {...}` after `callable_bound`, written only for an existential
 binding the binder replaces with the trait it receives. An older record
 has none. The package format moves to `mojito-package 275` (R2554).
 
+A checked expression no longer carries a `contextual_base` attribute: a
+leading-dot chain reaches the arena as the construction rooted at its base
+type, so no `$contextual` node needs one. The package format moves to
+`mojito-package 276` (R2568).
+
 Schema 1.230 gives a trait `requirement` record its parameters'
 `defaults` after `param_types`, encoded as a `decl`'s are: the attribute a
 call through the bound that leaves the slot out materializes, whatever the
@@ -3091,9 +3096,9 @@ mojito-package 82
   names, in the mask's bit order; an absent attribute (`None`, empty, or
   default effects) writes nothing. An expression's parts are its op,
   span, source, and syntax id; mask bits 0–1 hold its value category,
-  and bits 2–10 name `ty`, `place_ty`, `binding`, `adjustments`,
-  `binding_ty`, `effects`, `contextual_base`, `comprehension_bindings`,
-  and `call_transfers`, most frequent first, so a common node's mask is
+  and bits 2–9 name `ty`, `place_ty`, `binding`, `adjustments`,
+  `binding_ty`, `effects`, `comprehension_bindings`, and
+  `call_transfers`, most frequent first, so a common node's mask is
   one byte. A statement's parts are its op, span, module, and syntax id,
   bits 0–2 naming `binding`, `declaration`, and `binding_ty`; a
   declaration's are its kind, name, and location, bits 0–2 naming

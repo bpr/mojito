@@ -1583,9 +1583,6 @@ pub struct CheckedExpr {
     pub binding_ty: Option<Ty>,
     pub category: ValueCategory,
     pub binding: Option<mojito_types::origin::OwnerId>,
-    /// Checker-resolved base type name for a `$contextual` leading-dot
-    /// sentinel at this node; HIR substitutes it during syntax renaming.
-    pub contextual_base: Option<String>,
     pub effects: EffectFacts,
     pub adjustments: Vec<SemanticAdjustment>,
     /// Stable identities and storage types for generator binders introduced by
@@ -6276,7 +6273,6 @@ impl<'a> ArenaBuilder<'a> {
             binding_ty,
             category,
             binding,
-            contextual_base: facts.contextual_base.clone(),
             effects: facts.effects.clone().unwrap_or_default(),
             adjustments,
             comprehension_bindings: facts.comprehension_bindings.clone().unwrap_or_default(),
@@ -6341,7 +6337,8 @@ impl<'a> ArenaBuilder<'a> {
         // loop iterates the construction it spells, a `comptime for` steps
         // it, and `and`/`or` tests its truth. A place the sugar spells (an
         // address builtin's dereference) is the place a `mut` or `ref`
-        // argument retains and a `ref` binding or result borrows.
+        // argument retains and a `ref` binding or result borrows. A binding
+        // the sugar initializes is initialized by its construction.
         let facts = self.facts(&expression.source_span());
         let conversions = conversion_adjustments(facts);
         let place_uses: Vec<SemanticAdjustment> = facts
@@ -6374,6 +6371,11 @@ impl<'a> ArenaBuilder<'a> {
             .pointee_initialization
             .clone()
             .map(|element| SemanticAdjustment::PointerWrite { element });
+        let binding_ty = facts.binding_ty.clone();
+        let constructed = &mut self.nodes[node.0 as usize];
+        if constructed.binding_ty.is_none() {
+            constructed.binding_ty = binding_ty;
+        }
         self.nodes[node.0 as usize].adjustments.extend(conversions);
         self.nodes[node.0 as usize].adjustments.extend(place_uses);
         self.nodes[node.0 as usize].adjustments.extend(loops);
@@ -7719,8 +7721,6 @@ node_facts! {
     facts {
         /// The callable a call or name resolved to.
         overload_target: String,
-        /// The base type a `$contextual` leading-dot sentinel resolved to.
-        contextual_base: String,
         generic_instantiation: GenericInstantiation,
         method_instantiation: MethodInstantiation,
         /// The compile-time arguments a call through a trait bound applies

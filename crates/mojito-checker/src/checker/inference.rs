@@ -1991,11 +1991,11 @@ impl Checker {
             return Ok(ty);
         }
         // A leading-dot contextual member chain resolves its `$contextual`
-        // root against the expected type, then re-checks as the ordinary
-        // spelled form. The rewrite clone preserves spans and syntax ids, so
-        // every recorded fact lands on the original nodes; HIR substitutes
-        // the base name physically during syntax renaming.
-        if let Some(root_span) = contextual_root_span(expression) {
+        // root against the expected type and checks the resolved chain,
+        // under identities derived from the written chain's, as the
+        // construction spelled for it, as upstream emits a leading-dot member
+        // on the base type's reference; the arena hands HIR the construction.
+        if contextual_root_span(expression).is_some() {
             let base = match expected.kind() {
                 struct_ty if let Some((name, _)) = struct_ty.as_non_pointer_struct() => {
                     name.clone()
@@ -2044,7 +2044,7 @@ impl Checker {
             let rewritten = with_contextual_root(expression, &root);
             let ty = self.infer_with_expected(&rewritten, expected, record)?;
             if record {
-                self.record_at(root_span).contextual_base = Some(base);
+                self.record_spelled_construction(expression, rewritten, &ty);
             }
             return Ok(ty);
         }
@@ -3431,23 +3431,42 @@ pub(super) fn type_read_as_value(name: &str) -> TypeError {
 }
 
 /// A clone of `expression` whose `$contextual` chain root is replaced by the
-/// resolved base type name. Spans and syntax ids are untouched, so recorded
-/// facts key identically to the original nodes.
+/// resolved base `base`, as upstream emits a leading-dot member on the base
+/// type's reference. Spans are kept; every spine node and the resolved root
+/// take identities derived from the written ones, so the resolved chain is a
+/// distinct occurrence set, and the synthesized parts of an applied root
+/// derive from the root's. Arguments, keywords, and index keys stay the
+/// written occurrences.
 pub(super) fn with_contextual_root(expression: &Expr, base: &ExprKind) -> Expr {
-    fn replace(expression: &mut Expr, base: &ExprKind) {
+    fn resolve(expression: &mut Expr, base: &ExprKind) {
+        expression.syntax_id = mojito_common::token::SyntaxId::derived(
+            expression.syntax_id,
+            CONTEXTUAL_RESOLUTION_ORDINAL,
+        );
         match &mut expression.kind {
             ExprKind::Identifier(name) if name == mojito_ast::ast::CONTEXTUAL_SENTINEL => {
+                let resolved = expression.syntax_id;
                 expression.kind = base.clone();
+                mojito_ast::visit::walk_expr_mut(
+                    &mut mojito_ast::visit::DerivedIdentities {
+                        parent: resolved,
+                        next: 1,
+                    },
+                    expression,
+                );
+                expression.syntax_id = resolved;
             }
             ExprKind::Member { object, .. }
             | ExprKind::MethodCall { object, .. }
-            | ExprKind::Index { object, .. } => replace(object, base),
-            ExprKind::Invoke { callee, .. } => replace(callee, base),
+            | ExprKind::Index { object, .. } => resolve(object, base),
+            ExprKind::Invoke { callee, .. } => resolve(callee, base),
             _ => {}
         }
     }
     let mut rewritten = expression.clone();
-    replace(&mut rewritten, base);
+    if contextual_root_span(expression).is_some() {
+        resolve(&mut rewritten, base);
+    }
     rewritten
 }
 
@@ -3491,5 +3510,151 @@ fn parameter_lambda(argument: &mojito_ast::ast::ParamArg) -> Option<&Expr> {
         }
         mojito_ast::ast::ParamArg::Named { value, .. } => parameter_lambda(value),
         mojito_ast::ast::ParamArg::Value(_) => None,
+    }
+}
+
+/// The ordinal of a leading-dot chain's resolved node among the occurrences
+/// derived from its written node, past every ordinal a construction spelled
+/// for the written node derives, so the resolved chain and the written one
+/// are distinct occurrences with distinct facts.
+const CONTEXTUAL_RESOLUTION_ORDINAL: u32 = u32::MAX - 68;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mojito_ast::ast::{CONTEXTUAL_SENTINEL, ParamArg, named_subscript};
+    use mojito_common::token::SyntaxId;
+
+    /// `.make(1).brighten()`: the written chain and the argument `1`.
+    fn leading_dot_chain() -> (Expr, SyntaxId) {
+        let span = (0, 1);
+        let root = Expr::new(ExprKind::Identifier(CONTEXTUAL_SENTINEL.to_string()), span);
+        let argument = Expr::new(ExprKind::Int(1_i64.into()), span);
+        let argument_id = argument.syntax_id;
+        let make = Expr::new(
+            ExprKind::MethodCall {
+                object: Box::new(root),
+                method: "make".to_string(),
+                args: vec![argument],
+                kwargs: Vec::new(),
+            },
+            span,
+        );
+        let chain = Expr::new(
+            ExprKind::MethodCall {
+                object: Box::new(make),
+                method: "brighten".to_string(),
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            },
+            span,
+        );
+        (chain, argument_id)
+    }
+
+    /// The spine of a chain, outermost first, and the argument of its
+    /// innermost call.
+    fn spine(chain: &Expr) -> (Vec<&Expr>, Option<&Expr>) {
+        let mut nodes = vec![chain];
+        let mut argument = None;
+        let mut current = chain;
+        while let ExprKind::MethodCall { object, args, .. } = &current.kind {
+            argument = args.first().or(argument);
+            nodes.push(object);
+            current = object;
+        }
+        (nodes, argument)
+    }
+
+    fn syntax_ids(expression: &Expr) -> Vec<SyntaxId> {
+        struct Ids(Vec<SyntaxId>);
+        impl mojito_ast::visit::MutVisitor for Ids {
+            fn visit_expr_mut(&mut self, expr: &mut Expr) {
+                self.0.push(expr.syntax_id);
+            }
+        }
+        let mut ids = Ids(Vec::new());
+        mojito_ast::visit::walk_expr_mut(&mut ids, &mut expression.clone());
+        ids.0
+    }
+
+    #[test]
+    fn resolved_chain_spine_takes_derived_identities() {
+        let (chain, argument_id) = leading_dot_chain();
+        let base = ExprKind::Identifier("Color".to_string());
+        let resolved = with_contextual_root(&chain, &base);
+        let (written, _) = spine(&chain);
+        let (rewritten, argument) = spine(&resolved);
+        assert_eq!(written.len(), rewritten.len());
+        for (written, rewritten) in written.iter().zip(&rewritten) {
+            assert_eq!(
+                rewritten.syntax_id,
+                SyntaxId::derived(written.syntax_id, CONTEXTUAL_RESOLUTION_ORDINAL)
+            );
+        }
+        assert_eq!(
+            rewritten.last().map(|root| &root.kind),
+            Some(&ExprKind::Identifier("Color".to_string()))
+        );
+        assert_eq!(
+            syntax_ids(&resolved),
+            syntax_ids(&with_contextual_root(&chain, &base))
+        );
+        // The argument is written once and keeps its occurrence.
+        assert_eq!(
+            argument.map(|argument| argument.syntax_id),
+            Some(argument_id)
+        );
+    }
+
+    #[test]
+    fn applied_root_parts_derive_from_the_resolved_root() {
+        let (chain, _) = leading_dot_chain();
+        let span = (0, 1);
+        let applied = named_subscript(
+            "Result",
+            &[
+                ParamArg::Value(Expr::new(ExprKind::Identifier("Int".to_string()), span)),
+                ParamArg::Value(Expr::new(ExprKind::Identifier("String".to_string()), span)),
+            ],
+            span,
+        )
+        .expect("a two-argument application");
+        let resolved = with_contextual_root(&chain, &applied.kind);
+        let (written, _) = spine(&chain);
+        let (rewritten, _) = spine(&resolved);
+        let root = rewritten.last().expect("a resolved root");
+        let written_root = written.last().expect("a written root");
+        assert_eq!(
+            root.syntax_id,
+            SyntaxId::derived(written_root.syntax_id, CONTEXTUAL_RESOLUTION_ORDINAL)
+        );
+        let parts = syntax_ids(root);
+        assert!(
+            parts[..parts.len() - 1]
+                .iter()
+                .all(|part| part.derivation().map(|(parent, _)| parent) == Some(root.syntax_id))
+        );
+        assert_eq!(
+            syntax_ids(&resolved),
+            syntax_ids(&with_contextual_root(&chain, &applied.kind))
+        );
+    }
+
+    #[test]
+    fn a_chain_without_a_leading_dot_is_cloned_unchanged() {
+        let span = (0, 1);
+        let chain = Expr::new(
+            ExprKind::Member {
+                object: Box::new(Expr::new(ExprKind::Identifier("c".to_string()), span)),
+                field: "red".to_string(),
+            },
+            span,
+        );
+        let base = ExprKind::Identifier("Color".to_string());
+        assert_eq!(
+            syntax_ids(&with_contextual_root(&chain, &base)),
+            syntax_ids(&chain)
+        );
     }
 }
