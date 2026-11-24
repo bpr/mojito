@@ -92,7 +92,7 @@ pub fn check_program_in(
     let discovery = check_program_carrying(stmts, context).map(PassCarry::into_result)?;
     let _arena = timing::span("arena");
     timing::count("arena_builds", 1);
-    Ok(discovery.finalize())
+    mojito_checked::checked::CheckedProgram::new(discovery).map_err(TypeError::InvariantViolation)
 }
 
 /// The per-compilation state one check runs in.

@@ -1,18 +1,14 @@
 //! The op an emitted node holds from its allocation: its syntax's
 //! operation, each operand the node the emitter allocated for it.
 //!
-//! It is what the checked arena's builder (`mojito_checked::checked`'s
-//! `ArenaBuilder`) makes of the same syntax, arm for arm, with every field
-//! the check decides later left empty for the facts on the node to fill:
-//! a declaration's symbol is its written name and its signature the
-//! default, a call holds one parameter per written bracket argument, a
-//! subscript's key is its index's node, a type value holds no type, a
-//! `case`'s and a `match`'s plan is absent, and a destructuring loop's
-//! binder is unnamed until its desugar is spliced. The seal
-//! (`mojito_checked::emitted`) fills those fields from the facts, and the
-//! arena builder stays the oracle `MOJITO_CHECK_EMITTED=1` compares the
-//! sealed tables with until they replace it, so the two mappings live side
-//! by side.
+//! Every field the check decides later is left empty for the facts on the
+//! node to fill: a declaration's symbol is its written name and its
+//! signature the default, a call holds one parameter per written bracket
+//! argument, a subscript's key is its index's node, a type value holds no
+//! type, a `case`'s and a `match`'s plan is absent, and a destructuring
+//! loop's binder is unnamed until its desugar is spliced. The seal
+//! (`mojito_checked::emitted`) fills those fields from the facts when it
+//! composes the checked tables.
 
 use super::EmittedSlot;
 use mojito_ast::ast::{

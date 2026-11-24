@@ -181,21 +181,18 @@ pub struct HandoffStores {
 
 impl HandoffStores {
     /// The checked handoff: the occurrence records, less any a cleared
-    /// fact left empty, and under `MOJITO_CHECK_EMITTED=1` the emitted
-    /// nodes, holding the check's `desugars` by node.
+    /// fact left empty, and the emitted nodes, holding the check's
+    /// `desugars` by node.
     fn into_discovery(
         self,
         desugars: &HashMap<SourceSpan, super::desugar::StatementDesugar>,
     ) -> DiscoveryResult {
         let (node_facts, mut emitted) = self.emitter.into_parts();
-        let switched = std::env::var_os("MOJITO_CHECK_EMITTED").is_some();
-        if switched {
-            emitted.desugars = emitted_desugars(&emitted.index, desugars);
-        }
+        emitted.desugars = emitted_desugars(&emitted.index, desugars);
         DiscoveryResult {
             statements: self.statements,
             node_facts,
-            emitted: switched.then_some(emitted),
+            emitted,
             struct_instantiations: self.struct_instantiations.into_inner(),
             checked_types: self.checked_types.into_inner(),
             generic_parameters: self.generic_parameters.into_inner(),
@@ -686,26 +683,21 @@ fn stale_reads(
 }
 
 /// Each of the check's `desugars` with its statements' nodes in `index`;
-/// a statement no node holds is counted (`emit.seal.unemitted_desugars`)
-/// and left out.
+/// a statement no node holds keeps the slot no node holds, which the seal
+/// rejects.
 fn emitted_desugars(
     index: &HashMap<SourceSpan, mojito_checked::emitted::EmittedSlot>,
     desugars: &HashMap<SourceSpan, super::desugar::StatementDesugar>,
 ) -> HashMap<SourceSpan, mojito_checked::emitted::EmittedDesugar> {
-    let mut unemitted = 0u64;
-    let converted = desugars
+    desugars
         .iter()
         .map(|(at, desugar)| {
             let statements = desugar
                 .statements
                 .iter()
-                .filter_map(|statement| {
-                    let slot = match index.get(&statement.source_span()) {
-                        Some(mojito_checked::emitted::EmittedSlot::Statement(id)) => Some(*id),
-                        _ => None,
-                    };
-                    unemitted += u64::from(slot.is_none());
-                    slot
+                .map(|statement| match index.get(&statement.source_span()) {
+                    Some(mojito_checked::emitted::EmittedSlot::Statement(id)) => *id,
+                    _ => mojito_checked::checked::CheckedStmtId(u32::MAX),
                 })
                 .collect();
             (
@@ -716,7 +708,5 @@ fn emitted_desugars(
                 },
             )
         })
-        .collect();
-    timing::count("emit.seal.unemitted_desugars", unemitted);
-    converted
+        .collect()
 }

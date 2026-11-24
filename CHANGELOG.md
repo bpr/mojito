@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checked handoff is the sealed emitted nodes: `CheckedProgram::new`
+  takes the tables `emitted::seal` composes from the nodes the check
+  emitted, as upstream's emitter leaves each op final, and the second
+  syntax walk that built the arena from the records (`finalize`,
+  `build_checked_expressions`, `ArenaBuilder`, `CheckedArena`,
+  `LiftedApplications`) and the `MOJITO_CHECK_EMITTED=1` comparison are
+  gone (R766). An occurrence the check emitted no node for is now an
+  internal error naming it, not a placeholder node, and a default
+  wrapper's body syntax is dropped once sealed. No accepted program, MIR
+  text, or package byte changes; std's table assembly (`check.arena.expressions`,
+  std from source, debug) went from 64.7 ms to 51.8 ms.
+
 - The check's emitted nodes are sealed into checked tables: each node's op
   is composed with its facts and its declaration's sites, each spelled
   sugar's position holds its construction, and the check's desugars are

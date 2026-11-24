@@ -2,8 +2,8 @@
 
 use mojito_ast::ast::Stmt;
 use mojito_ast::ast::{
-    ArgConvention, BindingMode, CollectionKind, ComprehensionClause, Expr, ExprKind, ImportNames,
-    InfixOp, KwArg, MethodProvenance, ParamArg, ParamKind, PrefixOp, SubscriptArg, TStringPart,
+    ArgConvention, BindingMode, CollectionKind, Expr, ExprKind, ImportNames, InfixOp,
+    MethodProvenance, ParamKind, PrefixOp,
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
@@ -1623,7 +1623,8 @@ pub enum CheckedOp {
     Identifier(String),
     /// A function or generator type in value position, as the check resolved it (`None` where
     /// the check resolved none), with the nodes of the applications the
-    /// check lifted out of it ([`CheckedArenaBuilder::expression_applications`]).
+    /// check lifted out of it, chosen from the emitted candidates
+    /// ([`crate::emitted::EmittedExpr::applications`]).
     TypeValue {
         ty: Option<Ty>,
         applications: Vec<CheckedNodeId>,
@@ -4482,12 +4483,8 @@ impl CheckedTables {
                 ..declaration.clone()
             })
             .collect();
-        let mut tables = Self::new(CheckedArena {
-            nodes: copy.expressions,
-            statements: copy.statements,
-            roots: vec![root],
-            wrapper_roots,
-        });
+        let mut tables =
+            Self::undeclared(copy.expressions, copy.statements, vec![root], wrapper_roots);
         for statement in &mut tables.statements {
             statement.declaration = statement
                 .declaration
@@ -4497,14 +4494,14 @@ impl CheckedTables {
         tables
     }
 
-    /// The tables of `arena`, which declare nothing yet.
-    fn new(arena: CheckedArena) -> Self {
-        let CheckedArena {
-            nodes: expressions,
-            statements,
-            roots,
-            wrapper_roots,
-        } = arena;
+    /// The tables of `expressions` and `statements` under `roots` and each
+    /// default wrapper's `wrapper_roots`, which declare nothing yet.
+    pub(crate) const fn undeclared(
+        expressions: Vec<CheckedExpr>,
+        statements: Vec<CheckedStmt>,
+        roots: Vec<CheckedStmtId>,
+        wrapper_roots: Vec<Vec<CheckedStmtId>>,
+    ) -> Self {
         Self {
             expressions,
             statements,
@@ -4920,8 +4917,10 @@ pub struct CheckedDefaultWrapper {
     /// Its checked signature, read from its member sites when the program
     /// is assembled.
     pub signature: CheckedSignature,
-    /// The check's syntax of the body. A package unit does not hold it:
-    /// its nodes are the unit's [`CheckedTables::wrapper_roots`].
+    /// The check's syntax of the body, which the seal finds the body's
+    /// root nodes by; [`CheckedProgram::new`] empties it once sealed, as a
+    /// package unit never holds it: its nodes are the
+    /// [`CheckedTables::wrapper_roots`].
     #[serde(skip)]
     pub body: Vec<Stmt>,
 }
@@ -4987,9 +4986,9 @@ impl mojito_ast::ast::DeclaredParam for SignatureParam {
 /// What one check of an elaborated program established, before the executable
 /// handoff is assembled.
 ///
-/// It is [`CheckedProgram::new`]'s input alone, until the check emits its
-/// nodes itself: the check's facts, one record per occurrence
-/// ([`NodeFacts`]), and the syntax they were recorded at, beside its
+/// It is [`CheckedProgram::new`]'s input alone: the nodes the check
+/// emitted, the check's facts, one record per occurrence ([`NodeFacts`]),
+/// and the root syntax the seal finds the root nodes by, beside its
 /// declaration-site tables. Every rejecting check has already run. It is
 /// not an executable program and never reaches HIR or MIR.
 #[derive(Debug, Clone)]
@@ -5027,17 +5026,10 @@ pub struct DiscoveryResult {
     /// The symbol each overloaded module `def` lowers to, as the check
     /// spelled it from the declaration's typed signature.
     pub declaration_symbols: HashMap<GenericSite, String>,
-    /// The check's emitted nodes, kept only under `MOJITO_CHECK_EMITTED=1`,
-    /// which compares them with the arena built from `node_facts`.
-    pub emitted: Option<crate::emitted::EmittedNodes>,
-}
-
-impl DiscoveryResult {
-    /// Assemble the executable handoff. Nothing is inferred again: the arena
-    /// and its indexes are built from the facts this result already holds.
-    pub fn finalize(self) -> CheckedProgram {
-        CheckedProgram::new(self)
-    }
+    /// The check's emitted nodes, each holding its op, and the check's
+    /// desugars by node: what [`CheckedProgram::new`] seals into the
+    /// checked tables.
+    pub emitted: crate::emitted::EmittedNodes,
 }
 
 /// A successfully checked program plus semantic facts that downstream phases
@@ -5453,9 +5445,12 @@ impl CheckedProgram {
         &self.warnings
     }
 
-    /// The single checker-to-checked-boundary assembly point: the arena
-    /// and the program's indexes, built from what `discovery` recorded.
-    pub fn new(discovery: DiscoveryResult) -> Self {
+    /// The single checker-to-checked-boundary assembly point: the checked
+    /// tables sealed from the nodes the check emitted, and the program's
+    /// indexes, built from what `discovery` recorded. Nothing is inferred
+    /// again; an occurrence the check emitted no node for is an error,
+    /// with the first such occurrence named.
+    pub fn new(discovery: DiscoveryResult) -> Result<Self, String> {
         let DiscoveryResult {
             statements,
             node_facts,
@@ -5504,21 +5499,19 @@ impl CheckedProgram {
                 wrapper.params.len(),
             );
         }
-        let arena =
-            build_checked_expressions(&statements, &node_facts, &default_wrappers, signatures);
-        if let Some(emitted) = &emitted {
-            let (sealed, missing) = crate::emitted::seal(
-                emitted,
-                &statements,
-                &default_wrappers,
-                &node_facts,
-                signatures,
-            );
-            crate::emitted::compare(&sealed, &arena, missing);
+        let mut tables = crate::emitted::seal(
+            &emitted,
+            &statements,
+            &default_wrappers,
+            &node_facts,
+            signatures,
+        )
+        .map_err(|unsealed| unsealed.to_string())?;
+        for wrapper in &mut default_wrappers {
+            wrapper.body = Vec::new();
         }
         drop(expressions_span);
         let declarations_span = mojito_common::timing::span("declarations");
-        let mut tables = CheckedTables::new(arena);
         tables.declare(&|node| {
             checked_types
                 .get(&AnnotationSite::FunctionType {
@@ -5562,7 +5555,7 @@ impl CheckedProgram {
             trait_members,
         };
         program.collect_closure_uses();
-        program
+        Ok(program)
     }
 
     /// The program of one package unit: its checked `tables` as the
@@ -6253,44 +6246,6 @@ impl Outermost {
     }
 }
 
-/// The checked arena of `statements` and of `default_wrappers`' bodies,
-/// each node holding the facts `facts` recorded at its occurrence, each declaration op's symbol and
-/// signature read from `signatures`.
-pub(crate) fn build_checked_expressions<'a>(
-    statements: &[Stmt],
-    facts: &'a HashMap<SourceSpan, NodeFacts>,
-    default_wrappers: &[CheckedDefaultWrapper],
-    signatures: Signatures<'a>,
-) -> CheckedArena {
-    let mut builder = ArenaBuilder {
-        nodes: Vec::new(),
-        statements: Vec::new(),
-        facts,
-        signatures,
-        functions: 0,
-    };
-    let roots = builder.block(statements);
-    let wrapper_roots = default_wrappers
-        .iter()
-        .map(|wrapper| builder.block(&wrapper.body))
-        .collect();
-    CheckedArena {
-        nodes: builder.nodes,
-        statements: builder.statements,
-        roots,
-        wrapper_roots,
-    }
-}
-
-/// What [`build_checked_expressions`] builds, and what the seal makes of
-/// the emitted nodes (`emitted::seal`).
-pub(crate) struct CheckedArena {
-    pub(crate) nodes: Vec<CheckedExpr>,
-    pub(crate) statements: Vec<CheckedStmt>,
-    pub(crate) roots: Vec<CheckedStmtId>,
-    pub(crate) wrapper_roots: Vec<Vec<CheckedStmtId>>,
-}
-
 /// A unit's nodes being copied out of its program's tables
 /// ([`CheckedTables::extract`]).
 struct Extraction<'t> {
@@ -6393,1072 +6348,6 @@ impl NodeMap for Extraction<'_> {
     }
 }
 
-/// The checked arena under construction.
-struct ArenaBuilder<'a> {
-    nodes: Vec<CheckedExpr>,
-    statements: Vec<CheckedStmt>,
-    facts: &'a HashMap<SourceSpan, NodeFacts>,
-    /// What a declaration op's symbol and signature are read from.
-    signatures: Signatures<'a>,
-    /// How many function bodies enclose the statement being built: a
-    /// `def` inside one is named by its own name.
-    functions: usize,
-}
-
-impl<'a> ArenaBuilder<'a> {
-    fn facts(&self, span: &SourceSpan) -> &'a NodeFacts {
-        self.facts.get(span).unwrap_or(&NodeFacts::EMPTY)
-    }
-
-    /// A condition's nodes: the value, then a pattern's expressions.
-    fn condition(&mut self, condition: &mojito_ast::ast::Condition) -> CheckedCondition {
-        match condition {
-            mojito_ast::ast::Condition::Expr(value) => CheckedCondition::Expr(self.expr(value)),
-            mojito_ast::ast::Condition::Case { pattern, value } => {
-                let value = self.expr(value);
-                let plan = self.facts(&pattern.source_span()).match_plan.clone();
-                let pattern = self.pattern(pattern);
-                let anchor = plan
-                    .as_ref()
-                    .and_then(|plan| plan.anchor.as_ref())
-                    .map(|anchor| self.stmt(anchor));
-                let (commands, reads) = self.case_program(plan.as_ref(), 0);
-                CheckedCondition::Case {
-                    pattern,
-                    value,
-                    anchor,
-                    commands,
-                    reads,
-                }
-            }
-        }
-    }
-
-    /// A pattern's node, its embedded expressions built in source order.
-    fn pattern(&mut self, pattern: &mojito_ast::ast::MatchPattern) -> CheckedPattern {
-        use mojito_ast::ast::{MatchPatternKind, SequencePattern};
-        let kind = match &pattern.kind {
-            MatchPatternKind::Wildcard => CheckedPatternKind::Wildcard,
-            MatchPatternKind::Bind { name, mode } => CheckedPatternKind::Bind {
-                name: name.clone(),
-                mode: *mode,
-            },
-            MatchPatternKind::Literal { value, .. } => {
-                CheckedPatternKind::Literal(self.expr(value))
-            }
-            MatchPatternKind::Equal { value, .. } => CheckedPatternKind::Equal(self.expr(value)),
-            MatchPatternKind::Head(value) => CheckedPatternKind::Head(self.expr(value)),
-            MatchPatternKind::Tuple(items) => {
-                CheckedPatternKind::Tuple(items.iter().map(|item| self.pattern(item)).collect())
-            }
-            MatchPatternKind::Or(items) => {
-                CheckedPatternKind::Or(items.iter().map(|item| self.pattern(item)).collect())
-            }
-            MatchPatternKind::Sequence(items) => CheckedPatternKind::Sequence(
-                items
-                    .iter()
-                    .map(|item| match item {
-                        SequencePattern::Element(pattern) => {
-                            CheckedSequencePattern::Element(self.pattern(pattern))
-                        }
-                        SequencePattern::Star(pattern) => {
-                            CheckedSequencePattern::Star(self.pattern(pattern))
-                        }
-                    })
-                    .collect(),
-            ),
-            MatchPatternKind::Call { head, args, kwargs } => CheckedPatternKind::Call {
-                head: self.expr(head),
-                args: args.iter().map(|item| self.pattern(item)).collect(),
-                kwargs: kwargs
-                    .iter()
-                    .map(|(name, pattern)| (name.clone(), self.pattern(pattern)))
-                    .collect(),
-            },
-            MatchPatternKind::Fields(fields) => CheckedPatternKind::Fields(
-                fields
-                    .iter()
-                    .map(|(name, pattern)| (name.clone(), self.pattern(pattern)))
-                    .collect(),
-            ),
-            MatchPatternKind::As { pattern, name } => CheckedPatternKind::As {
-                pattern: Box::new(self.pattern(pattern)),
-                name: name.clone(),
-            },
-        };
-        CheckedPattern {
-            kind,
-            span: pattern.span,
-            syntax_id: pattern.syntax_id,
-        }
-    }
-
-    /// A target's node, its places built in source order.
-    fn target(&mut self, target: &mojito_ast::ast::DestructureTarget) -> CheckedTarget {
-        use mojito_ast::ast::{DestructureTargetKind, SequenceTarget};
-        let kind = match &target.kind {
-            DestructureTargetKind::Discard => CheckedTargetKind::Discard,
-            DestructureTargetKind::Declare { name, mode } => {
-                let facts = self.facts(&target.source_span());
-                CheckedTargetKind::Declare {
-                    name: name.clone(),
-                    mode: *mode,
-                    binding: facts.binding,
-                    binding_ty: facts.binding_ty.clone(),
-                }
-            }
-            DestructureTargetKind::Place(place) => CheckedTargetKind::Place(self.expr(place)),
-            DestructureTargetKind::Tuple(items) => {
-                CheckedTargetKind::Tuple(items.iter().map(|item| self.target(item)).collect())
-            }
-            DestructureTargetKind::Sequence(items) => CheckedTargetKind::Sequence(
-                items
-                    .iter()
-                    .map(|item| match item {
-                        SequenceTarget::Element(target) => {
-                            CheckedSequenceTarget::Element(self.target(target))
-                        }
-                        SequenceTarget::Star(target) => {
-                            CheckedSequenceTarget::Star(self.target(target))
-                        }
-                    })
-                    .collect(),
-            ),
-        };
-        CheckedTarget {
-            kind,
-            span: target.span,
-            syntax_id: target.syntax_id,
-        }
-    }
-
-    fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
-        if let Some(node) = self.spelled_construction(expression) {
-            return node;
-        }
-        let op = self.op(expression);
-        let facts = self.facts(&expression.source_span());
-        let id = CheckedNodeId(self.nodes.len() as u32);
-        self.nodes.push(expression_node(
-            id,
-            op,
-            (
-                expression.span,
-                expression.source.clone(),
-                expression.syntax_id,
-            ),
-            facts,
-            expression.bracket_application().map(|(name, _)| name),
-        ));
-        id
-    }
-
-    /// The node of the construction the check spelled for `expression`, if
-    /// it is a spelled sugar: the sugar's operand position holds it, so HIR
-    /// lowers the construction where the sugar was written (an
-    /// initializer list, a t-string, a value pack read as its
-    /// `ParameterList`, a scalar `range` call, a `comptime for` iterable read
-    /// as its `__iter__()` call, a type-receiver call's converted first
-    /// argument). A sugar the check lifted as a compile-time
-    /// application (a module constant's initializer list) lifts its
-    /// construction.
-    fn spelled_construction(&mut self, expression: &Expr) -> Option<CheckedNodeId> {
-        if !matches!(
-            expression.kind,
-            ExprKind::BraceLit(_)
-                | ExprKind::InitializerList { .. }
-                | ExprKind::ListLit(_)
-                | ExprKind::TString { .. }
-                | ExprKind::Identifier(_)
-                | ExprKind::Member { .. }
-                | ExprKind::Call { .. }
-                | ExprKind::MethodCall { .. }
-                | ExprKind::Invoke { .. }
-                | ExprKind::Index { .. }
-                | ExprKind::MultiIndex { .. }
-                | ExprKind::Int(_)
-                | ExprKind::Float(_)
-                | ExprKind::Bool(_)
-                | ExprKind::Str(_)
-        ) {
-            return None;
-        }
-        let facts = self.facts(&expression.source_span());
-        let (construction, lifted) = spelled_construction(facts)?;
-        let node = self.expr(construction);
-        apply_spelled(&mut self.nodes[node.0 as usize], facts, lifted);
-        Some(node)
-    }
-
-    /// `expression`'s own operation, its operands' nodes built in their
-    /// structural order.
-    fn op(&mut self, expression: &Expr) -> CheckedOp {
-        let values = |this: &mut Self, values: &[Expr]| {
-            values
-                .iter()
-                .map(|value| this.expr(value))
-                .collect::<Vec<_>>()
-        };
-        match &expression.kind {
-            ExprKind::Int(value) => CheckedOp::Int(value.clone()),
-            ExprKind::Float(value) => CheckedOp::Float(value.clone()),
-            ExprKind::Bool(value) => CheckedOp::Bool(*value),
-            ExprKind::Str(value) => CheckedOp::Str(value.clone()),
-            ExprKind::None => CheckedOp::None,
-            ExprKind::Uninitialized => CheckedOp::Uninitialized,
-            ExprKind::EmptySubscript => CheckedOp::EmptySubscript,
-            ExprKind::IsRunInComptimeInterpreter => CheckedOp::IsRunInComptimeInterpreter,
-            ExprKind::Identifier(name) => CheckedOp::Identifier(name.clone()),
-            ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => CheckedOp::TypeValue {
-                ty: self.facts(&expression.source_span()).type_operand.clone(),
-                applications: self.expression_applications(expression),
-            },
-            ExprKind::Prefix(op, value) => CheckedOp::Prefix(*op, self.expr(value)),
-            ExprKind::Transfer(value) => CheckedOp::Transfer(self.expr(value)),
-            ExprKind::Spread(value) => CheckedOp::Spread(self.expr(value)),
-            ExprKind::Named { target, value } => {
-                let target = self.expr(target);
-                CheckedOp::Named {
-                    target,
-                    value: self.expr(value),
-                }
-            }
-            ExprKind::Infix(op, left, right) => {
-                let left = self.expr(left);
-                CheckedOp::Infix(*op, left, self.expr(right))
-            }
-            ExprKind::Index { object, index } => {
-                let object = self.expr(object);
-                CheckedOp::Index {
-                    object,
-                    index: self.subscript_key(expression, index),
-                }
-            }
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } => CheckedOp::Call {
-                name: name.clone(),
-                param_args: self.param_args(expression, param_args),
-                args: values(self, args),
-                kwargs: self.kwargs(kwargs),
-            },
-            ExprKind::Invoke {
-                callee,
-                param_args,
-                args,
-                kwargs,
-            } => CheckedOp::Invoke {
-                callee: self.expr(callee),
-                param_args: self.param_args(expression, param_args),
-                args: values(self, args),
-                kwargs: self.kwargs(kwargs),
-            },
-            ExprKind::Member { object, field } => CheckedOp::Member {
-                object: self.expr(object),
-                field: field.clone(),
-            },
-            ExprKind::MethodCall {
-                object,
-                method,
-                args,
-                kwargs,
-            } => CheckedOp::MethodCall {
-                object: self.expr(object),
-                method: method.clone(),
-                args: values(self, args),
-                kwargs: self.kwargs(kwargs),
-            },
-            ExprKind::ListLit(items) => CheckedOp::ListLit(values(self, items)),
-            ExprKind::TupleLit(items) => CheckedOp::TupleLit(values(self, items)),
-            ExprKind::BraceLit(entries) => CheckedOp::BraceLit(
-                entries
-                    .iter()
-                    .map(|(key, value)| {
-                        (self.expr(key), value.as_ref().map(|value| self.expr(value)))
-                    })
-                    .collect(),
-            ),
-            ExprKind::InitializerList { args, kwargs } => CheckedOp::InitializerList {
-                args: values(self, args),
-                kwargs: self.kwargs(kwargs),
-            },
-            ExprKind::Comprehension {
-                kind,
-                key,
-                value,
-                clauses,
-            } => {
-                let clauses = clauses
-                    .iter()
-                    .map(|clause| match clause {
-                        ComprehensionClause::For {
-                            target,
-                            iter,
-                            unpack,
-                        } => {
-                            let (var, binding) = spliced_loop_binding(target);
-                            let iter = self.expr(iter);
-                            let unpack = unpack.as_deref().and_then(|unpack| match &unpack.kind {
-                                mojito_ast::ast::StmtKind::Destructure { target, value } => {
-                                    Some(CheckedComprehensionUnpack {
-                                        target: self.target(target),
-                                        value: self.expr(value),
-                                    })
-                                }
-                                _ => None,
-                            });
-                            CheckedComprehensionClause::For {
-                                var,
-                                binding,
-                                iter,
-                                unpack,
-                            }
-                        }
-                        ComprehensionClause::If(condition) => {
-                            CheckedComprehensionClause::If(self.expr(condition))
-                        }
-                    })
-                    .collect();
-                CheckedOp::Comprehension {
-                    kind: *kind,
-                    key: key.as_ref().map(|key| self.expr(key)),
-                    value: self.expr(value),
-                    clauses,
-                }
-            }
-            ExprKind::IfExpr {
-                cond,
-                then_branch,
-                else_branch,
-            } => CheckedOp::IfExpr {
-                cond: self.expr(cond),
-                then_branch: self.expr(then_branch),
-                else_branch: self.expr(else_branch),
-            },
-            ExprKind::Compare { first, rest } => CheckedOp::Compare {
-                first: self.expr(first),
-                rest: rest
-                    .iter()
-                    .map(|(op, value)| (*op, self.expr(value)))
-                    .collect(),
-            },
-            ExprKind::Slice {
-                object,
-                lower,
-                upper,
-                step,
-            } => CheckedOp::Slice {
-                object: self.expr(object),
-                lower: self.optional(lower.as_deref()),
-                upper: self.optional(upper.as_deref()),
-                step: self.optional(step.as_deref()),
-            },
-            ExprKind::MultiIndex { object, args } => CheckedOp::MultiIndex {
-                object: self.expr(object),
-                args: args
-                    .iter()
-                    .map(|argument| match argument {
-                        SubscriptArg::Index(value) => CheckedSubscriptArg::Index(self.expr(value)),
-                        SubscriptArg::Keyword { name, value } => CheckedSubscriptArg::Keyword {
-                            name: name.clone(),
-                            value: self.expr(value),
-                        },
-                        SubscriptArg::Slice { lower, upper, step } => CheckedSubscriptArg::Slice {
-                            lower: self.optional(lower.as_deref()),
-                            upper: self.optional(upper.as_deref()),
-                            step: self.optional(step.as_deref()),
-                        },
-                        SubscriptArg::KeywordSlice {
-                            name,
-                            lower,
-                            upper,
-                            step,
-                        } => CheckedSubscriptArg::KeywordSlice {
-                            name: name.clone(),
-                            lower: self.optional(lower.as_deref()),
-                            upper: self.optional(upper.as_deref()),
-                            step: self.optional(step.as_deref()),
-                        },
-                    })
-                    .collect(),
-            },
-            ExprKind::TString { parts, raw } => CheckedOp::TString {
-                parts: parts
-                    .iter()
-                    .map(|part| match part {
-                        TStringPart::Literal(text) => CheckedTStringPart::Literal(text.clone()),
-                        TStringPart::Expr(value) => CheckedTStringPart::Expr(self.expr(value)),
-                    })
-                    .collect(),
-                raw: *raw,
-            },
-            // A lambda node has no operands; it names its hidden
-            // definition, built exactly like a nested `def` statement.
-            ExprKind::Lambda { def } => CheckedOp::Lambda {
-                def: self.stmt(def),
-            },
-        }
-    }
-
-    fn optional(&mut self, expression: Option<&Expr>) -> Option<CheckedNodeId> {
-        expression.map(|expression| self.expr(expression))
-    }
-
-    fn kwargs(&mut self, kwargs: &[KwArg]) -> Vec<CheckedKwArg> {
-        kwargs
-            .iter()
-            .map(|kwarg| CheckedKwArg {
-                name: kwarg.name.clone(),
-                value: self.expr(&kwarg.value),
-            })
-            .collect()
-    }
-
-    /// The compile-time parameters of call `expression`, one per declared
-    /// parameter, from the binding its binder recorded
-    /// ([`NodeFacts::parameter_attributes`]). An argument the check resolved
-    /// to an attribute — a type-shaped one, or a value-shaped one it bound
-    /// to a type, an origin, or a closed value — is that attribute, and
-    /// builds the nodes of its lifted applications only. An argument bound
-    /// to no declaration is a parameter of its own after the declared ones
-    /// ([`CheckedParameter`]).
-    fn param_args(&mut self, expression: &Expr, arguments: &[ParamArg]) -> Vec<CheckedParameter> {
-        let binding = self
-            .facts(&expression.source_span())
-            .parameter_attributes
-            .as_ref();
-        parameter_layout(binding, arguments.len())
-            .into_iter()
-            .map(|(declaration, bound)| CheckedParameter {
-                declaration,
-                arguments: bound
-                    .into_iter()
-                    .map(|(position, attribute)| self.param_arg(&arguments[position], attribute))
-                    .collect(),
-            })
-            .collect()
-    }
-
-    /// The key of subscript `expression`, `index`: the attribute the
-    /// check bound when the subscript is a type-keyed accessor call
-    /// (`v[Int]`, upstream's `v.__getitem_param__[Int]()`, whose one
-    /// bracket argument it recorded at the subscript), else the index's
-    /// node.
-    fn subscript_key(&mut self, expression: &Expr, index: &Expr) -> CheckedParamArg {
-        match subscript_attribute(self.facts(&expression.source_span())) {
-            attribute @ Some(_) => CheckedParamArg::Attribute {
-                value: attribute,
-                applications: self.expression_applications(index),
-            },
-            None => CheckedParamArg::Value(self.expr(index)),
-        }
-    }
-
-    fn param_arg(
-        &mut self,
-        argument: &ParamArg,
-        attribute: Option<mojito_types::types::TyArg>,
-    ) -> CheckedParamArg {
-        match argument {
-            // A lambda bound as a callable attribute (`g[lambda -> Int: 3]`)
-            // still declares its hidden `def` where it is spelled, which
-            // the attribute's symbol names: its node is reached, never
-            // evaluated.
-            ParamArg::Value(value) if attribute.is_some() => CheckedParamArg::Attribute {
-                value: attribute,
-                applications: if matches!(value.kind, ExprKind::Lambda { .. }) {
-                    vec![self.expr(value)]
-                } else {
-                    self.expression_applications(value)
-                },
-            },
-            ParamArg::Value(value) => CheckedParamArg::Value(self.expr(value)),
-            ParamArg::Named { name, value } => CheckedParamArg::Named {
-                name: name.clone(),
-                value: Box::new(self.param_arg(value, attribute)),
-            },
-        }
-    }
-
-    /// Build the node of each expression inside an annotation slot's
-    /// expression the check named a lifted function for
-    /// ([`SemanticAdjustment::ComptimeApplication`]): MIR lowers it in that
-    /// function, away from the annotation that spells it. Any other
-    /// expression of an annotation has no node.
-    fn annotation_applications(&mut self, annotation: &Expr) -> Vec<CheckedNodeId> {
-        self.applications(|applied| mojito_ast::visit::walk_annotation(applied, annotation))
-    }
-
-    /// [`Self::annotation_applications`] for a bracket argument written as a
-    /// value that the check bound to a type or an origin: the argument is
-    /// an attribute, and only its lifted applications are nodes.
-    fn expression_applications(&mut self, value: &Expr) -> Vec<CheckedNodeId> {
-        self.applications(|applied| mojito_ast::visit::walk_expr(applied, value))
-    }
-
-    fn applications(
-        &mut self,
-        walk: impl FnOnce(&mut LiftedApplications<'_>),
-    ) -> Vec<CheckedNodeId> {
-        let mut applied = LiftedApplications {
-            facts: self.facts,
-            outermost: Outermost::default(),
-            found: Vec::new(),
-        };
-        walk(&mut applied);
-        applied
-            .found
-            .iter()
-            .map(|expression| self.expr(expression))
-            .collect()
-    }
-
-    fn block(&mut self, statements: &[Stmt]) -> Vec<CheckedStmtId> {
-        statements
-            .iter()
-            .map(|statement| self.stmt(statement))
-            .collect()
-    }
-
-    /// `statement`'s node, built after its operands' and bodies' nodes.
-    /// One planned command as the checked program's: its synthesized node
-    /// or statement converted, alternatives recursively.
-    fn command(&mut self, planned: &PlannedCommand) -> CheckedCommand {
-        match planned {
-            PlannedCommand::Equal { test, reads } => CheckedCommand::Equal {
-                test: self.expr(test),
-                reads: reads.clone(),
-            },
-            PlannedCommand::ListLength { test, reads } => CheckedCommand::ListLength {
-                test: self.expr(test),
-                reads: reads.clone(),
-            },
-            PlannedCommand::EnumTag {
-                tag,
-                test,
-                case,
-                reads,
-            } => CheckedCommand::EnumTag {
-                tag: self.stmt(tag),
-                test: self.expr(test),
-                case: *case,
-                reads: reads.clone(),
-            },
-            PlannedCommand::Bind { declaration, reads } => CheckedCommand::Bind {
-                declaration: self.stmt(declaration),
-                reads: reads.clone(),
-            },
-            PlannedCommand::Alternatives(alternatives) => CheckedCommand::Alternatives(
-                alternatives
-                    .iter()
-                    .map(|commands| {
-                        commands
-                            .iter()
-                            .map(|command| self.command(command))
-                            .collect()
-                    })
-                    .collect(),
-            ),
-        }
-    }
-
-    /// One case's planned commands and path reads as the checked
-    /// program's, the reads built first.
-    fn case_program(
-        &mut self,
-        plan: Option<&MatchPlan>,
-        index: usize,
-    ) -> (Vec<CheckedCommand>, Vec<CheckedPathRead>) {
-        let reads = plan
-            .and_then(|plan| plan.reads.get(index))
-            .map(|reads| {
-                reads
-                    .iter()
-                    .map(|read| CheckedPathRead {
-                        path: read.path,
-                        declaration: self.stmt(&read.declaration),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let commands = plan
-            .and_then(|plan| plan.cases.get(index))
-            .map(|commands| {
-                commands
-                    .iter()
-                    .map(|command| self.command(command))
-                    .collect()
-            })
-            .unwrap_or_default();
-        (commands, reads)
-    }
-
-    fn stmt(&mut self, statement: &Stmt) -> CheckedStmtId {
-        let op = self.stmt_op(statement);
-        let facts = self.facts(&statement.source_span());
-        let id = CheckedStmtId(self.statements.len() as u32);
-        self.statements.push(statement_node(
-            id,
-            op,
-            (
-                statement.span,
-                statement.module.clone(),
-                statement.syntax_id,
-            ),
-            facts,
-        ));
-        id
-    }
-
-    /// `statement`'s own operation, its expressions' and bodies' nodes built
-    /// in their structural order.
-    /// A declaration's op (`def`, `struct`, `trait`): its symbol, signature,
-    /// and members. `None` for any other statement.
-    fn declaration_op(&mut self, statement: &Stmt) -> Option<CheckedStmtOp> {
-        use mojito_ast::ast::StmtKind;
-        let values = |this: &mut Self, values: &[Expr]| {
-            values
-                .iter()
-                .map(|value| this.expr(value))
-                .collect::<Vec<_>>()
-        };
-        Some(match &statement.kind {
-            StmtKind::Def {
-                name,
-                params,
-                positional_only,
-                keyword_only,
-                raises,
-                where_clauses,
-                body,
-                decorators,
-                captures,
-                ..
-            } => CheckedStmtOp::Def(Box::new(CheckedDef {
-                name: name.clone(),
-                symbol: self.signatures.function_symbol(
-                    self.functions,
-                    statement.module.as_ref(),
-                    statement.span,
-                    statement.syntax_id,
-                    name,
-                ),
-                signature: self.signatures.function(
-                    statement.module.as_ref(),
-                    statement.span,
-                    statement.syntax_id,
-                    params.len(),
-                ),
-                params: self.fn_params(params),
-                positional_only: *positional_only,
-                keyword_only: *keyword_only,
-                raises: *raises,
-                where_clauses: values(self, where_clauses),
-                body: self.function_body(body),
-                captures: self
-                    .facts(&statement.source_span())
-                    .captures
-                    .clone()
-                    .unwrap_or_default(),
-                capture_list: captures.is_some(),
-                storage: self
-                    .facts(&statement.source_span())
-                    .closure_storage
-                    .as_deref()
-                    .cloned(),
-                inline: crate::declaration::InlineLevel::of(decorators).unwrap_or_default(),
-                unavailable: mojito_ast::ast::is_unavailable(decorators),
-            })),
-            StmtKind::Struct {
-                name,
-                conforms,
-                conformance_conditions,
-                where_clauses,
-                fields,
-                associated,
-                methods,
-                fieldwise_init,
-                ..
-            } => {
-                let conformance_conditions = conformance_conditions
-                    .iter()
-                    .filter_map(|(entry, value)| {
-                        Some((entry.identifier()?.to_string(), self.expr(value)))
-                    })
-                    .collect();
-                let where_clauses = values(self, where_clauses);
-                let associated = associated
-                    .iter()
-                    .map(|member| CheckedStructComptime {
-                        name: member.name.clone(),
-                        where_clauses: values(self, &member.where_clauses),
-                        value: self.expr(&member.value),
-                    })
-                    .collect();
-                let methods = methods
-                    .iter()
-                    .enumerate()
-                    .map(|(position, method)| {
-                        let registered =
-                            mojito_symbol::symbol::lifecycle_method_name(method).to_string();
-                        let symbol = self.signatures.method_symbol(
-                            statement.module.as_ref(),
-                            name,
-                            position,
-                            &registered,
-                        );
-                        CheckedMethod {
-                            name: method.name.clone(),
-                            registered,
-                            symbol,
-                            signature: self.signatures.method(
-                                statement.module.as_ref(),
-                                name,
-                                position,
-                                method.params.len(),
-                            ),
-                            has_self: method.has_self,
-                            self_convention: method.self_convention,
-                            params: self.fn_params(&method.params),
-                            positional_only: method.positional_only,
-                            keyword_only: method.keyword_only,
-                            raises: method.raises,
-                            where_clauses: values(self, &method.where_clauses),
-                            body: self.function_body(&method.body),
-                            provenance: method.provenance.clone(),
-                            inline: crate::declaration::InlineLevel::of(&method.decorators)
-                                .unwrap_or_default(),
-                        }
-                    })
-                    .collect();
-                let fields = self.signatures.fields(
-                    statement.module.as_ref(),
-                    name,
-                    fields
-                        .iter()
-                        .map(|declared| (declared.name.clone(), declared.reference.is_some())),
-                );
-                CheckedStmtOp::Struct(Box::new(CheckedStruct {
-                    name: name.clone(),
-                    conforms: entry_names(conforms),
-                    conformance_conditions,
-                    where_clauses,
-                    fields,
-                    associated,
-                    methods,
-                    fieldwise_init: *fieldwise_init,
-                }))
-            }
-            StmtKind::Trait {
-                name,
-                refines,
-                methods,
-                comptime_members,
-            } => {
-                let methods = methods
-                    .iter()
-                    .enumerate()
-                    .map(|(index, method)| CheckedTraitMethod {
-                        name: method.name.clone(),
-                        symbol: self.signatures.method_symbol(
-                            statement.module.as_ref(),
-                            name,
-                            index,
-                            &method.name,
-                        ),
-                        signature: self.signatures.method(
-                            statement.module.as_ref(),
-                            name,
-                            index,
-                            method.params.len(),
-                        ),
-                        self_convention: method.self_convention,
-                        params: self.fn_params(&method.params),
-                        positional_only: method.positional_only,
-                        keyword_only: method.keyword_only,
-                        raises: method.raises,
-                        where_clauses: values(self, &method.where_clauses),
-                        default: method
-                            .default_body
-                            .as_ref()
-                            .map(|body| CheckedTraitDefault {
-                                body: self.function_body(body),
-                                inline: crate::declaration::InlineLevel::of(&method.decorators)
-                                    .unwrap_or_default(),
-                            }),
-                    })
-                    .collect();
-                let comptime_members = comptime_members
-                    .iter()
-                    .map(|member| CheckedTraitComptime {
-                        name: member.name.clone(),
-                        where_clauses: values(self, &member.where_clauses),
-                    })
-                    .collect();
-                CheckedStmtOp::Trait(Box::new(CheckedTrait {
-                    name: name.clone(),
-                    refines: entry_names(refines),
-                    methods,
-                    comptime_members,
-                }))
-            }
-            _ => return None,
-        })
-    }
-
-    fn stmt_op(&mut self, statement: &Stmt) -> CheckedStmtOp {
-        use mojito_ast::ast::StmtKind;
-        if let Some(op) = self.declaration_op(statement) {
-            return op;
-        }
-        let values = |this: &mut Self, values: &[Expr]| {
-            values
-                .iter()
-                .map(|value| this.expr(value))
-                .collect::<Vec<_>>()
-        };
-        let optional_block =
-            |this: &mut Self, body: &Option<Vec<Stmt>>| body.as_ref().map(|body| this.block(body));
-        let branches = |this: &mut Self, branches: &[(mojito_ast::ast::Condition, Vec<Stmt>)]| {
-            branches
-                .iter()
-                .map(|(condition, body)| (this.condition(condition), this.block(body)))
-                .collect::<Vec<_>>()
-        };
-        // A `comptime match` case's guard is a conjunct of its condition,
-        // which holds its own copy of it.
-        let cases =
-            |this: &mut Self, cases: &[mojito_ast::ast::MatchCase], plan: Option<&MatchPlan>| {
-                let comptime = plan.is_some_and(|plan| !plan.conditions.is_empty());
-                cases
-                    .iter()
-                    .enumerate()
-                    .map(|(index, case)| {
-                        let pattern = this.pattern(&case.pattern);
-                        let (commands, reads) = this.case_program(plan, index);
-                        CheckedMatchCase {
-                            pattern,
-                            commands,
-                            reads,
-                            guard: case
-                                .guard
-                                .as_ref()
-                                .filter(|_| !comptime)
-                                .map(|guard| this.expr(guard)),
-                            condition: plan
-                                .and_then(|plan| plan.conditions.get(index))
-                                .and_then(Option::as_ref)
-                                .map(|condition| this.expr(condition)),
-                            body: this.block(&case.body),
-                            unreachable: plan
-                                .and_then(|plan| plan.unreachable.get(index).copied())
-                                .unwrap_or(false),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            };
-        match &statement.kind {
-            StmtKind::VarDecl { name, ty, value } => CheckedStmtOp::VarDecl {
-                name: name.clone(),
-                applications: ty
-                    .as_ref()
-                    .map(|ty| self.annotation_applications(ty))
-                    .unwrap_or_default(),
-                value: self.expr(value),
-            },
-            StmtKind::RefDecl { name, value } => CheckedStmtOp::RefDecl {
-                name: name.clone(),
-                value: self.expr(value),
-            },
-            StmtKind::Assign { name, value } => CheckedStmtOp::Assign {
-                name: name.clone(),
-                value: self.expr(value),
-            },
-            StmtKind::Raise(value) => CheckedStmtOp::Raise(self.expr(value)),
-            StmtKind::Expr(value) if let Some((cond, message)) = value.kgen_param_assert() => {
-                CheckedStmtOp::ComptimeAssert {
-                    cond: self.expr(cond),
-                    message: Some(self.expr(message)),
-                    denotes: self
-                        .facts(&message.source_span())
-                        .comptime_value
-                        .as_deref()
-                        .cloned(),
-                    fails: self.facts(&cond.source_span()).failing_assertion,
-                }
-            }
-            StmtKind::Expr(value) => CheckedStmtOp::Expr(self.expr(value)),
-            StmtKind::Comptime {
-                name,
-                where_clauses,
-                value,
-                ..
-            } => CheckedStmtOp::Comptime {
-                name: name.clone(),
-                where_clauses: values(self, where_clauses),
-                value: self.expr(value),
-                denotes: self
-                    .facts(&statement.source_span())
-                    .comptime_value
-                    .as_deref()
-                    .cloned(),
-            },
-            StmtKind::AugAssign { place, op, value } => CheckedStmtOp::AugAssign {
-                place: self.expr(place),
-                op: *op,
-                value: self.expr(value),
-            },
-            StmtKind::SetPlace { place, value } => CheckedStmtOp::SetPlace {
-                place: self.expr(place),
-                value: self.expr(value),
-            },
-            StmtKind::Destructure { target, value } => CheckedStmtOp::Destructure {
-                target: self.target(target),
-                value: self.expr(value),
-            },
-            // Declarations were taken above, and the check rejects an
-            // `assert` the linker did not lower.
-            StmtKind::Def { .. }
-            | StmtKind::Struct { .. }
-            | StmtKind::Trait { .. }
-            | StmtKind::Assert { .. } => CheckedStmtOp::Pass,
-            StmtKind::ComptimeIf {
-                branches: arms,
-                orelse,
-            } => CheckedStmtOp::ComptimeIf {
-                branches: branches(self, arms),
-                orelse: optional_block(self, orelse),
-            },
-            StmtKind::If {
-                branches: arms,
-                orelse,
-            } => CheckedStmtOp::If {
-                branches: branches(self, arms),
-                orelse: optional_block(self, orelse),
-            },
-            StmtKind::ComptimeFor { var, iter, body } => CheckedStmtOp::ComptimeFor {
-                var: var.clone(),
-                iter: self.expr(iter),
-                body: self.block(body),
-            },
-            StmtKind::ComptimeAssert { cond, message } => CheckedStmtOp::ComptimeAssert {
-                cond: self.expr(cond),
-                message: message.as_ref().map(|message| self.expr(message)),
-                denotes: message.as_ref().and_then(|message| {
-                    self.facts(&message.source_span())
-                        .comptime_value
-                        .as_deref()
-                        .cloned()
-                }),
-                fails: self.facts(&cond.source_span()).failing_assertion,
-            },
-            StmtKind::Scope(body) => CheckedStmtOp::Scope(self.block(body)),
-            StmtKind::While { cond, body, orelse } => CheckedStmtOp::While {
-                cond: self.condition(cond),
-                body: self.block(body),
-                orelse: optional_block(self, orelse),
-            },
-            StmtKind::Match { cases: arms, .. } => {
-                let plan = self.facts(&statement.source_span()).match_plan.clone();
-                let anchor = plan
-                    .as_ref()
-                    .and_then(|plan| plan.anchor.as_ref())
-                    .map(|anchor| self.stmt(anchor));
-                CheckedStmtOp::Match {
-                    anchor,
-                    cases: cases(self, arms, plan.as_ref()),
-                    emission: plan.map(|plan| plan.emission).unwrap_or_default(),
-                }
-            }
-            StmtKind::ComptimeMatch { cases: arms, .. } => {
-                let plan = self.facts(&statement.source_span()).match_plan.clone();
-                let anchor = plan
-                    .as_ref()
-                    .and_then(|plan| plan.anchor.as_ref())
-                    .map(|anchor| self.stmt(anchor));
-                CheckedStmtOp::ComptimeMatch {
-                    anchor,
-                    cases: cases(self, arms, plan.as_ref()),
-                }
-            }
-            StmtKind::For {
-                target,
-                iter,
-                body,
-                orelse,
-            } => {
-                let (var, binding) = spliced_loop_binding(target);
-                CheckedStmtOp::For {
-                    var,
-                    binding,
-                    iter: self.expr(iter),
-                    body: self.block(body),
-                    orelse: optional_block(self, orelse),
-                }
-            }
-            StmtKind::Return(value) => CheckedStmtOp::Return(self.optional(value.as_ref())),
-            StmtKind::With { items, body } => CheckedStmtOp::With {
-                items: items
-                    .iter()
-                    .map(|item| CheckedWithItem {
-                        context: self.expr(&item.context),
-                        var: item.var.clone(),
-                    })
-                    .collect(),
-                body: self.block(body),
-            },
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => CheckedStmtOp::Try {
-                body: self.block(body),
-                except: except
-                    .as_ref()
-                    .map(|(name, body)| (name.clone(), self.block(body))),
-                orelse: optional_block(self, orelse),
-                finalbody: optional_block(self, finalbody),
-            },
-            StmtKind::Import { path, alias } => CheckedStmtOp::Import {
-                path: path.clone(),
-                alias: alias.clone(),
-            },
-            StmtKind::FromImport { level, path, names } => CheckedStmtOp::FromImport {
-                level: *level,
-                path: path.clone(),
-                names: names.clone(),
-            },
-            StmtKind::Pass => CheckedStmtOp::Pass,
-            StmtKind::Break => CheckedStmtOp::Break,
-            StmtKind::Continue => CheckedStmtOp::Continue,
-        }
-    }
-
-    fn fn_params(&mut self, params: &[mojito_ast::ast::FnParam]) -> Vec<CheckedFnParam> {
-        params
-            .iter()
-            .map(|param| CheckedFnParam {
-                name: param.name.clone(),
-                default: self.optional(param.default.as_ref()),
-                kind: param.kind,
-                convention: param.convention,
-            })
-            .collect()
-    }
-
-    /// The nodes of a function's `body`, inside one more function.
-    fn function_body(&mut self, body: &[Stmt]) -> Vec<CheckedStmtId> {
-        self.functions += 1;
-        let body = self.block(body);
-        self.functions -= 1;
-        body
-    }
-}
-
 /// The value category of a node whose op is `op`, from the `facts` the
 /// check recorded at it. A bracket is classified by its base, as
 /// upstream's `SubscriptNode` is: a type's application denotes the type,
@@ -7496,26 +6385,6 @@ fn value_category(facts: &NodeFacts, op: &CheckedOp, bracket_base: Option<&str>)
             ValueCategory::Place
         }
         _ => ValueCategory::Value,
-    }
-}
-
-/// The outermost expressions of a walked annotation or bracket argument
-/// the check named a lifted function for.
-struct LiftedApplications<'a> {
-    facts: &'a HashMap<SourceSpan, NodeFacts>,
-    outermost: Outermost,
-    found: Vec<Expr>,
-}
-
-impl mojito_ast::visit::Visitor for LiftedApplications<'_> {
-    fn visit_expr(&mut self, expression: &Expr) {
-        let lifted = self
-            .facts
-            .get(&expression.source_span())
-            .is_some_and(lifted);
-        if self.outermost.admits(expression.span, lifted) {
-            self.found.push(expression.clone());
-        }
     }
 }
 
@@ -8042,23 +6911,6 @@ node_facts! {
         /// as the pin's constraint-failure terminator ends a return path.
         failing_assertion,
     }
-}
-
-/// A checked loop target's binder: the checker's splice left every `for`
-/// and comprehension target one `Declare` leaf.
-fn spliced_loop_binding(target: &mojito_ast::ast::DestructureTarget) -> (String, BindingMode) {
-    let (name, mode) = target
-        .loop_binding()
-        .expect("the checker's splice leaves every loop target one declared leaf");
-    (name.to_string(), mode)
-}
-
-/// The trait names of a checked conformance or refinement list, whose every
-/// entry the check required to name a trait.
-fn entry_names(entries: &[mojito_ast::ast::Expr]) -> Vec<String> {
-    mojito_ast::ast::trait_entry_names(entries)
-        .map(str::to_string)
-        .collect()
 }
 
 #[cfg(test)]

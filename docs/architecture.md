@@ -2931,12 +2931,11 @@ compilation's context (its `ParamContext`, the body-fact carry switch, and
 the requirement defaults bound at calls through a bound), which runs every
 rejecting check — the transfer-effect fixpoint, reference-result reads,
 context-manager splicing, explicit destruction — and then assembles the
-checked arena. The check hands the arena builder a `DiscoveryResult`,
-`CheckedProgram::new`'s internal input until the check emits its nodes
-itself: the check's facts as one `NodeFacts` record per occurrence, as an
-op holds its attributes, beside its declaration-site tables (annotation
-types, generic parameters, declaration effects) and its struct
-instantiations, with `DiscoveryResult::finalize` for the arena. A
+checked tables. The check hands `CheckedProgram::new` a `DiscoveryResult`,
+its internal input: the nodes the check emitted, its desugars by node, and
+its facts as one `NodeFacts` record per occurrence, as an op holds its
+attributes, beside its declaration-site tables (annotation types, generic
+parameters, declaration effects) and its struct instantiations. A
 `DiscoveryResult` is not executable, never reaches HIR or MIR, and no
 client reads it. `CheckedProgram` holds no syntax: it is the checked
 nodes, the site facts, and the declaration-level tables. Its declarations
@@ -2970,20 +2969,27 @@ holds — a pattern, a destructuring target, a derived occurrence no arena
 node is, or one written before its statement is entered, which moves onto
 the node when the statement is. The handoff reads the records out, less
 any a cleared fact left empty (`Emitter::into_parts`, from `body_carry.rs`'s
-`HandoffStores::into_discovery`); nothing reads the ops yet but
-`MOJITO_CHECK_EMITTED=1`, under which the handoff also carries the check's
-desugars by node, each `for` statement and comprehension clause holding its
-written target's occurrence, and `CheckedProgram::new` seals the emitted
-nodes into checked tables (`emitted::seal`): the seal composes each node's
-op with its facts and its declaration's sites (a call's parameters as its
-binder laid them out, a subscript's key, a type value's type, a symbol and
-signature, a match's and a `case`'s plan), puts each spelled sugar's
-construction in its place, splices the check's desugars into every body,
-and numbers the nodes post-order as the arena builder does, through the
-composition helpers both share (`expression_node`, `apply_spelled`,
-`parameter_layout`, and `Signatures`). It then compares the tables with the
-arena builder's, whole, node for node (`emitted::compare`, counted as
-`emit.seal.*` under `--timings`). An overload
+`HandoffStores::into_discovery`), with the check's desugars by node, each
+`for` statement and comprehension clause holding its written target's
+occurrence, and `CheckedProgram::new` seals the emitted nodes into the
+checked tables (`emitted::seal`), as upstream's emitter leaves each op
+final: the seal composes each node's op with its facts and its
+declaration's sites (a call's parameters as its binder laid them out, a
+subscript's key, a type value's type, a symbol and signature, a match's
+and a `case`'s plan), puts each spelled sugar's construction in its place,
+splices the check's desugars into every body, and numbers the nodes
+post-order, through the composition helpers in `checked.rs`
+(`expression_node`, `apply_spelled`, `parameter_layout`, and
+`Signatures`). An occurrence the check emitted no node or op for is an
+`InvariantViolation` naming the first one, never a placeholder in the
+tables. Three things still reach the seal as syntax: a detached record's
+occurrence, such as a destructuring target's leaf, which `Seal::target`
+reads by span (R2569); the `SpelledConstruction` and `MatchPlan` facts,
+whose construction, tests, and declarations the seal finds by span
+(R2570); and the roots, found by the spans of the spliced root statements
+and of each `CheckedDefaultWrapper::body`, which `CheckedProgram::new`
+empties once sealed (R2571). `explicit_destroy` also still walks the
+spliced syntax with span-keyed facts (R751). An overload
 candidate — of a free call or of an overloaded function value — is
 checked inside `Checker::probe` (`checker/probe.rs`): every store
 journals what a write displaces while a probe is open, and closing it

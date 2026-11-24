@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2569**.
+Next free ID: **R2572**.
 
 ## Ordered Work
 
@@ -11766,34 +11766,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R766 The checked handoff is still gathered from fact records by
-  `finalize` and `build_checked_expressions`, where upstream's parser
-  emits typed ops as it checks**
-
-  `CheckedProgram::new` walks the syntax again after the check to build
-  the nodes.
-  - The lever: `CheckedProgram::new` takes the tables `emitted::seal`
-    makes of the emitted nodes in place of `build_checked_expressions`'
-    (they are equal on std and the corpus under `MOJITO_CHECK_EMITTED=1`),
-    so the emitted nodes and the desugar table cross the handoff always.
-  - Done when `finalize`, `build_checked_expressions`, `ArenaBuilder`,
-    `CheckedArena`, and `LiftedApplications` are deleted, with MIR text
-    and package bytes unchanged.
-  - Update `docs/architecture.md` §Stage 3 and `docs/symbol-map.md`, and
-    file what stays (detached records, `explicit_destroy` walking syntax).
-  - What stays includes about 180 detached records for std: destructuring
-    targets, a pattern, derived occurrences no node holds, and records at
-    written ids under syntax no entered statement holds.
-  - It also includes the `SpelledConstruction` and `MatchPlan` facts, which
-    still carry syntax (`Box<Expr>`, `Stmt`) where an upstream op names its
-    operands' values: the seal maps them to nodes by their spans.
-  - And the seal's roots, found by each spliced root statement's and wrapper
-    body statement's span.
-  - Plan: none; the R624 plan this entry cited was never committed, so
-    plan it in its own session.
-  - Depends on R765, R2567 (the sealed tables it hands over).
-  - Model: Fable, Not Planned.
-
 - [ ] **R767 `DiscoveryResult` still carries the check's records to
   `CheckedProgram::new`**
 
@@ -11814,6 +11786,55 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     Entry A.
   - Depends on R766.
   - Model: Fable, Not Planned.
+
+- [ ] **R2569 Occurrences no emitted node holds still keep detached
+  records, where every upstream attribute sits on an op**
+
+  std leaves 179 of them (`emit.detached_records` under `--timings`),
+  beside 23,500 records on nodes.
+  - A destructuring target's leaf, which `Seal::target` reads by
+    `SourceSpan::syntax` from the target's span and id.
+  - A `case` pattern, whose `MatchPlan` `Seal::condition` reads the same
+    way.
+  - A derived occurrence no node is.
+  - A record at a written id under syntax no entered statement holds.
+  - The lever: give targets and patterns slots when their statement is
+    entered, and have `Seal::target` and `Seal::condition` read the slot.
+  - Found while landing R766 (2026-11-24).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2570 The `SpelledConstruction` and `MatchPlan` facts carry
+  syntax, where an upstream op names its operands' values**
+
+  `SpelledConstruction` holds a `Box<Expr>` and a `MatchPlan`'s anchor,
+  tests, reads, and conditions hold `Expr`s and `Stmt`s, which the seal
+  maps to emitted nodes by their spans.
+  - Probe: `Seal::expression_slot` for a spelled construction.
+  - Probe: `Seal::planned_expression` and `Seal::planned_statement` for a
+    plan's tests, conditions, anchor, tag, bind, and read declarations.
+  - The lever: `Emitter::enter_expression` and `Emitter::enter_plan`
+    return the slots they allocate, and the facts hold those slots.
+  - Found while landing R766 (2026-11-24).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2571 The seal finds the module's and each default wrapper's root
+  nodes by syntax spans, where upstream's module op holds its body ops**
+
+  `Seal::roots` looks up each spliced root statement of
+  `DiscoveryResult::statements` and each `CheckedDefaultWrapper::body`
+  statement by its span, so both cross the handoff as syntax.
+  - `CheckedProgram::new` empties each wrapper's body once sealed; the
+    root statements stay in `DiscoveryResult`.
+  - The lever: the emitter records the root and wrapper-body slots as the
+    check enters them, and the seal reads those.
+  - Then `DiscoveryResult::statements` and `CheckedDefaultWrapper::body`
+    go, and with R751 so can the syntax half of
+    `desugar::splice_desugars`.
+  - Found while landing R766 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R768 `CheckedDeclaration` repeats what the statement nodes hold,
   where upstream's symbol is its op**
@@ -13234,6 +13255,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `CheckedProgram` handoff is a waist decision (AGENTS invariant 5).
   - Its plan must split the move into one-session slices, each filed as
     its own entry before any lands.
+  - Probe: `run_explicit_destroy` (`checker.rs`) walks the spliced
+    syntax `splice_desugars` returns, with span-keyed facts; with the
+    seal's roots (R2571) it is one of the two readers keeping that
+    syntax half alive.
   - Found while landing R749 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.

@@ -9,35 +9,39 @@
 //! spliced into every body. A spelled sugar's position holds its
 //! construction. Nodes are numbered post-order, each operand before the op
 //! that names it, in the order [`CheckedOp::map_operands`] visits them, and
-//! a node reached twice is sealed twice, as the arena builder builds it.
+//! a node reached twice is sealed twice: HIR, MIR, and the package read the
+//! ids in that order.
 
-use super::{EmittedDesugar, EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt, substituted};
+use super::{
+    EmittedDesugar, EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt, Unsealed, substituted,
+};
 use crate::checked::{
-    CheckedArena, CheckedCommand, CheckedComprehensionClause, CheckedComprehensionUnpack,
-    CheckedCondition, CheckedDef, CheckedDefaultWrapper, CheckedMatchCase, CheckedMethod,
-    CheckedNodeId, CheckedOp, CheckedParamArg, CheckedParameter, CheckedPathRead,
-    CheckedSequenceTarget, CheckedStmtId, CheckedStmtOp, CheckedStruct, CheckedStructComptime,
-    CheckedTarget, CheckedTargetKind, CheckedTrait, CheckedTraitComptime, CheckedTraitDefault,
-    CheckedTraitMethod, MatchPlan, NodeFacts, NodeMap, Outermost, PlannedCommand, Signatures,
-    apply_spelled, expression_node, lifted, map_params, parameter_layout, spelled_construction,
-    statement_node, subscript_attribute,
+    CheckedCommand, CheckedComprehensionClause, CheckedComprehensionUnpack, CheckedCondition,
+    CheckedDef, CheckedDefaultWrapper, CheckedMatchCase, CheckedMethod, CheckedNodeId, CheckedOp,
+    CheckedParamArg, CheckedParameter, CheckedPathRead, CheckedSequenceTarget, CheckedStmtId,
+    CheckedStmtOp, CheckedStruct, CheckedStructComptime, CheckedTables, CheckedTarget,
+    CheckedTargetKind, CheckedTrait, CheckedTraitComptime, CheckedTraitDefault, CheckedTraitMethod,
+    MatchPlan, NodeFacts, NodeMap, Outermost, PlannedCommand, Signatures, apply_spelled,
+    expression_node, lifted, map_params, parameter_layout, spelled_construction, statement_node,
+    subscript_attribute,
 };
 use mojito_ast::ast::{BindingMode, Expr, Stmt};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
 use mojito_types::types::TyArg;
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// The checked tables of `statements` and of `wrappers`' bodies, sealed
 /// from `emitted` with the `facts` the check recorded and the declaration
-/// sites `signatures` reads, and how many nodes the seal found no emitted
-/// node or op for.
+/// sites `signatures` reads; they declare nothing yet. A node the check
+/// emitted no node or op for leaves the tables [`Unsealed`].
 pub fn seal(
     emitted: &EmittedNodes,
     statements: &[Stmt],
     wrappers: &[CheckedDefaultWrapper],
     facts: &HashMap<SourceSpan, NodeFacts>,
     signatures: Signatures<'_>,
-) -> (CheckedArena, u64) {
+) -> Result<CheckedTables, Unsealed> {
     let mut seal = Seal {
         emitted,
         facts,
@@ -45,22 +49,23 @@ pub fn seal(
         nodes: Vec::new(),
         statements: Vec::new(),
         functions: 0,
-        missing: 0,
+        unsealed: RefCell::new(Unsealed::default()),
     };
     let roots = seal.roots(statements);
     let wrapper_roots = wrappers
         .iter()
         .map(|wrapper| seal.roots(&wrapper.body))
         .collect();
-    (
-        CheckedArena {
-            nodes: seal.nodes,
-            statements: seal.statements,
-            roots,
-            wrapper_roots,
-        },
-        seal.missing,
-    )
+    let unsealed = seal.unsealed.into_inner();
+    if unsealed.count > 0 {
+        return Err(unsealed);
+    }
+    Ok(CheckedTables::undeclared(
+        seal.nodes,
+        seal.statements,
+        roots,
+        wrapper_roots,
+    ))
 }
 
 /// The tables being sealed. A [`NodeMap`] from emitted slots to the sealed
@@ -74,24 +79,25 @@ struct Seal<'a> {
     /// How many function bodies enclose the statement being sealed: a
     /// `def` inside one is named by its own name.
     functions: usize,
-    missing: u64,
+    /// The occurrences no emitted node or op holds.
+    unsealed: RefCell<Unsealed>,
 }
 
 impl NodeMap for Seal<'_> {
     fn expression(&mut self, slot: CheckedNodeId) -> CheckedNodeId {
         let emitted = self.emitted;
         let Some(node) = emitted.expressions.get(slot.0 as usize) else {
-            return self.missing_expression();
+            return self.missing_expression(None);
         };
         let (Some(op), Some(syntax)) = (&node.op, node.at.syntax) else {
-            return self.missing_expression();
+            return self.missing_expression(Some(&node.at));
         };
         let facts = self.facts(&node.at);
         if substituted(op)
             && let Some((construction, lifted)) = spelled_construction(facts)
         {
             let Some(construction) = self.expression_slot(construction) else {
-                return self.missing_expression();
+                return self.missing_expression(Some(&construction.source_span()));
             };
             let id = self.expression(construction);
             apply_spelled(&mut self.nodes[id.0 as usize], facts, lifted);
@@ -113,10 +119,10 @@ impl NodeMap for Seal<'_> {
     fn statement(&mut self, slot: CheckedStmtId) -> CheckedStmtId {
         let emitted = self.emitted;
         let Some(node) = emitted.statements.get(slot.0 as usize) else {
-            return self.missing_statement();
+            return self.missing_statement(None);
         };
         let (Some(op), Some(syntax)) = (&node.op, node.at.syntax) else {
-            return self.missing_statement();
+            return self.missing_statement(Some(&node.at));
         };
         let facts = self.facts(&node.at);
         let op = match op {
@@ -156,18 +162,22 @@ impl<'a> Seal<'a> {
     }
 
     /// The emitted slot of the planned expression `expression`, or one no
-    /// node holds, which seals as missing.
+    /// node holds, which seals as missing at `expression`.
     fn planned_expression(&self, expression: &Expr) -> CheckedNodeId {
-        self.expression_slot(expression)
-            .unwrap_or(CheckedNodeId(u32::MAX))
+        self.expression_slot(expression).unwrap_or_else(|| {
+            self.unsealed.borrow_mut().locate(&expression.source_span());
+            CheckedNodeId(u32::MAX)
+        })
     }
 
     /// The emitted slot of the planned statement `statement`, or one no
-    /// node holds, which seals as missing.
+    /// node holds, which seals as missing at `statement`.
     fn planned_statement(&self, statement: &Stmt) -> CheckedStmtId {
-        match self.emitted.index.get(&statement.source_span()) {
-            Some(EmittedSlot::Statement(id)) => *id,
-            _ => CheckedStmtId(u32::MAX),
+        if let Some(EmittedSlot::Statement(id)) = self.emitted.index.get(&statement.source_span()) {
+            *id
+        } else {
+            self.unsealed.borrow_mut().locate(&statement.source_span());
+            CheckedStmtId(u32::MAX)
         }
     }
 
@@ -896,7 +906,7 @@ impl<'a> Seal<'a> {
             .filter_map(|statement| {
                 let slot = self.planned_statement(statement);
                 if slot.0 == u32::MAX {
-                    self.missing += 1;
+                    self.unsealed.borrow_mut().count += 1;
                     None
                 } else {
                     Some(slot)
@@ -906,9 +916,11 @@ impl<'a> Seal<'a> {
         self.block(&slots)
     }
 
-    /// A placeholder for an expression no emitted node or op holds.
-    fn missing_expression(&mut self) -> CheckedNodeId {
-        self.missing += 1;
+    /// A placeholder for an expression no emitted node or op holds, at
+    /// `at` where the seal knows it: the walk stays total, and the tables
+    /// are rejected.
+    fn missing_expression(&mut self, at: Option<&SourceSpan>) -> CheckedNodeId {
+        self.unsealed.get_mut().miss(at);
         let id = CheckedNodeId(self.nodes.len() as u32);
         self.nodes.push(expression_node(
             id,
@@ -920,9 +932,9 @@ impl<'a> Seal<'a> {
         id
     }
 
-    /// A placeholder for a statement no emitted node or op holds.
-    fn missing_statement(&mut self) -> CheckedStmtId {
-        self.missing += 1;
+    /// As [`Self::missing_expression`], for a statement.
+    fn missing_statement(&mut self, at: Option<&SourceSpan>) -> CheckedStmtId {
+        self.unsealed.get_mut().miss(at);
         let id = CheckedStmtId(self.statements.len() as u32);
         self.statements.push(statement_node(
             id,
@@ -938,10 +950,10 @@ impl<'a> Seal<'a> {
 mod tests {
     use super::seal;
     use crate::checked::{
-        BracketBinding, BracketBound, CheckedArena, CheckedOp, CheckedParamArg, CheckedParameter,
-        CheckedStmtOp, NodeFacts, SemanticAdjustment, Signatures, SpelledConstruction,
-        build_checked_expressions,
+        BracketBinding, BracketBound, CheckedOp, CheckedParamArg, CheckedParameter, CheckedStmtOp,
+        CheckedTables, NodeFacts, SemanticAdjustment, Signatures, SpelledConstruction,
     };
+    use crate::emitted::Unsealed;
     use crate::emitted::{EmittedDesugar, EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt};
     use mojito_ast::ast::{Expr, ExprKind, ParamArg, Stmt, StmtKind};
     use mojito_common::token::{SourceSpan, SyntaxId};
@@ -1007,13 +1019,12 @@ mod tests {
         }
     }
 
-    /// The tables built from `statements` and sealed from `emitted`, and
-    /// the seal's missing count.
-    fn both(
+    /// The tables sealed from `emitted` for the roots `statements`.
+    fn sealed(
         emitted: &EmittedNodes,
         statements: &[Stmt],
         facts: &HashMap<SourceSpan, NodeFacts>,
-    ) -> (CheckedArena, CheckedArena, u64) {
+    ) -> Result<CheckedTables, Unsealed> {
         let (types, generics, effects) = (HashMap::new(), HashMap::new(), HashMap::new());
         let (conventions, references, symbols) = (HashMap::new(), HashMap::new(), HashMap::new());
         let signatures = Signatures {
@@ -1024,18 +1035,7 @@ mod tests {
             fieldwise_ref_params: &references,
             declaration_symbols: &symbols,
         };
-        let built = build_checked_expressions(statements, facts, &[], signatures);
-        let (sealed, missing) = seal(emitted, statements, &[], facts, signatures);
-        (sealed, built, missing)
-    }
-
-    fn same(sealed: &CheckedArena, built: &CheckedArena) {
-        assert_eq!(format!("{:?}", sealed.nodes), format!("{:?}", built.nodes));
-        assert_eq!(
-            format!("{:?}", sealed.statements),
-            format!("{:?}", built.statements)
-        );
-        assert_eq!(sealed.roots, built.roots);
+        seal(emitted, statements, &[], facts, signatures)
     }
 
     fn written(slot: crate::checked::CheckedNodeId) -> CheckedParameter {
@@ -1096,18 +1096,41 @@ mod tests {
                 ..NodeFacts::default()
             },
         )]);
-        let (sealed, built, missing) = both(&emitted.0, &[statement], &facts);
-        same(&sealed, &built);
-        assert_eq!(missing, 0);
-        assert_eq!(sealed.nodes.len(), 3, "the attribute's value has no node");
-        let Some(CheckedOp::Call { param_args, .. }) = sealed.nodes.last().map(|node| &node.op)
+        let sealed = sealed(&emitted.0, &[statement], &facts).expect("every node was emitted");
+        assert_eq!(
+            sealed.expressions.len(),
+            3,
+            "the attribute's value has no node"
+        );
+        assert_eq!(sealed.statements.len(), 1);
+        assert_eq!(sealed.roots(), &[crate::checked::CheckedStmtId(0)]);
+        let Some(CheckedOp::Call {
+            param_args, args, ..
+        }) = sealed.expressions.last().map(|node| &node.op)
         else {
             unreachable!("the root expression is the call")
         };
-        assert_eq!(param_args[0].declaration.as_deref(), Some("T"));
+        assert_eq!(
+            args,
+            &[crate::checked::CheckedNodeId(1)],
+            "the value argument is sealed after the bracket value it follows"
+        );
+        let declarations: Vec<_> = param_args
+            .iter()
+            .map(|parameter| parameter.declaration.as_deref())
+            .collect();
+        assert_eq!(declarations, [Some("T"), Some("n")]);
         assert!(matches!(
             param_args[0].arguments.as_slice(),
             [CheckedParamArg::Attribute { value: Some(_), applications }] if applications.is_empty()
+        ));
+        assert!(matches!(
+            param_args[1].arguments.as_slice(),
+            [CheckedParamArg::Value(crate::checked::CheckedNodeId(0))]
+        ));
+        assert!(matches!(
+            &sealed.expressions[0].op,
+            CheckedOp::Identifier(name) if name == "a"
         ));
     }
 
@@ -1154,13 +1177,23 @@ mod tests {
             },
         );
         scope.kind = StmtKind::Scope(vec![first, second, third]);
-        let (sealed, built, missing) = both(&emitted.0, &[scope], &HashMap::new());
-        same(&sealed, &built);
-        assert_eq!(missing, 0);
-        assert!(matches!(
-            &sealed.statements.last().map(|statement| &statement.op),
-            Some(CheckedStmtOp::Scope(body)) if body.len() == 3
-        ));
+        let sealed = sealed(&emitted.0, &[scope], &HashMap::new()).expect("every node was emitted");
+        assert_eq!(
+            sealed.statements.len(),
+            4,
+            "the `with` statements are replaced"
+        );
+        let Some(CheckedStmtOp::Scope(body)) =
+            sealed.statements.last().map(|statement| &statement.op)
+        else {
+            unreachable!("the root statement is the scope")
+        };
+        assert_eq!(body.len(), 3);
+        for (statement, written) in body.iter().zip([1, 2, 3]) {
+            let node = sealed.statement(*statement).expect("a sealed statement");
+            assert!(matches!(node.op, CheckedStmtOp::Pass));
+            assert_eq!(node.span, (written, written + 1));
+        }
     }
 
     #[test]
@@ -1196,13 +1229,16 @@ mod tests {
                 },
             ),
         ]);
-        let (sealed, built, missing) = both(&emitted.0, &[statement], &facts);
-        same(&sealed, &built);
-        assert_eq!(missing, 0);
-        assert_eq!(sealed.nodes.len(), 1);
-        assert!(matches!(sealed.nodes[0].op, CheckedOp::Identifier(_)));
+        let sealed = sealed(&emitted.0, &[statement], &facts).expect("every node was emitted");
+        assert_eq!(sealed.expressions.len(), 1);
+        assert!(matches!(&sealed.expressions[0].op, CheckedOp::Identifier(name) if name == "x"));
+        assert_eq!(sealed.expressions[0].span, construction.span);
+        assert!(matches!(
+            sealed.statements.last().map(|statement| &statement.op),
+            Some(CheckedStmtOp::Expr(crate::checked::CheckedNodeId(0)))
+        ));
         assert!(
-            sealed.nodes[0]
+            sealed.expressions[0]
                 .adjustments
                 .iter()
                 .any(|adjustment| matches!(adjustment, SemanticAdjustment::ImplicitConversion(_)))
@@ -1210,10 +1246,16 @@ mod tests {
     }
 
     #[test]
-    fn a_root_with_no_emitted_node_is_counted_missing() {
+    fn a_root_with_no_emitted_node_is_unsealed() {
         let statement = Syntax::default().stmt(StmtKind::Pass);
-        let (sealed, _, missing) = both(&EmittedNodes::default(), &[statement], &HashMap::new());
-        assert_eq!(missing, 1);
-        assert!(sealed.roots.is_empty());
+        let Err(unsealed) = sealed(
+            &EmittedNodes::default(),
+            &[statement.clone()],
+            &HashMap::new(),
+        ) else {
+            unreachable!("a root with no node cannot seal")
+        };
+        assert_eq!(unsealed.count, 1);
+        assert_eq!(unsealed.first, Some(statement.source_span()));
     }
 }

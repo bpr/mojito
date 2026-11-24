@@ -5,21 +5,18 @@
 //! when they emit it.
 //!
 //! An op's operands are other emitted nodes, numbered by their position in
-//! [`EmittedNodes`], not by the checked arena's ids. A field the check
+//! [`EmittedNodes`], not by the checked tables' ids. A field the check
 //! decides after allocation (a declaration's symbol and signature, a call's
 //! parameter grouping, a match's plan) is left empty in the op and stands
-//! as a fact on the node. Under `MOJITO_CHECK_EMITTED=1` the seal
-//! ([`seal`]) composes each op with its node's facts into checked tables,
-//! and [`compare`] checks them against the arena built from the records.
+//! as a fact on the node. The seal ([`seal`]) composes each op with its
+//! node's facts into the checked tables `CheckedProgram::new` hands over,
+//! and rejects an occurrence the check emitted no node for ([`Unsealed`]).
 
 mod seal;
 
 pub(crate) use seal::seal;
 
-use crate::checked::{
-    CheckedArena, CheckedExpr, CheckedNodeId, CheckedOp, CheckedStmt, CheckedStmtId,
-};
-use mojito_common::timing;
+use crate::checked::{CheckedNodeId, CheckedOp, CheckedStmtId};
 use mojito_common::token::SourceSpan;
 use std::collections::HashMap;
 
@@ -59,7 +56,7 @@ pub struct EmittedExpr {
     pub at: SourceSpan,
     /// Set when the node is allocated and never changed; `None` only where
     /// an operand had no node, which the handoff counts
-    /// (`emit.opless_nodes`).
+    /// (`emit.opless_nodes`) and the seal rejects.
     pub op: Option<CheckedOp>,
     /// For each operand position whose lifted applications the check
     /// decides (a call's bracket argument, a subscript key, a function
@@ -101,51 +98,47 @@ pub enum EmittedSlot {
     Expression(CheckedNodeId),
 }
 
-/// Compare the tables `sealed` from the emitted nodes, `missing` of whose
-/// nodes the seal found no emitted node for, with the tables `built` from
-/// the check's records, whole: node for node by id, and their roots. Each
-/// kind of difference is counted (`emit.seal.*`) and its first five are
-/// printed; a difference shifts every later id, so the first is the one to
-/// read.
-pub(crate) fn compare(sealed: &CheckedArena, built: &CheckedArena, missing: u64) {
-    let expressions = differences(
-        "emit.seal.expression_mismatches",
-        &sealed.nodes,
-        &built.nodes,
-        CheckedExpr::location,
-    );
-    let statements = differences(
-        "emit.seal.statement_mismatches",
-        &sealed.statements,
-        &built.statements,
-        CheckedStmt::location,
-    );
-    let roots = u64::from(sealed.roots != built.roots)
-        + u64::from(sealed.wrapper_roots != built.wrapper_roots);
-    if roots > 0 {
-        eprintln!(
-            "emit.seal.root_mismatches:\n  sealed {:?} {:?}\n  built  {:?} {:?}",
-            sealed.roots, sealed.wrapper_roots, built.roots, built.wrapper_roots
-        );
+/// The occurrences the seal found no emitted node or op for: how many,
+/// and the first whose location it knew.
+#[derive(Debug, Default)]
+pub(crate) struct Unsealed {
+    pub(crate) count: u64,
+    pub(crate) first: Option<SourceSpan>,
+}
+
+impl Unsealed {
+    /// One more occurrence with no node, at `at` where it is known.
+    fn miss(&mut self, at: Option<&SourceSpan>) {
+        self.count += 1;
+        if let Some(at) = at {
+            self.locate(at);
+        }
     }
-    for (kind, count) in [
-        ("emit.seal.missing", missing),
-        ("emit.seal.expressions", built.nodes.len() as u64),
-        ("emit.seal.statements", built.statements.len() as u64),
-        ("emit.seal.expression_mismatches", expressions),
-        ("emit.seal.statement_mismatches", statements),
-        ("emit.seal.root_mismatches", roots),
-    ] {
-        timing::count(kind, count);
+
+    /// `at` as the first located occurrence with no node, unless one is
+    /// already known.
+    fn locate(&mut self, at: &SourceSpan) {
+        if self.first.is_none() {
+            self.first = Some(at.clone());
+        }
     }
-    for (kind, count) in [
-        ("emit.seal.missing", missing),
-        ("emit.seal.expression_mismatches", expressions),
-        ("emit.seal.statement_mismatches", statements),
-        ("emit.seal.root_mismatches", roots),
-    ] {
-        if count > 0 {
-            eprintln!("{kind}: {count}");
+}
+
+impl std::fmt::Display for Unsealed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the check emitted no node for {} occurrence(s)",
+            self.count
+        )?;
+        match &self.first {
+            Some(at) => write!(
+                f,
+                ", the first at {}:{:?}",
+                at.source.as_deref().unwrap_or("<main>"),
+                at.span
+            ),
+            None => Ok(()),
         }
     }
 }
@@ -171,31 +164,4 @@ const fn substituted(op: &CheckedOp) -> bool {
             | CheckedOp::Bool(_)
             | CheckedOp::Str(_)
     )
-}
-
-/// How many nodes of `sealed` and `built` differ by id, a node one side
-/// lacks counting as a difference; the first five are printed under
-/// `kind` at their `location`.
-fn differences<T: std::fmt::Debug>(
-    kind: &str,
-    sealed: &[T],
-    built: &[T],
-    location: impl Fn(&T) -> SourceSpan,
-) -> u64 {
-    let mut count = 0u64;
-    for (id, node) in built.iter().enumerate() {
-        let theirs = format!("{node:?}");
-        let ours = sealed.get(id).map(|node| format!("{node:?}"));
-        if ours.as_deref() != Some(theirs.as_str()) {
-            count += 1;
-            if count <= 5 {
-                eprintln!(
-                    "{kind}: id {id} at {:?}\n  sealed {}\n  built  {theirs}",
-                    location(node),
-                    ours.as_deref().unwrap_or("(none)")
-                );
-            }
-        }
-    }
-    count + sealed.len().saturating_sub(built.len()) as u64
 }
