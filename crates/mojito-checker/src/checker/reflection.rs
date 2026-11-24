@@ -223,39 +223,19 @@ impl Checker {
         }
     }
 
-    /// The same from a type annotation: `types[i]` (a `Named` with one
-    /// argument over a bound list), `r.field_at[i].T`, `r.field["x"].T`, and
-    /// `f.T` over a bound handle. A handle is always reached through a
-    /// `comptime` binding here, as the elaborator requires too.
-    pub(super) fn reflected_type_annotation(
-        &self,
-        source: &AnnotationView,
-    ) -> Result<Option<Ty>, TypeError> {
-        if self.local_comptime_values.iter().all(HashMap::is_empty)
-            && !self.installs_any(interface::Table::ComptimeValues)
-        {
-            return Ok(None);
-        }
-        match source {
-            AnnotationView::Named(name, args) => {
-                let [ParamArg::Value(index)] = args.as_slice() else {
-                    return Ok(None);
-                };
-                let Some(bound) = self.local_comptime_value(name) else {
-                    return Ok(None);
-                };
-                match self.reflection_list(bound)? {
-                    Some((ReflectQuery::FieldTypes, list)) => {
-                        self.reflection_list_element(&list, index).map(Some)
-                    }
-                    _ => Ok(None),
-                }
-            }
-            AnnotationView::Assoc { base, name, args } if name == "T" && args.is_empty() => {
-                self.handle_from_annotation(base)
-            }
-            _ => Ok(None),
-        }
+    /// The element of a reflected field-type list a local `comptime` binds
+    /// (`types[i]` over `comptime types = reflect[P].field_types()`), as
+    /// [`Self::reflected_type_operand`] reads it. `None` for any other
+    /// expression.
+    pub(super) fn reflected_type_element(&self, expr: &Expr) -> Option<Result<Ty, TypeError>> {
+        let ExprKind::Index { object, .. } = &expr.kind else {
+            return None;
+        };
+        let ExprKind::Identifier(name) = &object.kind else {
+            return None;
+        };
+        self.local_comptime_value(name)?;
+        self.reflected_type_operand(expr).transpose()
     }
 
     /// Answer a query: from the struct table for a registered struct (its
@@ -620,38 +600,6 @@ impl Checker {
                     return Ok(None);
                 };
                 self.reflection_selector(&subject, field, index).map(Some)
-            }
-            _ => Ok(None),
-        }
-    }
-
-    /// A handle spelled in an annotation: a bound name, or a
-    /// `field_at[i]` / `field[name]` selection on one.
-    fn handle_from_annotation(&self, source: &AnnotationView) -> Result<Option<Ty>, TypeError> {
-        match source {
-            AnnotationView::Named(name, args) if args.is_empty() => {
-                match self.local_comptime_value(name) {
-                    Some(bound) => self.reflection_handle(bound),
-                    None => Ok(None),
-                }
-            }
-            AnnotationView::IndexedProjection { base, index } => {
-                let AnnotationView::Assoc {
-                    base: inner,
-                    name,
-                    args,
-                } = base.as_ref()
-                else {
-                    return Ok(None);
-                };
-                if !args.is_empty() || !matches!(name.as_str(), "field" | "field_at" | "field_type")
-                {
-                    return Ok(None);
-                }
-                let Some(subject) = self.handle_from_annotation(inner)? else {
-                    return Ok(None);
-                };
-                self.reflection_selector(&subject, name, index).map(Some)
             }
             _ => Ok(None),
         }

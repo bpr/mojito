@@ -253,7 +253,7 @@ which names the upstream pass each one follows. Each is measured by the
     and the check's (`f`, or `symbol::declaration_owner`'s `f@decl1` for
     an overload); after the entry's classification is deleted, one owner
     remains.
-  - The obstacle: the demand chain is `&self` (`ty_from_spelling` →
+  - The obstacle: the demand chain is `&self` (`applied_type` →
     `applied_call` / `violated_application_constraint` →
     `selected_application_at`), and emitting a signature pushes onto the
     `&mut self` scope stacks (`push_param_scope`, `in_owner_scope`,
@@ -5219,14 +5219,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   L[1], found Bool", where the pin reads the local and prints `True`.
   - A name resolves through the innermost scope at the pin, so the local
     binding hides the module struct in every position.
-  - `Checker::ty_from_spelling`'s `AnnotationView::Named` arm
-    (`checker/type_resolution.rs`) asks `applied_type_at_depth` first and
-    reads the name as a compile-time value (`value_headed_type`) only
-    when no type has that name, so a module type wins over a local value.
-  - Probe: a member read through the local, `var a: w.E = True` over a
-    module `struct w` and `comptime w = W[3]()` (`W` declaring `comptime E
-    = Bool`), reads the module struct's member, since
-    `Checker::member_base` likewise asks the type spelling first.
+  - The builder's application arm (`Checker::type_application_value`,
+    `checker/constraints.rs`) asks `applied_type` first and reads the
+    name as a compile-time value only when no type has that name, so a
+    module type wins over a local value.
+  - A member read through the local (`var a: w.E`) already reads it,
+    since `Checker::member_base` types the base as an expression
+    (`assets/ok/local_comptime_member_base_shadows_type.mojo`).
   - Found while landing R1540 (2026-11-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5425,7 +5424,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     nothing. A run-time call through the alias already constructs
     (`infer_type_alias_read`).
   - Lever: resolve a callee naming a type alias to its struct template
-    and spelled instance (`ty_from_spelling`), as the `on_instance` arm does
+    and spelled instance (`applied_type`), as the `on_instance` arm does
     for `G[2](n)`.
   - Probe: `comptime t = StaticString("lit")` then `name[t]()`, and
     `name[StaticString("lit")]()`, over `def name[s: StaticString]() ->
@@ -13402,33 +13401,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2548 The resolver's leaves and bracket operands read an annotation view**
-
-  `ty_from_spelling`, `resolve_ty_from_anno`, and
-  `resolve_ty_from_anno_at_depth` survive because synthesized views and
-  view-taking leaves still call them, where upstream's type-application code
-  takes the expression.
-  - Synthesized `AnnotationView::Named`/`SelfParam` sites go to
-    `applied_type` or `emit_expr_type` (`type_resolution.rs`,
-    `comptime_validation.rs`, `initializer_list.rs`, `declarations.rs`,
-    `origins/binders.rs`, `method_calls/type_receivers.rs`,
-    `constraints.rs`).
-  - `member_type`, `member_base`, `member_index_application`,
-    `dependent_type_sequence`, `unbound_pack_type`, `value_base_type`, and
-    `indexed_projection_type` take the base expression;
-    `constraints.rs::member_through_type`, `denoted_type`'s value-member
-    check, and `build_ct_rest`'s member-subscript arm then stop viewing the
-    object.
-  - `reflection.rs::{reflected_type_annotation, handle_from_annotation}`
-    go with the dispatcher: `applied_type`'s synthesized `Named` read
-    becomes `reflected_type_operand` on the application expression, as the
-    builder already reads a handle's `.T`.
-  - `build_ct`'s `&` of trait operands builds the trait composition, so
-    `composition_view` and `$trait_composition` go.
-  - `build_ct_rest`'s member-type fallback stops using `member_view_of`.
-  - Depends on R2547.
-  - Model: Fable, Planned.
-
 - [ ] **R2549 Origin, declaration, and trait readers classify an annotation by its view**
 
   Structural readers in `origins/`, `declarations.rs`, `traits.rs`,
@@ -13449,10 +13421,11 @@ follow-ups the landed producer stages filed come last.
   `constraints.rs`, `comptime_validation.rs`, and `initializer_list.rs`
   still match `AnnotationView` shapes, so the view type outlives the
   evaluator it was built for.
-  - Probe: `ct_member_req_from_anno`, `lower_parameterized_member`,
-    `assoc_body_view`, `member_view_of`, `type_initializer_mismatch`,
-    `mlir_source_name`, `SlotType` classification, the
-    `initializer_list.rs` view readers.
+  - Probe: `assoc_body_view` (the gate `check_struct_associated`,
+    `denotes_type`, and `builtin_fold.rs` still test before typing a
+    member body), `member_view_of`, `mlir_source_name`, `SlotType`
+    classification, the `initializer_list.rs` view readers
+    (`type_member_read`, `type_member_spelling`).
   - Then delete `AnnotationView`, its view functions, and
     `annotation_view_tests`, and say in `docs/features.md` that the checker
     types every annotation with `emit_expr_type`.

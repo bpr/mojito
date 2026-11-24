@@ -685,6 +685,7 @@ assets/ok/loan_carrying_temporary_destroyed_after_call.mojo	main	exe-differentia
 assets/ok/loan_carrying_temporary_owned_argument.mojo	main	exe-differential	sanitized
 assets/ok/local_comptime_closed_binding.mojo	main	exe-differential	sanitized
 assets/ok/local_comptime_float.mojo	main	exe-differential	sanitized
+assets/ok/local_comptime_member_base_shadows_type.mojo	main	exe-differential	sanitized
 assets/ok/local_type_alias_construction.mojo	main	exe-differential	sanitized
 assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/loop_never_breaks_returning_body.mojo	main	exe-differential	sanitized

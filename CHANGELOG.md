@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The resolver's second evaluator is gone (R2548): `ty_from_spelling` and its
+  annotation-view dispatcher are deleted, and every caller types an
+  expression with the one builder or calls a builder leaf on the
+  expression's parts (`applied_type`, `member_type` over a member read's
+  base expression, `self_pack_type`). A trait member's or generator
+  result's `&` composition is the trait value `trait_value` reads. A local
+  `comptime` now hides a module struct of its name as a member read's base
+  (`var a: w.E` over `comptime w = W[3]()`), as at the pin.
+
 - Every annotation is typed by the one compile-time builder (R2547): an
   index into a type sequence (`Self.Ts[0]`, `values.Ts[i]`,
   `TypeList[...]()[i]`), `type_of(x)`, an applied member

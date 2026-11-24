@@ -1384,7 +1384,7 @@ impl Checker {
         {
             return None;
         }
-        self.ty_from_spelling(&AnnotationView::Named(only.to_string(), Vec::new()))
+        self.emit_expr_type(tp.bounds.first()?)
             .ok()
             .filter(|ty| !matches!(ty.kind(), TyKind::Trait(_) | TyKind::AnyTrait(_)))
     }
@@ -1415,7 +1415,7 @@ impl Checker {
                 let Some(annotation) = binder_view(tp) else {
                     return Ok(None);
                 };
-                let Some(binder) = self.origin_annotation_mutability(&annotation)? else {
+                let Some(binder) = self.origin_annotation_mutability(tp, &annotation)? else {
                     return Ok(None);
                 };
                 binder
@@ -1444,6 +1444,7 @@ impl Checker {
     /// type than `Bool` is the binding's type mismatch.
     fn origin_annotation_mutability(
         &self,
+        tp: &mojito_ast::ast::TypeParam,
         annotation: &AnnotationView,
     ) -> Result<Option<OriginBinderType>, TypeError> {
         if let Some(binder) = self.enclosing_self_mutability(annotation) {
@@ -1451,7 +1452,10 @@ impl Checker {
                 binder,
             ))));
         }
-        let mutability = match self.ty_from_spelling(annotation) {
+        let Some(resolved) = self.binder_annotation_type(tp) else {
+            return Ok(None);
+        };
+        let mutability = match resolved {
             Ok(ty) => {
                 let (name, args) = match ty.kind() {
                     TyKind::Struct(name, args) => (name, args),
@@ -1512,6 +1516,27 @@ impl Checker {
             // unbound parameter.
             _ => OriginMutability::Binder(ParamRef::unbound("_")),
         })))
+    }
+
+    /// The type a binder's annotation denotes: its value type, else the
+    /// `Origin[mut=e]` the parser read into its `origin_mutability`, else
+    /// its lone bound. `None` for several bounds.
+    fn binder_annotation_type(
+        &self,
+        tp: &mojito_ast::ast::TypeParam,
+    ) -> Option<Result<Ty, TypeError>> {
+        if let Some(value_type) = &tp.value_type {
+            return Some(self.emit_expr_type(value_type));
+        }
+        if let Some(mutability) = &tp.origin_mutability {
+            let mutability = mojito_ast::ast::ParamArg::Named {
+                name: "mut".to_string(),
+                value: Box::new(mojito_ast::ast::ParamArg::Value(mutability.clone())),
+            };
+            return Some(self.applied_type("Origin", &[mutability]).map(|(ty, _)| ty));
+        }
+        tp.lone_bound()?;
+        Some(self.emit_expr_type(tp.bounds.first()?))
     }
 
     /// The enclosing struct's `Bool` binder an `Origin[mut=Self.mut]`
@@ -1804,7 +1829,7 @@ impl Checker {
                 if let Some(ty) = scalar_type_name(name) {
                     Ok(ty)
                 } else {
-                    self.ty_from_spelling(&AnnotationView::Named(name.clone(), Vec::new()))
+                    self.emit_expr_type(value)
                 }
             }
             ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => self.type_value(value),

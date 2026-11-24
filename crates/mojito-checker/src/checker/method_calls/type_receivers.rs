@@ -356,9 +356,8 @@ impl Checker {
         object: &Expr,
     ) -> Option<Result<Ty, TypeError>> {
         let (name, targs) = object.bracket_application()?;
-        self.generic_type_alias(name).then(|| {
-            self.ty_from_spelling(&AnnotationView::Named(name.to_string(), targs.into_owned()))
-        })
+        self.generic_type_alias(name)
+            .then(|| self.applied_type(name, &targs).map(|(ty, _)| ty))
     }
 
     /// Type a call through `object`, a receiver bound to the type `instance`

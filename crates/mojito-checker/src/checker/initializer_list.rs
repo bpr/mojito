@@ -170,7 +170,8 @@ impl Checker {
                 args,
                 kwargs,
             } if self.generic_type_alias(name) => Some(
-                self.ty_from_spelling(&AnnotationView::Named(name.clone(), param_args.clone()))
+                self.applied_type(name, param_args)
+                    .map(|(ty, _)| ty)
                     .and_then(|ty| {
                         let applied =
                             mojito_ast::ast::named_subscript(name, param_args, expression.span);
@@ -589,10 +590,7 @@ impl Checker {
         if !self.generic_type_alias(name) {
             return None;
         }
-        let ty = match self.ty_from_spelling(&AnnotationView::Named(
-            name.to_string(),
-            param_args.into_owned(),
-        )) {
+        let ty = match self.applied_type(name, &param_args).map(|(ty, _)| ty) {
             Ok(ty) if ty.is_simd() => return None,
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
@@ -665,7 +663,7 @@ impl Checker {
                 object.span,
             );
         }
-        let ty = self.ty_from_spelling(&spelling).ok()?;
+        let ty = self.emit_expr_type(object).ok()?;
         if let Some(spelled) = mojito_types::ct::source_expr(&ty, object.span) {
             return Some(self.keyword_spelling(spelled));
         }
@@ -727,9 +725,9 @@ impl Checker {
             },
             object.span,
         );
-        let (spelling, _) = self.type_member_read(&read)?;
+        self.type_member_read(&read)?;
         Some((
-            self.ty_from_spelling(&spelling).ok()?,
+            self.emit_expr_type(&read).ok()?,
             self.type_member_spelling(&read)?,
         ))
     }
@@ -740,7 +738,11 @@ impl Checker {
     /// lookup reads the member as its value. `None` when `object` names no
     /// such member.
     fn type_member_read(&self, object: &Expr) -> Option<(AnnotationView<'_>, Option<&Expr>)> {
-        let ExprKind::Member { field, .. } = &object.kind else {
+        let ExprKind::Member {
+            object: inner,
+            field,
+        } = &object.kind
+        else {
             return None;
         };
         let spelling = spelled_view(object)?;
@@ -756,7 +758,7 @@ impl Checker {
                 }
                 // A bare parametric struct's member is read through its
                 // unbound generator, as a type member read's base is.
-                self.member_base(base).ok()?.0
+                self.member_base(inner).ok()?.0
             }
             _ => return None,
         };
@@ -870,14 +872,9 @@ impl Checker {
         {
             return None;
         }
-        let member = AnnotationView::Assoc {
-            base: Box::new(base),
-            name: field.clone(),
-            args: param_args.to_vec(),
-        };
         let applied = member_application(callee, param_args);
         let construction = self
-            .ty_from_spelling(&member)
+            .member_type(object, field, param_args)
             .and_then(|ty| self.type_construction(expression, applied.as_ref(), &ty, args, kwargs));
         Some(construction.and_then(|construction| self.infer_spelled(expression, construction)))
     }

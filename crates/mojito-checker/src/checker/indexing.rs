@@ -2218,8 +2218,50 @@ impl Checker {
         if root.is_some_and(|name| name == "Self" || self.lookup(name).is_some()) {
             return None;
         }
-        let source = super::constraints::assoc_body_view(object).ok()?;
-        Some(self.ty_from_spelling(&source))
+        super::constraints::assoc_body_view(object).ok()?;
+        Some(match &object.kind {
+            ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
+                self.callable_type(object)
+            }
+            ExprKind::Identifier(name) => self.named_type(name, &[]),
+            _ if let Some((name, args)) = object.bracket_application() => {
+                self.named_type(name, &args)
+            }
+            // A member application (`M.Pair[A, B]`, `S[Int].Of[Bool]`) or an
+            // index into a member (`M.Buf[n]`).
+            ExprKind::Index {
+                object: member,
+                index,
+            } if !index.is_type_expression() => self.indexed_projection_type(member, index),
+            ExprKind::Index {
+                object: member,
+                index,
+            } => {
+                let ExprKind::Member {
+                    object: base,
+                    field,
+                } = &member.kind
+                else {
+                    return None;
+                };
+                self.member_type(base, field, &mojito_ast::ast::subscript_param_args(index))
+            }
+            ExprKind::MultiIndex {
+                object: member,
+                args,
+            } => {
+                let ExprKind::Member {
+                    object: base,
+                    field,
+                } = &member.kind
+                else {
+                    return None;
+                };
+                let args = mojito_ast::ast::multi_subscript_param_args(args)?;
+                self.member_type(base, field, &args)
+            }
+            _ => return None,
+        })
     }
 }
 

@@ -234,52 +234,17 @@ impl Checker {
     pub(super) fn ct_member_req_from_anno(
         &self,
         params: &[mojito_ast::ast::TypeParam],
-        ty: &AnnotationView,
+        annotation: &Expr,
     ) -> Result<CtMemberReq, TypeError> {
-        if let AnnotationView::Named(name, args) = ty
-            && name == "$trait_composition"
-        {
-            let mut bounds = Vec::with_capacity(args.len());
-            for argument in args {
-                let mojito_ast::ast::ParamArg::Value(member) = argument else {
-                    return Err(TypeError::Unsupported(
-                        "associated type bounds must be trait names".to_string(),
-                    ));
-                };
-                let bound = match &member.kind {
-                    ExprKind::Identifier(bound) => bound,
-                    _ if member.bracket_application().is_some() => {
-                        return Err(TypeError::Unsupported(
-                            "associated type bounds cannot take arguments".to_string(),
-                        ));
-                    }
-                    _ => {
-                        return Err(TypeError::Unsupported(
-                            "associated type bounds must be trait names".to_string(),
-                        ));
-                    }
-                };
-                self.check_trait_name(bound)?;
-                if !bounds.iter().any(|existing| existing == bound) {
-                    bounds.push(bound.clone());
-                }
-            }
+        // A trait or an `&` composition of traits declares a type member
+        // bounded by each trait, as upstream's `AnyTrait` value of `&` is.
+        if let Some(value) = self.trait_value(annotation) {
             return Ok(CtMemberReq::Type {
-                bounds,
+                bounds: value?.traits,
                 params: params.to_vec(),
             });
         }
-        if let AnnotationView::Named(name, args) = ty
-            && args.is_empty()
-            && (COMPILER_TRAITS.contains(&name.as_str()) || self.traits.contains_key(name))
-        {
-            self.check_trait_name(name)?;
-            return Ok(CtMemberReq::Type {
-                bounds: vec![name.clone()],
-                params: params.to_vec(),
-            });
-        }
-        Ok(CtMemberReq::Value(self.ty_from_spelling(ty)?))
+        Ok(CtMemberReq::Value(self.emit_expr_type(annotation)?))
     }
 
     /// `conformance_conditions` are the struct's conditional conformances: a
@@ -343,9 +308,7 @@ impl Checker {
             let requirement = member
                 .ty
                 .as_ref()
-                .map(|annotation| {
-                    self.ct_member_req_from_anno(&member.params, &composition_view_of(annotation)?)
-                })
+                .map(|annotation| self.ct_member_req_from_anno(&member.params, annotation))
                 .transpose();
             self.pop_param_scope();
             let requirement = requirement?;
@@ -400,7 +363,7 @@ impl Checker {
                 // unannotated generic alias's is.
                 let as_type = match requirement {
                     Some(CtMemberReq::Value(_)) => Err(unsupported_assoc_body()),
-                    _ => assoc_body_view(&member.value).and_then(|source_ty| {
+                    _ => assoc_body_view(&member.value).and_then(|_| {
                         let decls = own_decls.clone();
                         let template = self.lower_parameterized_member(
                             &member_owner,
@@ -408,7 +371,6 @@ impl Checker {
                             member_scope.clone(),
                             &member.params,
                             &member.value,
-                            &source_ty,
                         )?;
                         Ok(MemberTemplate::Type { decls, template })
                     }),
@@ -814,7 +776,6 @@ impl Checker {
         scope: HashMap<String, Ty>,
         params: &[mojito_ast::ast::TypeParam],
         body: &Expr,
-        source_ty: &AnnotationView,
     ) -> Result<Ty, TypeError> {
         // Member type parameters resolve as `TyKind::Param` (via the `tparams` scope
         // the caller built, like a generic def's parameters); origin parameters
@@ -832,7 +793,7 @@ impl Checker {
         self.enclosing_param_decls.extend(classified);
         // The body's own occurrence records what it resolved to, under the
         // member's parameters.
-        let template = match (&body.kind, source_ty) {
+        let template = match &body.kind {
             _ if let Some((name, args)) = self.parameter_application(body) => self
                 .applied_type(name, &args)
                 .map(|(template, attributes)| {
@@ -842,10 +803,10 @@ impl Checker {
             // A function type with its own binders (`def[dtype: DType,
             // width: SIMDLength, //](SIMD[dtype, width]) thin -> …`) is the
             // parametric function type a callable bound's is.
-            (ExprKind::FunctionType(callable), _) if !callable.type_params.is_empty() => {
+            ExprKind::FunctionType(callable) if !callable.type_params.is_empty() => {
                 self.lower_anonymous_callable_type(&format!("$callable:{owner}"), callable, params)
             }
-            _ => self.ty_from_spelling(source_ty),
+            _ => self.emit_expr_type(body),
         };
         if let Ok(template) = &template
             && body.is_type_expression()
@@ -2153,6 +2114,22 @@ impl Checker {
         }
     }
 
+    /// The type value the application `expr` names, beside what each of
+    /// its bracket arguments bound to: a type's application, or an element
+    /// of a reflected field-type list a local `comptime` binds (`types[i]`
+    /// over `comptime types = reflect[P].field_types()`). `None` when
+    /// `expr` names no type.
+    pub(super) fn type_application_value(
+        &self,
+        expr: &Expr,
+    ) -> Option<Result<(CtValue, DeclaredAttributes), TypeError>> {
+        if let Some(reflected) = self.reflected_type_element(expr) {
+            return Some(reflected.map(|ty| (CtValue::Type(ty), DeclaredAttributes::default())));
+        }
+        let (name, args) = self.parameter_application(expr)?;
+        self.applied_type_value(name, &args).transpose()
+    }
+
     /// Whether `name` is one of the enclosing struct's own parameters: its
     /// declared parameters, or — inside a value specialization's clone, whose
     /// body may still spell a baked value parameter bare — the template's.
@@ -2251,9 +2228,7 @@ impl Checker {
                     .constant_as(CtValue::FuncSymbol(symbol), &ty)
                     .map_err(param_error)
             }
-            _ if let Some((name, args)) = self.parameter_application(expr)
-                && let Some(applied) = self.applied_type_value(name, &args).transpose() =>
-            {
+            _ if let Some(applied) = self.type_application_value(expr) => {
                 let (ty, attributes) = applied?;
                 if record {
                     self.record_declared_attributes(expr.source_span(), &attributes);
@@ -3555,10 +3530,9 @@ impl Checker {
         }
         // A type's type member (`Meta.KGENTypeType`, `S[Int].Of[Bool]`) is
         // the type it names.
-        if matches!(expr.kind, ExprKind::Member { .. })
-            && let Some(member) = member_view_of(expr)
-                .filter(|member| !matches!(member, AnnotationView::SelfParam(_)))
-            && let Ok(ty) = self.ty_from_spelling(&member)
+        if let ExprKind::Member { object, field } = &expr.kind
+            && spells_member_base(object)
+            && let Ok(ty) = self.member_type(object, field, &[])
         {
             return Ok(self.param_context.type_shape(ty));
         }
@@ -3592,13 +3566,11 @@ impl Checker {
         // selection on a bound reflection handle (`s.field_at[0]`) is the
         // handle value the reflection reader owns.
         if let Some((object, index)) = member_subscript(expr)
-            && let Some(base) =
-                annotation_view(object).filter(|base| !matches!(base, AnnotationView::Value(_)))
             && !matches!(self.reflection_handle(expr), Ok(Some(_)))
         {
             return Ok(self
                 .param_context
-                .type_shape(self.indexed_projection_type(&base, index)?));
+                .type_shape(self.indexed_projection_type(object, index)?));
         }
         Err(self.ct_expression_rejection(expr))
     }
@@ -3691,8 +3663,7 @@ impl Checker {
         {
             return None;
         }
-        let base = annotation_view(object)?;
-        Some(self.member_type(&base, field, &[]))
+        (!object.is_sentinel()).then(|| self.member_type(object, field, &[]))
     }
 
     /// Why `expr`, read where only a type is accepted, is no type when it
@@ -3954,7 +3925,7 @@ impl Checker {
     /// name, an application, a type value, a member or subscript rooted at a
     /// name, none of them a runtime binding, or a conditional over two such
     /// arms (`Int if c else String`).
-    fn may_denote_type(&self, expr: &Expr) -> bool {
+    pub(super) fn may_denote_type(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Identifier(name) => self.lookup(name).is_none(),
             _ if expr.is_type_expression() => true,
@@ -5747,7 +5718,11 @@ impl Checker {
                 kwargs,
             } if args.is_empty() && kwargs.is_empty() => {
                 // The member's base names a struct, applied or not.
-                let ExprKind::Member { object, .. } = &callee.kind else {
+                let ExprKind::Member {
+                    object,
+                    field: member,
+                } = &callee.kind
+                else {
                     return Ok(None);
                 };
                 let root = match &object.kind {
@@ -5759,14 +5734,7 @@ impl Checker {
                 {
                     return Ok(None);
                 }
-                let Some(AnnotationView::Assoc { base, name, .. }) = member_view_of(callee) else {
-                    return Ok(None);
-                };
-                let ty = self.ty_from_spelling(&AnnotationView::Assoc {
-                    base,
-                    name,
-                    args: param_args.clone(),
-                })?;
+                let ty = self.member_type(object, member, param_args)?;
                 self.type_list_construction(&ty).map_or(Ok(None), |values| {
                     derived(self.param_context.constant(values))
                 })
@@ -8260,6 +8228,35 @@ fn annotation_head(expr: &Expr) -> Option<&str> {
         | ExprKind::MultiIndex { object, .. } => annotation_head(object),
         _ => None,
     }
+}
+
+/// Whether `object` spells the base of a type member read through a type
+/// (`M.E`, `S[Int].X`, `C.IteratorType[o].Element`, `type_of(x).T`): any
+/// such spelling but `Self` itself, whose members are its own.
+fn spells_member_base(object: &Expr) -> bool {
+    !matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+        && spells_member_root(object)
+}
+
+/// Whether `base` spells a type a member is read through: a type-shaped
+/// spelling ([`spelled_view`]), any name (a type parameter `t` included),
+/// an applied member, or `type_of(x)`.
+fn spells_member_root(base: &Expr) -> bool {
+    spelled_view(base).is_some()
+        || match &base.kind {
+            ExprKind::Identifier(_) => true,
+            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
+                matches!(&object.kind, ExprKind::Member { object: root, .. }
+                    if spells_member_root(root))
+            }
+            ExprKind::Call {
+                name,
+                args,
+                kwargs,
+                param_args,
+            } => name == "type_of" && kwargs.is_empty() && param_args.is_empty() && args.len() == 1,
+            _ => false,
+        }
 }
 
 /// The member object and the one positional index of a subscript of a

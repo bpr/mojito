@@ -5851,8 +5851,12 @@ trait `comptime` members, struct fields, union payloads, a parameter's type,
 a result, a `raises` type, a receiver's annotation, a callable conformance,
 and a type parameter's value type and callable bound) stores the annotation
 expression itself, as upstream keeps it, and the checker converts it when it
-reads it (`Checker::emit_expr_type`, `composition_view` for a struct or trait
-`comptime` member's `&` composition, `binder_view` for a binder). A
+reads it (`Checker::emit_expr_type`, `Checker::trait_value` for a struct or
+trait `comptime` member's `&` composition). The builder's leaves take the
+expression's parts, never a view: `applied_type` a name and its bracket,
+`member_type` a member read's base expression, `indexed_projection_type`
+a subscripted member, and `self_pack_type` the enclosing struct's own
+parameter. A
 synthesized slot is built as the expression source would spell, and an
 elaborator rewrite of an annotation edits the expression
 (`visit::walk_annotation_names_mut`). A `def`

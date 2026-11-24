@@ -1024,7 +1024,6 @@ impl Checker {
         {
             return Ok(());
         }
-        let ty = ty.as_ref().map(annotation_view_of).transpose()?;
         self.check_generic_comptime_alias(name, type_params, ty.as_ref(), where_clauses, value)
     }
 
@@ -1057,8 +1056,7 @@ impl Checker {
     /// module `comptime` bound to it is a type alias. A value spelled the
     /// same way (`DType.int16`) is not.
     fn denotes_type(&self, value: &Expr) -> bool {
-        super::constraints::assoc_body_view(value)
-            .is_ok_and(|source| self.ty_from_spelling(&source).is_ok())
+        super::constraints::assoc_body_view(value).is_ok() && self.emit_expr_type(value).is_ok()
     }
 
     /// Check the statements of a block in the current scope. `ret` is the
@@ -2333,7 +2331,7 @@ impl Checker {
                     return Err(TypeError::ParametricConstruction(shown));
                 }
                 if type_params.is_empty()
-                    && let Some(mismatch) = ty
+                    && let Some(mismatch) = annotation
                         .as_ref()
                         .and_then(|annotation| self.type_initializer_mismatch(annotation, value))
                 {
@@ -2377,7 +2375,7 @@ impl Checker {
                     return self.check_generic_comptime_alias(
                         name,
                         type_params,
-                        ty.as_ref(),
+                        annotation.as_ref(),
                         where_clauses,
                         value,
                     );
@@ -4682,7 +4680,7 @@ impl Checker {
         &mut self,
         name: &str,
         type_params: &[mojito_ast::ast::TypeParam],
-        ty: Option<&AnnotationView<'_>>,
+        ty: Option<&Expr>,
         where_clauses: &[Expr],
         value: &Expr,
     ) -> Result<(), TypeError> {
@@ -4784,14 +4782,13 @@ impl Checker {
                         },
                     }
                 }
-                (Ok(source_ty), None) => {
+                (Ok(_), None) => {
                     match self.lower_parameterized_member(
                         name,
                         &decls,
                         type_scope(&decls),
                         type_params,
                         value,
-                        &source_ty,
                     ) {
                         Ok(template) => AliasBody::Type(template),
                         // A type-shaped body over a pack (`Ts.length`, `vs[0]`)

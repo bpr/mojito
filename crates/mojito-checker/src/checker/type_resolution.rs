@@ -88,23 +88,6 @@ pub(super) fn annotation_view(annotation: &Expr) -> Option<AnnotationView<'_>> {
     Some(spelled_annotation_view(annotation).unwrap_or(AnnotationView::Value(annotation)))
 }
 
-/// The view an expression has where upstream composes traits as a type (a
-/// generator result, an associated member's annotation): an `&` chain
-/// (`Copyable & Defaultable`), however nested, is a `$trait_composition`
-/// of its member expressions in source order; any other expression is
-/// viewed as an annotation ([`annotation_view`]).
-pub(super) fn composition_view(annotation: &Expr) -> Option<AnnotationView<'_>> {
-    let mut members = Vec::new();
-    composition_members(annotation, &mut members)?;
-    match <[_; 1]>::try_from(members) {
-        Ok([only]) => annotation_view(only),
-        Err(members) => Some(AnnotationView::Named(
-            "$trait_composition".to_string(),
-            members.into_iter().cloned().map(ParamArg::Value).collect(),
-        )),
-    }
-}
-
 /// The view a type-shaped expression spells: a capitalized name, `Self`,
 /// a parameter application (`S[Int]`, or the one-operand subscript
 /// `S[1]`), or a member chain rooted at one (`M.Inner`, `Self.T`). `None`
@@ -178,25 +161,10 @@ pub(super) fn binder_view(binder: &mojito_ast::ast::TypeParam) -> Option<Annotat
         .map(|only| AnnotationView::Named(only.to_string(), Vec::new()))
 }
 
-/// A trait `comptime` member's annotation viewed in its type context,
-/// where an `&` chain is a trait composition ([`composition_view`]).
-pub(super) fn member_view(member: &TraitComptime) -> Option<AnnotationView<'_>> {
-    composition_view(&member.ty)
-}
-
 /// The view of an annotation slot's expression ([`annotation_view`]). The
 /// parser stores only annotations that have one.
 pub(super) fn annotation_view_of(annotation: &Expr) -> Result<AnnotationView<'_>, TypeError> {
     annotation_view(annotation).ok_or_else(|| {
-        TypeError::InvariantViolation("an annotation slot holds no annotation".to_string())
-    })
-}
-
-/// [`annotation_view_of`] where upstream composes traits as a type (an
-/// associated `comptime` member's annotation): an `&` chain is a trait
-/// composition ([`composition_view`]).
-pub(super) fn composition_view_of(annotation: &Expr) -> Result<AnnotationView<'_>, TypeError> {
-    composition_view(annotation).ok_or_else(|| {
         TypeError::InvariantViolation("an annotation slot holds no annotation".to_string())
     })
 }
@@ -852,12 +820,6 @@ impl Checker {
         self.emit_expr_type(annotation)
     }
 
-    /// The type denoted by a source annotation; resolves type parameters and
-    /// validates struct names and type-argument counts.
-    pub(super) fn ty_from_spelling(&self, ty: &AnnotationView) -> Result<Ty, TypeError> {
-        self.resolve_ty_from_anno(ty)
-    }
-
     /// The function type `callable` spells, its signature resolved in the
     /// scopes already open; `decls` is the classified list its origin
     /// reference signatures (`ref[o] T`) read, its own followed by any
@@ -1226,54 +1188,31 @@ impl Checker {
         params: &[mojito_ast::ast::TypeParam],
         result: &Expr,
     ) -> Result<Ty, TypeError> {
-        let result = &composition_view(result).ok_or_else(|| {
-            TypeError::InvariantViolation("a generator type's result spells no type".to_string())
-        })?;
         let decls =
             self.classify_param_list(mojito_types::types::GENERATOR_BINDER_OWNER, params)?;
         // The list scopes the result, as a declaration's list scopes its
         // signature: `__generator_type[T: Copyable] List[T]`.
         self.push_param_scope(&decls);
-        let result = match result {
-            AnnotationView::Named(name, args)
-                if args.is_empty()
-                    && self.lookup_tparam(name).is_none()
-                    && !self.structs.contains_key(name)
-                    && !self.comptime_aliases.contains_key(name)
-                    && self.check_trait_name(name).is_ok() =>
-            {
-                Ok(TyKind::Trait(vec![name.clone()]).into())
-            }
+        let result = match &result.kind {
             // A trait-valued binder in scope is the trait it binds used as a
             // type (`__generator_type[From: From] To` over `To:
             // type_of(AnyType)`), symbolic until the binder is bound.
-            AnnotationView::Named(name, args)
-                if args.is_empty()
-                    && self.lookup_tparam(name).is_none()
+            ExprKind::Identifier(name)
+                if self.lookup_tparam(name).is_none()
                     && let Some(binder) = self.trait_valued_binder(name) =>
             {
                 Ok(mojito_types::types::DependentType::resolve(binder))
             }
-            AnnotationView::Named(name, members) if name == "$trait_composition" => self
-                .generator_result_composition(members)
-                .map(|traits| TyKind::Trait(traits).into()),
-            _ => self.resolve_ty_from_anno(result),
+            // A trait or an `&` composition of traits is the trait value
+            // used as a type, as upstream's `AnyTrait` value of `&` is.
+            _ => match self.trait_value(result) {
+                Some(value) => value.map(|value| TyKind::Trait(value.traits).into()),
+                None => self.emit_expr_type(result),
+            },
         };
         self.pop_param_scope();
         let result = result?;
         Ok(Ty::generator(decls, result))
-    }
-
-    pub(super) fn resolve_ty_from_anno(&self, ty: &AnnotationView) -> Result<Ty, TypeError> {
-        // Nesting depth: the outermost application of an annotation may leave
-        // its origin slots to inference where its position allows; an
-        // application nested as a type argument (`List[RefBox]`) is not
-        // concrete without them, as at the pin.
-        let depth = self.annotation_depth.get();
-        self.annotation_depth.set(depth + 1);
-        let resolved = self.resolve_ty_from_anno_at_depth(ty);
-        self.annotation_depth.set(depth);
-        resolved
     }
 
     /// The type `name[args]` denotes, beside what each of its bracket
@@ -1285,14 +1224,25 @@ impl Checker {
     ) -> Result<(Ty, DeclaredAttributes), TypeError> {
         let depth = self.annotation_depth.get();
         self.annotation_depth.set(depth + 1);
-        let resolved = self
-            .reflected_type_annotation(&AnnotationView::Named(name.to_string(), args.to_vec()))
-            .and_then(|reflected| match reflected {
-                Some(ty) => Ok((ty, DeclaredAttributes::default())),
-                None => self.applied_type_at_depth(name, args),
-            });
+        let resolved = self.applied_type_at_depth(name, args);
         self.annotation_depth.set(depth);
         resolved
+    }
+
+    /// The type `name[args]` names: the application [`Self::applied_type`]
+    /// resolves, or, when the head names no type, the expression it
+    /// spells ([`Self::value_headed_type`]).
+    pub(super) fn named_type(
+        &self,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
+        match self.applied_type(name, args) {
+            Err(TypeError::UnknownType(unknown)) if unknown == name => {
+                self.value_headed_type(name, args)
+            }
+            resolved => resolved.map(|(ty, _)| ty),
+        }
     }
 
     /// The type a `Named` annotation denotes when its head names no type:
@@ -1375,6 +1325,19 @@ impl Checker {
         type_parameter(decl)
     }
 
+    /// `Self.NAME`, one of the enclosing struct's own type parameters as
+    /// `Self` binds it ([`Self::self_type_parameter`]), else a type member
+    /// of `Self` ([`Self::associated_type_for_self`]), as upstream reads
+    /// `Self.Ts` from the struct's parameter list. The struct's own pack
+    /// is named by its starred spelling (`*Ts`).
+    pub(super) fn self_pack_type(&self, name: &str) -> Result<Ty, TypeError> {
+        self.self_decls
+            .iter()
+            .position(|decl| decl.name() == name)
+            .and_then(|index| self.self_type_parameter(index))
+            .map_or_else(|| self.associated_type_for_self(name), Ok)
+    }
+
     /// The parametric function type `callable` spells inline, in a type
     /// argument or an annotation (`OptionalReg[def[d: DType](Scalar[d])
     /// thin -> Scalar[d]]`): its own list opened over the enclosing
@@ -1415,75 +1378,6 @@ impl Checker {
         self.function_signature_type(callable, &[])
     }
 
-    fn resolve_ty_from_anno_at_depth(&self, ty: &AnnotationView) -> Result<Ty, TypeError> {
-        if let Some(reflected) = self.reflected_type_annotation(ty)? {
-            return Ok(reflected);
-        }
-        Ok(match ty {
-            AnnotationView::TypeOf(operand) => self.type_of_operand(operand)?,
-            AnnotationView::None => Ty::none(),
-            // A bare name may be an in-scope type parameter (a generic `def`'s
-            // `T`) or a struct type, optionally applied to parameter arguments.
-            // A head that names no type may name a compile-time value, whose
-            // subscript is a type (`tl[1]` over a `TypeList` value).
-            AnnotationView::Named(name, args) => {
-                return match self.applied_type_at_depth(name, args) {
-                    Err(TypeError::UnknownType(unknown)) if unknown == *name => {
-                        self.value_headed_type(name, args)
-                    }
-                    resolved => resolved.map(|(ty, _)| ty),
-                };
-            }
-            // `Self.T` — one of the enclosing struct's *type* parameters (a value
-            // parameter is not a type, so `Self.n` in type position is an error).
-            AnnotationView::SelfParam(name) => match self
-                .self_decls
-                .iter()
-                .position(|d| d.name() == name)
-                .and_then(|index| self.self_type_parameter(index))
-            {
-                Some(parameter) => parameter,
-                None => return self.associated_type_for_self(name),
-            },
-            // Bare `Self` — the enclosing struct type or a trait's abstract Self.
-            // Value-parameterized structs carry their symbolic `CtValue::Expr`
-            // arguments here; specialization bakes them out.
-            AnnotationView::SelfType => match &self.self_ty {
-                Some(ty) => ty.clone(),
-                None => return Err(TypeError::UnknownSelfParam("Self".to_string())),
-            },
-            // The MLIR types the subset reads (`mlir_type_named`): the
-            // builtin `index` upstream's `Indexer` requirement returns, a
-            // scalar's `!kgen.scalar<dtype>` storage, the metatype
-            // `!kgen.type`, and a `StringLiteral`'s parameter type
-            // `!kgen.string`. Every other MLIR type spelling is outside the
-            // subset.
-            AnnotationView::Assoc { base, name, args }
-                if matches!(base.as_ref(), AnnotationView::Named(base, base_args)
-                    if base == "__mlir_type" && base_args.is_empty()) =>
-            {
-                args.is_empty()
-                    .then(|| mojito_types::types::mlir_type_named(name))
-                    .flatten()
-                    .ok_or_else(unsupported_mlir_type)?
-            }
-            AnnotationView::Assoc { base, name, args } => self.member_type(base, name, args)?,
-            // Any other annotation expression is evaluated in the type
-            // context, as upstream's `emitExprType` evaluates it: a
-            // conditional of types is a type, a value is "expected a type".
-            AnnotationView::Value(value) => match &value.kind {
-                ExprKind::FunctionType(callable) => self.function_type(callable)?,
-                ExprKind::GeneratorType { params, result } => {
-                    self.generator_type(params, result)?
-                }
-                _ => self.annotation_type(value)?,
-            },
-            AnnotationView::IndexedProjection { base, index } => {
-                self.indexed_projection_type(base, index)?
-            }
-        })
-    }
-
     /// The parameter list of a parameterized associated type `name` reachable from
     /// a base type — a trait's abstract `Self` or a bounded type parameter — or
     /// `None` when the member is monomorphic, absent, or on a concrete struct
@@ -1518,38 +1412,27 @@ impl Checker {
         }
     }
 
-    /// The type an indexed projection `base[index]` denotes: a compile-time
-    /// value's `__getitem_param__[index]` (`TypeList[Trait=AnyType,
-    /// Ts.values]()[i]`), an unbound pack's dependent element (`Self.Ts[i]`),
+    /// The type an indexed projection `base[index]` denotes: an unbound
+    /// pack's dependent element (`Self.Ts[i]`),
     /// a parameterized member application (`Self.IteratorType[o]`,
     /// `C.IteratorType[o]`), or else an index into a dependent type
     /// sequence (`values.Ts[i]`).
     pub(super) fn indexed_projection_type(
         &self,
-        base: &AnnotationView,
+        base: &Expr,
         index: &Expr,
     ) -> Result<Ty, TypeError> {
-        if let AnnotationView::Value(value) = base {
-            let ty = self.compile_time_value_type(value)?;
-            return self
-                .parameterized_assoc_application(
-                    &ty,
-                    "__getitem_param__",
-                    &[mojito_ast::ast::subscript_param_arg(index)],
-                )?
-                .ok_or_else(|| TypeError::NotIndexable(ty.to_string()));
-        }
         if let Some(pack) = self.unbound_pack_type(base) {
             return self.pack_element_type(&pack, index);
         }
         // A parameterized member application is spelled like a dependent
         // index; it resolves as an application rather than as sequence
         // indexing.
-        let application = match base {
+        let application = match &base.kind {
             // `Self.IteratorType[..]`: the concrete `Self` (a registered
             // struct) when there is one, so the member resolves concretely;
             // otherwise a trait's abstract `Self`.
-            AnnotationView::SelfParam(name) => {
+            _ if let Some(name) = base.self_member() => {
                 let base = match &self.self_ty {
                     Some(ty)
                         if ty.is_simd() || ty.is_pointer() || ty.kind().is_non_pointer_struct() =>
@@ -1559,18 +1442,20 @@ impl Checker {
                     _ => Ty::self_type(),
                 };
                 let args = [mojito_ast::ast::subscript_param_arg(index)];
-                if self.declared_member(&base, name) {
+                let applied = if self.declared_member(&base, name) {
                     Some(self.member_application(&base, name, &args)?)
                 } else {
                     self.parameterized_assoc_application(&base, name, &args)?
-                }
+                };
+                // `Self`'s own member is no dependent type sequence.
+                return applied.ok_or_else(dependent_indexing_unsupported);
             }
             // `C.IteratorType[..]` over a bounded type parameter or another
             // base; a base that names no type (`values.element_types` over a
             // value binding) falls through to dependent sequence indexing.
-            AnnotationView::Assoc {
-                base: inner, name, ..
-            } => self.member_index_application(inner, name, index)?,
+            ExprKind::Member { object, field } => {
+                self.member_index_application(object, field, index)?
+            }
             _ => None,
         };
         if let Some(applied) = application {
@@ -1668,7 +1553,7 @@ impl Checker {
     /// unparameterized member): `T.Element`, `S[Int].Of[Bool]`, `S.Of[Bool]`.
     pub(super) fn member_type(
         &self,
-        base: &AnnotationView,
+        base: &Expr,
         name: &str,
         args: &[mojito_ast::ast::ParamArg],
     ) -> Result<Ty, TypeError> {
@@ -1701,19 +1586,22 @@ impl Checker {
     /// its unbound generator ([`Self::unbound_generator`]).
     pub(super) fn member_base<'a>(
         &self,
-        base: &'a AnnotationView,
+        base: &'a Expr,
     ) -> Result<(Ty, Option<&'a str>), TypeError> {
-        // A compile-time construction's member is its type's (`S[2]().H`).
-        if let AnnotationView::Value(value) = base {
-            return self.compile_time_value_type(value).map(|ty| (ty, None));
-        }
-        if let AnnotationView::Named(name, args) = base
-            && args.is_empty()
+        if let ExprKind::Identifier(name) = &base.kind
             && let Some(generator) = self.unbound_generator(name)
         {
             return Ok((generator, Some(name)));
         }
-        self.ty_from_spelling(base)
+        // A compile-time construction's member is its type's (`S[2]().H`).
+        if matches!(
+            base.kind,
+            ExprKind::Call { .. } | ExprKind::Invoke { .. } | ExprKind::MethodCall { .. }
+        ) && !self.may_denote_type(base)
+        {
+            return self.compile_time_value_type(base).map(|ty| (ty, None));
+        }
+        self.emit_expr_type(base)
             .or_else(|error| self.value_base_type(base).ok_or(error))
             .map(|ty| (ty, None))
     }
@@ -1773,7 +1661,7 @@ impl Checker {
     /// does, which infers it.
     fn member_index_application(
         &self,
-        inner: &AnnotationView,
+        inner: &Expr,
         name: &str,
         index: &Expr,
     ) -> Result<Option<Ty>, TypeError> {
@@ -1875,12 +1763,8 @@ impl Checker {
         // (`M.KGENTypeType`) names a type; otherwise the argument must
         // evaluate to a compile-time type value.
         let ty = match &arg.kind {
-            ExprKind::Identifier(id) => {
-                self.ty_from_spelling(&AnnotationView::Named(id.clone(), Vec::new()))?
-            }
-            ExprKind::Member { .. } if let Some(spelled) = spelled_view(arg) => {
-                self.ty_from_spelling(&spelled)?
-            }
+            ExprKind::Identifier(_) => self.emit_expr_type(arg)?,
+            ExprKind::Member { .. } if spelled_view(arg).is_some() => self.emit_expr_type(arg)?,
             _ => match self.eval_associated_ct(arg)? {
                 CtValue::Type(ty) => ty,
                 _ => {
@@ -1978,14 +1862,13 @@ impl Checker {
         // spelling names the enclosing struct's pack.
         if args.is_empty() && name.starts_with('*') && self.self_ty.is_some() {
             return self
-                .ty_from_spelling(&AnnotationView::SelfParam(name.to_string()))
+                .self_pack_type(name)
                 .map(|ty| (ty, DeclaredAttributes::default()));
         }
         // A `def`'s own `Ts[index]` while the pack is still a
         // parameter: the dependent element type.
         if let [mojito_ast::ast::ParamArg::Value(index)] = args
-            && let Some(pack) =
-                self.unbound_pack_type(&AnnotationView::Named(name.to_string(), Vec::new()))
+            && let Some(pack) = self.lookup_tparam(&format!("*{}", name.trim_start_matches('*')))
         {
             return self
                 .pack_element_type(&pack, index)
@@ -2254,21 +2137,22 @@ impl Checker {
     fn mlir_type_operand(&self, element: &mojito_ast::ast::ParamArg) -> Result<Ty, TypeError> {
         use mojito_ast::ast::ParamArg;
         match element {
-            ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(name),
-                ..
-            }) => self.ty_from_spelling(&AnnotationView::Named(name.clone(), Vec::new())),
+            ParamArg::Value(
+                operand @ Expr {
+                    kind: ExprKind::Identifier(_),
+                    ..
+                },
+            ) => self.emit_expr_type(operand),
             ParamArg::Value(Expr {
                 kind: ExprKind::Member { object, field },
                 ..
             }) if matches!(&object.kind, ExprKind::Identifier(base) if base == "__mlir_type") => {
                 mojito_types::types::mlir_type_named(field).ok_or_else(unsupported_mlir_type)
             }
-            ParamArg::Value(expr) if expr.self_member().is_some() => {
-                self.ty_from_spelling(&spelled_view(expr).ok_or_else(unsupported_mlir_type)?)
-            }
-            ParamArg::Value(expr) if let Some(spelled) = spelled_view(expr) => {
-                self.ty_from_spelling(&spelled)
+            ParamArg::Value(expr)
+                if expr.self_member().is_some() || spelled_view(expr).is_some() =>
+            {
+                self.emit_expr_type(expr)
             }
             _ => Err(unsupported_mlir_type()),
         }
@@ -2819,21 +2703,20 @@ impl Checker {
     /// Resolve the type-valued sequence at the base of an indexed type
     /// projection. A source value may expose such a sequence through an
     /// associated compile-time member; its runtime value is never inspected.
-    pub(super) fn dependent_type_sequence(
-        &self,
-        projection: &AnnotationView,
-    ) -> Result<Vec<Ty>, TypeError> {
-        let AnnotationView::Assoc { base, name, .. } = projection else {
-            return Err(TypeError::Unsupported(
-                "dependent type indexing requires a type-valued associated member".to_string(),
-            ));
+    pub(super) fn dependent_type_sequence(&self, projection: &Expr) -> Result<Vec<Ty>, TypeError> {
+        let ExprKind::Member {
+            object,
+            field: name,
+        } = &projection.kind
+        else {
+            return Err(dependent_indexing_unsupported());
         };
-        let base_ty = match base.as_ref() {
-            AnnotationView::Named(binding, arguments) if arguments.is_empty() => self
+        let base_ty = match &object.kind {
+            ExprKind::Identifier(binding) => self
                 .lookup(binding)
                 .cloned()
-                .map_or_else(|| self.ty_from_spelling(base), Ok)?,
-            _ => self.ty_from_spelling(base)?,
+                .map_or_else(|| self.emit_expr_type(object), Ok)?,
+            _ => self.emit_expr_type(object)?,
         };
 
         // Public Tuple exposes its concrete element pack as `element_types`.
@@ -3884,9 +3767,11 @@ impl Checker {
                 // value expression binds the type, which is its attribute.
                 let ty = match arg {
                     // A pack's spread (`*Ts`) binds the pack.
-                    ParamArg::Value(_) if let Some(pack) = spread_pack_view(arg) => {
-                        self.ty_from_spelling(&pack)?
-                    }
+                    ParamArg::Value(_) if let Some(pack) = spread_pack_view(arg) => match pack {
+                        AnnotationView::SelfParam(name) => self.self_pack_type(&name)?,
+                        AnnotationView::Named(name, args) => self.applied_type(&name, &args)?.0,
+                        _ => return Err(TypeError::UnknownType(name.clone())),
+                    },
                     // A reflected field type (`reflect[Q].field_at[0].T`,
                     // or a name bound to one) is an `AnyType` value, which
                     // binds only a binder that asks nothing more of it.
@@ -4538,10 +4423,12 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         use mojito_ast::ast::ParamArg;
         match argument {
-            ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(id),
-                ..
-            }) => self.ty_from_spelling(&AnnotationView::Named(id.clone(), vec![])),
+            ParamArg::Value(
+                element @ Expr {
+                    kind: ExprKind::Identifier(_),
+                    ..
+                },
+            ) => self.emit_expr_type(element),
             ParamArg::Value(element) => self.denoted_type(element, &format!("{name} element type")),
             ParamArg::Named { value, .. } => self.pointer_element_arg(name, value),
         }
@@ -4745,10 +4632,12 @@ impl Checker {
             }
             let element = match arg {
                 // A bare-identifier arg is reinterpreted as a type (as elsewhere).
-                mojito_ast::ast::ParamArg::Value(Expr {
-                    kind: ExprKind::Identifier(id),
-                    ..
-                }) => self.ty_from_spelling(&AnnotationView::Named(id.clone(), vec![]))?,
+                mojito_ast::ast::ParamArg::Value(
+                    element @ Expr {
+                        kind: ExprKind::Identifier(_),
+                        ..
+                    },
+                ) => self.emit_expr_type(element)?,
                 mojito_ast::ast::ParamArg::Value(element) => {
                     self.denoted_type(element, "Tuple element type")?
                 }
@@ -4768,22 +4657,17 @@ impl Checker {
     /// The pack a type names by itself while it is still a parameter: the
     /// enclosing struct's `Self.Ts`, or a bare `Ts` of an enclosing `def` or
     /// method.
-    fn unbound_pack_type(&self, base: &AnnotationView) -> Option<Ty> {
-        match base {
-            AnnotationView::SelfParam(name) => {
-                let starred = format!("*{}", name.trim_start_matches('*'));
-                ParamDecl::type_pack_list(&self.self_decls, name)
-                    .and_then(|_| {
-                        self.ty_from_spelling(&AnnotationView::SelfParam(starred))
-                            .ok()
-                    })
-                    .filter(|ty| matches!(ty.kind(), TyKind::Param { .. }))
-            }
-            AnnotationView::Named(name, arguments) if arguments.is_empty() => {
-                self.lookup_tparam(&format!("*{}", name.trim_start_matches('*')))
-            }
-            _ => None,
+    fn unbound_pack_type(&self, base: &Expr) -> Option<Ty> {
+        if let Some(name) = base.self_member() {
+            let starred = format!("*{}", name.trim_start_matches('*'));
+            return ParamDecl::type_pack_list(&self.self_decls, name)
+                .and_then(|_| self.self_pack_type(&starred).ok())
+                .filter(|ty| matches!(ty.kind(), TyKind::Param { .. }));
         }
+        let ExprKind::Identifier(name) = &base.kind else {
+            return None;
+        };
+        self.lookup_tparam(&format!("*{}", name.trim_start_matches('*')))
     }
 
     /// The type of the compile-time value a type expression subscripts or a
@@ -4831,13 +4715,8 @@ impl Checker {
                 let ExprKind::Member { object, field } = &callee.kind else {
                     return Err(not_construction());
                 };
-                let base = spelled_view(object).ok_or_else(not_construction)?;
-                let member = AnnotationView::Assoc {
-                    base: Box::new(base),
-                    name: field.clone(),
-                    args: param_args.clone(),
-                };
-                let ty = self.ty_from_spelling(&member)?;
+                spelled_view(object).ok_or_else(not_construction)?;
+                let ty = self.member_type(object, field, param_args)?;
                 let Some((name, _)) = ty.kind().as_non_pointer_struct() else {
                     return Err(not_construction());
                 };
@@ -4927,10 +4806,8 @@ impl Checker {
             expected: TyKind::AnyTrait(bound.to_vec()).to_string(),
             found,
         };
-        let type_argument = |source: &AnnotationView| {
-            self.ty_from_spelling(source)
-                .map(|ty| mismatch(format!("AnyStruct[{ty}]")))
-        };
+        let type_argument =
+            |source: Result<Ty, TypeError>| source.map(|ty| mismatch(format!("AnyStruct[{ty}]")));
         let value = match arg {
             ParamArg::Named { value, .. } => {
                 return self.resolve_trait_param_arg(decl, bound, value);
@@ -4948,15 +4825,13 @@ impl Checker {
                     Ok(value) => value.into_value(),
                     Err(error) => {
                         let source = match &expr.kind {
-                            ExprKind::Identifier(name) => {
-                                AnnotationView::Named(name.clone(), vec![])
-                            }
+                            ExprKind::Identifier(_) => self.emit_expr_type(expr),
                             _ if let Some((name, args)) = self.parameter_application(expr) => {
-                                AnnotationView::Named(name.to_string(), args.into_owned())
+                                self.applied_type(name, &args).map(|(ty, _)| ty)
                             }
                             _ => return Err(error),
                         };
-                        return Err(type_argument(&source).unwrap_or(error));
+                        return Err(type_argument(source).unwrap_or(error));
                     }
                 },
             },
@@ -5022,14 +4897,12 @@ impl Checker {
                 if self.pack_is_shadowed(name) {
                     return Err(TypeError::UnknownType(name.clone()));
                 }
-                self.lookup_tparam(name).map_or_else(
-                    || self.ty_from_spelling(&AnnotationView::SelfParam(name.clone())),
-                    Ok,
-                )
+                self.lookup_tparam(name)
+                    .map_or_else(|| self.self_pack_type(name), Ok)
             })
         };
         match spread_pack_view(arg)? {
-            anno @ AnnotationView::SelfParam(_) => Some(self.ty_from_spelling(&anno)),
+            AnnotationView::SelfParam(name) => Some(self.self_pack_type(&name)),
             AnnotationView::Named(name, _) => pack(&name),
             _ => None,
         }
@@ -5377,10 +5250,12 @@ impl Checker {
             {
                 reflected
             }
-            mojito_ast::ast::ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(name),
-                ..
-            }) => self.ty_from_spelling(&AnnotationView::Named(name.clone(), Vec::new())),
+            mojito_ast::ast::ParamArg::Value(
+                expression @ Expr {
+                    kind: ExprKind::Identifier(_),
+                    ..
+                },
+            ) => self.emit_expr_type(expression),
             mojito_ast::ast::ParamArg::Value(expression) => self.denoted_type(expression, context),
             mojito_ast::ast::ParamArg::Named { .. } => Err(TypeError::Unsupported(format!(
                 "named arguments are not supported in {context}"
@@ -5628,51 +5503,15 @@ impl Checker {
         self.infer(expr).unwrap_or_else(|_| actual.clone())
     }
 
-    /// The trait set a generator type's `&`-composed result denotes. Each
-    /// member is a trait name; a member that is not is the left operand's
-    /// missing `__and__`, as upstream evaluates the composition.
-    fn generator_result_composition(
-        &self,
-        members: &[mojito_ast::ast::ParamArg],
-    ) -> Result<Vec<String>, TypeError> {
-        let mut traits: Vec<String> = Vec::with_capacity(members.len());
-        for member in members {
-            let mojito_ast::ast::ParamArg::Value(member) = member else {
-                return Err(TypeError::Unsupported(
-                    "a generator type's result must be a type expression".to_string(),
-                ));
-            };
-            let trait_name = match &member.kind {
-                ExprKind::Identifier(name) if self.check_trait_name(name).is_ok() => {
-                    Some(name.clone())
-                }
-                _ => None,
-            };
-            let Some(trait_name) = trait_name else {
-                let left = if traits.is_empty() {
-                    format!("AnyStruct[{}]", self.ty_from_anno(member)?)
-                } else {
-                    format!("AnyTrait[{}]", traits.join(" & "))
-                };
-                return Err(TypeError::MatchPattern(format!(
-                    "'{left}' does not implement the '__and__' method"
-                )));
-            };
-            traits.push(trait_name);
-        }
-        Ok(self.canonical_trait_set(&traits))
-    }
-
     /// The type of the compile-time value a member read's base spells when
     /// it names no type (`w.E` over `comptime w = W[3]()`): upstream types
     /// the base as an expression and reads the member on its type. A local
     /// `comptime` binding the builder does not inline types as its
     /// construction (`comptime L = TypeList.of[Trait=AnyType, Int]()`); a
     /// run-time local or argument types as its declared type (`var z: p.T`).
-    fn value_base_type(&self, base: &AnnotationView) -> Option<Ty> {
-        let expr = view_expression(base, mojito_common::token::Span::default())?;
+    fn value_base_type(&self, expr: &Expr) -> Option<Ty> {
         if let Some(ty) = self
-            .compile_dependent_ct_expr(&expr)
+            .compile_dependent_ct_expr(expr)
             .ok()
             .and_then(|built| built.meta().value_ty())
         {
@@ -5684,7 +5523,7 @@ impl Checker {
         if let Some(bound) = self.local_comptime_value(name) {
             return self.compile_time_value_type(bound).ok();
         }
-        self.member_subject(&expr)
+        self.member_subject(expr)
     }
 }
 
@@ -6120,14 +5959,11 @@ fn spelled_annotation_view(expression: &Expr) -> Option<AnnotationView<'_>> {
     }
 }
 
-fn composition_members<'a>(expression: &'a Expr, members: &mut Vec<&'a Expr>) -> Option<()> {
-    if let ExprKind::Infix(InfixOp::BitAnd, left, right) = &expression.kind {
-        composition_members(left, members)?;
-        return composition_members(right, members);
-    }
-    annotation_view(expression)?;
-    members.push(expression);
-    Some(())
+/// The rejection of an index into a base that is no type-valued member.
+fn dependent_indexing_unsupported() -> TypeError {
+    TypeError::Unsupported(
+        "dependent type indexing requires a type-valued associated member".to_string(),
+    )
 }
 
 /// The lone positional operand of a bracket, borrowed from it: the index
@@ -6148,12 +5984,11 @@ fn projection_index(bracket: &Expr) -> Option<&Expr> {
 #[cfg(test)]
 mod annotation_view_tests {
     use super::{
-        AnnotationView, annotation_view, binder_view, composition_view, member_view, spelled_view,
-        spread_pack_view, view_expression,
+        AnnotationView, annotation_view, binder_view, spelled_view, spread_pack_view,
+        view_expression,
     };
     use mojito_ast::ast::{
-        CONTEXTUAL_SENTINEL, Expr, ExprKind, InfixOp, ParamArg, SubscriptArg, TraitComptime,
-        TypeParam,
+        CONTEXTUAL_SENTINEL, Expr, ExprKind, InfixOp, ParamArg, SubscriptArg, TypeParam,
     };
 
     fn ident(name: &str) -> Expr {
@@ -6388,39 +6223,9 @@ mod annotation_view_tests {
     }
 
     #[test]
-    fn an_and_chain_composes_traits_where_upstream_composes() {
+    fn an_and_chain_is_an_operator_value() {
         let pair = and(ident("Copyable"), ident("Defaultable"));
-        assert_eq!(
-            composition_view(&pair),
-            Some(named(
-                "$trait_composition",
-                vec![
-                    ParamArg::Value(ident("Copyable")),
-                    ParamArg::Value(ident("Defaultable")),
-                ],
-            ))
-        );
-        let three = and(and(ident("A"), ident("B")), ident("C"));
-        assert_eq!(
-            composition_view(&three),
-            Some(named(
-                "$trait_composition",
-                ["A", "B", "C"]
-                    .map(|name| ParamArg::Value(ident(name)))
-                    .to_vec(),
-            ))
-        );
-        assert_eq!(composition_view(&ident("Int")), Some(named("Int", vec![])));
-        // Outside a composition context an `&` chain is an operator value.
         assert_eq!(annotation_view(&pair), Some(AnnotationView::Value(&pair)));
-        let member = TraitComptime {
-            name: "Element".into(),
-            params: vec![],
-            ty: pair.clone(),
-            where_clauses: vec![],
-            default: None,
-        };
-        assert_eq!(member_view(&member), composition_view(&pair));
     }
 
     #[test]

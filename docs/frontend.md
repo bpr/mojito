@@ -453,10 +453,9 @@ annotation to its bound application, and a binder's annotation substitutes
 along its type positions (`visit::walk_annotation_names_mut`, which skips a
 bracket's head and a pack spread). The parser and the elaborator match an
 annotation's expression shape and never convert it; only the checker
-views the expression in its type context when it reads it
-(`type_resolution.rs::annotation_view`, and `composition_view` for an
-associated `comptime` member, struct or trait, where an `&` chain composes
-traits).
+types the expression when it reads it (`Checker::emit_expr_type`, and
+`Checker::trait_value` for an associated `comptime` member, struct or
+trait, where an `&` chain composes traits).
 
 This is an intentional parser/checker split: the parser handles syntax, while
 the checker knows which parameter positions expect types versus comptime values.

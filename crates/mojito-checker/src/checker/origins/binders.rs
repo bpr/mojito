@@ -301,12 +301,11 @@ impl Checker {
         }
         // The bare struct (`Origin(o)`) leaves its parameters to the
         // conversion: the struct at its own binders.
-        let callee =
-            match self.ty_from_spelling(&AnnotationView::Named(name.clone(), param_args.clone())) {
-                Ok(callee) => callee,
-                Err(_) if param_args.is_empty() => self.self_instance_ty(name)?,
-                Err(_) => return None,
-            };
+        let callee = match self.applied_type(name, param_args).map(|(ty, _)| ty) {
+            Ok(callee) => callee,
+            Err(_) if param_args.is_empty() => self.self_instance_ty(name)?,
+            Err(_) => return None,
+        };
         let (head, arguments) = callee.kind().as_non_pointer_struct()?;
         if head != "Origin" || !self.is_library_origin(head) {
             return None;

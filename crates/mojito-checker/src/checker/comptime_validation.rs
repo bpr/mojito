@@ -3637,20 +3637,12 @@ impl Checker {
                             if struct_args.is_empty() {
                                 run_time_type()
                             } else {
-                                self.ty_from_spelling(&AnnotationView::Named(
-                                    name.clone(),
-                                    struct_args.clone(),
-                                ))
-                                .ok()
+                                self.applied_type(&name, struct_args).ok().map(|(ty, _)| ty)
                             },
                             param_args,
                         ),
                         (true, true) if !param_args.is_empty() => (
-                            self.ty_from_spelling(&AnnotationView::Named(
-                                name.clone(),
-                                param_args.to_vec(),
-                            ))
-                            .ok(),
+                            self.applied_type(&name, param_args).ok().map(|(ty, _)| ty),
                             [].as_slice(),
                         ),
                         (true, true) => (
@@ -3672,13 +3664,7 @@ impl Checker {
                     let owner = instance.clone().or_else(|| {
                         function
                             .constructs()
-                            .then(|| {
-                                self.ty_from_spelling(&AnnotationView::Named(
-                                    name.clone(),
-                                    Vec::new(),
-                                ))
-                                .ok()
-                            })
+                            .then(|| self.applied_type(&name, &[]).ok().map(|(ty, _)| ty))
                             .flatten()
                     });
                     let (mut arguments, result, conversions) = self.applied_arguments(
@@ -4283,10 +4269,7 @@ impl Checker {
         };
         let named = |name: &str, args: Vec<ParamArg>| {
             (self.binding_scope(name).is_none() && applicable(name))
-                .then(|| {
-                    self.ty_from_spelling(&AnnotationView::Named(name.to_string(), args))
-                        .ok()
-                })
+                .then(|| self.applied_type(name, &args).ok().map(|(ty, _)| ty))
                 .flatten()
         };
         let instance = match &object.kind {
@@ -5011,7 +4994,7 @@ impl Checker {
     /// annotation admits a type or the initializer is not one.
     pub(super) fn type_initializer_mismatch(
         &self,
-        annotation: &AnnotationView,
+        annotation: &Expr,
         value: &Expr,
     ) -> Option<TypeError> {
         let CtMemberReq::Value(expected) = self.ct_member_req_from_anno(&[], annotation).ok()?
@@ -6083,58 +6066,49 @@ impl Checker {
         if !args.is_empty() || !kwargs.is_empty() {
             return None;
         }
-        let (base, spelled, reference) = if through_self {
+        let starred = format!("*{pack}");
+        let (pack_ty, spelled, reference) = if through_self {
             let declared = ParamDecl::type_pack_list(&self.self_decls, pack).is_some();
             let reference = self.pack_reference(pack).filter(|_| declared)?;
-            (
-                AnnotationView::SelfParam(pack.to_string()),
-                format!("Self.{pack}"),
-                reference,
-            )
+            let pack_ty = self
+                .self_pack_type(&starred)
+                .ok()
+                .filter(|ty| matches!(ty.kind(), TyKind::Param { .. }))?;
+            (pack_ty, format!("Self.{pack}"), reference)
         } else {
             let reference = self
                 .type_pack_in_scope(pack)
                 .filter(|_| self.lookup(pack).is_none() || self.is_value_parameter(pack))?;
-            (
-                AnnotationView::Named(pack.to_string(), Vec::new()),
-                pack.to_string(),
-                reference,
-            )
+            (self.lookup_tparam(&starred)?, pack.to_string(), reference)
         };
-        Some(
-            self.ty_from_spelling(&AnnotationView::IndexedProjection {
-                base: Box::new(base),
-                index,
-            })
-            .and_then(|element| {
-                let view = self
-                    .opaque_element(&element)
-                    .unwrap_or_else(|| element.clone());
-                if self.conforms_to(&view, "Defaultable") {
-                    // A symbolic element is the template's construction,
-                    // which the elaborator resolves per instance; a closed
-                    // one is an ordinary construction of its type.
-                    if mojito_types::types::is_symbolic(&element)
-                        && let Some(pack) = reference.as_decl_ref()
-                    {
-                        self.record_at(span).adjustment = Some(Box::new(
-                            mojito_checked::checked::SemanticAdjustment::ConstructPackElement {
-                                pack: pack.clone(),
-                            },
-                        ));
-                        self.record_element_index(index);
-                    }
-                    Ok(element)
-                } else {
-                    Err(TypeError::TraitNotSatisfied {
-                        param: spelled,
-                        ty: element.to_string(),
-                        trait_name: "Defaultable".to_string(),
-                        reason: self.trait_failure_reason(&view, "Defaultable"),
-                    })
+        Some(self.pack_element_type(&pack_ty, index).and_then(|element| {
+            let view = self
+                .opaque_element(&element)
+                .unwrap_or_else(|| element.clone());
+            if self.conforms_to(&view, "Defaultable") {
+                // A symbolic element is the template's construction,
+                // which the elaborator resolves per instance; a closed
+                // one is an ordinary construction of its type.
+                if mojito_types::types::is_symbolic(&element)
+                    && let Some(pack) = reference.as_decl_ref()
+                {
+                    self.record_at(span).adjustment = Some(Box::new(
+                        mojito_checked::checked::SemanticAdjustment::ConstructPackElement {
+                            pack: pack.clone(),
+                        },
+                    ));
+                    self.record_element_index(index);
                 }
-            }),
-        )
+                Ok(element)
+            } else {
+                Err(TypeError::TraitNotSatisfied {
+                    param: spelled,
+                    ty: element.to_string(),
+                    trait_name: "Defaultable".to_string(),
+                    reason: self.trait_failure_reason(&view, "Defaultable"),
+                })
+            }
+        }))
     }
 
     /// Record the parameter expression a pack element construction's index
@@ -6963,21 +6937,19 @@ impl Checker {
             return Some(Ok(constructed));
         }
         Some(
-            self.ty_from_spelling(&AnnotationView::Named(
-                name.to_string(),
-                param_args.to_vec(),
-            ))
-            .and_then(|declared| {
-                if declared == constructed {
-                    Ok(constructed)
-                } else {
-                    Err(TypeError::TypeMismatch {
-                        expected: declared.to_string(),
-                        found: constructed.to_string(),
-                        context: format!("spread of '{binding}'"),
-                    })
-                }
-            }),
+            self.applied_type(name, param_args)
+                .map(|(ty, _)| ty)
+                .and_then(|declared| {
+                    if declared == constructed {
+                        Ok(constructed)
+                    } else {
+                        Err(TypeError::TypeMismatch {
+                            expected: declared.to_string(),
+                            found: constructed.to_string(),
+                            context: format!("spread of '{binding}'"),
+                        })
+                    }
+                }),
         )
     }
 

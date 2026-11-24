@@ -1386,10 +1386,11 @@ body, `comptime Gen = __generator_type[Idx: Int] Int`), as `def` function
 types do. A missing result is a parse error ("Expected an expression").
 The result is one whole expression, so a `&` composition after it is the
 whole result (`[G: __generator_type[T: Copyable] Copyable & Defaultable]`),
-never further bounds of the parameter it types. It converts as a trait
-composition (the checker's `composition_view`, which an associated member's
-annotation uses too): an `&` chain becomes the `$trait_composition` node,
-and the checker requires each member to be a trait. Any other operator
+never further bounds of the parameter it types. A trait or an `&` chain
+of traits converts as the trait value it composes (the checker's
+`trait_value`, which an associated member's annotation uses too); any
+other result is typed as an annotation, so an `&` whose left operand is
+no trait is that operand's missing `__and__`. Any other operator
 (`A & B | C`, `Int == Int`) is a compile-time value the checker evaluates
 and rejects. A function type's result is a whole expression too, converted
 as an annotation, so in `def(Int) -> Int & Copyable` the result is

@@ -139,9 +139,8 @@ impl Checker {
                     returned
                         .iter()
                         .filter_map(|member| {
-                            let spelling =
-                                super::constraints::assoc_body_view(&member.value).ok()?;
-                            let ty = checker.ty_from_spelling(&spelling).ok()?;
+                            super::constraints::assoc_body_view(&member.value).ok()?;
+                            let ty = checker.emit_expr_type(&member.value).ok()?;
                             Some((member.name.clone(), ty, member.value.clone()))
                         })
                         .collect::<Vec<_>>()

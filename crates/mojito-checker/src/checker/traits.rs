@@ -60,7 +60,7 @@ pub(super) fn comptime_defaults(members: &[TraitComptime]) -> Vec<StructComptime
     members
         .iter()
         .filter_map(|member| {
-            member_view(member)?;
+            (!member.ty.is_sentinel()).then_some(())?;
             Some(StructComptime {
                 name: member.name.clone(),
                 params: member.params.clone(),
@@ -379,12 +379,12 @@ impl Checker {
                 self.classify_params(&owner, &member.params)?
             };
             let declared = self.in_param_scope(&decls, |checker| {
-                let annotation = member_view(member).ok_or_else(|| {
-                    TypeError::InvariantViolation(
+                if member.ty.is_sentinel() {
+                    return Err(TypeError::InvariantViolation(
                         "a trait member's annotation holds no annotation".to_string(),
-                    )
-                })?;
-                checker.ct_member_req_from_anno(&member.params, &annotation)
+                    ));
+                }
+                checker.ct_member_req_from_anno(&member.params, &member.ty)
             })?;
             let (requirement, constraints) = match declared {
                 CtMemberReq::Value(result) if !member.params.is_empty() => {
