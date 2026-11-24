@@ -994,6 +994,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   position (`memoized_infer`), as upstream emits each argument once. A
   probe forgets the entries typed under it (`roll_back_argument_memo`),
   since it undid their facts.
+- `checker/member_object_memo.rs` owns `Checker::with_member_object`:
+  while `constraints.rs`'s `build_ct` builds a member read, the first
+  silent build of its object, per compile-time, lifting, literal-probe,
+  and application-strictness position, is kept (`keep_member_object`)
+  and read by every later reader (`built_member_object`), as upstream
+  emits the object once. A probe forgets the objects built under it
+  (`roll_back_member_objects`).
 - `checker/comptime_validation.rs` owns the check of compile-time control
   flow in the one check (and which callables a compile-time call applies:
   `ApplicableShape::applicable` lists every declared binder, which

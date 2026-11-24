@@ -304,6 +304,7 @@ fn check_program_carrying(
 mod argument_memo;
 mod body_carry;
 mod declaration_table;
+mod member_object_memo;
 pub(crate) use declaration_table::DeclarationTable;
 mod interface;
 mod method_table;
@@ -634,6 +635,9 @@ pub struct Checker {
     /// application reads as its receiver and argument rather than building
     /// them again ([`Self::with_built_operands`]).
     built_operands: RefCell<Vec<(comptime_validation::BuiltOperandKey, ParamExpr)>>,
+    /// The objects of the member reads being built, each built once
+    /// ([`Self::with_member_object`]).
+    member_object_memo: RefCell<member_object_memo::MemberObjectMemo>,
     /// Whether the compile-time value being built is only probed for an
     /// exact literal ([`Self::exact_literal_value`]), whose failure no one
     /// reads: a shape no arm builds fails without typing it again to say
@@ -1171,6 +1175,7 @@ impl Checker {
             instance_inferences: RefCell::new(HashSet::new()),
             argument_memo: RefCell::default(),
             built_operands: RefCell::default(),
+            member_object_memo: RefCell::default(),
             probing_literal: std::cell::Cell::new(false),
             applicable_functions: declaration_table::DeclarationTable::default(),
             builtin_procedures: HashSet::new(),

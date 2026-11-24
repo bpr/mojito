@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2565**.
+Next free ID: **R2567**.
 
 ## Ordered Work
 
@@ -863,13 +863,20 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R2564 1 fixture stopped elaborating after batch 6**
+- [ ] **R2565 `automatic-inline` takes time superlinear in a nested
+  list display's depth while its work stays linear**
 
-  The instantiation ratchet finds `assets/ok` fixtures that elaborated at the last baseline and now fail to compile.
-  - Probe: `assets/ok/nested_operands_type_once.mojo` (timeout: killed after 120 s).
-  - Ratchet log: `target/run-batches/20261120-073546/batch6-ratchet.log`.
-  - Fix the regression, or delete this entry and file one entry per cause in the track that owns it.
-  - Filed by `scripts/run-batches` (2026-11-24).
+  A twenty-deep `List` display spends about 9 s in `automatic-inline`,
+  so `assets/ok/nested_operands_type_once.mojo` takes 16 s to run though
+  it checks in a quarter second.
+  - Probe: `var l = [[…[10]…]]` printed through `l[0]…[0]`, at depths 14,
+    17, and 20: 0.9 s, 1.9 s, and 9.4 s in the pass.
+  - The pass's own counters (`erased_instructions`, `forwarded_copies`,
+    concrete instructions) grow linearly over the same depths, so the cost
+    is per operation, likely over the nested `List[List[…]]` type.
+  - The batch 5 baseline (`b021d96c4`) takes the same time: this predates
+    R2564's checker regression.
+  - Found while landing R2564 (2026-11-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10224,6 +10231,26 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - A parameterized `comptime` body already keeps the builder's failure
     (`body_type`).
   - Found while landing R2557 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2566 A compile-time construction used as a type annotation
+  reports the builder's failure, not that a value is no type**
+
+  `def second[*Ts: AnyType](ref x: TypeList[Ts.values]()) -> Int` fails
+  with "not a compile-time Int constant: not an associated comptime
+  expression", where the pin reports "type mismatch for type annotation:
+  expected a type, found a value".
+  - Cause: since annotations are read as whole expressions (`9cbfe3604`,
+    R2137), `constraints.rs::annotation_type` builds the call with the
+    compile-time builder, which fails on it, so `not_a_type` is never
+    reached; upstream's `emitExprType` emits the construction as a value
+    and `emitType` rejects the value.
+  - Probe: `assets/type_error/type_annotation_is_a_construction.mojo`,
+    whose `# expect:` the batch 5 baseline (`b021d96c4`) met.
+  - Probe: `def f(x: P(1))` over a `@fieldwise_init struct P` with one
+    `Int` field fails the same way.
+  - Found while landing R2564 (2026-11-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

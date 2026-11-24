@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A member read's object is built once for every reader the compile-time
+  builder asks for it (a struct value's field, a type member's base, a
+  value's type), as upstream emits the object once, so probing a run-time
+  field chain `a.x.x…x` for a literal is linear in its length again; twenty
+  links had stopped elaborating within two minutes (R2564).
 - A parameterized struct `comptime` member or generic alias body is
   evaluated under its binders, and a type result is the type template, as
   upstream keeps it (R2557), instead of being classified as a type by its

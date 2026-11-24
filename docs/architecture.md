@@ -2962,7 +2962,9 @@ nest. While a construction ranks its `__init__` overloads, an
 expression is typed once (`checker/argument_memo.rs`), as upstream emits
 each argument before ranking, so a nest of constructions checks in time
 linear in its depth; a probe forgets the types it typed along with their
-facts. Every
+facts. The compile-time builder likewise builds a member read's
+object once for all the read's readers (`checker/member_object_memo.rs`),
+so a field chain `a.x.x…x` builds in time linear in its length. Every
 fact store the checker writes during a body is a logged store
 (`mojito-checked`'s `fact_store.rs`: a map, set, or vector plus the log of
 keys written), so a site — a module-level `def` or a struct method —

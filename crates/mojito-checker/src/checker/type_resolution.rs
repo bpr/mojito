@@ -2468,7 +2468,7 @@ impl Checker {
     /// every position, as at the pin; only the outermost application may
     /// leave parameters to inference. A compiler-generated declaration
     /// rebinds already-checked spellings and keeps its context's leniency.
-    fn application_strictness(&self) -> super::StorageStrictness {
+    pub(super) fn application_strictness(&self) -> super::StorageStrictness {
         let generated = self.generated_declaration.get()
             || self.self_ty.as_ref().is_some_and(|ty| {
                 ty.kind()

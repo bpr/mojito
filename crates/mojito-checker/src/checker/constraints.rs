@@ -2176,8 +2176,29 @@ impl Checker {
     }
 
     /// The parameter expression of `expr`; see
-    /// [`Self::compile_dependent_ct_expr`].
+    /// [`Self::compile_dependent_ct_expr`]. A member read's object is built
+    /// once for all of the read's readers ([`Self::with_member_object`]).
     fn build_ct(&self, expr: &Expr, recording: Recording) -> Result<ParamExpr, TypeError> {
+        if recording == Recording::Silent
+            && let Some(built) = self.built_member_object(expr)
+        {
+            return built;
+        }
+        let built = match &expr.kind {
+            ExprKind::Member { object, .. } => {
+                self.with_member_object(object, || self.build_ct_expr(expr, recording))
+            }
+            _ => self.build_ct_expr(expr, recording),
+        };
+        if recording == Recording::Silent {
+            self.keep_member_object(expr, &built);
+        }
+        built
+    }
+
+    /// The parameter expression of `expr`, built by the arm its shape
+    /// selects ([`Self::build_ct`]).
+    fn build_ct_expr(&self, expr: &Expr, recording: Recording) -> Result<ParamExpr, TypeError> {
         let context = &self.param_context;
         let record = recording == Recording::Record;
         let build = |expr: &Expr| self.build_ct(expr, recording);

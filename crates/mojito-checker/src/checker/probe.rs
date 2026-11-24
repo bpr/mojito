@@ -13,9 +13,11 @@ impl Checker {
     pub(super) fn probe<R>(&self, check: impl FnOnce() -> R) -> R {
         let marks = self.open_probe_marks();
         let memo = self.argument_memo_mark();
+        let objects = self.member_object_mark();
         let result = check();
         self.roll_back_to(marks);
         self.roll_back_argument_memo(memo);
+        self.roll_back_member_objects(objects);
         result
     }
 }
