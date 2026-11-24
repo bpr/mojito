@@ -6551,18 +6551,14 @@ impl Checker {
     /// The value pack a bracket argument spreads whole: `*vs` of a `def`'s
     /// or method's own value pack, or `*Self.vs` of the enclosing struct's.
     pub(super) fn value_pack_spread(&self, argument: &ParamArg) -> Option<ParamExpr> {
-        match spread_pack_view(argument)? {
+        let operand = argument.spread_operand()?;
+        match (&operand.kind, operand.self_member()) {
+            (_, Some(field)) => self.self_value_pack(field),
             // The struct's own pack arrives here too: pack qualification
             // folds `*Self.vs` onto the bare spread.
-            AnnotationView::Named(name, args) if args.is_empty() => {
-                let name = name.strip_prefix('*')?;
-                self.value_pack_named(&Expr::new(
-                    ExprKind::Identifier(name.to_string()),
-                    mojito_common::token::DUMMY_SPAN,
-                ))
-                .or_else(|| self.self_value_pack(name))
-            }
-            AnnotationView::SelfParam(name) => self.self_value_pack(name.strip_prefix('*')?),
+            (ExprKind::Identifier(name), None) => self
+                .value_pack_named(operand)
+                .or_else(|| self.self_value_pack(name)),
             _ => None,
         }
     }

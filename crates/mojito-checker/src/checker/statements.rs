@@ -623,13 +623,7 @@ impl Checker {
     fn shell_awaits_declarations(&self, params: &[mojito_ast::ast::TypeParam]) -> bool {
         super::traits::names_member_type(params)
             || params.iter().any(|param| {
-                let value_type = param.value_type.as_ref().and_then(annotation_view);
-                let named = match &value_type {
-                    Some(AnnotationView::Named(name, _)) => Some(name.as_str()),
-                    Some(_) => None,
-                    None => param.lone_bound(),
-                };
-                named.is_some_and(|name| {
+                super::traits::binder_type_name(param).is_some_and(|name| {
                     let unregistered_struct = self.declared_structs.contains(name)
                         && !self.predeclared_structs.contains(name);
                     let unregistered_alias = self.declared_aliases.contains(name)
@@ -1027,17 +1021,11 @@ impl Checker {
         self.check_generic_comptime_alias(name, type_params, ty.as_ref(), where_clauses, value)
     }
 
-    /// The type an alias body spells, or else the type it evaluates to (`Int
+    /// Whether an alias body spells a type, or else evaluates to one (`Int
     /// if c else String`), as upstream's alias declaration evaluates its
     /// body and keeps a type result as the alias's type.
-    fn alias_body_view<'a>(&self, value: &'a Expr) -> Result<AnnotationView<'a>, TypeError> {
-        super::constraints::assoc_body_view(value).or_else(|error| {
-            if self.denotes_type_value(value) {
-                Ok(AnnotationView::Value(value))
-            } else {
-                Err(error)
-            }
-        })
+    fn alias_body_is_type(&self, value: &Expr) -> bool {
+        super::constraints::assoc_body_view(value).is_ok() || self.denotes_type_value(value)
     }
 
     /// Whether `value` builds to a generator (`Twice`, `S.k` read
@@ -2303,7 +2291,6 @@ impl Checker {
                     return Ok(());
                 }
                 let annotation = ty;
-                let ty = ty.as_ref().map(annotation_view_of).transpose()?;
                 if !at_module
                     && type_params.is_empty()
                     && self.bind_trait_constant(
@@ -2324,7 +2311,7 @@ impl Checker {
                     self.register_named_bindings(value)?;
                 }
                 let _position = self.comptime_position();
-                if let Some(shown) = ty
+                if let Some(shown) = annotation
                     .as_ref()
                     .and_then(|annotation| self.unconstructible_comptime_annotation(annotation))
                 {
@@ -4769,7 +4756,7 @@ impl Checker {
             if origin_value {
                 return Ok(AliasBody::OriginValue);
             }
-            Ok(match (self.alias_body_view(value), &declared) {
+            Ok(match (self.alias_body_is_type(value), &declared) {
                 // A `Bool` annotation admits a proposition as well as a value.
                 (_, Some(declared)) => {
                     match self.lower_parametric_value(&decls, value, Some(declared)) {
@@ -4782,7 +4769,7 @@ impl Checker {
                         },
                     }
                 }
-                (Ok(_), None) => {
+                (true, None) => {
                     match self.lower_parameterized_member(
                         name,
                         &decls,
@@ -4802,7 +4789,7 @@ impl Checker {
                         },
                     }
                 }
-                (Err(_), None) => match self.compile_predicate_alias_body(&decls, value) {
+                (false, None) => match self.compile_predicate_alias_body(&decls, value) {
                     Ok(constraint) => AliasBody::Predicate(Box::new(constraint)),
                     Err(predicate_error) => {
                         match self.lower_parametric_value(&decls, value, None) {
@@ -4916,25 +4903,44 @@ fn holds_closure(ty: &Ty) -> bool {
 /// (`values.Ts[index]`), used as the opaque element's type name inside a
 /// handler body.
 fn dependent_projection_spelling(annotation: &Expr) -> String {
-    fn type_text(annotation: &AnnotationView) -> String {
-        match annotation {
-            AnnotationView::Named(name, _) => name.clone(),
-            AnnotationView::Assoc { base, name, .. } => format!("{}.{name}", type_text(base)),
-            AnnotationView::IndexedProjection { base, index } => {
-                let index = match &index.kind {
-                    ExprKind::Identifier(name) => name.clone(),
-                    ExprKind::Int(value) => value.to_string(),
-                    _ => "_".to_string(),
-                };
-                format!("{}[{index}]", type_text(base))
+    let is_self = |expression: &Expr| matches!(&expression.kind, ExprKind::Identifier(name) if name == "Self");
+    let element = || "element".to_string();
+    if annotation.is_sentinel() || is_self(annotation) {
+        return element();
+    }
+    match &annotation.kind {
+        ExprKind::Identifier(name) => name.clone(),
+        ExprKind::Spread(operand) => match &operand.kind {
+            ExprKind::Identifier(name) => format!("*{name}"),
+            _ => element(),
+        },
+        ExprKind::Member { object, field } if !is_self(object) && !object.is_sentinel() => {
+            format!("{}.{field}", dependent_projection_spelling(object))
+        }
+        _ => {
+            let Some((object, args)) = annotation.bracket_operands() else {
+                return element();
+            };
+            match (&object.kind, args.as_slice()) {
+                (ExprKind::Identifier(name), _) if !is_self(object) => name.clone(),
+                _ if object.is_sentinel() => element(),
+                (_, [mojito_ast::ast::ParamArg::Value(index)]) => {
+                    let index = match &index.kind {
+                        ExprKind::Identifier(name) => name.clone(),
+                        ExprKind::Int(value) => value.to_string(),
+                        _ => "_".to_string(),
+                    };
+                    format!("{}[{index}]", dependent_projection_spelling(object))
+                }
+                (ExprKind::Member { object: base, .. }, _)
+                    if !is_self(base) && !base.is_sentinel() =>
+                {
+                    dependent_projection_spelling(object)
+                }
+                _ => element(),
             }
-            _ => "element".to_string(),
         }
     }
-    annotation_view(annotation).map_or_else(
-        || "element".to_string(),
-        |annotation| type_text(&annotation),
-    )
 }
 
 impl Checker {

@@ -730,7 +730,7 @@ impl Checker {
     /// application's arguments.
     pub(in crate::checker) fn field_origin_binder_arguments(
         &self,
-        annotation: &AnnotationView,
+        annotation: &Expr,
         associated: &[mojito_ast::ast::StructComptime],
     ) -> Option<Vec<(u32, u32)>> {
         let mut binders = Vec::new();
@@ -752,7 +752,7 @@ impl Checker {
     /// `None` when the annotation is not a recordable struct application.
     pub(super) fn collect_field_origin_binders(
         &self,
-        annotation: &AnnotationView,
+        annotation: &Expr,
         associated: &[mojito_ast::ast::StructComptime],
         substitution: &HashMap<String, String>,
         out: &mut Vec<(u32, String)>,
@@ -770,70 +770,83 @@ impl Checker {
                     .unwrap_or_else(|| binder.to_string()),
             )
         };
-        match annotation {
-            AnnotationView::Named(name, args) => {
-                let info = self.structs.get(name)?;
-                let explicit: Vec<&ParamDecl> = info.explicit_params().collect();
-                if args.len() != explicit.len() {
-                    return None;
-                }
-                for (decl, argument) in explicit.iter().zip(args) {
-                    let ParamDecl::Origin { origin, .. } = decl else {
-                        continue;
-                    };
-                    if let Some(binder) = applied_binder(argument) {
-                        out.push((origin.0, binder));
-                    }
-                }
-                Some(())
+        let application = match &annotation.kind {
+            ExprKind::Identifier(name) if !annotation.is_sentinel() => {
+                Some((name.as_str(), std::borrow::Cow::Borrowed(&[][..])))
             }
-            // A monomorphic alias of the declaring struct: read its body.
-            AnnotationView::SelfParam(alias) => {
-                let member = associated
-                    .iter()
-                    .find(|member| member.name == *alias && member.params.is_empty())?;
-                let body = super::constraints::assoc_body_view(&member.value).ok()?;
-                self.collect_field_origin_binders(&body, associated, substitution, out)
+            _ => annotation.bracket_application(),
+        };
+        if let Some((name, args)) = application.filter(|(name, _)| *name != "Self") {
+            let info = self.structs.get(name)?;
+            let explicit: Vec<&ParamDecl> = info.explicit_params().collect();
+            if args.len() != explicit.len() {
+                return None;
             }
-            // A parameterized alias application (`Self.view_t[o2]`): bind the
-            // alias's explicit binders to the supplied arguments, then read
-            // its body under that substitution.
-            AnnotationView::IndexedProjection { base, index } => {
-                let AnnotationView::SelfParam(alias) = base.as_ref() else {
-                    return None;
+            for (decl, argument) in explicit.iter().zip(args.iter()) {
+                let ParamDecl::Origin { origin, .. } = decl else {
+                    continue;
                 };
-                let member = associated
-                    .iter()
-                    .find(|member| member.name == *alias && !member.params.is_empty())?;
-                let supplied: Vec<&Expr> = match &index.kind {
-                    ExprKind::TupleLit(items) => items.iter().collect(),
-                    _ => vec![*index],
-                };
-                // An associated alias's own list is classified where it is
-                // read; none is stored for its members.
-                let explicit: Vec<(usize, &mojito_ast::ast::TypeParam)> = member
-                    .params
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, parameter)| !parameter.infer_only)
-                    .collect();
-                if explicit.len() != supplied.len() {
-                    return None;
+                if let Some(binder) = applied_binder(argument) {
+                    out.push((origin.0, binder));
                 }
-                let mut inner = HashMap::new();
-                for ((index, parameter), argument) in explicit.iter().zip(supplied) {
-                    if self.origin_binder_at(&member.params, *index).is_none() {
-                        continue;
-                    }
-                    if let Some(binder) = applied_binder(&ParamArg::Value(argument.clone())) {
-                        inner.insert(parameter.name.clone(), binder);
-                    }
-                }
-                let body = super::constraints::assoc_body_view(&member.value).ok()?;
-                self.collect_field_origin_binders(&body, associated, &inner, out)
             }
-            _ => None,
+            return Some(());
         }
+        // A monomorphic alias of the declaring struct: read its body.
+        if let Some(alias) = annotation.self_member() {
+            let member = associated
+                .iter()
+                .find(|member| member.name == alias && member.params.is_empty())?;
+            super::constraints::assoc_body_view(&member.value).ok()?;
+            return self.collect_field_origin_binders(&member.value, associated, substitution, out);
+        }
+        // A parameterized alias application (`Self.view_t[o2]`,
+        // `Self.view_t[o1, o2]`): bind the alias's explicit binders to the
+        // supplied positional arguments, then read its body under that
+        // substitution.
+        let (object, supplied): (&Expr, Vec<&Expr>) = match &annotation.kind {
+            ExprKind::Index { object, index } => match &index.kind {
+                ExprKind::EmptySubscript => return None,
+                ExprKind::TupleLit(items) => (object, items.iter().collect()),
+                _ => (object, vec![index]),
+            },
+            ExprKind::MultiIndex { object, args } => (
+                object,
+                args.iter()
+                    .map(|argument| match argument {
+                        SubscriptArg::Index(index) => Some(index),
+                        _ => None,
+                    })
+                    .collect::<Option<_>>()?,
+            ),
+            _ => return None,
+        };
+        let alias = object.self_member()?;
+        let member = associated
+            .iter()
+            .find(|member| member.name == alias && !member.params.is_empty())?;
+        // An associated alias's own list is classified where it is read;
+        // none is stored for its members.
+        let explicit: Vec<(usize, &mojito_ast::ast::TypeParam)> = member
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, parameter)| !parameter.infer_only)
+            .collect();
+        if explicit.len() != supplied.len() {
+            return None;
+        }
+        let mut inner = HashMap::new();
+        for ((index, parameter), argument) in explicit.iter().zip(supplied) {
+            if self.origin_binder_at(&member.params, *index).is_none() {
+                continue;
+            }
+            if let Some(binder) = applied_binder(&ParamArg::Value(argument.clone())) {
+                inner.insert(parameter.name.clone(), binder);
+            }
+        }
+        super::constraints::assoc_body_view(&member.value).ok()?;
+        self.collect_field_origin_binders(&member.value, associated, &inner, out)
     }
 
     /// The in-scope origin binder `name` (an `Origin`, never an

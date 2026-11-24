@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2556**.
+Next free ID: **R2557**.
 
 ## Ordered Work
 
@@ -13401,20 +13401,25 @@ follow-ups the landed producer stages filed come last.
   - Depends on R1495.
   - Model: Fable, Not Planned.
 
-- [ ] **R2549 Origin, declaration, and trait readers classify an annotation by its view**
+- [ ] **R2556 A method binder's `Origin[mut=Self.mut]` types with
+  `Origin`'s `mut` unbound**
 
-  Structural readers in `origins/`, `declarations.rs`, `traits.rs`,
-  `statements.rs`, `reflection.rs`, and `builtin_fold.rs` match an
-  `AnnotationView`'s shape, where upstream reads the expression or the
-  emitted type.
-  - Probe: `origins/sig.rs::result_origin_roots`,
-    `origins/binders.rs::field_origin_binder_arguments`,
-    `declarations.rs::{binder_view, origin_annotation_mutability,
-    spread_pack_view}`, `traits.rs` field and requirement readers,
-    `statements.rs::{check_generic_comptime_alias, type_text}`,
-    `builtin_fold.rs`.
-  - Depends on R2548.
-  - Model: Fable, Planned.
+  The builder types a method binder `o: Origin[mut=Self.mut]` as
+  `Origin[mut=<deferred Origin.mut>]`, where upstream binds `Origin`'s
+  `mut` to the enclosing struct's `mut` parameter.
+  - So `declarations.rs::enclosing_self_mutability` reads the binder's
+    expression for the `Self.mut` read instead of the emitted type's
+    `mut` argument, as upstream's binder classification does.
+  - Probe: log `binder_annotation_type(tp)` where
+    `enclosing_self_mutability` fires and run
+    `assets/ok/method_self_mut_origin_binder.mojo`: the library
+    `Pointer`'s and the fixture's `S`'s binders both type with
+    `Val(Deferred(ParamRef { owner: "Origin", slot: 0 }))`.
+  - Once the emitted type carries the struct's binder, the reader takes
+    its `mut` argument and goes.
+  - Found while landing R2549 (2026-11-23).
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **R2550 Constraint and comptime-validation readers classify an annotation by its view**
 
@@ -13426,6 +13431,14 @@ follow-ups the landed producer stages filed come last.
     member body), `member_view_of`, `mlir_source_name`, `SlotType`
     classification, the `initializer_list.rs` view readers
     (`type_member_read`, `type_member_spelling`).
+  - Also: the `spelled_view` tests in
+    `type_resolution.rs::{lower_assoc_application_arg, mlir_type_operand,
+    compile_time_value_type}` and `constraints.rs::spells_member_root`.
+  - Also: the `assoc_body_view` gates left in
+    `origins/binders.rs::collect_field_origin_binders` and
+    `statements.rs::{alias_body_is_type, denotes_type}`, which discard the
+    view.
+  - `pack_spread_view` remains only inside `spelled_annotation_view`.
   - Then delete `AnnotationView`, its view functions, and
     `annotation_view_tests`, and say in `docs/features.md` that the checker
     types every annotation with `emit_expr_type`.

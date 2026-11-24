@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker's origin-signature, origin-binder, struct-field, trait,
+  alias, and builtin-fold readers read the annotation expression itself
+  rather than the checker's annotation view (R2549), as upstream's do. A
+  result's `origin_of` roots are now checked in a several-operand bracket
+  over `Self` or a construction too, where they were skipped, and a field
+  typed by a parameterized alias applied to several origins
+  (`var tv: Self.view_t[Self.o1, Self.o2]`) records each origin's binder,
+  where it recorded none.
+
 - The resolver's second evaluator is gone (R2548): `ty_from_spelling` and its
   annotation-view dispatcher are deleted, and every caller types an
   expression with the one builder or calls a builder leaf on the

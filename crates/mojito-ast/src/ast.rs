@@ -381,6 +381,20 @@ pub enum ParamArg {
     },
 }
 
+impl ParamArg {
+    /// The operand of a positional `*` spread (`Ts` in `*Ts`, `Self.Ts` in
+    /// `*Self.Ts`); `None` for any other argument.
+    pub fn spread_operand(&self) -> Option<&Expr> {
+        match self {
+            Self::Value(Expr {
+                kind: ExprKind::Spread(operand),
+                ..
+            }) => Some(operand),
+            _ => None,
+        }
+    }
+}
+
 /// A SIMD element type — the `<dt>` in `SIMD[DType.<dt>, width]`.
 ///
 /// Every member of upstream's `struct DType` is a variant, so its value
@@ -3848,7 +3862,35 @@ mod expression_source {
 
 #[cfg(test)]
 mod tests {
-    use super::{Dtype, Stmt, StmtKind, rekey_syntax};
+    use super::{Dtype, Expr, ExprKind, ParamArg, Stmt, StmtKind, rekey_syntax};
+
+    #[test]
+    fn spread_operand_reads_a_positional_spread() {
+        let ident = |name: &str| Expr::from(ExprKind::Identifier(name.to_string()));
+        let spread = |operand: Expr| ParamArg::Value(ExprKind::Spread(Box::new(operand)).into());
+        let self_ts = Expr::from(ExprKind::Member {
+            object: Box::new(ident("Self")),
+            field: "Ts".to_string(),
+        });
+        let bare = spread(ident("Ts"));
+        assert_eq!(bare.spread_operand(), Some(&ident("Ts")));
+        assert_eq!(
+            bare.spread_operand().and_then(Expr::spread_pack_name),
+            Some("Ts")
+        );
+        let qualified = spread(self_ts.clone());
+        assert_eq!(qualified.spread_operand(), Some(&self_ts));
+        assert_eq!(
+            qualified.spread_operand().and_then(Expr::spread_pack_name),
+            Some("Ts")
+        );
+        assert_eq!(ParamArg::Value(ident("Ts")).spread_operand(), None);
+        let named = ParamArg::Named {
+            name: "Ts".to_string(),
+            value: Box::new(spread(ident("Ts"))),
+        };
+        assert_eq!(named.spread_operand(), None);
+    }
 
     #[test]
     fn a_rekeyed_copy_takes_a_fresh_identity() {

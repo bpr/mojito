@@ -47,6 +47,16 @@ struct WrapApplied[m1: Bool, m2: Bool, //, o1: Origin[mut=m1], o2: Origin[mut=m2
     def key(self) -> ref[self.tv.key()] Int:
         return self.tv.key()
 
+@fieldwise_init
+struct WrapTwo[m1: Bool, m2: Bool, //, o1: Origin[mut=m1], o2: Origin[mut=m2]]:
+    # A parameterized alias applied to both origins: each of its binders
+    # takes its operand, so the callee's second binder resolves to `o1`.
+    comptime view_t[a: Bool, b: Bool, //, x: Origin[mut=a], y: Origin[mut=b]] = TwoView[y, x]
+    var tv: Self.view_t[Self.o1, Self.o2]
+
+    def key(self) -> ref[self.tv.key()] Int:
+        return self.tv.key()
+
 def main():
     var a = Pair(1, 10)
     var b = Pair(2, 20)
@@ -54,3 +64,5 @@ def main():
     print(w.key())
     var x = WrapApplied(TwoView(EntryCursor(Pointer(to=b)), EntryCursor(Pointer(to=a))))
     print(x.key())
+    var y = WrapTwo(TwoView(EntryCursor(Pointer(to=a)), EntryCursor(Pointer(to=b))))
+    print(y.key())

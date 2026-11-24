@@ -440,7 +440,7 @@ the declaration's parameter kinds.
 
 A leading `*` spreads a type list: the operand is an `ExprKind::Spread`, the
 node a call argument's `*values` uses, whether it spreads a pack (`*Ts`,
-`*Self.Ts`, which the checker's `spread_pack_view` names) or any other type-list
+`*Self.Ts`, which `ParamArg::spread_operand` and `Expr::spread_pack_name` name) or any other type-list
 expression (`*Ts.reverse()`, `*TypeList._concat[A.values, B.values]()`).
 
 An annotation is its expression and nothing else, as upstream's is: the AST

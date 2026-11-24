@@ -4396,8 +4396,7 @@ use type_resolution::{
     AnnotationView, BoundMutability, BoundOrigin, BoundParameters, BracketOrigins, BracketUse,
     DeclaredAttributes, DependentValues, EXTERNAL_CALL_PARAMS, ExplicitTypes, T_PARAMS,
     TYPE_PARAMS, VALUE_PACK_PARAMS, VARIANT_REPLACE_PARAMS, annotation_view, annotation_view_of,
-    binder_view, bracket_attribute, spelled_view, spread_pack_view, tyarg_is_symbolic,
-    types_attributes, view_expression,
+    bracket_attribute, spelled_view, tyarg_is_symbolic, types_attributes, view_expression,
 };
 
 mod constraints;

@@ -185,7 +185,10 @@ pub(in crate::checker) fn value_result<'a>(
 /// receiver, as an abstract signature's `origin_of` does. Any other return,
 /// or a projection over a non-receiver base, gives no tags.
 pub(in crate::checker) fn view_return_interior_tags(ret: Option<&Expr>) -> Vec<String> {
-    let Some(AnnotationView::Named(_, arguments)) = ret.and_then(annotation_view) else {
+    let Some((_, arguments)) = ret
+        .and_then(Expr::bracket_application)
+        .filter(|(name, _)| *name != "Self")
+    else {
         return Vec::new();
     };
     arguments
@@ -543,12 +546,11 @@ impl Checker {
         else {
             return Ok(());
         };
-        let annotation = annotation_view_of(annotation)?;
         let mut roots = Vec::new();
         for expression in reference.into_iter().flatten() {
             origin_roots(expression, &mut roots);
         }
-        result_origin_roots(&annotation, &mut roots);
+        result_origin_roots(annotation, &mut roots);
         for root in roots {
             let (convention, ty) = if root == "self" {
                 match receiver {
@@ -609,10 +611,13 @@ impl Checker {
         self_ref: Option<&mojito_types::origin::RefSig>,
     ) -> Vec<ViewReturnOrigin> {
         use mojito_types::origin::{SigMutability, SigOrigin};
-        let Some(AnnotationView::Named(name, arguments)) = ret.and_then(annotation_view) else {
+        let Some((name, arguments)) = ret
+            .and_then(Expr::bracket_application)
+            .filter(|(name, _)| *name != "Self")
+        else {
             return Vec::new();
         };
-        let Some(info) = self.structs.get(&name) else {
+        let Some(info) = self.structs.get(name) else {
             return Vec::new();
         };
         let origin_id = |decl: &ParamDecl| match decl {
@@ -644,7 +649,7 @@ impl Checker {
             lower_ref_param_sigs(decls, params, struct_params, self).unwrap_or_default();
         let mut slots = Vec::new();
         let mut positional = explicit.iter();
-        for argument in &arguments {
+        for argument in arguments.iter() {
             let (slot, expression) = match argument {
                 mojito_ast::ast::ParamArg::Named { name, value } => {
                     let Some(slot) = explicit
@@ -1021,35 +1026,32 @@ pub(in crate::checker) fn sig_origin_for_binder(
 }
 
 /// The root of every `origin_of(...)` place a result annotation names, in
-/// source order: in a struct or associated-type
-/// application's arguments, at any depth. A function type's own origins
+/// source order: in the operands of every bracket along the annotation's
+/// member and subscript chain, at any depth. A function type's own origins
 /// are its contract's, not the result's.
-fn result_origin_roots<'a>(annotation: &'a AnnotationView, roots: &mut Vec<&'a str>) {
-    fn argument_roots<'a>(argument: &'a mojito_ast::ast::ParamArg, roots: &mut Vec<&'a str>) {
-        match argument {
-            mojito_ast::ast::ParamArg::Value(expression) => origin_roots(expression, roots),
-            mojito_ast::ast::ParamArg::Named { value, .. } => argument_roots(value, roots),
-        }
-    }
-    match annotation {
-        AnnotationView::Named(_, arguments) => {
-            for argument in arguments {
-                argument_roots(argument, roots);
+fn result_origin_roots<'a>(annotation: &'a Expr, roots: &mut Vec<&'a str>) {
+    match &annotation.kind {
+        ExprKind::Member { object, .. } => result_origin_roots(object, roots),
+        ExprKind::Index { object, index } => {
+            result_origin_roots(object, roots);
+            if !matches!(index.kind, ExprKind::EmptySubscript) {
+                origin_roots(index, roots);
             }
         }
-        AnnotationView::Assoc {
-            base,
-            args: arguments,
-            ..
-        } => {
-            result_origin_roots(base, roots);
-            for argument in arguments {
-                argument_roots(argument, roots);
+        ExprKind::MultiIndex { object, args } => {
+            let operands = args
+                .iter()
+                .map(|argument| match argument {
+                    SubscriptArg::Index(value) | SubscriptArg::Keyword { value, .. } => Some(value),
+                    SubscriptArg::Slice { .. } | SubscriptArg::KeywordSlice { .. } => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(operands) = operands {
+                result_origin_roots(object, roots);
+                for operand in operands {
+                    origin_roots(operand, roots);
+                }
             }
-        }
-        AnnotationView::IndexedProjection { base, index } => {
-            result_origin_roots(base, roots);
-            origin_roots(index, roots);
         }
         _ => {}
     }

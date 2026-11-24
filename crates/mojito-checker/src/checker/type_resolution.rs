@@ -128,39 +128,6 @@ pub(super) fn pack_spread_view(operand: &Expr) -> Option<AnnotationView<'static>
     }
 }
 
-/// The pack a positional spread operand of a bracket (`*Ts`, `*Self.Ts`)
-/// names, as [`pack_spread_view`] views it.
-pub(super) fn spread_pack_view(argument: &ParamArg) -> Option<AnnotationView<'static>> {
-    match argument {
-        ParamArg::Value(Expr {
-            kind: ExprKind::Spread(operand),
-            ..
-        }) => pack_spread_view(operand),
-        _ => None,
-    }
-}
-
-/// A binder's type: its value type viewed in the type context, else the
-/// `Origin[mut=e]` the parser read into its `origin_mutability`, else its
-/// lone bound. `None` for several bounds.
-pub(super) fn binder_view(binder: &mojito_ast::ast::TypeParam) -> Option<AnnotationView<'_>> {
-    if let Some(value_type) = &binder.value_type {
-        return annotation_view(value_type);
-    }
-    if let Some(mutability) = &binder.origin_mutability {
-        return Some(AnnotationView::Named(
-            "Origin".to_string(),
-            vec![ParamArg::Named {
-                name: "mut".to_string(),
-                value: Box::new(ParamArg::Value(mutability.clone())),
-            }],
-        ));
-    }
-    binder
-        .lone_bound()
-        .map(|only| AnnotationView::Named(only.to_string(), Vec::new()))
-}
-
 /// The view of an annotation slot's expression ([`annotation_view`]). The
 /// parser stores only annotations that have one.
 pub(super) fn annotation_view_of(annotation: &Expr) -> Result<AnnotationView<'_>, TypeError> {
@@ -479,7 +446,14 @@ pub(super) fn bracket_attribute(
     use mojito_ast::ast::ParamArg;
     match argument {
         ParamArg::Named { value, .. } => bracket_attribute(value, bound),
-        argument if spread_pack_view(argument).is_some() => Some(bound.clone()),
+        argument
+            if argument
+                .spread_operand()
+                .and_then(Expr::spread_pack_name)
+                .is_some() =>
+        {
+            Some(bound.clone())
+        }
         // A trait, a type list, or a KGEN string has no run-time form, so
         // such an argument is an attribute like a type. So is a compile-time
         // string an application computes, which is the elaborator's frozen
@@ -2599,16 +2573,10 @@ impl Checker {
     /// The `comptime` binding annotation `annotation` as shown when it
     /// spells a parametric struct bare (`comptime x: W = W[1]()`), whose
     /// value cannot be constructed, as at the pin.
-    pub(super) fn unconstructible_comptime_annotation(
-        &self,
-        annotation: &AnnotationView,
-    ) -> Option<String> {
-        let AnnotationView::Named(name, args) = annotation else {
+    pub(super) fn unconstructible_comptime_annotation(&self, annotation: &Expr) -> Option<String> {
+        let ExprKind::Identifier(name) = &annotation.kind else {
             return None;
         };
-        if !args.is_empty() {
-            return None;
-        }
         let info = self.structs.get(name)?;
         unbound_struct_spelling(name, &info.params)
     }
@@ -3767,11 +3735,15 @@ impl Checker {
                 // value expression binds the type, which is its attribute.
                 let ty = match arg {
                     // A pack's spread (`*Ts`) binds the pack.
-                    ParamArg::Value(_) if let Some(pack) = spread_pack_view(arg) => match pack {
-                        AnnotationView::SelfParam(name) => self.self_pack_type(&name)?,
-                        AnnotationView::Named(name, args) => self.applied_type(&name, &args)?.0,
-                        _ => return Err(TypeError::UnknownType(name.clone())),
-                    },
+                    ParamArg::Value(_) if let Some(operand) = arg.spread_operand() => {
+                        match (&operand.kind, operand.self_member()) {
+                            (_, Some(field)) => self.self_pack_type(&format!("*{field}"))?,
+                            (ExprKind::Identifier(pack), None) => {
+                                self.applied_type(&format!("*{pack}"), &[])?.0
+                            }
+                            _ => return Err(TypeError::UnknownType(name.clone())),
+                        }
+                    }
                     // A reflected field type (`reflect[Q].field_at[0].T`,
                     // or a name bound to one) is an `AnyType` value, which
                     // binds only a binder that asks nothing more of it.
@@ -4892,20 +4864,21 @@ impl Checker {
         // The elaborator's pack-qualification pass owns the rule that a member
         // spells its struct's pack `Self.Ts`; a spread it has normalized to
         // the bare spelling still names that pack.
-        let pack = |name: &String| {
-            name.starts_with('*').then(|| {
-                if self.pack_is_shadowed(name) {
-                    return Err(TypeError::UnknownType(name.clone()));
-                }
-                self.lookup_tparam(name)
-                    .map_or_else(|| self.self_pack_type(name), Ok)
-            })
-        };
-        match spread_pack_view(arg)? {
-            AnnotationView::SelfParam(name) => Some(self.self_pack_type(&name)),
-            AnnotationView::Named(name, _) => pack(&name),
-            _ => None,
+        let operand = arg.spread_operand()?;
+        if let Some(field) = operand.self_member() {
+            return Some(self.self_pack_type(&format!("*{field}")));
         }
+        let ExprKind::Identifier(name) = &operand.kind else {
+            return None;
+        };
+        let pack = format!("*{name}");
+        if self.pack_is_shadowed(&pack) {
+            return Some(Err(TypeError::UnknownType(pack)));
+        }
+        Some(
+            self.lookup_tparam(&pack)
+                .map_or_else(|| self.self_pack_type(&pack), Ok),
+        )
     }
 
     /// The element `__UninitStorage[T]`'s one bracket argument stores,
@@ -5983,13 +5956,8 @@ fn projection_index(bracket: &Expr) -> Option<&Expr> {
 
 #[cfg(test)]
 mod annotation_view_tests {
-    use super::{
-        AnnotationView, annotation_view, binder_view, spelled_view, spread_pack_view,
-        view_expression,
-    };
-    use mojito_ast::ast::{
-        CONTEXTUAL_SENTINEL, Expr, ExprKind, InfixOp, ParamArg, SubscriptArg, TypeParam,
-    };
+    use super::{AnnotationView, annotation_view, spelled_view, view_expression};
+    use mojito_ast::ast::{CONTEXTUAL_SENTINEL, Expr, ExprKind, InfixOp, ParamArg, SubscriptArg};
 
     fn ident(name: &str) -> Expr {
         Expr::from(ExprKind::Identifier(name.into()))
@@ -6215,55 +6183,12 @@ mod annotation_view_tests {
             annotation_view(&reversal),
             Some(AnnotationView::Value(&reversal))
         );
-        assert_eq!(
-            spread_pack_view(&ParamArg::Value(spread(ident("Ts")))),
-            Some(named("*Ts", vec![]))
-        );
-        assert_eq!(spread_pack_view(&ParamArg::Value(ident("Ts"))), None);
     }
 
     #[test]
     fn an_and_chain_is_an_operator_value() {
         let pair = and(ident("Copyable"), ident("Defaultable"));
         assert_eq!(annotation_view(&pair), Some(AnnotationView::Value(&pair)));
-    }
-
-    #[test]
-    fn a_binder_views_its_value_type_origin_or_lone_bound() {
-        let binder = |bounds: &[&str], value_type, origin_mutability| TypeParam {
-            name: "x".into(),
-            bounds: bounds
-                .iter()
-                .map(|bound| Expr::from(ExprKind::Identifier((*bound).to_string())))
-                .collect(),
-            value_type,
-            callable_bound: None,
-            origin_mutability,
-            infer_only: false,
-            keyword_only: false,
-            default: None,
-        };
-        let none = binder(&["None"], Some(Expr::from(ExprKind::None)), None);
-        assert_eq!(binder_view(&none), Some(AnnotationView::None));
-        let origin = binder(&["Origin"], None, Some(ident("m")));
-        assert_eq!(
-            binder_view(&origin),
-            Some(named(
-                "Origin",
-                vec![ParamArg::Named {
-                    name: "mut".into(),
-                    value: Box::new(ParamArg::Value(ident("m"))),
-                }],
-            ))
-        );
-        assert_eq!(
-            binder_view(&binder(&["Copyable"], None, None)),
-            Some(named("Copyable", vec![]))
-        );
-        assert_eq!(
-            binder_view(&binder(&["Copyable", "Movable"], None, None)),
-            None
-        );
     }
 
     #[test]

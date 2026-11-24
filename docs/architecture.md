@@ -5844,9 +5844,14 @@ annotation: an index into a type sequence or an applied member
 member subscript over `Checker::indexed_projection_type`, a pack spread
 (`*Ts`) is the pack it names, and a reflected handle's `.T` is the
 builder's reflection read, so `emit_expr_type` neither views nor resolves.
-Structural readers still classify an annotation through the
-checker's borrowed view, `type_resolution.rs::AnnotationView`
-(`annotation_view`), until R2549 and R2550 retire it. Every annotation slot (`var` and `comptime` annotations, struct and
+The checker's origin, binder, struct-field, trait, alias, and
+builtin-fold readers read the annotation expression itself
+(`Expr::bracket_application`, `Expr::self_member`,
+`ParamArg::spread_operand`), as upstream's do. The constraint,
+compile-time-validation, and initializer-list readers still classify an
+annotation through the checker's borrowed view,
+`type_resolution.rs::AnnotationView` (`annotation_view`), until R2550
+retires it. Every annotation slot (`var` and `comptime` annotations, struct and
 trait `comptime` members, struct fields, union payloads, a parameter's type,
 a result, a `raises` type, a receiver's annotation, a callable conformance,
 and a type parameter's value type and callable bound) stores the annotation

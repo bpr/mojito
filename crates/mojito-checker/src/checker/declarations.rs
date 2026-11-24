@@ -9,6 +9,7 @@ use mojito_ast::ast::DeclaredParam;
 use mojito_types::ct::FuncSymbolRef;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 use mojito_types::types::{LitOriginMut, TyKind, nominal_parts};
+use std::borrow::Cow;
 
 /// A method body as its check binds and walks it, whether the method was
 /// spelled or is a struct's wrapper of a trait default it inherits.
@@ -1412,10 +1413,7 @@ impl Checker {
                 return Ok(None);
             }
             _ => {
-                let Some(annotation) = binder_view(tp) else {
-                    return Ok(None);
-                };
-                let Some(binder) = self.origin_annotation_mutability(tp, &annotation)? else {
+                let Some(binder) = self.origin_annotation_mutability(tp)? else {
                     return Ok(None);
                 };
                 binder
@@ -1445,9 +1443,8 @@ impl Checker {
     fn origin_annotation_mutability(
         &self,
         tp: &mojito_ast::ast::TypeParam,
-        annotation: &AnnotationView,
     ) -> Result<Option<OriginBinderType>, TypeError> {
-        if let Some(binder) = self.enclosing_self_mutability(annotation) {
+        if let Some(binder) = self.enclosing_self_mutability(tp) {
             return Ok(Some(OriginBinderType::Origin(OriginMutability::Binder(
                 binder,
             ))));
@@ -1482,19 +1479,16 @@ impl Checker {
                     .cloned()
             }
             Err(error) => {
-                let AnnotationView::Named(name, args) = annotation else {
+                let Some(args) = self.origin_application(tp) else {
                     return Ok(None);
                 };
-                if !self.is_library_origin(name) {
-                    return Ok(None);
-                }
                 // A `mut` argument of another type than `Bool`, or any
                 // argument but `mut=` (a positional one, which the
                 // infer-only `mut` refuses), is the binding's error. A bare
                 // `Origin`, or a `mut=` naming a binder this scope does not
                 // hold (an enclosing declaration's, read after it closed),
                 // leaves the mutability symbolic: the type is still `Origin`.
-                let only_mut = match args.as_slice() {
+                let only_mut = match &*args {
                     [] => true,
                     [mojito_ast::ast::ParamArg::Named { name, .. }] => name == "mut",
                     _ => false,
@@ -1502,7 +1496,7 @@ impl Checker {
                 if !only_mut || matches!(error, TypeError::TypeMismatch { .. }) {
                     return Err(error);
                 }
-                return Ok(Some(OriginBinderType::Origin(origin_mut_argument(args))));
+                return Ok(Some(OriginBinderType::Origin(origin_mut_argument(&args))));
             }
         };
         Ok(Some(OriginBinderType::Origin(match &mutability {
@@ -1539,25 +1533,42 @@ impl Checker {
         Some(self.emit_expr_type(tp.bounds.first()?))
     }
 
+    /// The bracket arguments of the library `Origin` application a binder's
+    /// declared type spells: its value type (`o: Origin[mut=m]`, a bare
+    /// `o: Origin`), else the `Origin[mut=e]` the parser read into its
+    /// `origin_mutability`, else its lone bound. `None` for any other type.
+    fn origin_application<'a>(
+        &self,
+        tp: &'a mojito_ast::ast::TypeParam,
+    ) -> Option<Cow<'a, [mojito_ast::ast::ParamArg]>> {
+        let (name, args) = match (&tp.value_type, &tp.origin_mutability) {
+            (Some(value_type), _) => match &value_type.kind {
+                ExprKind::Identifier(name) if !value_type.is_sentinel() => {
+                    (name.as_str(), Cow::Borrowed(&[][..]))
+                }
+                _ => value_type.bracket_application()?,
+            },
+            (None, Some(mutability)) => (
+                "Origin",
+                Cow::Owned(vec![mojito_ast::ast::ParamArg::Named {
+                    name: "mut".to_string(),
+                    value: Box::new(mojito_ast::ast::ParamArg::Value(mutability.clone())),
+                }]),
+            ),
+            (None, None) => (tp.lone_bound()?, Cow::Borrowed(&[][..])),
+        };
+        self.is_library_origin(name).then_some(args)
+    }
+
     /// The enclosing struct's `Bool` binder an `Origin[mut=Self.mut]`
     /// annotation of a method's list names, as upstream's method signature
     /// keeps the struct's parameter symbolic until a receiver binds it.
-    fn enclosing_self_mutability(&self, annotation: &AnnotationView) -> Option<ParamRef> {
-        let AnnotationView::Named(name, args) = annotation else {
+    fn enclosing_self_mutability(&self, tp: &mojito_ast::ast::TypeParam) -> Option<ParamRef> {
+        let args = self.origin_application(tp)?;
+        let Some(mojito_ast::ast::ParamArg::Value(expression)) = origin_mut_source(&args) else {
             return None;
         };
-        if !self.is_library_origin(name) {
-            return None;
-        }
-        let Some(mojito_ast::ast::ParamArg::Value(expression)) = origin_mut_source(args) else {
-            return None;
-        };
-        let ExprKind::Member { object, field } = &expression.kind else {
-            return None;
-        };
-        if !matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") {
-            return None;
-        }
+        let field = expression.self_member()?;
         self.enclosing_param_decls
             .iter()
             .find_map(|decl| match decl {
@@ -7068,11 +7079,8 @@ impl Checker {
                 for (position, argument) in arguments {
                     // A spread of a computed list binds its elements,
                     // or the list itself while a length in it is open.
-                    if let mojito_ast::ast::ParamArg::Value(Expr {
-                        kind: ExprKind::Spread(operand),
-                        ..
-                    }) = argument
-                        && spread_pack_view(argument).is_none()
+                    if let Some(operand) = argument.spread_operand()
+                        && operand.spread_pack_name().is_none()
                     {
                         values.extend(self.spread_pack_values(operand)?);
                         continue;

@@ -122,12 +122,11 @@ impl Checker {
                 .filter(|member| member.params.is_empty() && member.ty.is_none())
                 .filter(|member| {
                     methods.iter().any(|method| {
-                        matches!(
-                            value_result(method.ret.as_ref(), method.ret_reference.as_ref())
-                                .and_then(annotation_view),
-                            Some(AnnotationView::SelfParam(read)) if read == member.name
-                        ) && InlineLevel::of(&method.decorators)
-                            .is_ok_and(|level| level == InlineLevel::Builtin)
+                        value_result(method.ret.as_ref(), method.ret_reference.as_ref())
+                            .and_then(Expr::self_member)
+                            == Some(member.name.as_str())
+                            && InlineLevel::of(&method.decorators)
+                                .is_ok_and(|level| level == InlineLevel::Builtin)
                     })
                 })
                 .collect();

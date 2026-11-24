@@ -110,15 +110,13 @@ impl Checker {
         annotation: &Expr,
         storage: &'static str,
     ) -> Result<(), TypeError> {
-        match annotation_view_of(annotation)? {
-            AnnotationView::Named(name, arguments)
-                if arguments.is_empty()
-                    && !self.structs.contains_key(&name)
-                    && self.check_trait_name(&name).is_ok() =>
+        match &annotation.kind {
+            ExprKind::Identifier(name)
+                if !self.structs.contains_key(name) && self.check_trait_name(name).is_ok() =>
             {
                 Err(TypeError::TraitTypedStorage {
                     storage,
-                    trait_name: name.rsplit('$').next().unwrap_or(&name).to_string(),
+                    trait_name: name.rsplit('$').next().unwrap_or(name).to_string(),
                 })
             }
             _ => Ok(()),
@@ -885,11 +883,8 @@ impl Checker {
                 declared_field_types: declaration
                     .fields
                     .iter()
-                    .map(|field| {
-                        annotation_view_of(&field.ty)
-                            .map(|_| (field.ty.clone(), field.reference.clone()))
-                    })
-                    .collect::<Result<_, _>>()?,
+                    .map(|field| (field.ty.clone(), field.reference.clone()))
+                    .collect(),
                 field_origin_arguments: HashMap::new(),
                 associated: HashMap::new(),
                 associated_value_types: HashMap::new(),
@@ -1370,8 +1365,8 @@ impl Checker {
                 },
                 ty.clone(),
             );
-            if let Some(bindings) = self
-                .field_origin_binder_arguments(&annotation_view_of(&f.ty)?, declaration.associated)
+            if let Some(bindings) =
+                self.field_origin_binder_arguments(&f.ty, declaration.associated)
             {
                 field_origin_arguments.insert(f.name.clone(), bindings);
             }
@@ -4492,15 +4487,9 @@ impl Checker {
                 }
             }
         }
-        let value_type = param.value_type.as_ref().and_then(annotation_view);
-        let contextual = match &value_type {
-            Some(AnnotationView::Named(name, _)) => Some(name.as_str()),
-            Some(_) => None,
-            None => param.lone_bound(),
-        };
         let mut reads = Reads {
             checker: self,
-            contextual,
+            contextual: binder_type_name(param),
             found: false,
         };
         mojito_ast::visit::walk_expr(&mut reads, default);
@@ -4930,12 +4919,44 @@ pub(super) fn literal_default(default: &mojito_ast::ast::Expr) -> bool {
 /// (`values: _MLIR.KGENParamListType[type]`), which classifies only once
 /// that declaration's member types resolve.
 pub(super) fn names_member_type(params: &[mojito_ast::ast::TypeParam]) -> bool {
-    params.iter().any(|param| {
-        matches!(
-            param.value_type.as_ref().and_then(annotation_view),
-            Some(AnnotationView::Assoc { .. } | AnnotationView::IndexedProjection { .. })
-        )
-    })
+    params
+        .iter()
+        .any(|param| param.value_type.as_ref().is_some_and(reads_type_member))
+}
+
+/// The name a binder's declared type is: its value type's name, bare or
+/// applied (`w: W`, `t: T[1]`), else its lone bound when it has no value
+/// type. `None` for any other value type (`Self`, a member, a call).
+pub(super) fn binder_type_name(param: &mojito_ast::ast::TypeParam) -> Option<&str> {
+    let Some(value_type) = param.value_type.as_ref().filter(|ty| !ty.is_sentinel()) else {
+        return param.lone_bound();
+    };
+    match &value_type.kind {
+        ExprKind::Identifier(name) => Some(name.as_str()),
+        _ => value_type.bracket_application().map(|(name, _)| name),
+    }
+    .filter(|name| *name != "Self")
+}
+
+/// Whether a value type reads another type's member: `B.NAME` on a base
+/// other than `Self`, its application (`_MLIR.KGENParamListType[type]`), or
+/// one index into a base that is not a name (`values.element_types[i]`).
+fn reads_type_member(value_type: &Expr) -> bool {
+    let is_self = |expression: &Expr| matches!(&expression.kind, ExprKind::Identifier(name) if name == "Self");
+    let foreign_member = |expression: &Expr| {
+        matches!(&expression.kind, ExprKind::Member { object, .. }
+            if !is_self(object) && !object.is_sentinel())
+    };
+    if foreign_member(value_type) {
+        return true;
+    }
+    let Some((object, args)) = value_type.bracket_operands() else {
+        return false;
+    };
+    if matches!(&object.kind, ExprKind::Identifier(_)) && !is_self(object) {
+        return false;
+    }
+    matches!(args.as_slice(), [mojito_ast::ast::ParamArg::Value(_)]) || foreign_member(object)
 }
 
 /// The contract origin a `ref` field's concrete (non-binder) origin
