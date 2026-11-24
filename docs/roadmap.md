@@ -6361,27 +6361,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2553 The parser judges a conformance list's listed-and-opted-out traits by spelling**
-
-  A trait listed and opted out under two spellings (`struct S(Greet, not
-  m.Greet)` with `from tr import Greet`) passes the parse and stops at the
-  check as "trait '__module$tr$Greet' appears multiple times in the
-  conformance list with different constraints", where upstream judges the
-  entries by the traits they evaluate to.
-  - `items.rs::parse_struct_conformance` compares entry expressions before
-    linking, so only an identical spelling meets the rule; the check's
-    `check_repeated_conformances` then sees the resolved names and reports
-    the identity, not the spelled name.
-  - Lever: move the listed-and-opted-out and opted-out-twice rules into
-    the check, over the resolved trait names, keeping the pin's wording,
-    and spell a trait in the diagnostic by its source name.
-  - Probe: the shape above; the pin rejects it, so the message to match
-    is the pin's for this exact program.
-  - Probe: `struct S(not Greet, not m.Greet)`, opted out twice.
-  - Found while landing R2551 (2026-11-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1649 A partially bound alias whose open parameter's name its bound
   arguments read is rejected**
 

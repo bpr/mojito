@@ -1970,6 +1970,13 @@ pub enum StmtKind {
         /// Conditions attached to entries in `conforms`, represented as
         /// `(trait entry, comptime predicate)`. An absent entry is unconditional.
         conformance_conditions: Vec<(Expr, Expr)>,
+        /// The span of each conformance entry written with `not`, from the
+        /// `not` through the composition it opts out of. An opted-out trait
+        /// is also in `conforms`, conditioned on `False`, as upstream
+        /// desugars it; these spans keep it apart from a listed `Trait where
+        /// False`, so the check can reject a trait both listed and opted
+        /// out, or opted out twice, as the pin does.
+        conformance_opt_outs: Vec<Span>,
         /// Trailing declaration constraint (`struct S[...] where ...:`).
         where_clauses: Vec<Expr>,
         fields: Vec<Param>,

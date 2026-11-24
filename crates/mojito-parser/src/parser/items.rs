@@ -155,7 +155,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             self.expect_identifier("Expected a struct name after 'struct'")?
         };
         let type_params = self.parse_type_params()?;
-        let (conforms, conformance_conditions, callable_conformance) =
+        let (conforms, conformance_conditions, conformance_opt_outs, callable_conformance) =
             self.parse_struct_conformance()?;
         let where_clauses = self.parse_where_clauses()?;
         if is_enum {
@@ -301,6 +301,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             conforms,
             callable_conformance,
             conformance_conditions,
+            conformance_opt_outs,
             where_clauses,
             fields,
             associated,
@@ -379,16 +380,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     /// which lists, conditions, or opts out of each trait it composes.
     pub(super) fn parse_struct_conformance(&mut self) -> Result<StructConformanceList, ParseError> {
         if !matches!(self.peek_token()?, Some(Token::LParen)) {
-            return Ok((Vec::new(), Vec::new(), None));
+            return Ok((Vec::new(), Vec::new(), Vec::new(), None));
         }
         self.next_token()?;
         let mut traits = Vec::new();
         let mut conditions = Vec::new();
         let mut callable = None;
-        // The entries spelled plainly and with `not`, each at its span, for
-        // upstream's rejection of a trait both listed and opted out.
-        let mut listed: Vec<(Expr, Span)> = Vec::new();
-        let mut opted: Vec<(Expr, Span)> = Vec::new();
+        let mut opt_outs = Vec::new();
         loop {
             if matches!(self.peek_token()?, Some(Token::Def)) {
                 if callable.is_some() {
@@ -410,33 +408,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             let start = self.peek_start();
             if matches!(self.peek_token()?, Some(Token::Not)) {
                 let (trait_names, condition) = self.parse_not_conformance()?;
-                let at = (start, self.last_span.1);
+                opt_outs.push((start, self.last_span.1));
                 for trait_name in trait_names {
-                    if opted.iter().any(|(opted, _)| opted == &trait_name) {
-                        return Err(ParseError::Message(format!(
-                            "trait '{}' must be opted out at most once; remove the duplicate 'not'",
-                            entry_spelling(&trait_name)
-                        ))
-                        .at(at));
-                    }
-                    if let Some((_, listed)) =
-                        listed.iter().find(|(listed, _)| listed == &trait_name)
-                    {
-                        return Err(also_listed(&trait_name).at(*listed));
-                    }
-                    opted.push((trait_name.clone(), at));
                     traits.push(trait_name.clone());
                     conditions.push((trait_name, condition.clone()));
                 }
             } else {
                 let trait_names = self.parse_trait_composition()?;
-                let at = (start, self.last_span.1);
-                for trait_name in &trait_names {
-                    if opted.iter().any(|(opted, _)| opted == trait_name) {
-                        return Err(also_listed(trait_name).at(at));
-                    }
-                    listed.push((trait_name.clone(), at));
-                }
                 if matches!(self.peek_token()?, Some(Token::Identifier(word)) if word == "where") {
                     self.next_token()?;
                     let condition = self.parse_expression(Precedence::Lowest)?;
@@ -458,7 +436,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
         }
         self.expect(&Token::RParen, "Expected ')' after the conformance list")?;
-        Ok((traits, conditions, callable))
+        Ok((traits, conditions, opt_outs, callable))
     }
 
     /// `not COMPOSITION ['else' STRING]`, a conformance-list opt-out: each
@@ -1239,14 +1217,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     }
 }
 
-/// Upstream's rejection of a trait both listed and opted out.
-fn also_listed(trait_name: &Expr) -> ParseError {
-    ParseError::Message(format!(
-        "trait '{}' must not be listed and also opted out with 'not'; remove one of the entries",
-        entry_spelling(trait_name)
-    ))
-}
-
 /// The `&` members of a trait composition, in source order.
 fn composition_members(expr: Expr, members: &mut Vec<Expr>) {
     match expr.kind {
@@ -1255,16 +1225,6 @@ fn composition_members(expr: Expr, members: &mut Vec<Expr>) {
             composition_members(*right, members);
         }
         kind => members.push(Expr { kind, ..expr }),
-    }
-}
-
-/// A conformance entry as a diagnostic spells it: its dotted name, or a
-/// placeholder for any other shape.
-fn entry_spelling(entry: &Expr) -> String {
-    match &entry.kind {
-        ExprKind::Identifier(name) => name.clone(),
-        ExprKind::Member { object, field } => format!("{}.{field}", entry_spelling(object)),
-        _ => "<expression>".to_string(),
     }
 }
 

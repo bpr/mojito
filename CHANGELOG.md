@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct conformance list's listed-and-opted-out and opted-out-twice
+  rules move from the parser to the check (R2553), which judges entries by
+  the traits they resolve to, as upstream does: `struct S(Writable, not
+  fm.Writable)` and `struct S(not Writable, not fm.Writable)` now fail with
+  the pin's message, where the first reached the check as "trait
+  '__module$...' appears multiple times ..." and the second compiled. A
+  listed `T where False` beside `not T` is listed and opted out, as at the
+  pin, and a repeated-constraint diagnostic names the trait as declared.
+  `StmtKind::Struct` gains `conformance_opt_outs`, the `not` entries' spans,
+  and the three `struct_not_conformance_*` fixtures move from `parse_error`
+  to `type_error`.
+
 - `Some[X]` takes a trait-valued binder (R2554): `def show[Tr:
   type_of(Writable)](t: Some[Tr])` and `def m(self, t: Some[Self.Tr])` in
   `struct S[Tr: type_of(AnyType)]` are accepted, as at the pin, where each

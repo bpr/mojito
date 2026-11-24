@@ -4243,6 +4243,7 @@ struct StructDeclaration<'a> {
     conforms: &'a [Expr],
     callable_conformance: &'a Option<Expr>,
     conformance_conditions: &'a [(Expr, Expr)],
+    conformance_opt_outs: &'a [mojito_common::token::Span],
     where_clauses: &'a [Expr],
     fields: &'a [mojito_ast::ast::Param],
     associated: &'a [StructComptime],

@@ -226,9 +226,6 @@ assets/parse_error/parameter_closure_decorator.mojo	compile-reject	agree	error: 
 assets/parse_error/read_convention_removed.mojo	compile-reject	agree	error: 'read' was removed; use 'imm'
 assets/parse_error/reserved_word_binding_name.mojo	compile-reject	agree	error: unexpected token in expression
 assets/parse_error/ref_type_argument_rejected.mojo	compile-reject	agree	error: expected ']' in call argument list
-assets/parse_error/struct_not_conformance_also_listed.mojo	compile-reject	agree	error: trait 'Movable' must not be listed and also opted out with 'not'; remove one of the entries
-assets/parse_error/struct_not_conformance_composition_also_listed.mojo	compile-reject	agree	error: trait 'Base' must not be listed and also opted out with 'not'; remove one of the entries
-assets/parse_error/struct_not_conformance_duplicate.mojo	compile-reject	agree	error: trait 'Copyable' must be opted out at most once; remove the duplicate 'not'
 assets/parse_error/unified_capture_list_removed.mojo	compile-reject	agree	error: unknown function effect 'unified', expected 'raises' or 'thin'
 assets/runtime_error/abort_arm_reads_live_values.mojo	trap	agree	error: execution crashed
 assets/runtime_error/allocation_use_after_dealloc.mojo	runs	subset	the pin runs it; Mojito rejects: use after Pointer deallocation
@@ -1214,6 +1211,12 @@ assets/type_error/struct_member_type_as_value_argument.mojo	compile-reject	agree
 assets/type_error/struct_member_type_member_arity.mojo	compile-reject	agree	error: unexpected parameter
 assets/type_error/struct_method_instance_clone_fails.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/struct_method_per_call_clone_fails.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/struct_not_conformance_also_listed.mojo	compile-reject	agree	error: trait 'Movable' must not be listed and also opted out with 'not'; remove one of the entries
+assets/type_error/struct_not_conformance_composition_also_listed.mojo	compile-reject	agree	error: trait 'Base' must not be listed and also opted out with 'not'; remove one of the entries
+assets/type_error/struct_not_conformance_duplicate.mojo	compile-reject	agree	error: trait 'Copyable' must be opted out at most once; remove the duplicate 'not'
+assets/type_error/struct_not_conformance_module_qualified_also_listed.mojo	compile-reject	agree	error: trait 'Writable' must not be listed and also opted out with 'not'; remove one of the entries
+assets/type_error/struct_not_conformance_module_qualified_duplicate.mojo	compile-reject	agree	error: trait 'Writable' must be opted out at most once; remove the duplicate 'not'
+assets/type_error/struct_not_conformance_where_false_also_listed.mojo	compile-reject	agree	error: trait 'Movable' must not be listed and also opted out with 'not'; remove one of the entries
 assets/type_error/struct_operator_abandoned_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: type 'Res' does not conform to 'Deinitable' and must be explicitly destroyed
 assets/type_error/struct_origin_cast_free_call_result_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/struct_param_bare_bracket_slot.mojo	compile-reject	agree	error: unqualified access to struct parameter 'length'; use 'Self.length' instead

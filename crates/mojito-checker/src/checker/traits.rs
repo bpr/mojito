@@ -1121,6 +1121,7 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let name = declaration.name;
         self.compile_header_conditions(name, true)?;
+        check_opted_out_conformances(declaration)?;
         self.check_repeated_conformances(declaration)?;
         if !declaration.where_clauses.is_empty() {
             let decls = self
@@ -3245,7 +3246,9 @@ impl Checker {
             let mut all = conditions.iter().chain(unconditioned.as_ref());
             let first = all.next();
             if all.any(|condition| Some(condition) != first) {
-                return Err(TypeError::RepeatedConformance(trait_name.to_string()));
+                return Err(TypeError::RepeatedConformance(
+                    declared_trait_name(trait_name).to_string(),
+                ));
             }
         }
         Ok(())
@@ -4881,6 +4884,46 @@ struct MethodRegistration<'d, 'a> {
 }
 
 /// The method names `declaration` declares, in first-occurrence order.
+/// Reject a trait the conformance list both lists and opts out of with
+/// `not`, or opts out of twice, judging the entries by the traits they
+/// resolve to, as upstream does: an imported name and a module-qualified
+/// spelling of one trait are one trait, and a listed `Trait where False` is
+/// listed, not opted out. The rules apply in source order, each at the
+/// entry that completes the conflict.
+fn check_opted_out_conformances(declaration: &StructDeclaration<'_>) -> Result<(), TypeError> {
+    let mut listed: Vec<&str> = Vec::new();
+    let mut opted: Vec<&str> = Vec::new();
+    for entry in declaration.conforms {
+        let Some(trait_name) = entry.identifier() else {
+            continue;
+        };
+        let shown = || declared_trait_name(trait_name).to_string();
+        let opts_out = declaration
+            .conformance_opt_outs
+            .iter()
+            .any(|&(start, end)| start <= entry.span.0 && entry.span.1 <= end);
+        if opts_out && opted.contains(&trait_name) {
+            return Err(TypeError::ConformanceOptedOutTwice(shown()));
+        }
+        let (own, other) = if opts_out {
+            (&mut opted, &listed)
+        } else {
+            (&mut listed, &opted)
+        };
+        if other.contains(&trait_name) {
+            return Err(TypeError::ConformanceListedAndOptedOut(shown()));
+        }
+        own.push(trait_name);
+    }
+    Ok(())
+}
+
+/// A trait's name as its declaration spells it, without the module path
+/// linking qualifies it with.
+fn declared_trait_name(name: &str) -> &str {
+    name.rsplit('$').next().unwrap_or(name)
+}
+
 fn method_groups<'a>(declaration: &StructDeclaration<'a>) -> Vec<&'a str> {
     let mut groups: Vec<&str> = Vec::new();
     for m in declaration.methods {

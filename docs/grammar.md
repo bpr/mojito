@@ -683,9 +683,12 @@ An entry `not NAME` **opts out** of the trait, upstream's spelling of
 `NAME where False`; `not NAME else "reason"` is `NAME where (False,
 "reason")`, and a `not Deinitable` reason is the diagnostic for abandoning a
 value. Any trait may be opted out, and an opted-out trait's requirements and
-defaults are not asked for. The parser rejects, in the pin's words, a trait
+defaults are not asked for. The parser records each `not` entry's span
+(`conformance_opt_outs`), and the check rejects, in the pin's words, a trait
 both listed and opted out ("trait 'T' must not be listed and also opted out
-with 'not'; remove one of the entries") and a trait opted out twice. The
+with 'not'; remove one of the entries") and a trait opted out twice, judging
+the entries by the traits they resolve to, so `Greet` and `m.Greet` naming
+one trait are one entry; a listed `T where False` counts as listed. The
 `else` reason is one string literal (a parenthesized run of adjacent
 literals included).
 

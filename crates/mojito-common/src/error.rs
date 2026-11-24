@@ -104,6 +104,12 @@ pub enum TypeError {
     /// A struct's conformance list names trait `0` more than once, with
     /// constraints that compile to different conditions.
     RepeatedConformance(String),
+    /// A struct's conformance list both lists trait `0` and opts out of it
+    /// with `not`.
+    ConformanceListedAndOptedOut(String),
+    /// A struct's conformance list opts out of trait `0` with `not` more
+    /// than once.
+    ConformanceOptedOutTwice(String),
     /// A position that names a concrete type (a result, a struct field, an
     /// uninitialized local, a type argument) spelled a parametric struct
     /// with parameters left unbound; the payload is the type as shown
@@ -770,6 +776,15 @@ impl fmt::Display for TypeError {
                 f,
                 "trait '{name}' appears multiple times in the conformance list with different \
                  constraints"
+            ),
+            Self::ConformanceListedAndOptedOut(name) => write!(
+                f,
+                "trait '{name}' must not be listed and also opted out with 'not'; remove one of \
+                 the entries"
+            ),
+            Self::ConformanceOptedOutTwice(name) => write!(
+                f,
+                "trait '{name}' must be opted out at most once; remove the duplicate 'not'"
             ),
             Self::NotConcrete(shown) => write!(
                 f,

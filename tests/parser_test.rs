@@ -281,6 +281,7 @@ fn parses_struct_with_field_and_method() {
             conforms: vec![],
             callable_conformance: None,
             conformance_conditions: vec![],
+            conformance_opt_outs: vec![],
             where_clauses: Vec::new(),
             fields: vec![Param {
                 reference: None,
@@ -928,6 +929,7 @@ fn parses_generic_struct_header_and_self_param_field() {
             conforms: vec![],
             callable_conformance: None,
             conformance_conditions: vec![],
+            conformance_opt_outs: vec![],
             where_clauses: Vec::new(),
             fields: vec![
                 Param {
@@ -1524,6 +1526,24 @@ fn reads_not_conformance_as_never_condition() {
 }
 
 #[test]
+fn records_each_not_conformance_entry_span() {
+    let source = "struct S(A & B, not B, not (A & C) else \"why\", B where False):\n    pass\n";
+    let statements = parse(source);
+    let StmtKind::Struct {
+        conformance_opt_outs,
+        ..
+    } = &statements[0].kind
+    else {
+        panic!("expected struct");
+    };
+    let spelled: Vec<_> = conformance_opt_outs
+        .iter()
+        .map(|&(start, end)| &source[start..end])
+        .collect();
+    assert_eq!(spelled, ["not B", "not (A & C) else \"why\""]);
+}
+
+#[test]
 fn reads_composition_conformance_entries_per_trait() {
     let statements = parse(
         "struct S[T: AnyType](A & (B & C) where conforms_to(T, A), not D & E else \"why\"):\n    pass\ntrait F(A & B):\n    pass\n",
@@ -1587,8 +1607,6 @@ fn rejects_not_conformance_without_trait_name() {
         "struct S(not):\n    pass\n",
         "struct S(not Movable else 1):\n    pass\n",
         "struct S(not (A &)):\n    pass\n",
-        "struct S(A & B, not B):\n    pass\n",
-        "struct S(not (A & B), not A):\n    pass\n",
     ] {
         let mut parser = Parser::new(Lexer::new(source));
         assert!(parser.parse_program().is_err(), "{source:?} parsed");
