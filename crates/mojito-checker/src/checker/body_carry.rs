@@ -180,11 +180,16 @@ pub struct HandoffStores {
 
 impl HandoffStores {
     /// The checked handoff: the occurrence records, less any a cleared
-    /// fact left empty.
+    /// fact left empty, and the emitted nodes under
+    /// `MOJITO_CHECK_EMITTED=1`.
     fn into_discovery(self) -> DiscoveryResult {
+        let (node_facts, emitted) = self.emitter.into_parts();
         DiscoveryResult {
             statements: self.statements,
-            node_facts: self.emitter.into_records(),
+            node_facts,
+            emitted: std::env::var_os("MOJITO_CHECK_EMITTED")
+                .is_some()
+                .then_some(emitted),
             struct_instantiations: self.struct_instantiations.into_inner(),
             checked_types: self.checked_types.into_inner(),
             generic_parameters: self.generic_parameters.into_inner(),

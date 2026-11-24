@@ -978,22 +978,38 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `declarations.rs:check_method_inner`); the carry is private to the
   passes of one check (`checker.rs:check_program_carrying`).
 - `checker/emit.rs` owns `Emitter` (`Checker::emitter`), where the check
-  keeps its facts, as upstream's emitters set each decided fact on an op
-  they made: `enter_statement` (from the top of `Checker::check_stmt` and
-  `check_block`'s `comptime assert` arm) allocates a statement node for
-  each statement and an expression node for each expression of a
-  statement's subtree the first time the check enters it, and the index
-  finds an occurrence's node; an occurrence no node holds (a pattern, a
-  destructuring target, a synthesized occurrence, or one written before
-  its statement was entered) keeps a detached record, which moves onto
-  the node allocated for it. `record` is the write path, `get`/`get_mut`/
-  `remove`/`insert`/`iter` mirror a map's; it logs node writes by slot and
-  journals them under a probe (`open_probe`/`roll_back`, which also
-  truncate the arenas and their index entries), `mark`/`written`/
-  `copy_window` measure and copy a body site's window (allocating the
-  window's nodes again), and `into_records` reads the span-keyed handoff
-  out of the nodes and detached records (`--timings` counts
-  `emit.node_records` and `emit.detached_records`).
+  keeps its nodes and facts, as upstream's emitters create each op when
+  they emit it and set each decided fact on it: `enter_statement` (from the
+  top of `Checker::check_stmt` and `check_block`'s `comptime assert` arm)
+  allocates a statement node for each statement and an expression node for
+  each expression of a statement's subtree the first time the check enters
+  it, `enter_expression` a spelled construction's
+  (`Checker::record_spelled_construction`), and `enter_plan` a match plan's
+  synthesized anchor, tests, reads, and conditions (`checker/patterns.rs`'s
+  three plan writers), each node given its op once its subtree is allocated
+  (the `Operations` walk over `checker/emit/ops.rs`'s `Ops`, which maps
+  syntax to `CheckedOp`/`CheckedStmtOp` as `ArenaBuilder` does, the fields
+  the check decides later left empty) and never changed; the index finds an
+  occurrence's node, and an occurrence no node holds (a pattern, a
+  destructuring target, a derived occurrence no arena node is, or one
+  written before its statement was entered) keeps a detached record, which
+  moves onto the node allocated for it. `record` is the write path,
+  `get`/`get_mut`/`remove`/`insert`/`iter` mirror a map's; it logs node
+  writes by slot and journals them under a probe (`open_probe`/`roll_back`,
+  which also truncate the arenas, ops and all, and their index entries),
+  `mark`/`written`/`copy_window` measure and copy a body site's window
+  (allocating the window's nodes again, each op relocated onto this
+  emitter's nodes by `Relocation`, a `NodeMap`), and `into_parts` reads the
+  span-keyed handoff out of the nodes and detached records beside the
+  nodes themselves (`--timings` counts `emit.node_records`,
+  `emit.detached_records`, and `emit.opless_nodes`).
+- `mojito-checked/src/emitted.rs` owns the emitted nodes as the handoff
+  carries them (`EmittedNodes`, `EmittedExpr`, `EmittedStmt`,
+  `EmittedSlot`), kept in `DiscoveryResult::emitted` only under
+  `MOJITO_CHECK_EMITTED=1`, and `cross_check`, which `CheckedProgram::new`
+  runs against the checked arena then (`emit.check.*` counters). `NodeMap`,
+  `CheckedOp::map_operands`, and `CheckedStmtOp::map_operands`
+  (`checked.rs`) are public for the emitter's relocation.
 - `checker/node_facts.rs` owns the checker's access to its per-occurrence
   records through the emitter: `record_at` is the write path (the record,
   created if absent), `fact`/`has_fact` read one fact, and

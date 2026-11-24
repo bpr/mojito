@@ -5,6 +5,7 @@
 pub mod checked;
 pub mod closure_uses;
 pub mod declaration;
+pub mod emitted;
 pub mod fact_store;
 pub mod package;
 pub mod unit;

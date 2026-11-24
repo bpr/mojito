@@ -1,21 +1,33 @@
 //! The check's emitted nodes: one per statement and expression occurrence,
-//! allocated when the check enters the statement that holds it, each
-//! carrying the facts the check decides there, as upstream's emitters set
-//! each decided fact as an attribute on an op they already made.
+//! allocated when the check enters the statement that holds it, or the
+//! construction it spells, or the match tests it plans, each holding its op
+//! and carrying the facts the check decides there, as upstream's emitters
+//! create each op when they emit it and set each decided fact on it as an
+//! attribute.
+//!
+//! A node's op is set when the node is allocated, from its syntax, with its
+//! operands the nodes allocated for its operands (`ops`), and never changes:
+//! what the check decides later is a fact on the node. So a probe's
+//! roll-back drops the nodes it allocated, ops and all, and restores only
+//! records.
 //!
 //! An index finds an occurrence's node. An occurrence no node holds (a
-//! pattern, a destructuring target, an occurrence the check synthesizes, or
-//! one written before its statement was entered) keeps a detached record,
-//! which moves onto the node when one is allocated for it. A span is never
-//! in both.
+//! pattern, a destructuring target, or one written before its statement was
+//! entered) keeps a detached record, which moves onto the node when one is
+//! allocated for it. A span is never in both.
 //!
 //! The emitter logs and journals as the fact stores do (`fact_store`): a
 //! body site's writes are carried by log range, and a probe's writes and
 //! allocations are undone when it rolls back.
 
+mod ops;
+
 use mojito_ast::ast::{Expr, Stmt};
 use mojito_ast::visit::{self, Visitor};
-use mojito_checked::checked::NodeFacts;
+use mojito_checked::checked::{
+    CheckedNodeId, CheckedStmtId, MatchPlan, NodeFacts, NodeMap, PlannedCommand,
+};
+use mojito_checked::emitted::{EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt};
 use mojito_checked::fact_store::{FactMap, ProbeMark};
 use mojito_common::timing;
 use mojito_common::token::SourceSpan;
@@ -26,8 +38,8 @@ use std::collections::hash_map::Entry;
 /// from occurrence to node, and the detached records.
 #[derive(Debug, Default)]
 pub struct Emitter {
-    statements: Vec<EmittedNode>,
-    expressions: Vec<EmittedNode>,
+    statements: Vec<Node<EmittedStmt>>,
+    expressions: Vec<Node<EmittedExpr>>,
     index: HashMap<SourceSpan, EmittedSlot>,
     detached: FactMap<SourceSpan, NodeFacts>,
     /// Every node write, in order.
@@ -43,7 +55,7 @@ impl Emitter {
     /// detached record otherwise.
     pub fn get(&self, at: &SourceSpan) -> Option<&NodeFacts> {
         match self.index.get(at) {
-            Some(slot) => self.node(*slot).facts.as_deref(),
+            Some(slot) => self.facts(*slot),
             None => self.detached.get(at),
         }
     }
@@ -52,16 +64,63 @@ impl Emitter {
     pub fn iter(&self) -> impl Iterator<Item = (&SourceSpan, &NodeFacts)> {
         self.statements
             .iter()
-            .chain(&self.expressions)
-            .filter_map(|node| Some((&node.at, node.facts.as_deref()?)))
+            .map(|node| (&node.node.at, &node.facts))
+            .chain(
+                self.expressions
+                    .iter()
+                    .map(|node| (&node.node.at, &node.facts)),
+            )
+            .filter_map(|(at, facts)| Some((at, facts.as_deref()?)))
             .chain(self.detached.iter())
     }
 
-    /// Allocate `statement` and every statement and expression under it,
+    /// Emit `statement` and every statement and expression under it,
     /// unless the check entered it before.
     pub(super) fn enter_statement(&mut self, statement: &Stmt) {
         if !self.index.contains_key(&statement.source_span()) {
+            let start = self.allocated();
             visit::walk_stmt(&mut Allocation(self), statement);
+            visit::walk_stmt(
+                &mut Operations {
+                    emitter: self,
+                    start,
+                },
+                statement,
+            );
+        }
+    }
+
+    /// Emit `expression` and every statement and expression under it that
+    /// no node holds yet: a construction the check spelled.
+    pub(super) fn enter_expression(&mut self, expression: &Expr) {
+        if !self.index.contains_key(&expression.source_span()) {
+            let start = self.allocated();
+            visit::walk_expr(&mut Allocation(self), expression);
+            visit::walk_expr(
+                &mut Operations {
+                    emitter: self,
+                    start,
+                },
+                expression,
+            );
+        }
+    }
+
+    /// Emit the syntax match `plan` synthesized: its anchor, each command's
+    /// test and declaration, each path read, and each `comptime match`
+    /// case's condition.
+    pub(super) fn enter_plan(&mut self, plan: &MatchPlan) {
+        if let Some(anchor) = &plan.anchor {
+            self.enter_statement(anchor);
+        }
+        for command in plan.cases.iter().flatten() {
+            self.enter_command(command);
+        }
+        for read in plan.reads.iter().flatten() {
+            self.enter_statement(&read.declaration);
+        }
+        for condition in plan.conditions.iter().flatten() {
+            self.enter_expression(condition);
         }
     }
 
@@ -77,7 +136,7 @@ impl Emitter {
     /// counts as written.
     pub(super) fn get_mut(&mut self, at: &SourceSpan) -> Option<&mut NodeFacts> {
         match self.index.get(at).copied() {
-            Some(slot) if self.node(slot).facts.is_some() => self.write(slot).as_deref_mut(),
+            Some(slot) if self.facts(slot).is_some() => self.write(slot).as_deref_mut(),
             Some(_) => None,
             None => self.detached.get_mut(at),
         }
@@ -88,7 +147,7 @@ impl Emitter {
         let Some(slot) = self.index.get(at).copied() else {
             return self.detached.remove(at);
         };
-        let removed = self.node_mut(slot).facts.take();
+        let removed = self.facts_mut(slot).take();
         if self.probes > 0 && removed.is_some() {
             self.undo.push((slot, removed.clone()));
         }
@@ -125,7 +184,7 @@ impl Emitter {
     ) -> impl Iterator<Item = &'a SourceSpan> {
         self.log[from.log..to.log]
             .iter()
-            .map(|slot| &self.node(*slot).at)
+            .map(|slot| self.at(*slot))
             .chain(self.detached.logged(from.detached..to.detached))
     }
 
@@ -143,19 +202,24 @@ impl Emitter {
     }
 
     /// Undo every write since `mark` was opened, newest first, then drop
-    /// the nodes allocated since, with their index entries, and the slots
-    /// logged since. A detached record a dropped node took is restored by
-    /// the detached store's own roll-back.
+    /// the nodes allocated since, with their ops and index entries, and the
+    /// slots logged since. A detached record a dropped node took is
+    /// restored by the detached store's own roll-back.
     pub(super) fn roll_back(&mut self, mark: EmitProbe) {
         for (slot, previous) in self.undo.split_off(mark.undo).into_iter().rev() {
-            self.node_mut(slot).facts = previous;
+            *self.facts_mut(slot) = previous;
         }
-        for node in self
+        for at in self
             .statements
             .drain(mark.statements..)
-            .chain(self.expressions.drain(mark.expressions..))
+            .map(|node| node.node.at)
+            .chain(
+                self.expressions
+                    .drain(mark.expressions..)
+                    .map(|node| node.node.at),
+            )
         {
-            self.index.remove(&node.at);
+            self.index.remove(&at);
         }
         self.log.truncate(mark.log);
         self.detached.roll_back(mark.detached);
@@ -164,14 +228,27 @@ impl Emitter {
 
     /// Copy the window `from..to` of `previous`, another pass over the same
     /// program: allocate every node it allocated there that this emitter
-    /// lacks, then set the final record of every occurrence it wrote there.
-    /// A record removed after the window is not copied.
+    /// lacks, with its op relocated onto this emitter's nodes, then set the
+    /// final record of every occurrence it wrote there. A record removed
+    /// after the window is not copied.
     pub(super) fn copy_window(&mut self, previous: &Self, from: &EmitMark, to: &EmitMark) {
+        let start = self.allocated();
         for node in &previous.statements[from.statements..to.statements] {
-            self.allocate(node.at.clone(), ArenaKind::Statement);
+            self.allocate(node.node.at.clone(), ArenaKind::Statement);
         }
         for node in &previous.expressions[from.expressions..to.expressions] {
-            self.allocate(node.at.clone(), ArenaKind::Expression);
+            self.allocate(node.node.at.clone(), ArenaKind::Expression);
+        }
+        let mut relocation = Relocation {
+            previous,
+            this: self,
+            start,
+        };
+        for position in from.statements..to.statements {
+            relocation.statement(CheckedStmtId(slot_position(position)));
+        }
+        for position in from.expressions..to.expressions {
+            relocation.expression(CheckedNodeId(slot_position(position)));
         }
         for at in previous.written(from, to) {
             if let Some(facts) = previous.get(at) {
@@ -184,8 +261,9 @@ impl Emitter {
     pub(super) fn for_each_record_mut(&mut self, mut rewrite: impl FnMut(&mut NodeFacts)) {
         self.statements
             .iter_mut()
-            .chain(&mut self.expressions)
-            .filter_map(|node| node.facts.as_deref_mut())
+            .map(|node| &mut node.facts)
+            .chain(self.expressions.iter_mut().map(|node| &mut node.facts))
+            .filter_map(|facts| facts.as_deref_mut())
             .for_each(&mut rewrite);
         self.detached.retain(|_, facts| {
             rewrite(facts);
@@ -194,39 +272,115 @@ impl Emitter {
     }
 
     /// The span-keyed handoff read out of the nodes and the detached
-    /// records, less any record a cleared fact left empty.
-    pub(super) fn into_records(self) -> HashMap<SourceSpan, NodeFacts> {
-        let mut records: HashMap<SourceSpan, NodeFacts> = self
+    /// records, less any record a cleared fact left empty, and the nodes
+    /// themselves.
+    pub(super) fn into_parts(self) -> (HashMap<SourceSpan, NodeFacts>, EmittedNodes) {
+        let mut records = HashMap::new();
+        let mut opless = 0u64;
+        let statements: Vec<EmittedStmt> = self
             .statements
             .into_iter()
-            .chain(self.expressions)
-            .filter_map(|node| Some((node.at, *node.facts?)))
-            .filter(|(_, facts)| !facts.is_empty())
+            .map(|node| {
+                opless += u64::from(node.node.op.is_none());
+                take_record(&mut records, &node.node.at, node.facts);
+                node.node
+            })
+            .collect();
+        let expressions: Vec<EmittedExpr> = self
+            .expressions
+            .into_iter()
+            .map(|node| {
+                opless += u64::from(node.node.op.is_none());
+                take_record(&mut records, &node.node.at, node.facts);
+                node.node
+            })
             .collect();
         let on_nodes = records.len();
         let mut detached = self.detached.into_inner();
         detached.retain(|_, facts| !facts.is_empty());
         timing::count("emit.node_records", on_nodes as u64);
         timing::count("emit.detached_records", detached.len() as u64);
+        timing::count("emit.opless_nodes", opless);
         debug_assert!(
             detached.keys().all(|at| !records.contains_key(at)),
             "an occurrence held both a node record and a detached one"
         );
         records.extend(detached);
-        records
+        (
+            records,
+            EmittedNodes {
+                expressions,
+                statements,
+                index: self.index,
+            },
+        )
     }
 
-    fn node(&self, slot: EmittedSlot) -> &EmittedNode {
+    fn facts(&self, slot: EmittedSlot) -> Option<&NodeFacts> {
         match slot {
-            EmittedSlot::Statement(at) => &self.statements[at as usize],
-            EmittedSlot::Expression(at) => &self.expressions[at as usize],
+            EmittedSlot::Statement(id) => self.statements[id.0 as usize].facts.as_deref(),
+            EmittedSlot::Expression(id) => self.expressions[id.0 as usize].facts.as_deref(),
         }
     }
 
-    fn node_mut(&mut self, slot: EmittedSlot) -> &mut EmittedNode {
+    fn facts_mut(&mut self, slot: EmittedSlot) -> &mut Option<Box<NodeFacts>> {
         match slot {
-            EmittedSlot::Statement(at) => &mut self.statements[at as usize],
-            EmittedSlot::Expression(at) => &mut self.expressions[at as usize],
+            EmittedSlot::Statement(id) => &mut self.statements[id.0 as usize].facts,
+            EmittedSlot::Expression(id) => &mut self.expressions[id.0 as usize].facts,
+        }
+    }
+
+    /// The node counts of both arenas: a node at or past them was
+    /// allocated since.
+    const fn allocated(&self) -> Allocated {
+        Allocated {
+            statements: self.statements.len(),
+            expressions: self.expressions.len(),
+        }
+    }
+
+    /// Allocate a node for `at` unless one holds it, moving its detached
+    /// record onto it; the node's slot either way.
+    fn allocate(&mut self, at: SourceSpan, kind: ArenaKind) -> EmittedSlot {
+        let vacant = match self.index.entry(at) {
+            Entry::Occupied(occupied) => return *occupied.get(),
+            Entry::Vacant(vacant) => vacant,
+        };
+        let facts = self.detached.remove(vacant.key()).map(Box::new);
+        let at = vacant.key().clone();
+        let slot = match kind {
+            ArenaKind::Statement => {
+                let id = CheckedStmtId(slot_position(self.statements.len()));
+                self.statements.push(Node {
+                    node: EmittedStmt {
+                        at,
+                        op: None,
+                        applications: Vec::new(),
+                    },
+                    facts,
+                });
+                EmittedSlot::Statement(id)
+            }
+            ArenaKind::Expression => {
+                let id = CheckedNodeId(slot_position(self.expressions.len()));
+                self.expressions.push(Node {
+                    node: EmittedExpr {
+                        at,
+                        op: None,
+                        applications: Vec::new(),
+                    },
+                    facts,
+                });
+                EmittedSlot::Expression(id)
+            }
+        };
+        *vacant.insert(slot)
+    }
+
+    fn at(&self, slot: EmittedSlot) -> &SourceSpan {
+        match slot {
+            EmittedSlot::Statement(id) => &self.statements[id.0 as usize].node.at,
+            EmittedSlot::Expression(id) => &self.expressions[id.0 as usize].node.at,
         }
     }
 
@@ -235,30 +389,28 @@ impl Emitter {
     fn write(&mut self, slot: EmittedSlot) -> &mut Option<Box<NodeFacts>> {
         self.log.push(slot);
         if self.probes > 0 {
-            let previous = self.node(slot).facts.clone();
+            let previous = self.facts(slot).cloned().map(Box::new);
             self.undo.push((slot, previous));
         }
-        &mut self.node_mut(slot).facts
+        self.facts_mut(slot)
     }
 
-    /// Allocate a node for `at` unless one holds it, moving its detached
-    /// record onto it.
-    fn allocate(&mut self, at: SourceSpan, kind: ArenaKind) {
-        let Entry::Vacant(vacant) = self.index.entry(at) else {
-            return;
-        };
-        let facts = self.detached.remove(vacant.key()).map(Box::new);
-        let at = vacant.key().clone();
-        let arena = match kind {
-            ArenaKind::Statement => &mut self.statements,
-            ArenaKind::Expression => &mut self.expressions,
-        };
-        let position = u32::try_from(arena.len()).expect("an emitter arena fits u32 slots");
-        arena.push(EmittedNode { at, facts });
-        vacant.insert(match kind {
-            ArenaKind::Statement => EmittedSlot::Statement(position),
-            ArenaKind::Expression => EmittedSlot::Expression(position),
-        });
+    fn enter_command(&mut self, command: &PlannedCommand) {
+        match command {
+            PlannedCommand::Equal { test, .. } | PlannedCommand::ListLength { test, .. } => {
+                self.enter_expression(test);
+            }
+            PlannedCommand::EnumTag { tag, test, .. } => {
+                self.enter_statement(tag);
+                self.enter_expression(test);
+            }
+            PlannedCommand::Bind { declaration, .. } => self.enter_statement(declaration),
+            PlannedCommand::Alternatives(alternatives) => {
+                for command in alternatives.iter().flatten() {
+                    self.enter_command(command);
+                }
+            }
+        }
     }
 }
 
@@ -282,18 +434,11 @@ pub(super) struct EmitProbe {
     detached: ProbeMark,
 }
 
-/// One allocated node: its occurrence and the facts set on it.
+/// One allocated node and the facts set on it.
 #[derive(Debug)]
-struct EmittedNode {
-    at: SourceSpan,
+struct Node<T> {
+    node: T,
     facts: Option<Box<NodeFacts>>,
-}
-
-/// A node's arena and position in it.
-#[derive(Debug, Clone, Copy)]
-enum EmittedSlot {
-    Statement(u32),
-    Expression(u32),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -302,7 +447,14 @@ enum ArenaKind {
     Expression,
 }
 
-/// The walk that allocates a statement's subtree.
+/// Both arenas' node counts at one moment.
+#[derive(Debug, Clone, Copy)]
+struct Allocated {
+    statements: usize,
+    expressions: usize,
+}
+
+/// The walk that allocates a subtree.
 struct Allocation<'a>(&'a mut Emitter);
 
 impl Visitor for Allocation<'_> {
@@ -316,18 +468,151 @@ impl Visitor for Allocation<'_> {
     }
 }
 
+/// The walk that sets the op of every node of a subtree allocated since
+/// `start`, once the subtree is allocated.
+struct Operations<'a> {
+    emitter: &'a mut Emitter,
+    start: Allocated,
+}
+
+impl Visitor for Operations<'_> {
+    fn visit_stmt(&mut self, statement: &Stmt) {
+        let Some(&EmittedSlot::Statement(id)) = self.emitter.index.get(&statement.source_span())
+        else {
+            return;
+        };
+        let position = id.0 as usize;
+        if position < self.start.statements {
+            return;
+        }
+        let ops = ops::Ops {
+            index: &self.emitter.index,
+        };
+        if let Ok((op, applications)) = ops.statement(statement) {
+            let node = &mut self.emitter.statements[position].node;
+            node.op = Some(op);
+            node.applications = applications;
+        }
+    }
+
+    fn visit_expr(&mut self, expression: &Expr) {
+        let Some(&EmittedSlot::Expression(id)) = self.emitter.index.get(&expression.source_span())
+        else {
+            return;
+        };
+        let position = id.0 as usize;
+        if position < self.start.expressions {
+            return;
+        }
+        let ops = ops::Ops {
+            index: &self.emitter.index,
+        };
+        if let Ok((op, applications)) = ops.expression(expression) {
+            let node = &mut self.emitter.expressions[position].node;
+            node.op = Some(op);
+            node.applications = applications;
+        }
+    }
+}
+
+/// A previous pass's nodes mapped onto this emitter's: each operand to the
+/// node this emitter holds for its occurrence, allocated if it holds none,
+/// and a node allocated since `start` given the previous op relocated.
+struct Relocation<'a> {
+    previous: &'a Emitter,
+    this: &'a mut Emitter,
+    start: Allocated,
+}
+
+impl NodeMap for Relocation<'_> {
+    fn expression(&mut self, id: CheckedNodeId) -> CheckedNodeId {
+        let pass = self.previous;
+        let previous = &pass.expressions[id.0 as usize].node;
+        let EmittedSlot::Expression(here) = self
+            .this
+            .allocate(previous.at.clone(), ArenaKind::Expression)
+        else {
+            return id;
+        };
+        let position = here.0 as usize;
+        if position >= self.start.expressions && self.this.expressions[position].node.op.is_none() {
+            let op = previous.op.as_ref().map(|op| op.map_operands(self));
+            let applications = previous
+                .applications
+                .iter()
+                .map(|candidates| {
+                    candidates
+                        .iter()
+                        .map(|candidate| self.expression(*candidate))
+                        .collect()
+                })
+                .collect();
+            let node = &mut self.this.expressions[position].node;
+            node.op = op;
+            node.applications = applications;
+        }
+        here
+    }
+
+    fn statement(&mut self, id: CheckedStmtId) -> CheckedStmtId {
+        let pass = self.previous;
+        let previous = &pass.statements[id.0 as usize].node;
+        let EmittedSlot::Statement(here) = self
+            .this
+            .allocate(previous.at.clone(), ArenaKind::Statement)
+        else {
+            return id;
+        };
+        let position = here.0 as usize;
+        if position >= self.start.statements && self.this.statements[position].node.op.is_none() {
+            let op = previous.op.as_ref().map(|op| op.map_operands(self));
+            let applications = previous
+                .applications
+                .iter()
+                .map(|candidate| self.expression(*candidate))
+                .collect();
+            let node = &mut self.this.statements[position].node;
+            node.op = op;
+            node.applications = applications;
+        }
+        here
+    }
+}
+
+/// Move a node's record into `records` unless a cleared fact left it empty.
+fn take_record(
+    records: &mut HashMap<SourceSpan, NodeFacts>,
+    at: &SourceSpan,
+    facts: Option<Box<NodeFacts>>,
+) {
+    if let Some(facts) = facts.filter(|facts| !facts.is_empty()) {
+        records.insert(at.clone(), *facts);
+    }
+}
+
+fn slot_position(position: usize) -> u32 {
+    u32::try_from(position).expect("an emitter arena fits u32 slots")
+}
+
 #[cfg(test)]
 mod tests {
     use super::Emitter;
-    use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
+    use mojito_ast::ast::{Expr, ExprKind, InfixOp, ParamArg, Stmt, StmtKind};
+    use mojito_checked::checked::{CheckedOp, CheckedParamArg};
+    use mojito_checked::emitted::{EmittedNodes, EmittedSlot};
     use mojito_common::token::{SourceSpan, Span};
     use std::collections::HashMap;
 
+    fn truth() -> Expr {
+        Expr::new(ExprKind::Bool(true), Span::default())
+    }
+
     fn statement() -> Stmt {
-        Stmt::new(
-            StmtKind::Expr(Expr::new(ExprKind::Bool(true), Span::default())),
-            Span::default(),
-        )
+        expression_statement(truth())
+    }
+
+    fn expression_statement(value: Expr) -> Stmt {
+        Stmt::new(StmtKind::Expr(value), Span::default())
     }
 
     fn value(statement: &Stmt) -> &Expr {
@@ -339,10 +624,30 @@ mod tests {
 
     fn records(emitter: Emitter) -> HashMap<SourceSpan, bool> {
         emitter
-            .into_records()
+            .into_parts()
+            .0
             .into_iter()
             .map(|(at, facts)| (at, facts.truthiness_condition))
             .collect()
+    }
+
+    /// The op at `at`, its operands named by their occurrences.
+    fn op_at(nodes: &EmittedNodes, at: &Expr) -> (String, Vec<SourceSpan>) {
+        let node = nodes
+            .expression(&at.source_span())
+            .expect("the expression was emitted");
+        let op = node.op.as_ref().expect("the node holds its op");
+        let operands = match op {
+            CheckedOp::Infix(_, left, right) => vec![*left, *right],
+            _ => Vec::new(),
+        };
+        (
+            format!("{:?}", std::mem::discriminant(op)),
+            operands
+                .into_iter()
+                .map(|id| nodes.expressions[id.0 as usize].at.clone())
+                .collect(),
+        )
     }
 
     #[test]
@@ -442,5 +747,111 @@ mod tests {
         fresh.enter_statement(&entered);
         fresh.copy_window(&previous, &from, &to);
         assert!(fresh.get(&at).is_none());
+    }
+
+    #[test]
+    fn an_entered_expression_takes_its_detached_record() {
+        let construction = truth();
+        let mut emitter = Emitter::default();
+        emitter
+            .record(construction.source_span())
+            .truthiness_condition = true;
+        emitter.enter_expression(&construction);
+        assert!(matches!(
+            emitter.index.get(&construction.source_span()),
+            Some(EmittedSlot::Expression(_))
+        ));
+        let (records, nodes) = emitter.into_parts();
+        assert!(records[&construction.source_span()].truthiness_condition);
+        assert!(matches!(
+            nodes.expressions[0].op,
+            Some(CheckedOp::Bool(true))
+        ));
+    }
+
+    #[test]
+    fn a_copied_window_relocates_its_ops_onto_this_emitters_nodes() {
+        let (left, right) = (truth(), truth());
+        let sum = Expr::new(
+            ExprKind::Infix(
+                InfixOp::Add,
+                Box::new(left.clone()),
+                Box::new(right.clone()),
+            ),
+            Span::default(),
+        );
+        let (entered, carried) = (statement(), expression_statement(sum.clone()));
+        let mut previous = Emitter::default();
+        previous.enter_statement(&entered);
+        let from = previous.mark();
+        previous.enter_statement(&carried);
+        let to = previous.mark();
+
+        let mut fresh = Emitter::default();
+        fresh.enter_statement(&statement());
+        fresh.enter_statement(&entered);
+        fresh.copy_window(&previous, &from, &to);
+        let (_, previous) = previous.into_parts();
+        let (_, fresh) = fresh.into_parts();
+        let at = |expression: &Expr| fresh.index.get(&expression.source_span()).copied();
+        assert_ne!(at(&left), previous.index.get(&left.source_span()).copied());
+        assert_eq!(op_at(&fresh, &sum), op_at(&previous, &sum));
+        assert_eq!(
+            op_at(&fresh, &sum).1,
+            vec![left.source_span(), right.source_span()]
+        );
+    }
+
+    #[test]
+    fn an_entered_call_holds_one_parameter_per_bracket_argument() {
+        let (parameter, argument) = (
+            Expr::new(ExprKind::Identifier("T".to_string()), Span::default()),
+            truth(),
+        );
+        let call = Expr::new(
+            ExprKind::Call {
+                name: "x".to_string(),
+                param_args: vec![ParamArg::Value(parameter.clone())],
+                args: vec![argument.clone()],
+                kwargs: Vec::new(),
+            },
+            Span::default(),
+        );
+        let mut emitter = Emitter::default();
+        emitter.enter_statement(&expression_statement(call.clone()));
+        let (_, nodes) = emitter.into_parts();
+        let node = nodes
+            .expression(&call.source_span())
+            .expect("the call was emitted");
+        let slot = |expression: &Expr| match nodes.index.get(&expression.source_span()) {
+            Some(EmittedSlot::Expression(id)) => *id,
+            _ => unreachable!("every operand was emitted"),
+        };
+        let Some(CheckedOp::Call {
+            param_args, args, ..
+        }) = &node.op
+        else {
+            unreachable!("a call's op is a call")
+        };
+        assert_eq!(param_args.len(), 1);
+        assert!(param_args[0].declaration.is_none());
+        assert!(matches!(
+            param_args[0].arguments.as_slice(),
+            [CheckedParamArg::Value(id)] if *id == slot(&parameter)
+        ));
+        assert_eq!(args, &vec![slot(&argument)]);
+        assert_eq!(node.applications, vec![vec![slot(&parameter)]]);
+    }
+
+    #[test]
+    fn a_probe_drops_the_nodes_and_ops_it_allocated() {
+        let construction = truth();
+        let mut emitter = Emitter::default();
+        let probe = emitter.open_probe();
+        emitter.enter_expression(&construction);
+        assert!(emitter.index.contains_key(&construction.source_span()));
+        emitter.roll_back(probe);
+        assert!(!emitter.index.contains_key(&construction.source_span()));
+        assert!(emitter.into_parts().1.expressions.is_empty());
     }
 }

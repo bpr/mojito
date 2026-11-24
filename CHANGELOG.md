@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Each node the check emits holds its op from the moment it is allocated,
+  its operands the nodes allocated for them, as upstream's emitter creates
+  an op when it emits it (R765). The check now also emits the nodes of the
+  constructions it spells and of the tests and conditions its match plans
+  synthesize, where it decides them, so std's detached records fall from
+  1,461 to 182; a carried body's ops are relocated onto the next pass's
+  nodes. Nothing reads the ops yet: `MOJITO_CHECK_EMITTED=1` compares them
+  with the checked arena (`emit.check.*` under `--timings`). Two spellings
+  that shared one occurrence with another now get their own: a `comptime
+  for`'s `__iter__()` call no longer shares its iterable's alias
+  construction's, and an initializer list's pack-element callee (`Self.Ts`)
+  keeps one identity across checks. MIR text is unchanged; the std package
+  grows by about 1 KB, the fact records those occurrences no longer share.
+
 - The check sets each fact it decides on the node it allocated for the
   occurrence when it entered the statement (`checker/emit.rs`'s `Emitter`),
   as upstream's emitter sets each attribute on an op it already made,

@@ -1907,7 +1907,8 @@ impl CheckedOp {
     /// The op with each node it names replaced by `map`'s, visited in the
     /// order the check's nodes are built: operands first, then a lambda's
     /// hidden `def`.
-    pub(crate) fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+    #[must_use]
+    pub fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
         let values = |map: &mut dyn NodeMap, values: &[CheckedNodeId]| -> Vec<CheckedNodeId> {
             values.iter().map(|value| map.expression(*value)).collect()
         };
@@ -2726,7 +2727,8 @@ impl CheckedStmtOp {
     /// The op with each node it names replaced by `map`'s, visited in the
     /// order the check's nodes are built: a statement's expressions before
     /// the bodies that follow them, each member in turn.
-    pub(crate) fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+    #[must_use]
+    pub fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
         let values = |map: &mut dyn NodeMap, values: &[CheckedNodeId]| -> Vec<CheckedNodeId> {
             values.iter().map(|value| map.expression(*value)).collect()
         };
@@ -5028,6 +5030,9 @@ pub struct DiscoveryResult {
     /// The symbol each overloaded module `def` lowers to, as the check
     /// spelled it from the declaration's typed signature.
     pub declaration_symbols: HashMap<GenericSite, String>,
+    /// The check's emitted nodes, kept only under `MOJITO_CHECK_EMITTED=1`,
+    /// which compares them with the arena built from `node_facts`.
+    pub emitted: Option<crate::emitted::EmittedNodes>,
 }
 
 impl DiscoveryResult {
@@ -5471,6 +5476,7 @@ impl CheckedProgram {
             mut default_wrappers,
             trait_members,
             declaration_symbols,
+            emitted,
         } = discovery;
         // Each statement's warnings in the order the check emitted them, the
         // statements in source order: an enclosing `match`'s come before a
@@ -5503,6 +5509,9 @@ impl CheckedProgram {
         }
         let arena =
             build_checked_expressions(&statements, &node_facts, &default_wrappers, signatures);
+        if let Some(emitted) = &emitted {
+            crate::emitted::cross_check(emitted, &arena.nodes, &arena.statements, &node_facts);
+        }
         drop(expressions_span);
         let declarations_span = mojito_common::timing::span("declarations");
         let mut tables = CheckedTables::new(arena);
@@ -5823,9 +5832,12 @@ pub(crate) enum StructShell {
     TraitDefault(usize),
 }
 
-/// What a node operand is replaced by when an op is copied
-/// ([`CheckedOp::map_operands`], [`CheckedStmtOp::map_operands`]).
-pub(crate) trait NodeMap {
+/// What a node operand is replaced by when an op is copied.
+///
+/// [`CheckedOp::map_operands`] and [`CheckedStmtOp::map_operands`] call it
+/// for a unit's extraction, and for the check's relocation of an emitted
+/// op from one pass's nodes to the next's ([`crate::emitted`]).
+pub trait NodeMap {
     fn expression(&mut self, id: CheckedNodeId) -> CheckedNodeId;
     fn statement(&mut self, id: CheckedStmtId) -> CheckedStmtId;
 }

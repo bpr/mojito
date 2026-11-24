@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2567**.
+Next free ID: **R2569**.
 
 ## Ordered Work
 
@@ -11766,31 +11766,58 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R765 Emitted nodes hold no ops, and spelled constructions and
-  lifted applications get no emitted node**
+- [ ] **R2568 A leading-dot chain is checked as a clone under the written
+  occurrences' identities, so its root occurrence holds two syntaxes**
 
-  `ArenaBuilder` still decides every op from syntax and facts after the
-  check, so the emitter's nodes cannot yet replace `finalize`'s tables.
-  - Statements and their expressions, `with` desugars, lambdas, trait
-    members, and default wrappers already get `Emitter` nodes
-    (`checker/emit.rs`) when the check enters their statements.
-  - Synthesized occurrences keep detached records: spelled constructions,
-    `SyntaxId::derived` calls such as `__bool__`, match anchors, and
-    `comptime for` steps (`--timings`'s `emit.detached_records`: 1,461 of
-    24,640 records for std, 67 of 196 in
-    `comptime_for_display_over_binder.mojo`).
-  - The lever: allocate each synthesized site's node where the check
-    decides it, set each node's op from the check's facts and site tables,
-    and seal each emitted node into a `CheckedExpr` or `CheckedStmt`.
-  - A carried window then relocates its ops through
-    `CheckedOp::map_operands` and `CheckedStmtOp::map_operands`, which are
-    `pub(crate)` in `mojito-checked` today.
-  - Cross-check the sealed tables against `finalize`'s under
-    `MOJITO_CHECK_EMITTED=1`, per extracted root, on the probe set with
-    and without `MOJITO_STD_PACKAGE=0`.
-  - Plan: none; the R624 plan this entry cited was never committed, so
-    plan it in its own session.
-  - Depends on R764.
+  The emitted node of a `$contextual` root holds `Identifier("$contextual")`
+  while a construction spelled from the resolved clone holds the base type's
+  name at the same occurrence.
+  - `with_contextual_root` (`checker/inference.rs`) replaces the root with
+    the expected type's name and keeps every syntax id, so the clone's
+    facts land on the written nodes.
+  - A construction spelled from the clone reuses those ids: the
+    `__getattr_param__` call `.red` stands for
+    (`indexing.rs:getattr_param_spelling`) holds `Identifier("Color")`
+    where the emitter set `Identifier("$contextual")` when it entered the
+    statement.
+  - Upstream resolves a leading dot when it emits the member, so the root's
+    op is the base type's reference and no sentinel op exists.
+  - The lever: give the resolved root an identity derived from the written
+    one, as `comptime for`'s `__iter__` receiver is, and read the base's
+    facts from that node.
+  - Probe: `MOJITO_CHECK_EMITTED=1 mojito --timings check
+    assets/ok/getattr_param_member.mojo` reports 3
+    `emit.check.op_mismatches`, at `.red`, `pick[.red]`, and `pick[.green]`.
+  - Found while landing R765 (2026-11-24).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2567 The emitted nodes are not sealed into checked tables, so
+  `finalize`'s arena is still the only one**
+
+  The check's nodes hold ops, but nothing composes an op with its node's
+  facts and the site tables into a `CheckedExpr` or `CheckedStmt`.
+  - The lever: a seal walks the emitted nodes from the roots in
+    `map_operands` order and renumbers them; R765's planning probe found
+    this reproduces `ArenaBuilder`'s ids exactly on std and every
+    `assets/ok` fixture.
+  - It decides what `ArenaBuilder` decides from facts: `param_args`
+    regrouped by `parameter_attributes`, the subscript key, lifted
+    applications over the captured candidate lists
+    (`EmittedExpr::applications`), spelled-construction substitution and
+    its adjustments, the category, `node_adjustments`, declaration symbols
+    and signatures, match plans, and desugar splicing
+    (`statement_desugars`).
+  - `node_adjustments` and the category read `ExprKind`; give them the op
+    instead, so the arena builder and the seal share them.
+  - Done when `MOJITO_CHECK_EMITTED=1` compares the sealed tables with
+    `finalize`'s, whole, with no difference, on the probe set with and
+    without `MOJITO_STD_PACKAGE=0` and over the CLI sweep of the corpus.
+  - Plan: none; plan it in its own session
+    (`R765-emitted-nodes-hold-no-ops-and-plan.md` lists every fact the
+    seal reads).
+  - Depends on R2568 (the comparison cannot be clean while an occurrence
+    holds two syntaxes).
   - Model: Fable, Not Planned.
 
 - [ ] **R766 The checked handoff is still gathered from fact records by
@@ -11806,9 +11833,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and package bytes unchanged.
   - Update `docs/architecture.md` §Stage 3 and `docs/symbol-map.md`, and
     file what stays (detached records, `explicit_destroy` walking syntax).
+  - What stays includes about 180 detached records for std: destructuring
+    targets, a pattern, derived occurrences no node holds, and records at
+    written ids under syntax no entered statement holds.
+  - It also includes the `SpelledConstruction` and `MatchPlan` facts, which
+    still carry syntax (`Box<Expr>`, `Stmt`) where an upstream op names its
+    operands' values.
   - Plan: none; the R624 plan this entry cited was never committed, so
     plan it in its own session.
-  - Depends on R765.
+  - Depends on R765, R2567 (the sealed tables it hands over).
   - Model: Fable, Not Planned.
 
 - [ ] **R767 `DiscoveryResult` still carries the check's records to

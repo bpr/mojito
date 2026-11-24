@@ -141,7 +141,7 @@ impl Checker {
                 self.compile_pattern(pattern, &subject, Join::None, &mut commands)?;
                 self.check_block(body, ret, in_loop)?;
                 let (program, reads, _) = commands.into_parts();
-                self.record_at(pattern.source_span()).match_plan = Some(MatchPlan {
+                let plan = MatchPlan {
                     anchor: Some(anchor),
                     cases: vec![program],
                     reads: vec![reads],
@@ -149,7 +149,9 @@ impl Checker {
                     conditions: Vec::new(),
                     concluded: false,
                     unreachable: Vec::new(),
-                });
+                };
+                self.emitter.borrow_mut().enter_plan(&plan);
+                self.record_at(pattern.source_span()).match_plan = Some(plan);
                 Ok(())
             });
         self.pop_scope();
@@ -344,8 +346,7 @@ impl Checker {
             .chain(fall_through)
             .flatten()
             .collect::<HashSet<_>>();
-        let mut facts = self.record_at(stmt.source_span());
-        facts.match_plan = Some(MatchPlan {
+        let plan = MatchPlan {
             anchor: Some(anchor),
             cases: programs,
             reads,
@@ -353,7 +354,10 @@ impl Checker {
             conditions: Vec::new(),
             concluded: verdict.concluding.is_some(),
             unreachable: verdict.unreachable,
-        });
+        };
+        self.emitter.borrow_mut().enter_plan(&plan);
+        let mut facts = self.record_at(stmt.source_span());
+        facts.match_plan = Some(plan);
         facts.match_warnings = (!verdict.warnings.is_empty()).then_some(verdict.warnings);
         Ok(())
     }
@@ -473,8 +477,7 @@ impl Checker {
             .chain(fall_through)
             .flatten()
             .collect::<HashSet<_>>();
-        let mut facts = self.record_at(stmt.source_span());
-        facts.match_plan = Some(MatchPlan {
+        let plan = MatchPlan {
             anchor,
             reads: vec![Vec::new(); programs.len()],
             cases: programs,
@@ -482,7 +485,10 @@ impl Checker {
             conditions,
             concluded: verdict.concluding.is_some(),
             unreachable: verdict.unreachable,
-        });
+        };
+        self.emitter.borrow_mut().enter_plan(&plan);
+        let mut facts = self.record_at(stmt.source_span());
+        facts.match_plan = Some(plan);
         // A `comptime if case` branch reports no coverage warning, as
         // upstream's does not.
         let spelled_if = matches!(stmt.kind, StmtKind::ComptimeMatch { if_case: true, .. });

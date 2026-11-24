@@ -139,14 +139,17 @@ impl Checker {
         let mut object = iter.clone();
         mojito_ast::visit::walk_expr_mut(
             &mut mojito_ast::visit::DerivedIdentities {
-                parent: mojito_common::token::SyntaxId::derived(source.syntax_id, 0),
+                parent: mojito_common::token::SyntaxId::derived(
+                    source.syntax_id,
+                    ITERATOR_CALL_ORDINAL,
+                ),
                 next: 1,
             },
             &mut object,
         );
         let call = initializer_list::spelled_node(
             source,
-            0,
+            ITERATOR_CALL_ORDINAL,
             ExprKind::MethodCall {
                 object: Box::new(object),
                 method: "__iter__".to_string(),
@@ -208,6 +211,13 @@ impl Checker {
 /// The compile-time binder of a `comptime for` iterator of type `iterator`,
 /// upstream's mangled `iter` parameter: the loop's iterable names it, as it
 /// names an element binder.
+/// The ordinal of a `comptime for`'s `__iter__()` call among the
+/// occurrences derived from its iterable, past every ordinal a
+/// construction spelled for the iterable derives (an alias application's
+/// is 0), so the call and the iterable's own construction are distinct
+/// occurrences with distinct facts.
+const ITERATOR_CALL_ORDINAL: u32 = u32::MAX - 66;
+
 fn comptime_iterator_binder(iter: &Expr, iterator: &Ty) -> ParamExpr {
     value_binder_expr(
         ParamId::new(&comptime_validation::comptime_for_owner(iter), 0),

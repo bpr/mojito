@@ -2951,13 +2951,31 @@ checker sets each fact on its occurrence's emitted node
 (`Checker::record_at`, `checker/node_facts.rs`), as upstream's emitter
 sets an attribute on an op it already made: the `Emitter`
 (`checker/emit.rs`) allocates a statement's node and its expression nodes
-when the check enters the statement (`Checker::check_stmt`), and an index
-finds an occurrence's node. A detached record holds an occurrence no node
-holds — a pattern, a destructuring target, an occurrence the check
-synthesizes, or one written before its statement is entered, which moves
-onto the node when the statement is. The handoff reads both out, less any
-record a cleared fact left empty (`Emitter::into_records`, from
-`body_carry.rs`'s `HandoffStores::into_discovery`). An overload
+when the check enters the statement (`Checker::check_stmt`), a spelled
+construction's when the check records it
+(`Checker::record_spelled_construction`), and a match plan's anchor, tests,
+reads, and `comptime match` conditions when it records the plan
+(`Emitter::enter_plan`, from `checker/patterns.rs`), and an index finds an
+occurrence's node. Each node holds its op from the moment it is allocated,
+as upstream's emitter creates an op when it emits it: the op is its
+syntax's operation with each operand the node allocated for it
+(`checker/emit/ops.rs`), and it never changes. What the check decides
+later — a declaration's symbol and signature, a call's parameter grouping,
+a subscript's key, a type value's type, a match's plan, a destructuring
+loop's binder — is a fact on the node, and the op leaves its field empty;
+each call, subscript, function type, and annotated `var` also holds the
+walk-ordered candidates its lifted applications are chosen from
+(`mojito_checked::emitted`). A detached record holds an occurrence no node
+holds — a pattern, a destructuring target, a derived occurrence no arena
+node is, or one written before its statement is entered, which moves onto
+the node when the statement is. The handoff reads the records out, less
+any a cleared fact left empty (`Emitter::into_parts`, from `body_carry.rs`'s
+`HandoffStores::into_discovery`); nothing reads the ops yet but
+`MOJITO_CHECK_EMITTED=1`, under which `CheckedProgram::new` checks that every
+checked-arena node has an emitted node of its kind and op variant at its
+occurrence, and that every expression op the syntax alone decides equals the
+arena's (`emitted::cross_check`, counted as `emit.check.*` under
+`--timings`). An overload
 candidate — of a free call or of an overloaded function value — is
 checked inside `Checker::probe` (`checker/probe.rs`): every store
 journals what a write displaces while a probe is open, and closing it
@@ -2981,6 +2999,7 @@ read (`checker/body_carry.rs`). The next transfer pass over the same tree
 starts from the previous pass's committed effect maps and, at a site whose
 reads still equal the committed entries, copies the logged entries instead
 of inferring (the emitter's window allocates the nodes it allocated again,
+each op relocated onto this pass's nodes through `CheckedOp::map_operands`,
 then copies each written occurrence's final record, `Emitter::copy_window`). Binding identities never
 collide: a pass starts its counter at the previous watermark, and a body
 inferred again allocates inside the range it had (`scopes.rs:reserve_owners`)

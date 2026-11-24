@@ -345,6 +345,7 @@ impl Checker {
         construction: Expr,
         ty: &Ty,
     ) {
+        self.emitter.borrow_mut().enter_expression(&construction);
         let value = self
             .record_at(expression.source_span())
             .comptime_condition
@@ -1093,8 +1094,22 @@ impl Checker {
                 } else {
                     ExprKind::Identifier(pack)
                 };
+                // The callee is spelled under identities derived from the
+                // sugar's, so every check of the sugar names one callee.
+                let mut callee = Expr::new(callee, expression.span);
+                callee.source.clone_from(&expression.source);
+                mojito_ast::visit::walk_expr_mut(
+                    &mut mojito_ast::visit::DerivedIdentities {
+                        parent: mojito_common::token::SyntaxId::derived(
+                            expression.syntax_id,
+                            PACK_ELEMENT_CALLEE_ORDINAL,
+                        ),
+                        next: 0,
+                    },
+                    &mut callee,
+                );
                 ExprKind::Invoke {
-                    callee: Box::new(Expr::new(callee, expression.span)),
+                    callee: Box::new(callee),
                     param_args: vec![mojito_ast::ast::ParamArg::Value(index)],
                     args,
                     kwargs,
@@ -1271,6 +1286,11 @@ pub(super) fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
     }
     construction
 }
+
+/// The ordinal of a pack element's construction callee (`Self.Ts`) among
+/// the occurrences derived from the initializer list it is spelled for,
+/// past the construction's own and its parameter arguments'.
+const PACK_ELEMENT_CALLEE_ORDINAL: u32 = u32::MAX - 67;
 
 /// The ordinal of a list display's `__list_literal__=None` marker among the
 /// occurrences derived from the display, past the construction's own (0)
