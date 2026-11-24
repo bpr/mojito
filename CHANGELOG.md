@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check seals its own module: the final pass's handoff seals the
+  emitted nodes, each now holding its facts as an op holds its
+  attributes, into declared checked tables, and `CheckedProgram::new`
+  takes those tables beside the declaration sites, an `OccurrenceIndex`,
+  and the program-level `DeclarationTables` (R767). `DiscoveryResult`,
+  `PassCarry::into_result`, `Emitter::into_parts`, and the span-keyed map
+  of every occurrence's facts are gone; `InstalledSites` is now
+  `DeclarationSites`. No accepted program, MIR text, warning, or package
+  byte changes; the seal (`check.arena.expressions`, std from source,
+  debug) went from 51.8 ms to 32.7 ms, reading each node's facts off the
+  node instead of by span.
+
 - The checked handoff is the sealed emitted nodes: `CheckedProgram::new`
   takes the tables `emitted::seal` composes from the nodes the check
   emitted, as upstream's emitter leaves each op final, and the second

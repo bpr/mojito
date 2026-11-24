@@ -8,7 +8,7 @@
 
 use crate::checked::{
     AnnotationSite, CheckedDefaultWrapper, CheckedProgram, CheckedStmtId, CheckedStmtOp,
-    CheckedStruct, CheckedTables, DeclarationEffect, GenericSite, InstalledSites, StructShell,
+    CheckedStruct, CheckedTables, DeclarationEffect, DeclarationSites, GenericSite, StructShell,
     WalkResult, Walked,
 };
 use crate::package::{LibraryRoot, ProgramConstants, ProgramOverloads};
@@ -396,10 +396,11 @@ impl CheckedUnit {
         constants: Arc<ProgramConstants>,
         struct_parameters: &dyn Fn(&str) -> Option<Vec<ParamDecl>>,
     ) -> UnitProgram {
-        let mut sites = InstalledSites {
+        let mut sites = DeclarationSites {
             checked_types: self.sites.checked_types.into_iter().collect(),
             generic_parameters: self.sites.generic_parameters.into_iter().collect(),
             declaration_effects: self.sites.declaration_effects.into_iter().collect(),
+            declaration_symbols: HashMap::new(),
         };
         if matches!(
             self.kind,

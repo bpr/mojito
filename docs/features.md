@@ -26,7 +26,9 @@ plan's tests and conditions when it plans them. A pattern, a destructuring
 target, or an occurrence no node holds keeps a detached record. The checked
 tables are sealed from the emitted nodes, each op composed with its node's
 facts, and an occurrence the check emitted no node for is an internal error
-rather than a placeholder (R2567, R766). No program's behavior depends on
+rather than a placeholder (R2567, R766). The check seals its own module at its
+end, each node carrying its facts across the handoff as an op carries its
+attributes (R767). No program's behavior depends on
 where the facts are kept. The supported CPU surface includes
 exact numeric literals, type/value/origin generics and heterogeneous packs,
 scope-stable and lexical nested-pack specialization, refined and conditional

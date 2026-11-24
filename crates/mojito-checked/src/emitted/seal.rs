@@ -16,63 +16,90 @@ use super::{
     EmittedDesugar, EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt, Unsealed, substituted,
 };
 use crate::checked::{
-    CheckedCommand, CheckedComprehensionClause, CheckedComprehensionUnpack, CheckedCondition,
-    CheckedDef, CheckedDefaultWrapper, CheckedMatchCase, CheckedMethod, CheckedNodeId, CheckedOp,
-    CheckedParamArg, CheckedParameter, CheckedPathRead, CheckedSequenceTarget, CheckedStmtId,
-    CheckedStmtOp, CheckedStruct, CheckedStructComptime, CheckedTables, CheckedTarget,
-    CheckedTargetKind, CheckedTrait, CheckedTraitComptime, CheckedTraitDefault, CheckedTraitMethod,
-    MatchPlan, NodeFacts, NodeMap, Outermost, PlannedCommand, Signatures, apply_spelled,
-    expression_node, lifted, map_params, parameter_layout, spelled_construction, statement_node,
+    AnnotationSite, CheckedCommand, CheckedComprehensionClause, CheckedComprehensionUnpack,
+    CheckedCondition, CheckedDef, CheckedDefaultWrapper, CheckedMatchCase, CheckedMethod,
+    CheckedNodeId, CheckedOp, CheckedParamArg, CheckedParameter, CheckedPathRead,
+    CheckedSequenceTarget, CheckedStmtId, CheckedStmtOp, CheckedStruct, CheckedStructComptime,
+    CheckedTables, CheckedTarget, CheckedTargetKind, CheckedTrait, CheckedTraitComptime,
+    CheckedTraitDefault, CheckedTraitMethod, ConformanceFacts, DeclarationSites, MatchPlan,
+    NodeFacts, NodeMap, Outermost, PlannedCommand, Signatures, apply_spelled, expression_node,
+    lifted, map_params, parameter_layout, spelled_construction, statement_node,
     subscript_attribute,
 };
 use mojito_ast::ast::{BindingMode, Expr, Stmt};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
 use mojito_types::types::TyArg;
 use std::cell::RefCell;
-use std::collections::HashMap;
 
-/// The checked tables of `statements` and of `wrappers`' bodies, sealed
-/// from `emitted` with the `facts` the check recorded and the declaration
-/// sites `signatures` reads; they declare nothing yet. A node the check
-/// emitted no node or op for leaves the tables [`Unsealed`].
+/// The checked tables of `roots` and of `wrappers`' bodies, sealed from
+/// `emitted` and declared.
+///
+/// Each node's op is composed with its facts, a declaration's symbol and
+/// signature read from `sites` and a fieldwise constructor's from
+/// `conformances`. Each wrapper's signature is set and its body, whose
+/// nodes the tables hold, taken. An occurrence the check emitted no node or
+/// op for leaves the tables [`Unsealed`].
 pub fn seal(
     emitted: &EmittedNodes,
-    statements: &[Stmt],
-    wrappers: &[CheckedDefaultWrapper],
-    facts: &HashMap<SourceSpan, NodeFacts>,
-    signatures: Signatures<'_>,
+    roots: &[Stmt],
+    wrappers: &mut [CheckedDefaultWrapper],
+    sites: &DeclarationSites,
+    conformances: &ConformanceFacts,
 ) -> Result<CheckedTables, Unsealed> {
+    let expressions_span = mojito_common::timing::span("expressions");
+    let signatures = Signatures {
+        checked_types: &sites.checked_types,
+        generic_parameters: &sites.generic_parameters,
+        declaration_effects: &sites.declaration_effects,
+        fieldwise_conventions: &conformances.fieldwise_conventions,
+        fieldwise_ref_params: &conformances.fieldwise_ref_params,
+        declaration_symbols: &sites.declaration_symbols,
+    };
+    for wrapper in wrappers.iter_mut() {
+        wrapper.signature = signatures.method(
+            wrapper.module.as_ref(),
+            &wrapper.declaration,
+            wrapper.method_index,
+            wrapper.params.len(),
+        );
+    }
     let mut seal = Seal {
         emitted,
-        facts,
         signatures,
         nodes: Vec::new(),
         statements: Vec::new(),
         functions: 0,
         unsealed: RefCell::new(Unsealed::default()),
     };
-    let roots = seal.roots(statements);
+    let roots = seal.roots(roots);
     let wrapper_roots = wrappers
-        .iter()
-        .map(|wrapper| seal.roots(&wrapper.body))
+        .iter_mut()
+        .map(|wrapper| seal.roots(&std::mem::take(&mut wrapper.body)))
         .collect();
     let unsealed = seal.unsealed.into_inner();
     if unsealed.count > 0 {
         return Err(unsealed);
     }
-    Ok(CheckedTables::undeclared(
-        seal.nodes,
-        seal.statements,
-        roots,
-        wrapper_roots,
-    ))
+    let mut tables = CheckedTables::undeclared(seal.nodes, seal.statements, roots, wrapper_roots);
+    drop(expressions_span);
+    let _declarations = mojito_common::timing::span("declarations");
+    tables.declare(&|node| {
+        sites
+            .checked_types
+            .get(&AnnotationSite::FunctionType {
+                module: node.module.clone(),
+                declaration: node.span,
+                syntax: node.syntax_id,
+            })
+            .cloned()
+    });
+    Ok(tables)
 }
 
 /// The tables being sealed. A [`NodeMap`] from emitted slots to the sealed
 /// ids it assigns.
 struct Seal<'a> {
     emitted: &'a EmittedNodes,
-    facts: &'a HashMap<SourceSpan, NodeFacts>,
     signatures: Signatures<'a>,
     nodes: Vec<crate::checked::CheckedExpr>,
     statements: Vec<crate::checked::CheckedStmt>,
@@ -92,7 +119,7 @@ impl NodeMap for Seal<'_> {
         let (Some(op), Some(syntax)) = (&node.op, node.at.syntax) else {
             return self.missing_expression(Some(&node.at));
         };
-        let facts = self.facts(&node.at);
+        let facts = held(node.facts.as_deref());
         if substituted(op)
             && let Some((construction, lifted)) = spelled_construction(facts)
         {
@@ -124,7 +151,7 @@ impl NodeMap for Seal<'_> {
         let (Some(op), Some(syntax)) = (&node.op, node.at.syntax) else {
             return self.missing_statement(Some(&node.at));
         };
-        let facts = self.facts(&node.at);
+        let facts = held(node.facts.as_deref());
         let op = match op {
             CheckedStmtOp::Def(def) => {
                 CheckedStmtOp::Def(Box::new(self.def(&node.at, syntax, def, facts)))
@@ -149,8 +176,12 @@ impl NodeMap for Seal<'_> {
 }
 
 impl<'a> Seal<'a> {
+    /// The facts recorded at `at`, an occurrence the seal reaches by its
+    /// written syntax rather than by a node: a destructuring target's leaf
+    /// or a `case` pattern, whose record is detached (R2569).
     fn facts(&self, at: &SourceSpan) -> &'a NodeFacts {
-        self.facts.get(at).unwrap_or(&NodeFacts::EMPTY)
+        let emitted = self.emitted;
+        held(emitted.facts(at))
     }
 
     /// The emitted slot of the expression `expression`.
@@ -194,7 +225,7 @@ impl<'a> Seal<'a> {
                     .expressions
                     .get(candidate.0 as usize)
                     .is_some_and(|node| {
-                        outermost.admits(node.at.span, lifted(self.facts(&node.at)))
+                        outermost.admits(node.at.span, lifted(held(node.facts.as_deref())))
                     })
             })
             .collect()
@@ -687,7 +718,7 @@ impl<'a> Seal<'a> {
         emitted
             .expressions
             .get(slot.0 as usize)
-            .map_or(&NodeFacts::EMPTY, |node| self.facts(&node.at))
+            .map_or(&NodeFacts::EMPTY, |node| held(node.facts.as_deref()))
     }
 
     fn anchor(&self, plan: Option<&MatchPlan>) -> Option<CheckedStmtId> {
@@ -946,12 +977,18 @@ impl<'a> Seal<'a> {
     }
 }
 
+/// A node's facts, or none recorded.
+fn held(facts: Option<&NodeFacts>) -> &NodeFacts {
+    facts.unwrap_or(&NodeFacts::EMPTY)
+}
+
 #[cfg(test)]
 mod tests {
     use super::seal;
     use crate::checked::{
         BracketBinding, BracketBound, CheckedOp, CheckedParamArg, CheckedParameter, CheckedStmtOp,
-        CheckedTables, NodeFacts, SemanticAdjustment, Signatures, SpelledConstruction,
+        CheckedTables, ConformanceFacts, DeclarationSites, NodeFacts, SemanticAdjustment,
+        SpelledConstruction,
     };
     use crate::emitted::Unsealed;
     use crate::emitted::{EmittedDesugar, EmittedExpr, EmittedNodes, EmittedSlot, EmittedStmt};
@@ -997,6 +1034,7 @@ mod tests {
                 op: Some(op),
                 applications,
                 loop_targets: Vec::new(),
+                facts: None,
             });
             self.0
                 .index
@@ -1011,6 +1049,7 @@ mod tests {
                 op: Some(op),
                 applications: Vec::new(),
                 loop_target: None,
+                facts: None,
             });
             self.0
                 .index
@@ -1019,23 +1058,33 @@ mod tests {
         }
     }
 
-    /// The tables sealed from `emitted` for the roots `statements`.
+    /// The tables sealed from `emitted` for the roots `statements`, with
+    /// each of `facts` on the node its occurrence's index names, or else
+    /// detached.
     fn sealed(
         emitted: &EmittedNodes,
         statements: &[Stmt],
         facts: &HashMap<SourceSpan, NodeFacts>,
     ) -> Result<CheckedTables, Unsealed> {
-        let (types, generics, effects) = (HashMap::new(), HashMap::new(), HashMap::new());
-        let (conventions, references, symbols) = (HashMap::new(), HashMap::new(), HashMap::new());
-        let signatures = Signatures {
-            checked_types: &types,
-            generic_parameters: &generics,
-            declaration_effects: &effects,
-            fieldwise_conventions: &conventions,
-            fieldwise_ref_params: &references,
-            declaration_symbols: &symbols,
-        };
-        seal(emitted, statements, &[], facts, signatures)
+        let mut emitted = emitted.clone();
+        for (at, record) in facts {
+            let held = match emitted.index.get(at) {
+                Some(EmittedSlot::Expression(id)) => &mut emitted.expressions[id.0 as usize].facts,
+                Some(EmittedSlot::Statement(id)) => &mut emitted.statements[id.0 as usize].facts,
+                None => {
+                    emitted.detached.insert(at.clone(), record.clone());
+                    continue;
+                }
+            };
+            *held = Some(Box::new(record.clone()));
+        }
+        seal(
+            &emitted,
+            statements,
+            &mut [],
+            &DeclarationSites::default(),
+            &ConformanceFacts::default(),
+        )
     }
 
     fn written(slot: crate::checked::CheckedNodeId) -> CheckedParameter {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2572**.
+Next free ID: **R2573**.
 
 ## Ordered Work
 
@@ -11766,27 +11766,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R767 `DiscoveryResult` still carries the check's records to
-  `CheckedProgram::new`**
-
-  Once the check emits sealed tables, the handoff record is a leftover.
-  - The lever: `HandoffStores` builds the `CheckedProgram` from the sealed
-    tables and its declaration-level tables, and `DiscoveryResult`,
-    `finalize`, and `PassCarry::into_result` go.
-  - Delete the syntax half of `desugar::splice_desugars` if
-    nothing but the arena builder reads the spliced statements.
-  - Renaming `DiscoveryResult` first (to `CheckedFacts`, as its doc
-    describes it) is moot: the type goes here.
-  - Update `docs/pliron-future.md`'s "checker (+ checked handoff)" row to
-    say the output is emitted ops.
-  - Then judge whether the node tree's remaining distance from `lit`'s
-    ops in regions earns its own entry, and file it if so; the plan
-    expects the distance to be recorded in that row instead.
-  - Plan: `R625-discoveryresult-still-stands-between-the-check-plan.md`,
-    Entry A.
-  - Depends on R766.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2569 Occurrences no emitted node holds still keep detached
   records, where every upstream attribute sits on an op**
 
@@ -11823,16 +11802,39 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   nodes by syntax spans, where upstream's module op holds its body ops**
 
   `Seal::roots` looks up each spliced root statement of
-  `DiscoveryResult::statements` and each `CheckedDefaultWrapper::body`
+  `HandoffStores::roots` and each `CheckedDefaultWrapper::body`
   statement by its span, so both cross the handoff as syntax.
-  - `CheckedProgram::new` empties each wrapper's body once sealed; the
-    root statements stay in `DiscoveryResult`.
+  - The seal empties each wrapper's body once sealed; the root
+    statements stay in `HandoffStores`.
   - The lever: the emitter records the root and wrapper-body slots as the
     check enters them, and the seal reads those.
-  - Then `DiscoveryResult::statements` and `CheckedDefaultWrapper::body`
+  - Then `HandoffStores::roots` and `CheckedDefaultWrapper::body`
     go, and with R751 so can the syntax half of
     `desugar::splice_desugars`.
   - Found while landing R766 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2572 `CheckedProgram` keeps span-keyed copies of per-occurrence
+  facts that no lowering reads, where upstream's op holds its attributes**
+
+  `OccurrenceIndex` copies overload targets, generic and method
+  instantiations, and implicit conversions and their types out of the
+  records into maps by span, though the sealed nodes hold the same facts as
+  adjustments.
+  - Probe: `overload_targets()` and `generic_instantiations()` are read
+    only by tests (`checker_test`, `compiler_test`, `module_test`) and
+    `checker::resolve_overload_targets`, itself read only by
+    `tests/symbol_test.rs`.
+  - Probe: `method_instantiations()`, `struct_instantiations()`,
+    `implicit_conversions()`, and `implicit_conversion_type()` have no
+    callers.
+  - Probe: `CheckedProgram::retarget_call` keeps the overload-target copy
+    in step with the node it retargets.
+  - The lever: the tests read the nodes' adjustments, the dead getters and
+    their checker stores go, and `OccurrenceIndex` shrinks to the
+    warnings.
+  - Found while landing R767 (2026-11-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

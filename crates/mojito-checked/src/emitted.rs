@@ -8,15 +8,16 @@
 //! [`EmittedNodes`], not by the checked tables' ids. A field the check
 //! decides after allocation (a declaration's symbol and signature, a call's
 //! parameter grouping, a match's plan) is left empty in the op and stands
-//! as a fact on the node. The seal ([`seal`]) composes each op with its
-//! node's facts into the checked tables `CheckedProgram::new` hands over,
-//! and rejects an occurrence the check emitted no node for ([`Unsealed`]).
+//! as a fact on the node, as an attribute on an op. The seal ([`seal`]),
+//! which the check runs at its end, composes each op with its node's facts
+//! into the checked tables, and rejects an occurrence the check emitted no
+//! node for ([`Unsealed`]).
 
 mod seal;
 
-pub(crate) use seal::seal;
+pub use seal::seal;
 
-use crate::checked::{CheckedNodeId, CheckedOp, CheckedStmtId};
+use crate::checked::{CheckedNodeId, CheckedOp, CheckedStmtId, NodeFacts};
 use mojito_common::token::SourceSpan;
 use std::collections::HashMap;
 
@@ -30,6 +31,10 @@ pub struct EmittedNodes {
     /// and a sequence destructuring's by the statement, a loop target's by
     /// the target.
     pub desugars: HashMap<SourceSpan, EmittedDesugar>,
+    /// The records no node holds, by occurrence: a pattern's, a
+    /// destructuring target's, and any other occurrence the check emitted
+    /// no node for (R2569).
+    pub detached: HashMap<SourceSpan, NodeFacts>,
 }
 
 impl EmittedNodes {
@@ -47,6 +52,34 @@ impl EmittedNodes {
             EmittedSlot::Statement(id) => self.statements.get(id.0 as usize),
             EmittedSlot::Expression(_) => None,
         }
+    }
+
+    /// The facts the check recorded at the occurrence `at`: its node's when
+    /// one holds it, its detached record otherwise.
+    pub fn facts(&self, at: &SourceSpan) -> Option<&NodeFacts> {
+        match self.index.get(at) {
+            Some(EmittedSlot::Statement(id)) => {
+                self.statements.get(id.0 as usize)?.facts.as_deref()
+            }
+            Some(EmittedSlot::Expression(id)) => {
+                self.expressions.get(id.0 as usize)?.facts.as_deref()
+            }
+            None => self.detached.get(at),
+        }
+    }
+
+    /// Every record the check left, by occurrence: the statements' facts,
+    /// then the expressions', then the detached records.
+    pub fn records(&self) -> impl Iterator<Item = (&SourceSpan, &NodeFacts)> {
+        self.statements
+            .iter()
+            .filter_map(|node| Some((&node.at, node.facts.as_deref()?)))
+            .chain(
+                self.expressions
+                    .iter()
+                    .filter_map(|node| Some((&node.at, node.facts.as_deref()?))),
+            )
+            .chain(&self.detached)
     }
 }
 
@@ -66,6 +99,9 @@ pub struct EmittedExpr {
     /// A comprehension's clauses' written loop targets, `None` for an `if`
     /// clause: the occurrence a target's desugar is keyed by.
     pub loop_targets: Vec<Option<SourceSpan>>,
+    /// The facts the check set on the node, as attributes on an op; `None`
+    /// where it set none.
+    pub facts: Option<Box<NodeFacts>>,
 }
 
 /// One emitted statement node.
@@ -80,6 +116,8 @@ pub struct EmittedStmt {
     /// A `for` statement's written loop target: the occurrence its
     /// desugar is keyed by.
     pub loop_target: Option<SourceSpan>,
+    /// As [`EmittedExpr::facts`].
+    pub facts: Option<Box<NodeFacts>>,
 }
 
 /// One desugar the check made: the nodes of the statements that replace
@@ -101,7 +139,7 @@ pub enum EmittedSlot {
 /// The occurrences the seal found no emitted node or op for: how many,
 /// and the first whose location it knew.
 #[derive(Debug, Default)]
-pub(crate) struct Unsealed {
+pub struct Unsealed {
     pub(crate) count: u64,
     pub(crate) first: Option<SourceSpan>,
 }

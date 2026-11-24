@@ -89,10 +89,10 @@ pub fn check_program_in(
     context: &mut CheckContext,
 ) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
     let _closure_traits = mojito_types::closure_trait::ClosureTraits::install();
-    let discovery = check_program_carrying(stmts, context).map(PassCarry::into_result)?;
+    let handoff = check_program_carrying(stmts, context)?;
     let _arena = timing::span("arena");
     timing::count("arena_builds", 1);
-    mojito_checked::checked::CheckedProgram::new(discovery).map_err(TypeError::InvariantViolation)
+    handoff.into_program()
 }
 
 /// The per-compilation state one check runs in.
@@ -175,8 +175,8 @@ impl Default for CheckContext {
     }
 }
 
-/// [`check_program_in`]'s passes, returning the last pass's
-/// carry.
+/// [`check_program_in`]'s passes, returning the final pass's checked
+/// handoff.
 ///
 /// Each transfer pass after the first starts from the previous pass's
 /// committed effect maps and serves every body site whose effect reads are
@@ -184,7 +184,7 @@ impl Default for CheckContext {
 fn check_program_carrying(
     stmts: &[Stmt],
     context: &mut CheckContext,
-) -> Result<PassCarry, TypeError> {
+) -> Result<HandoffStores, TypeError> {
     // Two-phase transfer effects: a call site checked before its callee's
     // body only sees effects already committed, so the check reruns — seeded
     // with the prior round's committed map — whenever some call site
@@ -268,11 +268,7 @@ fn check_program_carrying(
                 callable,
             });
         }
-        previous = Some(checker.into_carry(
-            Vec::new(),
-            HashMap::new(),
-            mojito_checked::checked::ConformanceFacts::default(),
-        ));
+        previous = Some(checker.into_carry());
     };
     // A package build exports its interfaces; an importer's check exports
     // nothing.
@@ -298,7 +294,7 @@ fn check_program_carrying(
         checker.conformance_facts()
     };
     let _carry = timing::span("carry");
-    Ok(checker.into_carry(expanded, explicit_destroy_types, conformances))
+    Ok(checker.into_handoff(expanded, explicit_destroy_types, conformances))
 }
 
 mod argument_memo;
@@ -315,7 +311,7 @@ mod node_facts;
 pub use interface::{DeclarationInterfaces, InstalledInterfaces, InterfaceExport};
 mod overload_support;
 mod probe;
-pub use body_carry::PassCarry;
+use body_carry::{HandoffStores, PassCarry};
 pub use overload_support::is_bundled_module_source;
 mod trait_defaults;
 mod traits_support;

@@ -2930,22 +2930,27 @@ whole-handoff entry phase tests and direct clients use, in a default
 compilation's context (its `ParamContext`, the body-fact carry switch, and
 the requirement defaults bound at calls through a bound), which runs every
 rejecting check — the transfer-effect fixpoint, reference-result reads,
-context-manager splicing, explicit destruction — and then assembles the
-checked tables. The check hands `CheckedProgram::new` a `DiscoveryResult`,
-its internal input: the nodes the check emitted, its desugars by node, and
-its facts as one `NodeFacts` record per occurrence, as an op holds its
-attributes, beside its declaration-site tables (annotation types, generic
-parameters, declaration effects) and its struct instantiations. A
-`DiscoveryResult` is not executable, never reaches HIR or MIR, and no
-client reads it. `CheckedProgram` holds no syntax: it is the checked
-nodes, the site facts, and the declaration-level tables. Its declarations
+context-manager splicing, explicit destruction — and then seals its own
+module, as upstream's parser finishes the module it emitted: the final
+pass's `HandoffStores` (`Checker::into_handoff`) seals the emitted nodes,
+each holding its facts as one `NodeFacts` record, as an op holds its
+attributes, into the checked tables and declares them
+(`HandoffStores::into_program`, calling `emitted::seal`).
+`CheckedProgram::new` then takes the sealed tables beside the
+`DeclarationSites` they were sealed with (annotation types, generic
+parameters, declaration effects, declaration symbols), an
+`OccurrenceIndex` (the warnings and the span-keyed per-occurrence
+lookups), and the `DeclarationTables` (the program-level tables); it
+infers and composes nothing. `CheckedProgram` holds no syntax: it is the
+checked nodes, the site facts, and the declaration-level tables. Its declarations
 are made by a walk over the statement nodes (`CheckedTables::declare`),
 each declaring node naming its own, and a `def`'s explicit captures are
 its op's (`CheckedDef::captures`), as upstream's closure op holds its
 captured values.
 
-The passes of one check hand each other a `PassCarry`: the pass's fact
-stores, one record per body site, and its binding-identity watermark. The
+The stale passes of one check hand the next a `PassCarry`: the pass's
+fact stores, one record per body site, and its binding-identity
+watermark. The
 checker sets each fact on its occurrence's emitted node
 (`Checker::record_at`, `checker/node_facts.rs`), as upstream's emitter
 sets an attribute on an op it already made: the `Emitter`
@@ -2967,12 +2972,13 @@ walk-ordered candidates its lifted applications are chosen from
 (`mojito_checked::emitted`). A detached record holds an occurrence no node
 holds — a pattern, a destructuring target, a derived occurrence no arena
 node is, or one written before its statement is entered, which moves onto
-the node when the statement is. The handoff reads the records out, less
-any a cleared fact left empty (`Emitter::into_parts`, from `body_carry.rs`'s
-`HandoffStores::into_discovery`), with the check's desugars by node, each
+the node when the statement is. The handoff moves the nodes out, each
+with its facts, and the detached records, less any record a cleared fact
+left empty (`Emitter::into_nodes`, from `body_carry.rs`'s
+`HandoffStores::into_program`), with the check's desugars by node, each
 `for` statement and comprehension clause holding its written target's
-occurrence, and `CheckedProgram::new` seals the emitted nodes into the
-checked tables (`emitted::seal`), as upstream's emitter leaves each op
+occurrence, and seals them into the checked tables (`emitted::seal`),
+as upstream's emitter leaves each op
 final: the seal composes each node's op with its facts and its
 declaration's sites (a call's parameters as its binder laid them out, a
 subscript's key, a type value's type, a symbol and signature, a match's
@@ -2987,8 +2993,8 @@ occurrence, such as a destructuring target's leaf, which `Seal::target`
 reads by span (R2569); the `SpelledConstruction` and `MatchPlan` facts,
 whose construction, tests, and declarations the seal finds by span
 (R2570); and the roots, found by the spans of the spliced root statements
-and of each `CheckedDefaultWrapper::body`, which `CheckedProgram::new`
-empties once sealed (R2571). `explicit_destroy` also still walks the
+and of each `CheckedDefaultWrapper::body`, which the seal empties
+(R2571). `explicit_destroy` also still walks the
 spliced syntax with span-keyed facts (R751). An overload
 candidate — of a free call or of an overloaded function value — is
 checked inside `Checker::probe` (`checker/probe.rs`): every store

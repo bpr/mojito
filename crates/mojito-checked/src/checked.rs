@@ -4516,7 +4516,7 @@ impl CheckedTables {
     /// statement naming its own: in source preorder, the lambdas of a
     /// statement's own expressions before it, and a declaration before the
     /// ones its bodies make. A function's type is `function_ty`'s.
-    fn declare(&mut self, function_ty: &dyn Fn(&CheckedStmt) -> Option<Ty>) {
+    pub(crate) fn declare(&mut self, function_ty: &dyn Fn(&CheckedStmt) -> Option<Ty>) {
         let mut declarer = Declarer {
             tables: self,
             function_ty,
@@ -4914,11 +4914,10 @@ pub struct CheckedDefaultWrapper {
     /// Its default's `/` and `*` markers, as indexes into `params`.
     pub positional_only: Option<usize>,
     pub keyword_only: Option<usize>,
-    /// Its checked signature, read from its member sites when the program
-    /// is assembled.
+    /// Its checked signature, read from its member sites by the seal.
     pub signature: CheckedSignature,
     /// The check's syntax of the body, which the seal finds the body's
-    /// root nodes by; [`CheckedProgram::new`] empties it once sealed, as a
+    /// root nodes by and empties once sealed, as a
     /// package unit never holds it: its nodes are the
     /// [`CheckedTables::wrapper_roots`].
     #[serde(skip)]
@@ -4983,24 +4982,10 @@ impl mojito_ast::ast::DeclaredParam for SignatureParam {
     }
 }
 
-/// What one check of an elaborated program established, before the executable
-/// handoff is assembled.
-///
-/// It is [`CheckedProgram::new`]'s input alone: the nodes the check
-/// emitted, the check's facts, one record per occurrence ([`NodeFacts`]),
-/// and the root syntax the seal finds the root nodes by, beside its
-/// declaration-site tables. Every rejecting check has already run. It is
-/// not an executable program and never reaches HIR or MIR.
+/// The program-level tables the check established beside its nodes:
+/// [`CheckedProgram::new`]'s declaration-level input.
 #[derive(Debug, Clone)]
-pub struct DiscoveryResult {
-    pub statements: Vec<Stmt>,
-    /// Every fact the check recorded at an occurrence, one record per
-    /// occurrence.
-    pub node_facts: HashMap<SourceSpan, NodeFacts>,
-    pub struct_instantiations: Vec<StructInstantiation>,
-    pub checked_types: HashMap<AnnotationSite, Ty>,
-    pub generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
-    pub declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
+pub struct DeclarationTables {
     pub explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     /// Each struct's named destructors (`deinit self` methods), by struct,
     /// beside whether each raises; a struct declaring none has no entry.
@@ -5019,17 +5004,90 @@ pub struct DiscoveryResult {
     /// The module integer constants the check folded: its own, and an
     /// imported package's, answered from the package's declarations.
     pub constants: Arc<crate::package::ProgramConstants>,
-    /// Every inherited trait default's wrapper the check built.
+    /// Every inherited trait default's wrapper the check built, its
+    /// signature set and its body taken by the seal.
     pub default_wrappers: Vec<CheckedDefaultWrapper>,
     /// Every trait default the check checked as its trait's member.
     pub trait_members: Vec<CheckedTraitMember>,
-    /// The symbol each overloaded module `def` lowers to, as the check
-    /// spelled it from the declaration's typed signature.
-    pub declaration_symbols: HashMap<GenericSite, String>,
-    /// The check's emitted nodes, each holding its op, and the check's
-    /// desugars by node: what [`CheckedProgram::new`] seals into the
-    /// checked tables.
-    pub emitted: crate::emitted::EmittedNodes,
+}
+
+/// The per-occurrence lookups a checked program keeps beside its nodes.
+#[derive(Debug, Clone, Default)]
+pub struct OccurrenceIndex {
+    /// Every warning the check recorded, in source order.
+    warnings: Vec<Warning>,
+    overload_targets: HashMap<SourceSpan, String>,
+    generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
+    method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
+    implicit_conversions: HashMap<SourceSpan, String>,
+    implicit_conversion_types: HashMap<SourceSpan, Ty>,
+    struct_instantiations: Vec<StructInstantiation>,
+}
+
+impl OccurrenceIndex {
+    /// The lookups read from the records the check left on its `emitted`
+    /// nodes and detached, beside the `struct_instantiations` it reached.
+    pub fn recorded(
+        emitted: &crate::emitted::EmittedNodes,
+        struct_instantiations: Vec<StructInstantiation>,
+    ) -> Self {
+        // Each statement's warnings in the order the check emitted them, the
+        // statements in source order: an enclosing `match`'s come before a
+        // nested one's, as upstream emits them.
+        let mut warned: Vec<(&SourceSpan, &Vec<Warning>)> = emitted
+            .records()
+            .filter_map(|(at, facts)| Some((at, facts.match_warnings.as_ref()?)))
+            .collect();
+        warned.sort_by_key(|(at, _)| (&at.source, at.span, at.syntax.map(|syntax| syntax.0)));
+        Self {
+            warnings: warned
+                .into_iter()
+                .flat_map(|(_, warnings)| warnings.iter().cloned())
+                .collect(),
+            overload_targets: fact_index(emitted, |facts| facts.overload_target.as_ref()),
+            generic_instantiations: fact_index(emitted, |facts| {
+                facts.generic_instantiation.as_ref()
+            }),
+            method_instantiations: fact_index(emitted, |facts| facts.method_instantiation.as_ref()),
+            implicit_conversions: fact_index(emitted, |facts| facts.implicit_conversion.as_ref()),
+            implicit_conversion_types: fact_index(emitted, |facts| {
+                facts.implicit_conversion_type.as_ref()
+            }),
+            struct_instantiations,
+        }
+    }
+
+    /// The location lookups read from the adjustments of `tables`' nodes,
+    /// as a package unit holds them; the instantiation lookups, which only
+    /// whole-program passes read, are empty.
+    pub(crate) fn installed(tables: &CheckedTables) -> Self {
+        let mut index = Self::default();
+        for node in &tables.expressions {
+            let location = node.location();
+            for adjustment in &node.adjustments {
+                match adjustment {
+                    SemanticAdjustment::ResolveCallable(target) => {
+                        index
+                            .overload_targets
+                            .insert(location.clone(), target.clone());
+                    }
+                    SemanticAdjustment::ImplicitConversion(target)
+                    | SemanticAdjustment::IndexNormalization { target } => {
+                        index
+                            .implicit_conversions
+                            .insert(location.clone(), target.clone());
+                    }
+                    SemanticAdjustment::ConversionResultType(ty) => {
+                        index
+                            .implicit_conversion_types
+                            .insert(location.clone(), ty.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        index
+    }
 }
 
 /// A successfully checked program plus semantic facts that downstream phases
@@ -5445,117 +5503,19 @@ impl CheckedProgram {
         &self.warnings
     }
 
-    /// The single checker-to-checked-boundary assembly point: the checked
-    /// tables sealed from the nodes the check emitted, and the program's
-    /// indexes, built from what `discovery` recorded. Nothing is inferred
-    /// again; an occurrence the check emitted no node for is an error,
-    /// with the first such occurrence named.
-    pub fn new(discovery: DiscoveryResult) -> Result<Self, String> {
-        let DiscoveryResult {
-            statements,
-            node_facts,
-            struct_instantiations,
-            checked_types,
-            generic_parameters,
-            declaration_effects,
-            explicit_destroy_types,
-            struct_destructors,
-            provided_defaults,
-            struct_modules,
-            conformances,
-            overloads,
-            constants,
-            mut default_wrappers,
-            trait_members,
-            declaration_symbols,
-            emitted,
-        } = discovery;
-        // Each statement's warnings in the order the check emitted them, the
-        // statements in source order: an enclosing `match`'s come before a
-        // nested one's, as upstream emits them.
-        let mut warned: Vec<(&SourceSpan, &Vec<Warning>)> = node_facts
-            .iter()
-            .filter_map(|(at, facts)| Some((at, facts.match_warnings.as_ref()?)))
-            .collect();
-        warned.sort_by_key(|(at, _)| (&at.source, at.span, at.syntax.map(|syntax| syntax.0)));
-        let warnings: Vec<Warning> = warned
-            .into_iter()
-            .flat_map(|(_, warnings)| warnings.iter().cloned())
-            .collect();
-        let expressions_span = mojito_common::timing::span("expressions");
-        let signatures = Signatures {
-            checked_types: &checked_types,
-            generic_parameters: &generic_parameters,
-            declaration_effects: &declaration_effects,
-            fieldwise_conventions: &conformances.fieldwise_conventions,
-            fieldwise_ref_params: &conformances.fieldwise_ref_params,
-            declaration_symbols: &declaration_symbols,
-        };
-        for wrapper in &mut default_wrappers {
-            wrapper.signature = signatures.method(
-                wrapper.module.as_ref(),
-                &wrapper.declaration,
-                wrapper.method_index,
-                wrapper.params.len(),
-            );
-        }
-        let mut tables = crate::emitted::seal(
-            &emitted,
-            &statements,
-            &default_wrappers,
-            &node_facts,
-            signatures,
-        )
-        .map_err(|unsealed| unsealed.to_string())?;
-        for wrapper in &mut default_wrappers {
-            wrapper.body = Vec::new();
-        }
-        drop(expressions_span);
-        let declarations_span = mojito_common::timing::span("declarations");
-        tables.declare(&|node| {
-            checked_types
-                .get(&AnnotationSite::FunctionType {
-                    module: node.module.clone(),
-                    declaration: node.span,
-                    syntax: node.syntax_id,
-                })
-                .cloned()
-        });
-        drop(declarations_span);
-        let mut program = Self {
-            warnings,
-            compatibility_overload_targets: fact_index(&node_facts, |facts| {
-                facts.overload_target.as_ref()
-            }),
-            generic_instantiations: fact_index(&node_facts, |facts| {
-                facts.generic_instantiation.as_ref()
-            }),
-            method_instantiations: fact_index(&node_facts, |facts| {
-                facts.method_instantiation.as_ref()
-            }),
-            struct_instantiations,
-            compatibility_implicit_conversions: fact_index(&node_facts, |facts| {
-                facts.implicit_conversion.as_ref()
-            }),
-            implicit_conversion_types: fact_index(&node_facts, |facts| {
-                facts.implicit_conversion_type.as_ref()
-            }),
-            checked_types,
-            generic_parameters,
-            tables: Arc::new(tables),
-            explicit_destroy_types,
-            struct_destructors,
-            provided_defaults,
-            struct_modules,
-            conformances,
-            declaration_effects,
-            overloads,
-            constants,
-            default_wrappers,
-            trait_members,
-        };
+    /// The module the check sealed: its checked `tables`, already
+    /// declared, beside the declaration `sites` they were sealed with, the
+    /// `occurrences` lookups, and the `declarations` tables. Nothing is
+    /// inferred or composed again.
+    pub fn new(
+        tables: CheckedTables,
+        sites: DeclarationSites,
+        occurrences: OccurrenceIndex,
+        declarations: DeclarationTables,
+    ) -> Self {
+        let mut program = Self::assembled(tables, sites, occurrences, declarations);
         program.collect_closure_uses();
-        Ok(program)
+        program
     }
 
     /// The program of one package unit: its checked `tables` as the
@@ -5570,60 +5530,29 @@ impl CheckedProgram {
     /// passes read, are empty.
     pub fn installed(
         tables: CheckedTables,
-        sites: InstalledSites,
+        sites: DeclarationSites,
         overloads: Arc<crate::package::ProgramOverloads>,
         constants: Arc<crate::package::ProgramConstants>,
         wrapper: Option<CheckedDefaultWrapper>,
     ) -> Self {
         let tables = tables.reindexed();
-        let mut overload_targets = HashMap::new();
-        let mut implicit_conversions = HashMap::new();
-        let mut implicit_conversion_types = HashMap::new();
-        for node in &tables.expressions {
-            let location = node.location();
-            for adjustment in &node.adjustments {
-                match adjustment {
-                    SemanticAdjustment::ResolveCallable(target) => {
-                        overload_targets.insert(location.clone(), target.clone());
-                    }
-                    SemanticAdjustment::ImplicitConversion(target)
-                    | SemanticAdjustment::IndexNormalization { target } => {
-                        implicit_conversions.insert(location.clone(), target.clone());
-                    }
-                    SemanticAdjustment::ConversionResultType(ty) => {
-                        implicit_conversion_types.insert(location.clone(), ty.clone());
-                    }
-                    _ => {}
-                }
-            }
-        }
-        let InstalledSites {
-            checked_types,
-            generic_parameters,
-            declaration_effects,
-        } = sites;
-        Self {
-            warnings: Vec::new(),
-            compatibility_overload_targets: overload_targets,
-            generic_instantiations: HashMap::new(),
-            method_instantiations: HashMap::new(),
-            struct_instantiations: Vec::new(),
-            compatibility_implicit_conversions: implicit_conversions,
-            implicit_conversion_types,
-            checked_types,
-            generic_parameters,
-            tables: Arc::new(tables),
-            explicit_destroy_types: HashMap::new(),
-            struct_destructors: HashMap::new(),
-            provided_defaults: HashMap::new(),
-            struct_modules: HashMap::new(),
-            conformances: ConformanceFacts::default(),
-            declaration_effects,
-            overloads,
-            constants,
-            default_wrappers: wrapper.into_iter().collect(),
-            trait_members: Vec::new(),
-        }
+        let occurrences = OccurrenceIndex::installed(&tables);
+        Self::assembled(
+            tables,
+            sites,
+            occurrences,
+            DeclarationTables {
+                explicit_destroy_types: HashMap::new(),
+                struct_destructors: HashMap::new(),
+                provided_defaults: HashMap::new(),
+                struct_modules: HashMap::new(),
+                conformances: ConformanceFacts::default(),
+                overloads,
+                constants,
+                default_wrappers: wrapper.into_iter().collect(),
+                trait_members: Vec::new(),
+            },
+        )
     }
 
     /// The wrapper of every trait default a struct of the program inherits
@@ -5799,15 +5728,78 @@ impl CheckedProgram {
     pub(crate) const fn declaration_effects(&self) -> &HashMap<AnnotationSite, DeclarationEffect> {
         &self.declaration_effects
     }
+
+    /// The program of `tables` and its tables beside them, laid out flat.
+    fn assembled(
+        tables: CheckedTables,
+        sites: DeclarationSites,
+        occurrences: OccurrenceIndex,
+        declarations: DeclarationTables,
+    ) -> Self {
+        let DeclarationSites {
+            checked_types,
+            generic_parameters,
+            declaration_effects,
+            declaration_symbols: _,
+        } = sites;
+        let OccurrenceIndex {
+            warnings,
+            overload_targets,
+            generic_instantiations,
+            method_instantiations,
+            implicit_conversions,
+            implicit_conversion_types,
+            struct_instantiations,
+        } = occurrences;
+        let DeclarationTables {
+            explicit_destroy_types,
+            struct_destructors,
+            provided_defaults,
+            struct_modules,
+            conformances,
+            overloads,
+            constants,
+            default_wrappers,
+            trait_members,
+        } = declarations;
+        Self {
+            warnings,
+            compatibility_overload_targets: overload_targets,
+            generic_instantiations,
+            method_instantiations,
+            struct_instantiations,
+            compatibility_implicit_conversions: implicit_conversions,
+            implicit_conversion_types,
+            checked_types,
+            generic_parameters,
+            tables: Arc::new(tables),
+            explicit_destroy_types,
+            struct_destructors,
+            provided_defaults,
+            struct_modules,
+            conformances,
+            declaration_effects,
+            overloads,
+            constants,
+            default_wrappers,
+            trait_members,
+        }
+    }
 }
 
-/// The declaration-site facts a package unit's program is installed with
-/// ([`CheckedProgram::installed`]).
+/// The declaration-site tables a checked program reads: the whole
+/// program's, which the seal reads its declarations' signatures from, or a
+/// package unit's rows ([`CheckedProgram::installed`]).
 #[derive(Debug, Default)]
-pub struct InstalledSites {
+pub struct DeclarationSites {
     pub checked_types: HashMap<AnnotationSite, Ty>,
     pub generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
     pub declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
+    /// The symbol each overloaded module `def` lowers to, as the check
+    /// spelled it from the declaration's typed signature: what the seal
+    /// names the declaration's op by. A package unit's nodes already hold
+    /// theirs, so its sites have none.
+    pub declaration_symbols: HashMap<GenericSite, String>,
 }
 
 /// How a struct member's unit holds the struct it is a member of: as
@@ -6705,13 +6697,13 @@ pub fn materialized_borrow_owner(
     })
 }
 
-/// One fact of every occurrence that holds it, by occurrence.
+/// One fact of every occurrence of `emitted` that holds it, by occurrence.
 fn fact_index<V: Clone>(
-    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    emitted: &crate::emitted::EmittedNodes,
     fact: impl Fn(&NodeFacts) -> Option<&V>,
 ) -> HashMap<SourceSpan, V> {
-    node_facts
-        .iter()
+    emitted
+        .records()
         .filter_map(|(span, facts)| Some((span.clone(), fact(facts)?.clone())))
         .collect()
 }

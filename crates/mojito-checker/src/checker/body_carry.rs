@@ -23,11 +23,12 @@ use super::emit::{EmitMark, Emitter};
 use crate::explicit_destroy::CheckedDeletability;
 use mojito_ast::ast::Stmt;
 use mojito_checked::checked::{
-    AnnotationSite, CallThroughEffect, CheckedDefaultWrapper, CheckedTraitMember, ConformanceFacts,
-    DeclarationEffect, DiscoveryResult, ExplicitDestroyInfo, GenericSite, StructInstantiation,
-    TransferEffect,
+    AnnotationSite, CallThroughEffect, CheckedDefaultWrapper, CheckedProgram, CheckedTraitMember,
+    ConformanceFacts, DeclarationEffect, DeclarationSites, DeclarationTables, ExplicitDestroyInfo,
+    GenericSite, OccurrenceIndex, StructInstantiation, TransferEffect,
 };
 use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
+use mojito_common::error::TypeError;
 use mojito_common::timing;
 use mojito_common::token::SourceSpan;
 use mojito_types::origin::OwnerId;
@@ -37,8 +38,8 @@ use std::hash::Hash;
 use std::ops::Range;
 use std::sync::Arc;
 
-/// What one checker pass leaves for the next: its fact stores, one record
-/// per body site, and the owner-id watermark.
+/// What a stale checker pass leaves for the next: its fact stores, one
+/// record per body site, and the owner-id watermark.
 #[derive(Debug)]
 pub struct PassCarry {
     result: HandoffStores,
@@ -51,11 +52,6 @@ pub struct PassCarry {
 }
 
 impl PassCarry {
-    pub fn into_result(self) -> DiscoveryResult {
-        self.result
-            .into_discovery(&self.internal.statement_desugars)
-    }
-
     /// The committed effect maps, the next pass's seeds.
     pub(crate) fn seeds(
         &self,
@@ -156,12 +152,14 @@ pub struct InternalStores {
     deletability: CheckedDeletability,
 }
 
-/// The checked handoff's stores, each logged as a body writes it: one
-/// record per occurrence and the four keyed by declaration, beside what the
-/// pass established with them.
+/// The checked handoff's stores, each logged as a body writes it: the
+/// emitted nodes with their records and the four keyed by declaration,
+/// beside what the pass established with them. The final pass's also holds
+/// the roots the seal reaches its root nodes by and the check's desugars.
 #[derive(Debug)]
 pub struct HandoffStores {
-    statements: Vec<Stmt>,
+    roots: Vec<Stmt>,
+    desugars: HashMap<SourceSpan, super::desugar::StatementDesugar>,
     emitter: Emitter,
     struct_instantiations: FactVec<StructInstantiation>,
     checked_types: FactMap<AnnotationSite, Ty>,
@@ -180,34 +178,47 @@ pub struct HandoffStores {
 }
 
 impl HandoffStores {
-    /// The checked handoff: the occurrence records, less any a cleared
-    /// fact left empty, and the emitted nodes, holding the check's
-    /// `desugars` by node.
-    fn into_discovery(
-        self,
-        desugars: &HashMap<SourceSpan, super::desugar::StatementDesugar>,
-    ) -> DiscoveryResult {
-        let (node_facts, mut emitted) = self.emitter.into_parts();
-        emitted.desugars = emitted_desugars(&emitted.index, desugars);
-        DiscoveryResult {
-            statements: self.statements,
-            node_facts,
-            emitted,
-            struct_instantiations: self.struct_instantiations.into_inner(),
+    /// The checked program: the emitted nodes, each holding its facts,
+    /// with the check's desugars by node, sealed into the checked tables
+    /// and declared, beside the declaration-level tables. An occurrence the
+    /// check emitted no node for is an invariant violation, the first such
+    /// occurrence named.
+    pub(crate) fn into_program(self) -> Result<CheckedProgram, TypeError> {
+        let mut emitted = self.emitter.into_nodes();
+        emitted.desugars = emitted_desugars(&emitted.index, &self.desugars);
+        let sites = DeclarationSites {
             checked_types: self.checked_types.into_inner(),
             generic_parameters: self.generic_parameters.into_inner(),
             declaration_effects: self.declaration_effects.into_inner(),
-            explicit_destroy_types: self.explicit_destroy_types,
-            struct_destructors: self.struct_destructors,
-            provided_defaults: self.provided_defaults,
-            struct_modules: self.struct_modules,
-            conformances: self.conformances,
-            overloads: self.overloads,
-            constants: self.constants,
-            default_wrappers: self.default_wrappers,
-            trait_members: self.trait_members,
             declaration_symbols: self.declaration_symbols,
-        }
+        };
+        let mut default_wrappers = self.default_wrappers;
+        let tables = mojito_checked::emitted::seal(
+            &emitted,
+            &self.roots,
+            &mut default_wrappers,
+            &sites,
+            &self.conformances,
+        )
+        .map_err(|unsealed| TypeError::InvariantViolation(unsealed.to_string()))?;
+        let occurrences =
+            OccurrenceIndex::recorded(&emitted, self.struct_instantiations.into_inner());
+        Ok(CheckedProgram::new(
+            tables,
+            sites,
+            occurrences,
+            DeclarationTables {
+                explicit_destroy_types: self.explicit_destroy_types,
+                struct_destructors: self.struct_destructors,
+                provided_defaults: self.provided_defaults,
+                struct_modules: self.struct_modules,
+                conformances: self.conformances,
+                overloads: self.overloads,
+                constants: self.constants,
+                default_wrappers,
+                trait_members: self.trait_members,
+            },
+        ))
     }
 }
 
@@ -348,27 +359,9 @@ macro_rules! define_carry_ops {
                 );
             }
 
-            /// Move this pass's facts into a carry, with `statements` as
-            /// the checked tree and `explicit_destroy_types` as the
-            /// destruction facts the pass established (empty for a pass
-            /// that stopped at the transfer fixpoint), and `conformances`
-            /// as the conformance facts later phases decide a `where`
-            /// clause from.
-            pub(crate) fn into_carry(
-                self,
-                statements: Vec<Stmt>,
-                explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
-                conformances: mojito_checked::checked::ConformanceFacts,
-            ) -> PassCarry {
-                self.record_lifted_applications();
-                let trait_members = self.checked_trait_members();
-                let result = HandoffStores {
-                    statements,
-                    trait_members,
-                    explicit_destroy_types,
-                    conformances,
-                    ..carried_result(&self)
-                };
+            /// Move a stale pass's facts into a carry for the next pass.
+            pub(crate) fn into_carry(self) -> PassCarry {
+                let result = carried_result(&self);
                 let internal = InternalStores {
                     transfer_effects: self.transfer_effects.into_inner(),
                     call_through_effects: self.call_through_effects.into_inner(),
@@ -412,6 +405,25 @@ macro_rules! define_carry_ops {
 carried_stores!(define_carry_ops);
 
 impl Checker {
+    /// Move the final pass's facts into the checked handoff, with `roots`
+    /// as the checked tree, `explicit_destroy_types` as the destruction
+    /// facts the pass established, and `conformances` as the conformance
+    /// facts later phases decide a `where` clause from.
+    pub(crate) fn into_handoff(
+        self,
+        roots: Vec<Stmt>,
+        explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+        conformances: ConformanceFacts,
+    ) -> HandoffStores {
+        HandoffStores {
+            roots,
+            desugars: self.statement_desugars.take().into_inner(),
+            explicit_destroy_types,
+            conformances,
+            ..carried_result(&self)
+        }
+    }
+
     /// Record that the body being checked read `callee`'s effect entry.
     pub(super) fn note_body_effect_read(&self, callee: &str, observed: ObservedEffects) {
         if let Some(reads) = self.site_reads.borrow_mut().as_mut() {
@@ -566,11 +578,14 @@ impl Checker {
     }
 }
 
-/// The checked-handoff fields of a checker, moved out; the two the carry
-/// sets itself are defaulted here and overwritten by the caller.
+/// The checked-handoff fields of a checker, moved out once its lifted
+/// applications are recorded; the roots, the desugars, and the facts only
+/// the final pass establishes are empty here.
 fn carried_result(checker: &Checker) -> HandoffStores {
+    checker.record_lifted_applications();
     HandoffStores {
-        statements: Vec::new(),
+        roots: Vec::new(),
+        desugars: HashMap::new(),
         explicit_destroy_types: HashMap::new(),
         struct_destructors: checker
             .structs
@@ -601,7 +616,7 @@ fn carried_result(checker: &Checker) -> HandoffStores {
         generic_parameters: checker.generic_parameters.take(),
         declaration_effects: checker.declaration_effects.take(),
         default_wrappers: checker.checked_default_wrappers(),
-        trait_members: Vec::new(),
+        trait_members: checker.checked_trait_members(),
         declaration_symbols: checker.declaration_symbols.take(),
     }
 }
