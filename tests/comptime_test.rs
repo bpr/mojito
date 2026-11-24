@@ -1645,24 +1645,35 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
         spelled.len(),
         "after the spelled methods"
     );
-    let [statement] = wrapper.body.as_slice() else {
-        panic!("the wrapper is one statement: {:?}", wrapper.body);
+    let tables = compiled.checked().tables();
+    let [statement] = tables.wrapper_roots(0) else {
+        panic!(
+            "the wrapper is one statement: {:?}",
+            tables.wrapper_roots(0)
+        );
     };
-    let mojito::ast::StmtKind::Return(Some(call)) = &statement.kind else {
-        panic!("the wrapper returns the call: {statement:?}");
+    let statement = tables.statement(*statement).expect("a sealed statement");
+    let mojito::checked::CheckedStmtOp::Return(Some(call)) = &statement.op else {
+        panic!("the wrapper returns the call: {:?}", statement.op);
     };
-    let mojito::ast::ExprKind::MethodCall {
+    let call = tables.expression(*call).expect("a sealed expression");
+    let mojito::checked::CheckedOp::MethodCall {
         object,
         method,
         args,
         ..
-    } = &call.kind
+    } = &call.op
     else {
-        panic!("the wrapper calls the default on its receiver: {call:?}");
+        panic!(
+            "the wrapper calls the default on its receiver: {:?}",
+            call.op
+        );
     };
+    let object = tables.expression(*object).expect("a sealed expression");
     assert!(
-        matches!(&object.kind, mojito::ast::ExprKind::Identifier(name) if name == "self"),
-        "{object:?}"
+        matches!(&object.op, mojito::checked::CheckedOp::Identifier(name) if name == "self"),
+        "{:?}",
+        object.op
     );
     assert_eq!(method, "T.d");
     assert_eq!(args.len(), 1);
