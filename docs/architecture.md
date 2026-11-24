@@ -2978,10 +2978,18 @@ walk-ordered candidates its lifted applications are chosen from
 leaves' bindings in its target's pre-order, and a `case` condition's plan
 sits on its value, the operand its op names, as an upstream op holds its
 results' attributes. A record written before its statement is entered is
-pending and moves onto the node when the statement is; what is still
-pending when the check ends is syntax the check typed only to evaluate it,
-its result folded into an attribute of the op that holds it, and the
-handoff discards it, so every fact handed off sits on a node. The handoff
+pending and moves onto the node when the statement is. Syntax the check
+types only to evaluate it (a compile-time operator's dunder call, an
+origin alias's construction, a `rebind` target, a slice subscript's
+spelled literal construction) is typed inside an evaluation
+(`Checker::evaluating`), as upstream's parameter evaluator emits
+speculatively, reads the callee and type off the ops it emitted, folds
+them into an attribute, and erases them: the evaluation erases every
+record it created on syntax no node holds, and the check reads the
+callee off the record before then (`run_time_typing`). What is still
+pending when the check ends is on syntax a site typed only to evaluate it
+outside an evaluation; the handoff discards it, and `--timings` counts it
+(`emit.discarded_records`), so every fact handed off sits on a node. The handoff
 moves the nodes out, each with its facts, less any record a cleared fact
 left empty (`Emitter::into_nodes`, from `body_carry.rs`'s
 `HandoffStores::into_program`), with the check's desugars by node, each

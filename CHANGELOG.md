@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Syntax the check types only to evaluate it is typed inside an
+  evaluation that erases its records, as upstream's parameter evaluator
+  erases the ops it emitted speculatively (R2573). `Checker::evaluating`
+  wraps a compile-time call's run-time typing (`run_time_typing`, which
+  now returns the callee it resolved), an origin alias's construction, a
+  slice subscript's selection, a `rebind` target's denotation, a
+  compile-time value's type, and a staged `SIMD` construction. A slice
+  literal's stand-in takes no argument fact, a lifted application no node
+  holds takes no adjustment, and a `comptime match` condition the plan
+  drops or refreshes is erased (`Emitter::discard_unheld`). std's
+  `emit.discarded_records` goes from 157 to 0. No accepted program,
+  output, or warning changes, and the std package is byte-identical, so
+  the package format does not move. A fixture's MIR text may renumber its
+  owner ids (`$vN`).
+
 - `CheckedProgram` keeps no span-keyed copy of a node's facts, as
   upstream's op holds its attributes (R2572). `OccurrenceIndex` holds only
   the warnings; the `overload_targets`, `generic_instantiations`,

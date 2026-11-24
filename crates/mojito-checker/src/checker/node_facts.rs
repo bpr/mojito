@@ -5,7 +5,8 @@
 //!
 //! Every write goes through the emitter, which logs and journals it, so a
 //! body site's records are carried and a probe's are undone as any other
-//! fact store's entries are.
+//! fact store's entries are. Syntax typed only to evaluate it is typed
+//! inside [`Checker::evaluating`], which erases its records afterwards.
 
 use super::Checker;
 use mojito_checked::checked::NodeFacts;
@@ -13,6 +14,22 @@ use mojito_common::token::SourceSpan;
 use std::cell::RefMut;
 
 impl Checker {
+    /// Run `evaluate`, typing syntax only to evaluate it, then erase every
+    /// record it created on syntax no node holds, as upstream's parameter
+    /// evaluator emits speculatively and erases the ops it folded into an
+    /// attribute. The typing memos are rolled back too, so no later typing
+    /// of the same syntax reads a memo whose records are gone.
+    pub(super) fn evaluating<R>(&self, evaluate: impl FnOnce() -> R) -> R {
+        let evaluation = self.emitter.borrow_mut().open_evaluation();
+        let memo = self.argument_memo_mark();
+        let objects = self.member_object_mark();
+        let result = evaluate();
+        self.roll_back_argument_memo(memo);
+        self.roll_back_member_objects(objects);
+        self.emitter.borrow_mut().close_evaluation(evaluation);
+        result
+    }
+
     /// The record at `span`, created if absent: the write path.
     pub(super) fn record_at(&self, span: SourceSpan) -> RefMut<'_, NodeFacts> {
         RefMut::map(self.emitter.borrow_mut(), |emitter| emitter.record(span))

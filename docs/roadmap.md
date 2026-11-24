@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2574**.
+Next free ID: **R2580**.
 
 ## Ordered Work
 
@@ -10757,10 +10757,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Slice` was a library struct; they go with it.
   - `CheckedSliceLiteral::indirect_result` goes with it too: the literal's
     node then records its own `IndirectResult`.
-  - Probe: `synthetic_slice_descriptor`'s derived `x[byte=a:b]`
-    descriptors are typed with records on no node
-    (`read_temporary_argument` via `record_argument_borrows`), which the
-    handoff discards (`emit.discarded_records`).
   - Probe: the rebuilt constructor's `Optional` operands carry no
     checked node, so `xs[::2]` keeps each `Optional.__init__` result in a
     register a `drop.reg` destroys, where upstream reads it in a
@@ -11770,36 +11766,134 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2573 The compile-time builder reads a synthesized call's
-  resolution back from the record its typing wrote, where upstream's
-  parameter evaluator takes the callee from overload resolution**
+- [ ] **R2574 A match pattern types each subject projection only to
+  read its type, leaving records on syntax no node holds**
 
-  `run_time_overload` (`comptime_validation.rs`) types a call it
-  synthesized and reads its `overload_target` back from the emitter, so
-  each such typing leaves a pending record on syntax no op holds, which
-  the handoff discards (std's 157 `emit.discarded_records` under
-  `--timings`).
-  - Probe: `struct_operator_value` → `called_application` →
-    `run_time_overload` over a `dunder_call` (62 records at
-    `debug_assert.mojo:60–80`).
-  - Probe: `run_time_type`'s typing of a construction for its struct.
-  - Probe: `value_alias_application`'s substituted copies (`True`/`False`
-    in `origin/__init__.mojo`).
-  - Probe: argument re-typings in `solving_argument_ty` and
-    `instantiate_method_generics`.
-  - Probe: a type-position application folded into its op's attribute
-    (`resolve_explicit_use_params`, `eval_associated_ct`,
-    `param_arg_value_ty`), and `staged_simd_construction`'s source-less
-    syntax.
-  - Probe: the concluding `comptime match` case's conjoined condition
-    (`simd.mojo:3542`), which no plan names and so no node holds.
-  - The lever: return the resolution and type from the typing
-    (`infer_method_call`, `infer_construction_of`) instead of recording it
-    on syntax no op holds; then `emit.discarded_records` is 0 and
-    `into_nodes` can assert no record is pending.
-  - Found while landing R2569 (2026-11-24).
+  `check_case` and `check_comptime_case` (`checker/patterns.rs`) type a
+  case's subject projections (`subject.field`, `subject[i]`, a
+  `__getitem__` call) outside an evaluation, so their records stay
+  pending and the handoff discards them (`emit.discarded_records`).
+  - Upstream's pattern compiler reads a projection's type off the op it
+    emits for the projection, and no projection outlives its case.
+  - The lever: type each projection in `Checker::evaluating`, or enter it
+    as a node the case's plan names.
+  - Probe: run-time `match`, 78 records in 9 fixtures:
+    `match_struct_and_initializer_patterns.mojo` (42),
+    `match_cluster_lifecycle.mojo` (12),
+    `union_tuple_payload_patterns.mojo` (10, through
+    `instantiate_method_generics` and `record_declared_attributes`),
+    `match_equality_effects.mojo`, `match_literal_clusters.mojo`,
+    `match_coverage_enums_and_products.mojo`,
+    `match_enum_cases_optional.mojo`, `match_noncopyable_subject.mojo`.
+  - Probe: `comptime match`, 10 records in
+    `comptime_match_patterns.mojo` (through `prepare_index_argument` and
+    `record_declared_attributes`).
+  - Measure with `mojito check --timings FILE`.
+  - Found while landing R2573 (2026-11-24).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2575 A type member's spelled construction is typed with records
+  on syntax no node holds**
+
+  `infer_type_member_construction` (`checker/initializer_list.rs`) types
+  the construction it spells for a call through a parameterized type
+  member (`TypeList.of[Trait=AnyType, ...]()`), and its bracket
+  arguments' records, spelled at the member's span, reach no node.
+  - Upstream reads the member as its value and emits the construction
+    once, as an op the call holds.
+  - The lever: enter the spelled construction as a construction node
+    (`Emitter::enter_construction`) where the call keeps it, and type it
+    in `Checker::evaluating` where the typing only answers a type.
+  - Probe: 39 records in 8 fixtures, reached from
+    `display_listed_element`/`evaluated_display_binding`,
+    `lifted_application`, `comptime_value_expression`, and
+    `compile_comptime_condition`: `typelist_reverse_concat.mojo` (13),
+    `typelist_comptime_vocabulary.mojo` (12), `typelist_of_alias.mojo`,
+    `typelist_simd_length_index.mojo`, `len_library_overloads.mojo`,
+    `type_pack_runtime_read.mojo`,
+    `comptime_local_value_member_annotation.mojo`,
+    `comptime_value_subscript_annotation.mojo`.
+  - Found while landing R2573 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2576 A struct's comptime type member body is checked for its
+  application's constraints with records on syntax no node holds**
+
+  `check_struct_types` → `body_type` → `denotation` →
+  `ct_expression_rejection` → `violated_application_constraint` selects
+  the body's application only to test its constraints, and the selection
+  types its bracket arguments (`param_arg_value_ty`, `eval_associated_ct`)
+  outside an evaluation.
+  - Upstream's parameter evaluator checks the application speculatively
+    and erases what it emitted.
+  - The lever: run `violated_application_constraint`'s selection in
+    `Checker::evaluating`, after confirming the member body's own syntax
+    is never a node the check enters later.
+  - Probe: `std/builtin/enum_like.mojo`'s
+    `_union_elt_type_for_case[id] = TypeList[Trait=AnyType,
+    Self._union_case_types]()[id]`, 2 records in each of 14 extension
+    fixtures (`enum_like_protocol.mojo`, `union_construction.mojo`,
+    `match_enum_cases_custom.mojo`, and the other `enum_like_*`,
+    `union_*`, and `match_*` extension fixtures).
+  - Found while landing R2573 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2577 A callable local's call respelled as `__call__` or
+  `__getitem__` leaves records on syntax no node holds**
+
+  `infer_value_method_call` and `infer_struct_getitem_call` type the
+  method call they spell for a call of a local callable value, and the
+  spelled call's records reach no node.
+  - Upstream's call of a value emits its `__call__` as the call's own op.
+  - The lever: enter the respelled call as the call's construction, or
+    type it in `Checker::evaluating` when only its type is read.
+  - Probe: 12 records in `shadowed_local_callable_call.mojo` and
+    `function_value_array_display.mojo`, reached under
+    `solving_argument_ty`.
+  - Found while landing R2573 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2578 Signature-time and alias-registration builders type
+  synthesized syntax outside an evaluation**
+
+  Builders that run before or beside a body's check spell syntax to
+  evaluate a parameter or attribute and type it outside
+  `Checker::evaluating`, so its records stay pending.
+  - Probe: `synthetic_store_value` (`augmented_store_copies_nothing.mojo`).
+  - Probe: `check_generic_comptime_alias`'s `record_declared_attributes`
+    (`comptime_alias_struct_generator.mojo`).
+  - Probe: `argument_source_type` under `applied_arguments`
+    (`getattr_param_member.mojo`).
+  - Probe: `named_type` under `member_type_operand_resolution`
+    (`struct_comptime_member_names_own_struct.mojo`, `T[4].other`).
+  - Probe: `applied_type` under `selection_at` for a signature default
+    (`signature_application_same_module_struct_default.mojo`,
+    `Tgt[_v=2] = Tgt.current()`).
+  - 6 records in all.
+  - Found while landing R2573 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2579 The handoff still discards pending records instead of
+  asserting there are none**
+
+  `Emitter::into_nodes` drops what is still pending and counts it
+  (`emit.discarded_records`), where upstream's emitter leaves no op it
+  emitted only to evaluate.
+  - Once every site types its evaluation-only syntax in an evaluation,
+    replace the discard and the counter with a `debug_assert!` that
+    nothing is pending.
+  - Remove the residue wording from `emit.rs`, `docs/architecture.md`,
+    and `docs/symbol-map.md`.
+  - Census: `mojito check --timings` over every `assets/**/*.mojo`, and
+    `mojito precompile stdlib/std --timings` (0 today).
+  - Found while landing R2573 (2026-11-24).
+  - Depends on R2574, R2575, R2576, R2577, R2578.
+  - Model: Opus, Not Planned.
 
 - [ ] **R611 A package unit's facts name the package check's binding
   owners**

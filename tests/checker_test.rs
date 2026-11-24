@@ -11865,3 +11865,49 @@ fn an_annotation_expression_is_evaluated_in_the_type_context() {
         "{error}"
     );
 }
+
+#[test]
+fn syntax_typed_only_to_evaluate_it_leaves_no_record_for_the_handoff() {
+    // An origin alias's `Origin(...)` construction, a parameter-position
+    // `==`'s dunder call, and a concluding `comptime match` case's
+    // condition are typed only to evaluate them: the evaluation erases
+    // their records, so the handoff discards none.
+    let source = "\
+struct S[o: Origin]:
+    def __init__(out self):
+        pass
+
+
+def enabled[mode: StaticString]() -> Bool:
+    comptime if mode == \"none\" or mode == \"safe\":
+        return False
+    else:
+        return True
+
+
+def pick[b: Bool]() -> Int:
+    comptime match b:
+        case True:
+            return 1
+        case False:
+            return 0
+
+
+def main():
+    var s = S[MutAnyOrigin]()
+    _ = s^
+    print(enabled[\"safe\"](), pick[True]())
+";
+    mojito::timing::enable();
+    check_with_std(source).expect("the program checks");
+    let report = mojito::timing::report();
+    let discarded: Vec<&str> = report
+        .lines()
+        .filter(|line| line.contains("emit.discarded_records"))
+        .collect();
+    assert!(!discarded.is_empty(), "{report}");
+    assert!(
+        discarded.iter().all(|line| line.ends_with("\t0")),
+        "{discarded:?}"
+    );
+}

@@ -3426,8 +3426,19 @@ impl Checker {
     }
 
     /// [`Self::selected_application`], a construction spelled without its
-    /// instance's bracket constructing `spelled` when it is given.
+    /// instance's bracket constructing `spelled` when it is given. A slice
+    /// subscript's selection builds the slice literal's construction the
+    /// check spelled for it as its argument, syntax no node holds, so it is
+    /// selected inside an evaluation.
     fn selected_application_at(&self, expr: &Expr, spelled: Option<&Ty>) -> Option<Selected<'_>> {
+        match expr.kind {
+            ExprKind::Slice { .. } => self.evaluating(|| self.selection_at(expr, spelled)),
+            _ => self.selection_at(expr, spelled),
+        }
+    }
+
+    /// [`Self::selected_application_at`]'s selection.
+    fn selection_at(&self, expr: &Expr, spelled: Option<&Ty>) -> Option<Selected<'_>> {
         // The construction bracket of an initializer called by name
         // (`S[2].__init__[3, 0]()`), whose own bracket binds the
         // initializer's own parameters, as its run-time call's does
@@ -3731,27 +3742,21 @@ impl Checker {
         (ranked.len() == 1).then(|| ranked.remove(0))
     }
 
-    /// The callable `expr`'s run-time call resolves to
-    /// (its `overload_target` fact), typing it first where the check
-    /// has not. `None` while that typing is under way, as
+    /// The callable `expr`'s run-time call resolves to: its node's
+    /// `overload_target` fact, else the callee its run-time typing
+    /// resolves. `None` while that typing is under way, as
     /// [`Self::run_time_type`]'s.
     fn run_time_overload(&self, expr: &Expr) -> Option<String> {
         let span = expr.source_span();
-        let recorded = || {
-            self.emitter
-                .borrow()
-                .get(&span)
-                .and_then(|facts| facts.overload_target.clone())
-        };
-        recorded().or_else(|| {
-            if !self.instance_inferences.borrow_mut().insert(span.clone()) {
-                return None;
-            }
-            let typed = self.run_time_typing(expr);
-            self.instance_inferences.borrow_mut().remove(&span);
-            typed.ok()?;
-            recorded()
-        })
+        self.fact(&span, |facts| facts.overload_target.as_ref())
+            .or_else(|| {
+                if !self.instance_inferences.borrow_mut().insert(span.clone()) {
+                    return None;
+                }
+                let typed = self.run_time_typing(expr);
+                self.instance_inferences.borrow_mut().remove(&span);
+                typed.ok()?.callee
+            })
     }
 
     /// The struct `expr`'s run-time construction builds, as its run-time
@@ -3766,19 +3771,28 @@ impl Checker {
         self.instance_inferences.borrow_mut().remove(&span);
         typed
             .ok()
+            .map(|typed| typed.ty)
             .filter(|ty| ty.kind().is_non_pointer_struct() || ty.kind().is_numeric_literal())
     }
 
     /// `expr` typed as a run-time expression in a compile-time position,
-    /// lifting nothing.
-    fn run_time_typing(&self, expr: &Expr) -> Result<Ty, TypeError> {
-        let lifting = self.lifting_positions.replace(0);
-        let typed = {
-            let _position = self.comptime_position();
-            self.infer(expr)
-        };
-        self.lifting_positions.set(lifting);
-        typed
+    /// lifting nothing, only to evaluate it: its type and the callee its
+    /// call resolves to, read off its record before the evaluation erases
+    /// it, as upstream's parameter evaluator reads the callee off the op it
+    /// emitted speculatively.
+    fn run_time_typing(&self, expr: &Expr) -> Result<RunTimeTyping, TypeError> {
+        self.evaluating(|| {
+            let lifting = self.lifting_positions.replace(0);
+            let typed = {
+                let _position = self.comptime_position();
+                self.infer(expr)
+            };
+            self.lifting_positions.set(lifting);
+            Ok(RunTimeTyping {
+                ty: typed?,
+                callee: self.fact(&expr.source_span(), |facts| facts.overload_target.as_ref()),
+            })
+        })
     }
 
     /// The application of the literal constructor of `ty`'s struct a list
@@ -4860,7 +4874,14 @@ impl Checker {
     /// operation (`SemanticAdjustment::ComptimeApplication`).
     pub(super) fn record_lifted_applications(&self) {
         use mojito_checked::checked::SemanticAdjustment;
-        for (span, application) in self.lifted_expressions.borrow().iter() {
+        // A lifted application no node holds was built inside an
+        // enclosing application, whose attribute already folds it.
+        for (span, application) in self
+            .lifted_expressions
+            .borrow()
+            .iter()
+            .filter(|(span, _)| self.emitter.borrow().holds(span))
+        {
             let mut record = self.record_at(span.clone());
             let operation = match record.adjustment.take().map(|operation| *operation) {
                 Some(SemanticAdjustment::ComptimeApplication { operation, .. }) => operation,
@@ -8368,6 +8389,14 @@ fn written_string(message: &Expr) -> Expr {
 struct CompiledCondition {
     constraint: GenericConstraint,
     value: ParamExpr,
+}
+
+/// What a run-time typing done only to evaluate an expression decided:
+/// its type, and the callee its call resolves to
+/// ([`Checker::run_time_typing`]).
+struct RunTimeTyping {
+    ty: Ty,
+    callee: Option<String>,
 }
 
 /// The traits a type generator's application that is still a parameter

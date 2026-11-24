@@ -310,8 +310,12 @@ impl Checker {
     fn rebind_target_ty(&self, target: &ParamArg) -> Result<Ty, TypeError> {
         match target {
             // `Dest` is a type parameter, so a value argument (`List[T]`,
-            // `type_of(x)`) is the type its expression denotes.
-            ParamArg::Value(expr) => self.denoted_type(expr, "rebind's type parameter 'dest_type'"),
+            // `type_of(x)`) is the type its expression denotes, folded into
+            // the call's attribute: what its denotation spells is typed only
+            // to evaluate it.
+            ParamArg::Value(expr) => {
+                self.evaluating(|| self.denoted_type(expr, "rebind's type parameter 'dest_type'"))
+            }
             ParamArg::Named { .. } => Err(TypeError::Unsupported(
                 "rebind takes one type argument (`rebind[Dest](value)`)".to_string(),
             )),

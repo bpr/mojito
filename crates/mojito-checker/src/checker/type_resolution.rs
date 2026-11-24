@@ -4535,85 +4535,90 @@ impl Checker {
     /// member read reads through: a struct construction
     /// (`TypeList[Ts.values]()`), or one through a type's parameterized
     /// member (`M.List[Bool, Int]()`) or a generic alias (`L[Bool, Int]()`),
-    /// whose struct has an `__init__` taking no argument.
+    /// whose struct has an `__init__` taking no argument. The construction
+    /// is typed only to evaluate it, as the type a read reads through.
     pub(super) fn compile_time_value_type(&self, value: &Expr) -> Result<Ty, TypeError> {
-        let not_construction = || {
-            TypeError::Unsupported("a subscript in a type takes a struct construction".to_string())
-        };
-        let (ty, name, args, kwargs) = match &value.kind {
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if self.structs.contains_key(name) => (
-                self.applied_type(name, param_args)?.0,
-                name.clone(),
-                args,
-                kwargs,
-            ),
-            // A construction through a generic alias (`L[Bool, Int]()`)
-            // constructs the struct its application denotes.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if self.comptime_aliases.contains_key(name) => {
-                let ty = self.applied_type(name, param_args)?.0;
-                let Some((name, _)) = ty.kind().as_non_pointer_struct() else {
-                    return Err(not_construction());
-                };
-                let name = name.clone();
-                (ty, name, args, kwargs)
-            }
-            ExprKind::Invoke {
-                callee,
-                param_args,
-                args,
-                kwargs,
-            } => {
-                let ExprKind::Member { object, field } = &callee.kind else {
-                    return Err(not_construction());
-                };
-                if !self.may_denote_type(object) {
-                    return Err(not_construction());
+        self.evaluating(|| {
+            let not_construction = || {
+                TypeError::Unsupported(
+                    "a subscript in a type takes a struct construction".to_string(),
+                )
+            };
+            let (ty, name, args, kwargs) = match &value.kind {
+                ExprKind::Call {
+                    name,
+                    param_args,
+                    args,
+                    kwargs,
+                } if self.structs.contains_key(name) => (
+                    self.applied_type(name, param_args)?.0,
+                    name.clone(),
+                    args,
+                    kwargs,
+                ),
+                // A construction through a generic alias (`L[Bool, Int]()`)
+                // constructs the struct its application denotes.
+                ExprKind::Call {
+                    name,
+                    param_args,
+                    args,
+                    kwargs,
+                } if self.comptime_aliases.contains_key(name) => {
+                    let ty = self.applied_type(name, param_args)?.0;
+                    let Some((name, _)) = ty.kind().as_non_pointer_struct() else {
+                        return Err(not_construction());
+                    };
+                    let name = name.clone();
+                    (ty, name, args, kwargs)
                 }
-                let ty = self.member_type(object, field, param_args)?;
-                let Some((name, _)) = ty.kind().as_non_pointer_struct() else {
-                    return Err(not_construction());
-                };
-                let name = name.clone();
-                (ty, name, args, kwargs)
+                ExprKind::Invoke {
+                    callee,
+                    param_args,
+                    args,
+                    kwargs,
+                } => {
+                    let ExprKind::Member { object, field } = &callee.kind else {
+                        return Err(not_construction());
+                    };
+                    if !self.may_denote_type(object) {
+                        return Err(not_construction());
+                    }
+                    let ty = self.member_type(object, field, param_args)?;
+                    let Some((name, _)) = ty.kind().as_non_pointer_struct() else {
+                        return Err(not_construction());
+                    };
+                    let name = name.clone();
+                    (ty, name, args, kwargs)
+                }
+                // A call of a type member (`CompilationTarget.current()`)
+                // constructs the type the member names.
+                ExprKind::MethodCall { .. } => {
+                    let construction = self
+                        .type_member_construction(value)
+                        .ok_or_else(not_construction)?;
+                    return self.compile_time_value_type(&construction);
+                }
+                _ => return Err(not_construction()),
+            };
+            let info = self.structs.get(&name).ok_or_else(not_construction)?;
+            if !args.is_empty() || !kwargs.is_empty() {
+                return Err(TypeError::Unsupported(
+                    "a compile-time construction takes no arguments".to_string(),
+                ));
             }
-            // A call of a type member (`CompilationTarget.current()`)
-            // constructs the type the member names.
-            ExprKind::MethodCall { .. } => {
-                let construction = self
-                    .type_member_construction(value)
-                    .ok_or_else(not_construction)?;
-                return self.compile_time_value_type(&construction);
+            let nullary = info.methods.get("__init__").is_some_and(|overloads| {
+                overloads
+                    .iter()
+                    .any(|overload| overload.required.iter().all(|required| !required))
+            }) || (info.fieldwise_init && info.declared_field_names.is_empty());
+            if !nullary {
+                return Err(TypeError::BadCall {
+                    func: name,
+                    reason: "no '__init__' overload takes no arguments".to_string(),
+                });
             }
-            _ => return Err(not_construction()),
-        };
-        let info = self.structs.get(&name).ok_or_else(not_construction)?;
-        if !args.is_empty() || !kwargs.is_empty() {
-            return Err(TypeError::Unsupported(
-                "a compile-time construction takes no arguments".to_string(),
-            ));
-        }
-        let nullary = info.methods.get("__init__").is_some_and(|overloads| {
-            overloads
-                .iter()
-                .any(|overload| overload.required.iter().all(|required| !required))
-        }) || (info.fieldwise_init && info.declared_field_names.is_empty());
-        if !nullary {
-            return Err(TypeError::BadCall {
-                func: name,
-                reason: "no '__init__' overload takes no arguments".to_string(),
-            });
-        }
-        Ok(ty)
+            Ok(ty)
+        })
     }
 
     /// `value`, an argument of a value parameter or of an applied

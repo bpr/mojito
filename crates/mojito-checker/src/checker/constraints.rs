@@ -1021,11 +1021,13 @@ impl Checker {
                                 mojito_ast::ast::ParamArg::Value(expr) => Some(expr),
                             }),
                         )?;
-                        self.infer(&construction)?;
-                        self.called_application(&construction).ok_or_else(|| {
-                            TypeError::NotComptime(format!(
-                                "the origin value '{name}' before 'Origin' is declared"
-                            ))
+                        self.evaluating(|| {
+                            self.infer(&construction)?;
+                            self.called_application(&construction).ok_or_else(|| {
+                                TypeError::NotComptime(format!(
+                                    "the origin value '{name}' before 'Origin' is declared"
+                                ))
+                            })
                         })
                     },
                 ));
@@ -1580,7 +1582,9 @@ impl Checker {
                 call.source.clone_from(&first.source);
                 Some(call)
             })()?;
-            return Some(self.compile_dependent_ct_expr(&construction));
+            // The spelled `SIMD[dtype, width](args)` is typed only to
+            // evaluate it.
+            return Some(self.evaluating(|| self.compile_dependent_ct_expr(&construction)));
         }
         let [argument] = args else {
             return None;

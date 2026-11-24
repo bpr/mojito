@@ -15,10 +15,18 @@
 //!
 //! An index finds an occurrence's node. An occurrence no node holds yet
 //! keeps a pending record, which moves onto the node when one is allocated
-//! for it; a span is never in both. What is still pending when the check
-//! ends is syntax the check typed only to evaluate it, whose result it
-//! folded into an attribute of the op that holds it, and the handoff
-//! discards it: every fact handed off is an attribute on an emitted op.
+//! for it; a span is never in both.
+//!
+//! Syntax the check types only to evaluate it (a compile-time operator's
+//! dunder call, an origin alias's construction, a `rebind` target) is typed
+//! inside an evaluation (`open_evaluation`/`close_evaluation`), as
+//! upstream's parameter evaluator emits speculatively, reads the callee and
+//! type off the ops it emitted, folds them into an attribute, and erases
+//! them: closing it erases every record the evaluation created on syntax no
+//! node holds. A record still pending when the check ends is on syntax a
+//! site typed only to evaluate it outside an evaluation; the handoff
+//! discards it, and `emit.discarded_records` counts it, so every fact
+//! handed off is an attribute on an emitted op.
 //!
 //! The emitter logs and journals as the fact stores do (`fact_store`): a
 //! body site's writes are carried by log range, and a probe's writes and
@@ -62,6 +70,10 @@ pub struct Emitter {
     roots: Vec<CheckedStmtId>,
     /// Each default wrapper's body's nodes, by the wrapper's position.
     wrapper_bodies: BTreeMap<usize, Vec<CheckedStmtId>>,
+    /// The evaluations open.
+    evaluations: u32,
+    /// Each pending record an open evaluation created, oldest first.
+    evaluated: Vec<SourceSpan>,
 }
 
 impl Emitter {
@@ -171,10 +183,11 @@ impl Emitter {
 
     /// The record at `at`, created if absent: the write path.
     pub(super) fn record(&mut self, at: SourceSpan) -> &mut NodeFacts {
-        match self.index.get(&at).copied() {
-            Some(slot) => self.write(slot).get_or_insert_default(),
-            None => self.pending.entry(at).or_default(),
+        if let Some(slot) = self.index.get(&at).copied() {
+            return self.write(slot).get_or_insert_default();
         }
+        self.note_evaluated(&at);
+        self.pending.entry(at).or_default()
     }
 
     /// The record at `at` handed out for mutation; only an existing one
@@ -201,11 +214,50 @@ impl Emitter {
 
     /// Replace the record at `at` wholesale.
     pub(super) fn insert(&mut self, at: SourceSpan, facts: NodeFacts) {
-        match self.index.get(&at).copied() {
-            Some(slot) => *self.write(slot) = Some(Box::new(facts)),
-            None => {
-                self.pending.insert(at, facts);
+        if let Some(slot) = self.index.get(&at).copied() {
+            *self.write(slot) = Some(Box::new(facts));
+        } else {
+            self.note_evaluated(&at);
+            self.pending.insert(at, facts);
+        }
+    }
+
+    /// Whether a node holds the occurrence at `at`.
+    pub(super) fn holds(&self, at: &SourceSpan) -> bool {
+        self.index.contains_key(at)
+    }
+
+    /// Start an evaluation: a pending record created from here until
+    /// `close_evaluation(mark)` is erased then, unless a node holds its
+    /// occurrence by that time. Evaluations nest.
+    pub(super) const fn open_evaluation(&mut self) -> EvaluationMark {
+        self.evaluations += 1;
+        EvaluationMark(self.evaluated.len())
+    }
+
+    /// End the evaluation `mark` opened, erasing every record it created
+    /// on syntax no node holds; the erasure is journaled, so a probe
+    /// around the evaluation restores it when it rolls back.
+    pub(super) fn close_evaluation(&mut self, mark: EvaluationMark) {
+        for at in self.evaluated.split_off(mark.0) {
+            if !self.index.contains_key(&at) {
+                self.pending.remove(&at);
             }
+        }
+        self.evaluations -= 1;
+    }
+
+    /// Erase the record of every occurrence in `expression` no node holds,
+    /// and of each construction such an occurrence spelled: syntax that
+    /// turned out, once typed, to have been typed only to evaluate it.
+    pub(super) fn discard_unheld(&mut self, expression: &Expr) {
+        let mut unheld = Unheld {
+            emitter: self,
+            constructions: Vec::new(),
+        };
+        visit::walk_expr(&mut unheld, expression);
+        while let Some(construction) = unheld.constructions.pop() {
+            visit::walk_expr(&mut unheld, &construction);
         }
     }
 
@@ -327,9 +379,8 @@ impl Emitter {
 
     /// The emitted nodes, each holding the facts set on it, less any
     /// record a cleared fact left empty. A record still pending is on
-    /// syntax the check typed only to evaluate it, whose result it folded
-    /// into an attribute of the op that holds it: the handoff discards it,
-    /// as it does the constructions' syntax.
+    /// syntax a site typed only to evaluate it outside an evaluation: the
+    /// handoff discards it, as it does the constructions' syntax.
     pub(super) fn into_nodes(self) -> EmittedNodes {
         let (mut on_nodes, mut opless) = (0u64, 0u64);
         let mut seal = |op: bool, facts: &mut Option<Box<NodeFacts>>| {
@@ -436,6 +487,13 @@ impl Emitter {
         }
     }
 
+    /// Note a pending record an open evaluation is about to create at `at`.
+    fn note_evaluated(&mut self, at: &SourceSpan) {
+        if self.evaluations > 0 && !self.pending.contains_key(at) {
+            self.evaluated.push(at.clone());
+        }
+    }
+
     /// A node's record slot handed out for a write: logged, and journaled
     /// under a probe.
     fn write(&mut self, slot: EmittedSlot) -> &mut Option<Box<NodeFacts>> {
@@ -468,6 +526,10 @@ pub(super) struct EmitProbe {
     pending: ProbeMark,
 }
 
+/// An emitter's evaluated-record position when an evaluation opened.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct EvaluationMark(usize);
+
 #[derive(Debug, Clone, Copy)]
 enum ArenaKind {
     Statement,
@@ -492,6 +554,25 @@ impl Visitor for Allocation<'_> {
 
     fn visit_expr(&mut self, expr: &Expr) {
         self.0.allocate(expr.source_span(), ArenaKind::Expression);
+    }
+}
+
+/// The walk that erases the pending record of every occurrence no node
+/// holds, collecting the constructions those occurrences spelled.
+struct Unheld<'a> {
+    emitter: &'a mut Emitter,
+    constructions: Vec<Expr>,
+}
+
+impl Visitor for Unheld<'_> {
+    fn visit_expr(&mut self, expression: &Expr) {
+        let at = expression.source_span();
+        if let Some(construction) = self.emitter.construction(&at) {
+            self.constructions.push(construction.clone());
+        }
+        if !self.emitter.holds(&at) {
+            self.emitter.pending.remove(&at);
+        }
     }
 }
 
@@ -1063,6 +1144,50 @@ mod tests {
             node.op,
             Some(mojito_checked::checked::CheckedStmtOp::For { .. })
         ));
+    }
+
+    #[test]
+    fn an_evaluation_erases_only_the_unheld_records_it_created() {
+        let (entered, existing, evaluated) = (statement(), truth(), truth());
+        let mut emitter = Emitter::default();
+        emitter.enter_statement(&entered);
+        emitter.record(existing.source_span()).truthiness_condition = true;
+        let evaluation = emitter.open_evaluation();
+        emitter
+            .record(value(&entered).source_span())
+            .truthiness_condition = true;
+        emitter.record(existing.source_span()).truthiness_condition = false;
+        emitter.record(evaluated.source_span()).truthiness_condition = true;
+        emitter.close_evaluation(evaluation);
+        assert!(emitter.get(&evaluated.source_span()).is_none());
+        assert_eq!(
+            emitter
+                .get(&existing.source_span())
+                .map(|facts| facts.truthiness_condition),
+            Some(false)
+        );
+        assert_eq!(
+            emitter
+                .get(&value(&entered).source_span())
+                .map(|facts| facts.truthiness_condition),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn a_probe_around_an_evaluation_rolls_its_erasure_back() {
+        let (existing, evaluated) = (truth(), truth());
+        let mut emitter = Emitter::default();
+        emitter.record(existing.source_span()).truthiness_condition = true;
+        let before = records(&emitter);
+        let probe = emitter.open_probe();
+        let evaluation = emitter.open_evaluation();
+        emitter.record(evaluated.source_span()).truthiness_condition = true;
+        emitter.close_evaluation(evaluation);
+        emitter.discard_unheld(&existing);
+        assert!(records(&emitter).is_empty());
+        emitter.roll_back(probe);
+        assert_eq!(records(&emitter), before);
     }
 
     #[test]

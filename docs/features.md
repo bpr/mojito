@@ -24,8 +24,9 @@ and sets attributes on it (R764, R765): the check emits a statement's nodes
 when it enters the statement, a construction's when it spells it, and a match
 plan's tests and conditions when it plans them. Every fact the check hands
 off sits on a node: a destructuring statement holds its leaves' bindings, a
-`case` condition's plan sits on its value, and a record on syntax the check
-typed only to evaluate is discarded at the handoff (R2569). The checked
+`case` condition's plan sits on its value, and syntax the check types only to
+evaluate it is typed inside an evaluation that erases its records, as upstream
+erases the ops its parameter evaluator emits speculatively (R2569, R2573). The checked
 tables are sealed from the emitted nodes, each op composed with its node's
 facts, and an occurrence the check emitted no node for is an internal error
 rather than a placeholder (R2567, R766). The check seals its own module at its

@@ -63,6 +63,9 @@ impl Checker {
             }
         };
         let collected = gathered.read();
+        // A slice literal's stand-in is no argument occurrence: the
+        // literal's construction is the argument, sealed on its subscript.
+        let occurs = |span: &SourceSpan| !self.slice_literals.borrow().contains_key(span);
         // A reference result at a `mut` or `ref` parameter binds its
         // referent, as upstream binds the returned reference to the
         // parameter: it is never read out as a value.
@@ -81,7 +84,10 @@ impl Checker {
             kwargs,
             receiver,
             read_place,
-        ) {
+        )
+        .into_iter()
+        .filter(occurs)
+        {
             self.record_at(span).borrowed_read_call_place = true;
         }
         let mut read = read_temporary_arguments(
@@ -96,7 +102,7 @@ impl Checker {
         self.unconsumed_temporaries
             .borrow_mut()
             .extend(read.iter().cloned());
-        for span in read {
+        for span in read.into_iter().filter(occurs) {
             self.record_at(span).read_temporary_argument = true;
         }
         if let Some(span) = read_place_receiver(receiver, designates_place) {

@@ -1019,12 +1019,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   entered, and `into_nodes` moves
   the nodes, each holding its facts (`EmittedExpr::facts`,
   `EmittedStmt::facts`), into `EmittedNodes`, less any record a cleared
-  fact left empty, and discards what is still pending, syntax the check
-  typed only to evaluate it, and the constructions' syntax (`--timings` counts `emit.node_records`,
+  fact left empty, and discards what is still pending and the
+  constructions' syntax (`--timings` counts `emit.node_records`,
   `emit.discarded_records`, and `emit.opless_nodes`). `Ops` also gives each
   `for` statement its written target's occurrence (`EmittedStmt::loop_target`)
   and each comprehension its clauses' (`EmittedExpr::loop_targets`) at
-  allocation, which `Relocation` copies.
+  allocation, which `Relocation` copies. An evaluation
+  (`open_evaluation`/`close_evaluation`, opened by
+  `checker/node_facts.rs`'s `Checker::evaluating`, which also rolls the
+  typing memos back) erases every pending record it created on syntax no
+  node holds (`holds`), as upstream erases the ops its parameter evaluator
+  emitted speculatively; `discard_unheld` erases them after the fact, for
+  a `comptime match` condition the plan dropped or replaced by refreshed
+  copies. What `into_nodes` still finds pending is on syntax a site typed
+  only to evaluate it outside an evaluation.
 - `checker/body_carry.rs`'s `HandoffStores::into_program` is the check's
   end, as upstream's parser finishes its module: it converts the check's
   `statement_desugars` to emitted slots (`emitted_desugars`; a statement

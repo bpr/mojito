@@ -466,8 +466,12 @@ impl Checker {
         let verdict = self.match_coverage(&subject.ty, &covers, &stmt.source_span())?;
         // The concluding case's tests pass whenever it is reached, so it is
         // the else arm.
-        if let Some(index) = verdict.concluding {
-            conditions[index] = None;
+        // Its condition was checked only to evaluate the verdict.
+        if let Some(condition) = verdict
+            .concluding
+            .and_then(|index| conditions[index].take())
+        {
+            self.emitter.borrow_mut().discard_unheld(&condition);
         }
         let reached = exits
             .into_iter()
@@ -842,6 +846,14 @@ impl Checker {
             conditions.and_then(|conditions| conjoin(synth, conditions, InfixOp::Or))
         {
             commands.conditions.push(condition);
+        }
+        // The case's condition holds the refreshed copies: each
+        // alternative's own was checked only to evaluate it.
+        for condition in compiled
+            .iter()
+            .filter_map(|(condition, _)| condition.as_ref())
+        {
+            self.emitter.borrow_mut().discard_unheld(condition);
         }
         commands.cover.push(CoverCommand::Or(covers));
         Ok(())
