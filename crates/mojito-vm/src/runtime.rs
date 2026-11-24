@@ -2330,23 +2330,23 @@ const fn low_bits(bits: usize) -> u64 {
     }
 }
 
-/// The type the VM holds a `pointee` as: a `!lit.ref<T, origin>` is held
-/// as the `Pointer[T, origin]` it is built from, so a pointer to one reads
-/// the same value as a pointer to the other.
 /// `ty` with each pointer it is, or points to, at an immutable static
 /// origin: the address the VM holds for it, whose mutability is no part of
 /// the value.
 fn held_address(ty: &mojito_types::types::Ty) -> mojito_types::types::Ty {
-    match ty.kind().pointer_parts() {
-        Some((element, _, address_space)) => mojito_types::types::Ty::pointer(
-            held_address(element),
+    match ty.kind().pointer_lit_ref() {
+        Some(reference) => mojito_types::types::Ty::pointer(
+            held_address(&reference.referent),
             mojito_types::origin::PointerOrigin::Static { mutable: false },
-            address_space,
+            reference.address_space,
         ),
         None => ty.clone(),
     }
 }
 
+/// The type the VM holds a `pointee` as: a `!lit.ref<T, origin>` is held
+/// as the `Pointer[T, origin]` it is built from, so a pointer to one reads
+/// the same value as a pointer to the other.
 fn held_pointee(pointee: &mojito_types::types::Ty) -> mojito_types::types::Ty {
     match pointee.kind() {
         mojito_types::types::TyKind::Ref(reference) => {

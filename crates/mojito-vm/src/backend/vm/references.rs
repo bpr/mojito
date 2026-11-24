@@ -957,11 +957,11 @@ pub(super) fn pointer_element(
 
 /// Whether a checked storage type is a single-pointee tracked pointer — a
 /// `to=place` pointer designating exactly one value
-/// ([`mojito_types::origin::PointerOrigin::single_place`]). Indexing such storage
+/// ([`mojito_types::origin::Origin::single_place`]). Indexing such storage
 /// is the offset-0 dereference, not element selection.
 pub(super) fn single_pointee_pointer(ty: Option<&Ty>) -> bool {
-    ty.and_then(|ty| ty.kind().pointer_origin())
-        .is_some_and(|origin| origin.single_place())
+    ty.and_then(Ty::pointer_lit_ref)
+        .is_some_and(|reference| reference.origin.single_place())
 }
 
 /// Whether a place reaches a stored handle *below* its root: a field

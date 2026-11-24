@@ -715,10 +715,12 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
         },
         MirInstr::ParamListAddress { dest, values } => {
             if !cx.reg_ty(*dest).is_none_or(|ty| {
-                matches!(
-                    ty.kind().pointer_origin(),
-                    Some(mojito_types::origin::PointerOrigin::Static { mutable: false })
-                )
+                ty.pointer_lit_ref().is_some_and(|reference| {
+                    matches!(
+                        reference.origin.uncast(),
+                        mojito_types::origin::Origin::Static
+                    ) && reference.mutability == mojito_types::origin::Mutability::Immutable
+                })
             }) {
                 errors.push(format!(
                     "{prefix}: a parameter list's address must be a static pointer"
@@ -902,9 +904,9 @@ fn verify_storage_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: 
             }
             match cx.reg_ty(*pointer).map(Ty::kind) {
                 Some(pointer_ty)
-                    if let Some((actual, origin)) = pointer_ty.as_pointer()
-                        && origin.statically_mutable() != Some(false)
-                        && types_compatible(&actual, element) => {}
+                    if let Some(reference) = pointer_ty.pointer_lit_ref()
+                        && reference.mutability.known() != Some(false)
+                        && types_compatible(&reference.referent, element) => {}
                 // An assignment through a handle destroys its pointee
                 // through the reference itself, an address as a pointer is.
                 Some(TyKind::Ref(reference))
@@ -1705,8 +1707,7 @@ fn verify_pointer_bitcast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
     ) {
         return;
     }
-    let (Some(to_origin), Some(from_origin)) =
-        (to.kind().pointer_origin(), from.kind().pointer_origin())
+    let (Some(to_reference), Some(from_reference)) = (to.pointer_lit_ref(), from.pointer_lit_ref())
     else {
         errors.push(format!(
             "{}: pointer bitcast from {from} to {to} is not between two `Pointer`s",
@@ -1714,7 +1715,7 @@ fn verify_pointer_bitcast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut 
         ));
         return;
     };
-    if to_origin.statically_mutable() != from_origin.statically_mutable() {
+    if to_reference.mutability.known() != from_reference.mutability.known() {
         errors.push(format!(
             "{}: pointer bitcast from {from} to {to} changes the origin's mutability",
             cx.prefix

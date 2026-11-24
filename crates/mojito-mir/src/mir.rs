@@ -3530,8 +3530,8 @@ fn constant_param_value(adjustments: &[mojito_checked::checked::SemanticAdjustme
 /// Whether checked type `ty` is a pointer whose provenance designates a
 /// single checked place.
 fn origin_bearing_pointer(ty: Option<&Ty>) -> bool {
-    ty.and_then(|ty| ty.kind().pointer_origin())
-        .is_some_and(|origin| origin.single_place())
+    ty.and_then(Ty::pointer_lit_ref)
+        .is_some_and(|reference| reference.origin.single_place())
 }
 
 /// The application the check lifted an expression as, among the

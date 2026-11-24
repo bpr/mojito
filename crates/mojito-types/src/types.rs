@@ -1551,10 +1551,11 @@ impl Ty {
         TyKind::Ref(reference).into()
     }
 
-    /// The `Pointer` built from the `!lit.ref` `reference`, its origin and
-    /// `mut` arguments the reference's.
+    /// The `Pointer` built from the `!lit.ref` `reference`, its `origin` and
+    /// `mut` arguments the reference's, in the canonical form [`Ty::new`]
+    /// folds every pointer application to.
     pub fn pointer_from_lit_ref(reference: &crate::origin::RefTy) -> Self {
-        Self(Arc::new(TyNode::new(TyKind::Struct(
+        Self::new(TyKind::Struct(
             POINTER_TYPE_NAME.to_string(),
             vec![
                 TyArg::Val(reference.mutability.mut_argument()),
@@ -1562,7 +1563,7 @@ impl Ty {
                 TyArg::Origin(reference.origin.clone()),
                 TyArg::Val(reference.address_space.clone().into_value()),
             ],
-        ))))
+        ))
     }
 
     /// The pointee and origin of a `Pointer` ([`TyKind::as_pointer`]).
@@ -3054,11 +3055,12 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
         }
     };
     match ty.kind() {
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
-            expand_pack_spread(element, pack, elements),
-            origin,
-            address_space,
-        ),
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&crate::origin::RefTy {
+                referent: expand_pack_spread(&reference.referent, pack, elements),
+                ..reference
+            })
+        }
         // A spread of a list computed from packs closes over the bound
         // pack, to its elements once every length in it is known.
         TyKind::Struct(name, arguments) if let Some(list) = list_spread_argument(arguments) => {
@@ -5209,8 +5211,11 @@ fn nominal_type_arguments<'a>(ty: &'a TyKind, expected: &str) -> Option<Vec<&'a 
 pub fn erase_origin_arguments(ty: &Ty) -> Ty {
     let recur = |ty: &Ty| erase_origin_arguments(ty);
     match ty.kind() {
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-            Ty::pointer(recur(element), origin, address_space)
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&crate::origin::RefTy {
+                referent: recur(&reference.referent),
+                ..reference
+            })
         }
         TyKind::Struct(..) if ty.is_closed() => ty.clone(),
         TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
@@ -5277,12 +5282,12 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
 pub fn erase_origins(ty: &Ty) -> Ty {
     let recur = erase_origins;
     match ty.kind() {
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
-            recur(element),
+        kind if let Some(reference) = kind.pointer_lit_ref() => Ty::pointer(
+            recur(&reference.referent),
             crate::origin::PointerOrigin::Static {
-                mutable: matches!(origin.parts().1, crate::origin::Mutability::Mutable),
+                mutable: reference.mutability == crate::origin::Mutability::Mutable,
             },
-            address_space,
+            reference.address_space,
         ),
         TyKind::Struct(..) if ty.is_closed() => ty.clone(),
         TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
@@ -5486,20 +5491,27 @@ pub fn bind_origin_params<S: std::hash::BuildHasher>(
     let recur = |ty: &Ty| bind_origin_params(ty, origins);
     let mapped = substitute_origin_params(ty, origins);
     match mapped.kind() {
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-            match &origin {
-                PointerOrigin::Param {
-                    id,
-                    mutability: Mutability::Param(_),
-                    ..
-                } if origins.contains_key(&id.0) => symbolic_cast_pointer(
-                    recur(element),
-                    origin.parts().0.substitute_params(origins),
-                    &address_space,
-                ),
-                _ => Err(recur(element)),
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            let element = recur(&reference.referent);
+            match reference.origin.projection_base() {
+                crate::origin::Origin::Param(id)
+                    if matches!(reference.mutability, Mutability::Param(_))
+                        && origins.contains_key(&id.0) =>
+                {
+                    symbolic_cast_pointer(
+                        element,
+                        reference.origin.substitute_params(origins),
+                        &reference.address_space,
+                    )
+                }
+                _ => Err(element),
             }
-            .unwrap_or_else(|element| Ty::pointer(element, bind(&origin), address_space))
+            .unwrap_or_else(|element| {
+                Ty::pointer_from_lit_ref(&crate::origin::RefTy {
+                    referent: element,
+                    ..reference.map_pointer_origin(bind)
+                })
+            })
         }
         TyKind::Ref(reference) => {
             let mut reference = reference.map_pointer_origin(bind);
@@ -5550,8 +5562,11 @@ pub fn map_origins(ty: &Ty, map: &impl Fn(&crate::origin::Origin) -> crate::orig
             .collect()
     };
     match ty.kind() {
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-            Ty::pointer(recur(element), origin, address_space)
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&crate::origin::RefTy {
+                referent: recur(&reference.referent),
+                ..reference
+            })
         }
         TyKind::Struct(name, args) => TyKind::Struct(name.clone(), map_args(args)).into(),
         TyKind::Assoc { base, name, args } => TyKind::Assoc {
@@ -5695,8 +5710,11 @@ pub fn map_struct_arguments(ty: &Ty, map: &impl Fn(&str, Vec<TyArg>) -> Vec<TyAr
             .collect()
     };
     match ty.kind() {
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-            Ty::pointer(recur(element), origin, address_space)
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&crate::origin::RefTy {
+                referent: recur(&reference.referent),
+                ..reference
+            })
         }
         TyKind::Struct(name, args) => {
             ty.reusing(TyKind::Struct(name.clone(), map(name, map_args(args))))
@@ -6360,11 +6378,10 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
     }
     match (from.kind(), to.kind()) {
         (TyKind::Param { binder: a, .. }, TyKind::Param { binder: b, .. }) => a == b,
-        (a, b)
-            if let (Some((a, ao, aa)), Some((b, bo, ba))) =
-                (a.pointer_parts(), b.pointer_parts()) =>
-        {
-            aa == ba && coerces(a, b) && ao.coerces_to(&bo)
+        (a, b) if let (Some(a), Some(b)) = (a.pointer_lit_ref(), b.pointer_lit_ref()) => {
+            a.address_space == b.address_space
+                && coerces(&a.referent, &b.referent)
+                && a.provenance_coerces_to(&b)
         }
         (TyKind::Struct(an, aargs), TyKind::Struct(bn, bargs))
             if !from.is_pointer() && !to.is_pointer() =>
@@ -7328,11 +7345,13 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             }
             .into()
         }),
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
-            substitute(element, subst),
-            origin,
-            substitute_address_space(&address_space, subst),
-        ),
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&crate::origin::RefTy {
+                referent: substitute(&reference.referent, subst),
+                address_space: substitute_address_space(&reference.address_space, subst),
+                ..reference
+            })
+        }
         TyKind::Struct(..) if ty.is_closed() => ty.clone(),
         TyKind::Struct(name, args) => {
             let mut args = map_tyargs(args, |t| substitute(t, subst));
@@ -7613,11 +7632,15 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             }
             .into()
         }
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
-            rewrite_ty(element, rewrite)?,
-            origin,
-            address_space.try_map(|space| rewrite.expr(space))?,
-        ),
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&crate::origin::RefTy {
+                referent: rewrite_ty(&reference.referent, rewrite)?,
+                address_space: reference
+                    .address_space
+                    .try_map(|space| rewrite.expr(space))?,
+                ..reference
+            })
+        }
         TyKind::Struct(..) if ty.is_closed() && !rewrite.visits_closed() => ty.clone(),
         kind if let Some((dtype, width)) = kind.as_simd() => {
             let dtype = match dtype {
@@ -8473,8 +8496,8 @@ fn symbolic_in(ty: &Ty, keyed: bool) -> bool {
         | TyKind::Assoc { .. }
         | TyKind::Dependent(_)
         | TyKind::SelfType => true,
-        kind if let Some((element, _, address_space)) = kind.pointer_parts() => {
-            address_space.is_symbolic() || symbolic_in(element, keyed)
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            reference.address_space.is_symbolic() || symbolic_in(&reference.referent, keyed)
         }
         TyKind::Struct(..) if ty.is_closed() => false,
         // An instance's own `mut=` binder left deferred (an unbound
@@ -9180,11 +9203,13 @@ fn expand_packs<S: std::hash::BuildHasher>(
             || TyKind::VariadicPack(recurse(element)),
             |elements| TyKind::Tuple(elements.clone()),
         )),
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
-            recurse(element),
-            origin,
-            expand_address_space(&address_space, subst, packs, values),
-        ),
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&crate::origin::RefTy {
+                referent: recurse(&reference.referent),
+                address_space: expand_address_space(&reference.address_space, subst, packs, values),
+                ..reference
+            })
+        }
         TyKind::Struct(name, arguments) => {
             let spread = spread_struct_arguments::<()>(
                 name,

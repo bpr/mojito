@@ -4000,7 +4000,8 @@ binder or the receiver (`Origin::Projected`) and the unsafe-any origin
 (`Origin::owned_interior`/`subtree`). A provenance reader reads the
 pointer's `!lit.ref` record (`TyKind::pointer_lit_ref`, or
 `pointer_or_lit_ref` for a pointer or a `!lit.ref`, both a `RefTy`) and
-asks the `Origin` and `Mutability` themselves:
+asks the `Origin` and `Mutability` themselves, as every reader below the
+checker does:
 `Origin::pointer_loan_origin` is the loan-tracked root, with the
 projection dropped, for the readers that ask which storage a loan keeps
 (`PointerOrigin::as_origin` delegates to it), `Origin::places` the places
@@ -4014,7 +4015,7 @@ coercion is `origin::provenance_coerces`'s, a union binds a struct's
 origin binder as a place does, mutable only when every member is, and an
 argument carrying it carries every member place. The decode still builds
 `PointerOrigin::Union` for the readers that ask for the view, which no
-reader outside `origin.rs` matches (R2512 and R2513 retire them). A `!lit.ref` stores no
+reader outside `origin.rs` matches (R2513 retires them). A `!lit.ref` stores no
 `PointerOrigin`: it is `TyKind::Ref`, upstream's one reference type,
 whose `RefTy` holds an `Origin` beside a `Mutability`, and
 `TyKind::LitRefPack` holds the same pair, so
@@ -4029,9 +4030,14 @@ compiler's pointer type is that struct's application
 decides it, that binder's implicit `mut` value binder
 (`Mutability::mut_argument`). `Ty::new` folds every other spelling into it,
 `TyKind::pointer_lit_ref` reads its arguments back as the `RefTy` it is
-built from, and the view accessors (`TyKind::pointer_parts`) decode it
-losslessly; an
-application no provenance decodes stays the nominal struct. A pointer is a
+built from, `Ty::pointer_from_lit_ref` builds the canonical pointer back
+from one (through `Ty::new`'s fold), and the view accessors
+(`TyKind::pointer_parts`, `as_pointer`, `pointer_origin`), which only the
+checker still reads, decode it losslessly; an
+application no provenance decodes stays the nominal struct. A rewrite that
+maps a pointer's pointee or address space reads its `!lit.ref` record and
+rebuilds through `Ty::pointer_from_lit_ref`, keeping the origin and `mut`
+as stored. A pointer is a
 declared struct for member lookup, associated members, conformance, and
 reflection, read through `nominal_struct`, never through a kind test, and
 below the MIR waist for layout, default and copy construction, and the

@@ -415,11 +415,13 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             TyKind::Tuple(sub_types(elements, bindings)?).into()
         }
         TyKind::VariadicPack(v) => TyKind::VariadicPack(substitute_ty(v, bindings)?).into(),
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
-            substitute_ty(element, bindings)?,
-            origin,
-            substitute_address_space(&address_space, bindings),
-        ),
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&mojito_types::origin::RefTy {
+                referent: substitute_ty(&reference.referent, bindings)?,
+                address_space: substitute_address_space(&reference.address_space, bindings),
+                ..reference
+            })
+        }
         TyKind::KgenPointer {
             element,
             address_space,
@@ -770,22 +772,26 @@ pub(super) fn substitute_func_ref(
 /// lowers a pointer field's pointee: the instance's layout holds its
 /// address alone, and no layout of the pointee is needed.
 pub(super) fn substitute_field(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoError> {
-    let Some((element, origin, address_space)) = ty.kind().pointer_parts() else {
+    let to_none = |reference| {
+        Ty::pointer_from_lit_ref(&mojito_types::origin::RefTy {
+            referent: Ty::none(),
+            ..reference
+        })
+    };
+    let Some(reference) = ty.kind().pointer_lit_ref() else {
         return substitute_ty(ty, bindings);
     };
     if bindings
         .removed
         .iter()
-        .any(|binder| mojito_types::types::names_binder(element, binder))
+        .any(|binder| mojito_types::types::names_binder(&reference.referent, binder))
     {
-        return substitute_ty(&Ty::pointer(Ty::none(), origin, address_space), bindings);
+        return substitute_ty(&to_none(reference), bindings);
     }
     let substituted = substitute_ty(ty, bindings)?;
-    match substituted.kind().pointer_parts() {
-        Some((element, origin, address_space))
-            if mojito_types::types::erases_an_argument(element) =>
-        {
-            Ok(Ty::pointer(Ty::none(), origin, address_space))
+    match substituted.kind().pointer_lit_ref() {
+        Some(reference) if mojito_types::types::erases_an_argument(&reference.referent) => {
+            Ok(to_none(reference))
         }
         _ => Ok(substituted),
     }

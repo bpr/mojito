@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2583**.
+Next free ID: **R2584**.
 
 ## Ordered Work
 
@@ -11367,37 +11367,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2512 Pointer readers below the checker read the `PointerOrigin`
-  view, not the pointer's `!lit.ref` record**
-
-  Upstream reads a pointer's `origin` value and `mut` parameter directly,
-  but these readers still decode both into `PointerOrigin` through
-  `pointer_parts`, `as_pointer`, or `TyKind::pointer_origin`.
-  - Each moves to `TyKind::pointer_lit_ref` and asks `Origin` and
-    `Mutability` (`pointer_loan_origin`, `places`, `single_place`,
-    `multi_element`, `ends_in_subtree`, `Mutability::known`).
-  - A rebuild arm `Ty::pointer(element, f(origin), space)` becomes
-    `Ty::pointer_from_lit_ref(&f(reference))`.
-  - `mojito-mir`: `mir.rs:3236`, `verify/instr.rs:745`, `:930`, `:1741`,
-    `verify/types.rs:566`, `verify/scope.rs:367`, `verify/places.rs:182`,
-    `lower_stmt.rs:2046`.
-  - `mojito-analysis`: `inline_parametric.rs:3160`, `:3164`, `:3241`,
-    `:3260`; `register_loans.rs:613`.
-  - `mojito-vm`: `runtime.rs:2340`, `backend/vm/references.rs:934`.
-  - `mojito-native`: `mono/substitute.rs:419`, `:780`, `:791`;
-    `mono/equiv.rs:161`, `:333`.
-  - `mojito-symbol`: `symbol.rs:1615`, `:2712`. The mangling arm must keep
-    every existing pointer key; R2501 owns any symbol change.
-  - `mojito-types`' own arms in `types.rs`: `:3053`, `:5222`, `:5295`,
-    `:5507` (`bind_origin_params`, which R2503 deletes; whichever lands
-    second rebases), `:5576`, `:5646`, `:6318`, `:7281`, `:7566`, `:8450`,
-    `:9157`.
-  - Plan: `R2493-pointer-provenance-readers-read-the-pointerorigin-plan.md`,
-    Slice 1.6.
-  - Found while landing R2493 (2026-11-22).
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R2513 Checker pointer readers read the `PointerOrigin` view, which
   keeps `PointerOrigin::Union` alive**
 
@@ -11428,12 +11397,40 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`rebase_self_place_pointer`, `pointer_write_capability`,
     `CloneBinderProjection`, the `pointer_*` MIR text records and their
     schema move to `pointer { element, origin, mutability }`).
+    - Also `symbol.rs`' `respell_bindable_place` through
+      `RefTy::map_pointer_origin` and `PointerOrigin::map_parts` (the
+      respell's pointer, `Ref`, and `LitRefPack` arms).
+    - Also `collect_named_origins`' `LitRefPack` decode in `types.rs`.
+    - Also `bind_origin_params`' `bind` closure, unless R2503 has deleted
+      it.
+    - Also the fixed-provenance constructors `Ty::pointer(..,
+      PointerOrigin::Static { .. }, ..)` in `erase_origins` and the VM's
+      `held_address`.
   - Probe: R2501's `rebase_self_place_pointer` bullet.
   - Plan: `R2493-pointer-provenance-readers-read-the-pointerorigin-plan.md`,
     Slice 1.6.
   - Found while landing R2493 (2026-11-22).
   - Depends on R2512.
   - Model: Opus, Planned.
+
+- [ ] **R2583 `mono::equiv::ty_equal_modulo_origins` ignores a pointer's
+  `mut`, so `Pointer[mut=True, T]` and `Pointer[mut=False, T]` match**
+
+  Upstream's `Pointer` is a struct whose `mut` is a parameter, so two
+  pointers differing only in it are two types, but the elaborator's
+  origin-blind equality compares only their pointee and address space.
+  - Its own doc says it still requires mutability agreement, and its
+    `Ref` arm compares mutability; the pointer arm should compare
+    `reference.mutability` as well.
+  - Callers whose answer may change: `mono/unify.rs:496`, `:923`,
+    `mono/availability.rs:376`, `mono/substitute.rs:1272`.
+  - Probe: a generic call binding one `T` from two arguments that differ
+    only in a pointer's `mut` (`f[T](a: T, b: T)` with a mutable and an
+    immutable `Pointer[Int, _]`), checked against the pin, and two
+    instances differing only in a pointer parameter's `mut`.
+  - Found while landing R2512 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1292 A MIR `try` may lack its `except` or `else` region, where
   upstream's `lit.try` always holds both**

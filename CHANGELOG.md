@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every pointer reader below the checker reads the pointer's `!lit.ref`
+  record (`TyKind::pointer_lit_ref`) and asks its `Origin` and
+  `Mutability`, as upstream reads a `Pointer`'s `origin` value and `mut`
+  parameter, instead of decoding a `PointerOrigin` view (R2512). This
+  covers the MIR verifier and lowering, inline-parametric and the
+  register-loan dataflow, the VM, the elaborator's substitution and
+  equivalence, mangling, and `mojito-types`' own rewrites. A rewrite
+  rebuilds through `Ty::pointer_from_lit_ref`, which now folds through
+  `Ty::new` to the canonical pointer. A walrus stored through a pointer
+  handle converts it to the pointer's own `!lit.ref`, as
+  `lit.ref.from_pointer` does, not to a hand-built mutable one. The view
+  accessors remain for the checker alone (R2513). No output, MIR text,
+  or symbol changes.
+
 - A `ref.make` has one meaning, a borrow of the storage its place names,
   as upstream's `!lit.ref` of a field does (R2494). A `ref` field's stored
   handle is a `ref.read` of a `ref (ref T)` borrow of its slot, typed as

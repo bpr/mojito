@@ -363,10 +363,8 @@ impl ScopeCx<'_> {
                 self.expr(role, "mutability", expr, &MetaTy::value(Ty::bool()), nested);
             }
             TyKind::LitOrigin(_) | TyKind::LitOriginSet => {}
-            TyKind::Struct(..)
-                if let Some((element, _, address_space)) = ty.kind().pointer_parts() =>
-            {
-                self.address_in(role, element, &address_space, nested);
+            TyKind::Struct(..) if let Some(reference) = ty.kind().pointer_lit_ref() => {
+                self.address_in(role, &reference.referent, &reference.address_space, nested);
             }
             TyKind::Struct(name, args) => {
                 let declared = self

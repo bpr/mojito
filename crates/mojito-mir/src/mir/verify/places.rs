@@ -178,9 +178,8 @@ pub(super) fn verify_place(
             let local_handle = function.binds_reference(through)
                 || function.var_tys.get(&through).is_some_and(|pointer| {
                     pointer
-                        .kind()
-                        .pointer_origin()
-                        .is_some_and(|origin| origin.as_origin().is_some())
+                        .pointer_lit_ref()
+                        .is_some_and(|reference| reference.origin.pointer_loan_origin().is_some())
                 });
             if !parameter_handle && !receiver_handle && !local_handle {
                 let declared = function

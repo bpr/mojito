@@ -571,11 +571,21 @@ pub(super) fn instantiate_checked_type(
                 .collect::<Result<Vec<_>, _>>()?,
         )
         .into(),
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
-            instantiate_checked_type(element, type_arguments, value_arguments, bound_values)?,
-            origin,
-            instantiate_address_space(&address_space, value_arguments)?,
-        ),
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&mojito_types::origin::RefTy {
+                referent: instantiate_checked_type(
+                    &reference.referent,
+                    type_arguments,
+                    value_arguments,
+                    bound_values,
+                )?,
+                address_space: instantiate_address_space(
+                    &reference.address_space,
+                    value_arguments,
+                )?,
+                ..reference
+            })
+        }
         TyKind::KgenPointer {
             element,
             address_space,

@@ -1518,8 +1518,8 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // An instance symbol spells the closed mutability the origin carries,
         // the struct's `mut` parameter, as an instance struct spells its
         // value arguments; an overload key does not.
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-            let mutability = match (mode, origin.parts().1) {
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            let mutability = match (mode, reference.mutability) {
                 (KeyMode::Instance, mojito_types::origin::Mutability::Mutable) => {
                     format!("{}$", value_argument_raw(&CtValue::Bool(true), mode))
                 }
@@ -1530,8 +1530,8 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
             };
             format!(
                 "Pointer${mutability}{}{}",
-                ty_raw_in(element, self_ty, mode),
-                address_space_raw(&address_space)
+                ty_raw_in(&reference.referent, self_ty, mode),
+                address_space_raw(&reference.address_space)
             )
         }
         TyKind::KgenPointer {
@@ -1857,11 +1857,11 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         // A caller place a clone binder stands for spells as the first
         // clone binder (`Elab::clone_binding`): one clone serves every place
         // of the shape, as an erased struct origin tail does.
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => Ty::pointer(
-            respell(element),
-            respell_bindable_place(&origin),
-            address_space,
-        ),
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            let mut reference = reference.map_pointer_origin(respell_bindable_place);
+            reference.referent = respell(&reference.referent);
+            Ty::pointer_from_lit_ref(&reference)
+        }
         TyKind::KgenPointer {
             element,
             address_space,

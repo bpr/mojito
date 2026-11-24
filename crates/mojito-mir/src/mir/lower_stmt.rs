@@ -2115,22 +2115,15 @@ impl<'a> Flatten<'a> {
 
     /// The place walrus target `target` designates through `handle`, the
     /// getter's reference or the pointer its store wrote through: the
-    /// handle, a pointer converted to its pointee's reference as upstream's
-    /// `lit.ref.from_pointer` makes it, materialized in a hidden slot.
+    /// handle, a pointer converted to its own `!lit.ref` (its pointee,
+    /// origin, `mut`, and address space) as upstream's `lit.ref.from_pointer`
+    /// makes it, materialized in a hidden slot.
     fn materialize_stored_reference(&mut self, target: Node<'a>, handle: Reg) -> Option<MirPlace> {
         let ty = self.f.reg_types.get(&handle.0).cloned()?;
         let (handle, reference) = match ty.kind() {
             TyKind::Ref(reference) => (handle, reference.clone()),
             kind => {
-                let reference = mojito_types::origin::RefTy {
-                    referent: kind.pointer_element()?.clone(),
-                    origin: kind
-                        .pointer_origin()
-                        .and_then(|origin| origin.as_origin())
-                        .unwrap_or(mojito_types::origin::Origin::Untracked { mutable: true }),
-                    mutability: mojito_types::origin::Mutability::Mutable,
-                    address_space: kind.pointer_address_space()?,
-                };
+                let reference = kind.pointer_lit_ref()?;
                 let converted = self.fresh_typed(
                     target.location(),
                     None,

@@ -209,7 +209,7 @@ use mojito_mir::mir::{
     terminator_regs_mut, with_removed_argument_forwards_erased, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
-use mojito_types::origin::{Mutability, Origin, OriginParamId, PointerOrigin, RefTy};
+use mojito_types::origin::{Mutability, Origin, OriginParamId, RefTy};
 use mojito_types::param_expr::{
     MetaTy, ParamBindings, ParamContext, ParamError, ParamExpr, ParamId, ParamKind, ParamRef,
 };
@@ -3217,33 +3217,33 @@ fn pointer_mutabilities(
                 Binding::Place(place) | Binding::Part { place, .. } => place.ty.as_ref(),
                 _ => None,
             }?;
-            let (
-                _,
-                PointerOrigin::Param {
-                    mutability: Mutability::Param(id),
-                    ..
-                }
-                | PointerOrigin::SelfPlace {
-                    mutability: Mutability::Param(id),
-                    ..
-                },
-            ) = declared.as_pointer()?
-            else {
+            let declared = declared.pointer_lit_ref()?;
+            let Mutability::Param(id) = declared.mutability else {
                 return None;
             };
-            let actual = actual.as_pointer()?.1;
-            let mutability = match (actual.statically_mutable(), &actual) {
-                (Some(mutable), _) => Mutability::of(mutable),
-                (
-                    None,
-                    PointerOrigin::Param { mutability, .. }
-                    | PointerOrigin::SelfPlace { mutability, .. },
-                ) if *mutability != Mutability::Param(id) => *mutability,
-                (None, _) => return None,
+            binder_rooted(&declared.origin).then_some(())?;
+            let actual = actual.pointer_lit_ref()?;
+            let mutability = match actual.mutability.known() {
+                Some(mutable) => Mutability::of(mutable),
+                None if actual.mutability != Mutability::Param(id)
+                    && binder_rooted(&actual.origin) =>
+                {
+                    actual.mutability
+                }
+                None => return None,
             };
             Some((id, mutability))
         })
         .collect()
+}
+
+/// Whether `origin` is rooted in an origin binder or the receiver's
+/// `origin_of(self)`, whose `mut` a pointer under it carries as its own.
+fn binder_rooted(origin: &Origin) -> bool {
+    matches!(
+        origin.projection_base(),
+        Origin::Param(_) | Origin::SelfParam
+    )
 }
 
 /// An inlined body's mutability parameters the call binds
@@ -3298,30 +3298,16 @@ impl TyRewrite for BoundMutabilities {
     fn whole(&mut self, ty: &Ty) -> Option<Ty> {
         // A pointer the body derives from the parameter (`origin_of(self)`)
         // carries its binder as a reference does.
-        if let Some((
-            element,
-            mut origin @ (PointerOrigin::Param {
-                mutability: Mutability::Param(id),
-                ..
-            }
-            | PointerOrigin::SelfPlace {
-                mutability: Mutability::Param(id),
-                ..
-            }),
-        )) = ty.as_pointer()
+        if let Some(reference) = ty.pointer_lit_ref()
+            && let Mutability::Param(id) = reference.mutability
+            && binder_rooted(&reference.origin)
         {
             let bound = *self.0.get(&id)?;
-            if let PointerOrigin::Param { mutability, .. }
-            | PointerOrigin::SelfPlace { mutability, .. } = &mut origin
-            {
-                *mutability = bound;
-            }
-            let address_space = ty.kind().pointer_address_space()?;
-            return Some(Ty::pointer(
-                rewrite_ty(&element, self).ok()?,
-                origin,
-                address_space,
-            ));
+            return Some(Ty::pointer_from_lit_ref(&RefTy {
+                referent: rewrite_ty(&reference.referent, self).ok()?,
+                mutability: bound,
+                ..reference
+            }));
         }
         let TyKind::Ref(reference) = ty.kind() else {
             return None;

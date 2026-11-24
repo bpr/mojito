@@ -610,8 +610,8 @@ fn tracked_pointer_result(
 ) -> bool {
     register_types
         .get(&dest.0)
-        .and_then(|ty| ty.kind().pointer_origin())
-        .is_some_and(|origin| origin.as_origin().is_some())
+        .and_then(mojito_types::types::Ty::pointer_lit_ref)
+        .is_some_and(|reference| reference.origin.pointer_loan_origin().is_some())
 }
 
 /// One SSA instruction's transfer of transient owner provenance, whose

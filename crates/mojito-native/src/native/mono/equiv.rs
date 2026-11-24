@@ -155,11 +155,8 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
                 && a.address_space == b.address_space
                 && ty_equal_modulo_origins(&a.referent, &b.referent)
         }
-        (a, b)
-            if let (Some((a, _, a_space)), Some((b, _, b_space))) =
-                (a.pointer_parts(), b.pointer_parts()) =>
-        {
-            a_space == b_space && ty_equal_modulo_origins(a, b)
+        (a, b) if let (Some(a), Some(b)) = (a.pointer_lit_ref(), b.pointer_lit_ref()) => {
+            a.address_space == b.address_space && ty_equal_modulo_origins(&a.referent, &b.referent)
         }
         (
             TyKind::KgenPointer {
@@ -316,10 +313,9 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
     if !erases {
         return;
     }
-    if let Some((element, origin, address_space)) = ty.kind().pointer_parts() {
-        let mut element = element.clone();
-        erase_callable_environments(&mut element);
-        *ty = Ty::pointer(element, origin, address_space);
+    if let Some(mut reference) = ty.kind().pointer_lit_ref() {
+        erase_callable_environments(&mut reference.referent);
+        *ty = Ty::pointer_from_lit_ref(&reference);
         return;
     }
     ty.update(|kind| match kind {
