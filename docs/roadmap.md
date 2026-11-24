@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2557**.
+Next free ID: **R2558**.
 
 ## Ordered Work
 
@@ -13421,29 +13421,30 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R2550 Constraint and comptime-validation readers classify an annotation by its view**
+- [ ] **R2557 A `comptime` member or generic alias body is classified as a
+  type by its spelling before it is lowered**
 
-  `constraints.rs`, `comptime_validation.rs`, and `initializer_list.rs`
-  still match `AnnotationView` shapes, so the view type outlives the
-  evaluator it was built for.
-  - Probe: `assoc_body_view` (the gate `check_struct_associated`,
-    `denotes_type`, and `builtin_fold.rs` still test before typing a
-    member body), `member_view_of`, `mlir_source_name`, `SlotType`
-    classification, the `initializer_list.rs` view readers
-    (`type_member_read`, `type_member_spelling`).
-  - Also: the `spelled_view` tests in
-    `type_resolution.rs::{lower_assoc_application_arg, mlir_type_operand,
-    compile_time_value_type}` and `constraints.rs::spells_member_root`.
-  - Also: the `assoc_body_view` gates left in
-    `origins/binders.rs::collect_field_origin_binders` and
-    `statements.rs::{alias_body_is_type, denotes_type}`, which discard the
-    view.
-  - `pack_spread_view` remains only inside `spelled_annotation_view`.
-  - Then delete `AnnotationView`, its view functions, and
-    `annotation_view_tests`, and say in `docs/features.md` that the checker
-    types every annotation with `emit_expr_type`.
-  - Depends on R2549.
-  - Model: Fable, Planned.
+  `constraints.rs::check_struct_associated` and
+  `statements.rs::check_generic_comptime_alias` choose between a type
+  template and a value body by `constraints.rs::spells_type_body`, a test
+  of the body's shape, where upstream evaluates the body under its binders
+  and keeps a type result as a type.
+  - Sites: the `as_type` and `spelled_as_type` choices in
+    `check_struct_associated`, and `statements.rs::alias_body_is_type`.
+  - Probe: `comptime U[n: Int] = Int if n > 0 else Float64`, as a struct
+    member and as a module alias, runs as at the pin, but as a
+    `MemberTemplate::Value` whose result is a type, a second template kind
+    for one body upstream lowers one way.
+  - Lever: try `lower_parameterized_member` under the binders for every
+    body, keep a metatype result as the type template, and fall back to
+    value lowering; choose the reported error by which lowering got
+    furthest, not by the spelling.
+  - Risk: `lower_parameterized_member` records attributes and
+    `type_operand` facts on success, so a body tried as a type and kept as
+    a value must leave no records.
+  - Found while landing R2550 (2026-11-23).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R2338 `dead-argument-elimination` keeps a method's dead receiver**
 

@@ -797,7 +797,6 @@ impl Checker {
             let member = associated
                 .iter()
                 .find(|member| member.name == alias && member.params.is_empty())?;
-            super::constraints::assoc_body_view(&member.value).ok()?;
             return self.collect_field_origin_binders(&member.value, associated, substitution, out);
         }
         // A parameterized alias application (`Self.view_t[o2]`,
@@ -845,7 +844,6 @@ impl Checker {
                 inner.insert(parameter.name.clone(), binder);
             }
         }
-        super::constraints::assoc_body_view(&member.value).ok()?;
         self.collect_field_origin_binders(&member.value, associated, &inner, out)
     }
 

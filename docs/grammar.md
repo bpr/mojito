@@ -1304,7 +1304,7 @@ fn_effect: 'thin' | 'raises' [type] | 'abi' '(' ... ')'
 As upstream parses an annotation, it is one whole expression (the
 expression grammar at ternary level, as a function type's result and a
 generator type's result are), converted in the annotation's type context
-by the checker (`annotation_view`). Only a `*` pack and a contextual `ref` keep their
+by the checker (`emit_expr_type`). Only a `*` pack and a contextual `ref` keep their
 own forms:
 
 - `None` is the none type (a bracket operand reads the same expression but

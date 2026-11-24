@@ -567,8 +567,8 @@ Postfix forms bind at `Call`, the highest level.
   (`ExprKind::GeneratorType`), each its own expression node, as upstream
   parses them; a `*` pack annotation (`*Ts`, `*Self.Ts`) is the
   `ExprKind::Spread` of the pack, as upstream parses a spread, which
-  the checker's `annotation_view` views as the pack's `*`-prefixed name
-  (`pack_spread_view`). `ref` is never a type: after `->`
+  the checker reads as the pack it names (`Expr::spread_pack_name`).
+  `ref` is never a type: after `->`
   (`Parser::parse_result`) and after a field's `:`
   (`Parser::parse_reference_slot`) a `ref[...]` is the slot's convention,
   kept as `ret_reference` / `Param::reference` beside the referent

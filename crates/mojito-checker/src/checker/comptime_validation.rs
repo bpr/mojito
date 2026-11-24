@@ -1131,20 +1131,6 @@ pub(super) fn mlir_attribute_expr(
     Ok((context.typed_constant(value, &ty).map_err(param_error)?, ty))
 }
 
-/// The `name` of an `` __mlir_type.`name` `` spelling.
-pub(super) fn mlir_source_name<'a>(ty: &'a AnnotationView<'_>) -> Option<&'a str> {
-    match ty {
-        AnnotationView::Assoc { base, name, args }
-            if args.is_empty()
-                && matches!(base.as_ref(), AnnotationView::Named(base, base_args)
-                    if base == "__mlir_type" && base_args.is_empty()) =>
-        {
-            Some(name)
-        }
-        _ => None,
-    }
-}
-
 /// The rejection of an untyped `__mlir_attr` read at run time outside a
 /// body that returns `!kgen.deferred`, which the pin elides and Mojito does
 /// not hold.
@@ -7568,14 +7554,14 @@ impl ApplicableShape<'_> {
             .iter()
             .map(|binder| binder.callable_bound.is_none().then(|| binder.name.clone()))
             .collect::<Option<_>>()?;
-        let slot = |annotation: &Expr| match &annotation_view_of(annotation).ok()? {
-            AnnotationView::SelfType => Some(SlotType::Owner),
-            ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
-            ty if is_mlir_source(ty, "i1") => Some(SlotType::Scalar(Ty::i1())),
-            ty if is_mlir_source(ty, "!kgen.dtype") => Some(SlotType::Scalar(Ty::kgen_dtype())),
-            AnnotationView::Named(..)
-            | AnnotationView::SelfParam(_)
-            | AnnotationView::Assoc { .. } => {
+        let slot = |annotation: &Expr| match annotation {
+            _ if annotation.is_self_annotation() => Some(SlotType::Owner),
+            _ if is_mlir_index_source(annotation) => Some(SlotType::Scalar(Ty::index())),
+            _ if is_mlir_source(annotation, "i1") => Some(SlotType::Scalar(Ty::i1())),
+            _ if is_mlir_source(annotation, "!kgen.dtype") => {
+                Some(SlotType::Scalar(Ty::kgen_dtype()))
+            }
+            _ if declares_slot_type(annotation) => {
                 Some(SlotType::Declared(Some(annotation.clone()), None))
             }
             _ => None,
@@ -7633,7 +7619,6 @@ impl ApplicableShape<'_> {
             Some(result) => &result.ty,
             None => &self.ret,
         };
-        let ret_view = annotation_view_of(ret).ok()?;
         Some(ApplicableFunction {
             owner,
             site: Some(site),
@@ -7654,21 +7639,11 @@ impl ApplicableShape<'_> {
                 self.keyword_only,
                 variadic,
             ),
-            result: match &ret_view {
+            result: match &ret.kind {
                 // A reference result is its referent's application, which
                 // the call reads ([`ResultConvention::Reference`]).
-                AnnotationView::SelfType
-                | AnnotationView::Named(..)
-                | AnnotationView::SelfParam(_)
-                | AnnotationView::IndexedProjection { .. }
-                    if self.reference =>
-                {
-                    ret.clone()
-                }
+                _ if self.reference && names_result_type(ret) => ret.clone(),
                 _ if self.reference => return None,
-                AnnotationView::None | AnnotationView::SelfType | AnnotationView::Named(..) => {
-                    ret.clone()
-                }
                 // A `comptime` member type of `Self` (`SIMD.eq`'s
                 // `Self._Mask`), or a parametric one applied
                 // (`SIMD.reduce_max`'s `Self._T[size_out]`), resolved in its
@@ -7676,13 +7651,12 @@ impl ApplicableShape<'_> {
                 // builtin's bare member is registered before its body folds
                 // ([`Checker::register_builtin_result_members`]); no other
                 // callable's member is needed sooner.
-                AnnotationView::SelfParam(_) | AnnotationView::IndexedProjection { .. } => {
-                    ret.clone()
-                }
-                view if is_mlir_index_source(view)
-                    || is_mlir_source(view, "!kgen.deferred")
-                    || is_mlir_source(view, "!kgen.string")
-                    || is_mlir_source(view, "!kgen.target") =>
+                ExprKind::None => ret.clone(),
+                _ if names_result_type(ret) => ret.clone(),
+                _ if is_mlir_index_source(ret)
+                    || is_mlir_source(ret, "!kgen.deferred")
+                    || is_mlir_source(ret, "!kgen.string")
+                    || is_mlir_source(ret, "!kgen.target") =>
                 {
                     ret.clone()
                 }
@@ -8027,13 +8001,77 @@ pub(super) fn reads_comptime_interpreter_query(expr: &Expr) -> bool {
 }
 
 /// Whether `ty` spells the MLIR builtin `__mlir_type.index`.
-fn is_mlir_index_source(ty: &AnnotationView) -> bool {
+fn is_mlir_index_source(ty: &Expr) -> bool {
     is_mlir_source(ty, "index")
 }
 
 /// Whether `ty` spells `` __mlir_type.`name` ``.
-fn is_mlir_source(ty: &AnnotationView, mlir_name: &str) -> bool {
-    mlir_source_name(ty) == Some(mlir_name)
+fn is_mlir_source(ty: &Expr, mlir_name: &str) -> bool {
+    mlir_type_name(ty) == Some(mlir_name)
+}
+
+/// The `name` of an `` __mlir_type.`name` `` spelling.
+fn mlir_type_name(ty: &Expr) -> Option<&str> {
+    match &ty.kind {
+        ExprKind::Member { object, field } if object.identifier() == Some("__mlir_type") => {
+            Some(field)
+        }
+        _ => None,
+    }
+}
+
+/// Whether a compile-time callable's parameter annotation declares the
+/// type its argument takes ([`SlotType::Declared`]): a name or its
+/// application (`Int`, `List[Int]`), a pack spread (`*Ts`, `*Self.Ts`), a
+/// member of `Self` or of another type (`Self.T`, `C.E`), or a member's
+/// application (`M.A[1, 2]`). An index into a sequence (`Self[0]`,
+/// `M.A[1]`), `type_of(x)`, and any value are no declared type.
+fn declares_slot_type(annotation: &Expr) -> bool {
+    match &annotation.kind {
+        ExprKind::Identifier(name) => name != "Self" && !annotation.is_sentinel(),
+        ExprKind::Spread(operand) => operand.spread_pack_name().is_some(),
+        ExprKind::Member { object, .. } => !object.is_sentinel(),
+        ExprKind::Index { .. } | ExprKind::MultiIndex { .. } => annotation
+            .bracket_operands()
+            .is_some_and(|(object, args)| applies_name_or_member(object, &args)),
+        _ => false,
+    }
+}
+
+/// Whether a compile-time callable's result annotation names the type its
+/// application returns: `Self` or a name or its application (`Int`,
+/// `List[Int]`), a pack spread, a member of `Self` (`Self._Mask`), or an
+/// index into a sequence (`Self[0]`, `Self._T[n]`). Another type's member
+/// (`C.E`) and its application are not resolved there.
+fn names_result_type(ret: &Expr) -> bool {
+    match &ret.kind {
+        ExprKind::Identifier(_) => !ret.is_sentinel(),
+        ExprKind::Spread(operand) => operand.spread_pack_name().is_some(),
+        ExprKind::Member { object, .. } => object.is_self_annotation(),
+        ExprKind::Index { .. } | ExprKind::MultiIndex { .. } => {
+            ret.bracket_operands().is_some_and(|(object, args)| {
+                applies_name(object) || matches!(args.as_slice(), [ParamArg::Value(_)])
+            })
+        }
+        _ => false,
+    }
+}
+
+/// Whether a bracket whose base is `object` applies a name other than
+/// `Self` (`List[Int]`).
+fn applies_name(object: &Expr) -> bool {
+    object.identifier().is_some_and(|name| name != "Self")
+}
+
+/// Whether a bracket of `args` on `object` applies a name or a type's
+/// member (`List[Int]`, `M.A[1, 2]`) rather than indexing a sequence: a
+/// lone positional operand on any other base (`Self[0]`, `M.A[1]`) is an
+/// index.
+fn applies_name_or_member(object: &Expr, args: &[ParamArg]) -> bool {
+    applies_name(object)
+        || !matches!(args, [ParamArg::Value(_)])
+            && matches!(&object.kind, ExprKind::Member { object: base, .. }
+                if !base.is_self_annotation() && !base.is_sentinel())
 }
 
 /// Whether `value` is a scalar or a string attribute.
@@ -8105,20 +8143,22 @@ fn value_names_read(expr: &Expr) -> Vec<String> {
         /// are type reads; its bracket operands and any value it evaluates
         /// stay value reads.
         fn visit_annotation(&mut self, annotation: &Expr) {
-            if matches!(
-                annotation_view(annotation),
-                None | Some(AnnotationView::Value(_))
-            ) {
-                return;
-            }
             match &annotation.kind {
-                ExprKind::Identifier(_) => {
+                ExprKind::Identifier(_) if !annotation.is_sentinel() => {
                     self.typed.insert(std::ptr::from_ref(annotation));
                 }
-                ExprKind::Member { object, .. }
-                | ExprKind::Index { object, .. }
-                | ExprKind::MultiIndex { object, .. }
-                | ExprKind::Spread(object) => self.visit_annotation(object),
+                ExprKind::Member { object, .. } => self.visit_annotation(object),
+                ExprKind::Spread(operand) if operand.spread_pack_name().is_some() => {
+                    self.visit_annotation(operand);
+                }
+                ExprKind::Index { .. } | ExprKind::MultiIndex { .. } => {
+                    if let Some((object, args)) = annotation.bracket_operands()
+                        && (matches!(args.as_slice(), [ParamArg::Value(_)])
+                            || applies_name_or_member(object, &args))
+                    {
+                        self.visit_annotation(object);
+                    }
+                }
                 _ => {}
             }
         }
@@ -8396,4 +8436,69 @@ fn nested_def_spellings(body: &[Stmt]) -> HashMap<String, usize> {
     };
     mojito_ast::visit::walk_block(&mut spellings, body);
     spellings.counts
+}
+
+#[cfg(test)]
+mod signature_spelling_tests {
+    use super::super::expr_builders::{call, ident, index, int, member, multi_index, spread};
+    use super::{declares_slot_type, mlir_type_name, names_result_type};
+
+    #[test]
+    fn an_mlir_type_spelling_names_its_builtin() {
+        assert_eq!(
+            mlir_type_name(&member(ident("__mlir_type"), "index")),
+            Some("index")
+        );
+        assert_eq!(
+            mlir_type_name(&index(ident("__mlir_type"), ident("x"))),
+            None
+        );
+        assert_eq!(mlir_type_name(&member(ident("M"), "index")), None);
+    }
+
+    #[test]
+    fn a_parameter_declares_a_named_or_member_type() {
+        for annotation in [
+            ident("Int"),
+            index(ident("List"), ident("Int")),
+            member(ident("Self"), "T"),
+            member(ident("C"), "E"),
+            multi_index(member(ident("M"), "A"), vec![int(1), int(2)]),
+            spread(ident("Ts")),
+            spread(member(ident("Self"), "Ts")),
+        ] {
+            assert!(declares_slot_type(&annotation), "{annotation:?}");
+        }
+        for annotation in [
+            ident("Self"),
+            index(ident("Self"), int(0)),
+            index(member(ident("M"), "A"), int(1)),
+            multi_index(member(ident("Self"), "T"), vec![int(1), int(2)]),
+            call("type_of", vec![ident("x")]),
+            int(3),
+        ] {
+            assert!(!declares_slot_type(&annotation), "{annotation:?}");
+        }
+    }
+
+    #[test]
+    fn a_result_names_a_type_or_an_index_into_one() {
+        for ret in [
+            ident("Self"),
+            ident("Int"),
+            index(ident("List"), ident("Int")),
+            member(ident("Self"), "T"),
+            index(ident("Self"), int(0)),
+            index(member(ident("Self"), "_T"), ident("n")),
+        ] {
+            assert!(names_result_type(&ret), "{ret:?}");
+        }
+        for ret in [
+            member(ident("C"), "E"),
+            multi_index(member(ident("M"), "A"), vec![int(1), int(2)]),
+            call("f", vec![]),
+        ] {
+            assert!(!names_result_type(&ret), "{ret:?}");
+        }
+    }
 }

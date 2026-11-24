@@ -5847,11 +5847,11 @@ builder's reflection read, so `emit_expr_type` neither views nor resolves.
 The checker's origin, binder, struct-field, trait, alias, and
 builtin-fold readers read the annotation expression itself
 (`Expr::bracket_application`, `Expr::self_member`,
-`ParamArg::spread_operand`), as upstream's do. The constraint,
-compile-time-validation, and initializer-list readers still classify an
-annotation through the checker's borrowed view,
-`type_resolution.rs::AnnotationView` (`annotation_view`), until R2550
-retires it. Every annotation slot (`var` and `comptime` annotations, struct and
+`ParamArg::spread_operand`), as upstream's do. So do the constraint,
+compile-time-validation, and initializer-list readers. The checker has no
+second representation of an annotation, and where a reader asks whether a
+chain is rooted at a type, it resolves the root name
+(`Checker::may_denote_type`), as upstream does, never its letter case. Every annotation slot (`var` and `comptime` annotations, struct and
 trait `comptime` members, struct fields, union payloads, a parameter's type,
 a result, a `raises` type, a receiver's annotation, a callable conformance,
 and a type parameter's value type and callable bound) stores the annotation

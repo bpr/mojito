@@ -363,17 +363,18 @@ impl Checker {
                 // unannotated generic alias's is.
                 let as_type = match requirement {
                     Some(CtMemberReq::Value(_)) => Err(unsupported_assoc_body()),
-                    _ => assoc_body_view(&member.value).and_then(|_| {
+                    _ if !spells_type_body(&member.value) => Err(unsupported_assoc_body()),
+                    _ => {
                         let decls = own_decls.clone();
-                        let template = self.lower_parameterized_member(
+                        self.lower_parameterized_member(
                             &member_owner,
                             &decls,
                             member_scope.clone(),
                             &member.params,
                             &member.value,
-                        )?;
-                        Ok(MemberTemplate::Type { decls, template })
-                    }),
+                        )
+                        .map(|template| MemberTemplate::Type { decls, template })
+                    }
                 };
                 let template = match (as_type, &requirement) {
                     (Ok(template), _) => template,
@@ -385,8 +386,7 @@ impl Checker {
                         };
                         // A body spelled as a type reports why it is not
                         // one, unless its annotation declares a value.
-                        let spelled_as_type =
-                            declared.is_none() && assoc_body_view(&member.value).is_ok();
+                        let spelled_as_type = declared.is_none() && spells_type_body(&member.value);
                         // A value member is a generator over its whole
                         // declared list, as upstream's is: an application
                         // binds an origin binder in its slot.
@@ -425,9 +425,7 @@ impl Checker {
                             info.associated_value_types
                                 .insert(member.name.clone(), ty.clone());
                         }
-                        if matches!(value, CtValue::Type(_))
-                            && assoc_body_view(&member.value).is_ok()
-                        {
+                        if matches!(value, CtValue::Type(_)) {
                             info.associated_spellings
                                 .insert(member.name.clone(), member.value.clone());
                         }
@@ -474,13 +472,13 @@ impl Checker {
         params: &[mojito_ast::ast::TypeParam],
         value: &Expr,
     ) -> Result<Option<(Vec<mojito_ast::ast::TypeParam>, Expr)>, TypeError> {
-        let Ok(AnnotationView::Named(struct_name, args)) = assoc_body_view(value) else {
+        let Some((struct_name, args)) = value.bracket_application() else {
             return Ok(None);
         };
         if !params.is_empty() || !args.iter().any(|arg| unbound_slot(arg).is_some()) {
             return Ok(None);
         }
-        let Some(info) = self.structs.get(&struct_name) else {
+        let Some(info) = self.structs.get(struct_name) else {
             return Ok(None);
         };
         let declared = &info.source_params;
@@ -597,7 +595,7 @@ impl Checker {
                 None => {}
             }
         }
-        let Some(applied) = mojito_ast::ast::named_subscript(&struct_name, &rewritten, value.span)
+        let Some(applied) = mojito_ast::ast::named_subscript(struct_name, &rewritten, value.span)
         else {
             return Ok(None);
         };
@@ -7516,135 +7514,37 @@ pub(super) enum TypeListReceiver {
     Derived(ParamExpr),
 }
 
-/// The type a parameterized associated type's body denotes. The body parses as
-/// an ordinary compile-time expression; the type-valued forms are a bare name
-/// (`Element`), a type application (`List[T]`, `Fixed[n]`), a function or
-/// generator type, or a `Self.` member.
-pub(super) fn assoc_body_view(value: &Expr) -> Result<AnnotationView<'_>, TypeError> {
+/// Whether a `comptime` body is spelled as a type, which
+/// `check_struct_associated` and a generic alias lower as a type template
+/// before trying a value: a bare name (`Element`, `Self`), a type
+/// application (`List[T]`, `Fixed[n]`), a function or generator type, a
+/// subscript of the struct's own member (`Self.values[idx]`) or of a
+/// compile-time construction, a member of `Self` or of a construction
+/// (`S[2]().H`), or another type's member or its application
+/// (`R.Of[Bool]`, `_MLIR.KGENParamListType[Self.type]`). A bracketed
+/// attribute (`__mlir_attr[...]`) is a compile-time value, whatever its
+/// type.
+pub(super) fn spells_type_body(value: &Expr) -> bool {
     match &value.kind {
-        ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
-            Ok(AnnotationView::Value(value))
+        ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } | ExprKind::Identifier(_) => {
+            true
         }
-        // `comptime IteratorType[...] = Self` — a self-iterating struct
-        // (current Mojo's range family) names itself as the member's body.
-        ExprKind::Identifier(name) if name == "Self" => Ok(AnnotationView::SelfType),
-        ExprKind::Identifier(name) => Ok(AnnotationView::Named(name.clone(), Vec::new())),
-        // A bracketed attribute is a compile-time value, whatever its type.
-        _ if let Some((name, args)) = value.bracket_application() => {
-            if name == "__mlir_attr" {
-                Err(unsupported_assoc_body())
-            } else {
-                Ok(AnnotationView::Named(name.to_string(), args.into_owned()))
-            }
-        }
-        // A subscript of the struct's own member or parameter
-        // (`Self.values[idx]`, `Self.Get[0]`).
-        ExprKind::Index { object, index }
-            if let ExprKind::Member {
-                object: base,
-                field,
-            } = &object.kind
-                && matches!(&base.kind, ExprKind::Identifier(name) if name == "Self") =>
+        _ if let Some((name, _)) = value.bracket_application() => name != "__mlir_attr",
+        ExprKind::Index { object, .. }
+            if object.self_member().is_some() || matches!(object.kind, ExprKind::Call { .. }) =>
         {
-            Ok(AnnotationView::IndexedProjection {
-                base: Box::new(AnnotationView::SelfParam(field.clone())),
-                index,
-            })
+            true
         }
-        ExprKind::Index { object, index } if matches!(object.kind, ExprKind::Call { .. }) => {
-            Ok(AnnotationView::IndexedProjection {
-                base: Box::new(AnnotationView::Value(object)),
-                index,
-            })
-        }
-        ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(s) if s == "Self") => {
-            Ok(AnnotationView::SelfParam(field.clone()))
-        }
-        // A member read through a compile-time construction (`S[2]().H`,
-        // `CompilationTarget.current().stdlib_plugin`): the member of the
-        // type it constructs.
-        ExprKind::Member { object, field }
-            if matches!(
-                object.kind,
-                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-            ) =>
+        ExprKind::Member { object, .. }
+            if object.is_self_annotation()
+                || matches!(
+                    object.kind,
+                    ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+                ) =>
         {
-            Ok(AnnotationView::Assoc {
-                base: Box::new(AnnotationView::Value(object)),
-                name: field.clone(),
-                args: Vec::new(),
-            })
+            true
         }
-        // Another type's member or its application (`R.Of[Bool]`,
-        // `_MLIR.KGENParamListType[Self.type]`).
-        _ => member_view_of(value).ok_or_else(unsupported_assoc_body),
-    }
-}
-
-/// The type a member read through a type spells as an expression: the
-/// member (`M.E`, `S[Int].X`) or its application (`S[Int].Of[Bool]`,
-/// `M.Pair[A, B]`, `M.Buf[n]`). `None` for any other expression.
-pub(super) fn member_view_of<'a>(expr: &'a Expr) -> Option<AnnotationView<'a>> {
-    // A lowercase root (a type parameter `t`) is a type here too.
-    let member = |object: &'a Expr| {
-        let ExprKind::Member {
-            object: base,
-            field,
-        } = &object.kind
-        else {
-            return None;
-        };
-        // An applied member (`C.IteratorType[o].Element`) projects from
-        // the member application it reads, and `type_of(x).T` from the
-        // type of `x`.
-        let base = spelled_view(base).or_else(|| match &base.kind {
-            ExprKind::Identifier(name) => Some(AnnotationView::Named(name.clone(), Vec::new())),
-            ExprKind::Index { .. } | ExprKind::MultiIndex { .. } => member_view_of(base),
-            ExprKind::Call {
-                name,
-                args,
-                kwargs,
-                param_args,
-            } if name == "type_of" && kwargs.is_empty() && param_args.is_empty() => {
-                match args.as_slice() {
-                    [operand] => Some(AnnotationView::TypeOf(operand)),
-                    _ => None,
-                }
-            }
-            _ => None,
-        })?;
-        Some(match base {
-            AnnotationView::SelfType => AnnotationView::SelfParam(field.clone()),
-            base => AnnotationView::Assoc {
-                base: Box::new(base),
-                name: field.clone(),
-                args: Vec::new(),
-            },
-        })
-    };
-    let applied = |object: &'a Expr, args: Vec<mojito_ast::ast::ParamArg>| match member(object)? {
-        AnnotationView::Assoc { base, name, .. } => {
-            Some(AnnotationView::Assoc { base, name, args })
-        }
-        // A sibling member's application (`Self.of[type=type]`).
-        AnnotationView::SelfParam(name) => Some(AnnotationView::Assoc {
-            base: Box::new(AnnotationView::SelfType),
-            name,
-            args,
-        }),
-        _ => None,
-    };
-    match &expr.kind {
-        ExprKind::Member { .. } => member(expr),
-        ExprKind::Index { object, index } if !index.is_type_expression() => {
-            Some(AnnotationView::IndexedProjection {
-                base: Box::new(member(object)?),
-                index,
-            })
-        }
-        ExprKind::Index { object, index } => applied(object, subscript_param_args(index)),
-        ExprKind::MultiIndex { object, args } => applied(object, multi_subscript_param_args(args)?),
-        _ => None,
+        _ => spells_member_read(value),
     }
 }
 
@@ -8238,25 +8138,44 @@ fn spells_member_base(object: &Expr) -> bool {
         && spells_member_root(object)
 }
 
-/// Whether `base` spells a type a member is read through: a type-shaped
-/// spelling ([`spelled_view`]), any name (a type parameter `t` included),
-/// an applied member, or `type_of(x)`.
+/// Whether `base` is the base chain of a type member read: a name, a
+/// bracket on one, a member of such a chain, an applied member
+/// (`C.IteratorType[o]`), or `type_of(x)`. Its root's meaning is decided
+/// by the read, never by its letter case.
 fn spells_member_root(base: &Expr) -> bool {
-    spelled_view(base).is_some()
-        || match &base.kind {
-            ExprKind::Identifier(_) => true,
-            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
-                matches!(&object.kind, ExprKind::Member { object: root, .. }
-                    if spells_member_root(root))
+    match &base.kind {
+        ExprKind::Identifier(_) => true,
+        ExprKind::Member { object, .. } => spells_member_root(object),
+        ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
+            match &object.kind {
+                ExprKind::Identifier(_) => true,
+                ExprKind::Member { object: root, .. } => spells_member_root(root),
+                _ => false,
             }
-            ExprKind::Call {
-                name,
-                args,
-                kwargs,
-                param_args,
-            } => name == "type_of" && kwargs.is_empty() && param_args.is_empty() && args.len() == 1,
-            _ => false,
         }
+        ExprKind::Call {
+            name,
+            args,
+            kwargs,
+            param_args,
+        } => name == "type_of" && kwargs.is_empty() && param_args.is_empty() && args.len() == 1,
+        _ => false,
+    }
+}
+
+/// Whether `expr` reads a member through a type as an expression: the
+/// member (`M.E`, `S[Int].X`) or its application (`S[Int].Of[Bool]`,
+/// `M.Pair[A, B]`, `M.Buf[n]`), or an index into it.
+fn spells_member_read(expr: &Expr) -> bool {
+    let member = |object: &Expr| matches!(&object.kind, ExprKind::Member { object: base, .. } if spells_member_root(base));
+    match &expr.kind {
+        ExprKind::Member { object, .. } => spells_member_root(object),
+        ExprKind::Index { object, .. } => member(object),
+        ExprKind::MultiIndex { object, args } => {
+            member(object) && multi_subscript_param_args(args).is_some()
+        }
+        _ => false,
+    }
 }
 
 /// The member object and the one positional index of a subscript of a
@@ -8274,4 +8193,68 @@ fn member_subscript(expr: &Expr) -> Option<(&Expr, &Expr)> {
         _ => return None,
     };
     matches!(object.kind, ExprKind::Member { .. }).then_some((object.as_ref(), index))
+}
+
+#[cfg(test)]
+mod body_spelling_tests {
+    use super::super::expr_builders::{
+        add, call, conditional, ident, index, int, member, multi_index,
+    };
+    use super::{spells_member_root, spells_type_body};
+
+    #[test]
+    fn a_body_spelled_as_a_type_lowers_as_a_template() {
+        for body in [
+            ident("Int"),
+            ident("Self"),
+            index(ident("List"), ident("T")),
+            member(ident("Self"), "T"),
+            index(member(ident("Self"), "values"), int(0)),
+            index(call("TypeList", vec![]), int(1)),
+            member(call("S", vec![]), "H"),
+            member(ident("M"), "E"),
+            index(member(index(ident("S"), ident("Int")), "Of"), ident("Bool")),
+            member(
+                index(member(ident("C"), "IteratorType"), ident("o")),
+                "Element",
+            ),
+            member(call("type_of", vec![ident("x")]), "T"),
+        ] {
+            assert!(spells_type_body(&body), "{body:?}");
+        }
+    }
+
+    #[test]
+    fn a_value_body_is_no_type_spelling() {
+        for body in [
+            int(3),
+            call("f", vec![]),
+            add(ident("a"), ident("b")),
+            conditional(ident("Int"), ident("Int")),
+            index(ident("__mlir_attr"), ident("x")),
+        ] {
+            assert!(!spells_type_body(&body), "{body:?}");
+        }
+    }
+
+    #[test]
+    fn a_member_root_is_read_whatever_its_case() {
+        for base in [
+            ident("M"),
+            ident("t"),
+            index(ident("S"), ident("Int")),
+            index(member(ident("C"), "IteratorType"), ident("o")),
+            call("type_of", vec![ident("x")]),
+        ] {
+            assert!(spells_member_root(&base), "{base:?}");
+        }
+        for base in [
+            call("f", vec![]),
+            int(3),
+            call("type_of", vec![ident("a"), ident("b")]),
+            multi_index(call("f", vec![]), vec![int(1), int(2)]),
+        ] {
+            assert!(!spells_member_root(&base), "{base:?}");
+        }
+    }
 }

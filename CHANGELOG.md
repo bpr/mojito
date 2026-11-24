@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker's `AnnotationView` is gone (R2550): the constraint,
+  compile-time-validation, and initializer-list readers read the annotation
+  or `comptime` body expression, as upstream's do, and a reader asking
+  whether a chain is rooted at a type resolves the root name instead of
+  testing its letter case. A type member read through a lowercase struct
+  (`holder.Elem(3)`, `pair[Int].Of[Int]()`, `box[2].W(7)`, `maker.Of[3]()`)
+  now runs as at the pin, where it was "'holder' value has no attribute
+  'Elem'".
+
 - The checker's origin-signature, origin-binder, struct-field, trait,
   alias, and builtin-fold readers read the annotation expression itself
   rather than the checker's annotation view (R2549), as upstream's do. A

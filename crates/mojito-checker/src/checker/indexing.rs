@@ -2218,7 +2218,12 @@ impl Checker {
         if root.is_some_and(|name| name == "Self" || self.lookup(name).is_some()) {
             return None;
         }
-        super::constraints::assoc_body_view(object).ok()?;
+        if object
+            .bracket_application()
+            .is_some_and(|(name, _)| name == "__mlir_attr")
+        {
+            return None;
+        }
         Some(match &object.kind {
             ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
                 self.callable_type(object)

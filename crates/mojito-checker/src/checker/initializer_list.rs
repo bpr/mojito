@@ -656,12 +656,9 @@ impl Checker {
     /// spelling at the receiver ([`self_at_receiver`]) when that type has no
     /// source spelling. `None` when `object` names no such member.
     fn type_member_spelling(&self, object: &Expr) -> Option<Expr> {
-        let (spelling, member) = self.type_member_read(object)?;
-        if matches!(spelling, AnnotationView::SelfParam(_)) {
-            return view_expression(
-                &super::constraints::assoc_body_view(member?).ok()?,
-                object.span,
-            );
+        let (receiver, member) = self.type_member_read(object)?;
+        if receiver.is_self_annotation() {
+            return type_spelling_at(member?, object.span);
         }
         let ty = self.emit_expr_type(object).ok()?;
         if let Some(spelled) = mojito_types::ct::source_expr(&ty, object.span) {
@@ -671,19 +668,10 @@ impl Checker {
         // (`T[n=f()]`), or one still a parameter expression (`T[t]`) — is
         // the member's own spelling with `Self` bound to the receiver, as
         // upstream substitutes the member's value at the instance.
-        let spelled = view_expression(
-            &super::constraints::assoc_body_view(member?).ok()?,
-            object.span,
-        )?;
+        let spelled = type_spelling_at(member?, object.span)?;
         if !reads_self(&spelled) {
             return Some(spelled);
         }
-        let ExprKind::Member {
-            object: receiver, ..
-        } = &object.kind
-        else {
-            return None;
-        };
         self_at_receiver(spelled, receiver)
     }
 
@@ -732,12 +720,13 @@ impl Checker {
         ))
     }
 
-    /// The type spelling of `object` when it names a struct's closed
-    /// `comptime` type member (`T[4].other`, `Self.current`), beside the
-    /// member's own spelling over `Self` when it has one, as upstream's name
-    /// lookup reads the member as its value. `None` when `object` names no
-    /// such member.
-    fn type_member_read(&self, object: &Expr) -> Option<(AnnotationView<'_>, Option<&Expr>)> {
+    /// The receiver of `object` when it names a struct's closed `comptime`
+    /// type member (`T[4].other`, `Self.current`), beside the member's own
+    /// spelling over `Self` when it has one, as upstream's name lookup reads
+    /// the member as its value. The receiver roots at a name that resolves
+    /// to no binding ([`Self::may_denote_type`]), whatever its case. `None`
+    /// when `object` names no such member.
+    fn type_member_read<'e>(&'e self, object: &'e Expr) -> Option<(&'e Expr, Option<&'e Expr>)> {
         let ExprKind::Member {
             object: inner,
             field,
@@ -745,22 +734,14 @@ impl Checker {
         else {
             return None;
         };
-        let spelling = spelled_view(object)?;
-        let owner = match &spelling {
-            AnnotationView::SelfParam(_) => self.self_ty.clone()?,
-            AnnotationView::Assoc { base, .. } => {
-                let mut root = base.as_ref();
-                while let AnnotationView::Assoc { base, .. } = root {
-                    root = base;
-                }
-                if matches!(root, AnnotationView::Named(name, _) if self.lookup(name).is_some()) {
-                    return None;
-                }
-                // A bare parametric struct's member is read through its
-                // unbound generator, as a type member read's base is.
-                self.member_base(inner).ok()?.0
-            }
-            _ => return None,
+        let owner = if inner.is_self_annotation() {
+            self.self_ty.clone()?
+        } else if self.may_denote_type(inner) {
+            // A bare parametric struct's member is read through its
+            // unbound generator, as a type member read's base is.
+            self.member_base(inner).ok()?.0
+        } else {
+            return None;
         };
         let (instance, _) = mojito_types::types::nominal_parts(&owner)?;
         let info = self
@@ -771,7 +752,7 @@ impl Checker {
         {
             return None;
         }
-        Some((spelling, info.associated_spellings.get(field)))
+        Some((inner, info.associated_spellings.get(field)))
     }
 
     /// The construction a call of a type alias of `ty`, bound to `value`,
@@ -857,15 +838,18 @@ impl Checker {
         {
             return Some(construction);
         }
-        let base = spelled_view(object)?;
-        let owner = match &base {
-            AnnotationView::Named(owner, _) => owner.as_str(),
+        let owner = if object.is_self_annotation() {
             // `Self._T[w](v)`: the enclosing struct's own member.
-            AnnotationView::SelfType if self.lookup("Self").is_none() => {
-                let (instance, _) = mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?;
-                mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance)
+            if self.lookup("Self").is_some() {
+                return None;
             }
-            _ => return None,
+            let (instance, _) = mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?;
+            mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance)
+        } else {
+            object
+                .identifier()
+                .or_else(|| object.bracket_application().map(|(name, _)| name))
+                .filter(|name| self.lookup(name).is_none())?
         };
         let owner = self.structs.get(owner)?;
         if !owner.parameterized_associated.contains_key(field) || owner.methods.contains_key(field)
@@ -895,10 +879,13 @@ impl Checker {
         if info.methods.contains_key(alias) {
             return None;
         }
-        let AnnotationView::Named(name, param_args) =
-            super::constraints::assoc_body_view(info.associated_spellings.get(alias)?).ok()?
-        else {
-            return None;
+        let spelling = info.associated_spellings.get(alias)?;
+        let (name, param_args) = match &spelling.kind {
+            ExprKind::Identifier(name) if name != "Self" => (name.clone(), Vec::new()),
+            _ => spelling
+                .bracket_application()
+                .filter(|(name, _)| *name != "__mlir_attr")
+                .map(|(name, args)| (name.to_string(), args.into_owned()))?,
         };
         let construction = derived_construction(
             expression,
@@ -1446,7 +1433,6 @@ fn self_at_receiver(mut spelled: Expr, receiver: &Expr) -> Option<Expr> {
             }
         }
     }
-    spelled_view(receiver)?;
     mojito_ast::visit::walk_expr_mut(
         &mut SelfAt {
             expression: receiver,
@@ -1454,6 +1440,28 @@ fn self_at_receiver(mut spelled: Expr, receiver: &Expr) -> Option<Expr> {
         &mut spelled,
     );
     (!reads_self(&spelled)).then_some(spelled)
+}
+
+/// The name chain `spelling` rebuilt at the use site `span`: a name, its
+/// application (`Pair[Int]`), or a member of such a chain (`Self.T`,
+/// `TypeList.of`), each node with a fresh syntax id so that no checked
+/// record keyed by the member body's own nodes is shared. `None` for any
+/// other spelling.
+fn type_spelling_at(spelling: &Expr, span: mojito_common::token::Span) -> Option<Expr> {
+    match &spelling.kind {
+        ExprKind::Identifier(name) => Some(Expr::new(ExprKind::Identifier(name.clone()), span)),
+        _ if let Some((name, args)) = spelling.bracket_application() => {
+            (name != "__mlir_attr").then(|| mojito_ast::ast::named_subscript(name, &args, span))?
+        }
+        ExprKind::Member { object, field } => Some(Expr::new(
+            ExprKind::Member {
+                object: Box::new(type_spelling_at(object, span)?),
+                field: field.clone(),
+            },
+            span,
+        )),
+        _ => None,
+    }
 }
 
 /// Whether `expr` spells `Self` or a read of a `Self` parameter.
@@ -1471,4 +1479,44 @@ fn reads_self(expr: &Expr) -> bool {
     let mut reads = ReadsSelf(false);
     mojito_ast::visit::walk_expr(&mut reads, expr);
     reads.0
+}
+
+#[cfg(test)]
+mod type_spelling_tests {
+    use super::super::expr_builders::{call, ident, index, int, member, multi_index};
+    use super::type_spelling_at;
+    use mojito_common::token::DUMMY_SPAN;
+
+    #[test]
+    fn a_name_chain_is_rebuilt_at_the_use_site() {
+        for spelling in [
+            ident("Self"),
+            ident("Int"),
+            member(ident("Self"), "T"),
+            member(ident("TypeList"), "of"),
+            index(ident("Pair"), ident("Int")),
+        ] {
+            assert_eq!(
+                type_spelling_at(&spelling, DUMMY_SPAN),
+                Some(spelling.clone())
+            );
+        }
+    }
+
+    #[test]
+    fn any_other_spelling_has_no_rebuild() {
+        for spelling in [
+            index(member(ident("Self"), "Get"), int(0)),
+            multi_index(member(ident("M"), "A"), vec![int(1), int(2)]),
+            member(call("type_of", vec![ident("x")]), "T"),
+            member(call("f", vec![]), "H"),
+            index(ident("__mlir_attr"), ident("x")),
+        ] {
+            assert_eq!(
+                type_spelling_at(&spelling, DUMMY_SPAN),
+                None,
+                "{spelling:?}"
+            );
+        }
+    }
 }

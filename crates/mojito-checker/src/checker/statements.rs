@@ -1025,7 +1025,7 @@ impl Checker {
     /// if c else String`), as upstream's alias declaration evaluates its
     /// body and keeps a type result as the alias's type.
     fn alias_body_is_type(&self, value: &Expr) -> bool {
-        super::constraints::assoc_body_view(value).is_ok() || self.denotes_type_value(value)
+        super::constraints::spells_type_body(value) || self.denotes_type_value(value)
     }
 
     /// Whether `value` builds to a generator (`Twice`, `S.k` read
@@ -1039,12 +1039,12 @@ impl Checker {
         })
     }
 
-    /// Whether the parameter expression `value` spells a type the check
-    /// resolves (a KGEN type, `S.Assoc`, `List[T]`): a
-    /// module `comptime` bound to it is a type alias. A value spelled the
-    /// same way (`DType.int16`) is not.
+    /// Whether `value` types as a type (a KGEN type, `S.Assoc`, `List[T]`),
+    /// as upstream's alias declaration keeps a type result: a module
+    /// `comptime` bound to it is a type alias. A value spelled the same way
+    /// (`DType.int16`) does not type.
     fn denotes_type(&self, value: &Expr) -> bool {
-        super::constraints::assoc_body_view(value).is_ok() && self.emit_expr_type(value).is_ok()
+        self.emit_expr_type(value).is_ok()
     }
 
     /// Check the statements of a block in the current scope. `ret` is the

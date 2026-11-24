@@ -4393,10 +4393,9 @@ mod iteration;
 
 mod type_resolution;
 use type_resolution::{
-    AnnotationView, BoundMutability, BoundOrigin, BoundParameters, BracketOrigins, BracketUse,
-    DeclaredAttributes, DependentValues, EXTERNAL_CALL_PARAMS, ExplicitTypes, T_PARAMS,
-    TYPE_PARAMS, VALUE_PACK_PARAMS, VARIANT_REPLACE_PARAMS, annotation_view, annotation_view_of,
-    bracket_attribute, spelled_view, tyarg_is_symbolic, types_attributes, view_expression,
+    BoundMutability, BoundOrigin, BoundParameters, BracketOrigins, BracketUse, DeclaredAttributes,
+    DependentValues, EXTERNAL_CALL_PARAMS, ExplicitTypes, T_PARAMS, TYPE_PARAMS, VALUE_PACK_PARAMS,
+    VARIANT_REPLACE_PARAMS, bracket_attribute, tyarg_is_symbolic, types_attributes,
 };
 
 mod constraints;
@@ -4449,6 +4448,9 @@ mod patterns;
 pub use patterns::irrefutable as irrefutable_pattern;
 mod statements;
 mod with_stmt;
+
+#[cfg(test)]
+mod expr_builders;
 
 #[cfg(test)]
 mod dependent_callable_signature_tests {
