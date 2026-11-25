@@ -2054,6 +2054,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An annotation the compile-time builder cannot read is typed as an
+  ordinary expression with its declaration's value binders in scope, as
+  upstream's `emitExprType` emits it (R2587): `def f[n: Int](x: Int if n > 0
+  else g())` reported "Undefined variable 'n'" and now reports, as the pin
+  does, that a value of type `AnyStruct[Int]` is not compatible with a value
+  of type `Int`. A struct method's annotation calling a module function
+  (`def m(self, x: Int if True else g())`) reported "Undefined variable
+  'g'" and now types the call the same way.
+
 - A type annotation or parameterized `comptime` body the compile-time
   builder cannot read reports the name it reads that declares nothing, as
   the pin's "use of unknown declaration" does (R2563):

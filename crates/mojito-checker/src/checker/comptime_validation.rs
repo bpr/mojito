@@ -8037,6 +8037,21 @@ pub(super) fn names_read(expr: &Expr) -> Vec<String> {
     names.0
 }
 
+/// Every name `expr` reads ([`names_read`]) or calls (`g` in `g()`).
+pub(super) fn names_referenced(expr: &Expr) -> Vec<String> {
+    struct Names(Vec<String>);
+    impl mojito_ast::visit::Visitor for Names {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::Identifier(name) | ExprKind::Call { name, .. } = &expr.kind {
+                self.0.push(name.clone());
+            }
+        }
+    }
+    let mut names = Names(Vec::new());
+    mojito_ast::visit::walk_expr(&mut names, expr);
+    names.0
+}
+
 /// Whether `expr` reads `__is_run_in_comptime_interpreter`, a run-time
 /// value: a compile-time position reading it is the pin's "dynamic value"
 /// rejection.

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2596**.
+Next free ID: **R2597**.
 
 ## Ordered Work
 
@@ -10228,19 +10228,19 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2587 An annotation typed as an ordinary expression does not see
-  its declaration's value binders**
+- [ ] **R2596 A struct method's annotation cannot call an overloaded
+  module function**
 
-  `def f[n: Int](x: Int if n > 0 else g())`, over a `def g() -> Int`,
-  reports "Undefined variable 'n'", where the pin reports that a value of
+  `def m(self, x: Int if True else g())`, over two `def g` overloads,
+  reports "Undefined variable 'g'", where the pin reports that a value of
   type `AnyStruct[Int]` is not compatible with a value of type `Int`.
-  - Cause: `constraints.rs::annotation_type`'s `AnnotationFailure::Unread`
-    arm types the annotation through `expression_error`, whose identifier
-    read finds no variable for a signature's value binder, where upstream's
-    `emitExprType` emits the expression with the parameters in scope.
-  - Lever: an identifier read that `value_parameter_in_scope` answers and
-    no variable shadows types as the binder's value type.
-  - Found while landing R2563 (2026-11-24).
+  - Cause: the check registers every struct's method signatures before the
+    module function pass, and `statements.rs::declare_functions_comptime_reads`
+    declares ahead only a function declared once, where upstream resolves a
+    callee's overload set on demand while emitting the signature.
+  - Lever: declare every overload of a name a method annotation calls
+    ahead of the struct pass, as a single declaration is.
+  - Found while landing R2587 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

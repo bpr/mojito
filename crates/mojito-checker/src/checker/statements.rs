@@ -3150,9 +3150,11 @@ impl Checker {
 
     /// Declare, ahead of the module's function pass, each module `def` of
     /// `stmts` that a compile-time initializer names, module or struct
-    /// member (`comptime h: def(Int) thin -> Int = sq`), so the constant
-    /// folds to the function's symbol at its signature, as the pin resolves
-    /// the declaration on demand. A name declared more than once is an
+    /// member (`comptime h: def(Int) thin -> Int = sq`), or that a struct
+    /// method's annotation reads (`x: Int if n > 0 else g()`), so the
+    /// constant folds to the function's symbol at its signature and the
+    /// method's signature types the call, as the pin resolves the
+    /// declaration on demand. A name declared more than once is an
     /// overload set, which no bare reference selects; a signature that does
     /// not resolve yet waits for a later round or the function pass.
     fn declare_functions_comptime_reads(&mut self, stmts: &[Stmt]) {
@@ -3160,9 +3162,22 @@ impl Checker {
         for stmt in stmts {
             match &stmt.kind {
                 StmtKind::Comptime { value, .. } => read.extend(names_read(value)),
-                StmtKind::Struct { associated, .. } => {
+                StmtKind::Struct {
+                    associated,
+                    methods,
+                    ..
+                } => {
                     for member in associated {
                         read.extend(names_read(&member.value));
+                    }
+                    for annotation in methods.iter().flat_map(|method| {
+                        method
+                            .params
+                            .iter()
+                            .map(|param| &param.ty)
+                            .chain(method.ret.as_ref())
+                    }) {
+                        read.extend(super::comptime_validation::names_referenced(annotation));
                     }
                 }
                 _ => {}

@@ -1255,6 +1255,7 @@ impl Checker {
                             None => self
                                 .infer_type_list_binding_read(expr, name)
                                 .or_else(|| self.type_name_metatype(expr, name))
+                                .or_else(|| self.signature_binder_read(expr, name))
                                 .unwrap_or_else(|| {
                                     // The enclosing struct's own parameter is
                                     // spelled `Self.<name>` inside the body.
@@ -3279,6 +3280,29 @@ impl Checker {
         (name != "_" && self.denotes_type_value(expr))
             .then(|| self.denoted_type(expr, "a type read as a value"))
             .map(|ty| ty.map(|ty| self.metatype_of(ty)))
+    }
+
+    /// The type of a read of `name`, a value binder of the declaration
+    /// whose signature is being typed (`n` in `x: Int if n > 0 else g()`
+    /// over `[n: Int]`), as upstream's `emitExprType` emits an annotation
+    /// with the declaration's parameters in scope: the binder's value type,
+    /// the read its parameter value. A body binds its binders as variables
+    /// first; an enclosing struct's own parameter is read through `Self`.
+    /// `None` when `name` is no value binder in scope.
+    fn signature_binder_read(&self, expr: &Expr, name: &str) -> Option<Result<Ty, TypeError>> {
+        if self.is_enclosing_struct_param(name) {
+            return None;
+        }
+        let value = self.value_parameter_in_scope(name)?;
+        let ty = value.meta().value_ty()?;
+        self.record_at(expr.source_span()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::ParamValue {
+                value,
+                materialized: None,
+                literal_target: None,
+            },
+        ));
+        Some(Ok(ty))
     }
 
     /// `found`, unless `value` is a run-time call returning `!kgen.deferred`
