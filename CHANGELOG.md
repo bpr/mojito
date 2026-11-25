@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait composition now displays its traits ordered by fully qualified
+  symbol, as upstream's `sortAndDeduplicateTraitSymbols` orders them, so
+  `comptime X: Shape & Movable = 3` over an entry-module `trait Shape`
+  reports 'Movable & Shape', as the pin does, instead of 'Shape & Movable'
+  (R2592).
+
 - A parameter typed by a conditional over a value binder (`def f[n:
   Int](x: Int if n > 0 else Float64)`, directly or through `comptime T[n:
   Int] = Int if n > 0 else Float64`) now takes the arm the call's explicit

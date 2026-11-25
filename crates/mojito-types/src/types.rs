@@ -976,8 +976,8 @@ pub enum TyKind {
     ParamList(Ty),
     /// Upstream's trait metatype `AnyTraitType`, spelled `type_of(Trait)`:
     /// the type of a trait used as a value, displayed `AnyTrait[A & B]`. The
-    /// list is the bound's canonical trait set ([`trait_set`]). It is
-    /// compile-time only; no runtime register holds one.
+    /// list is the bound's canonical trait set, ordered by qualified symbol.
+    /// It is compile-time only; no runtime register holds one.
     AnyTrait(Vec<String>),
     /// Upstream's struct metatype, displayed `AnyStruct[S]`: the type of the
     /// struct type `S` read as a value (`f(Int)`, `objs[Int]`), which
@@ -986,8 +986,8 @@ pub enum TyKind {
     AnyStruct(Ty),
     /// Upstream's `TraitType` (`!lit.trait<@A, @B>`): a trait, or a `&`
     /// composition, used as a type, the type of every type conforming to the
-    /// canonical set ([`trait_set`]), displayed `A & B`. It is a raw list's
-    /// element in `KGENParamList[AnyType]`, a list of types. It is
+    /// canonical set, ordered by qualified symbol, displayed `A & B`. It is a
+    /// raw list's element in `KGENParamList[AnyType]`, a list of types. It is
     /// compile-time only; no runtime register holds one.
     Trait(Vec<String>),
     /// Upstream's KGEN metatype `!kgen.type` (`_MLIR.KGENTypeType`), the
@@ -8351,16 +8351,20 @@ pub fn is_stdlib_file_descriptor_struct(name: &str) -> bool {
     name == "RawFileDescriptor" || name.ends_with("file$descriptor$RawFileDescriptor")
 }
 
-/// The canonical spelling of a trait composition.
+/// A trait composition read without the trait table: each trait once, in
+/// the order spelled.
 ///
-/// Each trait appears once, ordered by name descending, as the pin displays
-/// a composition (`Copyable & Hashable` prints `Hashable & Copyable`).
-/// Dropping a trait another one implies needs the trait table, so the
-/// checker does that first.
+/// Canonicalizing it needs that table, both to drop a trait another one
+/// implies and to order the rest by fully qualified symbol, as upstream's
+/// `sortAndDeduplicateTraitSymbols` does, so the checker's
+/// `canonical_trait_set` owns the canonical set.
 pub fn trait_set<I: IntoIterator<Item = String>>(names: I) -> Vec<String> {
-    let mut traits: Vec<String> = names.into_iter().collect();
-    traits.sort_unstable_by(|a, b| b.cmp(a));
-    traits.dedup();
+    let mut traits: Vec<String> = Vec::new();
+    for name in names {
+        if !traits.contains(&name) {
+            traits.push(name);
+        }
+    }
     traits
 }
 

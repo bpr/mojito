@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2598**.
+Next free ID: **R2599**.
 
 ## Ordered Work
 
@@ -5236,6 +5236,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2598 A type pack's bound is checked against a literal argument
+  before the element materializes**
+
+  `def g[*Ts: Hashable](*args: *Ts)` called as `g(1)` fails with "an
+  element of 'args' with type 'IntLiteral[1]' does not conform to trait
+  'Hashable'", where the pin runs it.
+  - A lone `T: Hashable` parameter materializes `1` to `Int` before its
+    bound is checked, as upstream deduces a parameter's materialized
+    type; the pack collector checks each element's literal type
+    instead, and only `materialize_pack_element`
+    (`checker/declarations.rs`) materializes it afterward.
+  - The rejection is `collector_element_failure`
+    (`checker/call_inference.rs`); the method-call path has the same
+    wording (`method_calls/resolution.rs`) and needs the same order.
+  - Probe: `*Ts: Writable` already accepts `g(1)`, since `IntLiteral` is
+    `Writable`, and must keep binding `Int`.
+  - Found while landing R2592 (2026-11-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2459 A `_` hole in a function type's parameter is not concrete**
 
   `def app(g: def(Span[Int, _]) -> Int)` fails with "'Span[_]' is not
@@ -10257,28 +10277,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: `-> type_of(x)` returning `x` fails with the same copy error
     at the `return`.
   - Found while landing R2588 (2026-11-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2592 A trait composition's display orders its traits by bare
-  name, not by fully qualified symbol**
-
-  `comptime X: Shape & Movable = 3`, over a `trait Shape` in the entry
-  module `usertrait.mojo`, reports "cannot implicitly convert
-  'IntLiteral[3]' value to 'Shape & Movable'", where the pin says
-  'Movable & Shape'.
-  - Cause: `mojito_types::types::trait_set` sorts a composition by bare
-    name descending, where upstream's `sortAndDeduplicateTraitSymbols`
-    sorts by fully qualified symbol ascending (`std.format.Writable`
-    before `std.traits.copyable.Copyable`, `comp3.Zed` before
-    `std.format.Writable`).
-  - Lever: order `canonical_trait_set` by `trait_symbol_path`
-    (`checker/traits.rs`), which already computes upstream's key, then
-    drop `trait_set`'s name sort.
-  - Probe: `comptime X: Writable & Copyable = 3` and `Zed & Writable` (a
-    user `trait Zed` in `comp3.mojo`) already agree with the pin and must
-    keep agreeing.
-  - Found while landing R2562 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -6286,7 +6286,7 @@ impl Checker {
     pub(super) fn type_pack_list_ty(&self, pack: &ParamExpr) -> Option<Ty> {
         let element = match self.type_pack_trait(pack)? {
             CtValue::Expr(reference) => mojito_types::types::DependentType::resolve(reference),
-            CtValue::Trait(set) => TyKind::Trait(mojito_types::types::trait_set(set)).into(),
+            CtValue::Trait(set) => TyKind::Trait(self.canonical_trait_set(&set)).into(),
             _ => return None,
         };
         Some(TyKind::ParamList(element).into())

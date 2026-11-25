@@ -213,8 +213,9 @@ pub(super) fn pack_element_alias(
 }
 
 /// The trait metatype `type_of(operand)` denotes when the operand is a
-/// trait or a `&` composition of traits. Which spelled traits a sibling
-/// implies is the checker's to drop.
+/// trait or a `&` composition of traits, as spelled: dropping the traits a
+/// sibling implies and ordering the rest by qualified symbol is the
+/// checker's canonicalization.
 pub(super) fn any_trait_source_type(operand: &Expr) -> Option<Ty> {
     mojito_ast::ast::trait_conjunction_names(operand).map(|names| {
         TyKind::AnyTrait(mojito_types::types::trait_set(

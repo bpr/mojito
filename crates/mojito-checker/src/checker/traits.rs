@@ -223,22 +223,25 @@ impl Checker {
         Ok(true)
     }
 
-    /// The canonical trait set of a composition of `names`: each trait
-    /// another one implies is dropped, the rest in [`trait_set`] order.
-    ///
-    /// [`trait_set`]: mojito_types::types::trait_set
+    /// The canonical trait set of a composition of `names`, as upstream's
+    /// `sortAndDeduplicateTraitSymbols` builds it: each trait another one
+    /// implies is dropped, the rest appear once, ordered by fully qualified
+    /// symbol ascending (`std.format.Writable & std.traits.copyable.Copyable`
+    /// displays `Writable & Copyable`).
     pub(super) fn canonical_trait_set<S: AsRef<str>>(&self, names: &[S]) -> Vec<String> {
-        mojito_types::types::trait_set(
-            names
-                .iter()
-                .map(AsRef::as_ref)
-                .filter(|name| {
-                    !names.iter().any(|other| {
-                        other.as_ref() != *name && self.trait_implies(other.as_ref(), name)
-                    })
+        let mut keyed: Vec<(Vec<String>, String)> = names
+            .iter()
+            .map(AsRef::as_ref)
+            .filter(|name| {
+                !names.iter().any(|other| {
+                    other.as_ref() != *name && self.trait_implies(other.as_ref(), name)
                 })
-                .map(str::to_string),
-        )
+            })
+            .map(|name| (self.trait_symbol_path(name), name.to_string()))
+            .collect();
+        keyed.sort_unstable();
+        keyed.dedup();
+        keyed.into_iter().map(|(_, name)| name).collect()
     }
 
     /// The conjuncts of a `&` composition of `names`, uncanonicalized: a

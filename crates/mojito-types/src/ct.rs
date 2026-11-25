@@ -607,8 +607,8 @@ pub enum CtValue {
     Type(Ty),
     /// A trait, or a `&` composition of traits, used as a value — upstream's
     /// `!lit.trait<…>`, whose type is the trait metatype
-    /// ([`TyKind::AnyTrait`]). The list is the canonical trait set
-    /// ([`crate::types::trait_set`]); it displays as `A & B`.
+    /// ([`TyKind::AnyTrait`]). The list is the canonical trait set, ordered
+    /// by qualified symbol; it displays as `A & B`.
     Trait(Vec<String>),
     /// A KGEN string attribute — upstream's `#kgen.string`, the `value`
     /// parameter of a `StringLiteral` ([`Self::literal_value`]), whose type
