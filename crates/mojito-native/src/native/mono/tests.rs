@@ -468,7 +468,8 @@ fn colliding_instances_share_only_modulo_pointer_elements() {
     let pointer = |element: Ty| {
         Ty::pointer(
             element,
-            mojito_types::origin::PointerOrigin::Static { mutable: false },
+            mojito_types::origin::Origin::Static,
+            mojito_types::origin::Mutability::Immutable,
             mojito_types::types::AddressSpaceSlot::GENERIC,
         )
     };

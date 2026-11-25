@@ -21,7 +21,7 @@ impl Checker {
         receiver: &Expr,
         declared: Option<&Ty>,
     ) -> Ty {
-        use mojito_types::origin::{Mutability, Origin, PointerOrigin, RefTy};
+        use mojito_types::origin::{Mutability, Origin, RefTy};
         // The projection below `origin_of(self)` a pointer's origin argument
         // names, when that is the receiver's.
         let self_place_path = |ty: &Ty| {
@@ -51,8 +51,7 @@ impl Checker {
         // binder, as `Pointer(to=xs)` does: `array.unsafe_ptr()` in `Span`'s
         // constructor is a `Pointer[T, Self.origin._get_owned_interior[...]]`.
         if let ExprKind::Identifier(name) = &receiver.kind
-            && let Some(PointerOrigin::Param { id, mutability, .. }) =
-                self.lookup_reference_parameter_binder(name)
+            && let Some((id, mutability)) = self.lookup_reference_parameter_binder(name)
         {
             return rebased(Origin::Param(id), mutability);
         }

@@ -4431,24 +4431,23 @@ impl Checker {
         })
     }
 
-    /// Look up an enclosing `Origin`-bounded type parameter by name and
-    /// resolve its declared mutability.
+    /// Look up an enclosing `Origin`-bounded type parameter by name: the
+    /// binder and its declared `mut`.
     pub(super) fn enclosing_origin_param(
         &self,
         name: &str,
-    ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-        use mojito_types::origin::{OriginParamId, PointerOrigin};
-
+    ) -> Result<
+        (
+            mojito_types::origin::OriginParamId,
+            mojito_types::origin::Mutability,
+        ),
+        TypeError,
+    > {
         let (index, decl) = self
             .enclosing_origin_type_param(name)
             .ok_or_else(|| TypeError::UnknownSelfParam(name.to_string()))?;
-        let id = OriginParamId(index);
-        Ok(PointerOrigin::Param {
-            id,
-            mutability: super::generics::origin_binder_mutability(&decl, id),
-            interior: Vec::new(),
-            subtree: false,
-        })
+        let id = mojito_types::origin::OriginParamId(index);
+        Ok((id, super::generics::origin_binder_mutability(&decl, id)))
     }
 
     /// Resolve `Tuple[T1, …, Tn]` from its type arguments (each a type).

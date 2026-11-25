@@ -106,7 +106,7 @@ impl<'a> Flatten<'a> {
         op: PointerOp,
         args: &[Node<'a>],
     ) -> Reg {
-        use mojito_types::origin::{Mutability, Origin, PointerOrigin, RefTy};
+        use mojito_types::origin::{Mutability, Origin, RefTy};
         let ty = call.ty().expect("a checked `__mlir_op` has a type");
         let location = call.location();
         let operands: Vec<Reg> = args.iter().map(|argument| self.expr(*argument)).collect();
@@ -153,7 +153,8 @@ impl<'a> Flatten<'a> {
                 };
                 let untracked = Ty::pointer(
                     element.clone(),
-                    PointerOrigin::Untracked { mutable: true },
+                    Origin::Untracked { mutable: true },
+                    Mutability::Mutable,
                     address_space.clone(),
                 );
                 let base = retyped(self, *pointer, untracked.clone());

@@ -11338,35 +11338,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2584 The checker's provenance producers build a `PointerOrigin`
-  view no upstream reader has**
-
-  Upstream reads a `Pointer`'s `origin` and `mut` arguments as they are,
-  and the checker now reads them so too, but its producers still build the
-  decoded view and `Ty::pointer` still takes one.
-  - `ref [o]` parameter binders: `reference_parameter_binders`
-    (`checker.rs`), `lookup_reference_parameter_binder` and its readers
-    (`construct.rs::reference_argument`,
-    `method_calls/selection.rs::rebase_self_place_pointer`).
-  - The `origin_binders` vectors (`checker.rs`, `interface.rs`,
-    `declarations.rs`, `origins/ref_params.rs`) and
-    `bind_constructor_origins`' `Param` match (`origins/construct.rs`).
-  - `enclosing_origin_param` (`type_resolution.rs`).
-  - A place's address: `PlaceAddress::Provenance` and its builders and
-    readers in `operators.rs` (`statically_mutable`), and
-    `RefTy::from_pointer_origin` there.
-  - `call_inference.rs`' `PointerOrigin::Static` pointer.
-  - Then make `Ty::pointer` take the `origin` and `mut` parts.
-  - Found while landing R2513 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2585 `PointerOrigin` survives as the spelling of a pointer's
   provenance in MIR text, the display, and symbols**
 
-  Once the checker builds no view (R2584), the remaining users only spell
-  or compare one, and upstream spells a pointer's `origin` and `mut`
-  arguments directly.
+  The checker and every pointer constructor now build a pointer from its
+  `origin` and `mut` arguments, so the remaining users only spell or
+  compare the view, and upstream spells those arguments directly.
   - MIR text's `pointer_*` origin records (`mir/text/write.rs`
     `pointer_origin_parts`, `parse/origins.rs`): move the schema to
     `pointer { element, origin, mutability }`, a MIR text version bump.
@@ -11377,12 +11354,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `symbol.rs`' `respell_bindable_place` through
     `RefTy::map_pointer_origin`, `PointerOrigin::map_parts`, and
     `clone_bindable_place`/`CloneBinderProjection`.
-  - Fixed-provenance constructors below the checker: `erase_origins`
-    (`types.rs`), the VM's `held_address` (`runtime.rs`) and
-    `backend/vm.rs`, `mir/variadics.rs`, `mir/struct_reads.rs`,
-    `lower_expr/{expr_call, mlir_op}.rs`, `mono/spread.rs`,
-    `native-core/src/layout.rs`, `types/src/ffi.rs`, and Pliron's
-    `lower/module_env.rs`.
+  - The `types.rs` `pointer_application_tests` round trip and the MIR text
+    parse tests' `pointer_spelled`/`lit_ref_spelled` helpers, which build
+    each record's pointer through the view.
   - Then delete `PointerOrigin`.
   - Found while landing R2513 (2026-11-24).
   - Depends on R2584.

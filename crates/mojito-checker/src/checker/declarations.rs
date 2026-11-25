@@ -2622,7 +2622,10 @@ impl Checker {
         param: BodyParam<'_>,
         pty: &Ty,
         writable: bool,
-        binder: Option<mojito_types::origin::PointerOrigin>,
+        binder: Option<(
+            mojito_types::origin::OriginParamId,
+            mojito_types::origin::Mutability,
+        )>,
     ) -> Result<(), TypeError> {
         let BodyParam {
             name,

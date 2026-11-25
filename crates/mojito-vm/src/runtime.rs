@@ -2337,7 +2337,8 @@ fn held_address(ty: &mojito_types::types::Ty) -> mojito_types::types::Ty {
     match ty.kind().pointer_lit_ref() {
         Some(reference) => mojito_types::types::Ty::pointer(
             held_address(&reference.referent),
-            mojito_types::origin::PointerOrigin::Static { mutable: false },
+            mojito_types::origin::Origin::Static,
+            mojito_types::origin::Mutability::Immutable,
             reference.address_space,
         ),
         None => ty.clone(),

@@ -2808,7 +2808,8 @@ impl Checker {
         ));
         Ok(Ty::pointer(
             element,
-            mojito_types::origin::PointerOrigin::Static { mutable: false },
+            mojito_types::origin::Origin::Static,
+            mojito_types::origin::Mutability::Immutable,
             mojito_types::types::AddressSpaceSlot::GENERIC,
         ))
     }

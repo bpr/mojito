@@ -304,7 +304,6 @@ fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
             index += 1;
             continue;
         };
-        let origin = mojito_types::origin::PointerOrigin::Untracked { mutable: false };
         let span = tables.spans.0.get(&dest.0).cloned();
         let mut fresh = |ty: Ty| {
             let register = Reg(*tables.n_regs);
@@ -334,13 +333,12 @@ fn expand_load_indirect(block: &mut MirBlock, tables: &mut SpreadTables<'_>) {
                 call: None,
                 intrinsic: Some(mojito_mir::mir::MirIntrinsicSubscript::TupleStorage),
             });
-            let reference = fresh(Ty::lit_ref(
-                mojito_types::origin::RefTy::from_pointer_origin(
-                    element.clone(),
-                    origin.clone(),
-                    mojito_types::types::AddressSpaceSlot::GENERIC,
-                ),
-            ));
+            let reference = fresh(Ty::lit_ref(mojito_types::origin::RefTy {
+                referent: element.clone(),
+                origin: mojito_types::origin::Origin::Untracked { mutable: false },
+                mutability: mojito_types::origin::Mutability::Immutable,
+                address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+            }));
             reads.push(MirInstr::PointerConvert {
                 dest: reference,
                 value: pointer,

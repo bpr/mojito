@@ -15,6 +15,32 @@ fn bool_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
     ParamContext::detached().decl_ref(ParamId::new(owner, slot), name, MetaTy::bool())
 }
 
+/// The pointer to `element` in `space` whose provenance the MIR text's
+/// `pointer_*` origin record `origin` spells.
+fn pointer_spelled(
+    element: Ty,
+    origin: PointerOrigin,
+    space: mojito_types::types::AddressSpaceSlot,
+) -> Ty {
+    Ty::pointer_from_lit_ref(&lit_ref_spelled(element, origin, space))
+}
+
+/// The `!lit.ref` to `referent` in `space` whose provenance the MIR text's
+/// `pointer_*` origin record `origin` spells.
+fn lit_ref_spelled(
+    referent: Ty,
+    origin: PointerOrigin,
+    address_space: mojito_types::types::AddressSpaceSlot,
+) -> RefTy {
+    let (origin, mutability) = origin.into_parts();
+    RefTy {
+        referent,
+        origin,
+        mutability,
+        address_space,
+    }
+}
+
 /// The width slot of `lanes` lanes: `SIMDLength(lanes)`.
 fn width_of(lanes: &ParamExpr) -> mojito_types::types::SimdWidth {
     mojito_types::types::SimdWidth::Expr(
@@ -277,14 +303,14 @@ fn type_families_reprint_byte_identically() {
                 TyKind::Variant(vec![Ty::int(), Ty::none()]).into(),
                 TyKind::PopArray {
                     size: mojito_types::types::ArraySize::Known(2),
-                    element: Ty::pointer(
+                    element: pointer_spelled(
                         Ty::int(),
                         PointerOrigin::Untracked { mutable: false },
                         mojito_types::types::AddressSpaceSlot::GENERIC,
                     ),
                 }
                 .into(),
-                Ty::pointer(
+                pointer_spelled(
                     Ty::int(),
                     PointerOrigin::Place {
                         place: OriginPlace {
@@ -295,7 +321,7 @@ fn type_families_reprint_byte_identically() {
                     },
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                Ty::pointer(
+                pointer_spelled(
                     Ty::int(),
                     PointerOrigin::Param {
                         id: OriginParamId(2),
@@ -305,7 +331,7 @@ fn type_families_reprint_byte_identically() {
                     },
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                Ty::pointer(
+                pointer_spelled(
                     Ty::int(),
                     PointerOrigin::SelfPlace {
                         mutability: Mutability::Immutable,
@@ -314,27 +340,27 @@ fn type_families_reprint_byte_identically() {
                     },
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                Ty::pointer(
+                pointer_spelled(
                     Ty::int(),
                     PointerOrigin::Static { mutable: false },
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                Ty::pointer(
+                pointer_spelled(
                     Ty::int(),
                     PointerOrigin::Static { mutable: true },
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                Ty::pointer(
+                pointer_spelled(
                     Ty::int(),
                     PointerOrigin::Untracked { mutable: false },
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                Ty::pointer(
+                pointer_spelled(
                     Ty::int(),
                     PointerOrigin::UnsafeAny { mutable: true },
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                Ty::pointer(
+                pointer_spelled(
                     Ty::int(),
                     PointerOrigin::Static { mutable: false },
                     mojito_types::types::AddressSpaceSlot::Known(5),
@@ -362,7 +388,7 @@ fn type_families_reprint_byte_identically() {
                     mutability: Mutability::Immutable,
                     address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                 }),
-                Ty::lit_ref(RefTy::from_pointer_origin(
+                Ty::lit_ref(lit_ref_spelled(
                     Ty::int(),
                     PointerOrigin::Static { mutable: false },
                     mojito_types::types::AddressSpaceSlot::Known(1),
@@ -925,9 +951,9 @@ fn frozen_pointer_constant_round_trip() {
             offset: 1,
         },
     ];
-    let ty = Ty::pointer(
+    let ty = pointer_spelled(
         Ty::int(),
-        mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+        PointerOrigin::Untracked { mutable: true },
         mojito_types::types::AddressSpaceSlot::GENERIC,
     );
     let instructions = values
@@ -2318,7 +2344,7 @@ fn older_lit_ref_records_read_as_reference_records() {
         only_register_type(&artifact_with_register_type(
             "lit_ref { element: simd { dtype: int, width: 1 }, origin: pointer_untracked { mutable: true } }"
         )),
-        Ty::lit_ref(RefTy::from_pointer_origin(
+        Ty::lit_ref(lit_ref_spelled(
             Ty::int(),
             untracked.clone(),
             mojito_types::types::AddressSpaceSlot::GENERIC,
@@ -3317,9 +3343,9 @@ fn param_list_addresses_round_trip() {
         "values",
         MetaTy::ParamList(Box::new(MetaTy::int())),
     );
-    let pointer = Ty::pointer(
+    let pointer = pointer_spelled(
         Ty::int(),
-        mojito_types::origin::PointerOrigin::Static { mutable: false },
+        PointerOrigin::Static { mutable: false },
         mojito_types::types::AddressSpaceSlot::GENERIC,
     );
     for values in [

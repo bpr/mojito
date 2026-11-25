@@ -431,8 +431,13 @@ pub struct Checker {
     /// names, by the parameter's owner: `Pointer(to=param)` mints that binder
     /// (upstream's iterator-storage shape `self.src = Pointer(to=xs)` into a
     /// `Pointer[T, Self.o]` field) instead of the parameter slot's place.
-    reference_parameter_binders:
-        HashMap<mojito_types::origin::OwnerId, mojito_types::origin::PointerOrigin>,
+    reference_parameter_binders: HashMap<
+        mojito_types::origin::OwnerId,
+        (
+            mojito_types::origin::OriginParamId,
+            mojito_types::origin::Mutability,
+        ),
+    >,
     /// The inferred mutability binder of each bare `ref` parameter (the
     /// receiver included), by the parameter's owner: a reference reached
     /// through it carries the binder rather than `immutable`
@@ -3122,7 +3127,12 @@ struct MethodSig {
     /// clause names (`ref [Self.origin] list`), so a constructor call can
     /// check an explicitly applied origin against the argument filling that
     /// slot. `None` for every other parameter.
-    origin_binders: Vec<Option<mojito_types::origin::PointerOrigin>>,
+    origin_binders: Vec<
+        Option<(
+            mojito_types::origin::OriginParamId,
+            mojito_types::origin::Mutability,
+        )>,
+    >,
     /// A synthesized trait default ([`mojito_ast::ast::MethodProvenance::SynthesizedDefault`]):
     /// the elaborator mints no per-instance clone of it.
     synthesized_default: bool,

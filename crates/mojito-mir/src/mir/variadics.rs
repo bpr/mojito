@@ -32,7 +32,7 @@
 use crate::mir::{FuncRef, MirInstr, MirPlace, Reg};
 use mojito_hir::hir::VarId;
 use mojito_types::ct::CtValue;
-use mojito_types::origin::PointerOrigin;
+use mojito_types::origin::{Mutability, Origin, RefTy};
 use mojito_types::types::{Ty, TyArg, TyKind, variadic_list_type};
 
 /// One element of the list a call builds.
@@ -76,11 +76,12 @@ pub struct VariadicListConstruction {
 /// `Pointer[element_type, origin]._mlir_lit_ref`, its origin untracked,
 /// mutable for an owned list.
 pub fn element_lit_ref_type(element: &Ty, owned: bool) -> Ty {
-    Ty::lit_ref(mojito_types::origin::RefTy::from_pointer_origin(
-        element.clone(),
-        PointerOrigin::Untracked { mutable: owned },
-        mojito_types::types::AddressSpaceSlot::GENERIC,
-    ))
+    Ty::lit_ref(RefTy {
+        referent: element.clone(),
+        origin: Origin::Untracked { mutable: owned },
+        mutability: Mutability::of(owned),
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+    })
 }
 
 /// The `VariadicList[element, owned]` over `elements`, in order.
@@ -149,13 +150,12 @@ pub fn build_variadic_list(
         binding_ty: Some(array_ty.clone()),
         in_place: false,
     });
-    let array_reference = tables.fresh_register(Ty::lit_ref(
-        mojito_types::origin::RefTy::from_pointer_origin(
-            array_ty.clone(),
-            PointerOrigin::Untracked { mutable: false },
-            mojito_types::types::AddressSpaceSlot::GENERIC,
-        ),
-    ));
+    let array_reference = tables.fresh_register(Ty::lit_ref(RefTy {
+        referent: array_ty.clone(),
+        origin: Origin::Untracked { mutable: false },
+        mutability: Mutability::Immutable,
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+    }));
     before.push(MirInstr::MakeRef {
         dest: array_reference,
         place: MirPlace::root(array_slot, Some(array_ty)),
@@ -262,12 +262,11 @@ pub fn build_variadic_pack(
             }
         }
     }
-    let (origin, mutability) = PointerOrigin::Untracked { mutable }.into_parts();
     let refs = tables.fresh_register(
         TyKind::LitRefPack {
             elements: element_types.to_vec(),
-            origin,
-            mutability,
+            origin: Origin::Untracked { mutable },
+            mutability: Mutability::of(mutable),
         }
         .into(),
     );

@@ -262,7 +262,8 @@ fn checked_types_with_specified_runtime_representations_agree() {
         vec![
             Ty::pointer(
                 Ty::uint(),
-                mojito::origin::PointerOrigin::Static { mutable: false },
+                mojito::origin::Origin::Static,
+                mojito::origin::Mutability::Immutable,
                 mojito::types::AddressSpaceSlot::GENERIC,
             ),
             Ty::int(),

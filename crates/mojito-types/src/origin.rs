@@ -283,6 +283,17 @@ impl Origin {
         Self::mut_cast(origin, LitOriginMut::Known(false))
     }
 
+    /// The `origin` and `mut` arguments of a pointer into static storage
+    /// at `mutable`: upstream's `StaticConstantOrigin`, and at `mutable`
+    /// its `unsafe_mut_cast[True]()`.
+    #[must_use]
+    pub fn static_at(mutable: bool) -> (Self, Mutability) {
+        (
+            Self::mut_cast(Self::Static, LitOriginMut::Known(mutable)),
+            Mutability::of(mutable),
+        )
+    }
+
     /// Upstream's `origin.unsafe_mut_cast[mutability]()`, the
     /// `#lit.origin.mutcast` attribute, canonical as the pin compares it: a
     /// cast of a cast is the outer cast of the base, a known cast to the
@@ -1349,23 +1360,6 @@ pub struct RefTy {
 }
 
 impl RefTy {
-    /// The reference to `referent` under a pointer's provenance `origin`
-    /// in `address_space`: the `!lit.ref` that pointer is built from, its
-    /// origin and mutability `origin`'s [parts](PointerOrigin::parts).
-    pub fn from_pointer_origin(
-        referent: crate::types::Ty,
-        origin: PointerOrigin,
-        address_space: crate::types::AddressSpaceSlot,
-    ) -> Self {
-        let (origin, mutability) = origin.into_parts();
-        Self {
-            referent,
-            origin,
-            mutability,
-            address_space,
-        }
-    }
-
     /// Whether a pointer or `!lit.ref` under this reference's origin and
     /// mutability coerces to one under `expected`'s: a union expectation
     /// accepts any origin within it at no more than the permission held,

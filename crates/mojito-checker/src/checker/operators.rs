@@ -1150,85 +1150,66 @@ impl Checker {
     }
 
     /// The reference `__get_mvalue_as_litref` takes of `value`, a place,
-    /// recording the `PointerToPlace` adjustment at `span`.
+    /// recording the `PointerToPlace` adjustment at `span`: a call's
+    /// reference result is that reference, and any other place's is the
+    /// `!lit.ref` under the place's `origin` and `mut`.
     fn infer_place_address(
         &self,
         span: SourceSpan,
         value: &Expr,
     ) -> Result<mojito_types::origin::RefTy, TypeError> {
-        let (element, origin) = match self.infer_place_provenance(span, value)? {
-            PlaceAddress::Reference(reference) => return Ok(reference),
-            PlaceAddress::Provenance(element, origin) => (element, origin),
+        use mojito_types::origin::{Mutability, Origin, OriginSeg, RefTy};
+        let address = |referent: Ty, origin: Origin, mutability: Mutability| {
+            self.record_pointer_adjustment(
+                span.clone(),
+                SemanticAdjustment::PointerToPlace {
+                    mutable: mutability.known() == Some(true),
+                    materialized: None,
+                },
+            );
+            Ok(RefTy {
+                referent,
+                origin,
+                mutability,
+                address_space: self.place_address_space(value),
+            })
         };
-        Ok(mojito_types::origin::RefTy::from_pointer_origin(
-            element,
-            origin,
-            self.place_address_space(value),
-        ))
-    }
-
-    /// The element and provenance of the address of `value`, or, for a call
-    /// returning a reference, that reference ([`Self::infer_place_address`]).
-    fn infer_place_provenance(
-        &self,
-        span: SourceSpan,
-        value: &Expr,
-    ) -> Result<PlaceAddress, TypeError> {
         // A `ref[Self.o]` parameter names the enclosing struct's origin binder:
         // its pointer carries that binder exactly as a `Pointer[T, Self.o]`
         // field declares it (upstream's iterator storage `self.src =
         // Pointer(to=xs)`), so the store type-checks by identity and the
         // binder later resolves to the caller's source.
         if let ExprKind::Identifier(name) = &value.kind
-            && let Some(origin) = self.lookup_reference_parameter_binder(name)
+            && let Some((binder, mutability)) = self.lookup_reference_parameter_binder(name)
             && let Some(reference) = self.lookup_reference_parameter(name)
         {
-            let mutable = origin.statically_mutable() == Some(true);
-            self.record_pointer_adjustment(
-                span,
-                SemanticAdjustment::PointerToPlace {
-                    mutable,
-                    materialized: None,
-                },
-            );
-            return Ok(PlaceAddress::Provenance(reference.referent, origin));
+            return address(reference.referent, Origin::Param(binder), mutability);
         }
         if let ExprKind::Identifier(name) = &value.kind
             && (self.lookup_ref_binding(name).is_some()
                 || self.lookup_reference_parameter(name).is_some())
         {
             // A `ref` binding names a borrowed region, not owned storage, so
-            // the minted pointer's provenance is the conservative subtree of
+            // the minted pointer's origin is the conservative subtree of
             // the reference's origin: the referent is that base or some
             // descendant of it. Subtree staleness (any mutation at or below
             // the base, and the first-write rule) replaces the exact-place
             // loan the owned case gets.
-            use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
             let reference = self.reference_actual(value)?;
-            let origin = match reference.origin {
+            let held = Mutability::of(reference.mutability == Mutability::Mutable);
+            let (origin, mutability) = match reference.origin {
                 Origin::Place(mut place) => {
-                    let mutable = matches!(reference.mutability, Mutability::Mutable);
                     place.path.push(OriginSeg::Subtree);
-                    PointerOrigin::Place { place, mutable }
+                    (Origin::Place(place), held)
                 }
-                Origin::Param(id) => PointerOrigin::Param {
-                    id,
-                    mutability: reference.mutability,
-                    interior: Vec::new(),
-                    subtree: true,
-                },
-                Origin::SelfParam => PointerOrigin::SelfPlace {
-                    mutability: reference.mutability,
-                    interior: Vec::new(),
-                    subtree: true,
-                },
+                binder @ (Origin::Param(_) | Origin::SelfParam) => (
+                    Origin::Projected(Box::new(binder), vec![OriginSeg::Subtree]),
+                    reference.mutability,
+                ),
                 // A union of places under one owner (`ref[self.a, self.b]`)
                 // designates some descendant of their deepest common base.
                 Origin::Union(members) if let Some(place) = union_subtree_place(&members) => {
-                    PointerOrigin::Place {
-                        place,
-                        mutable: matches!(reference.mutability, Mutability::Mutable),
-                    }
+                    (Origin::Place(place), held)
                 }
                 other => {
                     return Err(TypeError::Unsupported(format!(
@@ -1237,15 +1218,7 @@ impl Checker {
                     )));
                 }
             };
-            let mutable = origin.statically_mutable() == Some(true);
-            self.record_pointer_adjustment(
-                span,
-                SemanticAdjustment::PointerToPlace {
-                    mutable,
-                    materialized: None,
-                },
-            );
-            return Ok(PlaceAddress::Provenance(reference.referent, origin));
+            return address(reference.referent, origin, mutability);
         }
         // A call, or a subscript's accessor call, is a place only through
         // the reference its inference records (`w.get()` returning
@@ -1270,30 +1243,27 @@ impl Checker {
         let reference = self.infer_reference_value(value);
         if let Some(reference) = &reference {
             self.record_at(value.source_span()).reference_value_use =
-                Some(reference.mutability == mojito_types::origin::Mutability::Mutable);
+                Some(reference.mutability == Mutability::Mutable);
         }
-        let mutable = self.owner_is_mutable(place.root);
-        self.record_pointer_adjustment(
-            span,
-            SemanticAdjustment::PointerToPlace {
-                mutable,
-                materialized: None,
-            },
-        );
+        let mutability = Mutability::of(self.owner_is_mutable(place.root));
         // A call's reference result is the `!lit.ref` itself, under the
         // origin its callee declares (`p[]` over `Pointer[T, o]` is
         // `ref[o] T`), as upstream's builtin gives an mvalue that already
         // is a reference.
         if call && let Some(reference) = reference {
-            return Ok(PlaceAddress::Reference(mojito_types::origin::RefTy {
+            self.record_pointer_adjustment(
+                span,
+                SemanticAdjustment::PointerToPlace {
+                    mutable: mutability == Mutability::Mutable,
+                    materialized: None,
+                },
+            );
+            return Ok(RefTy {
                 referent: element,
                 ..reference
-            }));
+            });
         }
-        Ok(PlaceAddress::Provenance(
-            element,
-            mojito_types::origin::PointerOrigin::Place { place, mutable },
-        ))
+        address(element, Origin::Place(place), mutability)
     }
 
     /// Check the address builtin `name` at `call`: the place a `!lit.ref`
@@ -1555,11 +1525,4 @@ fn untracked_pointer_spelling(call: &Expr, operand: &Expr) -> Expr {
         },
         call.span,
     )
-}
-
-/// The address `__get_mvalue_as_litref` takes of its operand: the element
-/// and provenance of a place, or the reference a call already returns.
-enum PlaceAddress {
-    Provenance(Ty, mojito_types::origin::PointerOrigin),
-    Reference(mojito_types::origin::RefTy),
 }

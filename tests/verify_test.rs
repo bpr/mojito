@@ -127,13 +127,11 @@ fn reference_ty(referent: Ty, mutability: mojito::Mutability) -> Ty {
 fn tracked_pointer_ty(element: Ty, mutable: bool) -> Ty {
     Ty::pointer(
         element,
-        mojito::PointerOrigin::Place {
-            place: mojito::OriginPlace {
-                root: mojito::OwnerId(0),
-                path: Vec::new(),
-            },
-            mutable,
-        },
+        mojito::Origin::Place(mojito::OriginPlace {
+            root: mojito::OwnerId(0),
+            path: Vec::new(),
+        }),
+        mojito::Mutability::of(mutable),
         mojito::types::AddressSpaceSlot::GENERIC,
     )
 }
@@ -310,7 +308,8 @@ fn verifier_checks_make_ref_capability_types() {
             0,
             Ty::pointer(
                 Ty::int(),
-                mojito::PointerOrigin::Static { mutable: false },
+                mojito::Origin::Static,
+                mojito::Mutability::Immutable,
                 mojito::types::AddressSpaceSlot::GENERIC,
             ),
         )],
@@ -1810,7 +1809,8 @@ fn verifier_checks_constant_array_element_projections() {
 fn verifier_rejects_malformed_dynamic_place_projections() {
     let pointer = Ty::pointer(
         Ty::int(),
-        mojito::PointerOrigin::Untracked { mutable: true },
+        mojito::Origin::Untracked { mutable: true },
+        mojito::Mutability::Mutable,
         mojito::types::AddressSpaceSlot::GENERIC,
     );
 

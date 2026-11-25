@@ -398,7 +398,8 @@ mod tests {
         let int32 = canonical_simd_ty(Dtype::Int32, 1);
         let byte_ptr = Ty::pointer(
             canonical_simd_ty(Dtype::UInt8, 1),
-            crate::origin::PointerOrigin::Untracked { mutable: true },
+            crate::origin::Origin::Untracked { mutable: true },
+            crate::origin::Mutability::Mutable,
             crate::types::AddressSpaceSlot::GENERIC,
         );
         assert!(accepts_arg(CType::Int, &int32));
@@ -421,7 +422,8 @@ mod tests {
             CType::Int,
             &Ty::pointer(
                 Ty::int(),
-                crate::origin::PointerOrigin::Untracked { mutable: false },
+                crate::origin::Origin::Untracked { mutable: false },
+                crate::origin::Mutability::Immutable,
                 crate::types::AddressSpaceSlot::GENERIC,
             )
         ));

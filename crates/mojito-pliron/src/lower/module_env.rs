@@ -714,7 +714,8 @@ pub(super) fn reference_outcome(
 ) -> Result<OutcomeAbi, LayoutError> {
     let pointer = Ty::pointer(
         referent.clone(),
-        mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+        mojito_types::origin::Origin::Untracked { mutable: true },
+        mojito_types::origin::Mutability::Mutable,
         mojito_types::types::AddressSpaceSlot::GENERIC,
     );
     let composed = layout.outcome_layout(&pointer)?;

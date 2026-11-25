@@ -4053,18 +4053,21 @@ argument carrying it carries every member place. A union is only that
 `PointerOrigin::from_parts` reads a union as no view. A `!lit.ref` stores no
 `PointerOrigin`: it is `TyKind::Ref`, upstream's one reference type,
 whose `RefTy` holds an `Origin` beside a `Mutability`, and
-`TyKind::LitRefPack` holds the same pair. The view remains only where
-the checker produces a provenance (a `ref [o]` parameter's binder, a
-place's address) and where `Ty::pointer`, the symbol respell, the
-display, and MIR text spell one (R2584, R2585).
+`TyKind::LitRefPack` holds the same pair. A producer builds those parts
+too: a `ref [Self.o]` parameter's binder is the origin binder and its
+declared `mut` (`Checker::enclosing_origin_param`), a place's address is
+the `RefTy` under the place's origin and `mut`
+(`Checker::infer_place_address`), and a fixed provenance is its `Origin`
+(`Origin::static_at` for static storage) beside a `Mutability`. The view
+remains only where the symbol respell, the display, coercion's last arm,
+and MIR text spell or compare one (R2585).
 
 The bundled library declares upstream's `struct Pointer`, and the
 compiler's pointer type is that struct's application
 `Pointer[mut, T, origin, address_space]` in one canonical form
-(`Ty::pointer`): the `origin` and `mut` arguments are the provenance's
-`PointerOrigin::parts`, the `mut` one a `Bool` or, when an origin binder
-decides it, that binder's implicit `mut` value binder
-(`Mutability::mut_argument`). `Ty::new` folds every other spelling into it,
+(`Ty::pointer`, over an `Origin` and a `Mutability`): the `mut` argument
+is a `Bool` or, when an origin binder decides it, that binder's implicit
+`mut` value binder (`Mutability::mut_argument`). `Ty::new` folds every other spelling into it,
 `TyKind::pointer_lit_ref` reads its arguments back as the `RefTy` it is
 built from, and `Ty::pointer_from_lit_ref` builds the canonical pointer back
 from one (through `Ty::new`'s fold); an application no pointer holds

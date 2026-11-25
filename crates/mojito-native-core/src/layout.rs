@@ -336,7 +336,7 @@ fn align_up(offset: u64, align: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::target::{NativeTarget, Triple};
-    use mojito_types::origin::PointerOrigin;
+    use mojito_types::origin::{Mutability, Origin};
     use mojito_types::types::{SimdDtype, SimdWidth, canonical_simd_ty, kgen_simd_ty};
 
     /// The field index every program holds: `Bool` is the declared struct
@@ -483,7 +483,8 @@ mod tests {
         );
         let pointer = Ty::pointer(
             Ty::int(),
-            PointerOrigin::Static { mutable: false },
+            Origin::Static,
+            Mutability::Immutable,
             AddressSpaceSlot::GENERIC,
         );
         assert_eq!(layout_of(&pointer), Ok(Layout::new(8, 8)));
@@ -492,18 +493,18 @@ mod tests {
         let in_space = |space| {
             Ty::pointer(
                 Ty::int(),
-                PointerOrigin::Static { mutable: false },
+                Origin::Static,
+                Mutability::Immutable,
                 AddressSpaceSlot::Known(space),
             )
         };
         assert_eq!(layout_of(&in_space(270)), Ok(Layout::new(4, 4)));
         assert_eq!(layout_of(&in_space(3)), Ok(Layout::new(8, 8)));
         // A reference pack is one address per element, whatever each holds.
-        let (origin, mutability) = PointerOrigin::Static { mutable: false }.into_parts();
         let pack = Ty::new(TyKind::LitRefPack {
             elements: vec![Ty::bool(), Ty::string_literal_of("s"), Ty::int()],
-            origin,
-            mutability,
+            origin: Origin::Static,
+            mutability: Mutability::Immutable,
         });
         assert_eq!(layout_of(&pack), Ok(Layout::new(24, 8)));
     }

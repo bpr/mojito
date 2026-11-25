@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker's pointer producers build a pointer's `origin` and `mut`
+  arguments directly, as upstream builds a `Pointer`, instead of a
+  `PointerOrigin` view (R2584). A `ref [Self.o]` parameter's binder is the
+  origin binder and its declared `mut`, a place's address
+  (`__get_mvalue_as_litref`, `Pointer(to=)`) is the `!lit.ref` under the
+  place's origin and `mut`, and `Ty::pointer` takes an `Origin` and a
+  `Mutability`, folding through `Ty::new` to the canonical pointer
+  (`Origin::static_at` spells static storage). `RefTy::from_pointer_origin`
+  is gone. No output, MIR text, or symbol changes.
+
 - A `place.load` of a `ref` field's place has one meaning: it loads the
   handle the field's slot stores, and a value read of the field is that
   load plus a `ref.read` of the handle, as upstream loads the field's

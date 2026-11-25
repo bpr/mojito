@@ -14,7 +14,10 @@ impl Checker {
         name: &str,
         referent: Ty,
         mutable: bool,
-        binder: Option<mojito_types::origin::PointerOrigin>,
+        binder: Option<(
+            mojito_types::origin::OriginParamId,
+            mojito_types::origin::Mutability,
+        )>,
     ) {
         let Some(scope) = self.binding_scope(name) else {
             return;
@@ -115,13 +118,16 @@ impl Checker {
 
     /// The enclosing struct's origin binder a `ref` parameter's clause names
     /// (`ref[Self.o] xs`, or the bare binder in a ref field annotation's
-    /// position), as the pointer origin a `Pointer[T, Self.o]` field declares
-    /// — the declared mutability, no interior, no subtree. `None` for a
+    /// position), with its declared `mut`: the `origin` and `mut` arguments
+    /// of the `Pointer[T, Self.o]` a field declares. `None` for a
     /// method-own binder, an inferred clause, or any other spelling.
     pub(in crate::checker) fn reference_parameter_struct_binder(
         &self,
         origin: Option<&[Expr]>,
-    ) -> Option<mojito_types::origin::PointerOrigin> {
+    ) -> Option<(
+        mojito_types::origin::OriginParamId,
+        mojito_types::origin::Mutability,
+    )> {
         let origins = clause_origins(origin, &self.enclosing_param_decls)?;
         let [expression] = &*origins else {
             return None;
@@ -138,9 +144,12 @@ impl Checker {
     pub(in crate::checker) fn lookup_reference_parameter_binder(
         &self,
         name: &str,
-    ) -> Option<mojito_types::origin::PointerOrigin> {
+    ) -> Option<(
+        mojito_types::origin::OriginParamId,
+        mojito_types::origin::Mutability,
+    )> {
         let owner = self.lookup_owner(name)?;
-        self.reference_parameter_binders.get(&owner).cloned()
+        self.reference_parameter_binders.get(&owner).copied()
     }
 
     pub(in crate::checker) fn lookup_reference_parameter(

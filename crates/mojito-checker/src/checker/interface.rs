@@ -678,7 +678,12 @@ struct MethodResidue {
     view_return_interior: Vec<String>,
     view_return: Vec<ViewReturnOrigin>,
     implicit: bool,
-    origin_binders: Vec<Option<mojito_types::origin::PointerOrigin>>,
+    origin_binders: Vec<
+        Option<(
+            mojito_types::origin::OriginParamId,
+            mojito_types::origin::Mutability,
+        )>,
+    >,
     synthesized_default: bool,
     nested_origins: NestedOrigins,
 }

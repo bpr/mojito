@@ -465,7 +465,7 @@ mod tests {
     use super::*;
     use crate::mir::{MirFunctionDeclaration, MirStructDeclaration};
     use mojito_types::ct::CtValue;
-    use mojito_types::origin::PointerOrigin;
+    use mojito_types::origin::{Mutability, Origin};
     use mojito_types::param_expr::{MetaTy, ParamContext, ParamId, ParamRef};
     use mojito_types::types::{SimdDtype, SimdWidth};
 
@@ -625,7 +625,8 @@ mod tests {
                     vec![
                         Ty::pointer(
                             applied("Link", TyArg::Ty(param("Link", "T"))),
-                            PointerOrigin::Static { mutable: false },
+                            Origin::Static,
+                            Mutability::Immutable,
                             mojito_types::types::AddressSpaceSlot::GENERIC,
                         ),
                         Ty::int(),

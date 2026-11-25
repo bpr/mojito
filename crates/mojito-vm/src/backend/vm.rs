@@ -2216,7 +2216,8 @@ mod pointer_storage_tests {
         );
         let ty = Ty::pointer(
             Ty::int(),
-            mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+            mojito_types::origin::Origin::Untracked { mutable: true },
+            mojito_types::origin::Mutability::Mutable,
             mojito_types::types::AddressSpaceSlot::GENERIC,
         );
         let first = vm.thaw(&empty_program(), &frozen, Some(&ty)).expect("thaw");

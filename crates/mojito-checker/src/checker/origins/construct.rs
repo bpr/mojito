@@ -9,7 +9,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::origin::{Mutability, Origin, OriginParamId, PointerOrigin};
+use mojito_types::origin::{Mutability, Origin, OriginParamId};
 use mojito_types::types::TyKind;
 
 /// The struct origin binders one construction binds: each binder's one
@@ -744,7 +744,7 @@ impl Checker {
             // origin: a reference-valued place (a `ref [o]` parameter of the
             // enclosing signature) carries its declared origin, any other
             // place its own.
-            if let Some(Some(PointerOrigin::Param { id, .. })) = sig.origin_binders.get(*index)
+            if let Some(Some((id, _))) = sig.origin_binders.get(*index)
                 && let Some(slot) = super::super::struct_origin_decl(params, *id)
                 && let Some((actual, lent)) = self.reference_argument(expression)
             {
@@ -1163,8 +1163,7 @@ impl Checker {
     fn reference_argument(&self, expression: &Expr) -> Option<(Origin, Option<Mutability>)> {
         // A `ref [o]` parameter of the enclosing signature lends its binder.
         if let ExprKind::Identifier(name) = &expression.kind
-            && let Some(PointerOrigin::Param { id, .. }) =
-                self.lookup_reference_parameter_binder(name)
+            && let Some((id, _)) = self.lookup_reference_parameter_binder(name)
         {
             return Some((Origin::Param(id), None));
         }
