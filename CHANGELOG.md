@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct method's annotation that calls an overloaded module function
+  now selects among every overload, declared ahead of the struct's method
+  signatures in source order, as upstream resolves a callee's overload set
+  on demand (R2596): `def m(self) -> Int if True else g()` over two `def g`
+  overloads no longer reports "Undefined variable 'g'", and reports, as
+  the pin does, that `AnyStruct[Int]` is not compatible with `Int`.
+
 - A trait `comptime` requirement declared `__mlir_type.`!kgen.type``,
   plain or parameterized, is now a type requirement a type witnesses, as
   at the pin (R2595): `trait HasRaw: comptime Raw:

@@ -3221,9 +3221,13 @@ impl Checker {
     /// method's annotation reads (`x: Int if n > 0 else g()`), so the
     /// constant folds to the function's symbol at its signature and the
     /// method's signature types the call, as the pin resolves the
-    /// declaration on demand. A name declared more than once is an
-    /// overload set, which no bare reference selects; a signature that does
-    /// not resolve yet waits for a later round or the function pass.
+    /// declaration on demand. Every overload of a name declares, in source
+    /// order, so a call selects among the whole set as upstream resolves a
+    /// callee's overload set while emitting the signature, and a bare
+    /// reference reports the set's ambiguity; a signature that does not
+    /// resolve yet waits, with every later overload of its name, for a
+    /// later round or the function pass, keeping the candidates in source
+    /// order.
     fn declare_functions_comptime_reads(&mut self, stmts: &[Stmt]) {
         let mut read = HashSet::new();
         for stmt in stmts {
@@ -3258,22 +3262,21 @@ impl Checker {
                 definitions.entry(name.as_str()).or_default().push(stmt);
             }
         }
-        for stmt in definitions
-            .into_values()
-            .filter_map(|overloads| <[&Stmt; 1]>::try_from(overloads).ok())
-            .map(|[stmt]| stmt)
-        {
-            if self.predeclared_functions.contains(&stmt.source_span()) {
-                continue;
-            }
-            let declared = self
-                .in_def_context(stmt, |this| this.def_signature(stmt, false))
-                .and_then(|signature| {
-                    self.bind_def(stmt, false, &signature)?;
-                    self.publish_def_constraints(stmt, &signature.decls, signature.clauses);
-                    Ok(())
-                });
-            if declared.is_ok() {
+        for overloads in definitions.into_values() {
+            for stmt in overloads {
+                if self.predeclared_functions.contains(&stmt.source_span()) {
+                    continue;
+                }
+                let declared = self
+                    .in_def_context(stmt, |this| this.def_signature(stmt, false))
+                    .and_then(|signature| {
+                        self.bind_def(stmt, false, &signature)?;
+                        self.publish_def_constraints(stmt, &signature.decls, signature.clauses);
+                        Ok(())
+                    });
+                if declared.is_err() {
+                    break;
+                }
                 self.predeclared_functions.insert(stmt.source_span());
             }
         }

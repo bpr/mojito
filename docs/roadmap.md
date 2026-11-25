@@ -10077,22 +10077,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2596 A struct method's annotation cannot call an overloaded
-  module function**
-
-  `def m(self, x: Int if True else g())`, over two `def g` overloads,
-  reports "Undefined variable 'g'", where the pin reports that a value of
-  type `AnyStruct[Int]` is not compatible with a value of type `Int`.
-  - Cause: the check registers every struct's method signatures before the
-    module function pass, and `statements.rs::declare_functions_comptime_reads`
-    declares ahead only a function declared once, where upstream resolves a
-    callee's overload set on demand while emitting the signature.
-  - Lever: declare every overload of a name a method annotation calls
-    ahead of the struct pass, as a single declaration is.
-  - Found while landing R2587 (2026-11-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2597 A conditional type proves no conformance in its generic
   body**
 
