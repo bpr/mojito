@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameterized `comptime` member whose `__mlir_attr` body evaluates to
+  a type (`TypeList.__getitem_param__`, `TypeList._get_type_at_index`) is a
+  type template, as upstream keeps any type-valued body, and the second
+  reader that read a value template in type position is gone (R2561). An
+  `Int` argument at a `SIMDLength` member binder converts through
+  `SIMDLength.__init__(Int)`, and an attribute the builder rejects reports
+  its own failure instead of "unknown type '__mlir_attr'". A struct's
+  parameterized type member read unapplied (`comptime g = S.B; g[3]`) is
+  now its generator, which the elaborator also applies over an open pack
+  (`assets/ok/parameterized_member_generator_read.mojo`); one keying an
+  origin binder or a type pack is left to R2590.
+
 - A type parameter an immutable pointer bound takes a later mutable
   pointer to the same storage, converting it, as the pin binds a parameter
   at its first argument (`last(q, p)` over `def last[T](a: T, b: T)`), and

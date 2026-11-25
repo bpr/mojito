@@ -1241,6 +1241,52 @@ fn closes_a_parameterized_type_member_over_the_struct_pack() {
 }
 
 #[test]
+fn a_parameterized_mlir_attr_member_whose_body_is_a_type_is_a_type_template() {
+    let checked = checked_with_std(
+        "from std.builtin.variadics import _MLIR\n\n\
+         struct RawList[Trait: type_of(AnyType), //, values: _MLIR.KGENParamListType[Trait]]:\n    \
+         comptime _mlir_type = _MLIR.KGENParamListType[Self.Trait]\n    \
+         comptime get[idx: SIMDLength] = __mlir_attr[\n        \
+         `#kgen.param_list.get<:`, Self._mlir_type, ` `, +Self.values, `, `,\n        \
+         idx._mlir_value, `> : `, +Self.Trait,\n    ]\n    \
+         comptime next[i: Int]: Int = i + 1\n\n\
+         def main():\n    \
+         var x: RawList[TypeList.of[Trait=AnyType, Int, Bool].values].get[1] = True\n    \
+         print(x)\n",
+    )
+    .expect("checks");
+    let facts = checked.conformances();
+    // The type body is a type template; read unapplied it is also the
+    // generator the elaborator answers a symbolic `g[1]` from.
+    let types: Vec<&str> = facts.parameterized_associated["RawList"]
+        .iter()
+        .map(|member| member.name.as_str())
+        .collect();
+    assert_eq!(types, ["get"]);
+    let values: Vec<&str> = facts.parameterized_values["RawList"]
+        .iter()
+        .map(|member| member.name.as_str())
+        .collect();
+    assert_eq!(values, ["get", "next"]);
+    // A body the builder rejects reports its own failure, not its head:
+    // the pin, too, rejects an `Int` where the attribute takes an `index`.
+    let e = err_std(
+        "from std.builtin.variadics import _MLIR\n\n\
+         struct L[Trait: type_of(AnyType), //, values: _MLIR.KGENParamListType[Trait]]:\n    \
+         comptime _mlir_type = _MLIR.KGENParamListType[Self.Trait]\n    \
+         comptime get[idx: Int] = __mlir_attr[\n        \
+         `#kgen.param_list.get<:`, Self._mlir_type, ` `, +Self.values, `, `,\n        \
+         idx, `> : `, +Self.Trait,\n    ]\n\n\
+         def main():\n    pass\n",
+    );
+    assert!(
+        e.to_string()
+            .contains("the index of '#kgen.param_list.get'"),
+        "got {e:?}"
+    );
+}
+
+#[test]
 fn closes_an_earlier_member_as_a_bracket_value() {
     let boxed = "struct Box[n: Int]:\n    def __init__(out self):\n        pass\n\n\
                  struct S:\n    comptime n = 3\n    comptime B = Box[Self.n]\n\n";

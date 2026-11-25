@@ -3183,16 +3183,6 @@ impl Checker {
         let explicit = member.params.iter().filter(|p| !p.infer_only).count();
         let (decls, template) = match &member.template {
             MemberTemplate::Type { decls, template } => (decls, template),
-            MemberTemplate::Value { .. } if every || args.len() == explicit => {
-                return self.type_valued_member(
-                    base,
-                    name,
-                    member,
-                    struct_decls,
-                    struct_targs,
-                    args,
-                );
-            }
             MemberTemplate::Value { .. } => {
                 return Err(TypeError::TypeMismatch {
                     expected: "a type".to_string(),
@@ -3234,7 +3224,9 @@ impl Checker {
         }
         // The member's own explicit parameters concretize from the application:
         // a value binder by its identity, converted at its declared type as a
-        // parameter binding converts (`0` at `idx: Int` is `Int(0)`). Origin
+        // parameter binding converts (`0` at `idx: Int` is `Int(0)`, and an
+        // integer at `idx: SIMDLength` is upstream's implicit
+        // `SIMDLength.__init__(Int)` applied to it). Origin
         // parameters are keyed by the id assigned while the template was
         // lowered (their position in `enclosing_type_params`).
         let mut origins = HashMap::new();
@@ -3256,6 +3248,9 @@ impl Checker {
                     // is found by name.
                     let decl = decls.iter().find(|decl| decl.name() == param.name);
                     let value = match decl {
+                        Some(ParamDecl::Value { ty, .. }) if is_simd_length(ty) => {
+                            self.simd_length_argument(value, ty)?
+                        }
                         Some(ParamDecl::Value { ty, .. }) => value
                             .clone()
                             .materialize_as(ty)
@@ -3357,89 +3352,28 @@ impl Checker {
         Ok(self.resolve_assoc_ty(&substituted))
     }
 
-    /// A struct's parameterized value member whose value is a type, read in
-    /// a type position (`TypeList.__getitem_param__[idx: SIMDLength]`, the
-    /// `#kgen.param_list.get` upstream's body spells): its body at the
-    /// struct's arguments and the application's, an integer at a
-    /// `SIMDLength` parameter converted as upstream's implicit
-    /// `SIMDLength.__init__(Int)` converts it.
-    fn type_valued_member(
-        &self,
-        base: &Ty,
-        name: &str,
-        member: &ParameterizedMember,
-        struct_decls: &[ParamDecl],
-        struct_targs: &[TyArg],
-        args: &[TyArg],
-    ) -> Result<Ty, TypeError> {
-        let MemberTemplate::Value { decls, body } = &member.template else {
-            return Err(TypeError::InvariantViolation(format!(
-                "'{base}.{name}' is not a compile-time value member"
-            )));
+    /// `value` bound at a `SIMDLength` binder: an integer converted as
+    /// upstream's implicit `SIMDLength.__init__(Int)` converts it, so `1` is
+    /// `SIMDLength(1)`, and any other value converted at the binder's type.
+    fn simd_length_argument(&self, value: &CtValue, ty: &Ty) -> Result<CtValue, TypeError> {
+        let Some(lanes) = self
+            .param_context
+            .constant(value.clone())
+            .ok()
+            .filter(|lanes| lanes.meta().is_integer())
+        else {
+            return Ok(value
+                .clone()
+                .materialize_as(ty)
+                .unwrap_or_else(|| value.clone()));
         };
-        let every = args.len() == member.params.len();
-        let supplied: Vec<(&ParamDecl, &TyArg)> = member
-            .params
-            .iter()
-            .filter(|param| every || !param.infer_only)
-            .zip(args)
-            .filter_map(|(param, arg)| {
-                decls
-                    .iter()
-                    .find(|decl| decl.name() == param.name)
-                    .map(|decl| (decl, arg))
-            })
-            .collect();
-        self.validate_member_availability(
-            &format!("{base}.{name}"),
-            &member.availability,
-            struct_decls,
-            struct_targs,
-            decls,
-            supplied.iter().map(|(decl, arg)| (decl.name(), *arg)),
-        )?;
-        let context = &self.param_context;
-        let mut bindings = mojito_types::param_expr::ParamBindings::new();
-        self.bind_declared(&mut bindings, struct_decls, struct_targs)?;
-        for (decl, arg) in supplied {
-            match (decl, arg) {
-                (ParamDecl::Type { id, .. }, TyArg::Ty(ty)) => {
-                    bindings.bind_type(id.clone(), ty.clone());
-                }
-                (ParamDecl::Value { id, ty, .. }, TyArg::Val(value)) => {
-                    let value = context.constant(value.clone()).map_err(param_error)?;
-                    let value = if is_simd_length(ty) && value.meta().is_integer() {
-                        self.simd_length_of_lanes(&value).ok_or_else(|| {
-                            TypeError::InvariantViolation(format!(
-                                "'{value}' does not convert to a SIMDLength"
-                            ))
-                        })?
-                    } else {
-                        value
-                    };
-                    bindings.bind(id.clone(), value);
-                }
-                _ => {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "a type".to_string(),
-                        found: "a value".to_string(),
-                        context: format!("'{base}.{name}' is a compile-time value member"),
-                    });
-                }
-            }
-        }
-        let value = context
-            .replace(body, &bindings)
-            .and_then(|replaced| context.fold(&replaced))
-            .map_err(param_error)?;
-        if *value.meta() != mojito_types::param_expr::MetaTy::Type {
-            return Err(TypeError::TypeMismatch {
-                expected: "a type".to_string(),
-                found: "a value".to_string(),
-                context: format!("'{base}.{name}' is a compile-time value member"),
-            });
-        }
-        Ok(self.resolve_assoc_ty(&mojito_types::types::DependentType::resolve(value)))
+        let length = self.simd_length_of_lanes(&lanes).ok_or_else(|| {
+            TypeError::InvariantViolation(format!("'{lanes}' does not convert to a SIMDLength"))
+        })?;
+        Ok(length
+            .as_constant()
+            .cloned()
+            .unwrap_or(CtValue::Expr(length)))
     }
 
     /// `ty` with its member reads on concrete subjects closed, as a binder

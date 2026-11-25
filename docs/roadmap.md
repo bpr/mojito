@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2590**.
+Next free ID: **R2592**.
 
 ## Ordered Work
 
@@ -7828,6 +7828,47 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2590 A parameterized type member whose template keys a binder
+  outside its declarations is no generator read unapplied**
+
+  Upstream reads any parameterized member unapplied as its `#kgen.gen`,
+  but `ParameterizedMember::generator_view` (`checker.rs`) refuses a
+  `MemberTemplate::Type` whose template names a binder no declaration in
+  its `decls` holds, so the read stays a no-argument `TyKind::Assoc` from
+  `resolve_parameterized_member`.
+  - Cause: the template keys an origin binder by position
+    (`Origin::Param(param_base + k)`), and a type pack's spread by its
+    spelling (`Tuple[*Ts]`, which `generics::expand_solved_packs`
+    expands), so substituting a generator's bindings reaches neither.
+  - Lever: rekey both to the member's classified decls when the template
+    is lowered, as a value template already keys them.
+  - Probe: `comptime I = List[Int].IteratorType; comptime J =
+    I[origin_of(xs)]` stops with "not a compile-time Int constant: I",
+    where the pin binds both.
+  - Probe: `comptime g = S.B; comptime T = g[Int, Bool]` over `comptime
+    B[*Ts: AnyType] = Tuple[*Ts]` stops with "not a compile-time Int
+    constant: g", where the pin's `var t: T = (1, True)` prints `1 True`.
+  - Found while landing R2561 (2026-11-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2591 A parameterized member or generic alias declared
+  `__mlir_type.`!kgen.type`` rejects a type body**
+
+  `comptime Raw[i: Int]: __mlir_type.`!kgen.type` = Int`, in a struct or
+  at module scope, stops with "type mismatch for a compile-time value
+  declared with a type: expected __TypeOfAllTypes, found Int", where the
+  pin accepts it and `var x: Raw[0] = 1` prints `1`.
+  - Cause: the declared type makes the body a value
+    (`CtMemberReq::Value`), and `lower_parametric_value` converts a type
+    result through `type_value_mismatch`, which no `!kgen.type`
+    declaration passes; upstream keeps a type result as the generator.
+  - The parameter-free `comptime Raw: __mlir_type.`!kgen.type` = Int`
+    already works.
+  - Found while landing R2561 (2026-11-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -13327,31 +13368,6 @@ follow-ups the landed producer stages filed come last.
   - Found while landing R2556 (2026-11-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R2561 A parameterized member whose `__mlir_attr` body is a type
-  lowers as a value template**
-
-  `TypeList.__getitem_param__` and `TypeList._get_type_at_index`
-  (`stdlib/std/builtin/variadics.mojo`) evaluate to a type at the pin, but
-  stay `MemberTemplate::Value`, a second template kind that
-  `type_resolution.rs::type_valued_member` reads in type position.
-  - Cause: `constraints.rs::lower_parameterized_member`'s
-    `parameter_application` arm sends `__mlir_attr[...]` to `applied_type`,
-    which answers `UnknownType("__mlir_attr")` before the builder sees the
-    body.
-  - Probe: `TypeList.of[Trait=AnyType, Int, Bool].__getitem_param__[1]` as
-    an annotation; trace `check_struct_associated`'s template kind.
-  - Probe: a failing `__mlir_attr` member body whose value lowering also
-    fails reports "unknown type '__mlir_attr'" instead of the value error.
-  - Lever: fall back to `body_type` when `applied_type` names the head
-    unknown, as `named_type` falls back to `value_headed_type`.
-  - Then move `type_valued_member`'s `SIMDLength` conversion
-    (`simd_length_of_lanes`) into `resolve_parameterized_member`'s value
-    binding, and delete `type_valued_member` and the
-    `MemberTemplate::Value` type-position arm.
-  - Found while landing R2557 (2026-11-24).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R2562 A parameter-free module `comptime` is registered as a type
   alias by its spelling**

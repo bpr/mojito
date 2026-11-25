@@ -1000,6 +1000,7 @@ assets/ok/parameterized_assoc_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_self_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_self_origin_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_value.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parameterized_member_generator_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_value_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_value_member_dependent_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_value_member_substituted_signature.mojo	-	ineligible	no-scalar-entry-shape

@@ -3,8 +3,9 @@
 # converts through `SIMDLength.__init__(Int)`, a `SIMDLength` value indexes
 # directly, and the member reads spelled out in a compile-time expression
 # (`Ts.__getitem_param__[1]`, `comptime if Ts.__getitem_param__[0] == Int`)
-# are its value. A parameterized member whose value is a type is read as a
-# type in an annotation, whether a `SIMDLength` or a raw `index` takes it.
+# are its value. A parameterized member whose value is a type is a type
+# template, read as a type in an annotation, whether a `SIMDLength` or a raw
+# `index` takes it.
 from std.builtin.variadics import TypeList, _MLIR
 
 

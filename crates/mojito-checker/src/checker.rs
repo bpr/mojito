@@ -3814,6 +3814,29 @@ struct ParameterizedMember {
 }
 
 impl ParameterizedMember {
+    /// The member read unapplied as the generator its declaration is,
+    /// upstream's `#kgen.gen` over its own binders: a value member's body,
+    /// or a type member's template as a type-valued body. `None` for a type
+    /// member whose template keys a binder outside the generator's
+    /// declarations: an origin binder by position
+    /// (`Origin::Param(param_base + k)`) or a type pack's spread by spelling
+    /// (`Tuple[*Ts]`). `is_origin` is as for [`Self::checked_fact`].
+    fn generator_view(
+        &self,
+        is_origin: impl Fn(&[mojito_ast::ast::TypeParam], usize) -> bool,
+    ) -> Option<(&[ParamDecl], ParamExpr)> {
+        match &self.template {
+            MemberTemplate::Value { decls, body } => Some((decls, body.clone())),
+            MemberTemplate::Type { decls, template }
+                if !decls.iter().any(ParamDecl::is_type_pack)
+                    && !(0..self.params.len()).any(|index| is_origin(&self.params, index)) =>
+            {
+                Some((decls, ParamContext::detached().type_shape(template.clone())))
+            }
+            MemberTemplate::Type { .. } => None,
+        }
+    }
+
     /// The member as the checked declaration fact names it: its explicit
     /// parameters keyed exactly as `resolve_parameterized_member` binds an
     /// application's arguments. `None` for a value member, which is
@@ -3853,21 +3876,22 @@ impl ParameterizedMember {
         })
     }
 
-    /// A value member as the checked declaration fact names it, which the
-    /// elaborator answers a read through a bound from (`T.get[0]`); the
-    /// check answers a read through the struct itself. `None` for a type
-    /// member.
+    /// The member's generator ([`Self::generator_view`]) as the checked
+    /// declaration fact names it, which the elaborator answers a read
+    /// through a bound or a still-symbolic generator from (`T.get[0]`,
+    /// `g[1]` over `comptime g = S[*Ts].B`); the check answers a read
+    /// through a closed struct itself. `None` for a type member with an
+    /// origin binder.
     fn checked_value_fact(
         &self,
         name: &str,
+        is_origin: impl Fn(&[mojito_ast::ast::TypeParam], usize) -> bool,
     ) -> Option<mojito_checked::declaration::ParameterizedAssociatedValue> {
-        let MemberTemplate::Value { decls, body } = &self.template else {
-            return None;
-        };
+        let (decls, body) = self.generator_view(is_origin)?;
         Some(mojito_checked::declaration::ParameterizedAssociatedValue {
             name: name.to_string(),
-            params: decls.clone(),
-            body: body.clone(),
+            params: decls.to_vec(),
+            body,
         })
     }
 }

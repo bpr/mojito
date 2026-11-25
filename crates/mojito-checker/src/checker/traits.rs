@@ -3096,7 +3096,11 @@ impl Checker {
                 let mut members = info
                     .parameterized_associated
                     .iter()
-                    .filter_map(|(member, declared)| declared.checked_value_fact(member))
+                    .filter_map(|(member, declared)| {
+                        declared.checked_value_fact(member, |params, index| {
+                            self.origin_binder_at(params, index).is_some()
+                        })
+                    })
                     .collect::<Vec<_>>();
                 members.sort_by(|left, right| left.name.cmp(&right.name));
                 (name.clone(), members)

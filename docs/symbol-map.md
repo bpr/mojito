@@ -1158,12 +1158,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `type_member_value`, so `Ts.length` in any position), and
   `type_pack_element` applies its `__getitem_param__` through
   `associated_type_from_base`, which `pack_element_type` and
-  `eval_associated_ct`'s `Self.Ts[i]` arm call. The member is a value
-  template, upstream's bracketed `#kgen.param_list.get` over a
-  `SIMDLength` index (`mlir_bracket_attribute`), which
-  `resolve_parameterized_member` reads as a type through
-  `type_valued_member` (an `Int` argument converted by
-  `simd_length_of_lanes`); its value is the dependent element
+  `eval_associated_ct`'s `Self.Ts[i]` arm call. The member is a type
+  template (`MemberTemplate::Type`), upstream's bracketed
+  `#kgen.param_list.get` over a `SIMDLength` index
+  (`mlir_bracket_attribute`), which `lower_parameterized_member` evaluates
+  through `body_template` once `applied_type` names the `__mlir_attr` head
+  no type, and `resolve_parameterized_member` binds an `Int` argument at
+  the `SIMDLength` binder as `simd_length_argument` converts it
+  (`simd_length_of_lanes`); its value is the dependent element
   (`ParamContext::list_get`, which reads a `SIMDLength` index at its
   lane count, and `DependentType::pack_element` in `mojito-types`). A subscript of a construction in type position
   (`TypeList[Ts.values]()[i]`) is `Type::Value` (`mojito-ast`, built by
@@ -1580,7 +1582,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameterized declaration read unapplied is the generator it declares:
   `alias_generator` (a value or predicate alias, the latter's `Bool` body
   `ComptimeAlias::predicate_value`), `struct_generator_member` (a struct's
-  member), and `type_member_value` (a bound's requirement, a `TypeMember`
+  member, type- or value-bodied, through `struct_member_generator` and
+  `ParameterizedMember::generator_view`, which a type member keying an
+  origin binder or a type pack outside its declarations lacks; the
+  builder's type-member-read arm leaves such an unapplied read to it,
+  `reads_type_member_generator`), and `type_member_value` (a bound's requirement, a `TypeMember`
   typed by `Ty::generator`); `bind_template_comptime` binds a local or
   module `comptime` of one as a compile-time-only value. A
   `__generator_type` annotation resolves in `type_resolution.rs:
@@ -3362,7 +3368,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lookup_trait_generator`), a `TypeMember` node with the bound
   arguments. The conformer's member crosses the waist as
   `ParameterizedAssociatedValue` (`mojito-checked/src/declaration.rs`,
-  built by `ParameterizedMember::checked_value_fact`) in
+  built by `ParameterizedMember::checked_value_fact` from its
+  `generator_view`, so a type member with one is listed too and the
+  elaborator answers a symbolic `g[1]` of `comptime g = S[*Ts].B`) in
   `ConformanceFacts::parameterized_values` →
   `MirStructDeclaration::parameterized_associated_values`, and
   `type_member_answer` binds the arguments to its parameters by position

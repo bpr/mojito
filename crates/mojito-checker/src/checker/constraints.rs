@@ -798,6 +798,9 @@ impl Checker {
     /// parameters already are), so type parameters resolve to `TyKind::Param`, value
     /// parameters to `CtValue::Expr`, and origin parameters to `Origin::Param`;
     /// concrete resolution substitutes an application's arguments into the result.
+    /// A bracket whose head names no type (`__mlir_attr[...]`) is evaluated
+    /// like any other body, so a type result is a type template whatever
+    /// head spells it.
     pub(super) fn lower_parameterized_member(
         &mut self,
         owner: &str,
@@ -823,24 +826,29 @@ impl Checker {
         // The body's own occurrence records what it resolved to, under the
         // member's parameters.
         let template = match &body.kind {
-            _ if let Some((name, args)) = self.parameter_application(body) => self
-                .applied_type(name, &args)
-                .map(|(template, attributes)| {
-                    self.record_declared_attributes(body.source_span(), &attributes);
-                    template
-                })
-                .map_err(MemberBodyError::Failed),
+            // A bracket whose head names no type (`__mlir_attr[...]`) is
+            // evaluated like any other body, as `named_type` falls back to
+            // `value_headed_type`.
+            _ if let Some((name, args)) = self.parameter_application(body) => {
+                match self.applied_type(name, &args) {
+                    Err(TypeError::UnknownType(unknown)) if unknown == name => {
+                        self.body_template(body)
+                    }
+                    applied => applied
+                        .map(|(template, attributes)| {
+                            self.record_declared_attributes(body.source_span(), &attributes);
+                            template
+                        })
+                        .map_err(MemberBodyError::Failed),
+                }
+            }
             // A function type with its own binders (`def[dtype: DType,
             // width: SIMDLength, //](SIMD[dtype, width]) thin -> …`) is the
             // parametric function type a callable bound's is.
             ExprKind::FunctionType(callable) if !callable.type_params.is_empty() => self
                 .lower_anonymous_callable_type(&format!("$callable:{owner}"), callable, params)
                 .map_err(MemberBodyError::Failed),
-            _ => match self.body_type(body) {
-                Ok(Some(template)) => Ok(template),
-                Ok(None) => Err(MemberBodyError::NotAType),
-                Err(error) => Err(MemberBodyError::Failed(error)),
-            },
+            _ => self.body_template(body),
         };
         if let Ok(template) = &template
             && body.is_type_expression()
@@ -2456,9 +2464,11 @@ impl Checker {
                     .map(|ty| context.type_shape(ty))
             }
             // A type member read through a type (`T.Element` over an
-            // `Iterator`-bound `T`, `D.Y` over a generator).
+            // `Iterator`-bound `T`, `D.Y` over a generator). A struct's
+            // parameterized type member read unapplied is its generator.
             ExprKind::Member { object, field }
-                if let Some(member) = self.member_through_type(object, field) =>
+                if let Some(member) = self.member_through_type(object, field)
+                    && !self.reads_type_member_generator(object, field) =>
             {
                 Ok(context.type_shape(member))
             }
@@ -3757,6 +3767,17 @@ impl Checker {
             return Ok(Some(ty));
         }
         self.missing_type_member(expr).map_or(Ok(None), Err)
+    }
+
+    /// A parameterized declaration's body as a type template
+    /// ([`Self::body_type`]), or [`MemberBodyError::NotAType`] when it
+    /// evaluates to a value.
+    fn body_template(&self, body: &Expr) -> Result<Ty, MemberBodyError> {
+        match self.body_type(body) {
+            Ok(Some(template)) => Ok(template),
+            Ok(None) => Err(MemberBodyError::NotAType),
+            Err(error) => Err(MemberBodyError::Failed(error)),
+        }
     }
 
     /// The type a declaration's body evaluates to under its binders, or
@@ -5066,11 +5087,12 @@ impl Checker {
         }
     }
 
-    /// A struct's parameterized value member `field` read unapplied
-    /// (`A.get`, `S[3].plus`): the generator its declaration is, upstream's
-    /// `#kgen.gen`, at the struct's arguments. Over arguments still
-    /// symbolic it is the member read the elaborator answers per instance.
-    /// `None` when `field` is no parameterized value member.
+    /// A struct's parameterized member `field`, type- or value-bodied, read
+    /// unapplied (`A.get`, `S[3].plus`, `S.B` over `comptime B[n: Int] =
+    /// Box[n]`): the generator its declaration is, upstream's `#kgen.gen`,
+    /// at the struct's arguments. Over arguments still symbolic it is the
+    /// member read the elaborator answers per instance. `None` when `field`
+    /// is no parameterized member with a generator view.
     fn struct_generator_member(
         &self,
         subject: &Ty,
@@ -5117,32 +5139,63 @@ impl Checker {
         }
     }
 
-    /// A struct's parameterized value member `field` as the generator its
-    /// declaration is, its body at the struct application's `arguments`.
-    /// `None` when `field` is no parameterized value member.
+    /// A struct's parameterized member `field`, type- or value-bodied, as
+    /// the generator its declaration is ([`Self::member_generator_view`]),
+    /// its body at the struct application's `arguments`. `None` when
+    /// `field` is no parameterized member with a generator view.
     fn struct_member_generator(
         &self,
         info: &StructInfo,
         arguments: &[TyArg],
         field: &str,
     ) -> Option<Result<mojito_types::ct::GeneratorValue, TypeError>> {
-        let member = info.parameterized_associated.get(field)?;
-        let MemberTemplate::Value { decls, body } = &member.template else {
-            return None;
-        };
+        let (decls, body) =
+            self.member_generator_view(info.parameterized_associated.get(field)?)?;
         Some((|| {
             let mut outer = mojito_types::param_expr::ParamBindings::new();
             self.bind_declared(&mut outer, &info.decls(), &info.view_arguments(arguments))?;
             let context = &self.param_context;
             let body = context
-                .replace(body, &outer)
+                .replace(&body, &outer)
                 .and_then(|replaced| context.fold(&replaced))
                 .map_err(param_error)?;
             Ok(mojito_types::ct::GeneratorValue {
-                params: decls.clone(),
+                params: decls.to_vec(),
                 body,
             })
         })())
+    }
+
+    /// A parameterized member's generator view
+    /// ([`ParameterizedMember::generator_view`]), its origin binders told
+    /// apart as the member's list declares them.
+    fn member_generator_view<'m>(
+        &self,
+        member: &'m ParameterizedMember,
+    ) -> Option<(&'m [ParamDecl], ParamExpr)> {
+        member.generator_view(|params, index| self.origin_binder_at(params, index).is_some())
+    }
+
+    /// Whether `object.field` reads a struct's parameterized type member
+    /// unapplied while an explicit parameter is left to bind: the generator
+    /// [`Self::struct_generator_member`] answers, as upstream reads any
+    /// parameterized member unapplied, not a type.
+    fn reads_type_member_generator(&self, object: &Expr, field: &str) -> bool {
+        self.member_subject(object)
+            .and_then(|subject| {
+                let (name, _) = self.nominal_struct(&subject)?;
+                let member = self
+                    .structs
+                    .get(name)?
+                    .parameterized_associated
+                    .get(field)?;
+                Some(
+                    matches!(member.template, MemberTemplate::Type { .. })
+                        && member.params.iter().any(|param| !param.infer_only)
+                        && self.member_generator_view(member).is_some(),
+                )
+            })
+            .unwrap_or(false)
     }
 
     /// The pack a collector named by `object` spreads (`args` of `*args:
