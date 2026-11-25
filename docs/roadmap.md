@@ -1535,23 +1535,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2586 A loop over a `ref` field read through a `ref` binding
-  fails MIR verification**
-
-  `for x in r.src: print(x)`, where `ref r = w` names a local `w =
-  Walk(l)` of `struct Walk[o: MutOrigin]` holding `var src: ref[Self.o]
-  List[Int]`, stops with "invalid checked program: MakeRef destination
-  targets List[Int], incompatible with place storage ref[...] List[Int]".
-  - `len(r.src)` and `r.src.append(2)` through the same binding run.
-  - `place_is_ref_field` (`crates/mojito-mir/src/mir.rs`) answers no for
-    a place that carries `through`, so `borrow_iteration_source` makes a
-    reference typed as the referent over the field's slot instead of
-    loading the handle the field stores.
-  - Probe: the loop above over `l = [1]`, which should print `1`.
-  - Found while landing R2580 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2094 A loan named only inside a type argument does not follow a
   move or copy of its holder**
 
@@ -2208,6 +2191,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     with live reference 'v'"), where the pin accepts. The loans are shared;
     the `mut` access against them is the cause (found while landing R2475,
     2026-11-22).
+  - Probe: a mutable loop over a local holder's `ref` field. `for ref x
+    in w.src: x += 1` then `print(w.src[0])`, over `w = Walk(l)` of
+    `struct Walk[o: MutOrigin]` holding `var src: ref[Self.o] List[Int]`,
+    reports "access to 'l' conflicts with live reference 'w'"; the loop's
+    mutable loan on `l` meets `w`'s shared one. Through `ref r = w` too
+    (found while landing R2586, 2026-11-25).
   - Found while landing R192 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.

@@ -1,7 +1,8 @@
 # A `ref` field's stored handle is loaded out of its slot wherever it is
 # taken whole: a `ref` binding of the field (read and written through), a
 # loop iterating the field, a comprehension over it, and the field or such
-# a binding passed at a `ref` parameter.
+# a binding passed at a `ref` parameter, each also through a `ref`
+# binding of the holder.
 struct Bag:
     var items: List[Int]
 
@@ -73,4 +74,10 @@ def main():
     var d = w.doubled()
     print(d[0], d[1])
     print(w.alias_arg(), w.direct_ref_arg())
+    ref r = w
+    var u = 0
+    for x in r.src:
+        u += x
+    ref s = r.src
+    print(u, len(s), takes_ref(r.src), len([x * 2 for x in r.src]))
     print(xs[0] + xs[1])

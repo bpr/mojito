@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A loop over a `ref` field read through a `ref` binding (`for x in
+  r.src` over `ref r = w`) loads the handle the field's slot stores, as the
+  loop over `w.src` does, instead of failing MIR verification with
+  "MakeRef destination targets List[Int], incompatible with place storage"
+  (R2586). A `ref` binding of such a field (`ref s = r.src`) takes the
+  stored handle the same way.
+
 - A parameter-free module `comptime` is a type alias when its body
   evaluates to a type, as upstream evaluates the body and keeps a type
   result, instead of when its spelling looks like one (R2562). A body that

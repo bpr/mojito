@@ -3831,11 +3831,12 @@ impl<'a> Flatten<'a> {
         })
     }
 
-    /// Whether `place`, spelled from its root's own storage, ends at a
-    /// field declared `ref`, whose slot stores the handle a read of it
-    /// loads.
+    /// Whether `place` ends at a field declared `ref`, whose slot stores
+    /// the handle a read of it loads. A place reached through a `ref`
+    /// binding (`r.src` over `ref r = w`) is one too: the binding names
+    /// the holder's storage, and the field's slot still stores the handle.
     fn place_is_ref_field(&self, place: &MirPlace) -> bool {
-        !place.proj.is_empty() && place.through.is_none() && self.place_holds_reference(place)
+        !place.proj.is_empty() && self.place_holds_reference(place)
     }
 
     /// Load the handle the `ref` field `place` stores, as upstream loads
