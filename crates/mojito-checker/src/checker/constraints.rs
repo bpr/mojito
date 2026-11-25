@@ -347,6 +347,13 @@ impl Checker {
                 }
             }
             self.push_assumptions(facts);
+            // A default is the trait's syntax, typed here only to evaluate
+            // this conformer's witness, as upstream evaluates it with `Self`
+            // bound and keeps only the attribute.
+            let evaluation = defaults
+                .iter()
+                .any(|default| default.name == member.name)
+                .then(|| self.open_evaluation());
             let resolved = (|| {
                 if member.params.is_empty() {
                     // A call is the application of its callee over the
@@ -420,6 +427,9 @@ impl Checker {
                 };
                 Ok((None, Some(template)))
             })();
+            if let Some(evaluation) = evaluation {
+                self.close_evaluation(evaluation);
+            }
             self.pop_assumptions();
             match resolved? {
                 (Some(value), _) => {

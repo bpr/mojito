@@ -30,7 +30,8 @@ off sits on a node: a destructuring statement holds its leaves' bindings, a
 `case` condition's plan sits on its value, and syntax the check types only to
 evaluate it is typed inside an evaluation that erases its records, as upstream
 erases the ops its parameter evaluator emits speculatively, a match pattern's
-projection typed only for its type among them (R2569, R2573, R2574). The checked
+projection typed only for its type and a conformed trait's `comptime` default
+typed for one conformer's witness among them (R2569, R2573, R2574, R2576). The checked
 tables are sealed from the emitted nodes, each op composed with its node's
 facts, and an occurrence the check emitted no node for is an internal error
 rather than a placeholder (R2567, R766). The check seals its own module at its

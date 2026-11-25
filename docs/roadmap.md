@@ -11799,29 +11799,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2576 A struct's comptime type member body is checked for its
-  application's constraints with records on syntax no node holds**
-
-  `check_struct_types` → `body_type` → `denotation` →
-  `ct_expression_rejection` → `violated_application_constraint` selects
-  the body's application only to test its constraints, and the selection
-  types its bracket arguments (`param_arg_value_ty`, `eval_associated_ct`)
-  outside an evaluation.
-  - Upstream's parameter evaluator checks the application speculatively
-    and erases what it emitted.
-  - The lever: run `violated_application_constraint`'s selection in
-    `Checker::evaluating`, after confirming the member body's own syntax
-    is never a node the check enters later.
-  - Probe: `std/builtin/enum_like.mojo`'s
-    `_union_elt_type_for_case[id] = TypeList[Trait=AnyType,
-    Self._union_case_types]()[id]`, 2 records in each of 14 extension
-    fixtures (`enum_like_protocol.mojo`, `union_construction.mojo`,
-    `match_enum_cases_custom.mojo`, and the other `enum_like_*`,
-    `union_*`, and `match_*` extension fixtures).
-  - Found while landing R2573 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2577 A callable local's call respelled as `__call__` or
   `__getitem__` leaves records on syntax no node holds**
 

@@ -1026,8 +1026,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and each comprehension its clauses' (`EmittedExpr::loop_targets`) at
   allocation, which `Relocation` copies. An evaluation
   (`open_evaluation`/`close_evaluation`, opened by
-  `checker/node_facts.rs`'s `Checker::evaluating`, which also rolls the
-  typing memos back) erases every pending record it created on syntax no
+  `checker/node_facts.rs`'s `Checker::evaluating`, or by its
+  `Checker::open_evaluation`/`close_evaluation` pair and its `Evaluation`
+  marks for a site holding the checker mutably, either of which also
+  rolls the typing memos back) erases every pending record it created on syntax no
   node holds (`holds`), as upstream erases the ops its parameter evaluator
   emitted speculatively; `discard_unheld` erases them after the fact, for
   a `comptime match` condition the plan dropped or replaced by refreshed

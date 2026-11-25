@@ -9,9 +9,20 @@
 //! inside [`Checker::evaluating`], which erases its records afterwards.
 
 use super::Checker;
+use super::emit::EvaluationMark;
 use mojito_checked::checked::NodeFacts;
 use mojito_common::token::SourceSpan;
 use std::cell::RefMut;
+
+/// An open evaluation: where the emitter's evaluated records and the
+/// typing memos stood when it opened.
+#[derive(Debug, Clone, Copy)]
+#[must_use = "an open evaluation is closed by `Checker::close_evaluation`"]
+pub(super) struct Evaluation {
+    emitted: EvaluationMark,
+    memo: usize,
+    objects: usize,
+}
 
 impl Checker {
     /// Run `evaluate`, typing syntax only to evaluate it, then erase every
@@ -20,14 +31,32 @@ impl Checker {
     /// attribute. The typing memos are rolled back too, so no later typing
     /// of the same syntax reads a memo whose records are gone.
     pub(super) fn evaluating<R>(&self, evaluate: impl FnOnce() -> R) -> R {
-        let evaluation = self.emitter.borrow_mut().open_evaluation();
-        let memo = self.argument_memo_mark();
-        let objects = self.member_object_mark();
+        let evaluation = self.open_evaluation();
         let result = evaluate();
-        self.roll_back_argument_memo(memo);
-        self.roll_back_member_objects(objects);
-        self.emitter.borrow_mut().close_evaluation(evaluation);
+        self.close_evaluation(evaluation);
         result
+    }
+
+    /// Start an evaluation [`Self::evaluating`] would run, for a site that
+    /// types its syntax with the checker borrowed mutably; every typing
+    /// until [`Self::close_evaluation`] closes it is erased as
+    /// [`Self::evaluating`]'s is.
+    pub(super) fn open_evaluation(&self) -> Evaluation {
+        Evaluation {
+            emitted: self.emitter.borrow_mut().open_evaluation(),
+            memo: self.argument_memo_mark(),
+            objects: self.member_object_mark(),
+        }
+    }
+
+    /// End the evaluation `evaluation` opened, erasing its records and
+    /// rolling back its typing memos.
+    pub(super) fn close_evaluation(&self, evaluation: Evaluation) {
+        self.roll_back_argument_memo(evaluation.memo);
+        self.roll_back_member_objects(evaluation.objects);
+        self.emitter
+            .borrow_mut()
+            .close_evaluation(evaluation.emitted);
     }
 
     /// The record at `span`, created if absent: the write path.

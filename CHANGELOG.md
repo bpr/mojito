@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A conformed trait's `comptime` default is typed for the conformer's
+  witness inside an evaluation (`check_struct_associated`), as upstream
+  evaluates the default with `Self` bound and keeps only the attribute,
+  so the default's syntax, the trait's own, keeps no record of one
+  conformer's typing (R2576). The 2 records `UnionLike`'s
+  `_union_elt_type_for_case` body left in each of 14 `enum`/`union`
+  extension fixtures are gone, and std's precompile stays at 0. No
+  output, diagnostic, or MIR text changes.
+
 - A construction the check spells for a sugar numbers its keyword
   parameter arguments from the sugar's identity, as it already numbered
   its positional ones (`derived_construction`), so every check of a call

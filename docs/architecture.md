@@ -2998,8 +2998,11 @@ construction its node holds, as upstream emits it once. Syntax the check
 types only to evaluate it (a compile-time operator's dunder call, an
 origin alias's construction, a `rebind` target, a slice subscript's
 spelled literal construction, a match pattern's field projection, a
-`comptime match` or-pattern alternative's binding value) is typed inside an evaluation
-(`Checker::evaluating`), as upstream's parameter evaluator emits
+`comptime match` or-pattern alternative's binding value, a conformed
+trait's `comptime` default typed for one conformer's witness) is typed
+inside an evaluation (`Checker::evaluating`, or the
+`Checker::open_evaluation`/`close_evaluation` pair a site holding the
+checker mutably brackets), as upstream's parameter evaluator emits
 speculatively, reads the callee and type off the ops it emitted, folds
 them into an attribute, and erases them: the evaluation erases every
 record it created on syntax no node holds, and the check reads the
