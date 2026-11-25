@@ -3765,8 +3765,8 @@ impl Checker {
     /// The type a declaration's body evaluates to under its binders, or
     /// `None` when it evaluates to a value, as upstream emits the body and
     /// keeps a type result. Unlike an annotation's ([`Self::annotation_type`]),
-    /// a body the builder cannot read keeps the builder's failure: a value
-    /// binder is no runtime variable.
+    /// a body the builder cannot read for a declared name keeps the
+    /// builder's failure: a value binder is no runtime variable.
     fn body_type(&self, body: &Expr) -> Result<Option<Ty>, TypeError> {
         self.at_annotation_depth(body, || {
             self.denotation(body)
@@ -3780,8 +3780,10 @@ impl Checker {
     /// How a type expression's build failure reads. A name chain whose
     /// head names nothing (`Undeclared`, `Undeclared[Int]`,
     /// `Undeclared.Inner`) is an unknown type; a head that names a
-    /// declaration keeps the builder's own failure; any other unread name
-    /// is left to the caller.
+    /// declaration keeps the builder's own failure; a name the expression
+    /// reads that names nothing (`Int if n > 0 else Undeclared`) is the
+    /// unknown declaration upstream's name lookup reports while emitting
+    /// it; any other unread name is left to the caller.
     fn annotation_failure(&self, expr: &Expr, error: TypeError) -> AnnotationFailure {
         let TypeError::NotComptime(unbound) = error else {
             return AnnotationFailure::Reported(error);
@@ -3796,6 +3798,11 @@ impl Checker {
                 TypeError::UnknownType(head.to_string())
             }
             Some(head) if self.declares(head) => TypeError::NotComptime(unbound),
+            _ if !self.declares(&unbound)
+                && super::comptime_validation::names_read(expr).contains(&unbound) =>
+            {
+                TypeError::UndefinedVariable(unbound)
+            }
             _ => return AnnotationFailure::Unread(unbound),
         })
     }

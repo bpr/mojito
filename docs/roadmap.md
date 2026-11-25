@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2587**.
+Next free ID: **R2589**.
 
 ## Ordered Work
 
@@ -10216,21 +10216,34 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2563 A type annotation the builder cannot read reports a value
-  binder or an undeclared name as an undefined variable**
+- [ ] **R2587 An annotation typed as an ordinary expression does not see
+  its declaration's value binders**
 
-  `def f[n: Int](x: Int if n > 0 else Undeclared)` reports "Undefined
-  variable 'n'", where the pin reports "use of unknown declaration
-  'Undeclared'".
+  `def f[n: Int](x: Int if n > 0 else g())`, over a `def g() -> Int`,
+  reports "Undefined variable 'n'", where the pin reports that a value of
+  type `AnyStruct[Int]` is not compatible with a value of type `Int`.
   - Cause: `constraints.rs::annotation_type`'s `AnnotationFailure::Unread`
-    arm types the annotation as a runtime expression (`expression_error`),
-    in which a value binder is no variable.
-  - Probe: a field `var x: Int if Self.n > 0 else Undeclared` in
-    `struct S[n: Int]` reports "Undefined variable 'Undeclared'"; the pin
-    reports the unknown declaration.
-  - A parameterized `comptime` body already keeps the builder's failure
-    (`body_type`).
-  - Found while landing R2557 (2026-11-24).
+    arm types the annotation through `expression_error`, whose identifier
+    read finds no variable for a signature's value binder, where upstream's
+    `emitExprType` emits the expression with the parameters in scope.
+  - Lever: an identifier read that `value_parameter_in_scope` answers and
+    no variable shadows types as the binder's value type.
+  - Found while landing R2563 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2588 A conditional parameter type is not resolved by a call's
+  explicit parameters**
+
+  `def f[n: Int](x: Int if n > 0 else Float64) -> Int`, called as
+  `f[1](2)`, fails with "expected Int if 0 < n else Float64, found
+  IntLiteral[2]", where the pin runs it and prints `1`.
+  - Cause: the argument check's `resolve` closure in
+    `call_inference.rs` (`resolve_dependent_ty` over the call's values)
+    leaves the `Cond` parameter type over `n` unfolded.
+  - Probe: the same failure through an alias,
+    `comptime T[n: Int] = Int if n > 0 else Float64` read as `x: T[n]`.
+  - Found while landing R2563 (2026-11-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

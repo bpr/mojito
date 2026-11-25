@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1335
+# swept-count	1340
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -481,6 +481,7 @@ assets/type_error/comptime_type_ordering_rejected.mojo	compile-reject	agree	erro
 assets/type_error/comptime_type_pack_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'TypeList[Ts.values]' value to 'Int'
 assets/type_error/comptime_unread_constant_is_checked.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'StringLiteral["x"]' to 'Int'
 assets/type_error/comptime_with_body_abandoned.mojo	compile-reject	agree	error: 'r' abandoned without being explicitly destroyed: close it
+assets/type_error/conditional_annotation_unknown_name.mojo	compile-reject	agree	error: use of unknown declaration 'Undeclared'
 assets/type_error/conditional_equal_literal_arms_materialize.mojo	compile-reject	agree	error: invalid call to 'k': value passed to 'x' cannot be converted from 'Int' to 'Int8'
 assets/type_error/conditional_float_literal_arms_int_lane.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/conditional_int_float_literal_ambiguous_merge.mojo	compile-reject	agree	error: ambiguous merge: left value has type 'IntLiteral[1]' and right value has type 'FloatLiteral[2.5]', and both convert to each other

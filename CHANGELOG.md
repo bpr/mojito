@@ -1953,6 +1953,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A type annotation or parameterized `comptime` body the compile-time
+  builder cannot read reports the name it reads that declares nothing, as
+  the pin's "use of unknown declaration" does (R2563):
+  `def f[n: Int](x: Int if n > 0 else Undeclared)` reported the value
+  binder `n` as an undefined variable, and `comptime T[n: Int] = Int if n >
+  0 else Undeclared` reported `Undeclared` as no compile-time constant.
+
 - `len(h.r)` over a `ref String` field reports that `len(String/StringSlice)`
   is not supported, as a local `len(s)` does, instead of overflowing the
   checker's stack (R2581). The field's referent is read off its holder since
