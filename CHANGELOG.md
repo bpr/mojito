@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter typed by a conditional over a value binder (`def f[n:
+  Int](x: Int if n > 0 else Float64)`, directly or through `comptime T[n:
+  Int] = Int if n > 0 else Float64`) now takes the arm the call's explicit
+  parameters select, as at the pin, so `f[1](2)` prints `1` instead of
+  failing with "expected Int if 0 < n else Float64, found IntLiteral[2]"
+  (R2588).
+
 - A parameterized member or generic alias declared with the type of all
   types (`comptime Raw[i: Int]: __mlir_type.`!kgen.type` = Int`) now keeps
   a type body as its generator, as upstream does, instead of stopping with

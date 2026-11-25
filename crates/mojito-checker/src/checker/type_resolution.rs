@@ -2653,16 +2653,12 @@ impl Checker {
                         .collect::<Result<Vec<_>, _>>()?;
                     self.resolve_dependent_index(elements, index, values)?
                 }
-                // An element of a pack that is still a parameter closes as
-                // its pack and index bind, and a generator's application as
-                // its generator binds.
-                None if (dependent.pack_element().is_some()
-                    || matches!(
-                        dependent.expr().kind(),
-                        mojito_types::param_expr::ParamKind::BindParams { .. }
-                    ))
-                    && !values.is_empty() =>
-                {
+                // Any other type-valued expression closes as the use binds
+                // its parameters: an element of a pack that is still a
+                // parameter as its pack and index bind, a generator's
+                // application as its generator binds, and a conditional
+                // type (`Int if n > 0 else Float64`) as its condition does.
+                None if !values.is_empty() => {
                     let context = &self.param_context;
                     let bindings = &values.bindings;
                     // A pack bound to a list of types selects the indexed

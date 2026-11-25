@@ -309,6 +309,7 @@ assets/ok/conditional_expression_parameter_condition.mojo	main	exe-differential	
 assets/ok/conditional_expression_transfer.mojo	main	exe-differential	sanitized
 assets/ok/conditional_member_availability.mojo	main	exe-differential	sanitized
 assets/ok/conditional_member_trivial_value_clauses.mojo	main	exe-differential	sanitized
+assets/ok/conditional_parameter_type_call.mojo	main	exe-differential	sanitized
 assets/ok/conditional_register_passable_result_owned.mojo	main	exe-differential	sanitized
 assets/ok/conformance_module_qualified.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_condition_generic_def.mojo	main	exe-differential	sanitized

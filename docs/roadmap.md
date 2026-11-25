@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2597**.
+Next free ID: **R2598**.
 
 ## Ordered Work
 
@@ -10244,18 +10244,19 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2588 A conditional parameter type is not resolved by a call's
-  explicit parameters**
+- [ ] **R2597 A conditional type proves no conformance in its generic
+  body**
 
-  `def f[n: Int](x: Int if n > 0 else Float64) -> Int`, called as
-  `f[1](2)`, fails with "expected Int if 0 < n else Float64, found
-  IntLiteral[2]", where the pin runs it and prints `1`.
-  - Cause: the argument check's `resolve` closure in
-    `call_inference.rs` (`resolve_dependent_ty` over the call's values)
-    leaves the `Cond` parameter type over `n` unfolded.
-  - Probe: the same failure through an alias,
-    `comptime T[n: Int] = Int if n > 0 else Float64` read as `x: T[n]`.
-  - Found while landing R2563 (2026-11-24).
+  `def g[n: Int](x: Int if n > 0 else Float64) -> Int` whose body copies
+  (`var y = x`) or prints `x` fails with "cannot copy non-Copyable type
+  'element'" or "does not conform to trait 'Writable'", where the pin
+  runs `g[1](3)` and prints `3`.
+  - Cause: `Checker::conformance` in `traits.rs` answers `Unknown` for a
+    `Dependent` type other than a tabulated list's spread, so a `Cond`
+    over two types never conforms to the traits both arms conform to.
+  - Probe: `-> type_of(x)` returning `x` fails with the same copy error
+    at the `return`.
+  - Found while landing R2588 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
