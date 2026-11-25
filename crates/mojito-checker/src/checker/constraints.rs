@@ -1325,20 +1325,22 @@ impl Checker {
     /// The type an annotation expression `expr` denotes
     /// ([`Self::denoted_type`]), its build failure read as
     /// [`Self::annotation_failure`] reads it. Any other expression the
-    /// compile-time builder cannot read reports why the expression itself
-    /// fails, as upstream's `emitExprType` emits it as an ordinary
-    /// expression before folding it: `Int & Copyable` is an invalid
+    /// compile-time builder cannot read is emitted as an ordinary
+    /// expression, as upstream's `emitExprType` emits it before folding
+    /// it: one that fails reports why (`Int & Copyable` is an invalid
     /// `__and__` call, `M.f()` over an undeclared `M` an unknown
-    /// declaration.
+    /// declaration), and one that types is a value, which `emitType`
+    /// rejects (`P(1)`, `TypeList[Ts.values]()`).
     pub(super) fn annotation_type(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        const CONTEXT: &str = "type annotation";
         self.denotation(expr)
             .map_err(|error| match self.annotation_failure(expr, error) {
                 AnnotationFailure::Reported(error) => error,
-                AnnotationFailure::Unread(unbound) => self
-                    .expression_error(expr)
-                    .unwrap_or(TypeError::NotComptime(unbound)),
+                AnnotationFailure::Unread(_) => self
+                    .infer_as_expression(expr)
+                    .map_or_else(|error| error, |_| not_a_type(CONTEXT)),
             })?
-            .ok_or_else(|| not_a_type("type annotation"))
+            .ok_or_else(|| not_a_type(CONTEXT))
     }
 
     /// Whether `name` is a declaration in scope: a variable, a `comptime`
@@ -3737,11 +3739,6 @@ impl Checker {
             Some((CtValue::Type(ty), _)) => Some(ty),
             _ => None,
         })
-    }
-
-    /// Why `expr` fails as an ordinary expression, if it does.
-    fn expression_error(&self, expr: &Expr) -> Option<TypeError> {
-        self.infer_as_expression(expr).err()
     }
 
     /// What `expr` builds to under the scopes open: `Some` type, or `None`

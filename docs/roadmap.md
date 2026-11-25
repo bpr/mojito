@@ -10247,26 +10247,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2566 A compile-time construction used as a type annotation
-  reports the builder's failure, not that a value is no type**
-
-  `def second[*Ts: AnyType](ref x: TypeList[Ts.values]()) -> Int` fails
-  with "not a compile-time Int constant: not an associated comptime
-  expression", where the pin reports "type mismatch for type annotation:
-  expected a type, found a value".
-  - Cause: since annotations are read as whole expressions (`9cbfe3604`,
-    R2137), `constraints.rs::annotation_type` builds the call with the
-    compile-time builder, which fails on it, so `not_a_type` is never
-    reached; upstream's `emitExprType` emits the construction as a value
-    and `emitType` rejects the value.
-  - Probe: `assets/type_error/type_annotation_is_a_construction.mojo`,
-    whose `# expect:` the batch 5 baseline (`b021d96c4`) met.
-  - Probe: `def f(x: P(1))` over a `@fieldwise_init struct P` with one
-    `Int` field fails the same way.
-  - Found while landing R2564 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.

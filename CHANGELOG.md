@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A construction used as a type annotation (`def f(x: P(1))`, `ref x:
+  TypeList[Ts.values]()`) is rejected as a value where a type is expected,
+  as the pin reports "expected a type, found a value" (R2566), instead of
+  the compile-time builder's "not an associated comptime expression". An
+  annotation the builder cannot read is emitted as an ordinary expression,
+  as upstream's `emitExprType` emits it, and one that types is a value.
+
 - `automatic-inline` takes time linear in a nested list display's depth
   (R2565). Finding the lifecycle members a body's drops, copies, and moves
   run walked a struct instance's fields and its arguments both, and so its
