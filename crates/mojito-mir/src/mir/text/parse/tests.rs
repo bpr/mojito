@@ -15,32 +15,6 @@ fn bool_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
     ParamContext::detached().decl_ref(ParamId::new(owner, slot), name, MetaTy::bool())
 }
 
-/// The pointer to `element` in `space` whose provenance the MIR text's
-/// `pointer_*` origin record `origin` spells.
-fn pointer_spelled(
-    element: Ty,
-    origin: PointerOrigin,
-    space: mojito_types::types::AddressSpaceSlot,
-) -> Ty {
-    Ty::pointer_from_lit_ref(&lit_ref_spelled(element, origin, space))
-}
-
-/// The `!lit.ref` to `referent` in `space` whose provenance the MIR text's
-/// `pointer_*` origin record `origin` spells.
-fn lit_ref_spelled(
-    referent: Ty,
-    origin: PointerOrigin,
-    address_space: mojito_types::types::AddressSpaceSlot,
-) -> RefTy {
-    let (origin, mutability) = origin.into_parts();
-    RefTy {
-        referent,
-        origin,
-        mutability,
-        address_space,
-    }
-}
-
 /// The width slot of `lanes` lanes: `SIMDLength(lanes)`.
 fn width_of(lanes: &ParamExpr) -> mojito_types::types::SimdWidth {
     mojito_types::types::SimdWidth::Expr(
@@ -303,66 +277,69 @@ fn type_families_reprint_byte_identically() {
                 TyKind::Variant(vec![Ty::int(), Ty::none()]).into(),
                 TyKind::PopArray {
                     size: mojito_types::types::ArraySize::Known(2),
-                    element: pointer_spelled(
+                    element: Ty::pointer(
                         Ty::int(),
-                        PointerOrigin::Untracked { mutable: false },
+                        Origin::Untracked { mutable: false },
+                        Mutability::Immutable,
                         mojito_types::types::AddressSpaceSlot::GENERIC,
                     ),
                 }
                 .into(),
-                pointer_spelled(
+                Ty::pointer(
                     Ty::int(),
-                    PointerOrigin::Place {
-                        place: OriginPlace {
-                            root: OwnerId(0),
-                            path: vec![OriginSeg::Subtree],
-                        },
-                        mutable: true,
-                    },
+                    Origin::Place(OriginPlace {
+                        root: OwnerId(0),
+                        path: vec![OriginSeg::Subtree],
+                    }),
+                    Mutability::Mutable,
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                pointer_spelled(
+                Ty::pointer(
                     Ty::int(),
-                    PointerOrigin::Param {
-                        id: OriginParamId(2),
-                        mutability: Mutability::Param(OriginParamId(3)),
-                        interior: vec!["element".into()],
-                        subtree: true,
-                    },
+                    Origin::Projected(
+                        Box::new(Origin::Param(OriginParamId(2))),
+                        vec![OriginSeg::Interior("element".into()), OriginSeg::Subtree],
+                    ),
+                    Mutability::Param(OriginParamId(3)),
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                pointer_spelled(
+                Ty::pointer(
                     Ty::int(),
-                    PointerOrigin::SelfPlace {
-                        mutability: Mutability::Immutable,
-                        interior: Vec::new(),
-                        subtree: false,
-                    },
+                    Origin::SelfParam,
+                    Mutability::Immutable,
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                pointer_spelled(
+                Ty::pointer(
                     Ty::int(),
-                    PointerOrigin::Static { mutable: false },
+                    Origin::Static,
+                    Mutability::Immutable,
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                pointer_spelled(
+                Ty::pointer(
                     Ty::int(),
-                    PointerOrigin::Static { mutable: true },
+                    Origin::mut_cast(
+                        Origin::Static,
+                        mojito_types::types::LitOriginMut::Known(true),
+                    ),
+                    Mutability::Mutable,
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                pointer_spelled(
+                Ty::pointer(
                     Ty::int(),
-                    PointerOrigin::Untracked { mutable: false },
+                    Origin::Untracked { mutable: false },
+                    Mutability::Immutable,
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                pointer_spelled(
+                Ty::pointer(
                     Ty::int(),
-                    PointerOrigin::UnsafeAny { mutable: true },
+                    Origin::UnsafeAny { mutable: true },
+                    Mutability::Mutable,
                     mojito_types::types::AddressSpaceSlot::GENERIC,
                 ),
-                pointer_spelled(
+                Ty::pointer(
                     Ty::int(),
-                    PointerOrigin::Static { mutable: false },
+                    Origin::Static,
+                    Mutability::Immutable,
                     mojito_types::types::AddressSpaceSlot::Known(5),
                 ),
                 Ty::pointer_from_lit_ref(&RefTy {
@@ -388,11 +365,12 @@ fn type_families_reprint_byte_identically() {
                     mutability: Mutability::Immutable,
                     address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
                 }),
-                Ty::lit_ref(lit_ref_spelled(
-                    Ty::int(),
-                    PointerOrigin::Static { mutable: false },
-                    mojito_types::types::AddressSpaceSlot::Known(1),
-                )),
+                Ty::lit_ref(RefTy {
+                    referent: Ty::int(),
+                    origin: Origin::Static,
+                    mutability: Mutability::Immutable,
+                    address_space: mojito_types::types::AddressSpaceSlot::Known(1),
+                }),
                 TyKind::LitRefPack {
                     elements: vec![Ty::int(), Ty::float64()],
                     origin: Origin::Param(OriginParamId(1)),
@@ -951,9 +929,10 @@ fn frozen_pointer_constant_round_trip() {
             offset: 1,
         },
     ];
-    let ty = pointer_spelled(
+    let ty = Ty::pointer(
         Ty::int(),
-        PointerOrigin::Untracked { mutable: true },
+        Origin::Untracked { mutable: true },
+        Mutability::Mutable,
         mojito_types::types::AddressSpaceSlot::GENERIC,
     );
     let instructions = values
@@ -2339,18 +2318,18 @@ fn only_register_type(text: &str) -> Ty {
 /// reference record the provenance's parts give.
 #[test]
 fn older_lit_ref_records_read_as_reference_records() {
-    let untracked = PointerOrigin::Untracked { mutable: true };
+    let (origin, mutability) = (Origin::Untracked { mutable: true }, Mutability::Mutable);
     assert_eq!(
         only_register_type(&artifact_with_register_type(
             "lit_ref { element: simd { dtype: int, width: 1 }, origin: pointer_untracked { mutable: true } }"
         )),
-        Ty::lit_ref(lit_ref_spelled(
-            Ty::int(),
-            untracked.clone(),
-            mojito_types::types::AddressSpaceSlot::GENERIC,
-        ))
+        Ty::lit_ref(RefTy {
+            referent: Ty::int(),
+            origin: origin.clone(),
+            mutability,
+            address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+        })
     );
-    let (origin, mutability) = untracked.into_parts();
     assert_eq!(
         only_register_type(&artifact_with_register_type(
             "lit_ref_pack { elements: [simd { dtype: int, width: 1 }], origin: pointer_untracked { mutable: true } }"
@@ -2360,6 +2339,104 @@ fn older_lit_ref_records_read_as_reference_records() {
             origin,
             mutability,
         })
+    );
+}
+
+/// A `pointer` older than schema 1.234 spells its `origin` and `mut`
+/// arguments as one `pointer_*` provenance record; it reads as the pointer
+/// those parts give.
+#[test]
+fn older_pointer_records_read_as_their_origin_and_mut_arguments() {
+    let element = "simd { dtype: int, width: 1 }";
+    let pointer = |origin: Origin, mutability| {
+        Ty::pointer(
+            Ty::int(),
+            origin,
+            mutability,
+            mojito_types::types::AddressSpaceSlot::GENERIC,
+        )
+    };
+    let place = OriginPlace {
+        root: OwnerId(0),
+        path: vec![OriginSeg::Subtree],
+    };
+    for (record, expected) in [
+        (
+            "pointer_static",
+            pointer(Origin::Static, Mutability::Immutable),
+        ),
+        (
+            "pointer_static { mutable: true }",
+            pointer(
+                Origin::mut_cast(
+                    Origin::Static,
+                    mojito_types::types::LitOriginMut::Known(true),
+                ),
+                Mutability::Mutable,
+            ),
+        ),
+        (
+            "pointer_place { place: origin_place { root: $v0, path: [subtree] }, mutable: false }",
+            pointer(Origin::Place(place), Mutability::Immutable),
+        ),
+        (
+            "pointer_param { id: 2, mutability: mutability_param(3), interior: [element], subtree: true }",
+            pointer(
+                Origin::Projected(
+                    Box::new(Origin::Param(OriginParamId(2))),
+                    vec![OriginSeg::Interior("element".into()), OriginSeg::Subtree],
+                ),
+                Mutability::Param(OriginParamId(3)),
+            ),
+        ),
+        (
+            "pointer_self { mutability: mutable, interior: [], subtree: false }",
+            pointer(Origin::SelfParam, Mutability::Mutable),
+        ),
+        (
+            "pointer_unsafe_any { mutable: true }",
+            pointer(Origin::UnsafeAny { mutable: true }, Mutability::Mutable),
+        ),
+    ] {
+        assert_eq!(
+            only_register_type(&artifact_with_register_type(&format!(
+                "pointer {{ element: {element}, origin: {record} }}"
+            ))),
+            expected,
+            "{record}"
+        );
+    }
+}
+
+/// A current `pointer` record spells its `origin` and `mut` arguments
+/// apart, and one whose origin no pointer holds at its mutability is
+/// rejected.
+#[test]
+fn a_pointer_record_rejects_an_origin_no_pointer_holds() {
+    let current = |ty: &str| {
+        artifact_with_register_type(ty).replacen(
+            "mojito-mir 1.0",
+            &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
+            1,
+        )
+    };
+    assert_eq!(
+        only_register_type(&current(
+            "pointer { element: simd { dtype: int, width: 1 }, origin: origin_untracked { mutable: true }, mutability: mutable }"
+        )),
+        Ty::pointer(
+            Ty::int(),
+            Origin::Untracked { mutable: true },
+            Mutability::Mutable,
+            mojito_types::types::AddressSpaceSlot::GENERIC,
+        )
+    );
+    assert!(
+        diagnostics(&current(
+            "pointer { element: simd { dtype: int, width: 1 }, origin: origin_static, mutability: mutable }"
+        ))
+        .iter()
+        .any(|message| message.contains("no `Pointer` holds origin")),
     );
 }
 
@@ -3343,9 +3420,10 @@ fn param_list_addresses_round_trip() {
         "values",
         MetaTy::ParamList(Box::new(MetaTy::int())),
     );
-    let pointer = pointer_spelled(
+    let pointer = Ty::pointer(
         Ty::int(),
-        PointerOrigin::Static { mutable: false },
+        Origin::Static,
+        Mutability::Immutable,
         mojito_types::types::AddressSpaceSlot::GENERIC,
     );
     for values in [

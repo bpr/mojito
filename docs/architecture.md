@@ -4019,9 +4019,9 @@ operation (lowering forwards the receiver register; MIR verify compares
 pointer ABI modulo origin) and never upgrades a statically immutable
 capability.
 
-A pointer's origin (`PointerOrigin`) is a view of the struct origin argument
-upstream's `Pointer[mut, T, origin]` holds plus its `mut` argument
-(`PointerOrigin::parts`/`from_parts`, lossless), not a second vocabulary: a
+A pointer's provenance is the struct origin argument upstream's
+`Pointer[mut, T, origin]` holds plus its `mut` argument, an `Origin` beside
+a `Mutability`, with no second vocabulary: a
 struct's `Origin` holds the same interior and subtree projections over a
 binder or the receiver (`Origin::Projected`) and the unsafe-any origin
 (`Origin::UnsafeAny`), and both project through one rule
@@ -4033,13 +4033,15 @@ asks the `Origin` and `Mutability` themselves:
 `mut` a pointer holding them is spelled with (a known cast over non-static
 storage is that storage at the cast's mutability; `holdable_by_pointer`
 asks only whether one exists), which the decode, `Ty::new`'s canonical
-fold, the bracket, and the origin-binding solvers all ask;
+fold, the bracket, the origin-binding solvers, coercion, the type display,
+and the specialization-key respell all ask;
 `Origin::binder_projection` is the origin binder a pointer origin is rooted
 in with the projection below it, and `Origin::without_projection` drops a
 binder pattern's projection from an actual origin;
 `Origin::pointer_loan_origin` is the loan-tracked root, with the
-projection dropped, for the readers that ask which storage a loan keeps
-(`PointerOrigin::as_origin` delegates to it), `Origin::places` the places
+projection dropped, for the readers that ask which storage a loan keeps,
+`Origin::clone_binder_for_place` the clone origin binder a caller place
+respells as in a specialization key, `Origin::places` the places
 an origin names, `Origin::{single_place, multi_element, ends_in_subtree}`
 the address rules, and `Mutability::known` the static permission. A union
 origin argument over concrete members (`origin_of(x, y)`) is read as the
@@ -4048,19 +4050,17 @@ origin argument over concrete members (`origin_of(x, y)`) is read as the
 `Flatten::pointer_origin_loans` for a method's pointer result), its
 coercion is `origin::provenance_coerces`'s, a union binds a struct's
 origin binder as a place does, mutable only when every member is, and an
-argument carrying it carries every member place. A union is only that
-`Origin::Union` argument: `PointerOrigin` has no union variant, so
-`PointerOrigin::from_parts` reads a union as no view. A `!lit.ref` stores no
-`PointerOrigin`: it is `TyKind::Ref`, upstream's one reference type,
+argument carrying it carries every member place. A `!lit.ref` is
+`TyKind::Ref`, upstream's one reference type,
 whose `RefTy` holds an `Origin` beside a `Mutability`, and
 `TyKind::LitRefPack` holds the same pair. A producer builds those parts
 too: a `ref [Self.o]` parameter's binder is the origin binder and its
 declared `mut` (`Checker::enclosing_origin_param`), a place's address is
 the `RefTy` under the place's origin and `mut`
 (`Checker::infer_place_address`), and a fixed provenance is its `Origin`
-(`Origin::static_at` for static storage) beside a `Mutability`. The view
-remains only where the symbol respell, the display, coercion's last arm,
-and MIR text spell or compare one (R2585).
+(`Origin::static_at` for static storage) beside a `Mutability`. MIR text
+spells the same pair, `pointer { element, origin, mutability }`, as it
+spells a `ref` record (schema 1.234).
 
 The bundled library declares upstream's `struct Pointer`, and the
 compiler's pointer type is that struct's application
@@ -4174,11 +4174,12 @@ later assignment, not only its initializer.
 The **conservative subtree form** (`origin._subtree`, current Mojo's
 experimental `Origin._subtree`) is a third origin shape beside precise
 places and named interior generations: a terminal `OriginSeg::Subtree` on a
-place path (or the `subtree` flag on a symbolic `Param`/`SelfPlace` pointer
-origin, appended to the solved place after the interior tags). It
+place path (or a terminal `._subtree` in a binder's or the receiver's
+`Origin::Projected` path, appended to the solved place after the interior
+tags). It
 deliberately forgets which descendant of its base the pointer designates,
 which drives every rule downstream. It is single-element (`multi_element()`
-is false), so on a place it is one place (`PointerOrigin::single_place`,
+is false), so on a place it is one place (`Origin::single_place`,
 the one predicate the offset and arithmetic rules, MIR's deref lowering,
 and the VM's index projection share) and offsets reject; a symbolic
 `Param` origin is never one place, since a call may bind it to heap

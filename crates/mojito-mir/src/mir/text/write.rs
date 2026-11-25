@@ -9,8 +9,8 @@ use mojito_checked::checked::{
 use mojito_checked::declaration::InlineLevel;
 use mojito_types::ct::CtValue;
 use mojito_types::origin::{
-    CallableEnvironment, CaptureAccess, CaptureOriginSet, Mutability, Origin, OriginSeg,
-    PointerOrigin, RefSig, RefTy, SigMutability, SigOrigin,
+    CallableEnvironment, CaptureAccess, CaptureOriginSet, Mutability, Origin, OriginSeg, RefSig,
+    RefTy, SigMutability, SigOrigin,
 };
 use mojito_types::param_expr::{MetaTy, PackQuery, ParamExpr, ParamKind};
 use mojito_types::types::TyKind;
@@ -2409,17 +2409,15 @@ fn ty_value(ty: &Ty) -> String {
                 ("width", simd_width_slot(&width)),
             ],
         ),
-        // A pointer keeps its compact record, its `origin` read with its
-        // `mut` argument.
+        // A pointer keeps its compact record: its element and its `origin`
+        // and `mut` arguments, as `Pointer[mut, T, origin]` spells them.
         kind if let Some(reference) = kind.pointer_lit_ref() => record(
             "pointer",
             &with_address_space(
                 vec![
                     ("element", ty_value(&reference.referent)),
-                    (
-                        "origin",
-                        pointer_origin_parts(&reference.origin, reference.mutability),
-                    ),
+                    ("origin", origin(&reference.origin)),
+                    ("mutability", mutability_value(reference.mutability)),
                 ],
                 &reference.address_space,
             ),
@@ -3227,85 +3225,6 @@ fn origin(value: &Origin) -> String {
         ),
         Origin::UnsafeAny { mutable } => {
             record("origin_unsafe_any", &[("mutable", mutable.to_string())])
-        }
-    }
-}
-/// A pointer's `origin` argument read with its `mut` one, as the
-/// `pointer_*` provenance record spells it.
-fn pointer_origin_parts(value: &Origin, mutability: Mutability) -> String {
-    PointerOrigin::from_parts(value.clone(), mutability).map_or_else(
-        || pointer_union(value, mutability),
-        |view| pointer_origin(&view),
-    )
-}
-/// The `pointer_union` record of a union origin argument (`origin_of(a,
-/// b)`) under `mutability`.
-fn pointer_union(value: &Origin, mutability: Mutability) -> String {
-    let members = match value.uncast() {
-        Origin::Union(members) => members.as_slice(),
-        single => std::slice::from_ref(single),
-    };
-    record(
-        "pointer_union",
-        &[
-            ("members", list(members.iter().map(origin))),
-            ("mutability", mutability_value(mutability)),
-        ],
-    )
-}
-fn pointer_origin(value: &PointerOrigin) -> String {
-    match value {
-        PointerOrigin::Place { place, mutable } => record(
-            "pointer_place",
-            &[
-                (
-                    "place",
-                    record(
-                        "origin_place",
-                        &[
-                            ("root", format!("$v{}", place.root.0)),
-                            ("path", list(place.path.iter().map(origin_seg))),
-                        ],
-                    ),
-                ),
-                ("mutable", mutable.to_string()),
-            ],
-        ),
-        PointerOrigin::Param {
-            id,
-            mutability,
-            interior,
-            subtree,
-        } => record(
-            "pointer_param",
-            &[
-                ("id", id.0.to_string()),
-                ("mutability", mutability_value(*mutability)),
-                ("interior", list(interior.iter().map(|v| symbol(v)))),
-                ("subtree", subtree.to_string()),
-            ],
-        ),
-        PointerOrigin::SelfPlace {
-            mutability,
-            interior,
-            subtree,
-        } => record(
-            "pointer_self",
-            &[
-                ("mutability", mutability_value(*mutability)),
-                ("interior", list(interior.iter().map(|v| symbol(v)))),
-                ("subtree", subtree.to_string()),
-            ],
-        ),
-        PointerOrigin::Static { mutable: false } => "pointer_static".into(),
-        PointerOrigin::Static { mutable: true } => {
-            record("pointer_static", &[("mutable", "true".to_string())])
-        }
-        PointerOrigin::Untracked { mutable } => {
-            record("pointer_untracked", &[("mutable", mutable.to_string())])
-        }
-        PointerOrigin::UnsafeAny { mutable } => {
-            record("pointer_unsafe_any", &[("mutable", mutable.to_string())])
         }
     }
 }

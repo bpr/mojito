@@ -1858,29 +1858,19 @@ pub fn canonical_specialization_type(ty: &Ty) -> Ty {
         // clone binder (`Elab::clone_binding`): one clone serves every place
         // of the shape, as an erased struct origin tail does.
         kind if let Some(reference) = kind.pointer_lit_ref() => {
-            let mut reference = reference.map_pointer_origin(respell_bindable_place);
-            reference.referent = respell(&reference.referent);
-            Ty::pointer_from_lit_ref(&reference)
+            Ty::pointer_from_lit_ref(&respell_reference(&reference))
         }
         TyKind::KgenPointer {
             element,
             address_space,
         } => Ty::kgen_pointer(respell(element), address_space.clone()),
-        TyKind::Ref(reference) => {
-            let mut reference = reference.map_pointer_origin(respell_bindable_place);
-            reference.referent = respell(&reference.referent);
-            Ty::lit_ref(reference)
-        }
+        TyKind::Ref(reference) => Ty::lit_ref(respell_reference(reference)),
         TyKind::LitRefPack {
             elements,
             origin,
             mutability,
         } => {
-            let (origin, mutability) = mojito_types::origin::PointerOrigin::map_parts(
-                origin,
-                *mutability,
-                respell_bindable_place,
-            );
+            let (origin, mutability) = respell_bindable_place(origin, *mutability);
             TyKind::LitRefPack {
                 elements: elements.iter().map(respell).collect(),
                 origin,
@@ -2742,16 +2732,42 @@ fn declared_struct_name(linked: &str) -> &str {
 /// ([`inflated_function_name`]).
 const INFLATED_PREFIX: &str = "$inflated$";
 
-/// The provenance a specialization key spells for `origin`: a caller
-/// place a clone binder stands for spells as the first clone binder
-/// (`Elab::clone_binding`).
+/// The `origin` and `mut` arguments a specialization key spells for a
+/// pointer's: its canonical parts
+/// ([`mojito_types::origin::Origin::canonical_pointer_parts`]), with a
+/// caller place a clone binder stands for spelled as the first clone binder
+/// (`Elab::clone_binding`). A union, and an origin no pointer holds, spell
+/// as they are.
 fn respell_bindable_place(
-    origin: &mojito_types::origin::PointerOrigin,
-) -> mojito_types::origin::PointerOrigin {
-    origin.clone_bindable_place().map_or_else(
-        || origin.clone(),
-        |projection| projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX)),
-    )
+    origin: &mojito_types::origin::Origin,
+    mutability: mojito_types::origin::Mutability,
+) -> (
+    mojito_types::origin::Origin,
+    mojito_types::origin::Mutability,
+) {
+    use mojito_types::origin::{Origin, OriginParamId};
+    match origin.canonical_pointer_parts(mutability) {
+        Some((Origin::Union(_), _)) | None => (origin.clone(), mutability),
+        Some((canonical, mutability)) => (
+            canonical
+                .clone_binder_for_place(OriginParamId(u32::MAX))
+                .unwrap_or(canonical),
+            mutability,
+        ),
+    }
+}
+
+/// `reference` as a specialization key spells it: its origin and
+/// mutability respelled ([`respell_bindable_place`]) and its referent
+/// as [`canonical_specialization_type`] spells it.
+fn respell_reference(reference: &mojito_types::origin::RefTy) -> mojito_types::origin::RefTy {
+    let (origin, mutability) = respell_bindable_place(&reference.origin, reference.mutability);
+    mojito_types::origin::RefTy {
+        referent: canonical_specialization_type(&reference.referent),
+        origin,
+        mutability,
+        address_space: reference.address_space.clone(),
+    }
 }
 
 #[cfg(test)]

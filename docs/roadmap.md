@@ -2928,8 +2928,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   `var p = s.ptr()` fails with "Undefined variable 'self'", where the pin
   prints `p[]`.
   - `-> Pointer[Int, origin_of(self)]` runs.
-  - Cause: `PointerOrigin::SelfPlace` carries interior tags but no field
-    path, so the signature widens `origin_of(self.x)` to the whole
+  - Cause: a receiver pointer origin (`Origin::SelfParam`, projected by
+    `Origin::Projected`) carries interior tags but no field path, so the signature widens `origin_of(self.x)` to the whole
     receiver (`explicit_origin_argument`, `origins/binders.rs`), and the
     pointer return coercion does not take the body's `Pointer(to=self.x)`
     as lying within it: the probe now fails with "type mismatch for
@@ -3095,8 +3095,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   `Origin`, where the checker recognizes only the spelling
   `base._get_owned_interior["tag"]` (`interior_origin_syntax`,
   `checker/origins/sig.rs`).
-  - `OriginSeg::Interior` and `PointerOrigin`'s `interior` tags
-    (`mojito-types/origin.rs`) hold a closed `String`, so a tag naming a
+  - `OriginSeg::Interior` (`mojito-types/origin.rs`) holds a closed
+    `String`, so a tag naming a
     `StringLiteral` parameter has no form to substitute at the call.
   - Probe: `def g[name: StringLiteral, o: Origin](p: Pointer[Int, _]) ->
     ref[o._get_owned_interior[name]] Int` is "Undefined variable 'o'";
@@ -3124,8 +3124,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   S)` is "the origin origin_of(#323.a) as a pointer's origin", where the
   pin accepts it.
   - The place's mutability is the `ref` parameter's binder, and
-    `PointerOrigin::Place` (`mojito-types/origin.rs`) holds a closed
-    `mutable: bool`, so `PointerOrigin::from_parts` has no form for it.
+    `Origin::canonical_pointer_parts` (`mojito-types/origin.rs`) holds no
+    place under a symbolic `mut`, so a pointer has no form for it.
   - `origin_of(x)` itself resolves to the binder and is accepted.
   - Probe: the line above, and the same over
     `origin_of(x)._get_owned_interior["e"]` in `def f(ref x: Int)`.
@@ -7989,7 +7989,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   value, where the pin computes the address**
 
   The checker and the VM both treat a pointer whose origin is one known
-  place as a handle to one value (`PointerOrigin::single_place`), where
+  place as a handle to one value (`Origin::single_place`), where
   upstream's `Pointer` is one `!kgen.pointer` address whatever its origin.
   - A non-zero `p[i]` runs the declared offset getter, whose
     `self.unsafe_offset(i)[]` traps in the VM below
@@ -10082,7 +10082,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Cause: `auto_parameterize` (`Declared::bind`) declares an origin binder
     for a direct `Pointer` spelling only; an alias's hole reaches the
     checker as `_`, which `bind_alias_origin_placeholders`
-    (`checker/type_resolution.rs`) reads as `PointerOrigin::UnsafeAny` at
+    (`checker/type_resolution.rs`) reads as `Origin::UnsafeAny` at
     the alias parameter's mutability.
   - `InstalledInterfaces::alias_application` respells the alias's binders
     as bare `_` holes, losing each hole's declared type (`origin:
@@ -10108,7 +10108,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `checker/origins/binders.rs`); the pin runs it.
   - Probe: the same rejection meets an explicit `p: Pointer[Int,
     MutAnyOrigin]`, whose origin the pin reads as `MutAnyOrigin`: the
-    any-origin and the alias hole share `PointerOrigin::UnsafeAny`, so the
+    any-origin and the alias hole share `Origin::UnsafeAny`, so the
     rejection goes once the holes are binders.
   - Probe: `assets/type_error/pointer_placeholder_mutable_forward.mojo`
     reports "expected Pointer[Int, MutUnsafeAnyOrigin]", where the pin names
@@ -11336,30 +11336,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     only in a `ref` result.
   - Found while landing R2491 (2026-11-22).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2585 `PointerOrigin` survives as the spelling of a pointer's
-  provenance in MIR text, the display, and symbols**
-
-  The checker and every pointer constructor now build a pointer from its
-  `origin` and `mut` arguments, so the remaining users only spell or
-  compare the view, and upstream spells those arguments directly.
-  - MIR text's `pointer_*` origin records (`mir/text/write.rs`
-    `pointer_origin_parts`, `parse/origins.rs`): move the schema to
-    `pointer { element, origin, mutability }`, a MIR text version bump.
-  - `fmt_origin_parts`/`fmt_pointer_origin` (`types.rs`), the type
-    display.
-  - `provenance_coerces`' last arm, `PointerOrigin::coerces_to`
-    (`origin.rs`).
-  - `symbol.rs`' `respell_bindable_place` through
-    `RefTy::map_pointer_origin`, `PointerOrigin::map_parts`, and
-    `clone_bindable_place`/`CloneBinderProjection`.
-  - The `types.rs` `pointer_application_tests` round trip and the MIR text
-    parse tests' `pointer_spelled`/`lit_ref_spelled` helpers, which build
-    each record's pointer through the view.
-  - Then delete `PointerOrigin`.
-  - Found while landing R2513 (2026-11-24).
-  - Depends on R2584.
   - Model: Opus, Not Planned.
 
 - [ ] **R2583 `mono::equiv::ty_equal_modulo_origins` ignores a pointer's

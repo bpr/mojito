@@ -1,4 +1,4 @@
-mojito-mir 1.224
+mojito-mir 1.234
 artifact {
   features: [],
   files: [
@@ -24,11 +24,11 @@ artifact {
         deinit_params: [false],
         ref_params: [true],
         returns_reference: true,
-        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v1, type: kgen_pointer { element: Int } }, var_type { var: $v2, type: pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Box, arguments: [] } }, var_type { var: $v1, type: kgen_pointer { element: Int } }, var_type { var: $v2, type: pointer { element: Int, origin: origin_self, mutability: mutability_param(0) } }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: pointer { element: Int, origin: pointer_place { place: origin_place { root: $v316, path: [field(n)] }, mutable: false } } }, reg_type { reg: %r1, type: kgen_pointer { element: Int } }, reg_type { reg: %r2, type: kgen_pointer { element: Int } }, reg_type { reg: %r3, type: pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } } }, reg_type { reg: %r4, type: pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutability_param(0) } }],
+        register_types: [reg_type { reg: %r0, type: pointer { element: Int, origin: origin_place { root: $v316, path: [field(n)] }, mutability: immutable } }, reg_type { reg: %r1, type: kgen_pointer { element: Int } }, reg_type { reg: %r2, type: kgen_pointer { element: Int } }, reg_type { reg: %r3, type: pointer { element: Int, origin: origin_self, mutability: mutability_param(0) } }, reg_type { reg: %r4, type: pointer { element: Int, origin: origin_self, mutability: mutability_param(0) } }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutability_param(0) } }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 132, end: 150, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 132, end: 170, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 230, end: 231, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 186, end: 232, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 186, end: 232, origin: present($v2) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 233, end: 234, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 186, end: 234, origin: present($v2) }) }],
         blocks: [
           bb0 {
@@ -38,10 +38,10 @@ artifact {
               var.store { var: $v1, src: %r1, binding_type: present(kgen_pointer { element: Int }), in_place: false },
               var.use { dest: %r2, var: $v1, mode: move },
               pointer.convert { dest: %r3, value: %r2 },
-              var.store { var: $v2, src: %r3, binding_type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } }), in_place: false },
-              place.load { dest: %r4, place: place { root: $v2, root_type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } }), projections: [], type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } }), through: absent } },
+              var.store { var: $v2, src: %r3, binding_type: present(pointer { element: Int, origin: origin_self, mutability: mutability_param(0) }), in_place: false },
+              place.load { dest: %r4, place: place { root: $v2, root_type: present(pointer { element: Int, origin: origin_self, mutability: mutability_param(0) }), projections: [], type: present(pointer { element: Int, origin: origin_self, mutability: mutability_param(0) }), through: absent } },
               const { dest: %r5, value: int(0) },
-              ref.make { dest: %r6, place: place { root: $v2, root_type: present(pointer { element: Int, origin: pointer_self { mutability: mutability_param(0), interior: [], subtree: false } }), projections: [projection { op: index(%r5), type: Int }], type: present(Int), through: absent } },
+              ref.make { dest: %r6, place: place { root: $v2, root_type: present(pointer { element: Int, origin: origin_self, mutability: mutability_param(0) }), projections: [projection { op: index(%r5), type: Int }], type: present(Int), through: absent } },
               drop.var { var: $v2 }
             ],
             terminator: return { value: present(%r6) }

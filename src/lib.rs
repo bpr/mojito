@@ -71,7 +71,7 @@ pub use module::{
 };
 pub use origin::{
     CallableEnvironment, CaptureAccess, CaptureOrigin, CaptureOriginSet, Mutability, Origin,
-    OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefTy,
+    OriginParamId, OriginPlace, OriginSeg, OwnerId, RefTy,
 };
 pub use parser::{ParseReport, Parser};
 pub use runtime::RuntimeError;

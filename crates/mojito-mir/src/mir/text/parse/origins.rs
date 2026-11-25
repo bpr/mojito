@@ -97,24 +97,38 @@ impl Decoder {
         })
     }
 
-    /// A `pointer_*` provenance record, read as the pointer's `origin`
-    /// argument and its `mut` one.
+    /// A pre-1.234 `pointer_*` provenance record, read as the pointer's
+    /// `origin` argument and its `mut` one.
     pub(super) fn pointer_origin(&mut self, value: &Value) -> Option<(Origin, Mutability)> {
-        let view = match &value.kind {
+        let projected = |base: Origin, interior: Vec<String>, subtree: bool| {
+            let path: Vec<_> = interior
+                .into_iter()
+                .map(OriginSeg::Interior)
+                .chain(subtree.then_some(OriginSeg::Subtree))
+                .collect();
+            base.reprojected(&path)
+        };
+        match &value.kind {
             ValueKind::Atom(tag) if tag == "pointer_static" => {
-                Some(PointerOrigin::Static { mutable: false })
+                Some((Origin::Static, Mutability::Immutable))
             }
             ValueKind::Record(tag, fields) => match tag.as_str() {
                 "pointer_static" => {
                     let mutable = self.req(value, fields, "mutable", Self::boolean)?;
                     self.unknown(fields, &["mutable"]);
-                    Some(PointerOrigin::Static { mutable })
+                    Some((
+                        Origin::mut_cast(
+                            Origin::Static,
+                            mojito_types::types::LitOriginMut::Known(mutable),
+                        ),
+                        Mutability::of(mutable),
+                    ))
                 }
                 "pointer_place" => {
                     let place = self.req(value, fields, "place", Self::origin_place)?;
                     let mutable = self.req(value, fields, "mutable", Self::boolean)?;
                     self.unknown(fields, &["place", "mutable"]);
-                    Some(PointerOrigin::Place { place, mutable })
+                    Some((Origin::Place(place), Mutability::of(mutable)))
                 }
                 "pointer_param" => {
                     let id = OriginParamId(self.req(value, fields, "id", Self::uint32)?);
@@ -123,12 +137,7 @@ impl Decoder {
                         self.req(value, fields, "interior", |d, v| Some(d.strings(v)))?;
                     let subtree = self.req(value, fields, "subtree", Self::boolean)?;
                     self.unknown(fields, &["id", "mutability", "interior", "subtree"]);
-                    Some(PointerOrigin::Param {
-                        id,
-                        mutability,
-                        interior,
-                        subtree,
-                    })
+                    Some((projected(Origin::Param(id), interior, subtree), mutability))
                 }
                 "pointer_self" => {
                     let mutability = self.req(value, fields, "mutability", Self::mutability)?;
@@ -136,11 +145,7 @@ impl Decoder {
                         self.req(value, fields, "interior", |d, v| Some(d.strings(v)))?;
                     let subtree = self.req(value, fields, "subtree", Self::boolean)?;
                     self.unknown(fields, &["mutability", "interior", "subtree"]);
-                    Some(PointerOrigin::SelfPlace {
-                        mutability,
-                        interior,
-                        subtree,
-                    })
+                    Some((projected(Origin::SelfParam, interior, subtree), mutability))
                 }
                 "pointer_union" => {
                     let members = self.req(value, fields, "members", |d, v| {
@@ -162,16 +167,17 @@ impl Decoder {
                         );
                         return None;
                     }
-                    return Some((origin, mutability));
+                    Some((origin, mutability))
                 }
                 "pointer_untracked" | "pointer_unsafe_any" => {
                     let mutable = self.req(value, fields, "mutable", Self::boolean)?;
                     self.unknown(fields, &["mutable"]);
-                    Some(if tag == "pointer_untracked" {
-                        PointerOrigin::Untracked { mutable }
+                    let origin = if tag == "pointer_untracked" {
+                        Origin::Untracked { mutable }
                     } else {
-                        PointerOrigin::UnsafeAny { mutable }
-                    })
+                        Origin::UnsafeAny { mutable }
+                    };
+                    Some((origin, Mutability::of(mutable)))
                 }
                 other => {
                     self.error(value.span, format!("unknown pointer origin `{other}`"));
@@ -182,8 +188,7 @@ impl Decoder {
                 self.error(value.span, "expected pointer origin");
                 None
             }
-        };
-        view.map(PointerOrigin::into_parts)
+        }
     }
 
     pub(super) fn ref_ty(&mut self, value: &Value) -> Option<RefTy> {

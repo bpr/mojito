@@ -1398,6 +1398,18 @@ for it. A reader of an older record, or of a bare trait name, gives the
 trait that one binder. The package format moves to `mojito-package 262`
 (R2216): a trait member's recorded signature no longer holds `_Self`.
 
+Schema 1.234 spells a `Pointer`'s provenance as upstream's
+`Pointer[mut, T, origin]` arguments: the `pointer` record is
+`pointer { element, origin, mutability }` (with `address_space` as before),
+its `origin` an ordinary origin and its `mutability` the `mut` argument,
+as a `ref` record spells its own. The record keeps the parts the type
+holds, so a pointer round-trips unchanged; a reader rejects an origin no
+pointer holds at its mutability (`Origin::canonical_pointer_parts`). The
+`pointer_*` provenance records are gone; a reader of an older artifact
+still reads them, as the `origin` field of an older `pointer` or
+pre-1.222 `lit_ref`/`lit_ref_pack`, each as the origin and mutability it
+names. The package format moves to `mojito-package 281` (R2585).
+
 Schema 1.233 gives a `place.load` of a place ending at a `ref` field one
 meaning: it loads the handle the field's slot stores, typed as the field
 declares it, as upstream loads the field's `!lit.ref`, and the referent's
@@ -2544,7 +2556,7 @@ comptime_list(type) param_list(type) any_trait([trait...]) any_struct(type) trai
 tuple([type...]) runtime_pack([type...])
 pop_array { size, element } variadic_pack(type) variant([type...])
 lit_origin { mutable } lit_origin_set
-pointer { element, origin }
+pointer { element, origin, mutability }
 kgen_pointer { element }
 lit_ref_pack { elements, origin, mutability }
 ref { referent, origin, mutability }
@@ -2761,14 +2773,16 @@ other mutability cast, `mutable` a boolean or `ct_expr`),
 projection over an `origin_param` or `origin_self` base, upstream's
 `_get_owned_interior`/`_subtree` over a binder), and
 `origin_unsafe_any { mutable }` (schema 1.207: upstream's
-`Imm/MutUnsafeAnyOrigin`, distinct from the untracked origin). Pointer origins are `pointer_place`,
-`pointer_param`, `pointer_self`, `pointer_static` (the atom for
-`ImmStaticOrigin`, `pointer_static { mutable: true }` for its mutable cast,
-schema 1.218), `pointer_untracked`, `pointer_unsafe_any`, and
+`Imm/MutUnsafeAnyOrigin`, distinct from the untracked origin). A `pointer`
+record spells its `origin` argument as one of these and its `mut` argument
+as a mutability (schema 1.234). Before 1.234 a pointer's provenance was one
+pointer origin record, `pointer_place`, `pointer_param`, `pointer_self`,
+`pointer_static` (the atom for `ImmStaticOrigin`,
+`pointer_static { mutable: true }` for its mutable cast, schema 1.218),
+`pointer_untracked`, `pointer_unsafe_any`, or
 `pointer_union { members, mutability }` (schema 1.220: two or more concrete
-origin members, `origin_of(a, b)`, read back as the `Origin::Union`
-argument at that `mut`, which `PointerOrigin` has no variant for); all
-fields of each record are required.
+origin members, `origin_of(a, b)`), which a reader still reads as the origin
+and mutability it names; all fields of each record are required.
 
 Mutability is `immutable`, `mutable`, or `mutability_param(id)`. Signature
 origins are `sig_self`, `sig_param(index)`, `sig_bound(origin)`, `sig_static`,

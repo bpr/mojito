@@ -9663,18 +9663,52 @@ fn fmt_simd(f: &mut fmt::Formatter<'_>, dtype: &SimdDtype, width: &SimdWidth) ->
     }
 }
 
-/// A `Pointer`'s or a `!lit.ref`'s origin and mutability, spelled as a
-/// pointer's provenance when they read as one and as the bare origin
+/// A `Pointer`'s or a `!lit.ref`'s origin and mutability, spelled through
+/// their canonical parts ([`Origin::canonical_pointer_parts`]) when a
+/// pointer holds them other than as a union, and as the bare origin
 /// otherwise.
+///
+/// [`Origin::canonical_pointer_parts`]: crate::origin::Origin::canonical_pointer_parts
 fn fmt_origin_parts(
     f: &mut fmt::Formatter<'_>,
     origin: &crate::origin::Origin,
     mutability: crate::origin::Mutability,
 ) -> fmt::Result {
-    match crate::origin::PointerOrigin::from_parts(origin.clone(), mutability) {
-        Some(origin) => fmt_pointer_origin(f, &origin),
-        None => fmt_bare_origin(f, origin, mutability),
+    use crate::origin::{Mutability, Origin, OriginSeg};
+    let Some((canonical, mutability)) = origin
+        .canonical_pointer_parts(mutability)
+        .filter(|(canonical, _)| !matches!(canonical, Origin::Union(_)))
+    else {
+        return fmt_bare_origin(f, origin, mutability);
+    };
+    let (base, path) = match &canonical {
+        Origin::Projected(base, path) => (&**base, path.as_slice()),
+        other => (other, &[][..]),
+    };
+    let immutable = mutability == Mutability::Immutable;
+    let tracked = matches!(
+        base,
+        Origin::Place(_) | Origin::Param(_) | Origin::SelfParam
+    );
+    if immutable && tracked {
+        write!(f, "ImmOrigin(")?;
     }
+    match base {
+        Origin::Place(place) => write!(f, "origin@{}", place.root.0)?,
+        other => write!(f, "{other}")?,
+    }
+    for segment in path {
+        match segment {
+            OriginSeg::Interior(tag) => write!(f, "._get_owned_interior[{tag}]")?,
+            OriginSeg::Subtree => write!(f, "._subtree")?,
+            OriginSeg::Field(name) => write!(f, ".{name}")?,
+            OriginSeg::AnyIndex => write!(f, "[_]")?,
+        }
+    }
+    if immutable && tracked {
+        write!(f, ")")?;
+    }
+    Ok(())
 }
 
 /// An origin value under `mutability`, spelled as the origin itself:
@@ -9689,85 +9723,6 @@ fn fmt_bare_origin(
     } else {
         write!(f, "{origin}")
     }
-}
-
-fn fmt_pointer_origin(
-    f: &mut fmt::Formatter<'_>,
-    origin: &crate::origin::PointerOrigin,
-) -> fmt::Result {
-    use crate::origin::{Mutability, PointerOrigin};
-    match origin {
-        PointerOrigin::Place {
-            place,
-            mutable: false,
-        } => {
-            write!(f, "ImmOrigin(origin@{})", place.root.0)?;
-        }
-        PointerOrigin::Place { place, .. } => {
-            write!(f, "origin@{}", place.root.0)?;
-        }
-        PointerOrigin::Param {
-            id,
-            mutability,
-            interior,
-            subtree,
-        } => {
-            let immutable = *mutability == Mutability::Immutable;
-            write!(
-                f,
-                "{}origin#{}",
-                if immutable { "ImmOrigin(" } else { "" },
-                id.0
-            )?;
-            for tag in interior {
-                write!(f, "._get_owned_interior[{tag}]")?;
-            }
-            if *subtree {
-                write!(f, "._subtree")?;
-            }
-            if immutable {
-                write!(f, ")")?;
-            }
-        }
-        PointerOrigin::SelfPlace {
-            mutability,
-            interior,
-            subtree,
-        } => {
-            let immutable = *mutability == Mutability::Immutable;
-            write!(
-                f,
-                "{}origin_of(self)",
-                if immutable { "ImmOrigin(" } else { "" }
-            )?;
-            for tag in interior {
-                write!(f, "._get_owned_interior[{tag}]")?;
-            }
-            if *subtree {
-                write!(f, "._subtree")?;
-            }
-            if immutable {
-                write!(f, ")")?;
-            }
-        }
-        PointerOrigin::Static { mutable: false } => write!(f, "ImmStaticOrigin")?,
-        PointerOrigin::Static { mutable: true } => {
-            write!(f, "ImmStaticOrigin.unsafe_mut_cast[True]()")?;
-        }
-        PointerOrigin::Untracked { mutable: true } => {
-            write!(f, "MutUntrackedOrigin")?;
-        }
-        PointerOrigin::Untracked { mutable: false } => {
-            write!(f, "ImmUntrackedOrigin")?;
-        }
-        PointerOrigin::UnsafeAny { mutable: true } => {
-            write!(f, "MutUnsafeAnyOrigin")?;
-        }
-        PointerOrigin::UnsafeAny { mutable: false } => {
-            write!(f, "ImmUnsafeAnyOrigin")?;
-        }
-    }
-    Ok(())
 }
 
 /// Declare a pack after `decls` as two binders: its implicit infer-only
@@ -10949,9 +10904,7 @@ mod string_literal_application_tests {
 #[cfg(test)]
 mod pointer_application_tests {
     use super::*;
-    use crate::origin::{
-        Mutability, Origin, OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin,
-    };
+    use crate::origin::{Mutability, Origin, OriginParamId, OriginPlace, OriginSeg, OwnerId};
 
     fn application(args: Vec<TyArg>) -> Ty {
         Ty::new(TyKind::Struct(POINTER_TYPE_NAME.to_string(), args))
@@ -11083,33 +11036,36 @@ mod pointer_application_tests {
     #[test]
     fn pointer_nominal_parts_round_trip() {
         let id = OriginParamId(3);
-        let projections = [
-            (Vec::new(), false),
-            (vec!["element".to_string()], false),
-            (vec!["element".to_string()], true),
+        let projections: [&[OriginSeg]; 3] = [
+            &[],
+            &[OriginSeg::Interior("element".into())],
+            &[OriginSeg::Interior("element".into()), OriginSeg::Subtree],
         ];
-        let mut origins = Vec::new();
+        let binder = |base: Origin, path: &[OriginSeg]| {
+            if path.is_empty() {
+                base
+            } else {
+                Origin::Projected(Box::new(base), path.to_vec())
+            }
+        };
+        let mut parts: Vec<_> = Vec::new();
         for mutable in [false, true] {
-            origins.push(PointerOrigin::Static { mutable });
-            origins.push(PointerOrigin::Place {
-                place: place(),
-                mutable,
-            });
-            origins.push(PointerOrigin::Untracked { mutable });
-            origins.push(PointerOrigin::UnsafeAny { mutable });
+            let mutability = Mutability::of(mutable);
+            parts.push((
+                Origin::mut_cast(Origin::Static, LitOriginMut::Known(mutable)),
+                mutability,
+            ));
+            parts.push((Origin::Place(place()), mutability));
+            parts.push((Origin::Untracked { mutable }, mutability));
+            parts.push((Origin::UnsafeAny { mutable }, mutability));
         }
         for mutability in [
             Mutability::Mutable,
             Mutability::Immutable,
             Mutability::Param(id),
         ] {
-            for (interior, subtree) in &projections {
-                origins.push(PointerOrigin::Param {
-                    id,
-                    mutability,
-                    interior: interior.clone(),
-                    subtree: *subtree,
-                });
+            for path in projections {
+                parts.push((binder(Origin::Param(id), path), mutability));
             }
         }
         let union = Origin::union([
@@ -11119,18 +11075,8 @@ mod pointer_application_tests {
                 path: Vec::new(),
             }),
         ]);
-        let mut parts: Vec<_> = Vec::new();
         for mutability in [Mutability::Mutable, Mutability::Immutable] {
-            origins.push(PointerOrigin::SelfPlace {
-                mutability,
-                interior: vec!["element".to_string()],
-                subtree: false,
-            });
-            assert_eq!(
-                PointerOrigin::from_parts(union.clone(), mutability),
-                None,
-                "a union is no pointer provenance view"
-            );
+            parts.push((binder(Origin::SelfParam, projections[1]), mutability));
             assert!(union.holdable_by_pointer(mutability));
             parts.push((union.clone(), mutability));
         }
@@ -11139,7 +11085,6 @@ mod pointer_application_tests {
                 .holdable_by_pointer(Mutability::Mutable),
             "a union naming an origin binder is not a pointer origin yet"
         );
-        parts.extend(origins.iter().cloned().map(PointerOrigin::into_parts));
         for space in [
             AddressSpaceSlot::GENERIC,
             AddressSpaceSlot::Known(3),

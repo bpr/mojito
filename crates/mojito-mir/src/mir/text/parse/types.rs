@@ -195,18 +195,33 @@ impl Decoder {
                     self.unknown(fields, &["width"]);
                     TyKind::KgenAddressSimd { width }.into()
                 }
-                "pointer" => {
+                // Before 1.234 a pointer spelled its `origin` and `mut`
+                // arguments as one `pointer_*` provenance record.
+                "pointer" if self.minor < 234 => {
                     let element = self.req(value, fields, "element", Self::ty)?;
                     let (origin, mutability) =
                         self.req(value, fields, "origin", Self::pointer_origin)?;
                     let address_space = self.address_space_slot(fields)?;
                     self.unknown(fields, &["element", "origin", "address_space"]);
-                    Ty::pointer_from_lit_ref(&RefTy {
-                        referent: element,
-                        origin,
-                        mutability,
-                        address_space,
-                    })
+                    Ty::pointer(element, origin, mutability, address_space)
+                }
+                "pointer" => {
+                    let element = self.req(value, fields, "element", Self::ty)?;
+                    let origin = self.req(value, fields, "origin", Self::origin)?;
+                    let mutability = self.req(value, fields, "mutability", Self::mutability)?;
+                    let address_space = self.address_space_slot(fields)?;
+                    self.unknown(
+                        fields,
+                        &["element", "origin", "mutability", "address_space"],
+                    );
+                    if !origin.holdable_by_pointer(mutability) {
+                        self.error(
+                            value.span,
+                            format!("no `Pointer` holds origin `{origin}` at {mutability:?}"),
+                        );
+                        return None;
+                    }
+                    Ty::pointer(element, origin, mutability, address_space)
                 }
                 "kgen_pointer" => {
                     let element = self.req(value, fields, "element", Self::ty)?;

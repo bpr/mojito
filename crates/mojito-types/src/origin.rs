@@ -577,23 +577,72 @@ impl Origin {
     /// over storage other than the static origin is that storage at the
     /// cast's mutability, and a symbolic cast is its storage at
     /// `mutability`. `None` for an origin no pointer holds (an unbound
-    /// slot, a malformed projection, a union with a binder or receiver
-    /// member) and for a mutability its origin contradicts.
+    /// slot, a projection other than interior tags and a trailing
+    /// `._subtree` below a binder or the receiver, a union with a binder or
+    /// receiver member) and for a mutability its origin contradicts: a
+    /// place under a symbolic one, the static origin under any but
+    /// immutable, an untracked or unsafe-any origin under any but its own.
     #[must_use]
     pub fn canonical_pointer_parts(&self, mutability: Mutability) -> Option<(Self, Mutability)> {
+        let held = || (self.clone(), mutability);
         match self {
-            Self::MutCast(inner, LitOriginMut::Known(mutable)) if **inner != Self::Static => {
+            Self::MutCast(inner, LitOriginMut::Known(mutable)) if **inner == Self::Static => {
+                Some((
+                    Self::mut_cast(Self::Static, LitOriginMut::Known(*mutable)),
+                    Mutability::of(*mutable),
+                ))
+            }
+            Self::MutCast(inner, LitOriginMut::Known(mutable)) => {
                 inner.canonical_pointer_parts(Mutability::of(*mutable))
             }
             Self::MutCast(inner, LitOriginMut::Expr(_)) => {
                 inner.canonical_pointer_parts(mutability)
             }
-            Self::Union(members) => members
-                .iter()
-                .all(concrete_union_member)
-                .then(|| (self.clone(), mutability)),
-            _ => PointerOrigin::from_parts(self.clone(), mutability).map(PointerOrigin::into_parts),
+            Self::Union(members) => members.iter().all(concrete_union_member).then(held),
+            Self::Place(_) => mutability.known().map(|_| held()),
+            Self::Param(_) | Self::SelfParam => Some(held()),
+            Self::Projected(base, path) => {
+                let projection = path
+                    .strip_suffix(&[OriginSeg::Subtree])
+                    .unwrap_or(path)
+                    .iter()
+                    .all(|segment| matches!(segment, OriginSeg::Interior(_)));
+                (projection
+                    && !path.is_empty()
+                    && matches!(**base, Self::Param(_) | Self::SelfParam))
+                .then(held)
+            }
+            Self::Static => (mutability == Mutability::Immutable).then(held),
+            Self::Untracked { mutable } | Self::UnsafeAny { mutable } => {
+                (mutability.known() == Some(*mutable)).then(held)
+            }
+            Self::Unbound => None,
         }
+    }
+
+    /// The origin a clone origin binder `binder` stands for when a pointer
+    /// under this canonical origin names a caller place
+    /// ([`Origin::canonical_pointer_parts`]): the binder, re-projected by
+    /// the place's interior-generation tags and terminal `._subtree` below
+    /// the place it binds, a place reached through fields. `None` for any
+    /// other origin, and for a place with a field below an interior
+    /// segment, which no clone binder stands for.
+    #[must_use]
+    pub fn clone_binder_for_place(&self, binder: OriginParamId) -> Option<Self> {
+        let Self::Place(place) = self else {
+            return None;
+        };
+        let base = place
+            .path
+            .iter()
+            .take_while(|segment| matches!(segment, OriginSeg::Field(_) | OriginSeg::AnyIndex))
+            .count();
+        let tail = &place.path[base..];
+        tail.strip_suffix(&[OriginSeg::Subtree])
+            .unwrap_or(tail)
+            .iter()
+            .all(|segment| matches!(segment, OriginSeg::Interior(_)))
+            .then(|| Self::Param(binder).reprojected(tail))
     }
 
     /// Whether a `Pointer` can hold this origin at `mutability`
@@ -943,411 +992,6 @@ impl Mutability {
     }
 }
 
-/// The pointer projection a clone origin binder re-applies for a caller place.
-///
-/// When the binder stands for a caller place
-/// ([`PointerOrigin::clone_bindable_place`]), it carries the place's
-/// mutability, then the interior-generation tags and terminal `._subtree`
-/// below the base place the binder binds.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct CloneBinderProjection {
-    pub mutable: bool,
-    pub interior: Vec<String>,
-    pub subtree: bool,
-}
-
-impl CloneBinderProjection {
-    /// The binder pointer's provenance: `id` at this mutability and
-    /// projection.
-    pub fn binder_origin(&self, id: OriginParamId) -> PointerOrigin {
-        PointerOrigin::Param {
-            id,
-            mutability: if self.mutable {
-                Mutability::Mutable
-            } else {
-                Mutability::Immutable
-            },
-            interior: self.interior.clone(),
-            subtree: self.subtree,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum PointerOrigin {
-    Place {
-        place: OriginPlace,
-        mutable: bool,
-    },
-    Param {
-        id: OriginParamId,
-        mutability: Mutability,
-        /// Interior-generation tags projected below the parameter's place
-        /// (`origin._get_owned_interior["tag"]`). A non-empty path marks a
-        /// multi-element domain: substitution appends it to the solved place,
-        /// so the concrete origin ends in `OriginSeg::Interior` and offset
-        /// dereferences stay legal after monomorphized replay.
-        interior: Vec<String>,
-        /// A trailing `._subtree` projection: substitution appends a terminal
-        /// `OriginSeg::Subtree` after the interior tags. A subtree pointer is
-        /// a conservative single reference, never a multi-element domain.
-        subtree: bool,
-    },
-    /// `origin_of(self)` (optionally interior-projected) in a method
-    /// signature or body: the receiver's own place, symbolic until a call
-    /// site rebases it onto the concrete receiver. Both the declared return
-    /// annotation and the body's `unsafe_origin_cast` target resolve to this same
-    /// form, so return coercion compares equal without a bound `self` place.
-    SelfPlace {
-        mutability: Mutability,
-        interior: Vec<String>,
-        /// A trailing `._subtree` projection (see [`PointerOrigin::Param`]).
-        subtree: bool,
-    },
-    /// `ImmStaticOrigin`, and at `mutable` its
-    /// `ImmStaticOrigin.unsafe_mut_cast[True]()` cast: a string literal's
-    /// static storage, which holds no loan.
-    Static {
-        mutable: bool,
-    },
-    Untracked {
-        mutable: bool,
-    },
-    /// A placeholder-origin pointer (`ImmPointer[T, _]`, `MutPointer[T, _]`,
-    /// and the bare `Pointer[T, _]` parameter, which reads as the immutable
-    /// alias): any provenance binds and no loan is held; only the permission
-    /// is retained.
-    UnsafeAny {
-        mutable: bool,
-    },
-}
-
-impl PointerOrigin {
-    /// The clone origin binder a provenance naming a caller place can be
-    /// baked to: a place reached through fields, then any interior-generation
-    /// tags and an optional terminal `._subtree`, which the binder's pointer
-    /// re-applies below the base place it stands for. A place with a field
-    /// below an interior segment has no such binder. Such a place never keys
-    /// a clone's identity.
-    pub fn clone_bindable_place(&self) -> Option<CloneBinderProjection> {
-        let Self::Place { place, mutable } = self else {
-            return None;
-        };
-        let subtree = matches!(place.path.last(), Some(OriginSeg::Subtree));
-        let projected = &place.path[..place.path.len() - usize::from(subtree)];
-        let base = projected
-            .iter()
-            .take_while(|segment| matches!(segment, OriginSeg::Field(_) | OriginSeg::AnyIndex))
-            .count();
-        let interior = projected[base..]
-            .iter()
-            .map(|segment| match segment {
-                OriginSeg::Interior(tag) => Some(tag.clone()),
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some(CloneBinderProjection {
-            mutable: *mutable,
-            interior,
-            subtree,
-        })
-    }
-
-    /// This provenance as upstream's `Pointer[mut, T, origin]` spells it: the
-    /// `origin` struct argument and the `mut` argument. Lossless:
-    /// [`PointerOrigin::from_parts`] inverts it.
-    pub fn parts(&self) -> (Origin, Mutability) {
-        self.clone().into_parts()
-    }
-
-    /// [`PointerOrigin::parts`], consuming the provenance.
-    pub fn into_parts(self) -> (Origin, Mutability) {
-        let projected = |base: Origin, interior: &[String], subtree: bool| {
-            let path: Vec<_> = interior
-                .iter()
-                .map(|tag| OriginSeg::Interior(tag.clone()))
-                .chain(subtree.then_some(OriginSeg::Subtree))
-                .collect();
-            if path.is_empty() {
-                base
-            } else {
-                Origin::Projected(Box::new(base), path)
-            }
-        };
-        match self {
-            Self::Place { place, mutable } => (Origin::Place(place), Mutability::of(mutable)),
-            Self::Param {
-                id,
-                mutability,
-                interior,
-                subtree,
-            } => (projected(Origin::Param(id), &interior, subtree), mutability),
-            Self::SelfPlace {
-                mutability,
-                interior,
-                subtree,
-            } => (projected(Origin::SelfParam, &interior, subtree), mutability),
-            Self::Static { mutable } => (
-                Origin::mut_cast(Origin::Static, LitOriginMut::Known(mutable)),
-                Mutability::of(mutable),
-            ),
-            Self::Untracked { mutable } => (Origin::Untracked { mutable }, Mutability::of(mutable)),
-            Self::UnsafeAny { mutable } => (Origin::UnsafeAny { mutable }, Mutability::of(mutable)),
-        }
-    }
-
-    /// `origin` and `mutability` with `bind` applied to the provenance they
-    /// read as ([`PointerOrigin::from_parts`]), unchanged when they read as
-    /// none.
-    pub fn map_parts(
-        origin: &Origin,
-        mutability: Mutability,
-        bind: impl FnOnce(&Self) -> Self,
-    ) -> (Origin, Mutability) {
-        Self::from_parts(origin.clone(), mutability).map_or_else(
-            || (origin.clone(), mutability),
-            |view| bind(&view).into_parts(),
-        )
-    }
-
-    /// The provenance a `Pointer` whose `origin` argument is `origin` and
-    /// whose `mut` argument is `mutability` carries: an `ImmOrigin(...)`
-    /// cast reads as the immutable pointer to its storage. `None` for an
-    /// origin no pointer holds (an unbound slot, a malformed projection),
-    /// for a mutability its origin contradicts, and for a union, which a
-    /// pointer holds only as its origin argument
-    /// ([`Origin::canonical_pointer_parts`]).
-    pub fn from_parts(origin: Origin, mutability: Mutability) -> Option<Self> {
-        let flag = |mutable: bool| match mutability {
-            Mutability::Mutable => mutable,
-            Mutability::Immutable => !mutable,
-            Mutability::Param(_) => false,
-        };
-        match origin {
-            Origin::MutCast(inner, LitOriginMut::Known(mutable)) if *inner == Origin::Static => {
-                Some(Self::Static { mutable })
-            }
-            Origin::MutCast(inner, LitOriginMut::Known(mutable)) => {
-                Self::from_parts(*inner, Mutability::of(mutable))
-            }
-            Origin::MutCast(inner, LitOriginMut::Expr(_)) => Self::from_parts(*inner, mutability),
-            Origin::Place(place) => match mutability {
-                Mutability::Mutable => Some(Self::Place {
-                    place,
-                    mutable: true,
-                }),
-                Mutability::Immutable => Some(Self::Place {
-                    place,
-                    mutable: false,
-                }),
-                Mutability::Param(_) => None,
-            },
-            Origin::Param(id) => Some(Self::Param {
-                id,
-                mutability,
-                interior: Vec::new(),
-                subtree: false,
-            }),
-            Origin::SelfParam => Some(Self::SelfPlace {
-                mutability,
-                interior: Vec::new(),
-                subtree: false,
-            }),
-            Origin::Projected(base, path) => {
-                let subtree = matches!(path.last(), Some(OriginSeg::Subtree));
-                let interior = path[..path.len() - usize::from(subtree)]
-                    .iter()
-                    .map(|segment| match segment {
-                        OriginSeg::Interior(tag) => Some(tag.clone()),
-                        _ => None,
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                if interior.is_empty() && !subtree {
-                    return None;
-                }
-                match *base {
-                    Origin::Param(id) => Some(Self::Param {
-                        id,
-                        mutability,
-                        interior,
-                        subtree,
-                    }),
-                    Origin::SelfParam => Some(Self::SelfPlace {
-                        mutability,
-                        interior,
-                        subtree,
-                    }),
-                    _ => None,
-                }
-            }
-            Origin::Static => {
-                (mutability == Mutability::Immutable).then_some(Self::Static { mutable: false })
-            }
-            Origin::Untracked { mutable } => flag(mutable).then_some(Self::Untracked { mutable }),
-            Origin::UnsafeAny { mutable } => flag(mutable).then_some(Self::UnsafeAny { mutable }),
-            Origin::Union(_) | Origin::Unbound => None,
-        }
-    }
-
-    /// The loan-tracked [`Origin`] a pointer provenance corresponds to, when it
-    /// designates checked storage: the binder or receiver a projection is
-    /// rooted in, with the projection dropped, which is the storage a loan
-    /// keeps. `Static`, `Untracked`, and `UnsafeAny` pointers carry no owner
-    /// loan. The struct argument a provenance spells is [`PointerOrigin::parts`].
-    pub fn as_origin(&self) -> Option<Origin> {
-        self.parts().0.pointer_loan_origin()
-    }
-
-    /// Whether this provenance statically designates one checked place
-    /// ([`Origin::single_place`]).
-    pub fn single_place(&self) -> bool {
-        self.parts().0.single_place()
-    }
-
-    /// Whether this provenance designates a multi-element domain
-    /// ([`Origin::multi_element`]).
-    pub fn multi_element(&self) -> bool {
-        self.parts().0.multi_element()
-    }
-
-    /// Whether this provenance ends in the conservative `._subtree`
-    /// projection ([`Origin::ends_in_subtree`]).
-    pub fn subtree(&self) -> bool {
-        self.parts().0.ends_in_subtree()
-    }
-
-    /// Whether writes through the pointer are permitted, when that is statically
-    /// known. A symbolic parameter mutability returns `None`: storage coercion
-    /// rejects an immutable place only for a field whose declared mutability
-    /// is explicitly `mut=True`.
-    pub const fn statically_mutable(&self) -> Option<bool> {
-        match self {
-            Self::Place { mutable, .. }
-            | Self::Untracked { mutable }
-            | Self::UnsafeAny { mutable }
-            | Self::Static { mutable } => Some(*mutable),
-            Self::Param { mutability, .. } | Self::SelfPlace { mutability, .. } => {
-                mutability.known()
-            }
-        }
-    }
-
-    /// The same provenance with writes through the pointer forbidden.
-    #[must_use]
-    pub fn immutable(self) -> Self {
-        match self {
-            Self::Place { place, .. } => Self::Place {
-                place,
-                mutable: false,
-            },
-            Self::Untracked { .. } => Self::Untracked { mutable: false },
-            Self::UnsafeAny { .. } => Self::UnsafeAny { mutable: false },
-            Self::Static { .. } => Self::Static { mutable: false },
-            Self::Param {
-                id,
-                interior,
-                subtree,
-                ..
-            } => Self::Param {
-                id,
-                mutability: Mutability::Immutable,
-                interior,
-                subtree,
-            },
-            Self::SelfPlace {
-                interior, subtree, ..
-            } => Self::SelfPlace {
-                mutability: Mutability::Immutable,
-                interior,
-                subtree,
-            },
-        }
-    }
-
-    /// The same provenance with writes through the pointer permitted
-    /// (upstream's `unsafe_mut_cast[True]`).
-    #[must_use]
-    pub fn mutable(self) -> Self {
-        match self {
-            Self::Place { place, .. } => Self::Place {
-                place,
-                mutable: true,
-            },
-            Self::Untracked { .. } => Self::Untracked { mutable: true },
-            Self::Static { .. } => Self::Static { mutable: true },
-            Self::UnsafeAny { .. } => Self::UnsafeAny { mutable: true },
-            Self::Param {
-                id,
-                interior,
-                subtree,
-                ..
-            } => Self::Param {
-                id,
-                mutability: Mutability::Mutable,
-                interior,
-                subtree,
-            },
-            Self::SelfPlace {
-                interior, subtree, ..
-            } => Self::SelfPlace {
-                mutability: Mutability::Mutable,
-                interior,
-                subtree,
-            },
-        }
-    }
-
-    /// Whether a pointer of this provenance may bind a parameter declared
-    /// with `expected`: an unsafe-any expectation (`ImmPointer[T, _]`, the
-    /// placeholder origin of a free function's raw-pointer parameter) accepts
-    /// any provenance whose permission is at least the expected one, an
-    /// immutable untracked expectation accepts the mutable untracked
-    /// provenance (dropping capability), an immutable tracked expectation
-    /// accepts the same provenance at any capability (upstream's `@implicit`
-    /// `Pointer.__init__(other: Pointer) -> Pointer[T, ImmOrigin(other.origin)]`),
-    /// and every other expectation, a mutable one included, binds exactly.
-    pub fn coerces_to(&self, expected: &Self) -> bool {
-        match expected {
-            Self::UnsafeAny { mutable: false } => true,
-            Self::UnsafeAny { mutable: true } => self.statically_mutable() == Some(true),
-            Self::Untracked { mutable: false } => {
-                matches!(self, Self::Untracked { .. })
-            }
-            Self::Place {
-                place,
-                mutable: false,
-            } => matches!(self, Self::Place { place: actual, .. } if actual == place),
-            Self::Param {
-                id,
-                mutability: Mutability::Immutable,
-                interior,
-                subtree,
-            } => matches!(
-                self,
-                Self::Param {
-                    id: actual,
-                    interior: actual_interior,
-                    subtree: actual_subtree,
-                    ..
-                } if actual == id && actual_interior == interior && actual_subtree == subtree
-            ),
-            Self::SelfPlace {
-                mutability: Mutability::Immutable,
-                interior,
-                subtree,
-            } => matches!(
-                self,
-                Self::SelfPlace {
-                    interior: actual_interior,
-                    subtree: actual_subtree,
-                    ..
-                } if actual_interior == interior && actual_subtree == subtree
-            ),
-            _ => self == expected,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 /// Checked reference type `!lit.ref<referent, origin, address_space>`:
 /// referent, storage origin, access permission, and the address space its
@@ -1363,10 +1007,11 @@ impl RefTy {
     /// Whether a pointer or `!lit.ref` under this reference's origin and
     /// mutability coerces to one under `expected`'s: a union expectation
     /// accepts any origin within it at no more than the permission held,
-    /// and an unsafe-any one any origin at least its permission; any other
-    /// pair coerces as the provenances they read as do
-    /// ([`PointerOrigin::coerces_to`]), and two that read as none only when
-    /// equal.
+    /// and an unsafe-any one any origin at least its permission, and an
+    /// immutable one the same storage at any permission; any other pair
+    /// coerces only when their canonical parts
+    /// ([`Origin::canonical_pointer_parts`]) are equal, and two origins no
+    /// pointer holds only when equal.
     #[must_use]
     pub fn provenance_coerces_to(&self, expected: &Self) -> bool {
         provenance_coerces(
@@ -1375,18 +1020,6 @@ impl RefTy {
             &expected.origin,
             expected.mutability,
         )
-    }
-
-    /// This reference with `bind` applied to its pointer provenance
-    /// ([`PointerOrigin::map_parts`]).
-    #[must_use]
-    pub fn map_pointer_origin(&self, bind: impl FnOnce(&PointerOrigin) -> PointerOrigin) -> Self {
-        let (origin, mutability) = PointerOrigin::map_parts(&self.origin, self.mutability, bind);
-        Self {
-            origin,
-            mutability,
-            ..self.clone()
-        }
     }
 }
 
@@ -1546,16 +1179,19 @@ pub fn provenance_coerces(
     {
         return union_provenance_coerces(&origin, own, members, to_mutability);
     }
-    // An unsafe-any expectation (`ImmPointer[T, _]`) accepts any provenance
-    // whose permission is at least its own.
-    if let Some((Origin::UnsafeAny { mutable }, _)) = to.canonical_pointer_parts(to_mutability) {
-        return !mutable || own.known() == Some(true);
-    }
-    match (
-        PointerOrigin::from_parts(origin, own),
-        PointerOrigin::from_parts(to.clone(), to_mutability),
-    ) {
-        (Some(from), Some(to)) => from.coerces_to(&to),
+    match to.canonical_pointer_parts(to_mutability) {
+        // An unsafe-any expectation (`ImmPointer[T, _]`) accepts any
+        // provenance whose permission is at least its own.
+        Some((Origin::UnsafeAny { mutable }, _)) => !mutable || own.known() == Some(true),
+        // An immutable expectation accepts its own storage at any
+        // permission (upstream's `@implicit` `Pointer.__init__(other:
+        // Pointer) -> Pointer[T, ImmOrigin(other.origin)]`), the immutable
+        // untracked one any untracked pointer; every other binds exactly.
+        Some((expected, expected_own)) if !matches!(origin, Origin::Union(_)) => {
+            (origin == expected && (own == expected_own || expected_own == Mutability::Immutable))
+                || (expected == Origin::Untracked { mutable: false }
+                    && matches!(origin, Origin::Untracked { .. }))
+        }
         _ => from == to && from_mutability == to_mutability,
     }
 }
@@ -1871,97 +1507,114 @@ mod tests {
 
     #[test]
     fn clone_binder_re_applies_an_interior_or_subtree_projection() {
-        let pointer = |path: &[OriginSeg]| PointerOrigin::Place {
-            place: OriginPlace {
-                root: OwnerId(1),
-                path: path.to_vec(),
-            },
-            mutable: true,
-        };
+        let binder = OriginParamId(7);
         let field = OriginSeg::Field("items".into());
         let element = OriginSeg::Interior("element".into());
-        let projected = pointer(&[field.clone(), element.clone(), OriginSeg::Subtree]);
-        let projection = projected.clone_bindable_place().expect("bindable");
-        assert_eq!(projection.interior, ["element"]);
-        assert!(projection.subtree);
-        let origin = |pointer: &PointerOrigin| pointer.parts().0;
+        let projected = place(1, &[field.clone(), element.clone(), OriginSeg::Subtree]);
         assert_eq!(
-            origin(&projected).without_projection(&[element.clone(), OriginSeg::Subtree]),
-            Some(origin(&pointer(std::slice::from_ref(&field))))
+            projected.clone_binder_for_place(binder),
+            Some(Origin::Projected(
+                Box::new(Origin::Param(binder)),
+                vec![element.clone(), OriginSeg::Subtree],
+            ))
         );
         assert_eq!(
-            origin(&projected).without_projection(&[]),
-            Some(origin(&projected))
+            place(1, std::slice::from_ref(&field)).clone_binder_for_place(binder),
+            Some(Origin::Param(binder))
         );
+        assert_eq!(
+            projected.without_projection(&[element.clone(), OriginSeg::Subtree]),
+            Some(place(1, std::slice::from_ref(&field)))
+        );
+        assert_eq!(projected.without_projection(&[]), Some(projected.clone()));
         assert!(
-            origin(&pointer(std::slice::from_ref(&element)))
+            place(1, std::slice::from_ref(&element))
                 .without_projection(&[OriginSeg::Subtree])
                 .is_none()
         );
-        assert!(pointer(&[element, field]).clone_bindable_place().is_none());
+        assert!(
+            place(1, &[element, field])
+                .clone_binder_for_place(binder)
+                .is_none()
+        );
+        assert!(
+            Origin::Param(binder)
+                .clone_binder_for_place(binder)
+                .is_none()
+        );
     }
 
     #[test]
-    fn pointer_origins_round_trip_through_their_struct_argument_parts() {
+    fn canonical_pointer_parts_are_fixed_points_and_casts_resolve() {
         let id = OriginParamId(3);
-        let mutabilities = [
-            Mutability::Mutable,
-            Mutability::Immutable,
-            Mutability::Param(OriginParamId(1)),
+        let symbolic = Mutability::Param(OriginParamId(1));
+        let projections: [&[OriginSeg]; 4] = [
+            &[OriginSeg::Interior("element".into())],
+            &[
+                OriginSeg::Interior("bytes".into()),
+                OriginSeg::Interior("element".into()),
+            ],
+            &[OriginSeg::Subtree],
+            &[OriginSeg::Interior("element".into()), OriginSeg::Subtree],
         ];
-        let projections = [
-            (Vec::new(), false),
-            (vec!["element".to_string()], false),
-            (vec!["bytes".to_string(), "element".to_string()], false),
-            (Vec::new(), true),
-            (vec!["element".to_string()], true),
-        ];
-        let mut pointers = Vec::new();
+        let mut canonical = Vec::new();
         for mutable in [false, true] {
-            pointers.push(PointerOrigin::Place {
-                place: OriginPlace {
-                    root: OwnerId(1),
-                    path: vec![OriginSeg::Field("a".into()), OriginSeg::Subtree],
-                },
-                mutable,
-            });
-            pointers.push(PointerOrigin::Static { mutable });
-            pointers.push(PointerOrigin::Untracked { mutable });
-            pointers.push(PointerOrigin::UnsafeAny { mutable });
+            let mutability = Mutability::of(mutable);
+            canonical.push((
+                place(1, &[OriginSeg::Field("a".into()), OriginSeg::Subtree]),
+                mutability,
+            ));
+            canonical.push((
+                Origin::mut_cast(Origin::Static, LitOriginMut::Known(mutable)),
+                mutability,
+            ));
+            canonical.push((Origin::Untracked { mutable }, mutability));
+            canonical.push((Origin::UnsafeAny { mutable }, mutability));
         }
-        for mutability in mutabilities {
-            for (interior, subtree) in &projections {
-                pointers.push(PointerOrigin::Param {
-                    id,
-                    mutability,
-                    interior: interior.clone(),
-                    subtree: *subtree,
-                });
-                pointers.push(PointerOrigin::SelfPlace {
-                    mutability,
-                    interior: interior.clone(),
-                    subtree: *subtree,
-                });
+        for mutability in [Mutability::Mutable, Mutability::Immutable, symbolic] {
+            for base in [Origin::Param(id), Origin::SelfParam] {
+                canonical.push((base.clone(), mutability));
+                for path in projections {
+                    canonical.push((
+                        Origin::Projected(Box::new(base.clone()), path.to_vec()),
+                        mutability,
+                    ));
+                }
             }
         }
-        for pointer in pointers {
-            let (origin, mutability) = pointer.parts();
+        for (origin, mutability) in canonical {
             assert_eq!(
-                PointerOrigin::from_parts(origin, mutability),
-                Some(pointer.clone()),
-                "{pointer:?}"
+                origin.canonical_pointer_parts(mutability),
+                Some((origin.clone(), mutability)),
+                "{origin:?}"
             );
         }
         assert_eq!(
-            PointerOrigin::from_parts(Origin::immutable(Origin::Param(id)), Mutability::Mutable),
-            Some(PointerOrigin::Param {
-                id,
-                mutability: Mutability::Immutable,
-                interior: Vec::new(),
-                subtree: false,
-            })
+            Origin::immutable(Origin::Param(id)).canonical_pointer_parts(Mutability::Mutable),
+            Some((Origin::Param(id), Mutability::Immutable))
         );
-        assert!(PointerOrigin::from_parts(Origin::Unbound, Mutability::Immutable).is_none());
+        for (origin, mutability) in [
+            (Origin::Unbound, Mutability::Immutable),
+            (place(1, &[]), symbolic),
+            (Origin::Static, Mutability::Mutable),
+            (Origin::Untracked { mutable: true }, Mutability::Immutable),
+            (
+                Origin::Projected(Box::new(Origin::Param(id)), Vec::new()),
+                Mutability::Mutable,
+            ),
+            (
+                Origin::Projected(
+                    Box::new(Origin::Param(id)),
+                    vec![OriginSeg::Subtree, OriginSeg::Interior("element".into())],
+                ),
+                Mutability::Mutable,
+            ),
+        ] {
+            assert!(
+                origin.canonical_pointer_parts(mutability).is_none(),
+                "{origin:?}"
+            );
+        }
     }
 
     #[test]

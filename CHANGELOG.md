@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pointer's provenance is only its `origin` and `mut` arguments, as
+  upstream's `Pointer[mut, T, origin]` spells it, and the `PointerOrigin`
+  view is gone (R2585). MIR text moves to schema 1.234: the `pointer`
+  record is `pointer { element, origin, mutability }`, keeping the parts
+  the type holds, and a reader rejects an origin no pointer holds at its
+  mutability; an older artifact's `pointer_*` provenance records still
+  read. The package format moves to `mojito-package 281`. Coercion
+  (`origin::provenance_coerces`), the type display, and the
+  specialization-key respell (`Origin::clone_binder_for_place`) read the
+  canonical parts (`Origin::canonical_pointer_parts`). No program output
+  or diagnostic changes.
+
 - The checker's pointer producers build a pointer's `origin` and `mut`
   arguments directly, as upstream builds a `Pointer`, instead of a
   `PointerOrigin` view (R2584). A `ref [Self.o]` parameter's binder is the

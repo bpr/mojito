@@ -16,8 +16,7 @@ use mojito_common::token::SourceSpan;
 use mojito_types::ct::CtValue;
 use mojito_types::origin::{
     CallableEnvironment, CaptureAccess, CaptureOrigin, CaptureOriginSet, Mutability, Origin,
-    OriginParamId, OriginPlace, OriginSeg, OwnerId, PointerOrigin, RefSig, RefTy, SigMutability,
-    SigOrigin,
+    OriginParamId, OriginPlace, OriginSeg, OwnerId, RefSig, RefTy, SigMutability, SigOrigin,
 };
 use mojito_types::param_expr::{
     MetaTy, PackQuery, ParamContext, ParamExpr, ParamId, ParamOp, ParamRef,

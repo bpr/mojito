@@ -770,8 +770,8 @@ impl RegisterLoanStep {
                 result_adapter: None,
                 ..
             } => receiver(),
-            // A method call returning a tracked pointer (`xs.unsafe_ptr()`, a
-            // `pointer_self`/`pointer_place` provenance) hands out a handle into
+            // A method call returning a tracked pointer (`xs.unsafe_ptr()`, an
+            // `origin_of(self)` or place `origin` argument) hands out a handle into
             // the receiver's storage the same way: the receiver must outlive
             // every consumer of the pointer register — a callee reading the
             // pointee included. Untracked and unsafe-any results carry no loan.
