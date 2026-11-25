@@ -474,6 +474,7 @@ assets/type_error/comptime_struct_missing_field.mojo	compile-reject	agree	error:
 assets/type_error/comptime_struct_type_instance_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'Int' type as a value to an instance of 'Int'; did you mean to instantiate 'Int'?
 assets/type_error/comptime_struct_type_value_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'AnyStruct[Int]' value to 'String'
 assets/type_error/comptime_template_binding_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Bool' value to 'Int'
+assets/type_error/comptime_trait_annotated_value_body.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[3]' value to 'Movable'
 assets/type_error/comptime_tuple_element_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, h(n)]' value to 'SIMD[.int32, h((load_from_mem Tuple(n, Int((mul n, 2))).__getitem_param__[Int(0)]()))]'
 assets/type_error/comptime_tuple_subscript_in_signature.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int8, (load_from_mem Tuple(Int(2), Int(1)).__getitem_param__[Int(0)]())]' value to 'SIMD[.int8, 2]'
 assets/type_error/comptime_type_binder_value_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'Writable & Copyable' value to 'Int'

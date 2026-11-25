@@ -694,10 +694,6 @@ impl Checker {
                 && !self.module_constant_shadowed(source))
     }
 
-    /// Register a module-level `comptime` alias declaration — a generic
-    /// alias, or a constant whose body is a type expression — ahead of the
-    /// declarations that may name it. Any other statement, and an alias
-    /// already registered, is left alone.
     /// Register each deferred struct shell the member types resolved so far
     /// let classify, dropping it from `deferred`.
     fn retry_deferred_shells(&mut self, stmts: &[Stmt], deferred: &mut Vec<usize>) {
@@ -975,6 +971,11 @@ impl Checker {
         Ok(())
     }
 
+    /// Register a module-level `comptime` alias declaration — a generic
+    /// alias, or a parameter-free one whose body evaluates to a type, as
+    /// upstream evaluates the body and keeps a type result — ahead of the
+    /// declarations that may name it. Any other statement, and an alias
+    /// already registered, is left alone.
     fn register_module_alias(&mut self, statement: &Stmt) -> Result<(), TypeError> {
         let StmtKind::Comptime {
             name,
@@ -1007,40 +1008,29 @@ impl Checker {
             && (self.names_module_value_constant(value)
                 || self.names_function_value(value)
                 || super::reflection::spells_reflection_handle(value)
-                || self.builds_generator(value))
-        {
-            return Ok(());
-        }
-        if type_params.is_empty()
-            && !subscript_application
-            && !member_application
-            && !matches!(value.kind, ExprKind::Identifier(_))
-            && !value.is_type_expression()
-            && !self.denotes_type(value)
-            && !self.denotes_type_value(value)
+                || !self.module_comptime_is_type(
+                    value,
+                    subscript_application
+                        || member_application
+                        || matches!(value.kind, ExprKind::Identifier(_)),
+                ))
         {
             return Ok(());
         }
         self.check_generic_comptime_alias(name, type_params, ty.as_ref(), where_clauses, value)
     }
 
-    /// Whether `value` builds to a generator (`Twice`, `S.k` read
-    /// unapplied): a module `comptime` bound to it is a value constant.
-    fn builds_generator(&self, value: &Expr) -> bool {
-        self.compile_dependent_ct_expr(value).is_ok_and(|built| {
-            built
-                .meta()
-                .as_value()
-                .is_some_and(|ty| matches!(ty.kind(), TyKind::Generator(_)))
-        })
-    }
-
-    /// Whether `value` types as a type (a KGEN type, `S.Assoc`, `List[T]`),
-    /// as upstream's alias declaration keeps a type result: a module
-    /// `comptime` bound to it is a type alias. A value spelled the same way
-    /// (`DType.int16`) does not type.
-    fn denotes_type(&self, value: &Expr) -> bool {
-        self.emit_expr_type(value).is_ok()
+    /// Whether a parameter-free module `comptime` body is a type, as
+    /// upstream evaluates it and keeps a type result: a body that builds
+    /// is a type exactly when its meta is one (a generator such as `Twice`
+    /// is a value). A body that does not evaluate yet (a struct still to
+    /// register, a construction awaiting its initializers, a generator
+    /// `Pair[_, Int]` the alias rewrites) is a type when `head_names_type`;
+    /// its registration then reports or waits. Any other is a value the
+    /// constant path evaluates.
+    fn module_comptime_is_type(&self, value: &Expr, head_names_type: bool) -> bool {
+        self.evaluating(|| self.compile_dependent_ct_expr(value))
+            .map_or(head_names_type, |built| *built.meta() == MetaTy::Type)
     }
 
     /// Check the statements of a block in the current scope. `ret` is the
@@ -2329,9 +2319,12 @@ impl Checker {
                 {
                     return Ok(());
                 }
-                // A type name takes the alias route; an alias of a value
-                // binder (`comptime lane = dt`), of a local compile-time
-                // value (`comptime k = $match<id>`, a `comptime match`
+                // A generic alias and a module alias the pre-pass
+                // registered as a type take the alias route, as does a
+                // module alias whose annotation is a trait: its declared
+                // metatype makes it a type. An alias of a value binder
+                // (`comptime lane = dt`), of a local compile-time value
+                // (`comptime k = $match<id>`, a `comptime match`
                 // binding), of a module value constant (`comptime E = D`),
                 // or of a value alias's application (`comptime n =
                 // First[5, 6]`) is the ordinary path below.
@@ -2346,11 +2339,10 @@ impl Checker {
                 if !value_alias
                     && (!type_params.is_empty()
                         || self.comptime_aliases.contains_key(name)
-                        || matches!(&value.kind, ExprKind::Identifier(_))
-                        || value.is_type_expression()
-                        || (value.bracket_application().is_some() && self.denotes_type(value))
-                        || (matches!(&value.kind, ExprKind::Member { .. })
-                            && self.denotes_type(value)))
+                        || (at_module
+                            && annotation
+                                .as_ref()
+                                .is_some_and(|annotation| self.trait_value(annotation).is_some())))
                 {
                     // Top-level aliases were registered by `check_program`'s
                     // pre-pass; re-walking the same statement is not a
@@ -4680,6 +4672,12 @@ impl Checker {
         if type_params.is_empty()
             && let Some(mismatch) =
                 ty.and_then(|annotation| self.type_initializer_mismatch(annotation, value))
+        {
+            return Err(mismatch);
+        }
+        if type_params.is_empty()
+            && let Some(mismatch) =
+                ty.and_then(|annotation| self.value_initializer_mismatch(annotation, value))
         {
             return Err(mismatch);
         }

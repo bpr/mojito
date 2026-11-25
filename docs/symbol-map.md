@@ -167,7 +167,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   registry of `ComptimeAlias` entries — classified `ParamDecl`s plus an
   `AliasBody`: a symbolic type template or, for a Bool-bodied predicate
   alias, a symbolic `GenericConstraint`; `check_program` pre-registers
-  module-level aliases like struct shells; a shell whose parameter is typed
+  module-level aliases like struct shells, `register_module_alias` keeping
+  a parameter-free body only when it evaluates to a type
+  (`module_comptime_is_type`, falling back to a type-naming head while a
+  body cannot evaluate yet), and the statement registers a trait-annotated
+  one the pre-pass left, rejecting a value body
+  (`value_initializer_mismatch`); a shell whose parameter is typed
   by another struct's member, `traits::names_member_type`, waits until that
   struct's member types resolve, `retry_deferred_shells`; a trait whose signature reads a
   same-module struct's member or constructs one, `awaits_struct_declarations`,
@@ -1240,7 +1245,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   resolve (any other read of such a struct fails, so a module constant
   binds in the declaration pass); `spells_reflection_handle` keeps a module
   handle (`comptime R = reflect[P]`) out of the type-alias path
-  (`register_module_alias`, `module_alias_spelling`) and binds a handle
+  (`register_module_alias`) and binds a handle
   with a bad selection lazily (`bind_compile_time_only_value`); `infer_reflection` types a query read as a value
   (hooked at the top of `inference.rs:infer_impl`) and records its answer
   as `SemanticAdjustment::ParamValue` (`record_reflection_value`), which MIR

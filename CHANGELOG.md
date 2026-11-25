@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter-free module `comptime` is a type alias when its body
+  evaluates to a type, as upstream evaluates the body and keeps a type
+  result, instead of when its spelling looks like one (R2562). A body that
+  cannot evaluate yet still registers by its type-naming head, and a
+  trait-annotated alias with a value body (`comptime X: Movable = 3`) now
+  reports the pin's "cannot implicitly convert 'IntLiteral[3]' value to
+  'Movable'" instead of "unknown type 'Movable'"
+  (`assets/type_error/comptime_trait_annotated_value_body.mojo`).
+
 - A parameterized `comptime` member whose `__mlir_attr` body evaluates to
   a type (`TypeList.__getitem_param__`, `TypeList._get_type_at_index`) is a
   type template, as upstream keeps any type-valued body, and the second

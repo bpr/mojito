@@ -5017,6 +5017,30 @@ impl Checker {
         self.type_value_mismatch(operand, &expected)
     }
 
+    /// The rejection of a value initializer under a type-of-types
+    /// annotation (`comptime X: Movable = 3`): upstream converts the
+    /// value's type to the declared trait metatype, which no value type
+    /// converts to.
+    pub(super) fn value_initializer_mismatch(
+        &self,
+        annotation: &Expr,
+        value: &Expr,
+    ) -> Option<TypeError> {
+        let CtMemberReq::Type { bounds, .. } =
+            self.ct_member_req_from_anno(&[], annotation).ok()?
+        else {
+            return None;
+        };
+        let built = self
+            .evaluating(|| self.compile_dependent_ct_expr(value))
+            .ok()?;
+        let found = built.meta().as_value()?;
+        Some(TypeError::MetatypeConversion {
+            found: found.to_string(),
+            expected: TyKind::Trait(self.binder_metatype_traits(&bounds)).to_string(),
+        })
+    }
+
     /// The rejection of the type `ty` bound where a value of `expected` is
     /// declared: upstream converts the type's metatype to `expected`, and a
     /// type binder's metatype (its trait bound) or a struct's

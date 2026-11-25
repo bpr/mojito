@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2592**.
+Next free ID: **R2595**.
 
 ## Ordered Work
 
@@ -10288,6 +10288,46 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2592 A trait composition's display orders its traits by bare
+  name, not by fully qualified symbol**
+
+  `comptime X: Shape & Movable = 3`, over a `trait Shape` in the entry
+  module `usertrait.mojo`, reports "cannot implicitly convert
+  'IntLiteral[3]' value to 'Shape & Movable'", where the pin says
+  'Movable & Shape'.
+  - Cause: `mojito_types::types::trait_set` sorts a composition by bare
+    name descending, where upstream's `sortAndDeduplicateTraitSymbols`
+    sorts by fully qualified symbol ascending (`std.format.Writable`
+    before `std.traits.copyable.Copyable`, `comp3.Zed` before
+    `std.format.Writable`).
+  - Lever: order `canonical_trait_set` by `trait_symbol_path`
+    (`checker/traits.rs`), which already computes upstream's key, then
+    drop `trait_set`'s name sort.
+  - Probe: `comptime X: Writable & Copyable = 3` and `Zed & Writable` (a
+    user `trait Zed` in `comp3.mojo`) already agree with the pin and must
+    keep agreeing.
+  - Found while landing R2562 (2026-11-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2593 A type member read through a static method's result fails**
+
+  `comptime P = Picker.make().Chosen`, over a struct `Picker` with
+  `comptime Chosen = Int` and a `@staticmethod def make() -> Self`, reports
+  "type 'Picker' has no field 'Chosen'", where the pin runs `var a: P = 7`
+  and prints `7`, at module scope and in a body alike.
+  - Cause: `member_type_operand_resolution` (`checker/indexing.rs`) reads a
+    member through a receiver only when the receiver is spelled as a
+    construction (`type_member_construction`, a struct call), where
+    upstream types the receiver expression and reads the member of its
+    type.
+  - `CurrentPlugin` (`CompilationTarget.current().stdlib_plugin`) reads
+    the same shape and works only because `current` constructs.
+  - Probe: the same read annotated `comptime P: Movable = ...`.
+  - Found while landing R2562 (2026-11-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -13369,20 +13409,31 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2562 A parameter-free module `comptime` is registered as a type
-  alias by its spelling**
+- [ ] **R2594 A module `comptime` whose body cannot evaluate yet is
+  classified by its head's spelling**
 
-  `statements.rs::register_module_alias` decides whether
-  `comptime X = body` is a type alias by `subscript_application`,
-  `member_application`, `is_type_expression`, and then `denotes_type` /
-  `denotes_type_value`, where upstream evaluates the body and keeps a type
-  result.
-  - Lever: after the value-constant, function, generator, and reflection
-    exclusions, ask `lower_parameterized_member`'s typed outcome
-    (`MemberBodyError::NotAType`) as `check_generic_comptime_alias` does.
-  - Probe: `comptime X = Int if True else Float64`, read as `var a: X = 3`,
-    runs at the pin; trace which registration path takes it.
-  - Found while landing R2557 (2026-11-24).
+  `module_comptime_is_type` (`checker/statements.rs`) keeps a body as a
+  type alias when it evaluates to a type, but a body that does not
+  evaluate yet is a type when its head spells a declared struct, a struct
+  member's application, or a bare name, where upstream resolves the
+  declarations the body names on demand and only ever keeps an evaluated
+  type result.
+  - Cause: module declarations register in passes (struct shells, the alias
+    pre-pass, `retry_deferred_shells`), so a body read before the
+    declaration it names has registered cannot evaluate.
+  - Probe: `comptime StringSpan = ...` and `Origin[...]` aliases linked
+    above their structs.
+  - Probe: `AHasher[SIMD[DType.uint64, 4](0)]` before `SIMD`'s
+    initializers register.
+  - Probe: the generators `check_generic_comptime_alias` rewrites
+    (`SIMD[_, length=1]`, `Pair[_, Int]`, `comptime Q = P`), which do not
+    build through `compile_dependent_ct_expr`.
+  - Probe: `assets/type_error/module_alias_bracket_arity.mojo` reports its
+    arity error only through the head route.
+  - Lever: let a non-evaluating body wait beside the deferred shells and
+    re-evaluate it after each registration round, then delete
+    `head_names_type`.
+  - Found while landing R2562 (2026-11-25).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
