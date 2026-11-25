@@ -1953,6 +1953,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A write through a `ref` field while a loop iterates the same field in a
+  `mut self` method (`for x in self.src: self.src.append(x)`) is rejected as
+  a use of an invalidated interior reference (R2580). The loop named the
+  field's referent by the receiver itself, and the write by the field, so
+  the two never met and the program checked, then failed or looped at run
+  time; both now name the origin the field holds, or the field's own place
+  when that origin is a parameter of the enclosing struct.
+
 - A struct's `comptime` member annotated with a trait composition
   (`comptime Element: Copyable & Movable = Int`) declares a type member, as
   at the pin, instead of failing with "not a compile-time Int constant:

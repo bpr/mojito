@@ -1967,6 +1967,7 @@ assets/extensions/ok/ref_field_iteration_and_binding_source.mojo	main	exe-differ
 assets/extensions/ok/ref_field_mut_origin_element_write.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_mut_origin_subscript_write.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_mut_origin_write_generic_wrapper.mojo	main	exe-differential	sanitized
+assets/extensions/ok/ref_field_mut_self_loop_then_append.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_nodebug_mut_argument.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_operand_origin_argument.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_operand_passes_stored_handle.mojo	main	exe-differential	sanitized

@@ -38,7 +38,7 @@ impl Checker {
                 })
             }
             ExprKind::Member { object, field } => {
-                if self.place_reference_storage(expr).is_some() {
+                if let Some(storage) = self.place_reference_storage(expr) {
                     fn collect_places(
                         origin: mojito_types::origin::Origin,
                         places: &mut Vec<OriginPlace>,
@@ -63,8 +63,21 @@ impl Checker {
                         }
                     }
 
+                    // A `ref` field's referent is the origin it holds: the
+                    // one this value's construction bound to the field, else
+                    // the field's declared origin read at the object's type.
+                    // An origin parameter of the enclosing body names no
+                    // place here, so the field's own place stands for it, as
+                    // every access through the same handle spells it. The
+                    // object's flat retained set is no referent: for a
+                    // reference binding (`mut self`) it is the binding's own
+                    // target.
+                    let retained = self
+                        .aggregate_field_origins(object)
+                        .remove(field)
+                        .unwrap_or_else(|| vec![storage.origin]);
                     let mut referents = Vec::new();
-                    for origin in self.aggregate_origins(expr) {
+                    for origin in retained {
                         collect_places(origin, &mut referents);
                     }
                     referents.sort();

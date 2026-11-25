@@ -1948,6 +1948,7 @@ assets/extensions/ok/ref_field_iteration_and_binding_source.mojo	-	ineligible	no
 assets/extensions/ok/ref_field_mut_origin_element_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_mut_origin_subscript_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_mut_origin_write_generic_wrapper.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_mut_self_loop_then_append.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_nodebug_mut_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_operand_origin_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_operand_passes_stored_handle.mojo	-	ineligible	no-scalar-entry-shape

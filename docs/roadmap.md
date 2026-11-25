@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2586**.
+Next free ID: **R2587**.
 
 ## Ordered Work
 
@@ -1535,21 +1535,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2580 A write through a `ref` field while a loop iterates the
-  same field through `mut self` is not rejected**
+- [ ] **R2586 A loop over a `ref` field read through a `ref` binding
+  fails MIR verification**
 
-  `for x in self.src: self.src.append(x)` in a `mut self` method of
-  `struct Walk[o: MutOrigin]` holding `var src: ref[Self.o] List[Int]`
-  checks, and the VM stops with "use after Pointer deallocation".
-  - The same write through the field's owner, `l.append(x)` while
-    `for x in w.src` iterates a local `w = Walk(l)`, is rejected with
-    "use of invalidated interior reference", as it should be.
-  - The loop's interior loan is on the origin the field's handle names, an
-    origin parameter of `self` here; the write's invalidation through the
-    same handle is likely never matched against it.
-  - Probe: the method above over `l = [1]`, called once from `main`.
-  - Found while landing R2494 (2026-11-24); it already fails at
-    `047e77596`.
+  `for x in r.src: print(x)`, where `ref r = w` names a local `w =
+  Walk(l)` of `struct Walk[o: MutOrigin]` holding `var src: ref[Self.o]
+  List[Int]`, stops with "invalid checked program: MakeRef destination
+  targets List[Int], incompatible with place storage ref[...] List[Int]".
+  - `len(r.src)` and `r.src.append(2)` through the same binding run.
+  - `place_is_ref_field` (`crates/mojito-mir/src/mir.rs`) answers no for
+    a place that carries `through`, so `borrow_iteration_source` makes a
+    reference typed as the referent over the field's slot instead of
+    loading the handle the field stores.
+  - Probe: the loop above over `l = [1]`, which should print `1`.
+  - Found while landing R2580 (2026-11-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
