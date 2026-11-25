@@ -10280,24 +10280,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2593 A type member read through a static method's result fails**
-
-  `comptime P = Picker.make().Chosen`, over a struct `Picker` with
-  `comptime Chosen = Int` and a `@staticmethod def make() -> Self`, reports
-  "type 'Picker' has no field 'Chosen'", where the pin runs `var a: P = 7`
-  and prints `7`, at module scope and in a body alike.
-  - Cause: `member_type_operand_resolution` (`checker/indexing.rs`) reads a
-    member through a receiver only when the receiver is spelled as a
-    construction (`type_member_construction`, a struct call), where
-    upstream types the receiver expression and reads the member of its
-    type.
-  - `CurrentPlugin` (`CompilationTarget.current().stdlib_plugin`) reads
-    the same shape and works only because `current` constructs.
-  - Probe: the same read annotated `comptime P: Movable = ...`.
-  - Found while landing R2562 (2026-11-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.

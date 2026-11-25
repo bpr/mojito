@@ -2288,11 +2288,19 @@ pub(super) fn simd_dtype(ty: &Ty) -> Option<Result<SimdDtype, TypeError>> {
 
 impl Checker {
     /// The type member `field` of the type `base` names or constructs
-    /// (`T.plugin`, `S[2]().H`), resolved against that type, as upstream
-    /// resolves a member against a value's type. `None` when `base` names
-    /// no type or `field` is not a type member of it.
+    /// (`T.plugin`, `S[2]().H`), or of the type of the call `base` spells
+    /// (`Picker.make().Chosen`), resolved against that type, as upstream
+    /// types the receiver and resolves a member against its type. `None`
+    /// when `base` has no such type or `field` is not a type member of it.
     fn type_member_through(&self, base: &Expr, field: &str) -> Option<Result<Ty, TypeError>> {
-        let base_ty = self.member_type_operand(base)?;
+        let base_ty = self.member_type_operand(base).or_else(|| {
+            matches!(
+                base.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+            )
+            .then(|| self.infer_as_expression(base).ok())
+            .flatten()
+        })?;
         let (name, _) = base_ty.kind().as_non_pointer_struct()?;
         matches!(
             self.structs.get(name)?.associated.get(field),

@@ -1441,6 +1441,16 @@ impl Checker {
         typed
     }
 
+    /// `expr` typed as an ordinary expression without being evaluated,
+    /// inside a probe and outside any annotation, as upstream emits an
+    /// operand into a block it then erases.
+    pub(super) fn infer_as_expression(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        let depth = self.annotation_depth.replace(0);
+        let typed = self.probe(|| self.infer(expr));
+        self.annotation_depth.set(depth);
+        typed
+    }
+
     /// A type comparison read as a value (`print(T == Int)`, `comptime b =
     /// T == Int`, `show[T == Int]()`): one compile-time `Bool` parameter
     /// value over type-valued operands, recorded at its span for MIR to
@@ -3675,16 +3685,6 @@ impl Checker {
                 TypeError::NotComptime("not an associated comptime expression".to_string())
             }
         }
-    }
-
-    /// `expr` typed as an ordinary expression without being evaluated,
-    /// inside a probe and outside any annotation, as upstream emits an
-    /// operand into a block it then erases.
-    fn infer_as_expression(&self, expr: &Expr) -> Result<Ty, TypeError> {
-        let depth = self.annotation_depth.replace(0);
-        let typed = self.probe(|| self.infer(expr));
-        self.annotation_depth.set(depth);
-        typed
     }
 
     /// The type a function-type or `__generator_type` operand spells

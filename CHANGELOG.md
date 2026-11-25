@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A type member read through a call's result (`comptime P =
+  Picker.make().Chosen` over a `@staticmethod def make() -> Self`, or
+  `Box[2].make().Elem`) now types the receiver and reads the member of its
+  type, as upstream does, so `var a: P = 7` prints `7` instead of failing
+  with "type 'Picker' has no field 'Chosen'", at module scope and in a body
+  alike; an unannotated module alias over a construction
+  (`comptime P = Picker().Chosen`) no longer fails the same way (R2593).
+
 - A trait composition now displays its traits ordered by fully qualified
   symbol, as upstream's `sortAndDeduplicateTraitSymbols` orders them, so
   `comptime X: Shape & Movable = 3` over an entry-module `trait Shape`

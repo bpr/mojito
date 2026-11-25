@@ -596,20 +596,33 @@ impl Checker {
             })
     }
 
-    /// Whether `value` constructs a struct this program declares whose
-    /// initializers have yet to register (`SIMD[DType.uint64, 4](0)` in
-    /// `AHasher[...]`).
+    /// Whether `value` calls a struct this program declares, or one of its
+    /// static methods, whose signature has yet to register
+    /// (`SIMD[DType.uint64, 4](0)` in `AHasher[...]`, `Box[2].make()`).
     fn constructs_unsigned_struct(&self, value: &Expr) -> bool {
         struct Constructions<'a>(&'a Checker, bool);
+        impl Constructions<'_> {
+            fn unsigned(&self, owner: &str, method: &str) -> bool {
+                self.0.declared_structs.contains(owner)
+                    && !self
+                        .0
+                        .structs
+                        .get(owner)
+                        .is_some_and(|info| info.methods.contains_key(method))
+            }
+        }
         impl mojito_ast::visit::Visitor for Constructions<'_> {
             fn visit_expr(&mut self, expr: &Expr) {
-                if let ExprKind::Call { name, .. } = &expr.kind {
-                    self.1 |= self.0.declared_structs.contains(name)
-                        && !self
-                            .0
-                            .structs
-                            .get(name)
-                            .is_some_and(|info| info.methods.contains_key("__init__"));
+                match &expr.kind {
+                    ExprKind::Call { name, .. } => self.1 |= self.unsigned(name, "__init__"),
+                    ExprKind::MethodCall { object, method, .. } => {
+                        let owner = match &object.kind {
+                            ExprKind::Identifier(owner) => Some(owner.as_str()),
+                            _ => object.bracket_application().map(|(owner, _)| owner),
+                        };
+                        self.1 |= owner.is_some_and(|owner| self.unsigned(owner, method));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -870,6 +883,14 @@ impl Checker {
         };
         if self.applies_unregistered_member(value) {
             return Ok(AliasRegistration::AwaitsTypes);
+        }
+        // A member read through a call (`Picker.make().Chosen`) is a type
+        // exactly when the call's result type has a type member of that
+        // name, which the call's signature answers once it registers.
+        if let ExprKind::Member { object, .. } = &value.kind
+            && self.constructs_unsigned_struct(object)
+        {
+            return Ok(AliasRegistration::AwaitsSignatures);
         }
         match self.register_module_alias(statement) {
             // A parameter default reading a struct's constructed member

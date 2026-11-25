@@ -1945,6 +1945,18 @@ fn a_type_member_is_read_through_a_module_alias_and_a_construction() {
 }
 
 #[test]
+fn a_type_member_is_read_through_a_static_methods_result() {
+    // The receiver is typed and the member read on its type, as upstream
+    // reads it: at module scope above or below the struct, in a body, and
+    // through a parameterized struct's call.
+    let source = "comptime Above = Picker.make().Chosen\n\nstruct Picker(Movable):\n    comptime Chosen = Int\n\n    def __init__(out self):\n        pass\n\n    @staticmethod\n    def make() -> Self:\n        return Self()\n\nstruct Box[n: Int](Movable):\n    comptime Elem = SIMD[DType.int32, Self.n]\n\n    def __init__(out self):\n        pass\n\n    @staticmethod\n    def make() -> Self:\n        return Self()\n\ncomptime P = Picker.make().Chosen\ncomptime Built = Picker().Chosen\ncomptime Pair = Box[2].make().Elem\n\ndef main():\n    comptime Q = Picker.make().Chosen\n    var a: P = 7\n    var b: Q = 8\n    var c: Above = 9\n    var d: Built = 10\n    print(a, b, c, d, Pair(1, 2))\n";
+    assert_eq!(run(source).unwrap(), "7 8 9 10 [1, 2]\n");
+    let missing = "struct Picker(Movable):\n    comptime Chosen = Int\n\n    def __init__(out self):\n        pass\n\n    @staticmethod\n    def make() -> Self:\n        return Self()\n\ncomptime P = Picker.make().Missing\n\ndef main():\n    var a: P = 7\n    print(a)\n";
+    let error = run(missing).unwrap_err();
+    assert!(error.contains("no field 'Missing'"), "{error}");
+}
+
+#[test]
 fn declarations_resolve_whatever_their_order() {
     // A struct parameter typed by a later struct, a trait member annotated
     // with a later trait, and a struct member applying a later struct's
