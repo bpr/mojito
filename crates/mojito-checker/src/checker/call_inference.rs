@@ -841,7 +841,10 @@ impl Checker {
             },
         };
         let element = super::initializer_list::spelled_node(call, 2, subscript, call.span);
-        let element_ty = self.infer(&element).ok()?;
+        // The element is typed only to read its type: the method call types
+        // the receiver it spells, and an element declaring no `__call__` is
+        // the element call's.
+        let element_ty = self.evaluating(|| self.infer(&element)).ok()?;
         self.infer_call_method(call, element, &element_ty, args, kwargs)
     }
 
@@ -986,8 +989,12 @@ impl Checker {
             call.span,
         );
         match self.infer(&spelled) {
-            // A type parameter whose bounds declare no `__call__`.
-            Err(TypeError::NoSuchMethod { .. }) if bound => None,
+            // A type parameter whose bounds declare no `__call__`: the method
+            // call was typed only to find that out.
+            Err(TypeError::NoSuchMethod { .. }) if bound => {
+                self.emitter.borrow_mut().discard_unheld(&spelled);
+                None
+            }
             result => Some(result.and_then(|ty| {
                 self.record_spelled_construction(call, spelled, &ty)
                     .map(|()| ty)
@@ -1263,7 +1270,12 @@ impl Checker {
                 source: span.source.clone(),
                 syntax_id: mojito_common::token::SyntaxId::fresh(),
             };
-            return self.infer_element_call(span, &receiver, &ty, &indices, args, kwargs);
+            let typed = self.infer_element_call(span, &receiver, &ty, &indices, args, kwargs);
+            // The receiver is spelled only to type the getter's selection:
+            // the call's own op names the binding, and its node holds the
+            // element invocation.
+            self.emitter.borrow_mut().discard_unheld(&receiver);
+            return typed;
         }
         reject_unavailable(origin_signatures.first())?;
         let indirect_target = match ty.kind() {

@@ -31,7 +31,8 @@ off sits on a node: a destructuring statement holds its leaves' bindings, a
 evaluate it is typed inside an evaluation that erases its records, as upstream
 erases the ops its parameter evaluator emits speculatively, a match pattern's
 projection typed only for its type and a conformed trait's `comptime` default
-typed for one conformer's witness among them (R2569, R2573, R2574, R2576). The checked
+typed for one conformer's witness and a callable local's element typed
+only to find its `__call__` among them (R2569, R2573, R2574, R2576, R2577). The checked
 tables are sealed from the emitted nodes, each op composed with its node's
 facts, and an occurrence the check emitted no node for is an internal error
 rather than a placeholder (R2567, R766). The check seals its own module at its

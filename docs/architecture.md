@@ -2999,7 +2999,9 @@ types only to evaluate it (a compile-time operator's dunder call, an
 origin alias's construction, a `rebind` target, a slice subscript's
 spelled literal construction, a match pattern's field projection, a
 `comptime match` or-pattern alternative's binding value, a conformed
-trait's `comptime` default typed for one conformer's witness) is typed
+trait's `comptime` default typed for one conformer's witness, the element
+`base[i]` a callable local's call `base[i](args)` types to find its
+`__call__`) is typed
 inside an evaluation (`Checker::evaluating`, or the
 `Checker::open_evaluation`/`close_evaluation` pair a site holding the
 checker mutably brackets), as upstream's parameter evaluator emits

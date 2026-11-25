@@ -11799,22 +11799,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2577 A callable local's call respelled as `__call__` or
-  `__getitem__` leaves records on syntax no node holds**
-
-  `infer_value_method_call` and `infer_struct_getitem_call` type the
-  method call they spell for a call of a local callable value, and the
-  spelled call's records reach no node.
-  - Upstream's call of a value emits its `__call__` as the call's own op.
-  - The lever: enter the respelled call as the call's construction, or
-    type it in `Checker::evaluating` when only its type is read.
-  - Probe: 12 records in `shadowed_local_callable_call.mojo` and
-    `function_value_array_display.mojo`, reached under
-    `solving_argument_ty`.
-  - Found while landing R2573 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2578 Signature-time and alias-registration builders type
   synthesized syntax outside an evaluation**
 

@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call of a callable local through a subscript (`fns[0](5)`) leaves
+  no record on syntax no node holds (R2577). The element `fns[0]` that
+  `infer_element_call_method` spells to find a `__call__` is typed
+  inside an evaluation, the receiver the element call spells to type
+  its `__getitem__` selection is erased once the call's node holds the
+  element invocation, and a type parameter's `__call__` probe that finds
+  none erases its spelled method call, as upstream emits the call of a
+  value once, as the call's own op. The 12 records in
+  `shadowed_local_callable_call.mojo` and
+  `function_value_array_display.mojo` are gone. No output, diagnostic,
+  or MIR text changes.
+
 - A conformed trait's `comptime` default is typed for the conformer's
   witness inside an evaluation (`check_struct_associated`), as upstream
   evaluates the default with `Self` bound and keeps only the attribute,
