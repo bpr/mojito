@@ -145,18 +145,17 @@ pub(super) fn owner_covered_prefix(
     }
 }
 
-/// Structural type equality that ignores `ref` and pointer origin components
+/// Structural type equality that ignores `ref` and struct origin components
 /// (which erase from the runtime ABI and vary per call site), while still
-/// requiring mutability agreement.
+/// requiring mutability agreement. A `Pointer` is the struct upstream
+/// declares, so its `mut` and address-space value arguments compare as any
+/// struct's value arguments do.
 pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
     match (a.kind(), b.kind()) {
         (TyKind::Ref(a), TyKind::Ref(b)) => {
             a.mutability == b.mutability
                 && a.address_space == b.address_space
                 && ty_equal_modulo_origins(&a.referent, &b.referent)
-        }
-        (a, b) if let (Some(a), Some(b)) = (a.pointer_lit_ref(), b.pointer_lit_ref()) => {
-            a.address_space == b.address_space && ty_equal_modulo_origins(&a.referent, &b.referent)
         }
         (
             TyKind::KgenPointer {

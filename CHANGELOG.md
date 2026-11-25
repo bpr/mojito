@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A type parameter an immutable pointer bound takes a later mutable
+  pointer to the same storage, converting it, as the pin binds a parameter
+  at its first argument (`last(q, p)` over `def last[T](a: T, b: T)`), and
+  the elaborator's origin-blind type equality
+  (`mono::equiv::ty_equal_modulo_origins`) compares a `Pointer`'s `mut`
+  argument as it compares any struct's value arguments, so
+  `Pointer[mut=True, T]` and `Pointer[mut=False, T]` are two types there
+  (R2583).
+
 - A pointer's provenance is only its `origin` and `mut` arguments, as
   upstream's `Pointer[mut, T, origin]` spells it, and the `PointerOrigin`
   view is gone (R2585). MIR text moves to schema 1.234: the `pointer`

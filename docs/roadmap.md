@@ -11338,25 +11338,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2583 `mono::equiv::ty_equal_modulo_origins` ignores a pointer's
-  `mut`, so `Pointer[mut=True, T]` and `Pointer[mut=False, T]` match**
-
-  Upstream's `Pointer` is a struct whose `mut` is a parameter, so two
-  pointers differing only in it are two types, but the elaborator's
-  origin-blind equality compares only their pointee and address space.
-  - Its own doc says it still requires mutability agreement, and its
-    `Ref` arm compares mutability; the pointer arm should compare
-    `reference.mutability` as well.
-  - Callers whose answer may change: `mono/unify.rs:496`, `:923`,
-    `mono/availability.rs:376`, `mono/substitute.rs:1272`.
-  - Probe: a generic call binding one `T` from two arguments that differ
-    only in a pointer's `mut` (`f[T](a: T, b: T)` with a mutable and an
-    immutable `Pointer[Int, _]`), checked against the pin, and two
-    instances differing only in a pointer parameter's `mut`.
-  - Found while landing R2512 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1292 A MIR `try` may lack its `except` or `else` region, where
   upstream's `lit.try` always holds both**
 

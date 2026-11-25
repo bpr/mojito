@@ -5011,11 +5011,13 @@ impl Checker {
             } else if let TyKind::Param { binder, .. } = pat.kind()
                 && let Some(bound) = subst.get(&binder.id)
                 && *bound != *act
-                && self.implicit_conversion_constructor(act, bound)?.is_some()
+                && (self.coerces_by_origins(act, bound)
+                    || self.implicit_conversion_constructor(act, bound)?.is_some())
             {
                 // An earlier argument bound the parameter, and this one
                 // converts to that type, as the pin binds a parameter at its
-                // first argument (`select(c, 0, length)` is over `Int`).
+                // first argument (`select(c, 0, length)` is over `Int`, and
+                // a mutable pointer after an immutable one converts to it).
             } else {
                 unify(pat, act, &mut subst, &|ty: &Ty| self.deduced_ty(ty))?;
             }
