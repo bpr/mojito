@@ -549,6 +549,24 @@ impl ParamContext {
         }
     }
 
+    /// `expr` with each origin binder of a type it is bound as `origins`
+    /// binds it ([`crate::types::bind_origin_params`]), as a
+    /// `#kgen.bind_params` binds a `!lit.origin` its body names in a type
+    /// (`Span[Int, o]`). Any other expression is returned as it is.
+    pub fn bind_shape_origins(
+        &self,
+        expr: ParamExpr,
+        origins: &HashMap<u32, crate::origin::Origin>,
+    ) -> ParamExpr {
+        match expr.kind() {
+            _ if origins.is_empty() => expr,
+            ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) => {
+                self.type_shape(crate::types::bind_origin_params(ty, origins))
+            }
+            _ => expr,
+        }
+    }
+
     /// The origin attribute `origin` as a value of `ty`, its binder's
     /// `Origin[mut=m, _mlir_origin=origin]` type ([`ParamKind::Origin`]).
     pub fn origin(&self, origin: crate::origin::Origin, ty: Ty) -> ParamExpr {
@@ -1261,7 +1279,10 @@ impl ParamContext {
                 // the generator type's positional ones ([`Ty::generator`]).
                 let own = generator_bindings(&value.params, &args);
                 if complete {
-                    return self.fold(&self.replace(&value.body, &own)?);
+                    let body = self.fold(&self.replace(&value.body, &own)?)?;
+                    return Ok(
+                        self.bind_shape_origins(body, &generator_origins(&value.params, &args))
+                    );
                 }
                 // A partial binding over a parameter still unbound stays a
                 // node, so a later replacement reaches that argument.
@@ -6896,6 +6917,20 @@ fn generator_bindings(
                 decl.id().clone(),
                 crate::types::DependentType::resolve(arg.clone()),
             );
+        }
+        // A type pack's list binder bound to its element types is the pack
+        // a spread of it (`Tuple[*Ts]`) expands to.
+        if let crate::types::ParamDecl::Type { variadic: true, .. } = decl
+            && let Some(CtValue::Tuple(values)) = arg.as_constant()
+            && let Some(elements) = values
+                .iter()
+                .map(|value| match value {
+                    CtValue::Type(ty) => Some(ty.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+        {
+            bindings.bind_type(decl.id().clone(), TyKind::RuntimePack(elements).into());
         }
         bindings.bind(decl.id().clone(), arg.clone());
     }

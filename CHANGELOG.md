@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameterized type member whose body names an origin binder or
+  spreads a type pack is a generator when read unapplied, as upstream reads
+  any parameterized member (R2590): `comptime I = List[Int].IteratorType;
+  comptime J = I[origin_of(xs)]` and `comptime g = S.B; comptime T =
+  g[Int, Bool]` over `comptime B[*Ts: AnyType] = Tuple[*Ts]` no longer stop
+  with "not a compile-time Int constant". A generic type alias read
+  unapplied now binds the same two binder kinds, where `h[Int, Bool]` over
+  `comptime Tup[*Ts: AnyType] = Tuple[*Ts]` kept `Tuple[*Ts]` and an origin
+  argument stayed unbound.
+
 - A loop over a `ref` field read through a `ref` binding (`for x in
   r.src` over `ref r = w`) loads the handle the field's slot stores, as the
   loop over `w.src` does, instead of failing MIR verification with

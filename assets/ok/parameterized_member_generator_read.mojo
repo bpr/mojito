@@ -2,7 +2,10 @@
 # declaration is, upstream's `#kgen.gen`, whether its body is a type or a
 # value: `comptime g = S.B` binds the generator, and `g[3]` applies it as
 # `S.B[3]` would. A type spelled by an `__mlir_attr` body is such a type
-# member too, and over a pack still open the elaborator applies it.
+# member too, and over a pack still open the elaborator applies it. The
+# generator binds the member's whole list: a type pack its body spreads
+# (`Tuple[*Ts]`), and an origin binder with the `mut=` binder it declares
+# (`List[Int].IteratorType[origin_of(xs)]`), as a module alias's does.
 from std.builtin.variadics import _MLIR
 
 
@@ -13,6 +16,11 @@ struct Box[n: Int](Copyable):
 
 struct S:
     comptime B[n: Int] = Box[n]
+    comptime P[*Ts: AnyType] = Tuple[*Ts]
+
+
+comptime Tup[*Ts: AnyType] = Tuple[*Ts]
+comptime IntSpan[o: ImmOrigin] = Span[Int, o]
 
 
 struct RawList[Trait: type_of(AnyType), //, values: _MLIR.KGENParamListType[Trait]]:
@@ -50,3 +58,20 @@ def main():
     var x = T(1)
     print(x.v, T.n)
     show[Int, Bool]()
+    comptime p = S.P
+    comptime U = p[Int, Bool]
+    var t: U = (1, True)
+    print(t[0], t[1])
+    comptime h = Tup
+    comptime V = h[Bool, Int]
+    var w: V = (False, 2)
+    print(w[0], w[1])
+    var xs: List[Int] = [7, 8, 9]
+    comptime I = List[Int].IteratorType
+    comptime J = I[origin_of(xs)]
+    comptime assert reflect[J].name() == reflect[
+        List[Int].IteratorType[origin_of(xs)]
+    ].name()
+    comptime s = IntSpan
+    var span: s[origin_of(xs)] = Span(xs)
+    print(span[1], len(xs))

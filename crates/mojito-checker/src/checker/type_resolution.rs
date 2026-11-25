@@ -3181,8 +3181,12 @@ impl Checker {
         let every = args.len() == member.params.len();
         let supplies = |param: &mojito_ast::ast::TypeParam| every || !param.infer_only;
         let explicit = member.params.iter().filter(|p| !p.infer_only).count();
-        let (decls, template) = match &member.template {
-            MemberTemplate::Type { decls, template } => (decls, template),
+        let (decls, declared, template) = match &member.template {
+            MemberTemplate::Type {
+                decls,
+                declared,
+                template,
+            } => (decls, declared, template),
             MemberTemplate::Value { .. } => {
                 return Err(TypeError::TypeMismatch {
                     expected: "a type".to_string(),
@@ -3244,9 +3248,7 @@ impl Checker {
                     );
                 }
                 TyArg::Val(value) => {
-                    // Origin binders classify to no slot: the declaration
-                    // is found by name.
-                    let decl = decls.iter().find(|decl| decl.name() == param.name);
+                    let decl = declared.iter().find(|decl| decl.name() == param.name);
                     let value = match decl {
                         Some(ParamDecl::Value { ty, .. }) if is_simd_length(ty) => {
                             self.simd_length_argument(value, ty)?
@@ -3261,7 +3263,7 @@ impl Checker {
                         && let Some(bound) = self.bound_parameter_value(&value)
                     {
                         // A pack's arguments are its list binder's.
-                        let id = ParamDecl::pack_list(decls, decl).unwrap_or(decl).id();
+                        let id = ParamDecl::pack_list(declared, decl).unwrap_or(decl).id();
                         ids.bind(id.clone(), bound);
                     }
                     values.insert(param.name.clone(), value);
@@ -3307,8 +3309,8 @@ impl Checker {
         // its bound origin decides, as upstream infers it with the origin;
         // one nothing decides yet is deferred as the origin is.
         let mut open = Vec::new();
-        for decl in ParamDecl::mutability_binders(decls) {
-            let governed = decls.iter().find_map(|candidate| match candidate {
+        for decl in ParamDecl::mutability_binders(declared) {
+            let governed = declared.iter().find_map(|candidate| match candidate {
                 ParamDecl::Origin {
                     origin,
                     mutability: mojito_types::types::OriginMutability::Binder(binder),

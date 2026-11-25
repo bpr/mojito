@@ -7817,30 +7817,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2590 A parameterized type member whose template keys a binder
-  outside its declarations is no generator read unapplied**
-
-  Upstream reads any parameterized member unapplied as its `#kgen.gen`,
-  but `ParameterizedMember::generator_view` (`checker.rs`) refuses a
-  `MemberTemplate::Type` whose template names a binder no declaration in
-  its `decls` holds, so the read stays a no-argument `TyKind::Assoc` from
-  `resolve_parameterized_member`.
-  - Cause: the template keys an origin binder by position
-    (`Origin::Param(param_base + k)`), and a type pack's spread by its
-    spelling (`Tuple[*Ts]`, which `generics::expand_solved_packs`
-    expands), so substituting a generator's bindings reaches neither.
-  - Lever: rekey both to the member's classified decls when the template
-    is lowered, as a value template already keys them.
-  - Probe: `comptime I = List[Int].IteratorType; comptime J =
-    I[origin_of(xs)]` stops with "not a compile-time Int constant: I",
-    where the pin binds both.
-  - Probe: `comptime g = S.B; comptime T = g[Int, Bool]` over `comptime
-    B[*Ts: AnyType] = Tuple[*Ts]` stops with "not a compile-time Int
-    constant: g", where the pin's `var t: T = (1, True)` prints `1 True`.
-  - Found while landing R2561 (2026-11-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2591 A parameterized member or generic alias declared
   `__mlir_type.`!kgen.type`` rejects a type body**
 
@@ -11677,6 +11653,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `declared_call_arguments` fills one.
   - Probe: `reflect[type_of(d.keys())].name()` over a `var d` prints
     `_DictKeyIter[iterable_mut, …]`, where the pin prints `True`.
+  - Probe: `var it: List[Int].IteratorType[origin_of(xs)] =
+    xs.__iter__()` over `var xs: List[Int]` fails with "cannot implicitly
+    convert '_ListIter[iterable_mut, SIMD[DType.int, 1],
+    origin_of(self)]'", where the pin binds it.
+  - Probe: the same annotation over `iter(xs)` finds
+    `_ListIter[iterable_mut, SIMD[DType.int, 1], _]`.
   - Found while landing R2375 (2026-11-21).
   - Depends on R2516.
   - Model: Opus, Planned.

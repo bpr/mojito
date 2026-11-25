@@ -3777,7 +3777,16 @@ enum AliasBody {
 enum MemberTemplate {
     /// A type body over the member's classified binders (`comptime
     /// Buf[n: Int] = Fixed[n]`), which an application binds by identity.
-    Type { decls: Vec<ParamDecl>, template: Ty },
+    /// `decls` are the binders an application binds by position
+    /// ([`ParamDecl::argument_view`]); `declared` is the whole list, an
+    /// origin binder numbered as the template names it
+    /// (`Origin::Param(param_base + k)`), over which the member read
+    /// unapplied is a generator.
+    Type {
+        decls: Vec<ParamDecl>,
+        declared: Vec<ParamDecl>,
+        template: Ty,
+    },
     /// A value body (`comptime get[idx: Int]: Int = Self.values[idx]`) over
     /// the member's classified binders, which an application binds like a
     /// module alias's.
@@ -3815,25 +3824,17 @@ struct ParameterizedMember {
 
 impl ParameterizedMember {
     /// The member read unapplied as the generator its declaration is,
-    /// upstream's `#kgen.gen` over its own binders: a value member's body,
-    /// or a type member's template as a type-valued body. `None` for a type
-    /// member whose template keys a binder outside the generator's
-    /// declarations: an origin binder by position
-    /// (`Origin::Param(param_base + k)`) or a type pack's spread by spelling
-    /// (`Tuple[*Ts]`). `is_origin` is as for [`Self::checked_fact`].
-    fn generator_view(
-        &self,
-        is_origin: impl Fn(&[mojito_ast::ast::TypeParam], usize) -> bool,
-    ) -> Option<(&[ParamDecl], ParamExpr)> {
+    /// upstream's `#kgen.gen` over its whole declared list: a value
+    /// member's body, or a type member's template as a type-valued body.
+    fn generator_view(&self) -> (&[ParamDecl], ParamExpr) {
         match &self.template {
-            MemberTemplate::Value { decls, body } => Some((decls, body.clone())),
-            MemberTemplate::Type { decls, template }
-                if !decls.iter().any(ParamDecl::is_type_pack)
-                    && !(0..self.params.len()).any(|index| is_origin(&self.params, index)) =>
-            {
-                Some((decls, ParamContext::detached().type_shape(template.clone())))
-            }
-            MemberTemplate::Type { .. } => None,
+            MemberTemplate::Value { decls, body } => (decls, body.clone()),
+            MemberTemplate::Type {
+                declared, template, ..
+            } => (
+                declared,
+                ParamContext::detached().type_shape(template.clone()),
+            ),
         }
     }
 
@@ -3841,17 +3842,27 @@ impl ParameterizedMember {
     /// parameters keyed exactly as `resolve_parameterized_member` binds an
     /// application's arguments. `None` for a value member, which is
     /// [`Self::checked_value_fact`]. `is_origin` tells whether a parameter
-    /// of a list is an origin binder ([`Checker::origin_binder_at`]).
+    /// of a list is an origin binder ([`Checker::origin_binder_at`]). The
+    /// fact binds no `mut=` binder of the member's own, so `defer` defers
+    /// each read of one ([`Checker::defer_mutability_reads`]) to the origin
+    /// it governs, as an application leaving it undecided does.
     fn checked_fact(
         &self,
         name: &str,
         is_origin: impl Fn(&[mojito_ast::ast::TypeParam], usize) -> bool,
+        defer: impl Fn(&Ty, &[ParamId]) -> Ty,
     ) -> Option<mojito_checked::declaration::ParameterizedAssociatedType> {
         use mojito_checked::declaration::AssociatedParameter;
 
-        let MemberTemplate::Type { template, .. } = &self.template else {
+        let MemberTemplate::Type {
+            declared, template, ..
+        } = &self.template
+        else {
             return None;
         };
+        let mutabilities: Vec<ParamId> = ParamDecl::mutability_binders(declared)
+            .map(|decl| decl.id().clone())
+            .collect();
         let params = self
             .params
             .iter()
@@ -3872,7 +3883,7 @@ impl ParameterizedMember {
         Some(mojito_checked::declaration::ParameterizedAssociatedType {
             name: name.to_string(),
             params,
-            template: template.clone(),
+            template: defer(template, &mutabilities),
         })
     }
 
@@ -3880,19 +3891,17 @@ impl ParameterizedMember {
     /// declaration fact names it, which the elaborator answers a read
     /// through a bound or a still-symbolic generator from (`T.get[0]`,
     /// `g[1]` over `comptime g = S[*Ts].B`); the check answers a read
-    /// through a closed struct itself. `None` for a type member with an
-    /// origin binder.
+    /// through a closed struct itself.
     fn checked_value_fact(
         &self,
         name: &str,
-        is_origin: impl Fn(&[mojito_ast::ast::TypeParam], usize) -> bool,
-    ) -> Option<mojito_checked::declaration::ParameterizedAssociatedValue> {
-        let (decls, body) = self.generator_view(is_origin)?;
-        Some(mojito_checked::declaration::ParameterizedAssociatedValue {
+    ) -> mojito_checked::declaration::ParameterizedAssociatedValue {
+        let (decls, body) = self.generator_view();
+        mojito_checked::declaration::ParameterizedAssociatedValue {
             name: name.to_string(),
             params: decls.to_vec(),
             body,
-        })
+        }
     }
 }
 

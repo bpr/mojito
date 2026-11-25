@@ -3080,9 +3080,11 @@ impl Checker {
                     .parameterized_associated
                     .iter()
                     .filter_map(|(member, declared)| {
-                        declared.checked_fact(member, |params, index| {
-                            self.origin_binder_at(params, index).is_some()
-                        })
+                        declared.checked_fact(
+                            member,
+                            |params, index| self.origin_binder_at(params, index).is_some(),
+                            |ty, open| self.defer_mutability_reads(ty, open),
+                        )
                     })
                     .collect::<Vec<_>>();
                 members.sort_by(|left, right| left.name.cmp(&right.name));
@@ -3096,11 +3098,7 @@ impl Checker {
                 let mut members = info
                     .parameterized_associated
                     .iter()
-                    .filter_map(|(member, declared)| {
-                        declared.checked_value_fact(member, |params, index| {
-                            self.origin_binder_at(params, index).is_some()
-                        })
-                    })
+                    .map(|(member, declared)| declared.checked_value_fact(member))
                     .collect::<Vec<_>>();
                 members.sort_by(|left, right| left.name.cmp(&right.name));
                 (name.clone(), members)

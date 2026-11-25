@@ -389,14 +389,28 @@ impl Checker {
                 // the type template, as upstream keeps it.
                 let as_type = (!matches!(requirement, Some(CtMemberReq::Value(_)))).then(|| {
                     let decls = own_decls.clone();
+                    // The whole list is open while the body is lowered, an
+                    // origin binder numbered past the struct's, so an
+                    // origin's `mut=` reads the member's own binder.
+                    let declared = self
+                        .classify_param_list_after(
+                            &member_owner,
+                            &member.params,
+                            self.enclosing_type_params.len(),
+                        )
+                        .map_err(MemberBodyError::Failed)?;
                     self.lower_parameterized_member(
                         &member_owner,
-                        &decls,
+                        &declared,
                         member_scope.clone(),
                         &member.params,
                         &member.value,
                     )
-                    .map(|template| MemberTemplate::Type { decls, template })
+                    .map(|template| MemberTemplate::Type {
+                        decls,
+                        declared,
+                        template,
+                    })
                 });
                 let template = match as_type {
                     Some(Ok(template)) => template,
@@ -5140,17 +5154,16 @@ impl Checker {
     }
 
     /// A struct's parameterized member `field`, type- or value-bodied, as
-    /// the generator its declaration is ([`Self::member_generator_view`]),
+    /// the generator its declaration is ([`ParameterizedMember::generator_view`]),
     /// its body at the struct application's `arguments`. `None` when
-    /// `field` is no parameterized member with a generator view.
+    /// `field` is no parameterized member.
     fn struct_member_generator(
         &self,
         info: &StructInfo,
         arguments: &[TyArg],
         field: &str,
     ) -> Option<Result<mojito_types::ct::GeneratorValue, TypeError>> {
-        let (decls, body) =
-            self.member_generator_view(info.parameterized_associated.get(field)?)?;
+        let (decls, body) = info.parameterized_associated.get(field)?.generator_view();
         Some((|| {
             let mut outer = mojito_types::param_expr::ParamBindings::new();
             self.bind_declared(&mut outer, &info.decls(), &info.view_arguments(arguments))?;
@@ -5164,16 +5177,6 @@ impl Checker {
                 body,
             })
         })())
-    }
-
-    /// A parameterized member's generator view
-    /// ([`ParameterizedMember::generator_view`]), its origin binders told
-    /// apart as the member's list declares them.
-    fn member_generator_view<'m>(
-        &self,
-        member: &'m ParameterizedMember,
-    ) -> Option<(&'m [ParamDecl], ParamExpr)> {
-        member.generator_view(|params, index| self.origin_binder_at(params, index).is_some())
     }
 
     /// Whether `object.field` reads a struct's parameterized type member
@@ -5191,8 +5194,7 @@ impl Checker {
                     .get(field)?;
                 Some(
                     matches!(member.template, MemberTemplate::Type { .. })
-                        && member.params.iter().any(|param| !param.infer_only)
-                        && self.member_generator_view(member).is_some(),
+                        && member.params.iter().any(|param| !param.infer_only),
                 )
             })
             .unwrap_or(false)

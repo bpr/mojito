@@ -1527,9 +1527,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `MemberBodyError::NotAType`, and `check_struct_associated` and
   `check_generic_comptime_alias` then lower the body as a value, reporting
   the type attempt's failure when the body evaluated to neither
-  (`MemberTemplate::Type`, keeping the member's classified
+  (`MemberTemplate::Type`, keeping the member's classified argument
   binders, which `type_resolution.rs:resolve_parameterized_member` binds by
-  identity through `generics::AssocBindings::ids`). A member application
+  identity through `generics::AssocBindings::ids`, and its whole declared
+  list, `declared`, open while the body lowers, so an origin's `mut=` reads
+  the member's own binder, which `resolve_parameterized_member` binds from
+  the origin it supplies and `ParameterizedMember::checked_fact` defers). A member application
   read through a type (`S[Int].Of[Bool]`) is a bracket over a member in
   type position (the bracket node `parser/suffix.rs:parse_bracket_suffix`
   builds), which
@@ -1576,7 +1579,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`ParamContext::{origin, argument_expr}`, typed by
   `ParamDecl::origin_argument_ty`), its `mut=` binder takes the
   mutability that origin decides, and `bind_params` substitutes the bound
-  origins into a function generator's result (`types::bind_origin_params`);
+  origins into a function generator's result (`types::bind_origin_params`)
+  and a constant generator's type body (`ParamContext::bind_shape_origins`),
+  and binds a type pack's list binder as the `RuntimePack` a spread of it
+  (`Tuple[*Ts]`) expands to (`generator_bindings`);
   the elaborator answers a member application's origin argument as an
   erased `TyArg::Origin` (`native/mono/symbolic.rs`). A generic alias, a
   struct's value member, and a trait's value requirement classify the
@@ -1588,10 +1594,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `alias_generator` (a value or predicate alias, the latter's `Bool` body
   `ComptimeAlias::predicate_value`), `struct_generator_member` (a struct's
   member, type- or value-bodied, through `struct_member_generator` and
-  `ParameterizedMember::generator_view`, which a type member keying an
-  origin binder or a type pack outside its declarations lacks; the
-  builder's type-member-read arm leaves such an unapplied read to it,
-  `reads_type_member_generator`), and `type_member_value` (a bound's requirement, a `TypeMember`
+  `ParameterizedMember::generator_view`, over the member's whole declared
+  list; the builder's type-member-read arm leaves such an unapplied read
+  to it, `reads_type_member_generator`), and `type_member_value` (a bound's requirement, a `TypeMember`
   typed by `Ty::generator`); `bind_template_comptime` binds a local or
   module `comptime` of one as a compile-time-only value. A
   `__generator_type` annotation resolves in `type_resolution.rs:
@@ -3374,7 +3379,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   arguments. The conformer's member crosses the waist as
   `ParameterizedAssociatedValue` (`mojito-checked/src/declaration.rs`,
   built by `ParameterizedMember::checked_value_fact` from its
-  `generator_view`, so a type member with one is listed too and the
+  `generator_view`, so every type member is listed too and the
   elaborator answers a symbolic `g[1]` of `comptime g = S[*Ts].B`) in
   `ConformanceFacts::parameterized_values` →
   `MirStructDeclaration::parameterized_associated_values`, and
