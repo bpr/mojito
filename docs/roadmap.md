@@ -863,23 +863,6 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R2565 `automatic-inline` takes time superlinear in a nested
-  list display's depth while its work stays linear**
-
-  A twenty-deep `List` display spends about 9 s in `automatic-inline`,
-  so `assets/ok/nested_operands_type_once.mojo` takes 16 s to run though
-  it checks in a quarter second.
-  - Probe: `var l = [[…[10]…]]` printed through `l[0]…[0]`, at depths 14,
-    17, and 20: 0.9 s, 1.9 s, and 9.4 s in the pass.
-  - The pass's own counters (`erased_instructions`, `forwarded_copies`,
-    concrete instructions) grow linearly over the same depths, so the cost
-    is per operation, likely over the nested `List[List[…]]` type.
-  - The batch 5 baseline (`b021d96c4`) takes the same time: this predates
-    R2564's checker regression.
-  - Found while landing R2564 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2523 Concrete instructions grew by 306273 instructions (+5.48%) over batch 4**
 
   The elaborated corpus grew past `scripts/run-batches`' `--max-growth`, and the growth was accepted into the baseline.

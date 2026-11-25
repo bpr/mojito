@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `automatic-inline` takes time linear in a nested list display's depth
+  (R2565). Finding the lifecycle members a body's drops, copies, and moves
+  run walked a struct instance's fields and its arguments both, and so its
+  element type twice per level; the walk now expands each type once and
+  keeps each answer, so a twenty-three-deep `List[List[…]]` spends 0.2 s in
+  the pass instead of 12 s. No output, diagnostic, or MIR text changes.
+
 - The check's handoff asserts that no record is pending instead of
   discarding what is (R2579), as upstream's emitter leaves no op it
   emitted only to evaluate: every site now types its evaluation-only

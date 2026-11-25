@@ -23,7 +23,7 @@ use crate::mir::param_uses::Removals;
 use crate::mir::{MirDeclarations, has_no_destructor};
 use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind, names_binder};
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// The parameters of a struct, by position, that a question about it reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +77,7 @@ pub struct StructReads<'d, 'a> {
     removals: Option<&'d Removals<'a>>,
     layouts: RefCell<HashMap<String, LayoutReads>>,
     members: RefCell<HashMap<(String, &'static str), MemberNeeds>>,
+    symbols: RefCell<HashMap<(Ty, &'static str), BTreeSet<String>>>,
     consulted: RefCell<BTreeSet<String>>,
 }
 
@@ -89,6 +90,7 @@ impl<'d, 'a> StructReads<'d, 'a> {
             removals: None,
             layouts: RefCell::new(HashMap::new()),
             members: RefCell::new(HashMap::new()),
+            symbols: RefCell::new(HashMap::new()),
             consulted: RefCell::new(BTreeSet::new()),
         }
     }
@@ -113,9 +115,18 @@ impl<'d, 'a> StructReads<'d, 'a> {
     /// `ty` reaches: a struct declaring it contributes its own, one that
     /// does not the members of its fields' types and its arguments, as do a
     /// tuple's, pack's, or variant's items.
+    ///
+    /// Each answer is kept, and one walk expands each type it reaches
+    /// once, so a nested instance (`List[List[…]]`), which names its
+    /// element in its fields and its arguments both, costs its depth.
     pub fn member_symbols(&self, ty: &Ty, member: &'static str) -> BTreeSet<String> {
+        let key = (ty.clone(), member);
+        if let Some(symbols) = self.symbols.borrow().get(&key) {
+            return symbols.clone();
+        }
         let mut symbols = BTreeSet::new();
-        self.member_symbols_in(ty, member, &mut Vec::new(), &mut symbols);
+        self.member_symbols_in(ty, member, &mut SymbolWalk::default(), &mut symbols);
+        self.symbols.borrow_mut().insert(key, symbols.clone());
         symbols
     }
 
@@ -223,48 +234,66 @@ impl<'d, 'a> StructReads<'d, 'a> {
         }
     }
 
+    /// Add to `symbols` the members [`Self::member_symbols`] finds below
+    /// `ty`, and return whether the walk saw all of them: `false` when it
+    /// stopped at a struct it is already expanding.
+    ///
+    /// A type expanded in full adds nothing when it is reached again: any
+    /// later walk of it stops at no fewer structs, so it reaches no other
+    /// member.
     fn member_symbols_in(
         &self,
         ty: &Ty,
         member: &'static str,
-        visiting: &mut Vec<String>,
+        walk: &mut SymbolWalk,
         symbols: &mut BTreeSet<String>,
-    ) {
-        match ty.kind() {
+    ) -> bool {
+        if walk.expanded.contains(ty) {
+            return true;
+        }
+        let complete = match ty.kind() {
             struct_ty if let Some((name, arguments)) = struct_ty.as_non_simd_struct() => {
                 let Some(structure) = self.declarations.structure(name) else {
-                    return;
+                    return true;
                 };
                 if let Some(symbol) = structure.member(member) {
                     symbols.insert(symbol.to_string());
-                    return;
+                    return true;
                 }
-                if visiting.iter().any(|seen| seen == name) {
-                    return;
+                if walk.visiting.iter().any(|seen| seen == name) {
+                    return false;
                 }
-                visiting.push(name.clone());
-                for (_, field) in &structure.fields {
-                    self.member_symbols_in(field, member, visiting, symbols);
-                }
-                visiting.pop();
-                for argument in arguments {
-                    if let TyArg::Ty(argument) = argument {
-                        self.member_symbols_in(argument, member, visiting, symbols);
-                    }
-                }
+                walk.visiting.push(name.clone());
+                let fields = structure.fields.iter().fold(true, |complete, (_, field)| {
+                    self.member_symbols_in(field, member, walk, symbols) & complete
+                });
+                walk.visiting.pop();
+                arguments
+                    .iter()
+                    .filter_map(|argument| match argument {
+                        TyArg::Ty(argument) => Some(argument),
+                        _ => None,
+                    })
+                    .fold(fields, |complete, argument| {
+                        self.member_symbols_in(argument, member, walk, symbols) & complete
+                    })
             }
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
-                for item in items {
-                    self.member_symbols_in(item, member, visiting, symbols);
-                }
+                items.iter().fold(true, |complete, item| {
+                    self.member_symbols_in(item, member, walk, symbols) & complete
+                })
             }
             TyKind::ComptimeList(item)
             | TyKind::VariadicPack(item)
             | TyKind::PopArray { element: item, .. } => {
-                self.member_symbols_in(item, member, visiting, symbols);
+                self.member_symbols_in(item, member, walk, symbols)
             }
-            _ => {}
+            _ => true,
+        };
+        if complete {
+            walk.expanded.insert(ty.clone());
         }
+        complete
     }
 
     /// What `name`'s `member` reads of each of its parameters, by position:
@@ -407,6 +436,15 @@ const fn is_variadic(decl: &ParamDecl) -> bool {
         decl,
         ParamDecl::Type { variadic: true, .. } | ParamDecl::Value { variadic: true, .. }
     )
+}
+
+/// One [`StructReads::member_symbols`] walk's state.
+#[derive(Default)]
+struct SymbolWalk {
+    /// The structs whose fields the walk is inside.
+    visiting: Vec<String>,
+    /// The types the walk expanded in full.
+    expanded: HashSet<Ty>,
 }
 
 /// Whether the struct argument `part` names the binder `decl` declares.
