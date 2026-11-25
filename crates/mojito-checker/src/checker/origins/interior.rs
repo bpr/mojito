@@ -470,10 +470,12 @@ impl Checker {
                     // A `ref[o]` field, or upstream's `Pointer[T, Self.o]`
                     // storage of a forwarded `ref[Self.o]` parameter.
                     let origin_bearing = matches!(field_ty.kind(), TyKind::Ref(_))
-                        || matches!(
-                            field_ty.kind().pointer_origin(),
-                            Some(mojito_types::origin::PointerOrigin::Param { .. })
-                        );
+                        || field_ty.pointer_lit_ref().is_some_and(|pointer| {
+                            matches!(
+                                pointer.origin.uncast().projection_base(),
+                                mojito_types::origin::Origin::Param(_)
+                            )
+                        });
                     if !origin_bearing {
                         continue;
                     }

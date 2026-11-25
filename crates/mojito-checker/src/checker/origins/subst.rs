@@ -147,7 +147,7 @@ impl OriginBindings {
         mojito_types::origin::Origin,
         mojito_types::origin::Mutability,
     ) {
-        use mojito_types::origin::{Mutability, PointerOrigin};
+        use mojito_types::origin::Mutability;
         let (held, bound_mutability) = match mutability {
             Mutability::Param(id) => match self.mutability(id) {
                 Some(bound) => (Vec::new(), bound),
@@ -156,7 +156,7 @@ impl OriginBindings {
             fixed => (Vec::new(), fixed),
         };
         let bound = self.bind_origin(origin, &held);
-        if PointerOrigin::from_parts(bound.clone(), bound_mutability).is_some() {
+        if bound.holdable_by_pointer(bound_mutability) {
             (bound, bound_mutability)
         } else {
             (origin.clone(), mutability)
@@ -621,21 +621,24 @@ pub(in crate::checker) fn field_carries_origin_param(
     ty: &Ty,
     id: mojito_types::origin::OriginParamId,
 ) -> bool {
-    use mojito_types::origin::{Origin, PointerOrigin};
+    use mojito_types::origin::Origin;
+    // A pointer origin rooted in the binder, through a mutability cast and
+    // an interior or subtree projection.
+    let rooted = |origin: &Origin, mutability| {
+        origin.holdable_by_pointer(mutability)
+            && matches!(origin.uncast().projection_base(), Origin::Param(k) if *k == id)
+    };
     match ty.kind() {
         TyKind::Ref(reference) => {
             matches!(reference.origin, Origin::Param(k) if k == id)
-                || matches!(reference.pointer_origin(), Some(PointerOrigin::Param { id: k, .. }) if k == id)
+                || rooted(&reference.origin, reference.mutability)
         }
         TyKind::LitRefPack {
             origin, mutability, ..
-        } => matches!(
-            PointerOrigin::from_parts(origin.clone(), *mutability),
-            Some(PointerOrigin::Param { id: k, .. }) if k == id
-        ),
+        } => rooted(origin, *mutability),
         pointer => pointer
-            .pointer_origin()
-            .is_some_and(|origin| matches!(origin, PointerOrigin::Param { id: k, .. } if k == id)),
+            .pointer_lit_ref()
+            .is_some_and(|reference| rooted(&reference.origin, reference.mutability)),
     }
 }
 

@@ -249,17 +249,14 @@ impl ConstructorOriginBindings {
         id: OriginParamId,
         owner_mutability: &dyn Fn(mojito_types::origin::OwnerId) -> Mutability,
     ) -> Option<Mutability> {
-        if let Some(provenance) = self.pointer_binding(id) {
-            return match (provenance.statically_mutable(), &provenance) {
-                (Some(true), _) => Some(Mutability::Mutable),
-                (Some(false), _) => Some(Mutability::Immutable),
-                (
-                    None,
-                    PointerOrigin::Param { mutability, .. }
-                    | PointerOrigin::SelfPlace { mutability, .. },
-                ) => Some(*mutability),
-                (None, _) => None,
-            };
+        if let Some((origin, mutability)) = self.pointer_binding(id) {
+            return mutability.known().map(Mutability::of).or_else(|| {
+                matches!(
+                    origin.projection_base(),
+                    Origin::Param(_) | Origin::SelfParam
+                )
+                .then_some(mutability)
+            });
         }
         if let Some(mutability) = self.references.get(&id) {
             return Some(*mutability);
@@ -267,12 +264,13 @@ impl ConstructorOriginBindings {
         origin_mutability(self.bound.origins.get(&id)?, owner_mutability)
     }
 
-    /// The provenance a pointer argument bound binder `id` with.
-    fn pointer_binding(&self, id: OriginParamId) -> Option<PointerOrigin> {
-        PointerOrigin::from_parts(
-            self.bound.origins.get(&id)?.clone(),
-            self.bound.mutability(id)?,
-        )
+    /// The canonical pointer origin and mutability a pointer argument
+    /// bound binder `id` with ([`Origin::canonical_pointer_parts`]).
+    fn pointer_binding(&self, id: OriginParamId) -> Option<(Origin, Mutability)> {
+        self.bound
+            .origins
+            .get(&id)?
+            .canonical_pointer_parts(self.bound.mutability(id)?)
     }
 
     fn substitute_sig_origin(
@@ -299,10 +297,12 @@ impl ConstructorOriginBindings {
         }
     }
 
+    /// Bind binder `id` to a pointer argument's canonical `origin` and
+    /// `mutability`; a second binding must name the same ones.
     fn bind_pointer(
         &mut self,
         id: OriginParamId,
-        provenance: &PointerOrigin,
+        (origin, mutability): (Origin, Mutability),
         conflict: impl Fn() -> TypeError,
     ) -> Result<(), TypeError> {
         if !self.binders.binds(id) {
@@ -310,14 +310,13 @@ impl ConstructorOriginBindings {
         }
         match self.pointer_binding(id) {
             None => {
-                let (origin, mutability) = provenance.parts();
                 self.bound.origins.insert(id, origin);
                 self.bound
                     .mutabilities
                     .insert(id, mutability.mut_argument());
                 Ok(())
             }
-            Some(existing) if existing == *provenance => Ok(()),
+            Some(existing) if existing == (origin, mutability) => Ok(()),
             Some(_) => Err(conflict()),
         }
     }
@@ -993,8 +992,7 @@ impl Checker {
             references: HashMap::new(),
             binders,
         };
-        for (id, provenance) in pointers {
-            let (origin, mutability) = provenance.into_parts();
+        for (id, (origin, mutability)) in pointers {
             bindings.bound.origins.insert(id, origin);
             bindings
                 .bound
@@ -1027,28 +1025,22 @@ impl Checker {
         params: &[Ty],
         bound: &[(usize, &Ty)],
         binders: &CalleeBinders,
-    ) -> Result<HashMap<OriginParamId, PointerOrigin>, TypeError> {
-        let mut bindings: HashMap<OriginParamId, PointerOrigin> = HashMap::new();
+    ) -> Result<HashMap<OriginParamId, (Origin, Mutability)>, TypeError> {
+        let mut bindings: HashMap<OriginParamId, (Origin, Mutability)> = HashMap::new();
+        let canonical = |ty: &Ty| {
+            ty.kind().pointer_or_lit_ref().and_then(|reference| {
+                reference
+                    .origin
+                    .canonical_pointer_parts(reference.mutability)
+            })
+        };
         for (index, actual) in bound {
-            let (
-                Some(PointerOrigin::Param {
-                    id,
-                    mutability,
-                    interior,
-                    subtree,
-                }),
-                Some(actual_origin),
-            ) = (
-                params
-                    .get(*index)
-                    .and_then(|param| param.kind().pointer_or_lit_ref())
-                    .and_then(|reference| reference.pointer_origin()),
-                actual
-                    .kind()
-                    .pointer_or_lit_ref()
-                    .and_then(|reference| reference.pointer_origin()),
-            )
+            let (Some((pattern, mutability)), Some(actual_origin)) =
+                (params.get(*index).and_then(canonical), canonical(actual))
             else {
+                continue;
+            };
+            let Some((id, projection)) = pattern.binder_projection() else {
                 continue;
             };
             if !binders.binds(id) {
@@ -1066,7 +1058,7 @@ impl Checker {
                     context: format!("argument '{parameter}' to '{callee}'"),
                 });
             }
-            if !interior.is_empty() || subtree {
+            if !projection.is_empty() {
                 continue;
             }
             match bindings.get(&id) {
@@ -1205,13 +1197,11 @@ impl Checker {
             (pattern_kind, actual_kind)
                 if let Some((pattern, actual)) =
                     pattern_kind.matching_pointer_parts(actual_kind)
-                    && let Some(PointerOrigin::Param {
-                        id,
-                        interior,
-                        subtree,
-                        ..
-                    }) = pattern.pointer_origin()
-                    && let Some(actual_origin) = actual.pointer_origin() =>
+                    && let Some((pattern, _)) =
+                        pattern.origin.canonical_pointer_parts(pattern.mutability)
+                    && let Some((id, projection)) = pattern.binder_projection()
+                    && let Some(actual_origin) =
+                        actual.origin.canonical_pointer_parts(actual.mutability) =>
             {
                 let Some(slot) = slot_of(&id) else {
                     return Ok(());
@@ -1234,12 +1224,12 @@ impl Checker {
                     });
                 }
                 if let Some(supplied) = explicit.find(id) {
-                    let (actual, _) = actual_origin.parts();
-                    let within = if actual_origin.as_origin().is_some() {
-                        explicit.admits(&actual, &supplied.origin)
+                    let actual = &actual_origin.0;
+                    let within = if actual.pointer_loan_origin().is_some() {
+                        explicit.admits(actual, &supplied.origin)
                     } else {
                         supplied.origin.is_untracked()
-                            || (actual == Origin::Static && supplied.origin == Origin::Static)
+                            || (*actual == Origin::Static && supplied.origin == Origin::Static)
                     };
                     if !within {
                         return Err(TypeError::TypeMismatch {
@@ -1255,10 +1245,11 @@ impl Checker {
                 // A projected parameter origin (`Self.origin._subtree`)
                 // binds the provenance below the projection; one the actual
                 // does not end in is checked by coercion, not bound.
-                actual_origin
-                    .without_projection(&interior, subtree)
+                let (actual, mutability) = actual_origin;
+                actual
+                    .without_projection(projection)
                     .map_or(Ok(()), |base| {
-                        bindings.bind_pointer(id, &base, || {
+                        bindings.bind_pointer(id, (base, mutability), || {
                             conflicting_binding(struct_name, slot.name())
                         })
                     })
@@ -1401,17 +1392,14 @@ fn bind_callable_tail_pattern(
             if let Some((declared, provenance)) =
                 pattern_kind.matching_pointer_parts(actual_kind) =>
         {
-            if let Some(PointerOrigin::Param {
-                id,
-                interior,
-                subtree,
-                ..
-            }) = declared.pointer_origin()
-                && let Some(base) = provenance
-                    .pointer_origin()
-                    .and_then(|provenance| provenance.without_projection(&interior, subtree))
+            if let Some((pattern, _)) = declared.origin.canonical_pointer_parts(declared.mutability)
+                && let Some((id, projection)) = pattern.binder_projection()
+                && let Some((actual, mutability)) = provenance
+                    .origin
+                    .canonical_pointer_parts(provenance.mutability)
+                && let Some(base) = actual.without_projection(projection)
             {
-                bindings.bind_pointer(id, &base, conflict)?;
+                bindings.bind_pointer(id, (base, mutability), conflict)?;
             }
             bind_callable_tail_pattern(&declared.referent, &provenance.referent, bindings, conflict)
         }
@@ -1511,10 +1499,10 @@ fn conflicting_binding(struct_name: &str, slot: &str) -> TypeError {
 /// binder whose mutability is itself a parameter, which upstream converts to
 /// `MutOrigin` no more than an immutable one. The receiver's symbolic
 /// `origin_of(self)` still passes (R1215).
-fn not_statically_mutable(origin: &PointerOrigin) -> Option<String> {
-    match origin.statically_mutable() {
+fn not_statically_mutable((origin, mutability): &(Origin, Mutability)) -> Option<String> {
+    match mutability.known() {
         Some(false) => Some("an immutable-origin pointer".to_string()),
-        None if matches!(origin, PointerOrigin::Param { .. }) => {
+        None if origin.binder_projection().is_some() => {
             Some("a pointer whose origin's mutability is a parameter".to_string())
         }
         _ => None,

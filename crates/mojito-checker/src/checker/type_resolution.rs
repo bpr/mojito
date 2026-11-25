@@ -518,7 +518,12 @@ pub(super) struct PointerBracket {
     /// A `mut=` literal; `None` when absent or spelled by a value.
     pub(super) mutability: Option<bool>,
     pub(super) element: Option<Ty>,
-    pub(super) origin: Option<mojito_types::origin::PointerOrigin>,
+    /// The `origin` argument with the `mut` it is held at, canonical
+    /// ([`mojito_types::origin::Origin::canonical_pointer_parts`]).
+    pub(super) origin: Option<(
+        mojito_types::origin::Origin,
+        mojito_types::origin::Mutability,
+    )>,
     pub(super) address_space: Option<mojito_types::types::AddressSpaceSlot>,
     /// The attribute each source argument carries.
     pub(super) attributes: DeclaredAttributes,
@@ -1864,7 +1869,7 @@ impl Checker {
             return Err(unsupported_mlir_type());
         };
         let elements = self.mlir_type_list_elements(values)?;
-        let (origin, mutability) = self.mlir_origin_operand(origin)?.into_parts();
+        let (origin, mutability) = self.mlir_origin_operand(origin)?;
         Ok(TyKind::LitRefPack {
             elements,
             origin,
@@ -1882,13 +1887,13 @@ impl Checker {
         origin: &mojito_ast::ast::ParamArg,
         address_space: mojito_types::types::AddressSpaceSlot,
     ) -> Result<Ty, TypeError> {
-        Ok(Ty::lit_ref(
-            mojito_types::origin::RefTy::from_pointer_origin(
-                self.mlir_type_operand(element)?,
-                self.mlir_origin_operand(origin)?,
-                address_space,
-            ),
-        ))
+        let (origin, mutability) = self.mlir_origin_operand(origin)?;
+        Ok(Ty::lit_ref(mojito_types::origin::RefTy {
+            referent: self.mlir_type_operand(element)?,
+            origin,
+            mutability,
+            address_space,
+        }))
     }
 
     /// The `index` address-space operand of a `!kgen.pointer` or a
@@ -1924,7 +1929,13 @@ impl Checker {
     fn mlir_origin_operand(
         &self,
         origin: &mojito_ast::ast::ParamArg,
-    ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
+    ) -> Result<
+        (
+            mojito_types::origin::Origin,
+            mojito_types::origin::Mutability,
+        ),
+        TypeError,
+    > {
         super::raw_origin_argument(origin)
             .ok_or_else(unsupported_mlir_type)
             .and_then(|base| self.pointer_origin_arg(&base))
@@ -2786,12 +2797,11 @@ impl Checker {
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .into(),
-            kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-                Ty::pointer(
-                    self.resolve_dependent_ty(element, values)?,
-                    origin,
-                    address_space,
-                )
+            kind if let Some(reference) = kind.pointer_lit_ref() => {
+                Ty::pointer_from_lit_ref(&mojito_types::origin::RefTy {
+                    referent: self.resolve_dependent_ty(&reference.referent, values)?,
+                    ..reference
+                })
             }
             // A reference's space closes at the bound `AddressSpace` binder.
             TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
@@ -3497,8 +3507,11 @@ impl Checker {
                     .collect(),
             )
             .into(),
-            kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-                Ty::pointer(self.resolve_assoc_ty(element), origin, address_space)
+            kind if let Some(reference) = kind.pointer_lit_ref() => {
+                Ty::pointer_from_lit_ref(&mojito_types::origin::RefTy {
+                    referent: self.resolve_assoc_ty(&reference.referent),
+                    ..reference
+                })
             }
             TyKind::Func(func) => {
                 let FuncTy {
@@ -4176,7 +4189,7 @@ impl Checker {
                 reason: "failed to infer parameter 'T'".to_string(),
             });
         };
-        let Some(origin) = bracket.origin else {
+        let Some((origin, mutability)) = bracket.origin else {
             return Err(TypeError::CannotInferParam {
                 name: mojito_types::types::POINTER_TYPE_NAME.to_string(),
                 param: "origin".to_string(),
@@ -4195,7 +4208,12 @@ impl Checker {
             )));
         }
         Ok((
-            Ty::pointer(element, origin, address_space),
+            Ty::pointer_from_lit_ref(&mojito_types::origin::RefTy {
+                referent: element,
+                origin,
+                mutability,
+                address_space,
+            }),
             bracket.attributes,
         ))
     }
@@ -4243,9 +4261,8 @@ impl Checker {
         if let Some(argument) = origin_argument {
             bracket.origin = Some(self.pointer_bracket_origin(name, argument, &bracket)?);
         }
-        if let Some(origin) = bracket.origin.take() {
-            let mutable = origin.statically_mutable();
-            bracket.origin = Some(match (bracket.mutability, mutable) {
+        if let Some((origin, mutability)) = bracket.origin.take() {
+            bracket.origin = Some(match (bracket.mutability, mutability.known()) {
                 (Some(true), Some(false)) => {
                     return Err(TypeError::TypeMismatch {
                         expected: super::origin_value_type(Some(true), false),
@@ -4253,8 +4270,14 @@ impl Checker {
                         context: format!("value passed to 'origin' of '{name}'"),
                     });
                 }
-                (Some(false), _) => origin.immutable(),
-                _ => origin,
+                (Some(false), _) => mojito_types::origin::Origin::immutable(origin.clone())
+                    .canonical_pointer_parts(mojito_types::origin::Mutability::Immutable)
+                    .ok_or_else(|| {
+                        TypeError::Unsupported(format!(
+                            "the origin {origin} as an immutable pointer's origin"
+                        ))
+                    })?,
+                _ => (origin, mutability),
             });
         }
         let attributes =
@@ -4264,8 +4287,8 @@ impl Checker {
                     "T" => bracket.element.as_ref().and_then(|element| {
                         bracket_attribute(argument, &TyArg::Ty(element.clone()))
                     }),
-                    "origin" => bracket.origin.as_ref().and_then(|origin| {
-                        bracket_attribute(argument, &TyArg::Origin(origin.parts().0))
+                    "origin" => bracket.origin.as_ref().and_then(|(origin, _)| {
+                        bracket_attribute(argument, &TyArg::Origin(origin.clone()))
                     }),
                     _ => None,
                 })
@@ -4306,7 +4329,13 @@ impl Checker {
         name: &str,
         argument: &mojito_ast::ast::ParamArg,
         bracket: &PointerBracket,
-    ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
+    ) -> Result<
+        (
+            mojito_types::origin::Origin,
+            mojito_types::origin::Mutability,
+        ),
+        TypeError,
+    > {
         if !origin_placeholder(argument) {
             return self.pointer_origin_arg(argument);
         }
@@ -4321,7 +4350,10 @@ impl Checker {
                  ImmPointer[T, _] or MutPointer[T, _] here"
             )));
         }
-        Ok(mojito_types::origin::PointerOrigin::UnsafeAny { mutable: false })
+        Ok((
+            mojito_types::origin::Origin::UnsafeAny { mutable: false },
+            mojito_types::origin::Mutability::Immutable,
+        ))
     }
 
     /// The address space a `Pointer`'s `address_space=` argument, or an
@@ -4365,8 +4397,14 @@ impl Checker {
     pub(super) fn pointer_origin_arg(
         &self,
         argument: &mojito_ast::ast::ParamArg,
-    ) -> Result<mojito_types::origin::PointerOrigin, TypeError> {
-        use mojito_types::origin::{Mutability, Origin, PointerOrigin};
+    ) -> Result<
+        (
+            mojito_types::origin::Origin,
+            mojito_types::origin::Mutability,
+        ),
+        TypeError,
+    > {
+        use mojito_types::origin::{Mutability, Origin};
         let (origin, mutability) = self.resolve_origin_param_arg(argument)?;
         // The receiver's origin has the receiver's symbolic capability, in
         // the body as in the signature, unless a cast pins it.
@@ -4382,7 +4420,7 @@ impl Checker {
                 )));
             }
         };
-        PointerOrigin::from_parts(origin.clone(), mutability).ok_or_else(|| {
+        origin.canonical_pointer_parts(mutability).ok_or_else(|| {
             TypeError::Unsupported(if matches!(origin.uncast(), Origin::Union(_)) {
                 format!(
                     "the origin {origin}, which names an origin binder or the receiver, as a pointer's union origin"
@@ -4903,11 +4941,15 @@ impl Checker {
                     .unwrap_or_else(|| declared.clone())
             }
             (declared_kind, found_kind)
-                if let (Some((element, origin, address_space)), Some((_, _, found_space))) =
-                    (declared_kind.pointer_parts(), found_kind.pointer_parts())
-                    && address_space.is_inferred() =>
+                if let (Some(reference), Some(found)) = (
+                    declared_kind.pointer_lit_ref(),
+                    found_kind.pointer_lit_ref(),
+                ) && reference.address_space.is_inferred() =>
             {
-                Ty::pointer(element.clone(), origin, found_space)
+                Ty::pointer_from_lit_ref(&mojito_types::origin::RefTy {
+                    address_space: found.address_space,
+                    ..reference
+                })
             }
             (TyKind::Struct(name, declared_args), TyKind::Struct(found_name, found_args))
                 if !declared.is_simd()
@@ -5438,8 +5480,8 @@ fn type_is_symbolic(ty: &Ty) -> bool {
             dtype.is_symbolic() || width.is_symbolic()
         }
         kind if kind.is_string_literal() || kind.is_numeric_literal() => false,
-        kind if let Some((element, _, address_space)) = kind.pointer_parts() => {
-            address_space.is_symbolic() || type_is_symbolic(element)
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            reference.address_space.is_symbolic() || type_is_symbolic(&reference.referent)
         }
         TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
         TyKind::KgenSimd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
@@ -5738,7 +5780,7 @@ impl mojito_types::types::TyRewrite for BinderSearch<'_> {
 /// `address_space=_` hole.
 fn pointer_spelling(
     element: &Ty,
-    origin: &mojito_types::origin::PointerOrigin,
+    origin: &mojito_types::origin::Origin,
     args: &[mojito_ast::ast::ParamArg],
 ) -> String {
     let origin_open = args.iter().any(|argument| {
@@ -5748,7 +5790,7 @@ fn pointer_spelling(
     let origin = if origin_open {
         "_".to_string()
     } else {
-        origin.parts().0.to_string()
+        origin.to_string()
     };
     format!(
         "{}[{element}, {origin}, address_space=_]",

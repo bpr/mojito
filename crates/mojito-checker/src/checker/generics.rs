@@ -203,17 +203,16 @@ pub(super) fn unify(
 /// `identical` clauses: a placeholder pointer origin (`Pointer[U, _]`)
 /// accepts any origin and mutability.
 fn check_custom_receiver(func: &str, declared: &Ty, actual: &Ty) -> Result<(), TypeError> {
-    let matches = match (
-        declared.kind().pointer_parts(),
-        actual.kind().pointer_parts(),
-    ) {
-        (
-            Some((element, mojito_types::origin::PointerOrigin::UnsafeAny { .. }, space)),
-            Some((actual_element, _, actual_space)),
-        ) => {
-            space == actual_space
-                && mojito_types::types::erase_origins(element)
-                    == mojito_types::types::erase_origins(actual_element)
+    let matches = match (declared.pointer_lit_ref(), actual.pointer_lit_ref()) {
+        (Some(declared), Some(actual))
+            if matches!(
+                declared.origin.uncast(),
+                mojito_types::origin::Origin::UnsafeAny { .. }
+            ) =>
+        {
+            declared.address_space == actual.address_space
+                && mojito_types::types::erase_origins(&declared.referent)
+                    == mojito_types::types::erase_origins(&actual.referent)
         }
         _ => {
             mojito_types::types::erase_origins(declared)
@@ -591,8 +590,11 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
                 .collect(),
         )
         .into(),
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-            Ty::pointer(substitute_self(element, replacement), origin, address_space)
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&mojito_types::origin::RefTy {
+                referent: substitute_self(&reference.referent, replacement),
+                ..reference
+            })
         }
         TyKind::KgenPointer {
             element,
@@ -763,8 +765,12 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
             args: map_args(args),
         }
         .into(),
-        kind if let Some((element, origin, address_space)) = kind.pointer_parts() => {
-            Ty::pointer(recur(element), origin, space(&address_space))
+        kind if let Some(reference) = kind.pointer_lit_ref() => {
+            Ty::pointer_from_lit_ref(&mojito_types::origin::RefTy {
+                referent: recur(&reference.referent),
+                address_space: space(&reference.address_space),
+                ..reference
+            })
         }
         TyKind::KgenPointer {
             element,
@@ -1377,13 +1383,18 @@ impl Checker {
         }
         let base = origin.uncast();
         self.bound_origin_mutability(base)
-            .and_then(|mutability| {
-                mojito_types::origin::PointerOrigin::from_parts(base.clone(), mutability)
-            })
+            .and_then(|mutability| base.canonical_pointer_parts(mutability))
             .zip(mojito_types::types::AddressSpaceSlot::of_value(space))
             .map_or_else(
                 || ty.clone(),
-                |(origin, space)| Ty::pointer(element.clone(), origin, space),
+                |((origin, mutability), address_space)| {
+                    Ty::pointer_from_lit_ref(&mojito_types::origin::RefTy {
+                        referent: element.clone(),
+                        origin,
+                        mutability,
+                        address_space,
+                    })
+                },
             )
     }
 

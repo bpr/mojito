@@ -1508,22 +1508,25 @@ impl Checker {
     pub(super) fn pointer_write_capability(
         &self,
         pointer: &Expr,
-        origin: &mojito_types::origin::PointerOrigin,
+        (origin, mutability): &(
+            mojito_types::origin::Origin,
+            mojito_types::origin::Mutability,
+        ),
     ) -> Option<bool> {
-        use mojito_types::origin::{Origin, PointerOrigin};
-        if let Some(known) = origin.statically_mutable() {
+        use mojito_types::origin::Origin;
+        if let Some(known) = mutability.known() {
             return Some(known);
         }
-        match origin {
-            PointerOrigin::SelfPlace { .. } => Some(self.self_mutable),
-            PointerOrigin::Param { id, .. } => {
+        match (origin.projection_base(), origin.binder_projection()) {
+            (Origin::SelfParam, _) => Some(self.self_mutable),
+            (_, Some((id, _))) => {
                 let ExprKind::Member { object, .. } = &pointer.kind else {
                     return None;
                 };
-                if self.holder_slot_is_immutable_cast(object, *id) {
+                if self.holder_slot_is_immutable_cast(object, id) {
                     return Some(false);
                 }
-                let resolved = self.resolve_receiver_origin_arguments(Origin::Param(*id), object);
+                let resolved = self.resolve_receiver_origin_arguments(Origin::Param(id), object);
                 if self
                     .origin_place(object)
                     .is_ok_and(|place| super::origins::origin_rooted_at(&resolved, place.root))

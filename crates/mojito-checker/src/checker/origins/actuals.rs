@@ -838,30 +838,29 @@ impl Checker {
         operand: &Expr,
         litref: &Ty,
     ) -> Option<mojito_types::origin::RefTy> {
-        use mojito_types::origin::{Mutability, Origin, OriginPlace, PointerOrigin, RefTy};
+        use mojito_types::origin::{Mutability, Origin, OriginPlace, RefTy};
         let TyKind::Ref(reference) = litref.kind() else {
             return None;
         };
-        let origin = &reference.pointer_origin()?;
-        let mutability = match (self.pointer_write_capability(operand, origin), origin) {
-            (Some(true), _) => Mutability::Mutable,
-            (Some(false), _) => Mutability::Immutable,
-            (None, PointerOrigin::Param { id, .. }) => Mutability::Param(*id),
-            (None, _) => Mutability::Immutable,
+        let parts = reference
+            .origin
+            .canonical_pointer_parts(reference.mutability)?;
+        let binder = parts.0.binder_projection().map(|(id, _)| id);
+        let mutability = match (self.pointer_write_capability(operand, &parts), binder) {
+            (Some(mutable), _) => Mutability::of(mutable),
+            (None, Some(id)) => Mutability::Param(id),
+            (None, None) => Mutability::Immutable,
         };
         let receiver = self.lookup_owner("self").map(|root| OriginPlace {
             root,
             path: Vec::new(),
         });
-        let origin = match origin {
-            PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
-                Origin::Untracked { mutable: *mutable }
+        let origin = match (parts.0, binder) {
+            (Origin::Untracked { mutable } | Origin::UnsafeAny { mutable }, _) => {
+                Origin::Untracked { mutable }
             }
-            PointerOrigin::Static { mutable } => Origin::mut_cast(
-                Origin::Static,
-                mojito_types::types::LitOriginMut::Known(*mutable),
-            ),
-            PointerOrigin::Param { id, .. } => Origin::Param(*id),
+            (fixed, _) if *fixed.uncast() == Origin::Static => fixed,
+            (_, Some(id)) => Origin::Param(id),
             _ => origin_at_receiver(&reference.origin, receiver.as_ref())
                 .unwrap_or(Origin::SelfParam),
         };

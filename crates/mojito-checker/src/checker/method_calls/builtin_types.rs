@@ -32,21 +32,15 @@ impl Checker {
     /// `free()`/`unsafe_free()` deallocation. Indexed load/store remain
     /// ordinary public pointer subscript syntax; every other memory member
     /// is a body of the declared struct.
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::checker) fn infer_pointer_method(
         &self,
         object: &Expr,
         method: &str,
-        elem: &Ty,
-        origin: &mojito_types::origin::PointerOrigin,
-        address_space: &mojito_types::types::AddressSpaceSlot,
+        reference: &mojito_types::origin::RefTy,
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
-        let pointer = |element: Ty, origin: mojito_types::origin::PointerOrigin| {
-            Ty::pointer(element, origin, address_space.clone())
-        };
         reject_kwargs(kwargs)?;
         if !param_args.is_empty() {
             return Err(TypeError::BadCall {
@@ -56,7 +50,7 @@ impl Checker {
         }
         match method {
             "free" | "unsafe_free" => {
-                if origin.as_origin().is_some() {
+                if reference.origin.pointer_loan_origin().is_some() {
                     return Err(TypeError::Unsupported(format!(
                         "{method}() is not supported on an origin-bearing Pointer; \
                          it does not own an allocation"
@@ -67,7 +61,7 @@ impl Checker {
                 Ok(Ty::none())
             }
             _ => Err(TypeError::NoSuchMethod {
-                object_type: pointer(elem.clone(), origin.clone()).to_string(),
+                object_type: Ty::pointer_from_lit_ref(reference).to_string(),
                 method: method.to_string(),
             }),
         }

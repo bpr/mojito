@@ -2753,8 +2753,9 @@ projection over an `origin_param` or `origin_self` base, upstream's
 `ImmStaticOrigin`, `pointer_static { mutable: true }` for its mutable cast,
 schema 1.218), `pointer_untracked`, `pointer_unsafe_any`, and
 `pointer_union { members, mutability }` (schema 1.220: two or more concrete
-origin members, `origin_of(a, b)`); all fields of the corresponding
-`PointerOrigin` variant are required.
+origin members, `origin_of(a, b)`, read back as the `Origin::Union`
+argument at that `mut`, which `PointerOrigin` has no variant for); all
+fields of each record are required.
 
 Mutability is `immutable`, `mutable`, or `mutability_param(id)`. Signature
 origins are `sig_self`, `sig_param(index)`, `sig_bound(origin)`, `sig_static`,

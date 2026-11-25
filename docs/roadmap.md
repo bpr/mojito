@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2584**.
+Next free ID: **R2586**.
 
 ## Ordered Work
 
@@ -11174,8 +11174,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `Pointer[Int, origin_of(self, y)](to=y)` in a method body fails with "the
   origin … | origin_of(self), which names an origin binder or the receiver,
   as a pointer's union origin", where the pin prints `5`.
-  - `PointerOrigin::from_parts` (`crates/mojito-types/src/origin.rs`) builds
-    `PointerOrigin::Union` only over concrete members (places, and static,
+  - `Origin::canonical_pointer_parts` (`crates/mojito-types/src/origin.rs`)
+    holds a union only over concrete members (places, and static,
     untracked, and unsafe-any origins).
   - A binder or receiver member needs call-site substitution and rebasing
     of each union member: `rebase_self_place_pointer`,
@@ -11296,8 +11296,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     bound a pointer by a struct pass and pointer passes in turn; one
     substitution binds it now, so re-run the probe.
   - Probe: past that, `Span.__init__(ref [Self.origin] array: Array[…])`
-    fails, since `rebase_self_place_pointer` reads `as_pointer()`, which the
-    struct substitution already rewrote (R2513).
+    fails, since `rebase_self_place_pointer` reads the pointer's
+    `origin_of(self)` argument only after the struct substitution has
+    already rewritten it.
   - Decide whether pointer instance symbols change (`mojito-symbol`), and
     plan the package bump if they do.
   - The mut-to-imm coercion is `coerces`'s pointer arm today; the struct
@@ -11367,51 +11368,55 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2513 Checker pointer readers read the `PointerOrigin` view, which
-  keeps `PointerOrigin::Union` alive**
+- [ ] **R2584 The checker's provenance producers build a `PointerOrigin`
+  view no upstream reader has**
 
-  No reader outside `origin.rs` matches `PointerOrigin::Union` any more,
-  but the checker still decodes pointers into the view, and the decode
-  still builds the variant for a union origin argument (`origin_of(x, y)`).
-  - Move the checker's view readers to `pointer_lit_ref` or
-    `pointer_or_lit_ref` (both a `RefTy`): `generics.rs:211`, `:212`,
-    `:647`, `:819`; `method_calls/intrinsic_receivers.rs:97`;
-    `method_calls/selection.rs:26`, `:35`; `origins/exclusivity.rs:507`;
-    `origins/subst.rs:628`, `:637`; `origins/construct.rs:1053`, `:1057`,
-    `:1203`, `:1204`, `:1399`, `:1401`; `declarations.rs:5844`;
-    `origins/actuals.rs:845`; `origins/binders.rs:573`;
-    `origins/transfer.rs:878`; `origins/ref_params.rs:417`, `:696`,
-    `:837`; `origins/interior.rs:474`; `type_resolution.rs:2834`,
-    `:3516`, `:4939`, `:5554`.
-  - Then delete `TyKind::{as_pointer, pointer_origin}` and
-    `Ty::as_pointer`, and make `pointer_parts` return the `RefTy` or
-    delete it.
-  - `PointerArguments::decode` asks a parts-level
-    `Origin::holdable_by_pointer(mutability)` predicate, and
-    `canonical_pointer_application` builds through
-    `Ty::pointer_from_lit_ref`.
-  - Delete `PointerOrigin::Union` and its arms in `origin.rs`;
-    `provenance_coerces` already answers a union expectation from the
-    parts.
-  - File the follow-on for the variant matchers left
-    (`rebase_self_place_pointer`, `pointer_write_capability`,
-    `CloneBinderProjection`, the `pointer_*` MIR text records and their
-    schema move to `pointer { element, origin, mutability }`).
-    - Also `symbol.rs`' `respell_bindable_place` through
-      `RefTy::map_pointer_origin` and `PointerOrigin::map_parts` (the
-      respell's pointer, `Ref`, and `LitRefPack` arms).
-    - Also `collect_named_origins`' `LitRefPack` decode in `types.rs`.
-    - Also `bind_origin_params`' `bind` closure, unless R2503 has deleted
-      it.
-    - Also the fixed-provenance constructors `Ty::pointer(..,
-      PointerOrigin::Static { .. }, ..)` in `erase_origins` and the VM's
-      `held_address`.
-  - Probe: R2501's `rebase_self_place_pointer` bullet.
-  - Plan: `R2493-pointer-provenance-readers-read-the-pointerorigin-plan.md`,
-    Slice 1.6.
-  - Found while landing R2493 (2026-11-22).
-  - Depends on R2512.
-  - Model: Opus, Planned.
+  Upstream reads a `Pointer`'s `origin` and `mut` arguments as they are,
+  and the checker now reads them so too, but its producers still build the
+  decoded view and `Ty::pointer` still takes one.
+  - `ref [o]` parameter binders: `reference_parameter_binders`
+    (`checker.rs`), `lookup_reference_parameter_binder` and its readers
+    (`construct.rs::reference_argument`,
+    `method_calls/selection.rs::rebase_self_place_pointer`).
+  - The `origin_binders` vectors (`checker.rs`, `interface.rs`,
+    `declarations.rs`, `origins/ref_params.rs`) and
+    `bind_constructor_origins`' `Param` match (`origins/construct.rs`).
+  - `enclosing_origin_param` (`type_resolution.rs`).
+  - A place's address: `PlaceAddress::Provenance` and its builders and
+    readers in `operators.rs` (`statically_mutable`), and
+    `RefTy::from_pointer_origin` there.
+  - `call_inference.rs`' `PointerOrigin::Static` pointer.
+  - Then make `Ty::pointer` take the `origin` and `mut` parts.
+  - Found while landing R2513 (2026-11-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2585 `PointerOrigin` survives as the spelling of a pointer's
+  provenance in MIR text, the display, and symbols**
+
+  Once the checker builds no view (R2584), the remaining users only spell
+  or compare one, and upstream spells a pointer's `origin` and `mut`
+  arguments directly.
+  - MIR text's `pointer_*` origin records (`mir/text/write.rs`
+    `pointer_origin_parts`, `parse/origins.rs`): move the schema to
+    `pointer { element, origin, mutability }`, a MIR text version bump.
+  - `fmt_origin_parts`/`fmt_pointer_origin` (`types.rs`), the type
+    display.
+  - `provenance_coerces`' last arm, `PointerOrigin::coerces_to`
+    (`origin.rs`).
+  - `symbol.rs`' `respell_bindable_place` through
+    `RefTy::map_pointer_origin`, `PointerOrigin::map_parts`, and
+    `clone_bindable_place`/`CloneBinderProjection`.
+  - Fixed-provenance constructors below the checker: `erase_origins`
+    (`types.rs`), the VM's `held_address` (`runtime.rs`) and
+    `backend/vm.rs`, `mir/variadics.rs`, `mir/struct_reads.rs`,
+    `lower_expr/{expr_call, mlir_op}.rs`, `mono/spread.rs`,
+    `native-core/src/layout.rs`, `types/src/ffi.rs`, and Pliron's
+    `lower/module_env.rs`.
+  - Then delete `PointerOrigin`.
+  - Found while landing R2513 (2026-11-24).
+  - Depends on R2584.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2583 `mono::equiv::ty_equal_modulo_origins` ignores a pointer's
   `mut`, so `Pointer[mut=True, T]` and `Pointer[mut=False, T]` match**

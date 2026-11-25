@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker's pointer readers read the pointer's `!lit.ref` record as
+  every reader below it does, and `PointerOrigin` has no union variant:
+  `origin_of(a, b)` exists only as an `Origin::Union` argument, as
+  upstream's is one `#lit.origin.union` (R2513). One rule,
+  `Origin::canonical_pointer_parts` (`holdable_by_pointer`), gives the
+  origin and `mut` a pointer is spelled with, for the decode, `Ty::new`'s
+  fold, the `Pointer[...]` bracket, and the origin-binding solvers.
+  `TyKind::{as_pointer, pointer_origin, pointer_parts}`, `Ty::as_pointer`,
+  `RefTy::pointer_origin`, and `PointerOrigin::without_projection` are
+  gone. No output, MIR text, or symbol changes.
+
 - Every pointer reader below the checker reads the pointer's `!lit.ref`
   record (`TyKind::pointer_lit_ref`) and asks its `Origin` and
   `Mutability`, as upstream reads a `Pointer`'s `origin` value and `mut`

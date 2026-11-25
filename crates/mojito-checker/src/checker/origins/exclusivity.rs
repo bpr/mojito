@@ -504,10 +504,14 @@ impl Checker {
                     self.record_origin_places(access, origin, mutable);
                 }
             }
-            pointer if let Some((element, origin)) = pointer.as_pointer() => {
-                self.record_carried_places(access, &element);
-                let mutable = origin.statically_mutable();
-                self.record_origin_places(access, &origin.parts().0, mutable);
+            pointer if let Some(reference) = pointer.pointer_lit_ref() => {
+                self.record_carried_places(access, &reference.referent);
+                if let Some((origin, mutability)) = reference
+                    .origin
+                    .canonical_pointer_parts(reference.mutability)
+                {
+                    self.record_origin_places(access, &origin, mutability.known());
+                }
             }
             TyKind::Ref(reference) => {
                 self.record_carried_places(access, &reference.referent);

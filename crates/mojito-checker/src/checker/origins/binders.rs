@@ -565,10 +565,9 @@ impl Checker {
                 // own origin per call.
                 if matches!(origin, Origin::UnsafeAny { .. })
                     && self.member_subject(object).is_some_and(|subject| {
-                        matches!(
-                            subject.as_pointer(),
-                            Some((_, mojito_types::origin::PointerOrigin::UnsafeAny { .. }))
-                        )
+                        subject.pointer_lit_ref().is_some_and(|pointer| {
+                            matches!(pointer.origin.uncast(), Origin::UnsafeAny { .. })
+                        })
                     })
                 {
                     return Err(TypeError::Unsupported(format!(

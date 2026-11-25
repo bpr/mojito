@@ -94,18 +94,9 @@ impl Checker {
         // Built-in `Pointer` methods: the public unsafe_* operation
         // vocabulary. `unsafe_write(copy=v)` is the one keyword shape; every
         // other pointer method rejects kwargs inside.
-        if let Some((element, origin, address_space)) = obj_ty.kind().pointer_parts() {
+        if let Some(reference) = obj_ty.pointer_lit_ref() {
             return self
-                .infer_pointer_method(
-                    object,
-                    method,
-                    element,
-                    &origin,
-                    &address_space,
-                    param_args,
-                    args,
-                    kwargs,
-                )
+                .infer_pointer_method(object, method, &reference, param_args, args, kwargs)
                 .map(Some);
         }
         // Compiler-private inline uninit storage (`MaybeUninit`'s field):

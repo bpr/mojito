@@ -875,8 +875,8 @@ fn named_place_origins(ty: &Ty) -> Vec<mojito_types::origin::Origin> {
         let mut found = found.borrow_mut();
         match ty.kind() {
             TyKind::Ref(reference) => places(&reference.origin, &mut found),
-            pointer if let Some(origin) = pointer.pointer_origin() => {
-                if let Some(origin) = origin.as_origin() {
+            pointer if let Some(reference) = pointer.pointer_lit_ref() => {
+                if let Some(origin) = reference.origin.pointer_loan_origin() {
                     places(&origin, &mut found);
                 }
             }

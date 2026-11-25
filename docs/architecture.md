@@ -3997,11 +3997,18 @@ upstream's `Pointer[mut, T, origin]` holds plus its `mut` argument
 struct's `Origin` holds the same interior and subtree projections over a
 binder or the receiver (`Origin::Projected`) and the unsafe-any origin
 (`Origin::UnsafeAny`), and both project through one rule
-(`Origin::owned_interior`/`subtree`). A provenance reader reads the
+(`Origin::owned_interior`/`subtree`). A provenance reader, the checker's included, reads the
 pointer's `!lit.ref` record (`TyKind::pointer_lit_ref`, or
 `pointer_or_lit_ref` for a pointer or a `!lit.ref`, both a `RefTy`) and
-asks the `Origin` and `Mutability` themselves, as every reader below the
-checker does:
+asks the `Origin` and `Mutability` themselves:
+`Origin::canonical_pointer_parts` is the one rule saying which origin and
+`mut` a pointer holding them is spelled with (a known cast over non-static
+storage is that storage at the cast's mutability; `holdable_by_pointer`
+asks only whether one exists), which the decode, `Ty::new`'s canonical
+fold, the bracket, and the origin-binding solvers all ask;
+`Origin::binder_projection` is the origin binder a pointer origin is rooted
+in with the projection below it, and `Origin::without_projection` drops a
+binder pattern's projection from an actual origin;
 `Origin::pointer_loan_origin` is the loan-tracked root, with the
 projection dropped, for the readers that ask which storage a loan keeps
 (`PointerOrigin::as_origin` delegates to it), `Origin::places` the places
@@ -4013,14 +4020,15 @@ origin argument over concrete members (`origin_of(x, y)`) is read as the
 `Flatten::pointer_origin_loans` for a method's pointer result), its
 coercion is `origin::provenance_coerces`'s, a union binds a struct's
 origin binder as a place does, mutable only when every member is, and an
-argument carrying it carries every member place. The decode still builds
-`PointerOrigin::Union` for the readers that ask for the view, which no
-reader outside `origin.rs` matches (R2513 retires them). A `!lit.ref` stores no
+argument carrying it carries every member place. A union is only that
+`Origin::Union` argument: `PointerOrigin` has no union variant, so
+`PointerOrigin::from_parts` reads a union as no view. A `!lit.ref` stores no
 `PointerOrigin`: it is `TyKind::Ref`, upstream's one reference type,
 whose `RefTy` holds an `Origin` beside a `Mutability`, and
-`TyKind::LitRefPack` holds the same pair, so
-`RefTy::pointer_origin` decodes the view only for a reader that still asks
-for it.
+`TyKind::LitRefPack` holds the same pair. The view remains only where
+the checker produces a provenance (a `ref [o]` parameter's binder, a
+place's address) and where `Ty::pointer`, the symbol respell, the
+display, and MIR text spell one (R2584, R2585).
 
 The bundled library declares upstream's `struct Pointer`, and the
 compiler's pointer type is that struct's application
@@ -4030,11 +4038,9 @@ compiler's pointer type is that struct's application
 decides it, that binder's implicit `mut` value binder
 (`Mutability::mut_argument`). `Ty::new` folds every other spelling into it,
 `TyKind::pointer_lit_ref` reads its arguments back as the `RefTy` it is
-built from, `Ty::pointer_from_lit_ref` builds the canonical pointer back
-from one (through `Ty::new`'s fold), and the view accessors
-(`TyKind::pointer_parts`, `as_pointer`, `pointer_origin`), which only the
-checker still reads, decode it losslessly; an
-application no provenance decodes stays the nominal struct. A rewrite that
+built from, and `Ty::pointer_from_lit_ref` builds the canonical pointer back
+from one (through `Ty::new`'s fold); an application no pointer holds
+(`Origin::holdable_by_pointer`) stays the nominal struct. A rewrite that
 maps a pointer's pointee or address space reads its `!lit.ref` record and
 rebuilds through `Ty::pointer_from_lit_ref`, keeping the origin and `mut`
 as stored. A pointer is a

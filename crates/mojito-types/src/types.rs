@@ -1516,25 +1516,18 @@ impl Ty {
     /// [parts](crate::origin::PointerOrigin::parts), the `mut` one a `Bool`
     /// or, when an origin binder decides it, that binder's `mut`
     /// ([`Mutability::mut_argument`](crate::origin::Mutability::mut_argument)).
-    /// Code outside this crate builds a pointer only through this
-    /// constructor and reads one through [`TyKind::pointer_parts`] and the
-    /// accessors beside it, which decode those arguments back; a struct
-    /// application in any other form folds to this one ([`Ty::new`]).
+    /// Code outside this crate builds a pointer through this constructor
+    /// or [`Ty::pointer_from_lit_ref`] and reads one through
+    /// [`TyKind::pointer_lit_ref`], its `origin` and `mut` arguments as
+    /// they are; a struct application in any other form folds to this one
+    /// ([`Ty::new`]).
     pub fn pointer(
         element: Self,
         origin: crate::origin::PointerOrigin,
         address_space: AddressSpaceSlot,
     ) -> Self {
         let (origin, mutability) = origin.into_parts();
-        Self(Arc::new(TyNode::new(TyKind::Struct(
-            POINTER_TYPE_NAME.to_string(),
-            vec![
-                TyArg::Val(mutability.mut_argument()),
-                TyArg::Ty(element),
-                TyArg::Origin(origin),
-                TyArg::Val(address_space.into_value()),
-            ],
-        ))))
+        raw_pointer(element, origin, mutability, address_space)
     }
 
     /// The raw address `!kgen.pointer<element, address_space>`.
@@ -1564,11 +1557,6 @@ impl Ty {
                 TyArg::Val(reference.address_space.clone().into_value()),
             ],
         ))
-    }
-
-    /// The pointee and origin of a `Pointer` ([`TyKind::as_pointer`]).
-    pub fn as_pointer(&self) -> Option<(Self, crate::origin::PointerOrigin)> {
-        self.kind().as_pointer()
     }
 
     /// The pointer's `!lit.ref` record ([`TyKind::pointer_lit_ref`]).
@@ -1659,24 +1647,11 @@ impl TyKind {
         simd_struct_slots(self)
     }
 
-    /// The pointee and origin of a `Pointer[T, origin]`, owned: the origin
-    /// is the struct's origin argument read with its `mut` one.
-    pub fn as_pointer(&self) -> Option<(Ty, crate::origin::PointerOrigin)> {
-        self.pointer_parts()
-            .map(|(element, origin, _)| (element.clone(), origin))
-    }
-
     /// The pointee of a `Pointer[T, origin]`, its type argument `T`.
     pub fn pointer_element(&self) -> Option<&Ty> {
         pointer_arguments(self)
             .filter(|arguments| arguments.decode().is_some())
             .map(|arguments| arguments.element)
-    }
-
-    /// The origin of a `Pointer[T, origin]`, owned
-    /// ([`TyKind::as_pointer`]).
-    pub fn pointer_origin(&self) -> Option<crate::origin::PointerOrigin> {
-        self.pointer_parts().map(|(_, origin, _)| origin)
     }
 
     /// The `!lit.ref` record of a `!lit.ref` whose origin and mutability a
@@ -1685,8 +1660,8 @@ impl TyKind {
     pub fn pointer_or_lit_ref(&self) -> Option<crate::origin::RefTy> {
         match self {
             Self::Ref(reference) => reference
-                .pointer_origin()
-                .is_some()
+                .origin
+                .holdable_by_pointer(reference.mutability)
                 .then(|| reference.clone()),
             pointer => pointer.pointer_lit_ref(),
         }
@@ -1698,12 +1673,11 @@ impl TyKind {
     /// does.
     pub fn pointer_lit_ref(&self) -> Option<crate::origin::RefTy> {
         let arguments = pointer_arguments(self)?;
-        arguments.decode()?;
         Some(crate::origin::RefTy {
+            address_space: arguments.decode()?,
             referent: arguments.element.clone(),
             origin: arguments.origin.clone(),
             mutability: arguments.mutability,
-            address_space: AddressSpaceSlot::of_value(arguments.address_space)?,
         })
     }
 
@@ -1735,15 +1709,6 @@ impl TyKind {
         self.address_parts().map(|(_, space)| space)
     }
 
-    /// The pointee, provenance, and address space of a `Pointer[mut, T,
-    /// origin, address_space]`: its `T`, its `origin` read with its `mut`,
-    /// and its `address_space`.
-    pub fn pointer_parts(&self) -> Option<(&Ty, crate::origin::PointerOrigin, AddressSpaceSlot)> {
-        let arguments = pointer_arguments(self)?;
-        let (origin, address_space) = arguments.decode()?;
-        Some((arguments.element, origin, address_space))
-    }
-
     /// The pointee and address space of a `Pointer`, a `!kgen.pointer`, or
     /// a `!lit.ref`.
     pub fn address_parts(&self) -> Option<(&Ty, AddressSpaceSlot)> {
@@ -1760,7 +1725,7 @@ impl TyKind {
     /// The pointee and address space of a `Pointer` application, its
     /// `T` and `address_space`: the arguments its one declared field,
     /// `!kgen.pointer<T, address_space>`, reads. Unlike
-    /// [`TyKind::pointer_parts`] it reads no provenance, so it also answers
+    /// [`TyKind::pointer_lit_ref`] it reads no provenance, so it also answers
     /// for an elaborated instance whose `mut` argument the elaborator
     /// erased (`_REMOVED_ARG`), as it erases any argument a struct's layout
     /// does not read.
@@ -5442,11 +5407,13 @@ pub fn settle_symbolic_cast_pointers(ty: &Ty) -> Ty {
                 matches!(base.projection_base(), crate::origin::Origin::SelfParam)
                     .then_some(crate::origin::Mutability::RECEIVER)
             })?;
-            Some(Ty::pointer(
-                settle_symbolic_cast_pointers(element),
-                crate::origin::PointerOrigin::from_parts(base.clone(), mutability)?,
-                AddressSpaceSlot::of_value(space)?,
-            ))
+            let (origin, mutability) = base.canonical_pointer_parts(mutability)?;
+            Some(Ty::pointer_from_lit_ref(&crate::origin::RefTy {
+                referent: settle_symbolic_cast_pointers(element),
+                origin,
+                mutability,
+                address_space: AddressSpaceSlot::of_value(space)?,
+            }))
         }
 
         fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
@@ -5467,26 +5434,38 @@ pub fn bind_origin_params<S: std::hash::BuildHasher>(
     ty: &Ty,
     origins: &HashMap<u32, crate::origin::Origin, S>,
 ) -> Ty {
-    use crate::origin::{Mutability, PointerOrigin};
+    use crate::origin::{Mutability, Origin};
     if origins.is_empty() {
         return ty.clone();
     }
-    let bind = |origin: &PointerOrigin| -> PointerOrigin {
-        let PointerOrigin::Param { id, mutability, .. } = origin else {
-            return origin.clone();
+    // A pointer origin rooted in a bound binder, read as its canonical
+    // parts, takes the bound origin; any other stays as it is.
+    let bind = |origin: &Origin, mutability: Mutability| -> (Origin, Mutability) {
+        let Some((origin, own)) = origin.canonical_pointer_parts(mutability) else {
+            return (origin.clone(), mutability);
         };
-        let Some(bound) = origins.get(&id.0) else {
-            return origin.clone();
+        let Some(bound) = origin
+            .binder_projection()
+            .and_then(|(id, _)| origins.get(&id.0))
+        else {
+            return (origin, own);
         };
-        let mutability = match mutability {
-            Mutability::Param(_) => match bound.static_mutability() {
-                Some(mutable) => Mutability::of(mutable),
-                None => *mutability,
-            },
-            fixed => *fixed,
+        let bound_mutability = match own {
+            Mutability::Param(_) => bound.static_mutability().map_or(own, Mutability::of),
+            fixed => fixed,
         };
-        PointerOrigin::from_parts(origin.parts().0.substitute_params(origins), mutability)
-            .unwrap_or_else(|| origin.clone())
+        origin
+            .substitute_params(origins)
+            .canonical_pointer_parts(bound_mutability)
+            .unwrap_or((origin, own))
+    };
+    let bind_reference = |reference: &crate::origin::RefTy| {
+        let (origin, mutability) = bind(&reference.origin, reference.mutability);
+        crate::origin::RefTy {
+            origin,
+            mutability,
+            ..reference.clone()
+        }
     };
     let recur = |ty: &Ty| bind_origin_params(ty, origins);
     let mapped = substitute_origin_params(ty, origins);
@@ -5509,12 +5488,12 @@ pub fn bind_origin_params<S: std::hash::BuildHasher>(
             .unwrap_or_else(|element| {
                 Ty::pointer_from_lit_ref(&crate::origin::RefTy {
                     referent: element,
-                    ..reference.map_pointer_origin(bind)
+                    ..bind_reference(&reference)
                 })
             })
         }
         TyKind::Ref(reference) => {
-            let mut reference = reference.map_pointer_origin(bind);
+            let mut reference = bind_reference(reference);
             reference.referent = recur(&reference.referent);
             TyKind::Ref(reference).into()
         }
@@ -5523,7 +5502,7 @@ pub fn bind_origin_params<S: std::hash::BuildHasher>(
             origin,
             mutability,
         } => {
-            let (origin, mutability) = PointerOrigin::map_parts(origin, *mutability, bind);
+            let (origin, mutability) = bind(origin, *mutability);
             TyKind::LitRefPack {
                 elements: elements.iter().map(recur).collect(),
                 origin,
@@ -6101,12 +6080,33 @@ fn canonical_pointer_application(kind: &TyKind) -> Option<Ty> {
         },
         _ => return None,
     };
-    let origin = crate::origin::PointerOrigin::from_parts(origin.clone(), mutability)?;
-    Some(Ty::pointer(
+    let (origin, mutability) = origin.canonical_pointer_parts(mutability)?;
+    Some(raw_pointer(
         element.clone(),
         origin,
+        mutability,
         AddressSpaceSlot::of_value(space)?,
     ))
+}
+
+/// The `Pointer` node over canonical `origin` and `mutability` parts
+/// ([`crate::origin::Origin::canonical_pointer_parts`]), built without the
+/// fold [`Ty::new`] applies.
+fn raw_pointer(
+    element: Ty,
+    origin: crate::origin::Origin,
+    mutability: crate::origin::Mutability,
+    address_space: AddressSpaceSlot,
+) -> Ty {
+    Ty(Arc::new(TyNode::new(TyKind::Struct(
+        POINTER_TYPE_NAME.to_string(),
+        vec![
+            TyArg::Val(mutability.mut_argument()),
+            TyArg::Ty(element),
+            TyArg::Origin(origin),
+            TyArg::Val(address_space.into_value()),
+        ],
+    ))))
 }
 
 /// The arguments of a `Pointer` application in [`Ty::pointer`]'s canonical
@@ -6119,13 +6119,13 @@ struct PointerArguments<'a> {
 }
 
 impl PointerArguments<'_> {
-    /// The provenance and address space these arguments spell, or `None`
-    /// when no pointer holds them.
-    fn decode(&self) -> Option<(crate::origin::PointerOrigin, AddressSpaceSlot)> {
-        Some((
-            crate::origin::PointerOrigin::from_parts(self.origin.clone(), self.mutability)?,
-            AddressSpaceSlot::of_value(self.address_space)?,
-        ))
+    /// The address space these arguments spell, or `None` when no pointer
+    /// holds them ([`crate::origin::Origin::holdable_by_pointer`]).
+    fn decode(&self) -> Option<AddressSpaceSlot> {
+        self.origin
+            .holdable_by_pointer(self.mutability)
+            .then(|| AddressSpaceSlot::of_value(self.address_space))
+            .flatten()
     }
 }
 
@@ -9755,11 +9755,6 @@ fn fmt_pointer_origin(
         PointerOrigin::UnsafeAny { mutable: false } => {
             write!(f, "ImmUnsafeAnyOrigin")?;
         }
-        // A union origin argument (`origin_of(a, b)`) is the origin value.
-        other => {
-            let (origin, mutability) = other.parts();
-            fmt_bare_origin(f, &origin, mutability)?;
-        }
     }
     Ok(())
 }
@@ -10128,8 +10123,10 @@ fn collect_named_origins(ty: &Ty, out: &mut Vec<crate::origin::Origin>) {
             mutability,
         } => {
             out.extend(
-                crate::origin::PointerOrigin::from_parts(origin.clone(), *mutability)
-                    .and_then(|origin| origin.as_origin()),
+                origin
+                    .holdable_by_pointer(*mutability)
+                    .then(|| origin.pointer_loan_origin())
+                    .flatten(),
             );
             for element in elements {
                 collect_named_origins(element, out);
@@ -11125,32 +11122,40 @@ mod pointer_application_tests {
                 path: Vec::new(),
             }),
         ]);
+        let mut parts: Vec<_> = Vec::new();
         for mutability in [Mutability::Mutable, Mutability::Immutable] {
             origins.push(PointerOrigin::SelfPlace {
                 mutability,
                 interior: vec!["element".to_string()],
                 subtree: false,
             });
-            origins.push(
-                PointerOrigin::from_parts(union.clone(), mutability)
-                    .expect("a union of places is a pointer origin"),
+            assert_eq!(
+                PointerOrigin::from_parts(union.clone(), mutability),
+                None,
+                "a union is no pointer provenance view"
             );
+            assert!(union.holdable_by_pointer(mutability));
+            parts.push((union.clone(), mutability));
         }
-        assert_eq!(
-            PointerOrigin::from_parts(
-                Origin::union([Origin::Place(place()), Origin::Param(id)]),
-                Mutability::Mutable,
-            ),
-            None,
+        assert!(
+            !Origin::union([Origin::Place(place()), Origin::Param(id)])
+                .holdable_by_pointer(Mutability::Mutable),
             "a union naming an origin binder is not a pointer origin yet"
         );
+        parts.extend(origins.iter().cloned().map(PointerOrigin::into_parts));
         for space in [
             AddressSpaceSlot::GENERIC,
             AddressSpaceSlot::Known(3),
             symbolic_space(),
         ] {
-            for origin in &origins {
-                let pointer = Ty::pointer(Ty::int(), origin.clone(), space.clone());
+            for (origin, mutability) in &parts {
+                let pointer = Ty::pointer_from_lit_ref(&crate::origin::RefTy {
+                    referent: Ty::int(),
+                    origin: origin.clone(),
+                    mutability: *mutability,
+                    address_space: space.clone(),
+                });
+                assert!(pointer.is_pointer(), "{origin:?}");
                 let (name, args) = nominal_parts(&pointer).expect("a pointer is an instance");
                 assert_eq!(name, POINTER_TYPE_NAME);
                 assert_eq!(application(args.into_owned()), pointer, "{origin:?}");

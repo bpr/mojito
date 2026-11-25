@@ -422,11 +422,11 @@ impl Checker {
                 .any(Self::type_contains_unsafe_any_pointer);
         }
         match ty.kind() {
-            pointer if let Some((element, origin)) = pointer.as_pointer() => {
+            pointer if let Some(reference) = pointer.pointer_lit_ref() => {
                 matches!(
-                    origin,
-                    mojito_types::origin::PointerOrigin::UnsafeAny { .. }
-                ) || Self::type_contains_unsafe_any_pointer(&element)
+                    reference.origin.uncast(),
+                    mojito_types::origin::Origin::UnsafeAny { .. }
+                ) || Self::type_contains_unsafe_any_pointer(&reference.referent)
             }
             TyKind::ComptimeList(element) => Self::type_contains_unsafe_any_pointer(element),
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
@@ -700,8 +700,8 @@ impl Checker {
                     .borrow()
                     .get(&expression.source_span())
                     .and_then(|facts| facts.selected_call.as_deref())
-                    && let Some(origin) = contract.result_ty.kind().pointer_origin()
-                    && let Some(origin) = origin.as_origin()
+                    && let Some(pointer) = contract.result_ty.pointer_lit_ref()
+                    && let Some(origin) = pointer.origin.pointer_loan_origin()
                 {
                     return vec![origin];
                 }
@@ -841,8 +841,8 @@ impl Checker {
         match ty.kind() {
             TyKind::KgenPointer { .. } => Some(Vec::new()),
             kind => kind
-                .pointer_origin()
-                .map(|origin| origin.as_origin().into_iter().collect()),
+                .pointer_lit_ref()
+                .map(|pointer| pointer.origin.pointer_loan_origin().into_iter().collect()),
         }
     }
 

@@ -21,25 +21,32 @@ impl Checker {
         receiver: &Expr,
         declared: Option<&Ty>,
     ) -> Ty {
-        use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
-        let self_place =
-            |ty: &Ty| matches!(ty.as_pointer(), Some((_, PointerOrigin::SelfPlace { .. })));
-        if declared.is_some_and(|declared| !self_place(declared)) {
+        use mojito_types::origin::{Mutability, Origin, PointerOrigin, RefTy};
+        // The projection below `origin_of(self)` a pointer's origin argument
+        // names, when that is the receiver's.
+        let self_place_path = |ty: &Ty| {
+            ty.pointer_lit_ref()
+                .and_then(|pointer| match pointer.origin.uncast() {
+                    Origin::SelfParam => Some(Vec::new()),
+                    Origin::Projected(base, path) if **base == Origin::SelfParam => {
+                        Some(path.clone())
+                    }
+                    _ => None,
+                })
+        };
+        if declared.is_some_and(|declared| self_place_path(declared).is_none()) {
             return ty;
         }
-        let Some((
-            element,
-            PointerOrigin::SelfPlace {
-                interior, subtree, ..
-            },
-        )) = ty.as_pointer()
-        else {
+        let (Some(pointer), Some(path)) = (ty.pointer_lit_ref(), self_place_path(&ty)) else {
             return ty;
         };
-        let address_space = ty
-            .kind()
-            .pointer_address_space()
-            .unwrap_or(mojito_types::types::AddressSpaceSlot::GENERIC);
+        let rebased = |origin: Origin, mutability| {
+            Ty::pointer_from_lit_ref(&RefTy {
+                origin: origin.reprojected(&path),
+                mutability,
+                ..pointer.clone()
+            })
+        };
         // A `ref[Self.o]` parameter receiver reads as the enclosing struct's
         // binder, as `Pointer(to=xs)` does: `array.unsafe_ptr()` in `Span`'s
         // constructor is a `Pointer[T, Self.origin._get_owned_interior[...]]`.
@@ -47,42 +54,19 @@ impl Checker {
             && let Some(PointerOrigin::Param { id, mutability, .. }) =
                 self.lookup_reference_parameter_binder(name)
         {
-            return Ty::pointer(
-                element,
-                PointerOrigin::Param {
-                    id,
-                    mutability,
-                    interior,
-                    subtree,
-                },
-                address_space,
-            );
+            return rebased(Origin::Param(id), mutability);
         }
         let Ok(reference) = self.reference_actual(receiver) else {
             return ty;
         };
-        let origin = match reference.origin {
-            Origin::Place(mut place) => {
-                for tag in &interior {
-                    place.path.push(OriginSeg::Interior(tag.clone()));
-                }
-                if subtree {
-                    place.path.push(OriginSeg::Subtree);
-                }
-                PointerOrigin::Place {
-                    place,
-                    mutable: matches!(reference.mutability, Mutability::Mutable),
-                }
-            }
-            Origin::Param(id) => PointerOrigin::Param {
-                id,
-                mutability: reference.mutability,
-                interior,
-                subtree,
-            },
-            _ => return ty,
-        };
-        Ty::pointer(element, origin, address_space)
+        match reference.origin {
+            place @ Origin::Place(_) => rebased(
+                place,
+                Mutability::of(reference.mutability == Mutability::Mutable),
+            ),
+            binder @ Origin::Param(_) => rebased(binder, reference.mutability),
+            _ => ty,
+        }
     }
 
     /// Apply the implicit conversions selected while scoring one concrete method

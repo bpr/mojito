@@ -5945,9 +5945,10 @@ impl Checker {
         // pointer or reference over it, or a struct carrying it in its tail.
         let names_origin_binder = |parameter: &Ty| {
             mojito_types::types::mentions(parameter, &|candidate| match candidate.kind() {
-                pointer if let Some(origin) = pointer.pointer_origin() => {
-                    matches!(origin, mojito_types::origin::PointerOrigin::Param { .. })
-                }
+                pointer if let Some(reference) = pointer.pointer_lit_ref() => matches!(
+                    reference.origin.uncast().projection_base(),
+                    mojito_types::origin::Origin::Param(_)
+                ),
                 TyKind::Ref(reference) => {
                     matches!(reference.origin, mojito_types::origin::Origin::Param(_))
                 }

@@ -3307,11 +3307,6 @@ fn pointer_origin(value: &PointerOrigin) -> String {
         PointerOrigin::UnsafeAny { mutable } => {
             record("pointer_unsafe_any", &[("mutable", mutable.to_string())])
         }
-        // A union origin argument is the origin value.
-        other => {
-            let (value, mutability) = other.parts();
-            pointer_union(&value, mutability)
-        }
     }
 }
 fn ref_ty(value: &RefTy) -> String {

@@ -154,7 +154,7 @@ impl Decoder {
                     self.unknown(fields, &["members", "mutability"]);
                     let origin = Origin::union(members);
                     if !matches!(origin, Origin::Union(_))
-                        || PointerOrigin::from_parts(origin.clone(), mutability).is_none()
+                        || !origin.holdable_by_pointer(mutability)
                     {
                         self.error(
                             value.span,

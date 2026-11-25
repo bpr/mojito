@@ -561,6 +561,84 @@ impl Origin {
         }
     }
 
+    /// The `origin` and `mut` arguments a `Pointer` holding this origin at
+    /// `mutability` is canonically spelled with: a known mutability cast
+    /// over storage other than the static origin is that storage at the
+    /// cast's mutability, and a symbolic cast is its storage at
+    /// `mutability`. `None` for an origin no pointer holds (an unbound
+    /// slot, a malformed projection, a union with a binder or receiver
+    /// member) and for a mutability its origin contradicts.
+    #[must_use]
+    pub fn canonical_pointer_parts(&self, mutability: Mutability) -> Option<(Self, Mutability)> {
+        match self {
+            Self::MutCast(inner, LitOriginMut::Known(mutable)) if **inner != Self::Static => {
+                inner.canonical_pointer_parts(Mutability::of(*mutable))
+            }
+            Self::MutCast(inner, LitOriginMut::Expr(_)) => {
+                inner.canonical_pointer_parts(mutability)
+            }
+            Self::Union(members) => members
+                .iter()
+                .all(concrete_union_member)
+                .then(|| (self.clone(), mutability)),
+            _ => PointerOrigin::from_parts(self.clone(), mutability).map(PointerOrigin::into_parts),
+        }
+    }
+
+    /// Whether a `Pointer` can hold this origin at `mutability`
+    /// ([`Origin::canonical_pointer_parts`]).
+    #[must_use]
+    pub fn holdable_by_pointer(&self, mutability: Mutability) -> bool {
+        self.canonical_pointer_parts(mutability).is_some()
+    }
+
+    /// The origin binder a pointer origin is rooted in, below a mutability
+    /// cast, with the interior and subtree projection below it: `o` and
+    /// `o._get_owned_interior["tag"]._subtree` both name `o`. `None` for
+    /// an origin no binder roots.
+    #[must_use]
+    pub fn binder_projection(&self) -> Option<(OriginParamId, &[OriginSeg])> {
+        match self.uncast() {
+            Self::Param(id) => Some((*id, &[])),
+            Self::Projected(base, path) => match **base {
+                Self::Param(id) => Some((id, path.as_slice())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The origin a binder pointer projected by `tail` binds its binder to
+    /// when it matches this pointer origin: the origin with that trailing
+    /// projection removed, or `None` when it does not end in it. A place
+    /// drops the tail from its path and a projected origin binder from its
+    /// projection; any other origin matches only an empty tail.
+    #[must_use]
+    pub fn without_projection(&self, tail: &[OriginSeg]) -> Option<Self> {
+        let kept = |path: &[OriginSeg]| {
+            path.ends_with(tail)
+                .then(|| path[..path.len() - tail.len()].to_vec())
+        };
+        match self {
+            Self::Place(place) => kept(&place.path).map(|path| {
+                Self::Place(OriginPlace {
+                    root: place.root,
+                    path,
+                })
+            }),
+            Self::Projected(base, path) if matches!(**base, Self::Param(_)) => {
+                kept(path).map(|path| {
+                    if path.is_empty() {
+                        (**base).clone()
+                    } else {
+                        Self::Projected(base.clone(), path)
+                    }
+                })
+            }
+            other => tail.is_empty().then(|| other.clone()),
+        }
+    }
+
     /// The places this origin names below a mutability cast: the place
     /// itself, or each place member of a union, in the union's normalized
     /// order.
@@ -931,15 +1009,6 @@ pub enum PointerOrigin {
     UnsafeAny {
         mutable: bool,
     },
-    /// `origin_of(a, b)`: the normalized [`Origin::union`] of at least two
-    /// concrete members (places, and the static, untracked, and unsafe-any
-    /// origins a union keeps). This is the view of a pointer's
-    /// `Origin::Union` argument that the pointer accessors and a `!lit.ref`
-    /// give.
-    Union {
-        members: Vec<Origin>,
-        mutability: Mutability,
-    },
 }
 
 impl PointerOrigin {
@@ -971,41 +1040,6 @@ impl PointerOrigin {
             interior,
             subtree,
         })
-    }
-
-    /// The provenance a binder pointer projected by `interior` and
-    /// `subtree` binds its binder to when it matches `self`: `self` with
-    /// that trailing projection removed, or `None` when `self` does not end
-    /// in it.
-    pub fn without_projection(&self, interior: &[String], subtree: bool) -> Option<Self> {
-        match self {
-            Self::Place { place, mutable } => {
-                let tail = interior
-                    .iter()
-                    .map(|tag| OriginSeg::Interior(tag.clone()))
-                    .chain(subtree.then_some(OriginSeg::Subtree))
-                    .collect::<Vec<_>>();
-                place.path.ends_with(&tail).then(|| Self::Place {
-                    place: OriginPlace {
-                        root: place.root,
-                        path: place.path[..place.path.len() - tail.len()].to_vec(),
-                    },
-                    mutable: *mutable,
-                })
-            }
-            Self::Param {
-                id,
-                mutability,
-                interior: own,
-                subtree: own_subtree,
-            } if *own_subtree == subtree && own.ends_with(interior) => Some(Self::Param {
-                id: *id,
-                mutability: *mutability,
-                interior: own[..own.len() - interior.len()].to_vec(),
-                subtree: false,
-            }),
-            _ => (interior.is_empty() && !subtree).then(|| self.clone()),
-        }
     }
 
     /// This provenance as upstream's `Pointer[mut, T, origin]` spells it: the
@@ -1048,10 +1082,6 @@ impl PointerOrigin {
             ),
             Self::Untracked { mutable } => (Origin::Untracked { mutable }, Mutability::of(mutable)),
             Self::UnsafeAny { mutable } => (Origin::UnsafeAny { mutable }, Mutability::of(mutable)),
-            Self::Union {
-                members,
-                mutability,
-            } => (Origin::Union(members), mutability),
         }
     }
 
@@ -1072,9 +1102,10 @@ impl PointerOrigin {
     /// The provenance a `Pointer` whose `origin` argument is `origin` and
     /// whose `mut` argument is `mutability` carries: an `ImmOrigin(...)`
     /// cast reads as the immutable pointer to its storage. `None` for an
-    /// origin no pointer holds (an unbound slot, a malformed projection, a
-    /// union with a binder or receiver member) and for a mutability its
-    /// origin contradicts.
+    /// origin no pointer holds (an unbound slot, a malformed projection),
+    /// for a mutability its origin contradicts, and for a union, which a
+    /// pointer holds only as its origin argument
+    /// ([`Origin::canonical_pointer_parts`]).
     pub fn from_parts(origin: Origin, mutability: Mutability) -> Option<Self> {
         let flag = |mutable: bool| match mutability {
             Mutability::Mutable => mutable,
@@ -1143,16 +1174,7 @@ impl PointerOrigin {
             }
             Origin::Untracked { mutable } => flag(mutable).then_some(Self::Untracked { mutable }),
             Origin::UnsafeAny { mutable } => flag(mutable).then_some(Self::UnsafeAny { mutable }),
-            Origin::Union(members) => {
-                members
-                    .iter()
-                    .all(concrete_union_member)
-                    .then_some(Self::Union {
-                        members,
-                        mutability,
-                    })
-            }
-            Origin::Unbound => None,
+            Origin::Union(_) | Origin::Unbound => None,
         }
     }
 
@@ -1193,9 +1215,9 @@ impl PointerOrigin {
             | Self::Untracked { mutable }
             | Self::UnsafeAny { mutable }
             | Self::Static { mutable } => Some(*mutable),
-            Self::Param { mutability, .. }
-            | Self::SelfPlace { mutability, .. }
-            | Self::Union { mutability, .. } => mutability.known(),
+            Self::Param { mutability, .. } | Self::SelfPlace { mutability, .. } => {
+                mutability.known()
+            }
         }
     }
 
@@ -1203,10 +1225,6 @@ impl PointerOrigin {
     #[must_use]
     pub fn immutable(self) -> Self {
         match self {
-            Self::Union { members, .. } => Self::Union {
-                members,
-                mutability: Mutability::Immutable,
-            },
             Self::Place { place, .. } => Self::Place {
                 place,
                 mutable: false,
@@ -1240,10 +1258,6 @@ impl PointerOrigin {
     #[must_use]
     pub fn mutable(self) -> Self {
         match self {
-            Self::Union { members, .. } => Self::Union {
-                members,
-                mutability: Mutability::Mutable,
-            },
             Self::Place { place, .. } => Self::Place {
                 place,
                 mutable: true,
@@ -1318,13 +1332,6 @@ impl PointerOrigin {
                     ..
                 } if actual_interior == interior && actual_subtree == subtree
             ),
-            Self::Union {
-                members,
-                mutability,
-            } => {
-                let (origin, own) = self.parts();
-                union_provenance_coerces(&origin, own, members, *mutability)
-            }
             _ => self == expected,
         }
     }
@@ -1361,8 +1368,9 @@ impl RefTy {
 
     /// Whether a pointer or `!lit.ref` under this reference's origin and
     /// mutability coerces to one under `expected`'s: a union expectation
-    /// accepts any origin within it at no more than the permission held;
-    /// any other pair coerces as the provenances they read as do
+    /// accepts any origin within it at no more than the permission held,
+    /// and an unsafe-any one any origin at least its permission; any other
+    /// pair coerces as the provenances they read as do
     /// ([`PointerOrigin::coerces_to`]), and two that read as none only when
     /// equal.
     #[must_use]
@@ -1373,12 +1381,6 @@ impl RefTy {
             &expected.origin,
             expected.mutability,
         )
-    }
-
-    /// This reference's origin and mutability read as a pointer's
-    /// provenance ([`PointerOrigin::from_parts`]).
-    pub fn pointer_origin(&self) -> Option<PointerOrigin> {
-        PointerOrigin::from_parts(self.origin.clone(), self.mutability)
     }
 
     /// This reference with `bind` applied to its pointer provenance
@@ -1542,17 +1544,23 @@ pub fn provenance_coerces(
     to: &Origin,
     to_mutability: Mutability,
 ) -> bool {
-    let decode =
-        |origin: &Origin, mutability| PointerOrigin::from_parts(origin.clone(), mutability);
+    let Some((origin, own)) = from.canonical_pointer_parts(from_mutability) else {
+        return from == to && from_mutability == to_mutability;
+    };
     if let Origin::Union(members) = to.uncast()
         && members.iter().all(concrete_union_member)
     {
-        return decode(from, from_mutability).is_some_and(|view| {
-            let (origin, own) = view.into_parts();
-            union_provenance_coerces(&origin, own, members, to_mutability)
-        });
+        return union_provenance_coerces(&origin, own, members, to_mutability);
     }
-    match (decode(from, from_mutability), decode(to, to_mutability)) {
+    // An unsafe-any expectation (`ImmPointer[T, _]`) accepts any provenance
+    // whose permission is at least its own.
+    if let Some((Origin::UnsafeAny { mutable }, _)) = to.canonical_pointer_parts(to_mutability) {
+        return !mutable || own.known() == Some(true);
+    }
+    match (
+        PointerOrigin::from_parts(origin, own),
+        PointerOrigin::from_parts(to.clone(), to_mutability),
+    ) {
         (Some(from), Some(to)) => from.coerces_to(&to),
         _ => from == to && from_mutability == to_mutability,
     }
@@ -1882,14 +1890,18 @@ mod tests {
         let projection = projected.clone_bindable_place().expect("bindable");
         assert_eq!(projection.interior, ["element"]);
         assert!(projection.subtree);
+        let origin = |pointer: &PointerOrigin| pointer.parts().0;
         assert_eq!(
-            projected.without_projection(&projection.interior, projection.subtree),
-            Some(pointer(std::slice::from_ref(&field)))
+            origin(&projected).without_projection(&[element.clone(), OriginSeg::Subtree]),
+            Some(origin(&pointer(std::slice::from_ref(&field))))
         );
-        assert_eq!(projected.without_projection(&[], false), Some(projected));
+        assert_eq!(
+            origin(&projected).without_projection(&[]),
+            Some(origin(&projected))
+        );
         assert!(
-            pointer(std::slice::from_ref(&element))
-                .without_projection(&[], true)
+            origin(&pointer(std::slice::from_ref(&element)))
+                .without_projection(&[OriginSeg::Subtree])
                 .is_none()
         );
         assert!(pointer(&[element, field]).clone_bindable_place().is_none());
@@ -2041,5 +2053,72 @@ mod tests {
         // A sibling path and a foreign root stay disjoint.
         assert!(!subtree_at_a.overlaps(&place(1, std::slice::from_ref(&field_b))));
         assert!(!subtree_at_a.overlaps(&place(2, &[field_a])));
+    }
+
+    #[test]
+    fn canonical_pointer_parts_strip_casts_and_keep_a_concrete_union() {
+        let union = Origin::union([place(1, &[]), place(2, &[])]);
+        assert_eq!(
+            Origin::immutable(union.clone()).canonical_pointer_parts(Mutability::Mutable),
+            Some((union.clone(), Mutability::Immutable))
+        );
+        assert_eq!(
+            union.canonical_pointer_parts(Mutability::Mutable),
+            Some((union, Mutability::Mutable))
+        );
+        let binder = Origin::union([place(1, &[]), Origin::Param(OriginParamId(2))]);
+        assert_eq!(binder.canonical_pointer_parts(Mutability::Mutable), None);
+        assert_eq!(
+            Origin::immutable(place(1, &[])).canonical_pointer_parts(Mutability::Mutable),
+            Some((place(1, &[]), Mutability::Immutable))
+        );
+        let symbolic = Origin::MutCast(
+            Box::new(Origin::Param(OriginParamId(2))),
+            LitOriginMut::Expr(crate::param_expr::ParamContext::detached().decl_ref(
+                crate::param_expr::ParamId::new("f", 0),
+                "m",
+                crate::param_expr::MetaTy::value(crate::types::Ty::bool()),
+            )),
+        );
+        let binder_mutability = Mutability::Param(OriginParamId(2));
+        assert_eq!(
+            symbolic.canonical_pointer_parts(binder_mutability),
+            Some((Origin::Param(OriginParamId(2)), binder_mutability))
+        );
+        let static_mutable = Origin::mut_cast(Origin::Static, LitOriginMut::Known(true));
+        assert_eq!(
+            static_mutable.canonical_pointer_parts(Mutability::Mutable),
+            Some((static_mutable, Mutability::Mutable))
+        );
+        assert_eq!(
+            place(1, &[]).canonical_pointer_parts(binder_mutability),
+            None
+        );
+    }
+
+    #[test]
+    fn a_union_provenance_coerces_to_a_wider_union_and_to_unsafe_any() {
+        let union = Origin::union([place(1, &[]), place(2, &[])]);
+        let wider = Origin::union([place(1, &[]), place(2, &[]), place(3, &[])]);
+        let coerces = |to: &Origin, to_mutability| {
+            provenance_coerces(&union, Mutability::Mutable, to, to_mutability)
+        };
+        assert!(coerces(&union, Mutability::Mutable));
+        assert!(coerces(&wider, Mutability::Immutable));
+        assert!(coerces(
+            &Origin::UnsafeAny { mutable: false },
+            Mutability::Immutable
+        ));
+        assert!(coerces(
+            &Origin::UnsafeAny { mutable: true },
+            Mutability::Mutable
+        ));
+        assert!(!provenance_coerces(
+            &union,
+            Mutability::Immutable,
+            &Origin::UnsafeAny { mutable: true },
+            Mutability::Mutable,
+        ));
+        assert!(!coerces(&place(1, &[]), Mutability::Immutable));
     }
 }
