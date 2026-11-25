@@ -1953,6 +1953,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `len(h.r)` over a `ref String` field reports that `len(String/StringSlice)`
+  is not supported, as a local `len(s)` does, instead of overflowing the
+  checker's stack (R2581). The field's referent is read off its holder since
+  R2580, so the converted operand's borrow no longer asks for its own origin.
+
 - A write through a `ref` field while a loop iterates the same field in a
   `mut self` method (`for x in self.src: self.src.append(x)`) is rejected as
   a use of an invalidated interior reference (R2580). The loop named the

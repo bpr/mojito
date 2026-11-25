@@ -1552,21 +1552,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2581 Checking `len(h.r)` over a `ref String` field never ends**
-
-  `print(len(h.r))` over `struct H[o: MutOrigin]` holding `var r:
-  ref[Self.o] String` overflows the checker's stack, where a local
-  `len(s)` reports "`len(String/StringSlice)` is not supported".
-  - The overflow is an unbounded cycle of `origin_place`,
-    `aggregate_origins`, and `conversion_borrow_origins`
-    (`checker/origins/actuals.rs`, `ref_params.rs`) over the converted
-    `ref` field operand.
-  - `h.r.byte_length()` over the same field prints `3`.
-  - Probe: the program above, through `mojito check`.
-  - Found while landing R2494 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2094 A loan named only inside a type argument does not follow a
   move or copy of its holder**
 
