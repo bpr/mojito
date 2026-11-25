@@ -3474,7 +3474,9 @@ impl Checker {
         // a type's raw-list member (`x: TypeList[Trait=AnyType,
         // T._types]()[0]`), keeps its dependent type, whose capabilities are
         // the list's element trait, as does a generator's application (`x:
-        // G[Int]`), whose capabilities are its generator type's result.
+        // G[Int]`), whose capabilities are its generator type's result, and
+        // a conditional type (`x: Int if n > 0 else Float64`), whose
+        // capabilities are those both its arms have.
         let opaque_params: Vec<Option<Ty>> = params
             .iter()
             .zip(&param_tys)
@@ -3491,6 +3493,10 @@ impl Checker {
                     }) && !matches!(
                         dependent.expr().kind(),
                         mojito_types::param_expr::ParamKind::BindParams { .. }
+                            | mojito_types::param_expr::ParamKind::Op {
+                                op: ParamOp::Cond,
+                                ..
+                            }
                     )))
                 .then(|| {
                     TyKind::Param {

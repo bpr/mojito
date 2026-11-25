@@ -2927,6 +2927,26 @@ impl Checker {
                     tr,
                 )
             }
+            // A conditional type (`Int if n > 0 else Float64`) whose
+            // condition is still open conforms as both its arms agree.
+            TyKind::Dependent(dependent)
+                if let ParamKind::Op {
+                    op: ParamOp::Cond,
+                    operands,
+                } = dependent.expr().kind()
+                    && let [_, then_ty, else_ty] = operands.as_slice() =>
+            {
+                let arm = |arm: &ParamExpr| {
+                    self.conformance(
+                        &mojito_types::types::DependentType::resolve(arm.clone()),
+                        tr,
+                    )
+                };
+                match (arm(then_ty), arm(else_ty)) {
+                    (left, right) if left == right => left,
+                    _ => Conformance::Unknown,
+                }
+            }
             TyKind::Dependent(_) | TyKind::SelfType | TyKind::Infer => Conformance::Unknown,
             _ if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) => {
                 mojito_types::conformance::leaf_conformance(ty, tr, element)

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2601**.
+Next free ID: **R2602**.
 
 ## Ordered Work
 
@@ -10077,19 +10077,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2597 A conditional type proves no conformance in its generic
-  body**
+- [ ] **R2601 A method or operator on a conditional type finds no trait
+  member in its generic body**
 
-  `def g[n: Int](x: Int if n > 0 else Float64) -> Int` whose body copies
-  (`var y = x`) or prints `x` fails with "cannot copy non-Copyable type
-  'element'" or "does not conform to trait 'Writable'", where the pin
-  runs `g[1](3)` and prints `3`.
-  - Cause: `Checker::conformance` in `traits.rs` answers `Unknown` for a
-    `Dependent` type other than a tabulated list's spread, so a `Cond`
-    over two types never conforms to the traits both arms conform to.
-  - Probe: `-> type_of(x)` returning `x` fails with the same copy error
-    at the `return`.
-  - Found while landing R2588 (2026-11-25).
+  `x.copy()` in `def g[n: Int](x: Int if n > 0 else Float64)` fails with
+  "type 'Int if 0 < n else Float64' has no method 'copy'", where the pin
+  resolves it through `Copyable`, which both arms conform to, and prints
+  `3` for `g[1](3)`.
+  - Cause: method resolution (`resolve_method` in
+    `checker/method_calls/resolution.rs`) reaches a trait's requirements
+    only through `refined_bound` on a `Param` or `Assoc` receiver, and a
+    `Dependent` `Cond` receiver has no bound list.
+  - The conditional's bound is the traits both arms conform to
+    (`Checker::conformance` already answers each one); the dispatch then
+    records it as a refined bound, as a downcast receiver does.
+  - Probe: `var z = x.copy()` then `print(z)`, as above.
+  - Probe: `print(x == x)` fails with "operator '==' is not defined for
+    Int if 0 < n else Float64 and …", where the pin prints `True`
+    through `Equatable`.
+  - Found while landing R2597 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameter typed by a conditional over a value binder (`x: Int if n >
+  0 else Float64`) now conforms, inside its generic body, to every trait
+  both arms conform to, as at the pin (R2597): copying or printing `x`
+  no longer fails with "cannot copy non-Copyable type 'element'" or
+  "does not conform to trait 'Writable'", and a copy is still rejected
+  when one arm is not copyable.
+
 - A struct method's annotation that calls an overloaded module function
   now selects among every overload, declared ahead of the struct's method
   signatures in source order, as upstream resolves a callee's overload set
