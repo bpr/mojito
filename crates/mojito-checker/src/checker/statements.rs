@@ -2374,9 +2374,10 @@ impl Checker {
                     return Err(TypeError::ParametricConstruction(shown));
                 }
                 if type_params.is_empty()
-                    && let Some(mismatch) = annotation
-                        .as_ref()
-                        .and_then(|annotation| self.type_initializer_mismatch(annotation, value))
+                    && let Some(mismatch) = annotation.as_ref().and_then(|annotation| {
+                        self.type_initializer_mismatch(annotation, value)
+                            .or_else(|| self.value_initializer_mismatch(annotation, value))
+                    })
                 {
                     return Err(mismatch);
                 }
@@ -4797,11 +4798,11 @@ impl Checker {
         // Resolve and classify the annotation, so a declared type is not
         // silently discarded (mirrors associated-member declarations): a
         // value type declares a value body, converted to it.
-        let declared = match ty
+        let requirement = ty
             .map(|annotation| self.ct_member_req_from_anno(type_params, annotation))
-            .transpose()?
-        {
-            Some(CtMemberReq::Value(declared)) => Some(declared),
+            .transpose()?;
+        let declared = match &requirement {
+            Some(CtMemberReq::Value(declared)) => Some(declared.clone()),
             _ => None,
         };
         // The whole declared list, as upstream's generator declares it: an
@@ -4836,12 +4837,8 @@ impl Checker {
             if origin_value {
                 return Ok(AliasBody::OriginValue);
             }
-            // A `Bool` annotation admits a proposition as well as a value;
-            // the type of all types admits a type, as an unannotated body.
-            let declares_type = declared
-                .as_ref()
-                .is_none_or(|declared| matches!(declared.kind(), TyKind::TypeType));
-            if let Some(declared) = declared.as_ref().filter(|_| !declares_type) {
+            // A `Bool` annotation admits a proposition as well as a value.
+            if let Some(declared) = &declared {
                 return match self.lower_parametric_value(&decls, value, Some(declared)) {
                     Ok(body) => Ok(AliasBody::Value(body)),
                     Err(error) => match self.compile_predicate_alias_body(&decls, value) {
@@ -4865,13 +4862,12 @@ impl Checker {
                 Err(MemberBodyError::NotAType) => None,
                 Err(MemberBodyError::Failed(type_error)) => Some(type_error),
             };
-            // A declared type of all types converts a value body, which no
-            // value converts to.
-            if let Some(declared) = &declared {
-                return self
-                    .lower_parametric_value(&decls, value, Some(declared))
-                    .map(AliasBody::Value)
-                    .map_err(|value_error| type_error.unwrap_or(value_error));
+            // A declared metatype converts a value body, which no value
+            // converts to.
+            if let Some(CtMemberReq::Type { bounds, .. }) = &requirement {
+                return Err(type_error
+                    .or_else(|| self.parameterized_value_mismatch(&decls, value, bounds))
+                    .unwrap_or_else(|| MemberBodyError::NotAType.into_error()));
             }
             let predicate_error = match self.compile_predicate_alias_body(&decls, value) {
                 Ok(constraint) => return Ok(AliasBody::Predicate(Box::new(constraint))),

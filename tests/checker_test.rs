@@ -1311,7 +1311,59 @@ fn a_parameterized_member_declared_the_type_of_all_types_keeps_a_type_body() {
          def main():\n    pass\n",
     ] {
         let e = err_std(source);
-        assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+        assert!(
+            matches!(&e, TypeError::MetatypeConversion { expected, .. } if expected == "__TypeOfAllTypes"),
+            "got {e:?}"
+        );
+    }
+}
+
+#[test]
+fn a_type_of_all_types_requirement_admits_a_type_witness() {
+    // `!kgen.type` admits every type, so a trait requirement it declares
+    // is a type requirement, plain or parameterized, as at the pin.
+    let checked = checked_with_std(
+        "trait HasRaw:\n    comptime Raw: __mlir_type.`!kgen.type`\n    \
+         comptime Lanes[n: Int]: __mlir_type.`!kgen.type`\n\n\
+         struct S(HasRaw):\n    comptime Raw: __mlir_type.`!kgen.type` = Int\n    \
+         comptime Lanes[n: Int]: __mlir_type.`!kgen.type` = SIMD[DType.int64, n]\n\n\
+         def main():\n    var x: S.Raw = 5\n    var y: S.Lanes[2] = SIMD[DType.int64, 2](3, 4)\n    \
+         print(x, y)\n",
+    );
+    assert!(checked.is_ok(), "got {:?}", checked.err());
+    // A value witnesses no type requirement, and no value body converts to
+    // a metatype.
+    let e = err_std(
+        "trait HasRaw:\n    comptime Raw: __mlir_type.`!kgen.type`\n\n\
+         struct S(HasRaw):\n    comptime Raw = 3\n\n\
+         def main():\n    pass\n",
+    );
+    assert!(
+        matches!(e, TypeError::TraitComptimeMemberMismatch { .. }),
+        "got {e:?}"
+    );
+    for (source, expected) in [
+        (
+            "struct S:\n    comptime X: __mlir_type.`!kgen.type` = 3\n\n\
+             def main():\n    pass\n",
+            "__TypeOfAllTypes",
+        ),
+        (
+            "struct S:\n    comptime X: Movable = 3\n\n\
+             def main():\n    pass\n",
+            "Movable",
+        ),
+        (
+            "comptime R[i: Int]: Movable = i\n\n\
+             def main():\n    pass\n",
+            "Movable",
+        ),
+    ] {
+        let e = err_std(source);
+        assert!(
+            matches!(&e, TypeError::MetatypeConversion { expected: got, .. } if got == expected),
+            "got {e:?}"
+        );
     }
 }
 

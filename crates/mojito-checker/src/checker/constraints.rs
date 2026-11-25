@@ -263,7 +263,16 @@ impl Checker {
                 params: params.to_vec(),
             });
         }
-        Ok(CtMemberReq::Value(self.emit_expr_type(annotation)?))
+        // Upstream's `!kgen.type` admits every type, so it declares a type
+        // member bounded by the type of all types, which implies no trait.
+        let declared = self.emit_expr_type(annotation)?;
+        if matches!(declared.kind(), TyKind::TypeType) {
+            return Ok(CtMemberReq::Type {
+                bounds: vec![mojito_types::types::TYPE_OF_ALL_TYPES.to_string()],
+                params: params.to_vec(),
+            });
+        }
+        Ok(CtMemberReq::Value(declared))
     }
 
     /// `conformance_conditions` are the struct's conditional conformances: a
@@ -372,6 +381,18 @@ impl Checker {
                             _ => raw_origin_value_unsupported(&found),
                         });
                     }
+                    // A type requirement converts no value body, as upstream
+                    // converts the body's type to the declared metatype.
+                    if let Some(mismatch) = member
+                        .ty
+                        .as_ref()
+                        .filter(|_| matches!(requirement, Some(CtMemberReq::Type { .. })))
+                        .and_then(|annotation| {
+                            self.value_initializer_mismatch(annotation, &member.value)
+                        })
+                    {
+                        return Err(mismatch);
+                    }
                     let _lifting = self.lifting_position();
                     let mut value = self.eval_associated_ct(&member.value)?;
                     if let Some(CtMemberReq::Value(declared)) = &requirement {
@@ -385,12 +406,10 @@ impl Checker {
                     return Ok::<_, TypeError>((Some(value), None));
                 }
                 // A value annotation declares a value body; without one, or
-                // under the type of all types, the body is evaluated under
-                // its binders, and a type result is the type template, as
-                // upstream keeps a result `!kgen.type` admits.
-                let as_type = (!matches!(&requirement, Some(CtMemberReq::Value(ty))
-                    if !matches!(ty.kind(), TyKind::TypeType)))
-                .then(|| {
+                // under a metatype, the body is evaluated under its binders,
+                // and a type result is the type template, as upstream keeps a
+                // result its metatype admits.
+                let as_type = (!matches!(&requirement, Some(CtMemberReq::Value(_)))).then(|| {
                     let decls = own_decls.clone();
                     // The whole list is open while the body is lowered, an
                     // origin binder numbered past the struct's, so an
@@ -417,6 +436,16 @@ impl Checker {
                 });
                 let template = match as_type {
                     Some(Ok(template)) => template,
+                    // A declared metatype converts a value body, which no
+                    // value converts to.
+                    Some(Err(MemberBodyError::NotAType))
+                        if let Some(CtMemberReq::Type { bounds, .. }) = &requirement =>
+                    {
+                        let decls = self.classify_param_list(&member_owner, &member.params)?;
+                        return Err(self
+                            .parameterized_value_mismatch(&decls, &member.value, bounds)
+                            .unwrap_or_else(|| MemberBodyError::NotAType.into_error()));
+                    }
                     Some(Err(error)) if matches!(requirement, Some(CtMemberReq::Type { .. })) => {
                         return Err(error.into_error());
                     }

@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait `comptime` requirement declared `__mlir_type.`!kgen.type``,
+  plain or parameterized, is now a type requirement a type witnesses, as
+  at the pin (R2595): `trait HasRaw: comptime Raw:
+  __mlir_type.`!kgen.type`` with `comptime Raw: __mlir_type.`!kgen.type` =
+  Int` in a conformer no longer stops with "does not match the
+  requirement", and `var x: S.Raw = 5` prints `5`. A value body under a
+  metatype (`comptime X: Movable = 3` or `= 3` under `!kgen.type`) in a
+  struct or a parameterized alias is now rejected with the pin's "cannot
+  implicitly convert 'IntLiteral[3]' value to 'Movable'".
+
 - A loan now names an origin and borrows nothing exclusively, as
   upstream's references do (R1160). A live `Pointer`, `Span`, slice, view,
   iterator, or `ref`-field holder keeps the place it names alive, and only

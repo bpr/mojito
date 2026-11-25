@@ -2,7 +2,8 @@
 # (`__TypeOfAllTypes`), spelled directly, through a module alias, or through
 # a struct's member alias, binds any type, forwarded `AnyType` binders and
 # the metatype itself included. A parameterized member or generic alias it
-# declares keeps a type body as its generator.
+# declares keeps a type body as its generator, and a trait requirement it
+# declares, plain or parameterized, is a type requirement a type witnesses.
 comptime KT = __mlir_type.`!kgen.type`
 comptime Raw[i: Int]: __mlir_type.`!kgen.type` = Int
 comptime Packed[*Ts: AnyType]: __mlir_type.`!kgen.type` = Tuple[*Ts]
@@ -14,6 +15,20 @@ struct Meta:
         `!kgen.param_list<`, elt_type, `>`
     ]
     comptime Lanes[n: Int]: Self.KGENTypeType = SIMD[DType.int64, n]
+
+
+trait HasRaw:
+    comptime Raw: __mlir_type.`!kgen.type`
+    comptime Wide[n: Int]: __mlir_type.`!kgen.type`
+
+
+struct Witness(HasRaw):
+    comptime Raw: __mlir_type.`!kgen.type` = Int
+    comptime Wide[n: Int]: __mlir_type.`!kgen.type` = SIMD[DType.int64, n]
+
+
+struct Holder[T: HasRaw]:
+    comptime R = Self.T.Raw
 
 
 def direct[T: __mlir_type.`!kgen.type`]() -> Int:
@@ -54,3 +69,7 @@ def main():
     var packed: Packed[Int, Bool] = (8, True)
     var lanes: Meta.Lanes[2] = SIMD[DType.int64, 2](9, 10)
     print(raw, packed[0], packed[1], lanes[1])
+    var witnessed: Witness.Raw = 11
+    var held: Holder[Witness].R = 12
+    var wide: Witness.Wide[2] = SIMD[DType.int64, 2](13, 14)
+    print(witnessed, held, wide[1])

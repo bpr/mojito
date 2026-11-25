@@ -5035,10 +5035,23 @@ impl Checker {
             .evaluating(|| self.compile_dependent_ct_expr(value))
             .ok()?;
         let found = built.meta().as_value()?;
-        Some(TypeError::MetatypeConversion {
-            found: found.to_string(),
-            expected: TyKind::Trait(self.binder_metatype_traits(&bounds)).to_string(),
-        })
+        Some(self.metatype_conversion(found, &bounds))
+    }
+
+    /// The rejection of a parameterized body that evaluates to a value
+    /// under a type requirement bounded by `bounds` (``comptime Raw[i: Int]:
+    /// Movable = i``), evaluated under its binders `decls`:
+    /// upstream converts the value's type to the declared metatype, which
+    /// no value type converts to. `None` when the body evaluates to no value.
+    pub(super) fn parameterized_value_mismatch(
+        &self,
+        decls: &[ParamDecl],
+        value: &Expr,
+        bounds: &[String],
+    ) -> Option<TypeError> {
+        let built = self.lower_parametric_value(decls, value, None).ok()?;
+        let found = built.meta().as_value()?;
+        Some(self.metatype_conversion(found, bounds))
     }
 
     /// The rejection of the type `ty` bound where a value of `expected` is
@@ -5374,6 +5387,15 @@ impl Checker {
             .filter(|expected| expected.kind().is_non_pointer_struct())?;
         let compiled = self.compile_dependent_ct_expr(value).ok()?;
         self.converted_parameter_value(value, &compiled, &expected)
+    }
+
+    /// The conversion of a value of type `found` to the metatype of types
+    /// bounded by `bounds`, which never succeeds.
+    fn metatype_conversion(&self, found: &Ty, bounds: &[String]) -> TypeError {
+        TypeError::MetatypeConversion {
+            found: found.to_string(),
+            expected: TyKind::Trait(self.binder_metatype_traits(bounds)).to_string(),
+        }
     }
 
     /// Require a raw list binding's annotation, if any, to name the list's
