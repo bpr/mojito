@@ -4755,8 +4755,12 @@ impl Checker {
             if origin_value {
                 return Ok(AliasBody::OriginValue);
             }
-            // A `Bool` annotation admits a proposition as well as a value.
-            if let Some(declared) = &declared {
+            // A `Bool` annotation admits a proposition as well as a value;
+            // the type of all types admits a type, as an unannotated body.
+            let declares_type = declared
+                .as_ref()
+                .is_none_or(|declared| matches!(declared.kind(), TyKind::TypeType));
+            if let Some(declared) = declared.as_ref().filter(|_| !declares_type) {
                 return match self.lower_parametric_value(&decls, value, Some(declared)) {
                     Ok(body) => Ok(AliasBody::Value(body)),
                     Err(error) => match self.compile_predicate_alias_body(&decls, value) {
@@ -4780,6 +4784,14 @@ impl Checker {
                 Err(MemberBodyError::NotAType) => None,
                 Err(MemberBodyError::Failed(type_error)) => Some(type_error),
             };
+            // A declared type of all types converts a value body, which no
+            // value converts to.
+            if let Some(declared) = &declared {
+                return self
+                    .lower_parametric_value(&decls, value, Some(declared))
+                    .map(AliasBody::Value)
+                    .map_err(|value_error| type_error.unwrap_or(value_error));
+            }
             let predicate_error = match self.compile_predicate_alias_body(&decls, value) {
                 Ok(constraint) => return Ok(AliasBody::Predicate(Box::new(constraint))),
                 Err(predicate_error) => predicate_error,

@@ -384,10 +384,13 @@ impl Checker {
                     }
                     return Ok::<_, TypeError>((Some(value), None));
                 }
-                // A value annotation declares a value body; without one, the
-                // body is evaluated under its binders, and a type result is
-                // the type template, as upstream keeps it.
-                let as_type = (!matches!(requirement, Some(CtMemberReq::Value(_)))).then(|| {
+                // A value annotation declares a value body; without one, or
+                // under the type of all types, the body is evaluated under
+                // its binders, and a type result is the type template, as
+                // upstream keeps a result `!kgen.type` admits.
+                let as_type = (!matches!(&requirement, Some(CtMemberReq::Value(ty))
+                    if !matches!(ty.kind(), TyKind::TypeType)))
+                .then(|| {
                     let decls = own_decls.clone();
                     // The whole list is open while the body is lowered, an
                     // origin binder numbered past the struct's, so an

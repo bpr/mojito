@@ -1,8 +1,11 @@
 # A parameter typed by upstream's KGEN metatype `!kgen.type`
 # (`__TypeOfAllTypes`), spelled directly, through a module alias, or through
 # a struct's member alias, binds any type, forwarded `AnyType` binders and
-# the metatype itself included.
+# the metatype itself included. A parameterized member or generic alias it
+# declares keeps a type body as its generator.
 comptime KT = __mlir_type.`!kgen.type`
+comptime Raw[i: Int]: __mlir_type.`!kgen.type` = Int
+comptime Packed[*Ts: AnyType]: __mlir_type.`!kgen.type` = Tuple[*Ts]
 
 
 struct Meta:
@@ -10,6 +13,7 @@ struct Meta:
     comptime ListOf[elt_type: Self.KGENTypeType] = __mlir_type[
         `!kgen.param_list<`, elt_type, `>`
     ]
+    comptime Lanes[n: Int]: Self.KGENTypeType = SIMD[DType.int64, n]
 
 
 def direct[T: __mlir_type.`!kgen.type`]() -> Int:
@@ -46,3 +50,7 @@ def main():
     print(member[Meta.KGENTypeType]())
     print(take[Int](7))
     print(pack[5, 6, 7]())
+    var raw: Raw[0] = 1
+    var packed: Packed[Int, Bool] = (8, True)
+    var lanes: Meta.Lanes[2] = SIMD[DType.int64, 2](9, 10)
+    print(raw, packed[0], packed[1], lanes[1])

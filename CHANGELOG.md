@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A parameterized member or generic alias declared with the type of all
+  types (`comptime Raw[i: Int]: __mlir_type.`!kgen.type` = Int`) now keeps
+  a type body as its generator, as upstream does, instead of stopping with
+  "type mismatch for a compile-time value declared with a type: expected
+  __TypeOfAllTypes, found Int" (R2591). A value body is still rejected, as
+  at the pin.
+
 - A parameterized type member whose body names an origin binder or
   spreads a type pack is a generator when read unapplied, as upstream reads
   any parameterized member (R2590): `comptime I = List[Int].IteratorType;

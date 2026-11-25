@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2595**.
+Next free ID: **R2596**.
 
 ## Ordered Work
 
@@ -7817,20 +7817,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2591 A parameterized member or generic alias declared
-  `__mlir_type.`!kgen.type`` rejects a type body**
+- [ ] **R2595 A trait `comptime` requirement declared
+  `__mlir_type.`!kgen.type`` admits no type witness**
 
-  `comptime Raw[i: Int]: __mlir_type.`!kgen.type` = Int`, in a struct or
-  at module scope, stops with "type mismatch for a compile-time value
-  declared with a type: expected __TypeOfAllTypes, found Int", where the
-  pin accepts it and `var x: Raw[0] = 1` prints `1`.
-  - Cause: the declared type makes the body a value
-    (`CtMemberReq::Value`), and `lower_parametric_value` converts a type
-    result through `type_value_mismatch`, which no `!kgen.type`
-    declaration passes; upstream keeps a type result as the generator.
-  - The parameter-free `comptime Raw: __mlir_type.`!kgen.type` = Int`
-    already works.
-  - Found while landing R2561 (2026-11-25).
+  `trait HasRaw: comptime Raw: __mlir_type.`!kgen.type`` with `struct
+  S(HasRaw): comptime Raw: __mlir_type.`!kgen.type` = Int` stops with
+  "struct 'S' comptime member 'Raw' does not match the requirement from
+  trait 'HasRaw'", where the pin accepts it and `var x: S.Raw = 5` prints
+  `5`.
+  - Cause: `ct_member_req_from_anno` makes the type of all types a value
+    requirement (`CtMemberReq::Value`), and `ct_member_satisfies` takes
+    no `CtValue::Type` witness for it; upstream's `!kgen.type` admits
+    every type, so the requirement is a type requirement, read through a
+    bound as an opaque type (`T.Raw[Int(0)]`).
+  - Probe: the program above.
+  - Probe: the parameterized `comptime Raw[i: Int]:
+    __mlir_type.`!kgen.type`` requirement witnessed by `comptime Raw[i:
+    Int]: __mlir_type.`!kgen.type` = Int` fails the same way: the
+    requirement is `generator_requirement`'s value generator, and
+    `verify_conformance` matches no `MemberTemplate::Type` witness to it.
+  - Found while landing R2591 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -1287,6 +1287,35 @@ fn a_parameterized_mlir_attr_member_whose_body_is_a_type_is_a_type_template() {
 }
 
 #[test]
+fn a_parameterized_member_declared_the_type_of_all_types_keeps_a_type_body() {
+    let checked = checked_with_std(
+        "comptime Raw[i: Int]: __mlir_type.`!kgen.type` = Int\n\n\
+         struct S:\n    \
+         comptime Lanes[n: Int]: __mlir_type.`!kgen.type` = SIMD[DType.int64, n]\n\n\
+         def main():\n    \
+         var x: Raw[0] = 1\n    \
+         var y: S.Lanes[2] = SIMD[DType.int64, 2](3, 4)\n    \
+         print(x, y)\n",
+    )
+    .expect("checks");
+    let types: Vec<&str> = checked.conformances().parameterized_associated["S"]
+        .iter()
+        .map(|member| member.name.as_str())
+        .collect();
+    assert_eq!(types, ["Lanes"]);
+    // No value converts to the type of all types, as at the pin.
+    for source in [
+        "comptime Raw[i: Int]: __mlir_type.`!kgen.type` = i\n\n\
+         def main():\n    print(Raw[0])\n",
+        "struct S:\n    comptime Raw[i: Int]: __mlir_type.`!kgen.type` = 3\n\n\
+         def main():\n    pass\n",
+    ] {
+        let e = err_std(source);
+        assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+    }
+}
+
+#[test]
 fn closes_an_earlier_member_as_a_bracket_value() {
     let boxed = "struct Box[n: Int]:\n    def __init__(out self):\n        pass\n\n\
                  struct S:\n    comptime n = 3\n    comptime B = Box[Self.n]\n\n";
