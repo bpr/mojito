@@ -3012,13 +3012,12 @@ checker mutably brackets), as upstream's parameter evaluator emits
 speculatively, reads the callee and type off the ops it emitted, folds
 them into an attribute, and erases them: the evaluation erases every
 record it created on syntax no node holds, and the check reads the
-callee off the record before then (`run_time_typing`). What is still
-pending when the check ends is on syntax a site typed only to evaluate it
-outside an evaluation; a store's synthetic computed value
-(`synthetic_store_value`), which names a register rather than an op, is
-erased once its setter is selected (`release_synthetic_store_value`). The
-handoff discards what is still pending, and `--timings` counts it
-(`emit.discarded_records`), so every fact handed off sits on a node. The handoff
+callee off the record before then (`run_time_typing`). A store's
+synthetic computed value (`synthetic_store_value`), which names a
+register rather than an op, is erased once its setter is selected
+(`release_synthetic_store_value`). So nothing is pending when the check
+ends, which the handoff asserts, and every fact handed off sits on a
+node. The handoff
 moves the nodes out, each with its facts, less any record a cleared fact
 left empty (`Emitter::into_nodes`, from `body_carry.rs`'s
 `HandoffStores::into_program`), with the check's desugars by node, each

@@ -11871,7 +11871,8 @@ fn syntax_typed_only_to_evaluate_it_leaves_no_record_for_the_handoff() {
     // An origin alias's `Origin(...)` construction, a parameter-position
     // `==`'s dunder call, and a concluding `comptime match` case's
     // condition are typed only to evaluate them: the evaluation erases
-    // their records, so the handoff discards none.
+    // their records, so nothing is pending at the handoff, which asserts
+    // it.
     let source = "\
 struct S[o: Origin]:
     def __init__(out self):
@@ -11898,16 +11899,5 @@ def main():
     _ = s^
     print(enabled[\"safe\"](), pick[True]())
 ";
-    mojito::timing::enable();
     check_with_std(source).expect("the program checks");
-    let report = mojito::timing::report();
-    let discarded: Vec<&str> = report
-        .lines()
-        .filter(|line| line.contains("emit.discarded_records"))
-        .collect();
-    assert!(!discarded.is_empty(), "{report}");
-    assert!(
-        discarded.iter().all(|line| line.ends_with("\t0")),
-        "{discarded:?}"
-    );
 }

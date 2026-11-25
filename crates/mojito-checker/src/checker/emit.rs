@@ -23,9 +23,7 @@
 //! upstream's parameter evaluator emits speculatively, reads the callee and
 //! type off the ops it emitted, folds them into an attribute, and erases
 //! them: closing it erases every record the evaluation created on syntax no
-//! node holds. A record still pending when the check ends is on syntax a
-//! site typed only to evaluate it outside an evaluation; the handoff
-//! discards it, and `emit.discarded_records` counts it, so every fact
+//! node holds. So nothing is pending when the check ends, and every fact
 //! handed off is an attribute on an emitted op.
 //!
 //! The emitter logs and journals as the fact stores do (`fact_store`): a
@@ -378,9 +376,10 @@ impl Emitter {
     }
 
     /// The emitted nodes, each holding the facts set on it, less any
-    /// record a cleared fact left empty. A record still pending is on
-    /// syntax a site typed only to evaluate it outside an evaluation: the
-    /// handoff discards it, as it does the constructions' syntax.
+    /// record a cleared fact left empty. Nothing is pending: every site
+    /// types its evaluation-only syntax inside an evaluation, which erases
+    /// what it created, so every record is on a node. The constructions'
+    /// syntax does not cross the handoff.
     pub(super) fn into_nodes(self) -> EmittedNodes {
         let (mut on_nodes, mut opless) = (0u64, 0u64);
         let mut seal = |op: bool, facts: &mut Option<Box<NodeFacts>>| {
@@ -398,18 +397,11 @@ impl Emitter {
         for node in &mut expressions {
             seal(node.op.is_some(), &mut node.facts);
         }
-        let pending = self.pending.into_inner();
         debug_assert!(
-            pending.values().all(|facts| facts.match_plan.is_none()
-                && facts.match_warnings.is_none()
-                && facts.declared_leaves.is_none()),
-            "a statement's record was left on no node"
+            self.pending.is_empty(),
+            "a record was left on syntax no node holds"
         );
         timing::count("emit.node_records", on_nodes);
-        timing::count(
-            "emit.discarded_records",
-            pending.values().filter(|facts| !facts.is_empty()).count() as u64,
-        );
         timing::count("emit.opless_nodes", opless);
         EmittedNodes {
             expressions,
@@ -887,23 +879,14 @@ mod tests {
     }
 
     #[test]
-    fn a_record_no_node_takes_is_discarded_at_the_handoff() {
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a record was left on syntax no node holds")]
+    fn a_record_no_node_holds_fails_the_handoff() {
         let (entered, evaluated) = (statement(), truth());
         let mut emitter = Emitter::default();
         emitter.enter_statement(&entered);
-        emitter
-            .record(value(&entered).source_span())
-            .truthiness_condition = true;
         emitter.record(evaluated.source_span()).truthiness_condition = true;
-        assert!(emitter.get(&evaluated.source_span()).is_some());
-        let nodes = emitter.into_nodes();
-        assert_eq!(
-            nodes
-                .records()
-                .map(|(at, _)| at.clone())
-                .collect::<Vec<_>>(),
-            vec![value(&entered).source_span()]
-        );
+        emitter.into_nodes();
     }
 
     #[test]

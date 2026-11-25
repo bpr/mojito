@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check's handoff asserts that no record is pending instead of
+  discarding what is (R2579), as upstream's emitter leaves no op it
+  emitted only to evaluate: every site now types its evaluation-only
+  syntax inside an evaluation. The `emit.discarded_records` timing
+  counter is removed. No output, diagnostic, or MIR text changes.
+
 - The builders that run before or beside a body's check leave no record on
   syntax no node holds (R2578). A generic `comptime` alias's body is
   evaluated to its attribute inside an evaluation, as are an argument a

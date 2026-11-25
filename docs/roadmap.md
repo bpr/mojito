@@ -11799,23 +11799,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2579 The handoff still discards pending records instead of
-  asserting there are none**
-
-  `Emitter::into_nodes` drops what is still pending and counts it
-  (`emit.discarded_records`), where upstream's emitter leaves no op it
-  emitted only to evaluate.
-  - Once every site types its evaluation-only syntax in an evaluation,
-    replace the discard and the counter with a `debug_assert!` that
-    nothing is pending.
-  - Remove the residue wording from `emit.rs`, `docs/architecture.md`,
-    and `docs/symbol-map.md`.
-  - Census: `mojito check --timings` over every `assets/**/*.mojo`, and
-    `mojito precompile stdlib/std --timings` (0 today).
-  - Found while landing R2573 (2026-11-24).
-  - Depends on R2574, R2575, R2576, R2577, R2578.
-  - Model: Opus, Not Planned.
-
 - [ ] **R611 A package unit's facts name the package check's binding
   owners**
 
