@@ -3001,7 +3001,11 @@ spelled literal construction, a match pattern's field projection, a
 `comptime match` or-pattern alternative's binding value, a conformed
 trait's `comptime` default typed for one conformer's witness, the element
 `base[i]` a callable local's call `base[i](args)` types to find its
-`__call__`) is typed
+`__call__`, a generic alias's body evaluated to its attribute, an argument
+a compile-time application types to read its conversion source, a type
+application a compile-time selection reads an instance off, a member's
+object resolved as a type operand, and the silent build behind a type
+question such as `denotes_type_value` or `denotation`) is typed
 inside an evaluation (`Checker::evaluating`, or the
 `Checker::open_evaluation`/`close_evaluation` pair a site holding the
 checker mutably brackets), as upstream's parameter evaluator emits
@@ -3010,7 +3014,10 @@ them into an attribute, and erases them: the evaluation erases every
 record it created on syntax no node holds, and the check reads the
 callee off the record before then (`run_time_typing`). What is still
 pending when the check ends is on syntax a site typed only to evaluate it
-outside an evaluation; the handoff discards it, and `--timings` counts it
+outside an evaluation; a store's synthetic computed value
+(`synthetic_store_value`), which names a register rather than an op, is
+erased once its setter is selected (`release_synthetic_store_value`). The
+handoff discards what is still pending, and `--timings` counts it
 (`emit.discarded_records`), so every fact handed off sits on a node. The handoff
 moves the nodes out, each with its facts, less any record a cleared fact
 left empty (`Emitter::into_nodes`, from `body_carry.rs`'s

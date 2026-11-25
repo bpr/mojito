@@ -3618,6 +3618,14 @@ impl Checker {
                     .iter()
                     .any(|function| function.symbol() == Some(target.as_str()))
             });
+        // The instance a construction's bracket list applies is evaluated
+        // to its type alone, as upstream's parameter evaluator folds a type
+        // application into an attribute.
+        let instance_type = |param_args: &[ParamArg]| {
+            self.evaluating(|| self.applied_type(&name, param_args))
+                .ok()
+                .map(|(ty, _)| ty)
+        };
         let candidates = |only: Option<&str>| -> Vec<_> {
             overloads
                 .iter()
@@ -3635,14 +3643,13 @@ impl Checker {
                             if struct_args.is_empty() {
                                 run_time_type()
                             } else {
-                                self.applied_type(&name, struct_args).ok().map(|(ty, _)| ty)
+                                instance_type(struct_args)
                             },
                             param_args,
                         ),
-                        (true, true) if !param_args.is_empty() => (
-                            self.applied_type(&name, param_args).ok().map(|(ty, _)| ty),
-                            [].as_slice(),
-                        ),
+                        (true, true) if !param_args.is_empty() => {
+                            (instance_type(param_args), [].as_slice())
+                        }
                         (true, true) => (
                             spelled
                                 .or(instance.as_ref())
@@ -3659,12 +3666,9 @@ impl Checker {
                     }
                     // A `Self` slot takes the instance a call is made on, or the
                     // struct a non-generic one constructs.
-                    let owner = instance.clone().or_else(|| {
-                        function
-                            .constructs()
-                            .then(|| self.applied_type(&name, &[]).ok().map(|(ty, _)| ty))
-                            .flatten()
-                    });
+                    let owner = instance
+                        .clone()
+                        .or_else(|| function.constructs().then(|| instance_type(&[])).flatten());
                     let (mut arguments, result, conversions) = self.applied_arguments(
                         &name,
                         function,

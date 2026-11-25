@@ -11799,27 +11799,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2578 Signature-time and alias-registration builders type
-  synthesized syntax outside an evaluation**
-
-  Builders that run before or beside a body's check spell syntax to
-  evaluate a parameter or attribute and type it outside
-  `Checker::evaluating`, so its records stay pending.
-  - Probe: `synthetic_store_value` (`augmented_store_copies_nothing.mojo`).
-  - Probe: `check_generic_comptime_alias`'s `record_declared_attributes`
-    (`comptime_alias_struct_generator.mojo`).
-  - Probe: `argument_source_type` under `applied_arguments`
-    (`getattr_param_member.mojo`).
-  - Probe: `named_type` under `member_type_operand_resolution`
-    (`struct_comptime_member_names_own_struct.mojo`, `T[4].other`).
-  - Probe: `applied_type` under `selection_at` for a signature default
-    (`signature_application_same_module_struct_default.mojo`,
-    `Tgt[_v=2] = Tgt.current()`).
-  - 6 records in all.
-  - Found while landing R2573 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2579 The handoff still discards pending records instead of
   asserting there are none**
 

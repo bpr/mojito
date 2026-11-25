@@ -5410,8 +5410,11 @@ impl Checker {
         if matches!(value, CtValue::Expr(read) if read.as_decl_ref().is_some()) {
             return actual.clone();
         }
+        // The argument is typed only to read its type off: the call's
+        // binding converts the value, not the syntax.
         let _position = self.comptime_position();
-        self.infer(expr).unwrap_or_else(|_| actual.clone())
+        self.evaluating(|| self.infer(expr))
+            .unwrap_or_else(|_| actual.clone())
     }
 
     /// The type of the compile-time value a member read's base spells when

@@ -944,6 +944,10 @@ impl Checker {
                 argument.value_source.clone_from(site);
             }
         }
+        // The value names a register, not an op: what selecting the setter
+        // left on it (the conversion's target among them) is on syntax no
+        // node holds.
+        self.emitter.borrow_mut().discard_unheld(value);
     }
 
     /// The nominal subscript `place`, of a `receiver` whose accessors form
@@ -2231,9 +2235,11 @@ impl Checker {
             ExprKind::FunctionType(_) | ExprKind::GeneratorType { .. } => {
                 self.callable_type(object)
             }
-            ExprKind::Identifier(name) => self.named_type(name, &[]),
+            // A type operand is evaluated to its type alone: its bracket
+            // arguments are the application's attributes, not ops.
+            ExprKind::Identifier(name) => self.evaluating(|| self.named_type(name, &[])),
             _ if let Some((name, args)) = object.bracket_application() => {
-                self.named_type(name, &args)
+                self.evaluating(|| self.named_type(name, &args))
             }
             // A member application (`M.Pair[A, B]`, `S[Int].Of[Bool]`) or an
             // index into a member (`M.Buf[n]`).

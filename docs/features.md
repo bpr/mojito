@@ -32,7 +32,10 @@ evaluate it is typed inside an evaluation that erases its records, as upstream
 erases the ops its parameter evaluator emits speculatively, a match pattern's
 projection typed only for its type and a conformed trait's `comptime` default
 typed for one conformer's witness and a callable local's element typed
-only to find its `__call__` among them (R2569, R2573, R2574, R2576, R2577). The checked
+only to find its `__call__` among them (R2569, R2573, R2574, R2576, R2577),
+as are a generic alias's body, a signature's compile-time application, and a
+type question's build, so no record is left on syntax no node holds anywhere
+in the fixture corpus or the bundled library (R2578). The checked
 tables are sealed from the emitted nodes, each op composed with its node's
 facts, and an occurrence the check emitted no node for is an internal error
 rather than a placeholder (R2567, R766). The check seals its own module at its

@@ -1302,7 +1302,11 @@ impl Checker {
     /// builder: `None` when it builds to a value. A type records what it
     /// denotes at its span (a type operand's fact, its bracket attributes).
     pub(super) fn type_operand_expression(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
-        if *self.build_ct(expr, Recording::Silent)?.meta() != MetaTy::Type {
+        if *self
+            .evaluating(|| self.build_ct(expr, Recording::Silent))?
+            .meta()
+            != MetaTy::Type
+        {
             return Ok(None);
         }
         self.build_ct(expr, Recording::Record)
@@ -1355,22 +1359,24 @@ impl Checker {
     /// Whether `expr` evaluates to a type, upstream's `emitExprType`
     /// question: a type-shaped expression whose compile-time value has the
     /// type metatype (`Int`, `pair[1, 2]`, `G[3]`), not a value constant
-    /// (`XS[1]`) or a trait.
+    /// (`XS[1]`) or a trait. The build is an evaluation: only its answer is
+    /// kept.
     pub(super) fn denotes_type_value(&self, expr: &Expr) -> bool {
         self.may_denote_type(expr)
-            && self
-                .build_ct(expr, Recording::Silent)
-                .is_ok_and(|built| *built.meta() == MetaTy::Type)
+            && self.evaluating(|| {
+                self.build_ct(expr, Recording::Silent)
+                    .is_ok_and(|built| *built.meta() == MetaTy::Type)
+            })
     }
 
     /// The pin's verdict on a type application that leaves a parameter it
-    /// cannot infer open (`Pointer[Int]`, whose `origin` has no default).
+    /// cannot infer open (`Pointer[Int]`, whose `origin` has no default),
+    /// evaluated as [`Self::denotes_type_value`]'s question is.
     pub(super) fn uninferred_type_application(&self, expr: &Expr) -> Option<TypeError> {
         if !self.may_denote_type(expr) {
             return None;
         }
-        self.build_ct(expr, Recording::Silent)
-            .err()
+        self.evaluating(|| self.build_ct(expr, Recording::Silent).err())
             .filter(|error| matches!(error, TypeError::CannotInferParam { .. }))
     }
 
@@ -3739,13 +3745,13 @@ impl Checker {
     }
 
     /// What `expr` builds to under the scopes open: `Some` type, or `None`
-    /// when it builds to a value. Builds silently: the caller records once
-    /// the type is accepted. A value that reads a type's member the type
-    /// lacks, or an alias left holed, answers as [`Self::denoted_type`]
-    /// reports it.
+    /// when it builds to a value. Builds silently, inside an evaluation: the
+    /// caller records once the type is accepted. A value that reads a type's
+    /// member the type lacks, or an alias left holed, answers as
+    /// [`Self::denoted_type`] reports it.
     fn denotation(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
         let built = self
-            .build_ct(expr, Recording::Silent)
+            .evaluating(|| self.build_ct(expr, Recording::Silent))
             .map_err(|error| self.missing_type_member(expr).unwrap_or(error))?;
         if *built.meta() == MetaTy::Type {
             return Ok(Some(mojito_types::types::DependentType::resolve(built)));

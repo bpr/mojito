@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The builders that run before or beside a body's check leave no record on
+  syntax no node holds (R2578). A generic `comptime` alias's body is
+  evaluated to its attribute inside an evaluation, as are an argument a
+  compile-time application types to read its conversion source
+  (`argument_source_type`), the instance type a compile-time selection
+  reads off a construction's bracket list (`selection_at`), a member's
+  object resolved as a type operand (`T[4].other`), and the silent build
+  behind `denotes_type_value`, `uninferred_type_application`,
+  `type_operand_expression`, and `denotation`, as upstream's parameter
+  evaluator folds each into an attribute and erases what it emitted. A
+  store's synthetic computed value is erased once its setter is selected.
+  The 6 records left in five fixtures are gone, so `emit.discarded_records`
+  is 0 across every fixture and the bundled library. No output,
+  diagnostic, or MIR text changes.
+
 - A call of a callable local through a subscript (`fns[0](5)`) leaves
   no record on syntax no node holds (R2577). The element `fns[0]` that
   `infer_element_call_method` spells to find a `__call__` is typed

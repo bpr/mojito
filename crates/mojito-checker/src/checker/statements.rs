@@ -4748,6 +4748,11 @@ impl Checker {
         // A generic origin value's attribute holds its binder, which only
         // an application closes.
         let origin_value = !decls.is_empty() && self.origin_values.contains_key(name);
+        // The body is evaluated to the alias's attribute, as upstream folds a
+        // `comptime` declaration's body and emits no op for it: what the
+        // evaluation types on syntax no node holds (a generator's spelled
+        // application) is erased once the attribute is read off.
+        let evaluation = self.open_evaluation();
         let body = (|| -> Result<AliasBody, TypeError> {
             if origin_value {
                 return Ok(AliasBody::OriginValue);
@@ -4798,6 +4803,7 @@ impl Checker {
                 None => predicate_error,
             })
         })();
+        self.close_evaluation(evaluation);
         // A struct no bracket list can leave open as a generator alias (its
         // open parameters are origins) is the struct's generator alone.
         let body = match body {
@@ -4806,8 +4812,10 @@ impl Checker {
         };
         let predicate_value = matches!(body, AliasBody::Predicate(_))
             .then(|| {
-                self.lower_parametric_value(&decls, value, Some(&Ty::bool()))
-                    .ok()
+                self.evaluating(|| {
+                    self.lower_parametric_value(&decls, value, Some(&Ty::bool()))
+                        .ok()
+                })
             })
             .flatten();
         self.comptime_aliases.insert(
