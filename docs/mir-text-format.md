@@ -1398,6 +1398,19 @@ for it. A reader of an older record, or of a bare trait name, gives the
 trait that one binder. The package format moves to `mojito-package 262`
 (R2216): a trait member's recorded signature no longer holds `_Self`.
 
+Schema 1.233 gives a `place.load` of a place ending at a `ref` field one
+meaning: it loads the handle the field's slot stores, typed as the field
+declares it, as upstream loads the field's `!lit.ref`, and the referent's
+value is a `ref.read` of that handle. A whole `ref` binding's slot still
+reads its referent. In 1.232 such a load whose destination was typed as the
+referent (or untyped, which the reader inferred as the referent) read
+through the stored handle instead; an older artifact's such loads are split
+as it loads, into a load of the handle into a fresh register and a
+`ref.read` of it into the original destination
+(`call_addresses::split_stored_handle_loads`, after every other upgrade).
+The syntax is unchanged. The package format moves to `mojito-package 280`
+(R2582).
+
 Schema 1.232 gives a `ref.make` one meaning: a borrow of the storage its
 place designates. A place ending at a `ref` field designates the field's
 slot, so a `ref.make` of it is typed `ref (ref T)`, and the handle the field

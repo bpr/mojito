@@ -5823,3 +5823,70 @@ fn older_stored_handle_forwards_split_into_a_slot_borrow_and_a_read() {
         .expect("parse artifact");
     assert_eq!(current.program.functions[0].1.body.instrs.len(), 1);
 }
+
+/// Schema 1.233 loads only the handle a `ref` field's place stores; a 1.232
+/// `place.load` of the field typed as its referent read through that
+/// handle, and is read as a load of the handle and a `ref.read` of it into
+/// its destination.
+#[test]
+fn older_stored_handle_loads_split_into_a_handle_load_and_a_read() {
+    let stored: Ty = TyKind::Ref(RefTy {
+        referent: Ty::int(),
+        origin: Origin::Static,
+        mutability: Mutability::Mutable,
+        address_space: mojito_types::types::AddressSpaceSlot::GENERIC,
+    })
+    .into();
+    let holder: Ty = TyKind::Struct("Holder".into(), Vec::new()).into();
+    let mut place = MirPlace::root(0, Some(holder));
+    place.project(Proj::Field("src".into()), stored.clone());
+    let mut program = program_with(vec![(
+        "f".into(),
+        function_with(
+            vec![Ty::int()],
+            vec![MirInstr::LoadPlace {
+                dest: Reg(0),
+                place: place.clone(),
+            }],
+        ),
+    )]);
+    program.declarations.structs.push(MirStructDeclaration {
+        name: "Holder".into(),
+        module: String::new(),
+        fields: vec![("src".into(), stored.clone())],
+        ref_fields: vec!["src".into()],
+        fieldwise_init: false,
+        param_decls: Vec::new(),
+        explicit_destructors: HashMap::new(),
+        provided_defaults: Vec::new(),
+        explicit_destroy: None,
+        conformances: Vec::new(),
+        declared: Vec::new(),
+        register_passable: false,
+        associated_types: Vec::new(),
+        parameterized_associated_types: Vec::new(),
+        associated_values: Vec::new(),
+        parameterized_associated_values: Vec::new(),
+        witness_tables: Vec::new(),
+        members: Vec::new(),
+    });
+    let older = legacy_text(&program, 232, &[]);
+    let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    let function = &parsed.program.functions[0].1;
+    assert!(
+        matches!(
+            function.body.instrs.as_slice(),
+            [
+                MirInstr::LoadPlace { dest: Reg(1), place: load },
+                MirInstr::ReadRef { dest: Reg(0), reference: Reg(1) },
+            ] if crate::mir::call_addresses::same_storage(load, &place)
+        ),
+        "{:?}",
+        function.body.instrs
+    );
+    assert_eq!(function.reg_types[&1], stored);
+    assert_eq!(function.reg_types[&0], Ty::int());
+    let current = artifact(write::program(&program).as_bytes(), "unit.mir".to_string())
+        .expect("parse artifact");
+    assert_eq!(current.program.functions[0].1.body.instrs.len(), 1);
+}

@@ -22,7 +22,10 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         // The read half of `c[i] += e` on a user struct goes through
         // `c.__getitem__(i)`; any other place reads its slot / SIMD lane.
-        let holds_reference = prog.holds_reference(function, place);
+        // A whole `ref` binding's slot reads its referent; a `ref` field's
+        // place loads the handle it stores, which a `ref.read` reads
+        // through.
+        let reads_binding = place.proj.is_empty() && prog.holds_reference(function, place);
         let value = if let Some((element, suffix)) =
             super::references::pointer_element(&vars[place.root as usize], place, regs)?
         {
@@ -47,14 +50,14 @@ impl VmBackend {
             regs,
         )? {
             // Reading through a reference-alias root (a `mut`/`ref self`
-            // receiver) reaches the referent in one handle read. A
-            // `ref[origin]`-typed field stored behind that alias yields
-            // *another* handle, which needs the same second dereference the
-            // plain-root branch applies — but only then: an alias that
-            // already reaches its referent (a directly aliased value) must
-            // keep it, so gate on the loaded value still being a handle.
+            // receiver) reaches the referent in one handle read. A whole
+            // `ref` binding behind that alias yields *another* handle, which
+            // needs the same second dereference the plain-root branch
+            // applies — but only then: an alias that already reaches its
+            // referent (a directly aliased value) must keep it, so gate on
+            // the loaded value still being a handle.
             let value = self.read_reference(&reference, frame_id, vars)?;
-            if matches!(value, Value::Ref { .. }) && holds_reference {
+            if matches!(value, Value::Ref { .. }) && reads_binding {
                 self.read_reference(&value, frame_id, vars)?
             } else {
                 value
@@ -66,18 +69,14 @@ impl VmBackend {
             // (`self.value.items` through a `ref` field,
             // `self.src[]` on `Pointer[List[T], o]` storage) cannot
             // walk raw storage — route it through the reference walk,
-            // which chases stored handles mid-projection.
+            // which chases stored handles mid-projection. It projects
+            // below its root, so it is never a whole binding's read.
             if prog.crosses_reference(place) {
                 let composed = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
-                let value = self.read_reference(&composed, frame_id, vars)?;
-                if matches!(value, Value::Ref { .. }) && holds_reference {
-                    self.read_reference(&value, frame_id, vars)?
-                } else {
-                    value
-                }
+                self.read_reference(&composed, frame_id, vars)?
             } else {
                 let value = load_place(vars, regs, place)?;
-                if holds_reference {
+                if reads_binding {
                     self.read_reference(&value, frame_id, vars)?
                 } else {
                     value

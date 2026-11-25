@@ -2117,9 +2117,9 @@ impl<'c> Inliner<'_, 'c> {
                         in_place: false,
                     });
                 }
-                // The handle the field stores, read through a reference to
-                // the field, as the synthesized copy of a `ref` field reads
-                // it, since a load of the field reads through the handle.
+                // The handle the field stores, read out of a borrow of the
+                // field's slot, as lowering loads it for a by-address
+                // operand (`Flatten::load_field_handle`).
                 Binding::Handle(source @ HandleSource::Field(field, reference)) => {
                     let handle_ty = source.handle_ty();
                     let field_ref = TyKind::Ref(mojito_types::origin::RefTy {

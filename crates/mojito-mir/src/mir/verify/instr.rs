@@ -74,7 +74,8 @@ pub(super) fn verify_instruction(
         MirInstr::EstablishLoans { .. } | MirInstr::InvalidateInteriors { .. } => {
             verify_loan_instruction(&cx, instruction, errors);
         }
-        MirInstr::MakeRef { .. }
+        MirInstr::LoadPlace { .. }
+        | MirInstr::MakeRef { .. }
         | MirInstr::ReadRef { .. }
         | MirInstr::WriteRef { .. }
         | MirInstr::Store { .. }
@@ -454,6 +455,23 @@ fn verify_reference_instruction(
 ) {
     let prefix = cx.prefix;
     match instruction {
+        // A load of a place ending at a declared `ref` field loads the
+        // handle its slot stores, as upstream loads the field's `!lit.ref`;
+        // the referent's value is a `ReadRef` of that handle.
+        MirInstr::LoadPlace { dest, place } => {
+            if !place.proj.is_empty()
+                && let (Some(stored), Some(destination)) = (place.ty.as_ref(), cx.reg_ty(*dest))
+                && !types_compatible(destination, stored)
+                && crate::mir::place_holds_reference(place, false, |ty, field| {
+                    cx.declarations.declares_ref_field(ty, field)
+                })
+            {
+                errors.push(format!(
+                    "{prefix}: LoadPlace of `ref` field place loads its stored handle {stored}; \
+                     its destination is typed {destination} (read the referent with a ReadRef)"
+                ));
+            }
+        }
         MirInstr::MakeRef { dest, place } => {
             if let Some(destination) = cx.reg_ty(*dest) {
                 let Some(capability) = reference_capability(destination) else {

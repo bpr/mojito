@@ -337,10 +337,13 @@ impl FnLowering<'_> {
                     return Ok(());
                 }
                 let (mut address, mut ty) = self.place_address(ctx, place, *dest)?;
-                // A load of a place holding a reference by declaration (a
-                // direct `ref` field) into a register typed as its referent
-                // reads through the handle, as the VM's does.
+                // A load of a whole `ref` binding's slot into a register
+                // typed as its referent reads through the handle, as the
+                // VM's does; one whose referent is itself a reference loads
+                // that handle. A `ref` field's place loads the handle it
+                // stores, which a `ref.read` reads through.
                 if let TyKind::Ref(reference) = ty.kind()
+                    && place.proj.is_empty()
                     && self.holds_reference(place)
                     && self
                         .func

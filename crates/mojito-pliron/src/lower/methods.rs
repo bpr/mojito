@@ -286,9 +286,9 @@ impl FnLowering<'_> {
     }
 
     /// The storage a `mut`/`ref` receiver aliases: the place's address,
-    /// dereferenced once when the place holds a reference by declaration (a
-    /// `ref` field like an iterator's `src`) — the VM reads through
-    /// `Value::Ref` receivers before dispatch.
+    /// dereferenced once when the place is a whole `ref` binding's slot,
+    /// whose read reaches its referent. A `ref` field's place loads the
+    /// handle it stores, a pointer no borrower aliases.
     pub(super) fn aliased_receiver_address(
         &mut self,
         ctx: &mut Context,
@@ -296,7 +296,10 @@ impl FnLowering<'_> {
         anchor: Reg,
     ) -> Result<Value, PlironError> {
         let (address, ty) = self.place_address(ctx, place, anchor)?;
-        if self.holds_reference(place) && matches!(ty.kind(), TyKind::Ref(_)) {
+        if place.proj.is_empty()
+            && self.holds_reference(place)
+            && matches!(ty.kind(), TyKind::Ref(_))
+        {
             let handle = self.pointer_handle(ctx, &ty, anchor)?;
             let load = LoadOp::new(ctx, address, handle);
             self.append(ctx, load.get_operation(), Some(anchor));

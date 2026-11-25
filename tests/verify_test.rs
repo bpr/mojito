@@ -470,6 +470,46 @@ fn verifier_accepts_a_stored_reference_read_out_of_its_slot() {
 }
 
 #[test]
+fn verifier_requires_a_ref_field_load_to_load_its_stored_handle() {
+    // A value read of a `ref` field is the field's `place.load`, typed as
+    // the handle it stores, and a `ref.read` of that handle; a load typed
+    // as the referent is rejected.
+    let source = "@fieldwise_init\nstruct H[o: MutOrigin]:\n    var r: ref[Self.o] Int\n\ndef main():\n    var n = 4\n    var h = H(n)\n    print(h.r + 1)\n";
+    let mut mir = lower_linked_source(source);
+    let errors = verify(&mir);
+    assert!(errors.is_empty(), "the lowered read verifies: {errors:?}");
+    let main = function_named(&mut mir, "main");
+    let instructions = leaf_instructions_mut(&mut main.body);
+    let (load, read) = instructions
+        .windows(2)
+        .find_map(|pair| match (&*pair[0], &*pair[1]) {
+            (
+                MirInstr::LoadPlace { dest, place },
+                MirInstr::ReadRef {
+                    dest: read,
+                    reference,
+                },
+            ) if reference == dest
+                && matches!(place.proj.last(), Some(Proj::Field(field)) if field == "r") =>
+            {
+                Some((*dest, *read))
+            }
+            _ => None,
+        })
+        .expect("the field read is a handle load and a ref.read");
+    assert!(matches!(
+        main.reg_types.get(&load.0).map(Ty::kind),
+        Some(TyKind::Ref(_))
+    ));
+    assert_eq!(main.reg_types.get(&read.0), Some(&Ty::int()));
+    main.reg_types.insert(load.0, Ty::int());
+    expect_finding(
+        &mir,
+        "LoadPlace of `ref` field place loads its stored handle",
+    );
+}
+
+#[test]
 fn verifier_checks_read_and_write_reference_capabilities() {
     let read_non_capability = function(
         block(

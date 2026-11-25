@@ -8585,10 +8585,11 @@ fn bool_bodied_comptime_aliases_are_predicates() {
     );
 
     // A body referencing an undeclared name rejects at declaration rather
-    // than evaluating false at some application.
+    // than evaluating false at some application, naming the name, as the
+    // pin's "use of unknown declaration" does.
     assert_eq!(
         err("comptime IsCopy[T: AnyType] = conforms_to(U, Copyable)\n"),
-        TypeError::NotComptime("U".into())
+        TypeError::UndefinedVariable("U".into())
     );
 
     // `.values` projects a pack, so over a parameter that is not one the

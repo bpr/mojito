@@ -717,6 +717,26 @@ pub fn split_stored_handle_forwards(
     }
 }
 
+/// Split each `place.load` of `functions`, read from an artifact written
+/// before a `ref` field's place loaded only the handle it stores, that read
+/// through that handle: a load of the handle into a fresh register typed
+/// as the field declares it, then a `ref.read` of it into the original
+/// destination, the referent.
+///
+/// Such a load's place ends at a `ref` field and its destination is typed
+/// as the referent, or not at all, which schema 1.232 inferred as the
+/// referent, rather than as the stored handle.
+pub fn split_stored_handle_loads(
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+) {
+    for (_, function) in functions {
+        let mut body = std::mem::take(&mut function.body);
+        split_stored_handle_loads_in(&mut body, function, declarations);
+        function.body = body;
+    }
+}
+
 /// [`addressed_registers`] over one body, its regions included, whose
 /// registers `reg_types` types: a function's, or a body a pass spliced
 /// into one.
@@ -1432,6 +1452,55 @@ fn split_stored_handle_forwards_in(
             MirInstr::ReadRef {
                 dest,
                 reference: borrow,
+            },
+        );
+        index += 2;
+    }
+}
+
+fn split_stored_handle_loads_in(
+    block: &mut MirBlock,
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in instruction_regions_mut(&mut block.instrs[index]) {
+            split_stored_handle_loads_in(region, function, declarations);
+        }
+        let MirInstr::LoadPlace { dest, place } = &mut block.instrs[index] else {
+            index += 1;
+            continue;
+        };
+        let value = *dest;
+        let loads_handle = function
+            .reg_types
+            .get(&value.0)
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)));
+        let split = (!loads_handle
+            && !place.proj.is_empty()
+            && place_holds_reference(place, false, |base, field| {
+                declarations.declares_ref_field(base, field)
+            }))
+        .then(|| place.ty.clone())
+        .flatten()
+        .and_then(|handle| match handle.kind() {
+            TyKind::Ref(stored) => Some((stored.referent.clone(), handle.clone())),
+            _ => None,
+        });
+        let Some((referent, handle_ty)) = split else {
+            index += 1;
+            continue;
+        };
+        let span = function.spans.0.get(&value.0).map(|(span, _)| span.clone());
+        let handle = crate::mir::fresh_register(function, handle_ty, span.as_ref());
+        *dest = handle;
+        function.reg_types.entry(value.0).or_insert(referent);
+        block.instrs.insert(
+            index + 1,
+            MirInstr::ReadRef {
+                dest: value,
+                reference: handle,
             },
         );
         index += 2;

@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `place.load` of a `ref` field's place has one meaning: it loads the
+  handle the field's slot stores, and a value read of the field is that
+  load plus a `ref.read` of the handle, as upstream loads the field's
+  `!lit.ref` and then loads through it (R2582). Lowering emits the pair
+  wherever a value use reads such a field (`Flatten::load_field_value`,
+  `Flatten::field_load`, `Flatten::field_referent`), and the verifier
+  rejects a field load typed otherwise. The VM's `load_place_value` and
+  Pliron's `LoadPlace` arm and `aliased_receiver_address` no longer read
+  through a projected place's stored handle; only a whole `ref` binding's
+  slot reads its referent. The VM, which read through a handle-typed
+  field load too, now yields the handle its register's type says. MIR
+  text moves to schema 1.233: an older artifact's referent-typed field
+  load is split on read (`call_addresses::split_stored_handle_loads`).
+  The package format moves to `mojito-package 280`. With the
+  pre-elaboration pipeline off, `ref_field_temporary_value_read.mojo`,
+  whose VM run failed with "ReadRef … expected reference handle", now
+  runs; no other program output changes.
+
 - A construction used as a type annotation (`def f(x: P(1))`, `ref x:
   TypeList[Ts.values]()`) is rejected as a value where a type is expected,
   as the pin reports "expected a type, found a value" (R2566), instead of

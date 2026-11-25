@@ -2636,7 +2636,15 @@ its place designates and never forwards a handle that storage holds: a
 `ref s = self.src` binding, a `for x in self.src` loop's retained source,
 and a closure's `ref` capture field all load the stored handle the same
 way (`Flatten::bind_stored_handle`, `borrow_iteration_source`,
-`capture_storage_prologue`). The operand is the only record of the storage a
+`capture_storage_prologue`). A value read of a `ref` field is the
+field's `place.load`, typed as the handle its slot stores, and a `ref.read`
+of that handle, as upstream loads the field's `!lit.ref` and then loads
+through it (`Flatten::load_field_value`, `Flatten::field_load`,
+`Flatten::field_referent`); the verifier rejects a `place.load` of a `ref`
+field typed otherwise (`verify_reference_instruction`). Neither backend
+reads through a projected place's stored handle: only a whole `ref`
+binding's slot reads its referent (the VM's `load_place_value`, Pliron's
+`LoadPlace` arm and `aliased_receiver_address`). The operand is the only record of the storage a
 call names: no call-shaped instruction carries a place table beside its
 operands, as upstream's `lit.call` carries none. The inliner binds a
 parameter passed a `ref` field to the handle it stores (`place_binding`),
@@ -2746,7 +2754,10 @@ operands over a place holding a reference forwarded
 (`call_addresses::upgrade_stored_handles`), and one older than 1.232 has
 each `ref.make` that forwarded a `ref` field's stored handle split into a
 borrow of the slot and a `ref.read` of it
-(`call_addresses::split_stored_handle_forwards`). Every load-time upgrade reads an
+(`call_addresses::split_stored_handle_forwards`), and one older than 1.233
+has each `place.load` of a `ref` field typed as its referent split into a
+load of the stored handle and a `ref.read` of it
+(`call_addresses::split_stored_handle_loads`). Every load-time upgrade reads an
 older call's operand places from the reader's side table
 (`mir/legacy_places.rs`, `LegacyOperandTables`), paired with the
 call-shaped instructions of each function in decode order, as an MLIR
@@ -3337,7 +3348,8 @@ A struct field is a reference by the same rule: a `ref` field is its
 declaration's fact, `StructInfo::ref_fields`, recorded at shell
 registration from the field's `ref` annotation (and, for a closure's
 storage, from its reference captures). A field read reads through
-(`infer_member`, `infer_reference_value` via `declared_field_reference`),
+(`infer_member`, `infer_reference_value` via `declared_field_reference`;
+MIR spells that read as the field's handle load and a `ref.read` of it),
 a field place stores a reference (`place_reference_storage`), and a
 fieldwise parameter is `ref` (`fieldwise_conventions`,
 `fieldwise_ref_params`, the fieldwise tail of `infer_construction`) only
@@ -7207,10 +7219,10 @@ current Mojo:
   `load_temporary_field` leaves alone, projects that reference's place
   (`lower_projected_reference_place`, from `Flatten::member_expr`), so its
   copy passes the field's place as upstream's copy of a `!lit.ref` field
-  does. A declared `ref` field projects its stored handle and reads
-  through it, off a temporary as off a named local
-  (`Flatten::keeps_field_handle`): a value use is the referent, and a
-  method receiver or a place operation keeps the handle. Only a base no
+  does. A declared `ref` field's load is its stored handle, off a
+  temporary as off a named local (`Flatten::field_load`): a value use
+  reads the referent through it with a `ref.read`, and a method receiver
+  or a place operation keeps the handle. Only a base no
   storage holds keeps the register `GetField`.
 - A scalar `LoadPlace` borrows its owner for the one instruction consuming
   the loaded register (the register-loan dataflow's single-hop retention).

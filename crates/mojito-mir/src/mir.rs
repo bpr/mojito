@@ -3859,6 +3859,41 @@ impl<'a> Flatten<'a> {
         self.read_stored_handle(location, root, borrow, handle)
     }
 
+    /// Read the value the `ref` field `place` refers to, as upstream loads
+    /// the field's `!lit.ref` and then loads through it: a `place.load` of
+    /// the handle the field's slot stores, typed as the field declares it,
+    /// and a `ref.read` of that handle typed `referent`.
+    fn load_field_value(&mut self, location: SourceSpan, place: MirPlace, referent: Ty) -> Reg {
+        let root = Some(place.root);
+        let handle = self.fresh_typed(
+            location.clone(),
+            root,
+            place.ty.clone().unwrap_or_else(Ty::error),
+        );
+        self.emit(MirInstr::LoadPlace {
+            dest: handle,
+            place,
+        });
+        self.read_field_handle(location, root, handle, referent)
+    }
+
+    /// Emit a `ref.read` of `handle`, a `ref` field's loaded handle in
+    /// `root`, typed `referent`: the value it refers to.
+    fn read_field_handle(
+        &mut self,
+        location: SourceSpan,
+        root: Option<VarId>,
+        handle: Reg,
+        referent: Ty,
+    ) -> Reg {
+        let read = self.fresh_typed(location, root, referent);
+        self.emit(MirInstr::ReadRef {
+            dest: read,
+            reference: handle,
+        });
+        read
+    }
+
     /// Emit a `ref.read` of `borrow`, a borrow of a `ref` field's slot in
     /// `root`, typed `handle`: the handle the field stores.
     fn read_stored_handle(
@@ -5579,14 +5614,18 @@ fn close_register_types(
                     }
                     None
                 }
+                // A whole `ref` binding's slot reads its referent; a `ref`
+                // field's place loads the handle it stores.
                 MirInstr::LoadPlace { dest, place } => Some((
                     dest,
                     place.ty.clone().map(|ty| {
-                        if place_holds_reference(
-                            place,
-                            ref_bindings.contains(&place.root),
-                            |base, field| declarations.declares_ref_field(base, field),
-                        ) {
+                        if place.proj.is_empty()
+                            && place_holds_reference(
+                                place,
+                                ref_bindings.contains(&place.root),
+                                |base, field| declarations.declares_ref_field(base, field),
+                            )
+                        {
                             deref(ty)
                         } else {
                             ty

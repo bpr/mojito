@@ -1956,6 +1956,7 @@ assets/extensions/ok/ref_field_reborrow_read.mojo	-	ineligible	no-scalar-entry-s
 assets/extensions/ok/ref_field_template_method_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_temporary_value_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_truth_test.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_value_read_operands.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_view_for_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_view_free_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_view_method_return.mojo	-	ineligible	no-scalar-entry-shape

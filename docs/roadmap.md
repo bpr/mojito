@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2589**.
+Next free ID: **R2590**.
 
 ## Ordered Work
 
@@ -10258,32 +10258,42 @@ new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **R2582 A `place.load` of a `ref` field's place means either the
-  stored handle or the referent's value, chosen by its destination type,
-  where upstream loads the field's `!lit.ref` and then loads through it**
+- [ ] **R2589 A `place.store` to a `ref` field's place writes the
+  referent, where upstream loads the field's `!lit.ref` and stores through
+  it, and Pliron overwrites the stored handle instead**
 
-  Upstream reads a `ref` field's referent in two ops: a load of the
-  `!lit.ref` the field stores, then a load through it. Mojito's one
-  `place.load` of the field's place reads through the stored handle when
-  its destination is typed as the referent, and loads the handle itself
-  when it is typed as the reference.
-  - Pliron's `LoadPlace` arm (`lower/instr.rs`) and the VM's
-    `load_place_value` both make that choice, from `holds_reference` and
-    the destination's type.
-  - Lower such a read as a `ref.make` of the field's slot, a `ref.read` of
-    the handle, and a `ref.read` (or `place.load` through the handle's
-    binding) of the referent, the form a `ref.make` of the field takes
-    since R2494, at every emitter of a `place.load` over a `ref` field.
-  - Then delete the read-through branches from both backends, and split
-    an older artifact's such loads on read, as
-    `call_addresses::split_stored_handle_forwards` splits a 1.231
-    `ref.make`.
-  - Probe: `print(h.r)` over `var r: ref[Self.o] Int`
-    (`assets/extensions/ok/ref_field_operand_passes_stored_handle.mojo`)
-    prints the same after the change.
-  - Found while landing R2494 (2026-11-24).
+  Native code prints the wrong value today: `ih.r = 7; print(n)` over
+  `var r: ref[Self.o] Int` prints `4` with `--backend pliron` where the VM
+  prints `7`.
+  - Lowering's assignment (`lower_stmt.rs`, the `MirInstr::Store` arm
+    after the `holds_reference` copy) stores the referent's value into the
+    field's place.
+  - The VM writes through the stored handle (`store_through_handle` in
+    `vm/values.rs`, and the `!slot && prog.holds_reference` arm of
+    `exec.rs`'s `Store`).
+  - Pliron's `Store` arm (`lower/instr.rs`) stores to the field slot's
+    address with no read of the handle, so it overwrites the handle.
+  - The verifier's `Store` arm accepts either the referent or the handle
+    at such a place.
+  - Lower such a write as the field's `place.load` of its handle and a
+    `ref.write` through it, as R2582 lowers a read, and have the verifier
+    require a handle at a `place.store` of a `ref` field; a whole `ref`
+    binding's slot keeps writing its referent.
+  - Then drop the write-through for a projected place from the VM, and
+    split an older artifact's such stores on read
+    (`call_addresses::split_stored_handle_loads` is the template).
+  - Probe: `ih.r = 7; print(n)` prints `7` on both backends.
+  - Probe: `def setv(mut self, v: Int): self.r = v`, then
+    `ih.setv(9); print(n)`, prints `9` on both backends (`4` natively
+    today).
+  - Probe: `ih.r += 2; print(n)` prints `6` on both backends, as it does
+    today.
+  - Probe: `while fh.r: turns += 1; fh.r = turns < 3` over
+    `var r: ref[Self.o] Bool` ends with `turns == 3` and the referent
+    `False` on both backends (`1` and `True` natively today).
+  - Found while landing R2582 (2026-11-24).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2396 Pre-check auto-parameterization reads an origin binder by
   its `Origin` spelling, so the parser keeps its `Origin[mut=…]` special

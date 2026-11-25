@@ -964,16 +964,18 @@ impl<'a> Flatten<'a> {
         true
     }
 
-    /// Turn the `place.load` of the `ref` field `slot` defining `register`
-    /// into a `ref.make` of the slot into `borrow` and a `ref.read` of that
-    /// borrow into `register`, the field's stored handle.
+    /// Turn the read of the `ref` field `slot` defining `register` into a
+    /// `ref.make` of the slot into `borrow` and a `ref.read` of that borrow
+    /// into `register`, the field's stored handle: a `place.load` of the
+    /// slot, or a value read's `ref.read` through the handle the
+    /// `place.load` just before it loads.
     fn load_stored_handle_definition(
         &mut self,
         register: Reg,
         slot: &MirPlace,
         borrow: Reg,
     ) -> bool {
-        let found = self.operand_definition(|instruction| {
+        let loads_slot = |instruction: &MirInstr, register: Reg| {
             matches!(
                 instruction,
                 MirInstr::LoadPlace { dest, place: read }
@@ -981,16 +983,30 @@ impl<'a> Flatten<'a> {
                         && crate::mir::call_addresses::same_storage(read, slot)
                         && read.through == slot.through
             )
+        };
+        let found = self.operand_definition(|instruction| {
+            loads_slot(instruction, register)
+                || matches!(instruction, MirInstr::ReadRef { dest, .. } if *dest == register)
         });
         let Some((instructions, index)) = found else {
             return false;
         };
-        instructions[index] = MirInstr::MakeRef {
+        let load = match instructions[index] {
+            MirInstr::ReadRef { reference, .. } => match index.checked_sub(1) {
+                Some(load) if loads_slot(&instructions[load], reference) => {
+                    instructions.remove(index);
+                    load
+                }
+                _ => return false,
+            },
+            _ => index,
+        };
+        instructions[load] = MirInstr::MakeRef {
             dest: borrow,
             place: slot.clone(),
         };
         instructions.insert(
-            index + 1,
+            load + 1,
             MirInstr::ReadRef {
                 dest: register,
                 reference: borrow,
@@ -1181,18 +1197,21 @@ impl<'a> Flatten<'a> {
         // the caller place, so a `UseVar` lifecycle copy here would run a user
         // `__copyinit__` only to discard the result.
         if let Some(place) = self.simple_place(expression) {
-            // A `ref` field's place binds the parameter to the field's
-            // referent, which a load of the field reads through to; a
-            // by-address operand forwards the stored handle in its stead
-            // (`Self::forward_stored_handle`).
+            // A place holding a reference binds the parameter to its
+            // referent: a whole `ref` binding's load reads it, and a `ref`
+            // field's is read through the handle a load of the field yields
+            // (`Self::load_field_value`). A by-address operand forwards the
+            // stored handle in its stead (`Self::forward_stored_handle`).
             if self.place_holds_reference(&place)
                 && let Some(TyKind::Ref(reference)) = place.ty.as_ref().map(Ty::kind)
             {
-                let value = self.fresh_typed(
-                    expression.location(),
-                    Some(place.root),
-                    reference.referent.clone(),
-                );
+                let referent = reference.referent.clone();
+                let location = expression.location();
+                if !place.proj.is_empty() {
+                    let value = self.load_field_value(location, place.clone(), referent);
+                    return (value, Some(place));
+                }
+                let value = self.fresh_typed(location, Some(place.root), referent);
                 self.emit(MirInstr::LoadPlace {
                     dest: value,
                     place: place.clone(),
@@ -2153,6 +2172,17 @@ impl<'a> Flatten<'a> {
         }
         match self.try_place(expression) {
             Some(place) => {
+                // A `ref` field's receiver is its referent, read through
+                // the handle the field's slot stores.
+                if !place.proj.is_empty()
+                    && self.place_holds_reference(&place)
+                    && let Some(TyKind::Ref(reference)) = place.ty.as_ref().map(Ty::kind)
+                {
+                    let referent = reference.referent.clone();
+                    let value =
+                        self.load_field_value(expression.location(), place.clone(), referent);
+                    return (value, Some(place));
+                }
                 let value = self.fresh(expression.location(), Some(place.root));
                 self.emit(MirInstr::LoadPlace {
                     dest: value,
