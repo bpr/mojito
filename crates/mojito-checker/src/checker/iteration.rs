@@ -627,13 +627,14 @@ impl Checker {
         };
         // The declared interior projection of the yielded reference. It is
         // retained only while the instantiated origin is still the abstract
-        // origin parameter (the loop site resolves that to the source place
-        // and appends this granularity); a projection applied onto a concrete
-        // origin already carries its segments.
+        // origin parameter, under any mutability cast (the loop site resolves
+        // that to the source place and appends this granularity); a
+        // projection applied onto a concrete origin already carries its
+        // segments.
         let yield_interior = match (&next_sig.ref_return, reference_result) {
             (Some(signature), Some(reference))
                 if matches!(
-                    reference.origin,
+                    reference.origin.uncast(),
                     mojito_types::origin::Origin::Param(_)
                         | mojito_types::origin::Origin::SelfParam
                 ) =>

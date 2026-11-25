@@ -232,9 +232,9 @@ pub(super) fn check_interior_instruction_uses(
     state: &InteriorState,
     instr: &MirInstr,
     f: &MirFunction,
-    addresses: &mojito_mir::mir::OperandAddresses,
+    (addresses, made_refs): (&mojito_mir::mir::OperandAddresses, &HashMap<u32, MirPlace>),
 ) -> Result<(), OwnershipError> {
-    for (reference, marker) in interior_reference_uses(instr, addresses) {
+    for (reference, marker) in interior_reference_uses(instr, addresses, made_refs) {
         let Some(active) = state.active.get(&reference) else {
             continue;
         };
@@ -250,10 +250,13 @@ pub(super) fn check_interior_instruction_uses(
             }
             let origin = interior_origin_display(f, &invalidation.origin);
             let name = var_name(f, reference);
-            // A call operand's hidden handle slot is named by its origin, as
-            // the pin names it.
+            // A call operand's hidden handle or temporary slot is named by
+            // its origin, as the pin names it.
             return Err(OwnershipError::InvalidatedInteriorReference {
-                reference: if name.starts_with("$call_ref_r") {
+                reference: if ["$call_ref_r", "$call_result_tmp_r", "$arg_loan_r"]
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix))
+                {
                     origin.clone()
                 } else {
                     name
@@ -318,6 +321,7 @@ pub(super) fn interior_origin_invalidated_by(
 pub(super) fn interior_reference_uses(
     instr: &MirInstr,
     addresses: &mojito_mir::mir::OperandAddresses,
+    made_refs: &HashMap<u32, MirPlace>,
 ) -> Vec<(VarId, Reg)> {
     pub(super) fn add_place(uses: &mut Vec<(VarId, Reg)>, place: &MirPlace, marker: Reg) {
         uses.push((place.root, marker));
@@ -355,6 +359,21 @@ pub(super) fn interior_reference_uses(
             if let Some(place) = place {
                 add_place(uses, place, marker);
             }
+        }
+    }
+
+    pub(super) fn add_operand_places(
+        uses: &mut Vec<(VarId, Reg)>,
+        operands: &mojito_mir::mir::AddressedOperands<'_>,
+        marker: Reg,
+    ) {
+        for place in operands
+            .receiver
+            .into_iter()
+            .chain(operands.positional.iter().copied().flatten())
+            .chain(operands.keyword.iter().copied().flatten())
+        {
+            add_place(uses, place, marker);
         }
     }
 
@@ -432,21 +451,31 @@ pub(super) fn interior_reference_uses(
         MirInstr::HasNext { dest, iter, .. } | MirInstr::Next { dest, iter, .. } => {
             uses.push((*iter, *dest));
         }
-        // Call argument and receiver registers were evaluated before the
-        // call-boundary invalidation, and a by-address operand is read at its
-        // `ref.make`, not a second time at the call; but a `deinit`-receiver
-        // call consuming a part of its receiver reads it, as upstream's
-        // `checkConsume` checks the interior origins reachable through a
-        // consumed operand.
-        MirInstr::MethodCall { recv, .. } => {
+        // A call reads each by-address operand at the call, as upstream's
+        // call reads its `!lit.ref` operands once every argument is
+        // evaluated: a reference a later argument stales is used stale. A
+        // `deinit`-receiver call consuming a part of its receiver reads it,
+        // as upstream's `checkConsume` checks the interior origins reachable
+        // through a consumed operand.
+        MirInstr::MethodCall { dest, recv, .. } => {
             if let Some(place) = instr
                 .consumed_receiver(addresses)
                 .filter(|place| !place.is_whole_root())
             {
                 add_place(&mut uses, place, *recv);
             }
+            add_operand_places(&mut uses, &addresses.operands(instr), *dest);
         }
-        MirInstr::Call { .. } | MirInstr::CallIndirect { .. } => {}
+        MirInstr::Call { dest, .. } | MirInstr::CallIndirect { dest, .. } => {
+            add_operand_places(&mut uses, &addresses.operands(instr), *dest);
+        }
+        // A variadic pack is formed once every argument is evaluated, so it
+        // reads each element reference there.
+        MirInstr::MakeRefPack { dest, elems } => {
+            for place in elems.iter().filter_map(|elem| made_refs.get(&elem.0)) {
+                add_place(&mut uses, place, *dest);
+            }
+        }
         // Invalidating, dropping, or keeping an analytical handle alive is not
         // a read through that handle. Region ops' regions are replayed separately.
         MirInstr::InvalidateInteriors { .. }
@@ -488,7 +517,6 @@ pub(super) fn interior_reference_uses(
         | MirInstr::MakeTuple { .. }
         | MirInstr::MakeStruct { .. }
         | MirInstr::MakeArray { .. }
-        | MirInstr::MakeRefPack { .. }
         | MirInstr::LoadIndirect { .. }
         | MirInstr::ArrayRepeat { .. }
         | MirInstr::ArrayGet { .. }

@@ -1,9 +1,13 @@
 # Borrowing Views: Why Mojito Rejects What Mojo Accepts
 
-Status: implemented behavior as of the ref-field-struct-return work
-(2026-08). Book destination: source material for *Mojito Internals*
-chapters on borrow rules and runtime iteration, and a Part VIII case
-study in choosing a subset position.
+Status: superseded (2026-11-25). Mojito now accepts the program below
+and prints `1`, `2`, `9`, as the pin does: a loan names an origin and
+excludes only the end of the value it keeps alive (a move or a
+destruction), and a view whose type names an owned interior lends that
+interior, which a structural mutation stales. The note records the
+earlier position and its reasoning. Book destination: source material
+for *Mojito Internals* chapters on borrow rules and runtime iteration,
+and a Part VIII case study in choosing a subset position.
 
 Mojito rejects this program; the pinned upstream Mojo accepts it and
 prints `1`, `2`, `9`:
@@ -19,7 +23,7 @@ def main() raises:
 
 The divergence is recorded as the `dict-view-source-mutation-gap`
 strict-subset conformance case
-(`conformance/fixtures/dict_view_source_mutation_gap.mojo`), beside the
+(then `conformance/fixtures/dict_view_source_mutation_gap.mojo`, now `conformance/fixtures/dict_view_observes_source_mutation.mojo`), beside the
 analogous `set-ref-write-gap`. This note explains why the two compilers
 disagree, why the disagreement is structural rather than accidental, and
 why Mojito's side of it is a deliberate policy choice.

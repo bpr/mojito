@@ -365,22 +365,6 @@ impl<'a> Node<'a> {
     /// The places this node's reference value may point into: its interior
     /// references and its reference result's origin.
     pub(super) fn reference_places(self) -> Vec<mojito_types::origin::OriginPlace> {
-        fn collect(
-            origin: &mojito_types::origin::Origin,
-            places: &mut Vec<mojito_types::origin::OriginPlace>,
-        ) {
-            match origin {
-                mojito_types::origin::Origin::Place(place) => places.push(place.clone()),
-                mojito_types::origin::Origin::Union(members) => {
-                    for member in members {
-                        collect(member, places);
-                    }
-                }
-                mojito_types::origin::Origin::MutCast(inner, _) => collect(inner, places),
-                _ => {}
-            }
-        }
-
         let mut places = Vec::new();
         for adjustment in self.adjustments() {
             match adjustment {
@@ -388,7 +372,7 @@ impl<'a> Node<'a> {
                     places.push(origin.clone());
                 }
                 mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference } => {
-                    collect(&reference.origin, &mut places);
+                    collect_origin_places(&reference.origin, &mut places);
                 }
                 _ => {}
             }
@@ -1777,13 +1761,22 @@ impl<'a> Flatten<'a> {
                         return loans;
                     }
                     // A receiver that is itself the owning place lends that
-                    // place to the view.
+                    // place to the view, or the owned interior the view's
+                    // type names below it (`xs[:]` is a `Span` over
+                    // `origin_of(xs)._get_owned_interior["element"]`): an
+                    // element store coexists with it, and a structural
+                    // mutation of the receiver stales it, as at the pin.
                     if matches!(
                         object.op(),
                         CheckedOp::Identifier(_) | CheckedOp::Member { .. }
                     ) {
+                        let place = self.place(object);
+                        let interiors = self.view_type_interior_loans(node, place.root);
+                        if !interiors.is_empty() {
+                            return interiors;
+                        }
                         return vec![MirLoan {
-                            place: self.place(object),
+                            place,
                             mutable: false,
                             interior: None,
                             shared: false,
@@ -1991,14 +1984,67 @@ impl<'a> Flatten<'a> {
         });
         loans
     }
+
+    /// The interior loans a view-typed result `node` takes on the owned
+    /// interiors its type's origins name, an origin whose owner this body
+    /// has not seen resolving to `receiver`.
+    fn view_type_interior_loans(&mut self, node: Node<'a>, receiver: VarId) -> Vec<MirLoan> {
+        let mut places = Vec::new();
+        for origin in node
+            .ty()
+            .as_ref()
+            .map(mojito_types::types::named_origins)
+            .unwrap_or_default()
+        {
+            collect_origin_places(&origin, &mut places);
+        }
+        places
+            .into_iter()
+            .filter(|place| {
+                place
+                    .path
+                    .iter()
+                    .any(|segment| matches!(segment, mojito_types::origin::OriginSeg::Interior(_)))
+            })
+            .filter_map(|place| self.mir_interior_origin(&place, Some(receiver)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|interior| MirLoan {
+                place: MirPlace::root(interior.root, self.var_types.get(&interior.root).cloned()),
+                mutable: false,
+                interior: Some(interior),
+                shared: false,
+                setup: false,
+            })
+            .collect()
+    }
 }
 
-/// The interior domain a view lends from a field receiver (`h.name.strip()`
-/// lends `h.name["bytes"]`): its field path followed by the callee's named
-/// interior. A store over the field invalidates that domain, so the view's
-/// next use is rejected as invalidated, while reads of the field coexist.
+/// The places `origin` names: itself, a union's members, or a mutability
+/// cast's operand.
+fn collect_origin_places(
+    origin: &mojito_types::origin::Origin,
+    places: &mut Vec<mojito_types::origin::OriginPlace>,
+) {
+    match origin {
+        mojito_types::origin::Origin::Place(place) => places.push(place.clone()),
+        mojito_types::origin::Origin::Union(members) => {
+            for member in members {
+                collect_origin_places(member, places);
+            }
+        }
+        mojito_types::origin::Origin::MutCast(inner, _) => collect_origin_places(inner, places),
+        _ => {}
+    }
+}
+
+/// The interior domain a view lends from a place receiver (`s.strip()`
+/// lends `s["bytes"]`, `h.name.strip()` lends `h.name["bytes"]`): its field
+/// path followed by the callee's named interior. A store over the place
+/// invalidates that domain, so the view's next use is rejected as
+/// invalidated, while reads of the place coexist.
 fn field_interior(place: &MirPlace, named: &[String]) -> Option<MirInteriorOrigin> {
-    if named.is_empty() || place.is_whole_root() {
+    if named.is_empty() {
         return None;
     }
     let fields = place

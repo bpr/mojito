@@ -1,6 +1,6 @@
-# expect: conflicts with live reference
-# The hidden slot retaining a chained temporary view carries the source loan:
-# an argument in the same statement that mutates the source conflicts.
+# The hidden slot retaining a chained temporary view carries the source loan,
+# which excludes nothing: an argument in the same statement that mutates the
+# source runs beside it (R1160).
 @fieldwise_init
 struct Pane[m: Bool, //, o: Origin[mut=m]]:
     var items: ref[o] List[Int]

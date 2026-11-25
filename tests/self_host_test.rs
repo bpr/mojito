@@ -407,19 +407,16 @@ fn self_hosted_dict_views_iterate_and_get() {
 }
 
 #[test]
-fn self_hosted_dict_view_rejects_source_mutation() {
-    // A view borrows the dict's entries: mutating the dict while a stored
-    // view is still live is rejected, matching upstream's borrowing views.
+fn self_hosted_dict_view_reads_source_mutation() {
+    // A view keeps the dict alive but borrows nothing exclusively: inserting
+    // while a stored view is still live runs, and the view reads the
+    // insertion, as at the pin.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
         "from std.collections.dict import Dict\n\ndef main() raises:\n    var d: Dict[Int, Int] = Dict[Int, Int]()\n    d[1] = 10\n    var keys = d.keys()\n    d[2] = 20\n    for key in keys:\n        print(key)\n",
     );
-    let error = run(&main).expect_err("dict mutation with a live view must be rejected");
-    assert!(
-        error.contains("conflicts with live reference"),
-        "got {error}"
-    );
+    assert_eq!(run(&main).unwrap(), "1\n2\n");
 }
 
 #[test]

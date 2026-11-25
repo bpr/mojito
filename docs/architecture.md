@@ -4163,8 +4163,8 @@ precise (`Pointer(to=self.a)` loans `self.a`) and reborrowed through the
 `ref` binding a `_subtree` origin was taken through. Each other member of
 a union origin, and an origin no argument lent (`V[origin_of(a, b)](7)`),
 takes the loans a value moved into the result carries on it, else a
-keep-alive loan (`setup`) that grants no access but still excludes a store
-to or move of its owner, which the drop walk could not end under it. An
+keep-alive loan (`setup`) that grants no access but still excludes a move
+of its owner, which the drop walk could not end under it. An
 origin binder (`View[Self.o](x)` in a generic body) names the storage of
 the `ref` arguments bound to it. `BorrowRefArguments` stays the checker's
 record of which arguments were lent (mutability, materialization), not
@@ -4172,11 +4172,14 @@ the loan source. A view-typed subscript result records `BorrowViewResult`
 (the result inherits the receiver's loans, falling back to the receiver's
 own place for a plain owner), and `unsafe_origin_cast`/`unsafe_offset`
 results carry their rebound or forwarded origins through the
-aggregate-origin walks. The loans are shared, so reads
-coexist while structural mutation of the source conflicts with any live
-view — including a `for ref` loop over the source, whose element loan is
-mutable and therefore exclusive against the view (a value loop's element
-loan is shared and coexists). A local annotated with an explicit origin
+aggregate-origin walks. A loan names an origin and borrows nothing
+exclusively, as upstream's references do: reads, stores, mutating calls,
+and a `for ref` loop over the source coexist with a live view, and only
+the end of the owner's value (a move, a destruction) conflicts with it. A
+view whose type names an owned interior (`xs[:]` is a `Span` over
+`origin_of(xs)._get_owned_interior["element"]`, `s.strip()` a slice over
+`s["bytes"]`) lends that interior instead, which a structural mutation of
+the source stales. A local annotated with an explicit origin
 argument (`var v: Span[Int, origin_of(xs)]`) keeps that demand for every
 later assignment, not only its initializer.
 
@@ -5259,7 +5262,16 @@ pipeline composes it with
 per function, the move and initialization scan, carrying interior origins
 as upstream's `TrackedAndInteriorLiveness`, walks the structured body as
 upstream's `CheckLifetimes` walks `hlcf`, and the loan check walks it backward
-for reference liveness and forward for loan generations. The body stays
+for reference liveness and forward for loan generations. The loan check
+rejects only what upstream's checking rejects beside a live reference: the
+end of the value a whole-place loan keeps alive (a move, a consuming
+argument, a destruction — `LoanAccess::End`), a write through a reference
+holding no mutable loan, and a mutable reborrow of a shared reference.
+Upstream checks argument exclusivity at the call, in the checker. The
+interior half of the lifetime scan reads a call's by-address operands, and
+a variadic pack's elements, where the call or the pack consumes them, as
+upstream's call reads its `!lit.ref` operands once every argument is
+evaluated. The body stays
 structured for drop elaboration and every pass after it, the elaborator
 and the post-elaboration pipeline included; the VM runs it as it stands,
 and Pliron lowers its region ops to LLVM blocks as `LowerControlFlow` does.
@@ -5287,10 +5299,9 @@ its function's `ref_params` mask. An indirect call reads its callee's
 function type for the slot's convention, and the `$write_formatted` and
 `$write_repr_formatted` pseudo-methods read their argument. A place whose slot's convention is
 recorded nowhere (a trait-dispatched or unresolved method, a keyword slot,
-an untyped indirect callee) is `LoanAccess::Unclassified`: it excludes every
-other live loan of its storage, as a write does, but reaching it through a
-shared reference is no write through that reference, since the checker
-bound the reference to the parameter.
+an untyped indirect callee) is `LoanAccess::Unclassified`: it ends no
+value, and reaching it through a shared reference is no write through that
+reference, since the checker bound the reference to the parameter.
 
 A place's storage type is distinct from its expression value type. For a field
 declared `ref[origin] T`, the place stores `TyKind::Ref`, while an ordinary load

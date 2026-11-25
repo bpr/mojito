@@ -1492,15 +1492,12 @@ fn moving_an_iterable_while_its_generic_iterator_lives_rejects() {
 }
 
 #[test]
-fn string_mutation_during_grapheme_iteration_rejects() {
-    // Grapheme iteration borrows the String for the whole loop: mutating it
-    // inside the body is rejected.
+fn string_mutation_during_grapheme_iteration_checks() {
+    // Grapheme iteration keeps the String alive for the whole loop but
+    // borrows nothing exclusively: mutating it inside the body is accepted,
+    // as at the pin.
     let src = "def main():\n    var s = String(\"abc\")\n    for g in s:\n        s += \"!\"\n        print(g)\n";
-    let err = run_compiled(src).expect_err("mutation during iteration rejects");
-    assert!(
-        err.contains("conflicts with live reference"),
-        "unexpected error: {err}"
-    );
+    assert!(checks_ok(src));
 }
 
 #[test]
@@ -1537,13 +1534,14 @@ fn two_live_views_read_one_string() {
 }
 
 #[test]
-fn string_view_conflicts_with_source_mutation() {
-    // A live StringSpan holds a shared loan on its source String: mutating
-    // the String while any view is alive is rejected.
+fn string_view_stales_at_source_mutation() {
+    // A byte slice lends its source's owned interior (`s["bytes"]`):
+    // mutating the String stales it, and the view's next use is rejected,
+    // as at the pin.
     let src = "def main():\n    var s = String(\"hello\")\n    var v = s[byte=1:3]\n    s += \"!\"\n    print(v)\n";
-    let err = run_compiled(src).expect_err("mutation under a live view rejects");
+    let err = run_compiled(src).expect_err("a use of the stale view rejects");
     assert!(
-        err.contains("conflicts with live reference"),
+        err.contains("use of invalidated interior reference 'v' to 's[\"bytes\"]'"),
         "unexpected error: {err}"
     );
 }
@@ -1571,27 +1569,21 @@ fn write_int_writes_upstreams_pieces() {
 }
 
 #[test]
-fn span_conflicts_with_source_mutation() {
-    // A live Span holds a shared loan on its source List: a structural
-    // mutation of the List while any view is alive is rejected.
+fn span_of_list_checks_beside_source_mutation() {
+    // `Span(xs)` names the list itself, as upstream's does, so a structural
+    // mutation of the List while the view is alive is accepted, as at the
+    // pin; reading the view afterwards is undefined there.
     let src = "def main():\n    var xs: List[Int] = [1, 2, 3]\n    var sp = Span(xs)\n    xs.append(4)\n    print(sp[0])\n";
-    let err = run_compiled(src).expect_err("mutation under a live span rejects");
-    assert!(
-        err.contains("conflicts with live reference"),
-        "unexpected error: {err}"
-    );
+    assert!(checks_ok(src));
 }
 
 #[test]
 fn span_subslice_keeps_the_source_borrowed() {
-    // A sub-span carries the same loan as its parent view: mutating the
-    // source while only the sub-span is alive still conflicts.
+    // A sub-span carries the same loan as its parent view: it keeps the
+    // source alive, and a mutation of the source beside it is accepted, as
+    // at the pin.
     let src = "def main():\n    var xs: List[Int] = [1, 2, 3, 4]\n    var sub = Span(xs)[1:3]\n    xs.append(5)\n    print(sub[0])\n";
-    let err = run_compiled(src).expect_err("sub-span keeps the loan");
-    assert!(
-        err.contains("conflicts with live reference"),
-        "unexpected error: {err}"
-    );
+    assert!(checks_ok(src));
 }
 
 #[test]
@@ -2009,19 +2001,16 @@ fn annotated_local_origin_arguments_are_demands_on_the_initializer() {
 }
 
 #[test]
-fn span_implicit_conversion_binding_stales_on_source_mutation() {
+fn span_implicit_conversion_binding_checks_beside_source_mutation() {
     // An annotated binding that implicitly converts a List to a Span carries
-    // the same source loan as the explicit `Span(xs)` construction, so
-    // structural mutation while the converted view lives rejects. The origin
+    // the same source loan as the explicit `Span(xs)` construction, which
+    // keeps the list alive and excludes nothing, so a structural mutation
+    // while the converted view lives is accepted, as at the pin. The origin
     // slot is spelled: the pinned upstream also rejects the partial
     // `Span[Int]` annotation ("failed to infer parameter 'origin'").
     // (Linked stdlib only — Span has no link-free raw-seam twin.)
     let src = "def main():\n    var xs = List[Int]()\n    xs.append(10)\n    var s: Span[Int, origin_of(xs)] = xs\n    xs.append(20)\n    print(s[0])\n";
-    let err = run_compiled(src).expect_err("mutating the converted view's source rejects");
-    assert!(
-        err.contains("conflicts with live reference"),
-        "unexpected error: {err}"
-    );
+    assert!(checks_ok(src));
 }
 
 #[test]
@@ -2039,15 +2028,12 @@ fn allocation_tracked_pointer_stales_on_dealloc() {
 }
 
 #[test]
-fn span_iteration_rejects_source_mutation() {
-    // Structural mutation of the List during span iteration conflicts with
-    // the live view (the span's whole-place ctor loan).
-    let src = "def main():\n    var xs = List[Int]()\n    xs.append(1)\n    var sp = Span(xs)\n    for x in sp:\n        xs.append(x)\n";
-    let err = run_compiled(src).expect_err("mutating the source during span iteration rejects");
-    assert!(
-        err.contains("conflicts with live reference"),
-        "unexpected error: {err}"
-    );
+fn span_iteration_runs_beside_source_mutation() {
+    // Structural mutation of the List during span iteration runs, as at the
+    // pin: the span's whole-place constructor loan keeps the list alive and
+    // excludes nothing, and the iteration covers the span's own length.
+    let src = "def main():\n    var xs = List[Int]()\n    xs.append(1)\n    var sp = Span(xs)\n    for x in sp:\n        xs.append(x)\n    print(len(xs))\n";
+    assert_eq!(run_compiled(src).unwrap(), "2\n");
 }
 
 #[test]

@@ -732,10 +732,11 @@ fn view_temporaries_live_for_their_statement() {
 }
 
 #[test]
-fn view_temporary_argument_conflicts_with_a_later_source_mutation() {
-    // A subscript view temporary passed as an argument keeps a loan on its
-    // source for the statement: a later argument mutating the source
-    // conflicts with it. (Pinned here, on the linked pipeline, because the
+fn view_temporary_argument_stales_at_a_later_source_mutation() {
+    // A subscript view temporary passed as an argument lends its source's
+    // owned interior (`s["bytes"]`): a later argument mutating the source
+    // stales it, and the call's read of it is rejected, as at the pin.
+    // (Pinned here, on the linked pipeline, because the
     // `assets/ownership_error` seam group checks without the prelude, where
     // the nominal `String` is not a known type.)
     let compiler = Compiler::default();
@@ -744,10 +745,12 @@ fn view_temporary_argument_conflicts_with_a_later_source_mutation() {
             "def grow(mut s: String) -> Int:\n    s += \"zz\"\n    return 1\n\ndef main():\n    var s = String(\"hello\")\n    var out = String()\n    out.write(s[byte=1:3], grow(s))\n    print(out)\n",
             std::path::Path::new("/tmp/mojito_view_temporary_source_mutation.mojo"),
         )
-        .expect_err("the view temporary's loan must conflict with the mutation");
+        .expect_err("the view temporary must be stale at the call");
     assert!(matches!(error, CompilerError::Ownership(_)), "{error:?}");
     assert!(
-        error.to_string().contains("conflicts with live reference"),
+        error
+            .to_string()
+            .contains("use of invalidated interior reference 's[\"bytes\"]'"),
         "{error}"
     );
 }
@@ -1060,20 +1063,16 @@ fn callable_struct_call_replays_transfer_effects() {
     // An indirect call through a callable-struct value replays the
     // `Struct.__call__` transfer effects: the seeded `List.append` inside
     // the body transfers the argument's loans onto the `mut` sink actual,
-    // so mutating the loan source while the sink lives conflicts. Runs
-    // through the compiler so the seeded stdlib effect participates.
+    // so the loan source lives while the sink does; a mutation of the
+    // source beside the sink runs, since the loan excludes nothing, and the
+    // sink reads it. Runs through the compiler so the seeded stdlib effect
+    // participates.
     let compiler = Compiler::default();
-    let conflict = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher:\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n";
-    let error = compiler
-        .compile_unlinked(conflict)
-        .expect_err("mutating the transferred loan's source must conflict");
-    assert!(
-        matches!(error, CompilerError::Ownership(_))
-            && error
-                .to_string()
-                .contains("conflicts with live reference 'sink'"),
-        "{error}"
-    );
+    let beside = "@fieldwise_init\nstruct RefBox[origin: Origin[mut=True]]:\n    var value: ref[origin] List[Int]\n\n@fieldwise_init\nstruct Stasher:\n    var count: Int\n    def __call__(mut self, mut sink: List[RefBox[MutUnsafeAnyOrigin]], var box: RefBox[MutUnsafeAnyOrigin]):\n        self.count += 1\n        sink.append(box^)\n\ndef main():\n    var s = Stasher(0)\n    var sink = List[RefBox[MutUnsafeAnyOrigin]]()\n    var local: List[Int] = [9]\n    ref alias = local\n    s(sink, RefBox(alias))\n    local.append(1)\n    print(sink[0].value[0])\n";
+    let program = compiler
+        .compile_unlinked(beside)
+        .expect("a mutation beside the transferred loan compiles");
+    assert_eq!(compiler.execute(&program).expect("execute").output, "9\n");
 
     // The same program with the sink's last use before the mutation stays
     // accepted — no spurious rejection from the indirect replay.

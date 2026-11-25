@@ -130,13 +130,15 @@ struct CodepointSliceIter[
         Returns:
             A character if the string is not empty, otherwise None.
         """
-        if self._slice.byte_length() <= 0:
-            return None
-        var slice_len = self._slice._width_at(0)
-        var result = self._slice
-        result._size = slice_len
-        self._slice._data = self._slice._data.unsafe_offset(slice_len)
-        self._slice._size -= slice_len
+        var result: Optional[StringSpan[Self.origin]] = self.peek_next()
+
+        if case .Some(codepoint_slice) = result:
+            var slice_len = codepoint_slice.byte_length()
+            # Advance the pointer in _slice.
+            self._slice._data = self._slice._data.unsafe_offset(slice_len)
+            # Decrement the byte-length of _slice.
+            self._slice._size -= slice_len
+
         return result
 
     def next_back(mut self) -> Optional[StringSpan[Self.origin]]:
@@ -147,18 +149,13 @@ struct CodepointSliceIter[
             The last codepoint slice in the underlying string, or None if the
             string is empty.
         """
-        var total = self._slice.byte_length()
-        if total <= 0:
-            return None
-        var start = total - 1
-        while start > 0 and self._slice._is_continuation(
-            Int(self._slice._data[start])
-        ):
-            start -= 1
-        var result = self._slice
-        result._data = result._data.unsafe_offset(start)
-        result._size = total - start
-        self._slice._size = start
+        var result: Optional[StringSpan[Self.origin]] = self.peek_back()
+
+        if case .Some(codepoint_slice) = result:
+            var slice_len = codepoint_slice.byte_length()
+            # Decrement the byte-length of _slice.
+            self._slice._size -= slice_len
+
         return result
 
 

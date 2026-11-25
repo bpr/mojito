@@ -168,12 +168,17 @@ pub(super) fn reaching_loans<'a>(
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum LoanAccess {
     Read,
+    /// A write that leaves the storage holding a value: a store, a `mut`
+    /// argument, an in-place initialization.
     Write,
+    /// An access that ends the value in its storage and leaves it
+    /// uninitialized: a move out, a consuming (`var`/`deinit`) argument, a
+    /// destruction.
+    End,
     /// A retained call place whose callee convention the MIR does not
     /// record (a trait-dispatched or unresolved method, a keyword slot, an
-    /// untyped indirect callee). It excludes every other live loan of the
-    /// storage, as a write does, but a place reached through a reference
-    /// is not a write through it: the checker bound that reference to the
+    /// untyped indirect callee). A place reached through a reference is not
+    /// a write through it: the checker bound that reference to the
     /// parameter, so an immutable one reaches only a reading slot.
     Unclassified,
 }
@@ -181,12 +186,18 @@ pub(super) enum LoanAccess {
 /// Persistent local-loan checking. Reference variables participate in ordinary
 /// backward liveness through `MirPlace::through`, so a loan is active precisely
 /// from `EstablishLoans` through the reference's last use, including branch
-/// joins and loops. Interior-storage loans have generation semantics instead of
-/// exclusive-owner semantics among themselves (the lifetime scan checks
-/// those), but against a whole-place loan of the same storage they are
-/// ordinary borrows: establishing one beside the other conflicts when either
-/// is mutable (a `for ref` loop over a list while a view of the list lives,
-/// or a view taken inside such a loop).
+/// joins and loops.
+///
+/// A loan names an origin and borrows nothing exclusively, as upstream's
+/// references do: reads, stores, and mutating calls of the place it names
+/// coexist with it, and so do other loans of the same storage (upstream
+/// checks argument exclusivity at the call, in the checker). What a live
+/// whole-place loan excludes is the end of the value it keeps alive — a
+/// move out, a consuming argument, a destruction — which upstream reports
+/// as a use of the uninitialized value. Interior-storage loans have
+/// generation semantics instead: the lifetime scan stales them at a
+/// structural mutation of their container. Through a reference, a write
+/// needs a mutable loan, and a mutable reborrow a mutable source.
 ///
 /// The check walks the structured body twice: backward for reference
 /// liveness (`region_walk.rs`'s `DestructorInsertion`-shaped walk) and
@@ -282,57 +293,6 @@ pub(super) fn analyze_loans(
         )
     };
     walk_forward(&scan, LoanGenerationState::default(), &f.body, &mut check).map(|_| ())
-}
-
-/// Whether establishing `new` beside the live `existing` loan is a conflict:
-/// overlapping places, at most one interior-generation domain (two interior
-/// loans are generation-tracked, never exclusive), at most one shared
-/// pointer alias (two `Pointer(to=place)` loans coexist), neither side a
-/// setup loan (a call operand awaiting its read excludes nothing), and either
-/// side excluding the other's reads.
-fn loans_exclusive(new: &mojito_mir::mir::MirLoan, existing: &Loan) -> bool {
-    let generation_tracked = new.interior.is_some() && existing.interior.is_some();
-    let shared_aliases = new.shared && existing.shared;
-    !(generation_tracked || shared_aliases || new.setup || existing.setup)
-        && (excludes_reads(new) || excludes_reads(existing))
-        && mir_places_overlap(&new.place, &existing.place)
-}
-
-/// Whether a live loan excludes another borrow's *reads* of the same storage.
-/// Only an exclusive mutable borrow does. A `Pointer(to=place)` loan is
-/// shared: upstream's `Pointer` is provenance, not an exclusive borrow, so a
-/// second reader — another `Pointer`, or a `ref` argument naming the place —
-/// coexists with it. Writes to the owner still conflict with either kind
-/// (`assets/ownership_error/pointer_to_owner_twice_then_mutation.mojo`).
-fn excludes_reads(loan: &impl LoanCapability) -> bool {
-    loan.mutable() && !loan.shared()
-}
-
-/// The mutability/sharing pair `excludes_reads` reads, so the established
-/// (`MirLoan`) and reaching (`Loan`) forms answer it the same way.
-trait LoanCapability {
-    fn mutable(&self) -> bool;
-    fn shared(&self) -> bool;
-}
-
-impl LoanCapability for mojito_mir::mir::MirLoan {
-    fn mutable(&self) -> bool {
-        self.mutable
-    }
-
-    fn shared(&self) -> bool {
-        self.shared
-    }
-}
-
-impl LoanCapability for Loan {
-    fn mutable(&self) -> bool {
-        self.mutable
-    }
-
-    fn shared(&self) -> bool {
-        self.shared
-    }
 }
 
 pub(super) fn mir_places_overlap(left: &MirPlace, right: &MirPlace) -> bool {
@@ -457,7 +417,7 @@ pub(super) fn loan_accesses(
         } => vec![(
             MirPlace::root(*var, None),
             if mode.moves() {
-                LoanAccess::Write
+                LoanAccess::End
             } else {
                 LoanAccess::Read
             },
@@ -540,16 +500,17 @@ pub(super) fn loan_accesses(
             vec![(place.clone(), LoanAccess::Write, span_for(*value))]
         }
         MirInstr::MovePlace { dest, place } => {
-            vec![(place.clone(), LoanAccess::Write, span_for(*dest))]
+            vec![(place.clone(), LoanAccess::End, span_for(*dest))]
         }
         MirInstr::MakeClosure { dest, captures, .. } => captures
             .iter()
             .map(|capture| (capture.place.clone(), LoanAccess::Read, span_for(*dest)))
             .collect(),
-        MirInstr::DropPlace { place, .. }
-        | MirInstr::MarkInitialized { place }
-        | MirInstr::MarkDestroyed { place } => {
+        MirInstr::MarkInitialized { place } => {
             vec![(place.clone(), LoanAccess::Write, span_for(Reg(0)))]
+        }
+        MirInstr::DropPlace { place, .. } | MirInstr::MarkDestroyed { place } => {
+            vec![(place.clone(), LoanAccess::End, span_for(Reg(0)))]
         }
         MirInstr::Call {
             dest,
@@ -752,7 +713,7 @@ pub(super) fn loan_accesses(
             accesses
         }
         MirInstr::DropVar { var, .. } => {
-            vec![(MirPlace::root(*var, None), LoanAccess::Write, fallback)]
+            vec![(MirPlace::root(*var, None), LoanAccess::End, fallback)]
         }
         _ => Vec::new(),
     }
@@ -772,22 +733,14 @@ pub(super) fn loan_error(
 }
 
 /// The access a retained place bound by `convention` performs: a write
-/// through a `mut`, owned, or result slot, a read through a borrowed one.
+/// through a `mut` or result slot, an end through an owned one, a read
+/// through a borrowed one.
 const fn convention_access(convention: Option<mojito_ast::ast::ArgConvention>) -> LoanAccess {
     use mojito_ast::ast::ArgConvention;
-    if matches!(
-        convention,
-        Some(
-            ArgConvention::Mut
-                | ArgConvention::Ref
-                | ArgConvention::Var
-                | ArgConvention::Out
-                | ArgConvention::Deinit
-        )
-    ) {
-        LoanAccess::Write
-    } else {
-        LoanAccess::Read
+    match convention {
+        Some(ArgConvention::Mut | ArgConvention::Ref | ArgConvention::Out) => LoanAccess::Write,
+        Some(ArgConvention::Var | ArgConvention::Deinit) => LoanAccess::End,
+        _ => LoanAccess::Read,
     }
 }
 
@@ -827,9 +780,10 @@ fn recorded_access(
 }
 
 /// Check one instruction against the loans of the references `active` live
-/// before it, given the loan generations `state` reaching it: establishing a
-/// loan beside an exclusive live one, or accessing a place a live loan
-/// excludes, conflicts.
+/// before it, given the loan generations `state` reaching it: a mutable
+/// reborrow of a shared reference, a write through a reference that holds
+/// no mutable loan, or the end of a value a live whole-place loan keeps
+/// alive, conflicts.
 fn check_loans_at(
     f: &MirFunction,
     (callees, addresses, callee_slots): (
@@ -861,13 +815,6 @@ fn check_loans_at(
                     if loan.mutable && reaching.iter().any(|source| !source.mutable) {
                         return Err(loan_error(f, &loan.place, *other, span()));
                     }
-                    continue;
-                }
-                if reaching
-                    .iter()
-                    .any(|existing| loans_exclusive(loan, existing))
-                {
-                    return Err(loan_error(f, &loan.place, *other, span()));
                 }
             }
         }
@@ -915,7 +862,7 @@ fn check_loans_at(
                             }
                         ))
                     );
-                if access == LoanAccess::Write
+                if matches!(access, LoanAccess::Write | LoanAccess::End)
                     && reference_loans
                         .iter()
                         .chain(reborrowed.iter().flatten())
@@ -925,20 +872,20 @@ fn check_loans_at(
                 }
                 continue;
             }
-            if reference_loans.iter().any(|loan| {
-                loan.interior.is_none()
-                    && mir_places_overlap(&place, &loan.place)
-                    && if loan.setup {
-                        // A shared loan that only keeps its storage live (a
-                        // value whose type alone names it) grants no access,
-                        // but its owner's old value cannot end at a store or
-                        // move of it while the loan holds it live.
-                        loan.shared && place.through.is_none() && redefines(instr)
-                    } else {
-                        !(loan.shared && through_shared)
-                            && (access != LoanAccess::Read || excludes_reads(*loan))
-                    }
-            }) {
+            if access == LoanAccess::End
+                && reference_loans.iter().any(|loan| {
+                    loan.interior.is_none()
+                        && mir_places_overlap(&place, &loan.place)
+                        && if loan.setup {
+                            // A setup loan grants no access, but a shared one
+                            // keeps its storage live (a value whose type alone
+                            // names it), so its owner's value cannot end.
+                            loan.shared && place.through.is_none()
+                        } else {
+                            !(loan.shared && through_shared)
+                        }
+                })
+            {
                 return Err(loan_error(f, &place, *reference, span));
             }
         }
@@ -1009,18 +956,5 @@ impl ForwardScan for LoanScan<'_> {
 
     fn enters(&self, _instr: &MirInstr) -> bool {
         true
-    }
-}
-
-/// Whether `instr` stores into or moves out of the storage it names
-/// directly, ending the value there: a definition, a store, or a move.
-const fn redefines(instr: &MirInstr) -> bool {
-    match instr {
-        MirInstr::DefVar { .. }
-        | MirInstr::Store { .. }
-        | MirInstr::StoreRef { .. }
-        | MirInstr::MovePlace { .. } => true,
-        MirInstr::UseVar { mode, .. } => mode.moves(),
-        _ => false,
     }
 }

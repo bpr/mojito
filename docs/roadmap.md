@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2599**.
+Next free ID: **R2601**.
 
 ## Ordered Work
 
@@ -1811,6 +1811,28 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2599 A reference into an origin parameter's owned interior
+  returns under the parameter itself**
+
+  Problem: `def first(self) -> ref[Self.o] Int: return self.src[][0]`, over
+  `var src: Pointer[List[Int], Self.o]`, is accepted, where the pin rejects
+  it: "cannot return reference with incompatible origin:
+  'origin_of(o["element"])' vs 'origin_of(o)'".
+  - The return check compares a returned place with the declared origin
+    (`ReturnOriginIncompatible`), but a place reached through a pointer or
+    a `ref` field over `Self.o` is no place of the body, so the element
+    interior below the parameter goes unseen.
+  - A caller then holds an element reference whose origin names the
+    whole list, which a structural mutation of the list does not stale:
+    `for x in nums: nums.clear(); print(x)` over such a `__next__` traps
+    in the VM with "use after Pointer deallocation".
+  - The fix names the returned reference's own origin, as the selected
+    `__getitem__`'s result origin gives it, and compares that.
+  - Probe: `conformance/probes/return_element_reference_under_origin_parameter.mojo`.
+  - Found while landing R1160 (2026-11-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1878 A `ref` binding of a call's reference result holds no loan
   against a move of its origin**
 
@@ -1840,47 +1862,16 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   written, not at call setup**
 
   Problem: `two(ident(Span(xs))[0], bx(xs))`, with `bx(mut l)` adding 100
-  to `l[0]`, prints `two 101 0` at the pin and is rejected by Mojito with
-  "access to 'xs' conflicts with live reference '$arg_loan_r11'".
+  to `l[0]`, prints `two 101 0` at the pin and `two 1 0` in Mojito: the
+  element is read before the later argument writes it.
   - R685 reads a reference-result operand at its call's setup only when
     its accessor chain roots at a named place (`setup_reference` in
     `crates/mojito-mir/src/mir/calls.rs`): the VM resolves a view's
     referent through the receiver, and a temporary receiver's slot dies at
     its last use.
-  - The temporary `Span(xs)` argument's anchor slot (`$arg_loan_r`) holds
-    an exclusive loan on `xs` to the statement's end, so the later `mut`
-    argument conflicts with it even before the read's placement matters.
-  - Probe: `at(Span(l)) = 5` over `def at[o: MutOrigin](s: Span[Int, o])
-    -> ref[o] Int` is rejected with "access to 'l' conflicts with live
-    reference '$arg_loan_r12'" (pin: stores, `print(l[0])` prints `5`):
-    the write through the result, which borrows `l`, collides with the
-    anchor's loan. The same with `o: Origin`. A named span (`var s =
-    Span(l); at(s) = 5`) runs.
-  - Probe: `assets/ok/origin_binder_mutable_ref_result.mojo`
-    (`at(Pointer(to=x)) = 5`) fails with "access to 'x' conflicts with
-    live reference '$arg_loan_r8'" as of 2026-11-22, an `ok` fixture.
+  - The anchor's loan excludes nothing, so the read placement is the
+    whole divergence.
   - Found while landing R685 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1505 A destructuring leaf's reference lvalue borrows its root
-  exclusively until its store**
-
-  `(r[0], r[1]) = (5, 6)` over a struct whose only accessor is a `ref`
-  getter is rejected ("access to 'r' conflicts with live reference
-  '$call_ref_r4'"), where the pin forms both lvalues, then stores through
-  each, and prints `5 6`.
-  - `lower_destructure` (`mir/lower_stmt.rs`) forms every place leaf before
-    the value, as upstream's `TupleDLValue` does, and a getter leaf's handle
-    is materialized by `materialize_call_reference_place`, whose loans are
-    exclusive.
-  - The second leaf's getter call takes `r` mutably while the first
-    handle's loan is live; upstream's lvalue names an origin and excludes
-    nothing until the store, as a `ref` binding's setup loans do here
-    (`reference_binding_loans`).
-  - Probe: the store above; a single getter leaf, `(r[0], m) = (5, 6)`,
-    already runs (`assets/ok/destructure_subscript_targets.mojo`).
-  - Found while landing R1374 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2157,50 +2148,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1160 An element store while a contiguous `List` slice is live is
-  rejected**
-
-  Problem: `var v = xs[:]; xs[0] = 9; print(v)` is rejected ("access to
-  'xs' conflicts with live reference 'v'"), where the pin prints
-  `[9, 1, 2, 3, 4]`.
-  - The slice is a `Span` over `origin_of(xs)._get_owned_interior[
-    "element"]`, and an element store does not move the elements.
-  - Distinct from R1155, which is `Span(list)` followed by a structural
-    mutation.
-  - Probe: an element read beside a live mutable view is rejected too.
-    `var s = Span(l); s[0] = 7; print(l[0], len(s))` reports "access to
-    'l' conflicts with live reference 's'", where the pin prints `7 3`
-    (found while landing R1725, 2026-10-30).
-  - Probe: `conformance/probes/list_slice_span_element_store.mojo`.
-  - Probe: a pointer is the same view since `Pointer(to=)` is the declared
-    initializer. `ref rx = xs; var p = Pointer(to=rx); print(rx[0])` before
-    a use of `p` reports "access to 'xs' conflicts with live reference
-    'p'" (`assets/ownership_error/pointer_to_ref_binding_twice.mojo`, pin:
-    `3 1 2`), and `t.bump()` under a live `Pointer(to=r)` over `ref r =
-    t.a` reports the same for `t`
-    (`assets/ownership_error/pointer_to_ref_stale_after_owner_mutation.mojo`,
-    pin: `4`). Found while landing R2208 (2026-11-21).
-  - Probe: a store to the owner itself. `var p = Pointer(to=x); x = 5;
-    print(p[])` reports "access to 'x' conflicts with live reference 'p'",
-    where the pin prints `5`; a user view built by `P(to=x)` or `P(x)` over
-    a `ref[Self.origin] to` parameter reports the same (found while landing
-    R2472, 2026-11-21).
-  - Probe: two mutable user views over one place, `var v = MV(x); var w =
-    MV(x)` over `struct MV[o: MutOrigin]` with a `ref[Self.o]` initializer,
-    are rejected at the second construction's argument access ("conflicts
-    with live reference 'v'"), where the pin accepts. The loans are shared;
-    the `mut` access against them is the cause (found while landing R2475,
-    2026-11-22).
-  - Probe: a mutable loop over a local holder's `ref` field. `for ref x
-    in w.src: x += 1` then `print(w.src[0])`, over `w = Walk(l)` of
-    `struct Walk[o: MutOrigin]` holding `var src: ref[Self.o] List[Int]`,
-    reports "access to 'l' conflicts with live reference 'w'"; the loop's
-    mutable loan on `l` meets `w`'s shared one. Through `ref r = w` too
-    (found while landing R2586, 2026-11-25).
-  - Found while landing R192 (2026-10-19).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1240 A getter on a field of a read-only `match` anchor conflicts
   with the anchor**
 
@@ -2309,39 +2256,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Not yet checked against the pin, which is expected to print `2`.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R88 A copy of a loan-carrying value is taken as a borrow of its
-  receiver**
-
-  Problem: a method returning a struct that carries a loan through a type or
-  origin argument (`Span.copy()` at `Span[Int, origin_of(xs)]`) records a
-  view-result borrow of its receiver, so the copy looks like it aliases what
-  it was copied from.
-  - In `def g(xs: List[Int])`, `var v = Span(l)` over `l:
-    List[Span[Int, origin_of(xs)]]`, then `var w = v[0].copy()`,
-    `l.append(Span(xs))`, and a read of `w` is rejected ("access to 'l'
-    conflicts with live reference 'w'"). The pin prints `2 3`.
-  - `w = l[0].copy()` and `l.extend(l.copy())` are accepted, as at the pin.
-  - At a mutable origin (`var xs` in `main`), the pin rejects
-    `l.extend(l.copy())` itself ("aliasing values passed mutably"), and so
-    does Mojito.
-  - The rule is `record_view_result` in `method_calls/call_contract.rs`. It
-    lends the receiver for any loan-carrying struct result of a
-    non-consuming method.
-  - Dropping the borrow when the declared return names only the struct's own
-    origin binders was tried. It lost the only link from `c.get()`'s result
-    to the loans `c` carries, which R87 has to supply first.
-  - Probe: in a `mut self` method of `struct I[origin: ImmOrigin]` over
-    `var _slice: StringSpan[Self.origin]`, `var r = self._slice._sub_view(0,
-    1)` then `self._slice = self._slice._sub_view(1, n)` is rejected
-    ("access to 'self._slice' conflicts with live reference 'r'"), and so is
-    `var r = self.peek_next()` before a store to `self._slice`, which
-    upstream's `CodepointSliceIter.next` does; the bundled
-    `std/collections/string/iterators.mojo` shrinks `_slice` through its
-    `_data` and `_size` fields instead (found while landing R1866,
-    2026-11-10).
-  - Depends on R87.
-  - Model: Fable, Planned.
 
 - [ ] **R89 A subscript of an element read through a `Span` of `Span`s fails
   on the VM**
@@ -2601,27 +2515,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe:
     `conformance/probes/conditional_deinit_without_conditional_conformance.mojo`.
   - Depends on R1364.
-  - Model: Opus, Not Planned.
-
-- [ ] **R266 A view of a whole local's owned interior is lent as the whole
-  local**
-
-  Problem: `var view = s.strip()` then `s = String("q")` then a use of
-  `view` is rejected at the store as "access to 's' conflicts with live
-  reference 'view'", where the pin rejects the use as "use of invalidated
-  interior reference 's["bytes"]'".
-  - The verdict agrees; the shape does not: the pin lends `s["bytes"]` and
-    the store invalidates it, Mojito lends all of `s`.
-  - A field receiver (`h.name.strip()`, `self.name.strip()`) already lends
-    its named interior; a bare variable receiver still takes a whole-place
-    loan in `aggregate_borrows_unmaterialized`'s view-result path.
-  - Moving the owner (`var g = h^`) under such a view reports the stale view,
-    where the pin reports "use of uninitialized value 'h'".
-  - Found while closing the `self` field store under a live view (2026-10-04).
-  - Probe: `assets/ownership_error/list_slice_used_after_clear.mojo`, a
-    `List` slice used after `xs.clear()`: the pin reports the invalidated
-    `xs["element"]`, Mojito the conflict with the whole of `xs`.
-  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R302 A linear `Dict.deinit_with` leaks its emptied entries list,
@@ -8101,12 +7994,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     the pin; that special case goes with the port.
   - Done when the bundled declaration is upstream's and the name check is
     gone.
-  - Probe: `show(span[i])` over `def show(s: StringSlice)` and `var span
-    = Span(items)` of a `read` `items`, `span` used after the call, is
-    rejected ("access to 'items' conflicts with live reference 'span'"),
-    where the pin runs it: the implicit conversion's `ref [Self.origin]`
-    takes the element mutably. `StringSlice(span[0])` spelled out runs
-    (found while landing R1931).
   - Found while repairing the 2026-11-04 overnight gate.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8966,11 +8853,14 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Model: Opus, Planned.
 
 - [ ] **R1155 `Span`'s data pointer and `List.unsafe_ptr` name the owned
-  interior, so `Span(list)` is invalidated where the pin's is not**
+  interior, where upstream's name the list**
 
-  Problem: `var ys = Span(xs); xs.clear(); print(len(ys))` is rejected
-  ("access to 'xs' conflicts with live reference 'ys'"), where the pin
-  prints `3`.
+  Problem: a `Pointer` that `List.unsafe_ptr()` returns names
+  `origin_of(xs)._get_owned_interior["element"]`, so it does not keep
+  `xs` alive, where the pin's `Pointer[T, origin_of(xs)]` does.
+  - `Span(list)` itself now runs beside a structural mutation, as at the
+    pin, since its loan names the list and excludes nothing
+    (`assets/ok/span_of_list_survives_clear.mojo`).
   - Mojito's `Span._data` is `Pointer[T, origin._get_owned_interior[
     "element"]]` and `List.unsafe_ptr()` returns the interior pointer;
     upstream's `_data` is `Pointer[T, origin]`, `unsafe_ptr()` returns
@@ -8981,7 +8871,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     elements' generation.
   - A slice span `Span[T, interior(o)]` therefore carries a doubly
     interior data pointer inside Mojito; no probe observes it.
-  - Probe: `conformance/probes/span_of_list_survives_clear.mojo`.
   - Probe: a `Pointer` over an owned interior does not keep its owner
     alive, though a `Span` or `ref` over one does. `var p =
     xs.unsafe_ptr(); print(p[0].id)` over a `List` of a printing
@@ -9059,23 +8948,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     flag that survives joins.
   - The plan picks one.
   - Ledger name: `partial-move-join-imprecision`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **R181 Assigning a call over a `Span` of the assigned `List` is
-  rejected as a conflict the pin does not see**
-
-  Problem: `xs = rebuild(Span(xs))` runs upstream (`1`) and is rejected in
-  Mojito with "access to 'xs' conflicts with live reference 'xs'".
-  - The temporary argument's anchor now ends before the store, as for the
-    passing `s = String(StringSpan(s))`.
-  - But the assigned `List[Int]` result still records a loan on `xs`, so
-    the store conflicts with the new value itself.
-  - Pinned by
-    `conformance/probes/assign_plain_span_argument_over_list.mojo`.
-  - Where the result's loan comes from (MIR `aggregate_borrows` or a
-    replayed transfer effect) is not yet known.
-  - Ledger name: `assign-plain-span-argument-over-list`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -13434,6 +13306,23 @@ residue found inside a task moves to the task that owns its fix.
     upstream's `_type` does.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R2600 `String` keeps no inline storage, so a view over a short
+  string dangles at an append the pin's survives**
+
+  Problem: `for g in s: s += "!"; print(g)` over `var s = String("abc")`
+  prints `a`, `b`, `c` at the pin and traps in the VM with "use after
+  Pointer deallocation".
+  - Upstream's `String` holds up to `INLINE_CAPACITY` bytes inline
+    (`FLAG_IS_INLINE`), so appending to a short string writes in place and
+    a grapheme view over its bytes stays valid.
+  - The bundled `String` (`stdlib/std/string.mojo`) is `data`, `size`, and
+    `cap` over a heap buffer, so every growth reallocates.
+  - The loop's view names `origin_of(s)`, which excludes nothing, so the
+    program is accepted, as at the pin.
+  - Found while landing R1160 (2026-11-25).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1121 `Tuple` elements need not be `Movable`**
 

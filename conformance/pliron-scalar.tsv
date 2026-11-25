@@ -59,6 +59,7 @@ assets/ok/assign_interior_view_through_temporary.mojo	-	ineligible	no-scalar-ent
 assets/ok/assign_interior_view_to_other_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/assign_nested_call_interior_view_over_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/assign_plain_named_view_over_source.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/assign_plain_view_argument_over_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/assign_plain_view_temporary_over_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/assign_plain_view_temporary_over_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/assign_register_passable_element_over_list.mojo	-	ineligible	no-scalar-entry-shape
@@ -393,6 +394,7 @@ assets/ok/destructure_sequence_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_starred_slice.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_subscript_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_swap_and_places.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/destructure_two_getter_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_display_literal_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_hasher_forwarding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_insert_linear_capable.mojo	-	ineligible	no-scalar-entry-shape
@@ -661,6 +663,7 @@ assets/ok/list_from_iterable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_of_vectors_subscript.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_reflected_fields.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/list_slice_span_element_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_strided_slice_normalizes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_subscript_field_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_subscript_field_store_drop.mojo	-	ineligible	no-scalar-entry-shape
@@ -682,6 +685,8 @@ assets/ok/llvm_intrinsic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic_deinterleave.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic_math.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/llvm_intrinsic_shuffles.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/loan_beside_owner_access.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/loan_carrying_copy_beside_source_append.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loan_carrying_instance_clone.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loan_carrying_temporary_destroyed_after_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loan_carrying_temporary_owned_argument.mojo	-	ineligible	no-scalar-entry-shape
@@ -1386,12 +1391,14 @@ assets/ok/some_composition_and_callable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/some_indexer_user_subscript.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/some_parameter_literal_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/some_trait_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/span_element_implicit_string_slice_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_from_array.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_generic_free_def_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_implicit_from_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_move_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_mutable_converts_to_immutable_view.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/span_of_list_survives_clear.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_parameter_from_list_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_pointer_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_temp_method_argument.mojo	-	ineligible	no-scalar-entry-shape
@@ -1659,6 +1666,7 @@ assets/ok/temporary_field_read_drop_order.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/temporary_field_receiver_borrows_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_receiver_deinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/temporary_receiver_view.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/temporary_span_reference_result_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ternary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/thin_nested_def_reads_value_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_bound_argument_drop_order.mojo	-	ineligible	no-scalar-entry-shape
@@ -1949,6 +1957,7 @@ assets/extensions/ok/ref_field_ctor_owned_source.mojo	-	ineligible	no-scalar-ent
 assets/extensions/ok/ref_field_ctor_temporary_explicit_init.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_ctor_temporary_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_drain_mut_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_holder_mutable_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_iteration_and_binding_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_mut_origin_element_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_mut_origin_subscript_write.mojo	-	ineligible	no-scalar-entry-shape

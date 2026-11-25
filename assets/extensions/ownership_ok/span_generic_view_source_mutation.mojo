@@ -1,8 +1,7 @@
-# expect: conflicts with live reference
 # A compile-time-parameterized free function returning an origin-bearing
 # struct (`-> View[origin_of(xs)]`, minted as a `$`-mangled clone per
 # instantiation) loans its parameter place exactly like the plain spelling:
-# mutating the source list while the returned view lives is rejected.
+# mutating the source list while the returned view lives runs (R1160).
 @fieldwise_init
 struct View[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]

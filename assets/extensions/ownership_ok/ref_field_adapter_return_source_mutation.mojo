@@ -1,7 +1,6 @@
-# expect: conflicts with live reference 'k'
 # A returned adapter (wrapper around a ref-field struct built from the
-# receiver's field) lends the receiver: mutating the source while the adapter
-# is live is rejected.
+# receiver's field) lends the receiver, which it keeps alive: mutating the
+# source while the adapter is live runs, as through a pointer (R1160).
 @fieldwise_init
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]

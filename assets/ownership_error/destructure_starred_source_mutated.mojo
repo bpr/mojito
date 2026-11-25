@@ -1,7 +1,8 @@
-# expect: conflicts with live reference
+# expect: use of invalidated interior reference 'rest' to 'values["element"]'
+# A starred remainder is a `Span` over its list's owned elements: appending
+# to the list stales that interior, and the remainder's next use is
+# rejected, as at the pin.
 # requires: stdlib
-# A starred remainder borrows its list: appending to the list before the
-# remainder's last use is rejected.
 def main() raises:
     var values: List[Int] = [1, 2, 3, 4, 5]
     var [first, *rest] = values

@@ -1,8 +1,7 @@
-# expect: conflicts with live reference
-# A contiguous `List` slice is a `Span` borrowing the list, so clearing the
-# list while the slice is live conflicts with it. The pin words this as the
-# interior invalidation `use of invalidated interior reference 'xs["element"]'`
-# (R266 owns the wording).
+# expect: use of invalidated interior reference 'ys' to 'xs["element"]'
+# A contiguous `List` slice is a `Span` over
+# `origin_of(xs)._get_owned_interior["element"]`, so clearing the list
+# stales the slice, and its next use is rejected as the pin rejects it.
 # requires: stdlib
 def main():
     var xs: List[Int] = [1, 2, 3]

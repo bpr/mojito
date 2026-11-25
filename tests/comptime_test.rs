@@ -79,9 +79,10 @@ fn inferred_generic_over_origin_erased_iterator_stays_abstract() {
     // erased origin slot. The bundled List/Set iterators iterate themselves.
     let src = "from std.format._utils import Named\n\ndef ident[T: AnyType](x: T) -> Int:\n    return 1\n\ndef main() raises:\n    var xs: List[Int] = [1, 2, 3]\n    var it = xs.__iter__()\n    print(next(it), next(it))\n    for rest in it:\n        print(rest)\n    var st = Set[Int]()\n    st.add(9)\n    var si = st.__iter__()\n    print(next(si))\n    var w = 7\n    var n = Named(\"k\", w)\n    print(ident(n), ident(it))\n";
     assert_eq!(run(src).unwrap(), "1 2\n3\n9\n1 1\n");
+    // The stored iterator keeps its list alive but borrows nothing
+    // exclusively: an append beside it runs, as at the pin.
     let mutation = "def main() raises:\n    var xs: List[Int] = [1, 2]\n    var it = xs.__iter__()\n    xs.append(9)\n    print(next(it))\n";
-    let err = run(mutation).unwrap_err();
-    assert!(err.contains("conflicts with live reference"), "{err}");
+    run(mutation).unwrap();
 }
 
 #[test]
@@ -1505,9 +1506,10 @@ fn nested_tuple_type_arguments_resolve_in_every_position() {
 fn stored_array_and_span_iterators_iterate_themselves() {
     let src = "def main():\n    var a = [1, 2]\n    var ai = a.__iter__()\n    for x in ai:\n        print(x)\n    var xs: List[Int] = [5, 6]\n    var sp = Span(xs)\n    var it = sp.__iter__()\n    for y in it:\n        print(y)\n";
     assert_eq!(run(src).unwrap(), "1\n2\n5\n6\n");
+    // The span iterator names the list itself, so an append beside it runs
+    // and its length is still read, as at the pin.
     let mutation = "def main():\n    var xs: List[Int] = [1, 2]\n    var sp = Span(xs)\n    var it = sp.__iter__()\n    xs.append(9)\n    print(it.__len__())\n";
-    let err = run(mutation).unwrap_err();
-    assert!(err.contains("conflicts with live reference"), "{err}");
+    assert_eq!(run(mutation).unwrap(), "2\n");
 }
 
 #[test]

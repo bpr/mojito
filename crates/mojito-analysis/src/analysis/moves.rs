@@ -373,6 +373,9 @@ pub(super) struct MoveContext {
     call_operands: HashSet<u32>,
     /// The storage each call operand addresses.
     addresses: OperandAddresses,
+    /// The place each `ref.make` addresses, by the register it defines: a
+    /// variadic pack's element is read where the pack is formed.
+    made_refs: HashMap<u32, MirPlace>,
 }
 
 /// How an instruction touches a place: a whole-value *read* (using the subtree),
@@ -635,7 +638,12 @@ pub(super) fn analyze_lifetimes(
             )?;
         }
         if !scan.interior.is_empty() {
-            check_interior_instruction_uses(&state.interior, instr, f, &scan.context.addresses)?;
+            check_interior_instruction_uses(
+                &state.interior,
+                instr,
+                f,
+                (&scan.context.addresses, &scan.context.made_refs),
+            )?;
         }
         Ok(())
     };
@@ -817,7 +825,13 @@ fn move_context(f: &MirFunction, declarations: &MirDeclarations) -> MoveContext 
         caller_aliases: HashSet::new(),
         call_operands: HashSet::new(),
         addresses: operand_addresses(f, declarations),
+        made_refs: HashMap::new(),
     };
+    for_each_instr_deep(&f.body, &mut |instr| {
+        if let MirInstr::MakeRef { dest, place } = instr {
+            context.made_refs.insert(dest.0, place.clone());
+        }
+    });
     let mut parameter_references = HashSet::new();
     for_each_instr_deep(&f.body, &mut |instr| match instr {
         MirInstr::Call { args, kwargs, .. } | MirInstr::CallIndirect { args, kwargs, .. } => {

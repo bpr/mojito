@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1345
+# swept-count	1340
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -109,7 +109,6 @@ assets/type_error/type_binder_var_binding.mojo	compile-reject	agree	error: dynam
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
-assets/origin_error/pointer_loan_conflict.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/origin_error/pointer_write_immutable.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/origin_error/projected_origin_mismatch.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(self.right)' vs 'origin_of(self.left)'
 assets/origin_error/returned_local.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(source)'
@@ -148,6 +147,7 @@ assets/ownership_error/list_element_view_stale_after_store.mojo	compile-reject	a
 assets/ownership_error/list_element_view_used_after_list_moved.mojo	compile-reject	agree	error: use of uninitialized value 'ys'
 assets/ownership_error/list_extend_consumes.mojo	compile-reject	agree	error: use of uninitialized value 'b'
 assets/ownership_error/list_slice_used_after_clear.mojo	compile-reject	agree	error: use of invalidated interior reference 'xs["element"]'
+assets/ownership_error/local_view_stale_after_store.mojo	compile-reject	agree	error: use of invalidated interior reference 's["bytes"]'
 assets/ownership_error/match_sequence_star_source_mutated.mojo	compile-reject	agree	error: use of invalidated interior reference 'values["element"]'
 assets/ownership_error/method_on_moved.mojo	compile-reject	agree	error: use of uninitialized value 'p'
 assets/ownership_error/move_in_loop.mojo	compile-reject	agree	error: use of uninitialized value 'a'
@@ -173,11 +173,7 @@ assets/ownership_error/partial_move_raise_path_hole.mojo	compile-reject	agree	er
 assets/ownership_error/partial_move_sibling_write.mojo	compile-reject	agree	error: value 'p.a' cannot be consumed, because it is used later
 assets/ownership_error/partial_move_var_parameter.mojo	compile-reject	agree	error: field 'p.a' destroyed out of the middle of a value, preventing the overall value from being destroyed
 assets/ownership_error/partial_move_whole_reassign.mojo	compile-reject	agree	error: field 'p.a' destroyed out of the middle of a value, preventing the overall value from being destroyed
-assets/ownership_error/pointer_field_iterator_source_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
-assets/ownership_error/pointer_to_owner_across_for_loop.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
-assets/ownership_error/pointer_to_owner_twice_then_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
-assets/ownership_error/pointer_to_ref_binding_twice.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
-assets/ownership_error/pointer_to_ref_stale_after_owner_mutation.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
+assets/ownership_error/pointer_field_iterator_interior_after_source_mutation.mojo	compile-reject	agree	error: use of invalidated interior reference 'nums.items["element"]'
 assets/ownership_error/print_argument_read_after_move.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/reference_argument_read_after_invalidation.mojo	compile-reject	agree	error: use of invalidated interior reference 'lst["element"]'
 assets/ownership_error/reference_argument_read_after_move.mojo	compile-reject	agree	error: use of uninitialized value 'tup'
@@ -185,7 +181,6 @@ assets/ownership_error/reference_loop_element_held_across_append.mojo	runs	subse
 assets/ownership_error/reference_row_iteration_invalidated_by_row_append.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/self_field_store_under_live_view.mojo	compile-reject	agree	error: use of invalidated interior reference 'self.name["bytes"]'
 assets/ownership_error/template_method_reference_local_invalidated.mojo	compile-reject	agree	error: use of invalidated interior reference 'self.items["element"]'
-assets/ownership_error/template_served_instance_keeps_loan.mojo	runs	subset	the pin runs it; Mojito rejects: conflicts with live reference
 assets/ownership_error/transfer_into_var_parameter.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/try_break_move_then_use_after_loop.mojo	compile-reject	agree	error: use of uninitialized value 'x'
 assets/ownership_error/try_continue_move_reentered.mojo	compile-reject	agree	error: use of uninitialized value 's'

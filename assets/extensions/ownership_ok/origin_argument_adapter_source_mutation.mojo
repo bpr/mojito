@@ -1,6 +1,6 @@
-# expect: access to 'data' conflicts with live reference 'k'
 # A wrapper holding an explicitly origin-applied ref-field struct keeps the
-# transitive loan on the ultimate owner.
+# ultimate owner alive; mutating the owner while the wrapper is live runs,
+# and the wrapper reads the mutated owner (R1160).
 @fieldwise_init
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]

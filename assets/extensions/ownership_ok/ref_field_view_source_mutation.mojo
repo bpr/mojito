@@ -1,6 +1,6 @@
-# expect: access to 'b.items' conflicts with live reference 'v'
-# A ref-field view returned from an ordinary method lends the receiver:
-# mutating the source while the view is live is rejected.
+# A ref-field view returned from an ordinary method lends the receiver: it
+# keeps the receiver alive, and mutating the source while the view is live
+# runs (R1160).
 @fieldwise_init
 struct View[
     view_mut: Bool, //,

@@ -8,6 +8,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A loan now names an origin and borrows nothing exclusively, as
+  upstream's references do (R1160). A live `Pointer`, `Span`, slice, view,
+  iterator, or `ref`-field holder keeps the place it names alive, and only
+  that place's move or destruction beside it is rejected. Reads, stores,
+  mutating calls, and a second mutable view now run beside it: `var v =
+  xs[:]; xs[0] = 9; print(v)` prints `[9, 1, 2, 3, 4]`, `var p =
+  Pointer(to=x); x = 5; print(p[])` prints `5`, and `Span(xs)` survives
+  `xs.clear()`, as at the pin. A view whose type names an owned interior
+  lends that interior, so a structural mutation stales it with the pin's
+  "use of invalidated interior reference": a slice span, a starred
+  remainder, `s.strip()` over a whole local (R266), and a user iterator
+  whose `__next__` yields into its source's elements. A call reads its
+  by-address operands, and a variadic pack its elements, once every
+  argument is evaluated, so `print(s.strip(), grow(s))` is rejected, as at
+  the pin. This also fixes the destructuring `(r[0], r[1]) = (5, 6)` over a
+  `ref` getter (R1505), `xs = rebuild(Span(xs))` (R181), and a copy of a
+  loan-carrying view beside an append to its list (R88), and the bundled
+  `CodepointSliceIter.next` and `next_back` now advance through
+  `peek_next` and `peek_back`, as upstream's do.
+
 - A module `comptime` whose body does not evaluate yet (`comptime
   StringSlice = StringSpan` above `struct StringSpan`, `Holder[Key(7)]`
   before `Key`'s initializers register) now waits in the declaration

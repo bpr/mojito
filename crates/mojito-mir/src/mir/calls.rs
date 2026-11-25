@@ -3118,7 +3118,8 @@ impl<'a> Flatten<'a> {
     /// Emit all invalidations whose semantic boundary is this call.  Argument
     /// facts are deliberately delayed until every argument has been evaluated:
     /// the callee, rather than evaluation of the place expression, performs the
-    /// mutation.
+    /// mutation. An argument that is itself a call already emitted its facts
+    /// at its own boundary, before this call's operands are read.
     pub(super) fn emit_call_invalidations(
         &mut self,
         call: Node<'a>,
@@ -3126,9 +3127,15 @@ impl<'a> Flatten<'a> {
         kwargs: &[(&str, Node<'a>)],
     ) {
         for &argument in args.iter().chain(kwargs.iter().map(|(_, value)| value)) {
-            self.emit_interior_invalidations(argument, None);
+            if !self
+                .emitted_call_invalidations
+                .contains(&argument.address())
+            {
+                self.emit_interior_invalidations(argument, None);
+            }
         }
         self.emit_interior_invalidations(call, None);
+        self.emitted_call_invalidations.insert(call.address());
     }
 
     /// Bind a borrowed actual as a shallow place read — the read

@@ -1,8 +1,7 @@
-# expect: access to 'xs' conflicts with live reference 'b'
 # A template-served method that stores a copy of its argument publishes the
 # stored type, and the call closes it with the receiver's arguments: the bag
-# borrows `xs`, which the pointer type names, so `xs` is not written while
-# the bag is still read.
+# keeps `xs`, which the pointer type names, alive while it is read. The
+# append to `xs` beside it runs, as at the pin (R1160).
 # requires: stdlib
 struct Bag[T: Copyable & Deinitable](Movable):
     var items: List[Self.T]

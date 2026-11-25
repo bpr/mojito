@@ -3705,6 +3705,10 @@ struct Flatten<'a> {
     /// consuming call — the temporary's upstream lifetime is the full
     /// statement.
     pending_argument_anchors: Vec<VarId>,
+    /// The call expressions of the current statement whose invalidation
+    /// facts their own call boundary emitted, by HIR address: an enclosing
+    /// call that takes one as an argument does not emit them again.
+    emitted_call_invalidations: HashSet<usize>,
     /// Write-back places materialized inside the operation being lowered,
     /// innermost last, each awaiting its setter call
     /// ([`write_back::PendingWriteBack`]).
@@ -5334,6 +5338,7 @@ fn lower_cfg_nested(
             aggregate_loans: HashMap::new(),
             conversion_view_loans: HashMap::new(),
             pending_argument_anchors: Vec::new(),
+            emitted_call_invalidations: HashSet::new(),
             pending_write_backs: Vec::new(),
             call_setups: Vec::new(),
             call_result_slots: HashMap::new(),

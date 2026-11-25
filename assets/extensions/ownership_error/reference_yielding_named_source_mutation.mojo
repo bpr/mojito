@@ -1,9 +1,9 @@
-# expect: conflicts with live reference
+# expect: invalidated interior reference
 # requires: stdlib
-# A user reference-yielding iterator borrows its *named* source for the duration
-# of the loop (a live shared loan). Mutating that source while iterating — here a
-# `mut self` method call that overwrites the borrowed storage — is rejected by the
-# loan analysis, exactly as mutating a collection during iteration would be.
+# A user reference-yielding iterator yields references into its *named*
+# source's owned interior. Mutating that source while iterating — here a
+# `mut self` method call that overwrites the borrowed storage — stales the
+# yielded reference, and its use is rejected, as at the pin.
 
 
 @fieldwise_init
@@ -11,7 +11,9 @@ struct NumbersIter[o: Origin[mut=False]]:
     var src: ref[o] List[Int]
     var index: Int
 
-    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:
+    def __next__(
+        mut self,
+    ) raises StopIteration -> ref[Self.o._get_owned_interior["element"]] Int:
         if self.index >= len(self.src):
             raise StopIteration()
         var r = self.index

@@ -1,6 +1,6 @@
-# expect: conflicts with live reference
-# Mutating the source while looping over a method-returned ref-field view is
-# rejected: the view's receiver loan stays live across the loop body.
+# Mutating the source while looping over a method-returned ref-field view
+# runs: the view's receiver loan stays live across the loop body and keeps
+# the source alive, and the loop reads the element the body appends (R1160).
 @fieldwise_init
 struct StopIteration:
     pass
@@ -48,5 +48,6 @@ struct Box:
 def main():
     var b = Box()
     for x in b.view():
-        b.items.append(99)
+        if x == 1:
+            b.items.append(99)
         print(x)

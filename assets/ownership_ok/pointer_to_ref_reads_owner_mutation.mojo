@@ -1,7 +1,6 @@
-# expect: conflicts with live reference
 # A mutation of the owner while a pointer taken through a `ref` binding to
-# one of its fields is live. The pin runs it and prints 4; Mojito's pointer
-# loans the referent, so the mutating call conflicts with it (R1160).
+# one of its fields is live. The pointer names the field, which the mutation
+# writes in place, so it runs and the pointer reads 4, as at the pin (R1160).
 @fieldwise_init
 struct Pair:
     var a: Int

@@ -759,10 +759,10 @@ mod interior_origin_tests {
     }
 
     #[test]
-    fn mutable_interior_loan_conflicts_with_a_live_whole_place_loan() {
+    fn mutable_interior_loan_coexists_with_a_live_whole_place_loan() {
         // A `for ref` loop's mutable element loan established while a shared
         // whole-place view of the list lives, and the symmetric view taken
-        // inside such a loop, both conflict.
+        // inside such a loop: a loan borrows nothing exclusively.
         for (first, second) in [
             (
                 establish_with(1, 0, false, None),
@@ -780,10 +780,9 @@ mod interior_origin_tests {
                 ),
                 &[],
             );
-            assert!(matches!(
-                analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()),
-                Err(OwnershipError::LoanConflict { .. })
-            ));
+            assert!(
+                analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()).is_ok()
+            );
         }
     }
 
@@ -884,7 +883,7 @@ mod interior_origin_tests {
     }
 
     #[test]
-    fn overlapping_ordinary_mutable_loans_still_conflict() {
+    fn overlapping_mutable_loans_coexist() {
         let f = function(
             block(
                 vec![
@@ -897,23 +896,36 @@ mod interior_origin_tests {
             ),
             &[],
         );
-        assert!(matches!(
-            analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()),
-            Err(OwnershipError::LoanConflict { .. })
-        ));
+        assert!(analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()).is_ok());
     }
 
     #[test]
-    fn a_write_in_an_if_arm_conflicts_with_a_reference_used_after_it() {
-        let write = MirInstr::Store {
+    fn a_store_to_the_owner_coexists_with_a_live_loan() {
+        let store = MirInstr::Store {
             place: MirPlace::root(0, None),
             src: Reg(4),
         };
         let f = function(
             block(
+                vec![establish(1, 0, None), store, use_reference(1, 2)],
+                MirTerm::Return(None),
+            ),
+            &[],
+        );
+        assert!(analyze_loans(&f, &MirDeclarations::default(), &CalleeRefParams::new()).is_ok());
+    }
+
+    #[test]
+    fn a_move_in_an_if_arm_conflicts_with_a_reference_used_after_it() {
+        let moved = MirInstr::MovePlace {
+            dest: Reg(4),
+            place: MirPlace::root(0, None),
+        };
+        let f = function(
+            block(
                 vec![
                     establish(1, 0, None),
-                    if_else(yields(vec![write]), yields(Vec::new())),
+                    if_else(yields(vec![moved]), yields(Vec::new())),
                     use_reference(1, 2),
                 ],
                 MirTerm::Return(None),
@@ -927,16 +939,16 @@ mod interior_origin_tests {
     }
 
     #[test]
-    fn a_write_inside_a_try_is_not_loan_checked() {
-        let write = MirInstr::Store {
+    fn a_move_inside_a_try_is_not_loan_checked() {
+        let moved = MirInstr::MovePlace {
+            dest: Reg(4),
             place: MirPlace::root(0, None),
-            src: Reg(4),
         };
         let guarded = MirInstr::Try {
             label: TryLabel(0),
             error: None,
             results: Vec::new(),
-            body: Box::new(region(vec![write], MirTerm::TryYield(Vec::new()))),
+            body: Box::new(region(vec![moved], MirTerm::TryYield(Vec::new()))),
             handler_args: Vec::new(),
             handler: None,
             else_args: Vec::new(),

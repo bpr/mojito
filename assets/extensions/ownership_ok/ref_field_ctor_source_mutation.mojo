@@ -1,6 +1,6 @@
-# expect: access to 'data' conflicts with live reference 'outer'
-# Constructing a ref-field struct from a ref field keeps the transitive loan on
-# the ultimate owner: mutating it while the view chain is live is rejected.
+# Constructing a ref-field struct from a ref field keeps the transitive loan
+# on the ultimate owner: mutating it while the view chain is live runs, and
+# the chain reads the new value (R1160).
 @fieldwise_init
 struct Outer[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]

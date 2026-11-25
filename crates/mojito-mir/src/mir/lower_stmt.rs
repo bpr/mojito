@@ -2826,9 +2826,11 @@ impl<'a> Flatten<'a> {
         // Nested statement lowering saves and restores the enclosing list, so
         // each statement flushes exactly its own anchors.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
+        let saved_invalidations = std::mem::take(&mut self.emitted_call_invalidations);
         self.with_write_backs(|this| this.lower_stmt_dispatch(node, hir));
         self.flush_argument_anchors();
         self.pending_argument_anchors = saved;
+        self.emitted_call_invalidations = saved_invalidations;
         self.walrus_destinations.clear();
     }
 

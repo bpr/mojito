@@ -5,8 +5,8 @@
 # (`q`, then two spaces): the iterator reads bytes the store destroyed. With a
 # heap-sized string in place of `"q  "` it prints the freed string. Mojito
 # rejects with "use of invalidated interior reference 'it' to
-# 'ys["element"]~'", and rejects the same shape over a plain local
-# (`var it = s.codepoints()` then `s = String("zz")`), which the pin also runs.
+# 'ys["element"]~'". The same shape over a plain local
+# (`var it = s.codepoints()` then `s = String("zz")`) runs on both.
 #
 # Observed 2026-10-02 against `Mojo 1.2.0.dev2026092105 (e9569894)`.
 #

@@ -153,9 +153,9 @@ These are the three admitted extensions under the match-or-subset rule
 
 ### Interior-reference and unsafe-memory strictness exceeds the pin
 
-Not to be relaxed: Mojito tracks interior references through `Pointer` and
-through views into a container, and traps on unsafe-memory misuse the pinned
-Mojo leaves undefined. The 2026-09-12 error-folder sweep, with its 2026-09-13
+Not to be relaxed: Mojito tracks interior references — references, pointers,
+and views whose origin names a container's owned interior — and traps on
+unsafe-memory misuse the pinned Mojo leaves undefined. The 2026-09-12 error-folder sweep, with its 2026-09-13
 divergence triage, measured the gap at 33 fixtures the pin compiles and runs
 while Mojito rejects or traps; the 2026-09-21 re-pin left 32, upstream having
 made a var-less introduction an error of its own
@@ -166,12 +166,14 @@ beside it is no longer rejected. R1623 withdrew one more: `Int`'s `%` by
 zero is `SIMD.__mod__`, which yields `0`. R1624 withdrew one more: an
 integer literal's `//` by zero is `IntLiteral.__floordiv__`'s
 `#pop<int_literal_bin>`, which yields `0`. R387 withdrew one more: a
-compile-time `print` runs, its output the elaboration's. Invariant 1 permits it:
-Mojito may reject valid Mojo.
+compile-time `print` runs, its output the elaboration's. R1160 withdrew seven
+more: a pointer or view whose origin names a whole place keeps it alive and
+borrows nothing exclusively, as upstream's does, so only the end of that
+place's value beside it (a move, a destruction) is rejected. Invariant 1
+permits it: Mojito may reject valid Mojo.
 
-- Twelve `ownership_error`/`origin_error` fixtures report `invalidated interior
-  reference` or `conflicts with live reference` where the pin tracks nothing and
-  runs. `assets/ownership_error/reference_row_iteration_invalidated_by_row_append.mojo`
+- Four `ownership_error` fixtures report `invalidated interior reference` where
+  the pin tracks nothing and runs. `assets/ownership_error/reference_row_iteration_invalidated_by_row_append.mojo`
   is the one to cite: the pin runs it to completion printing dangling addresses,
   so the strictness is catching real undefined behavior rather than rejecting a
   sound program.
@@ -347,8 +349,8 @@ element's codepoints.
   over the element stales it. A view that names an interior
   (`ys[0].rstrip()`) lends exactly `ys["element"]["bytes"]`, as at the pin.
 - The same shape over a local (`var it = s.codepoints()`, then
-  `s = String("zz")`) runs at the pin and is rejected by Mojito as a loan
-  conflict, for the same reason.
+  `s = String("zz")`) runs on both sides: the view names the local itself,
+  whose loan excludes nothing.
 - Growing the list under the iterator is rejected on both sides.
 - Probe: `conformance/probes/list_element_iterator_after_store.mojo`.
 - Revisit when a re-pin rejects the store, and move the probe to

@@ -1,6 +1,6 @@
-# expect: conflicts with live reference
-# A manually held borrowing iterator retains its source loan outside any
-# loop: mutating the source while the iterator lives is rejected.
+# A manually held borrowing iterator keeps its source alive outside any loop
+# but borrows nothing exclusively: appending to the source while the iterator
+# lives runs, and the next element is read from the grown list (R1160).
 @fieldwise_init
 struct StopIteration:
     pass
@@ -11,7 +11,9 @@ struct NumbersIter[m: Bool, //, o: Origin[mut=m]]:
     var src: ref[o] List[Int]
     var index: Int
 
-    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:
+    def __next__(
+        mut self,
+    ) raises StopIteration -> ref[Self.o._get_owned_interior["element"]] Int:
         if self.index >= len(self.src):
             raise StopIteration()
         var r = self.index

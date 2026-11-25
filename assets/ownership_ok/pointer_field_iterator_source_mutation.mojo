@@ -1,8 +1,7 @@
-# expect: conflicts with live reference
-# The pointer-field iterator lends its source to the constructed value:
-# mutating the list while the iterator lives is rejected. (Upstream's
-# checker permits this mutation — Mojito's loan rule is the documented
-# stricter subset.)
+# The pointer-field iterator lends its source to the constructed value, which
+# keeps the list alive but borrows nothing exclusively: appending to the list
+# while the iterator lives runs, as at the pin, and the iterator reads the
+# grown list through its pointer (R1160).
 struct EntryIter[m: Bool, //, o: Origin[mut=m]]:
     var src: Pointer[List[Int], Self.o]
     var index: Int

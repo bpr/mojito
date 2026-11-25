@@ -1,9 +1,10 @@
-# expect: conflicts with live reference
+# expect: invalidated interior reference
 # requires: stdlib
-# A comprehension over a named user iterable borrows its source with the same
-# whole-place shared loan as a `for` statement. Mutating that source while the
-# comprehension's borrowing iterator is live — here a `mut self` method call in
-# the element expression — is rejected by the loan analysis.
+# A comprehension over a named user iterable borrows the owned interior its
+# iterator's `__next__` yields references into, as a `for` statement does.
+# Mutating the source while the comprehension iterates — here a `mut self`
+# method call in the element expression — stales that interior, and the next
+# element's use is rejected, as at the pin.
 
 
 @fieldwise_init
@@ -11,7 +12,9 @@ struct NumbersIter[o: Origin[mut=False]]:
     var src: ref[o] List[Int]
     var index: Int
 
-    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:
+    def __next__(
+        mut self,
+    ) raises StopIteration -> ref[Self.o._get_owned_interior["element"]] Int:
         if self.index >= len(self.src):
             raise StopIteration()
         var r = self.index
