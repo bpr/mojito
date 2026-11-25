@@ -1811,28 +1811,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2599 A reference into an origin parameter's owned interior
-  returns under the parameter itself**
-
-  Problem: `def first(self) -> ref[Self.o] Int: return self.src[][0]`, over
-  `var src: Pointer[List[Int], Self.o]`, is accepted, where the pin rejects
-  it: "cannot return reference with incompatible origin:
-  'origin_of(o["element"])' vs 'origin_of(o)'".
-  - The return check compares a returned place with the declared origin
-    (`ReturnOriginIncompatible`), but a place reached through a pointer or
-    a `ref` field over `Self.o` is no place of the body, so the element
-    interior below the parameter goes unseen.
-  - A caller then holds an element reference whose origin names the
-    whole list, which a structural mutation of the list does not stale:
-    `for x in nums: nums.clear(); print(x)` over such a `__next__` traps
-    in the VM with "use after Pointer deallocation".
-  - The fix names the returned reference's own origin, as the selected
-    `__getitem__`'s result origin gives it, and compares that.
-  - Probe: `conformance/probes/return_element_reference_under_origin_parameter.mojo`.
-  - Found while landing R1160 (2026-11-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1878 A `ref` binding of a call's reference result holds no loan
   against a move of its origin**
 
@@ -10921,35 +10899,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     which also needs `Span._unchecked_subspan`
     (`stdlib/std/collections/list.mojo`).
   - Found while landing R2467 (2026-11-21).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2500 A return contract over a projected origin binder is
-  substituted as the bare binder**
-
-  `ref[Self.origin._get_owned_interior["element"]]` is checked as
-  `ref[Self.origin]`, where upstream compares the returned reference's
-  origin with the projected one.
-  - `project_origin` (`checker/origins/subst.rs`) drops an interior or
-    subtree projection over anything but a place, so
-    `substitute_sig_origin_with_self` and `instantiate_sig_origin` return
-    `Param(o)` for `Projected(Bound(Param(o)), [Interior(..)])`.
-  - The actual side matches it by dropping the projection too:
-    `returned_reference_parameter_origin`'s `Index` arm reads the binder
-    under the selected `Pointer.__getitem__`'s `ref[Self.origin]` result,
-    and its `Member`/`Index` recursion answers a `ref`-field element read
-    with the field's binder.
-  - Keeping the projection (`Origin::reprojected`) needs those actuals to
-    read the selected getter's result instead; a `List.__getitem__`
-    through a `ref` field records it concretized to a place, so it must
-    be re-instantiated against the receiver's binder, as the
-    `MethodCall` arm does.
-  - Probe: `return self._data[index]` in `Span.__getitem__`
-    (`stdlib/std/span.mojo`), a pointer over the projected binder.
-  - Probe: `return self.src[r]` in `_ListIter.__next__`
-    (`stdlib/std/collections/list.mojo`) and `_ArrayIter.__next__`
-    (`stdlib/std/collections/array.mojo`).
-  - Found while landing R2483 (2026-11-22).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

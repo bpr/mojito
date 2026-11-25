@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A reference returned through an origin binder now names the origin
+  the selected getter's result has, and a return contract over a
+  binder's owned interior keeps that interior, as at the pin (R2599,
+  R2500): `return self.src[][0]` over `src: Pointer[List[Int], Self.o]`
+  under `ref[Self.o]`, and `return self.src[]` under
+  `ref[Self.o._get_owned_interior["element"]]`, are now rejected with
+  "cannot return reference with incompatible origin". An element
+  reference such a method returns is staled by a structural mutation of
+  its list instead of trapping at run time.
+
 - A parameter typed by a conditional over a value binder (`x: Int if n >
   0 else Float64`) now conforms, inside its generic body, to every trait
   both arms conform to, as at the pin (R2597): copying or printing `x`

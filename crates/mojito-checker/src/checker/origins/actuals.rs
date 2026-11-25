@@ -652,14 +652,14 @@ impl Checker {
                 | Origin::Unbound => true,
             }
         }
-        // The binder an origin projects or casts
-        // (`Self.origin._get_owned_interior[…]`), which is what a return
-        // contract's substitution names for its projection today (R2500).
-        fn origin_binder(origin: &Origin) -> Option<Origin> {
+        // Whether `origin` names storage of an origin binder: the binder, a
+        // projection below it, or a mutability cast of either. The
+        // receiver's own origin is read at its place instead.
+        fn binder_rooted(origin: &Origin) -> bool {
             match origin {
-                Origin::Param(_) => Some(origin.clone()),
-                Origin::Projected(base, _) | Origin::MutCast(base, _) => origin_binder(base),
-                _ => None,
+                Origin::Param(_) => true,
+                Origin::Projected(base, _) | Origin::MutCast(base, _) => binder_rooted(base),
+                _ => false,
             }
         }
         if let Some(spelled) = self.spelled_construction(expr) {
@@ -684,14 +684,29 @@ impl Checker {
                 .map(|reference| reference.origin)
                 .filter(is_abstract)
                 .or_else(|| self.returned_reference_parameter_origin(object)),
-            // Dereferencing a pointer whose origin is a binder (`self.p[0]`,
-            // `p: Pointer[T, o]`) reaches storage inside that binder: the
-            // selected `Pointer.__getitem__`'s `ref[Self.origin]` result names
-            // it. Indexing anything else stays within its object's region.
-            ExprKind::Index { object, .. } => self
-                .pointer_subscript_reference(expr)
-                .and_then(|reference| origin_binder(&reference.origin))
-                .or_else(|| self.returned_reference_parameter_origin(object)),
+            // A subscript's selected getter names the origin its reference
+            // result has, as upstream reads it off the getter's result type:
+            // dereferencing a pointer whose origin is a binder (`self.p[0]`,
+            // `p: Pointer[T, o]`) reaches storage inside that binder, and an
+            // element read through one (`self.src[][0]` over a
+            // `Pointer[List[T], o]`) is the list's element interior below
+            // it. A getter result the call concretized to the receiver's
+            // place is re-instantiated against the receiver's abstract
+            // origin. A subscript selecting no getter stays within its
+            // object's region.
+            ExprKind::Index { object, .. } => {
+                let getter = self.fact(&expr.source_span(), |facts| facts.selected_call.as_deref());
+                getter
+                    .as_ref()
+                    .and_then(|getter| getter.reference_result.as_ref())
+                    .map(|reference| reference.origin.clone())
+                    .filter(binder_rooted)
+                    .or_else(|| {
+                        self.self_rooted_result_origin(object, &getter?.target)
+                            .filter(is_abstract)
+                    })
+                    .or_else(|| self.returned_reference_parameter_origin(object))
+            }
             ExprKind::Identifier(_) => self
                 .infer_reference_value(expr)
                 .map(|reference| reference.origin)
@@ -1092,6 +1107,39 @@ impl Checker {
         }
         self.fact(&expr.source_span(), |facts| facts.selected_call.as_deref())
             .and_then(|getter| getter.reference_result)
+    }
+
+    /// The origin the method `target` selected on `object` returns under,
+    /// when its declared `ref` result is rooted at the callee's own `self`
+    /// (`ref[origin_of(self)._get_owned_interior["element"]]`): that
+    /// contract with `self` read as the origin `object` itself returns
+    /// under ([`Self::returned_reference_parameter_origin`]). `None` for a
+    /// contract naming anything else, or a receiver with no such origin.
+    fn self_rooted_result_origin(
+        &self,
+        object: &Expr,
+        target: &str,
+    ) -> Option<mojito_types::origin::Origin> {
+        let inferred = self.infer(object).ok()?;
+        let (name, _) = inferred.kind().as_non_pointer_struct()?;
+        let (method, qualifier) = mojito_symbol::symbol::method_of_symbol(name, target)?;
+        let declared = self
+            .structs
+            .get(name)?
+            .methods
+            .get(method)?
+            .iter()
+            .find(|signature| signature.overload.as_deref() == qualifier)?
+            .call_ref_return()?;
+        if !sig_origin_self_rooted(&declared.origin) {
+            return None;
+        }
+        let receiver = self.returned_reference_parameter_origin(object)?;
+        Some(super::subst::substitute_sig_origin_with_self(
+            &declared.origin,
+            &[],
+            Some(receiver),
+        ))
     }
 
     /// Whether `expr` names a local `comptime` binding of a requested

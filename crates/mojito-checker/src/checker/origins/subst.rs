@@ -281,11 +281,17 @@ pub(in crate::checker) fn project_sig_origin(
     )
 }
 
+/// `origin` with a signature projection's `path` applied: a place takes the
+/// path, and a binder or the receiver keeps an interior or subtree
+/// projection (`Self.o._get_owned_interior["element"]`), as upstream's
+/// `#lit.interior.origin` over a binder names storage distinct from the
+/// binder. A field path over a binder (`origin_of(o_ref.field)`) stays the
+/// binder, which names no field below itself.
 pub(in crate::checker) fn project_origin(
     origin: mojito_types::origin::Origin,
     path: &[mojito_types::origin::OriginSeg],
 ) -> mojito_types::origin::Origin {
-    use mojito_types::origin::Origin;
+    use mojito_types::origin::{Origin, OriginSeg};
     match origin {
         Origin::Place(mut place) => {
             place.path.extend_from_slice(path);
@@ -296,6 +302,13 @@ pub(in crate::checker) fn project_origin(
                 .into_iter()
                 .map(|member| project_origin(member, path)),
         ),
+        other
+            if path
+                .iter()
+                .all(|segment| matches!(segment, OriginSeg::Interior(_) | OriginSeg::Subtree)) =>
+        {
+            other.reprojected(path)
+        }
         other => other,
     }
 }

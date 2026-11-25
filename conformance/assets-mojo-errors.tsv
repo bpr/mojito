@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1342
+# swept-count	1345
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
@@ -134,6 +134,7 @@ assets/ownership_error/display_element_read_after_invalidation.mojo	compile-reje
 assets/ownership_error/double_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/double_move_in_try.mojo	compile-reject	agree	error: use of uninitialized value 's'
 assets/ownership_error/element_call_after_container_move.mojo	compile-reject	agree	error: use of uninitialized value 'objs'
+assets/ownership_error/element_reference_under_projected_binder_stale.mojo	compile-reject	agree	error: use of invalidated interior reference 'l["element"]'
 assets/ownership_error/for_target_source_moved.mojo	compile-reject	agree	error: use of uninitialized value 'pairs'
 assets/ownership_error/interior_pointer_offset_stale.mojo	compile-reject	agree	error: use of a never-initialized interior reference 'self_is_origin["items"]'
 assets/ownership_error/interior_pointer_stale_after_mutation.mojo	compile-reject	agree	error: use of a never-initialized interior reference 'self_is_origin["items"]'
@@ -1088,11 +1089,13 @@ assets/type_error/repr_not_writable.mojo	compile-reject	agree	error: no matching
 assets/type_error/reserved_word_function_name.mojo	compile-reject	agree	error: 'del' cannot be used as a function name in this context
 assets/type_error/result_origin_mut_register_passable.mojo	compile-reject	agree	error: cannot return 'items's origin, because it has RegisterPassable type 'Int'
 assets/type_error/result_origin_read_register_passable.mojo	compile-reject	agree	error: value of type 'P' doesn't have a memory origin in origin specifier
+assets/type_error/return_origin_element_under_origin_parameter.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(o["element"])' vs 'origin_of(o)'
 assets/type_error/return_origin_widening_call_result_field.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(w.t)' vs 'origin_of(w)'
 assets/type_error/return_origin_widening_field_view.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(self.items)]' value to 'View[origin_of(self)]'
 assets/type_error/return_origin_widening_parameter_field.mojo	compile-reject	agree	error: cannot implicitly convert 'View[origin_of(b.items)]' value to 'View[origin_of(b)]'
 assets/type_error/return_origin_widening_owner_field.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(self.item)' vs 'origin_of(self)'
 assets/type_error/return_origin_widening_wrapper_adapter.mojo	compile-reject	agree	error: cannot implicitly convert 'KeyIter[origin_of(self.entries)]' value to 'KeyIter[origin_of(self)]'
+assets/type_error/return_origin_whole_under_projected_binder.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(o)' vs 'origin_of(o["element"])'
 assets/type_error/round_undeclared_roundable.mojo	compile-reject	agree	error: no matching function in call to 'round'
 assets/type_error/roundable_missing_ndigits_overload.mojo	compile-reject	agree	error: 'R' does not implement all requirements for 'Roundable'
 assets/type_error/scalar_range_float_needs_step.mojo	compile-reject	agree	error: function instantiation failed
