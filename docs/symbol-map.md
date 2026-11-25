@@ -168,9 +168,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `AliasBody`: a symbolic type template or, for a Bool-bodied predicate
   alias, a symbolic `GenericConstraint`; `check_program` pre-registers
   module-level aliases like struct shells, `register_module_alias` keeping
-  a parameter-free body only when it evaluates to a type
-  (`module_comptime_is_type`, falling back to a type-naming head while a
-  body cannot evaluate yet), and the statement registers a trait-annotated
+  a parameter-free body only when it evaluates to a type, hoisting a
+  partially bound or unapplied parametric struct as a generic alias over
+  its unbound parameters, while a body that does not evaluate yet waits in
+  the alias rounds (`AliasEvaluation::Pending`, `retry_waiting_aliases`);
+  `check_program` maps a reader's unknown-type error to an unregistered
+  alias's own evaluation failure (`unevaluated_alias_read`), and the
+  statement registers a trait-annotated
   one the pre-pass left, rejecting a value body
   (`value_initializer_mismatch`); a shell whose parameter is typed
   by another struct's member, `traits::names_member_type`, waits until that

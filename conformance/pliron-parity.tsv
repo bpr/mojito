@@ -778,6 +778,7 @@ assets/ok/mlir_pop_simd_shuffle_one_lane.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_simd_shuffle_parameter_mask.mojo	main	exe-differential	sanitized
 assets/ok/mlir_simd_lane_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_type_overload_identity.mojo	main	exe-differential	sanitized
+assets/ok/module_alias_above_its_struct.mojo	main	exe-differential	sanitized
 assets/ok/module_call_list_in_method_loop.mojo	main	exe-differential	sanitized
 assets/ok/module_constant_literal_bracket.mojo	main	exe-differential	sanitized
 assets/ok/module_constant_literal_uses.mojo	main	exe-differential	sanitized
@@ -1759,6 +1760,7 @@ assets/ok/tuple_unpack_call.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_place_copies.mojo	main	exe-differential	sanitized
 assets/ok/type_and_trait_read_as_value.mojo	main	exe-differential	sanitized
 assets/ok/type_comparison_values.mojo	main	exe-differential	sanitized
+assets/ok/type_member_read_lowercase_root.mojo	main	exe-differential	sanitized
 assets/ok/type_member_string_materialized.mojo	main	exe-differential	sanitized
 assets/ok/type_member_struct_value_reads.mojo	main	exe-differential	sanitized
 assets/ok/type_member_symbolic_application_read.mojo	main	exe-differential	sanitized

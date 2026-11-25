@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A module `comptime` whose body does not evaluate yet (`comptime
+  StringSlice = StringSpan` above `struct StringSpan`, `Holder[Key(7)]`
+  before `Key`'s initializers register) now waits in the declaration
+  rounds until it evaluates, and a partially bound or unapplied parametric
+  struct (`Pair[_, 2]`, `comptime Q = Pair`) hoists as a generic alias over
+  its unbound parameters, as upstream resolves the body on demand and keeps
+  a type result, instead of being classified by its head's spelling
+  (R2594). A struct's bracket read as a value (`var x = pair[1, 2, 3]`)
+  now reports the binding's rejection ("type 'pair' expects 2 type
+  argument(s), got 3") instead of "Undefined variable 'pair'", and a read
+  of a module alias that never registered reports the alias body's own
+  failure.
+
 - An assignment to a declared `ref` field (`ih.r = 7` over `var r:
   ref[Self.o] Int`, or `self.r = v` in a `mut self` method) now loads the
   handle the field stores and writes the referent through it, destroying

@@ -1387,11 +1387,13 @@ impl Checker {
             }
             // A type application read as a runtime value, in whichever
             // bracket node the parser built it (`pair[1, 2]`, `G[3]`), is
-            // its metatype, as a type name is.
+            // its metatype, as a type name is. A struct's bracket is always
+            // its parameter binding, so one that fails to bind reports why
+            // (`pair[1, 2, 3]` binds one parameter too many).
             ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
                 if let Some((name, _)) = expr.bracket_application()
                     && self.lookup(name).is_none()
-                    && self.denotes_type_value(expr) =>
+                    && (self.structs.contains_key(name) || self.denotes_type_value(expr)) =>
             {
                 self.denoted_type(expr, "a type read as a value")
                     .map(|ty| self.metatype_of(ty))

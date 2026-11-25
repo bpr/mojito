@@ -777,6 +777,7 @@ assets/ok/mlir_pop_simd_shuffle_one_lane.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_simd_shuffle_parameter_mask.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_simd_lane_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_type_overload_identity.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/module_alias_above_its_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_call_list_in_method_loop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_constant_literal_bracket.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_constant_literal_uses.mojo	-	ineligible	no-scalar-entry-shape
@@ -1758,6 +1759,7 @@ assets/ok/tuple_unpack_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_unpack_place_copies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_and_trait_read_as_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_comparison_values.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/type_member_read_lowercase_root.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_member_string_materialized.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_member_struct_value_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_member_symbolic_application_read.mojo	-	ineligible	no-scalar-entry-shape

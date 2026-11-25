@@ -16,6 +16,11 @@ use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 
 impl Checker {
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        self.check_module(stmts)
+            .map_err(|error| self.unevaluated_alias_read(stmts, error))
+    }
+
+    fn check_module(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         let phase = timing::span("declarations.tuple_prepass");
         // Trait names predeclare before anything reads a spelling: a struct
         // parameter's bound may name a user trait declared anywhere in the
@@ -171,16 +176,7 @@ impl Checker {
         }
         // A shell typed by a later struct (`struct H[w: W]` above `W`).
         self.settle_deferred_shells(stmts, &mut deferred_shells);
-        // An alias over a later struct's shell (`comptime Scalar =
-        // SIMD[_, length=1]` above `struct SIMD`) registers once the shell
-        // does, before a builtin body reads it, as the pin resolves it on
-        // demand.
-        for index in alias_dependency_order(stmts) {
-            if waiting_aliases.contains(&index) && self.register_module_alias(&stmts[index]).is_ok()
-            {
-                waiting_aliases.retain(|waiting| *waiting != index);
-            }
-        }
+        self.retry_waiting_aliases(stmts, &mut waiting_aliases);
         // A shell typed by such an alias (`struct Tag[s: StaticString]`).
         self.settle_deferred_shells(stmts, &mut deferred_shells);
         self.resolve_materialization_targets(stmts, false)?;
@@ -316,7 +312,7 @@ impl Checker {
             }
             self.retry_deferred_shells(stmts, &mut deferred_shells);
         }
-        self.settle_struct_type_dependents(stmts, waiting_aliases)?;
+        self.settle_struct_type_dependents(stmts, waiting_aliases, &mut constructing_aliases)?;
         // A shell deferred until the member types registers its target now.
         self.resolve_materialization_targets(stmts, true)?;
         drop(phase);
@@ -892,7 +888,16 @@ impl Checker {
         {
             return Ok(AliasRegistration::AwaitsSignatures);
         }
+        let unregistered_structs = self
+            .declared_structs
+            .iter()
+            .any(|name| !self.predeclared_structs.contains(name));
         match self.register_module_alias(statement) {
+            Ok(AliasEvaluation::Settled) => Ok(AliasRegistration::Registered),
+            Ok(AliasEvaluation::Pending) if unregistered_structs => {
+                Ok(AliasRegistration::AwaitsTypes)
+            }
+            Ok(AliasEvaluation::Pending) => Ok(AliasRegistration::AwaitsSignatures),
             // A parameter default reading a struct's constructed member
             // (`address_space: AddressSpace = .GENERIC`) waits for the
             // struct's initializers, which build the member.
@@ -906,23 +911,35 @@ impl Checker {
             {
                 Ok(AliasRegistration::AwaitsSignatures)
             }
-            Err(_)
-                if self
-                    .declared_structs
-                    .iter()
-                    .any(|name| !self.predeclared_structs.contains(name)) =>
+            Err(_) if unregistered_structs => Ok(AliasRegistration::AwaitsTypes),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Register each alias of `waiting` whose shells have registered, in
+    /// dependency order: an alias over a later struct's shell (`comptime
+    /// Scalar = SIMD[_, length=1]` above `struct SIMD`) registers once the
+    /// shell does, before a builtin body reads it, as the pin resolves it on
+    /// demand. An alias still failing or pending stays in `waiting`.
+    fn retry_waiting_aliases(&mut self, stmts: &[Stmt], waiting: &mut Vec<usize>) {
+        for index in alias_dependency_order(stmts) {
+            if waiting.contains(&index)
+                && matches!(
+                    self.register_module_alias(&stmts[index]),
+                    Ok(AliasEvaluation::Settled)
+                )
             {
-                Ok(AliasRegistration::AwaitsTypes)
+                waiting.retain(|alias| *alias != index);
             }
-            registered => registered.map(|()| AliasRegistration::Registered),
         }
     }
 
     /// Register each alias of `waiting` that waited for the method
     /// signatures, in dependency order, then complete the shell defaults
     /// and classify the callables that name it (`HasherType: Hasher =
-    /// default_hasher`). An alias still failing stays in `waiting`, or
-    /// reports its rejection when `report` holds.
+    /// default_hasher`). An alias still failing or pending stays in
+    /// `waiting`; when `report` holds, a failing one reports its rejection
+    /// and a pending one leaves as a value.
     fn settle_constructing_aliases(
         &mut self,
         stmts: &[Stmt],
@@ -934,9 +951,14 @@ impl Checker {
                 continue;
             }
             match self.register_module_alias(&stmts[index]) {
-                Ok(()) => waiting.retain(|alias| *alias != index),
+                // A body still not evaluating in the reporting round is a
+                // value the constant path evaluates and reports.
+                Ok(AliasEvaluation::Settled) => waiting.retain(|alias| *alias != index),
+                Ok(AliasEvaluation::Pending) if report => {
+                    waiting.retain(|alias| *alias != index);
+                }
                 Err(error) if report => return Err(error),
-                Err(_) => {}
+                Ok(AliasEvaluation::Pending) | Err(_) => {}
             }
         }
         self.complete_shell_defaults(stmts, report)?;
@@ -947,13 +969,22 @@ impl Checker {
     /// Register each alias that waited for the struct types, and classify
     /// the callables a struct's `comptime` member defaults (`t: Tgt =
     /// Tgt.current()`), which classify once the struct's members register.
+    /// An alias whose body still does not evaluate joins `constructing`,
+    /// to wait for the method signatures.
     fn settle_struct_type_dependents(
         &mut self,
         stmts: &[Stmt],
         waiting_aliases: Vec<usize>,
+        constructing: &mut Vec<usize>,
     ) -> Result<(), TypeError> {
         for index in waiting_aliases {
-            self.register_module_alias(&stmts[index])?;
+            if matches!(
+                self.register_module_alias(&stmts[index])?,
+                AliasEvaluation::Pending
+            ) && !constructing.contains(&index)
+            {
+                constructing.push(index);
+            }
         }
         self.classify_applicable_signatures(stmts);
         Ok(())
@@ -992,12 +1023,18 @@ impl Checker {
         Ok(())
     }
 
-    /// Register a module-level `comptime` alias declaration — a generic
-    /// alias, or a parameter-free one whose body evaluates to a type, as
-    /// upstream evaluates the body and keeps a type result — ahead of the
-    /// declarations that may name it. Any other statement, and an alias
-    /// already registered, is left alone.
-    fn register_module_alias(&mut self, statement: &Stmt) -> Result<(), TypeError> {
+    /// Register a module-level `comptime` alias declaration ahead of the
+    /// declarations that may name it, as upstream evaluates the body and
+    /// keeps a type result. A generic alias registers as declared. A
+    /// parameter-free body over a partially bound or unapplied parametric
+    /// struct (`SIMD[_, length=1]`, `comptime Q = Pair`) is a generic alias
+    /// over the struct's unbound parameters, which upstream hoists. Any
+    /// other parameter-free body is evaluated: a type result registers, a
+    /// value result is left to the constant path, and a body that does not
+    /// evaluate yet (a struct still to register, a construction awaiting its
+    /// initializers) is [`AliasEvaluation::Pending`]. Any other statement,
+    /// and an alias already registered, is settled.
+    fn register_module_alias(&mut self, statement: &Stmt) -> Result<AliasEvaluation, TypeError> {
         let StmtKind::Comptime {
             name,
             type_params,
@@ -1006,52 +1043,60 @@ impl Checker {
             value,
         } = &statement.kind
         else {
-            return Ok(());
+            return Ok(AliasEvaluation::Settled);
         };
         if self.comptime_aliases.contains_key(name) || self.module_trait_constants.contains(name) {
-            return Ok(());
+            return Ok(AliasEvaluation::Settled);
         }
-        // A single-argument type application parses as a subscript
-        // (`AHasher[SIMD[DType.uint64, 4](0)]`): the subscript shape
-        // registers only over a declared struct.
-        let subscript_application = value
-            .bracket_application()
-            .is_some_and(|(base, _)| self.declared_structs.contains(base));
-        // A struct member's application (`TypeList.of[Trait=AnyType, Int]`)
-        // names a type the same way.
-        let member_application = matches!(&value.kind,
-            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. }
-                if matches!(&object.kind, ExprKind::Member { object, .. }
-                    if matches!(&object.kind, ExprKind::Identifier(base)
-                        if self.declared_structs.contains(base)
-                            || self.structs.contains_key(base))));
-        if type_params.is_empty()
-            && (self.names_module_value_constant(value)
+        if type_params.is_empty() {
+            if self.names_module_value_constant(value)
                 || self.names_function_value(value)
                 || super::reflection::spells_reflection_handle(value)
-                || !self.module_comptime_is_type(
-                    value,
-                    subscript_application
-                        || member_application
-                        || matches!(value.kind, ExprKind::Identifier(_)),
-                ))
-        {
-            return Ok(());
+            {
+                return Ok(AliasEvaluation::Settled);
+            }
+            let hoists = self
+                .unapplied_parametric_struct(type_params, value)
+                .is_some()
+                || !matches!(self.partially_bound_generator(type_params, value), Ok(None));
+            if !hoists {
+                match self.evaluating(|| self.compile_dependent_ct_expr(value)) {
+                    Ok(built) if *built.meta() == MetaTy::Type => {}
+                    Ok(_) => return Ok(AliasEvaluation::Settled),
+                    Err(_) => return Ok(AliasEvaluation::Pending),
+                }
+            }
         }
         self.check_generic_comptime_alias(name, type_params, ty.as_ref(), where_clauses, value)
+            .map(|()| AliasEvaluation::Settled)
     }
 
-    /// Whether a parameter-free module `comptime` body is a type, as
-    /// upstream evaluates it and keeps a type result: a body that builds
-    /// is a type exactly when its meta is one (a generator such as `Twice`
-    /// is a value). A body that does not evaluate yet (a struct still to
-    /// register, a construction awaiting its initializers, a generator
-    /// `Pair[_, Int]` the alias rewrites) is a type when `head_names_type`;
-    /// its registration then reports or waits. Any other is a value the
-    /// constant path evaluates.
-    fn module_comptime_is_type(&self, value: &Expr, head_names_type: bool) -> bool {
-        self.evaluating(|| self.compile_dependent_ct_expr(value))
-            .map_or(head_names_type, |built| *built.meta() == MetaTy::Type)
+    /// The error a reader of a module alias reports: a read of a
+    /// parameter-free module `comptime` that never registered (`unknown
+    /// type 'DefaultHolder'`) reports why the alias's own body does not
+    /// evaluate, as upstream resolves the alias on demand where it is read.
+    /// Any other error is unchanged.
+    fn unevaluated_alias_read(&self, stmts: &[Stmt], error: TypeError) -> TypeError {
+        let TypeError::UnknownType(read) = &error else {
+            return error;
+        };
+        if self.comptime_aliases.contains_key(read) {
+            return error;
+        }
+        stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                StmtKind::Comptime {
+                    name,
+                    type_params,
+                    value,
+                    ..
+                } if name == read && type_params.is_empty() => self
+                    .evaluating(|| self.compile_dependent_ct_expr(value))
+                    .err(),
+                _ => None,
+            })
+            .unwrap_or(error)
     }
 
     /// Check the statements of a block in the current scope. `ret` is the
@@ -5136,6 +5181,16 @@ enum AliasRegistration {
     AwaitsTypes,
     /// After the method signatures.
     AwaitsSignatures,
+}
+
+/// What registering a module `comptime` decided
+/// ([`Checker::register_module_alias`]).
+enum AliasEvaluation {
+    /// Registered as an alias, or a value the constant path owns.
+    Settled,
+    /// The body does not evaluate yet: a declaration it names has to
+    /// register first.
+    Pending,
 }
 
 /// The indices of `stmts`' `comptime` declarations, each after the ones

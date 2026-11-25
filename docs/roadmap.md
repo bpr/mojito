@@ -13330,34 +13330,6 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2594 A module `comptime` whose body cannot evaluate yet is
-  classified by its head's spelling**
-
-  `module_comptime_is_type` (`checker/statements.rs`) keeps a body as a
-  type alias when it evaluates to a type, but a body that does not
-  evaluate yet is a type when its head spells a declared struct, a struct
-  member's application, or a bare name, where upstream resolves the
-  declarations the body names on demand and only ever keeps an evaluated
-  type result.
-  - Cause: module declarations register in passes (struct shells, the alias
-    pre-pass, `retry_deferred_shells`), so a body read before the
-    declaration it names has registered cannot evaluate.
-  - Probe: `comptime StringSpan = ...` and `Origin[...]` aliases linked
-    above their structs.
-  - Probe: `AHasher[SIMD[DType.uint64, 4](0)]` before `SIMD`'s
-    initializers register.
-  - Probe: the generators `check_generic_comptime_alias` rewrites
-    (`SIMD[_, length=1]`, `Pair[_, Int]`, `comptime Q = P`), which do not
-    build through `compile_dependent_ct_expr`.
-  - Probe: `assets/type_error/module_alias_bracket_arity.mojo` reports its
-    arity error only through the head route.
-  - Lever: let a non-evaluating body wait beside the deferred shells and
-    re-evaluate it after each registration round, then delete
-    `head_names_type`.
-  - Found while landing R2562 (2026-11-25).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R2338 `dead-argument-elimination` keeps a method's dead receiver**
 
   The pin's `DeadArgumentElimination` drops a concrete method's receiver
