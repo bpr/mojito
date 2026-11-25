@@ -5129,26 +5129,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2598 A type pack's bound is checked against a literal argument
-  before the element materializes**
-
-  `def g[*Ts: Hashable](*args: *Ts)` called as `g(1)` fails with "an
-  element of 'args' with type 'IntLiteral[1]' does not conform to trait
-  'Hashable'", where the pin runs it.
-  - A lone `T: Hashable` parameter materializes `1` to `Int` before its
-    bound is checked, as upstream deduces a parameter's materialized
-    type; the pack collector checks each element's literal type
-    instead, and only `materialize_pack_element`
-    (`checker/declarations.rs`) materializes it afterward.
-  - The rejection is `collector_element_failure`
-    (`checker/call_inference.rs`); the method-call path has the same
-    wording (`method_calls/resolution.rs`) and needs the same order.
-  - Probe: `*Ts: Writable` already accepts `g(1)`, since `IntLiteral` is
-    `Writable`, and must keep binding `Int`.
-  - Found while landing R2592 (2026-11-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2459 A `_` hole in a function type's parameter is not concrete**
 
   `def app(g: def(Span[Int, _]) -> Int)` fails with "'Span[_]' is not

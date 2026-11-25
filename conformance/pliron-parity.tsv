@@ -934,6 +934,7 @@ assets/ok/ownership_marker_traits.mojo	main	exe-differential	sanitized
 assets/ok/pack_argument_destroyed_after_call.mojo	main	exe-differential	sanitized
 assets/ok/pack_bare_in_struct_header.mojo	main	exe-differential	sanitized
 assets/ok/pack_beside_value_binder.mojo	main	exe-differential	sanitized
+assets/ok/pack_bound_literal_materialized.mojo	main	exe-differential	sanitized
 assets/ok/pack_call_nested_def_and_forward.mojo	main	exe-differential	sanitized
 assets/ok/pack_constructor_spread_served.mojo	main	exe-differential	sanitized
 assets/ok/pack_contains_self_binder.mojo	main	exe-differential	sanitized

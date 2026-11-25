@@ -2118,6 +2118,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A type pack's bound is checked against each collected element's
+  materialized type, as a lone parameter's is (R2598): `def g[*Ts:
+  Hashable](*args: *Ts)` called as `g(1)` reported that an element of
+  type 'IntLiteral[1]' does not conform to 'Hashable', and now binds `Int`
+  and runs, as at the pin, on a function and on a method.
+
 - An annotation the compile-time builder cannot read is typed as an
   ordinary expression with its declaration's value binders in scope, as
   upstream's `emitExprType` emits it (R2587): `def f[n: Int](x: Int if n > 0

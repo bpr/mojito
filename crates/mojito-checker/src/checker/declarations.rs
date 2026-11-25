@@ -4974,12 +4974,10 @@ impl Checker {
                 && binder.name.starts_with('*')
             {
                 // An element binds, and meets the bounds as, the type it
-                // materializes to.
-                let element = if self.materializes_by_construction(act) {
-                    self.deduced_ty(act)
-                } else {
-                    act.clone()
-                };
+                // materializes to: a literal is checked as its `Int` or
+                // `String`, as upstream deduces a parameter's materialized
+                // type before its bound.
+                let element = self.deduced_ty(act);
                 for bound in bounds {
                     if !self.conforms_to(&element, bound) {
                         return Err(TypeError::TraitNotSatisfied {
