@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A match pattern's field projection (`subject.field`) and a `comptime
+  match` or-pattern alternative's binding value are typed only to read
+  their types, inside `Checker::evaluating`, as upstream's pattern
+  compiler reads a projection's type off the op it emits and keeps no
+  projection past its case (R2574). Every record a run-time or
+  compile-time `match` left pending is gone: the nine probe fixtures'
+  `emit.discarded_records` goes from 90 to 2, the 2 in
+  `union_tuple_payload_patterns.mojo` being R2576's `enum_like.mojo`
+  alias body, not its match. No output, diagnostic, or MIR text changes.
+
 - The checker's pointer readers read the pointer's `!lit.ref` record as
   every reader below it does, and `PointerOrigin` has no union variant:
   `origin_of(a, b)` exists only as an `Origin::Union` argument, as

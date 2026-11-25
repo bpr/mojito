@@ -11799,33 +11799,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2574 A match pattern types each subject projection only to
-  read its type, leaving records on syntax no node holds**
-
-  `check_case` and `check_comptime_case` (`checker/patterns.rs`) type a
-  case's subject projections (`subject.field`, `subject[i]`, a
-  `__getitem__` call) outside an evaluation, so their records stay
-  pending and the handoff discards them (`emit.discarded_records`).
-  - Upstream's pattern compiler reads a projection's type off the op it
-    emits for the projection, and no projection outlives its case.
-  - The lever: type each projection in `Checker::evaluating`, or enter it
-    as a node the case's plan names.
-  - Probe: run-time `match`, 78 records in 9 fixtures:
-    `match_struct_and_initializer_patterns.mojo` (42),
-    `match_cluster_lifecycle.mojo` (12),
-    `union_tuple_payload_patterns.mojo` (10, through
-    `instantiate_method_generics` and `record_declared_attributes`),
-    `match_equality_effects.mojo`, `match_literal_clusters.mojo`,
-    `match_coverage_enums_and_products.mojo`,
-    `match_enum_cases_optional.mojo`, `match_noncopyable_subject.mojo`.
-  - Probe: `comptime match`, 10 records in
-    `comptime_match_patterns.mojo` (through `prepare_index_argument` and
-    `record_declared_attributes`).
-  - Measure with `mojito check --timings FILE`.
-  - Found while landing R2573 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2575 A type member's spelled construction is typed with records
   on syntax no node holds**
 

@@ -2993,7 +2993,8 @@ results' attributes. A record written before its statement is entered is
 pending and moves onto the node when the statement is. Syntax the check
 types only to evaluate it (a compile-time operator's dunder call, an
 origin alias's construction, a `rebind` target, a slice subscript's
-spelled literal construction) is typed inside an evaluation
+spelled literal construction, a match pattern's field projection, a
+`comptime match` or-pattern alternative's binding value) is typed inside an evaluation
 (`Checker::evaluating`), as upstream's parameter evaluator emits
 speculatively, reads the callee and type off the ops it emitted, folds
 them into an attribute, and erases them: the evaluation erases every

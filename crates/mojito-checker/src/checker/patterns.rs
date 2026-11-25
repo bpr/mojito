@@ -803,14 +803,16 @@ impl Checker {
             .map(|(_, first)| first.clone())
             .unwrap_or_default();
         let mut names = Vec::new();
+        // Each alternative's value is typed only to compare its type: the
+        // merged binding holds refreshed copies.
         for binding in &first {
-            let declared = self.infer(&binding.value)?;
+            let declared = self.evaluating(|| self.infer(&binding.value))?;
             let mut values = Vec::new();
             for (condition, bindings) in &compiled {
                 let Some(value) = bindings.iter().find(|bound| bound.name == binding.name) else {
                     continue;
                 };
-                let found = self.infer(&value.value)?;
+                let found = self.evaluating(|| self.infer(&value.value))?;
                 if found != declared {
                     return Err(TypeError::MatchPattern(format!(
                         "or-pattern binding '{}' has incompatible types across alternatives: \
@@ -1428,8 +1430,9 @@ impl Checker {
             }
             let child = subject.project(Step::Field(field.clone()), Ty::error());
             // The field's checked type; an unknown field is the selection's
-            // own rejection.
-            let ty = self.infer(&child.value())?;
+            // own rejection. The projection is typed only to read its type:
+            // each command spells its own.
+            let ty = self.evaluating(|| self.infer(&child.value()))?;
             let child = MatchSubject { ty, ..child };
             self.compile_pattern(pattern, &child, join.reborrow(), commands)?;
         }
