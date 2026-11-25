@@ -1261,8 +1261,9 @@ pub(super) fn spelled_node(
 
 /// `kind` as the construction spelled for the sugar `expression` (an
 /// initializer list, a scalar `range` call): its location, with every
-/// synthesized node (the call and its spelled parameter arguments, never the
-/// entries) numbered from the sugar's identity.
+/// synthesized node (the call and its spelled parameter arguments, positional
+/// or by keyword, never the entries) numbered from the sugar's identity, so
+/// every check of the sugar spells the one construction its node holds.
 pub(super) fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
     let mut identities = mojito_ast::visit::DerivedIdentities {
         parent: expression.syntax_id,
@@ -1270,13 +1271,9 @@ pub(super) fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
     };
     let mut construction = spelled_node(expression, 0, kind, expression.span);
     let synthesized: Vec<&mut Expr> = match &mut construction.kind {
-        ExprKind::Call { param_args, .. } | ExprKind::Invoke { param_args, .. } => param_args
-            .iter_mut()
-            .filter_map(|argument| match argument {
-                mojito_ast::ast::ParamArg::Value(value) => Some(value),
-                mojito_ast::ast::ParamArg::Named { .. } => None,
-            })
-            .collect(),
+        ExprKind::Call { param_args, .. } | ExprKind::Invoke { param_args, .. } => {
+            param_args.iter_mut().map(spelled_argument_value).collect()
+        }
         _ => Vec::new(),
     };
     for value in synthesized {
@@ -1284,6 +1281,15 @@ pub(super) fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
         mojito_ast::visit::walk_expr_mut(&mut identities, value);
     }
     construction
+}
+
+/// The expression a spelled parameter argument passes, positional or by
+/// keyword.
+fn spelled_argument_value(argument: &mut mojito_ast::ast::ParamArg) -> &mut Expr {
+    match argument {
+        mojito_ast::ast::ParamArg::Value(value) => value,
+        mojito_ast::ast::ParamArg::Named { value, .. } => spelled_argument_value(value),
+    }
 }
 
 /// The ordinal of a pack element's construction callee (`Self.Ts`) among

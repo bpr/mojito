@@ -22,7 +22,10 @@ the node it allocated for the occurrence, and each node holds its op from the
 moment it is allocated, as upstream's emitter creates an op when it emits it
 and sets attributes on it (R764, R765): the check emits a statement's nodes
 when it enters the statement, a construction's when it spells it, and a match
-plan's tests and conditions when it plans them. Every fact the check hands
+plan's tests and conditions when it plans them. A spelled construction is
+numbered from its sugar's identity, keyword parameter arguments included, so
+every check of a sugar such as `TypeList.of[Trait=AnyType, Int]()` names the
+one construction its node holds (R2575). Every fact the check hands
 off sits on a node: a destructuring statement holds its leaves' bindings, a
 `case` condition's plan sits on its value, and syntax the check types only to
 evaluate it is typed inside an evaluation that erases its records, as upstream

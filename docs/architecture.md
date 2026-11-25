@@ -2990,7 +2990,11 @@ walk-ordered candidates its lifted applications are chosen from
 leaves' bindings in its target's pre-order, and a `case` condition's plan
 sits on its value, the operand its op names, as an upstream op holds its
 results' attributes. A record written before its statement is entered is
-pending and moves onto the node when the statement is. Syntax the check
+pending and moves onto the node when the statement is. A construction
+the check spells for a sugar is numbered from the sugar's identity, every
+spelled parameter argument included, positional or by keyword
+(`derived_construction`), so each check of the sugar names the one
+construction its node holds, as upstream emits it once. Syntax the check
 types only to evaluate it (a compile-time operator's dunder call, an
 origin alias's construction, a `rebind` target, a slice subscript's
 spelled literal construction, a match pattern's field projection, a

@@ -11799,31 +11799,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R2575 A type member's spelled construction is typed with records
-  on syntax no node holds**
-
-  `infer_type_member_construction` (`checker/initializer_list.rs`) types
-  the construction it spells for a call through a parameterized type
-  member (`TypeList.of[Trait=AnyType, ...]()`), and its bracket
-  arguments' records, spelled at the member's span, reach no node.
-  - Upstream reads the member as its value and emits the construction
-    once, as an op the call holds.
-  - The lever: enter the spelled construction as a construction node
-    (`Emitter::enter_construction`) where the call keeps it, and type it
-    in `Checker::evaluating` where the typing only answers a type.
-  - Probe: 39 records in 8 fixtures, reached from
-    `display_listed_element`/`evaluated_display_binding`,
-    `lifted_application`, `comptime_value_expression`, and
-    `compile_comptime_condition`: `typelist_reverse_concat.mojo` (13),
-    `typelist_comptime_vocabulary.mojo` (12), `typelist_of_alias.mojo`,
-    `typelist_simd_length_index.mojo`, `len_library_overloads.mojo`,
-    `type_pack_runtime_read.mojo`,
-    `comptime_local_value_member_annotation.mojo`,
-    `comptime_value_subscript_annotation.mojo`.
-  - Found while landing R2573 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2576 A struct's comptime type member body is checked for its
   application's constraints with records on syntax no node holds**
 

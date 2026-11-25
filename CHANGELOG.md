@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A construction the check spells for a sugar numbers its keyword
+  parameter arguments from the sugar's identity, as it already numbered
+  its positional ones (`derived_construction`), so every check of a call
+  through a parameterized type member (`TypeList.of[Trait=AnyType,
+  ...]()`, spelled `TypeList[Trait=..., values=...]()`) names the one
+  construction its node holds, as upstream emits the construction once
+  (R2575). Each re-check used to spell its `values=` argument under a
+  fresh identity no node held: the corpus's `emit.discarded_records`
+  goes from 85 to 46, the 39 in the eight `TypeList` probe fixtures all
+  gone, and std's precompile stays at 0. No output or diagnostic
+  changes.
+
 - A match pattern's field projection (`subject.field`) and a `comptime
   match` or-pattern alternative's binding value are typed only to read
   their types, inside `Checker::evaluating`, as upstream's pattern
