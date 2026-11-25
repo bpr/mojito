@@ -1995,21 +1995,20 @@ impl VmBackend {
                         vars,
                     )?
                 };
+                // A whole `ref` binding's slot writes its referent; a `ref`
+                // field's place stores the handle it is given, as a
+                // `ref.write` through the field's loaded handle writes the
+                // referent.
                 let slot = super::references::pointer_element_slot(place);
+                let writes_binding = place.proj.is_empty() && prog.holds_reference(function, place);
                 if let Some(handle) = handle {
                     if slot {
                         self.canonicalize_value_references(frame_id, vars, &mut v);
                         self.write_reference(&handle, frame_id, vars, v)?;
                     } else {
-                        self.store_through_handle(
-                            frame_id,
-                            prog.holds_reference(function, place),
-                            handle,
-                            v,
-                            vars,
-                        )?;
+                        self.store_through_handle(frame_id, writes_binding, handle, v, vars)?;
                     }
-                } else if !slot && prog.holds_reference(function, place) {
+                } else if !slot && writes_binding {
                     let reference = load_place(vars, regs, place)?;
                     self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&reference, frame_id, vars, v)?;

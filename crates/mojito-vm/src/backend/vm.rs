@@ -1145,10 +1145,11 @@ impl Prog {
         }
     }
 
-    /// Whether `place` of `function` holds a reference a read goes through
-    /// and a borrow forwards, by declaration ([`mojito_mir::mir::place_holds_reference`]):
-    /// its root's `ref` binding, or a field declared `ref`. Only a place of
-    /// reference type can, which spares the declaration lookup elsewhere.
+    /// Whether `place` of `function` holds a reference by declaration
+    /// ([`mojito_mir::mir::place_holds_reference`]): its root's `ref`
+    /// binding, whose load and store go through it, or a field declared
+    /// `ref`, whose slot stores the handle. Only a place of reference type
+    /// can, which spares the declaration lookup elsewhere.
     fn holds_reference(&self, function: usize, place: &MirPlace) -> bool {
         place
             .ty

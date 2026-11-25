@@ -1863,7 +1863,8 @@ impl<'a> Flatten<'a> {
 
     /// Lower the store `place = value`, a statement's or a walrus's: a
     /// nominal subscript through its getter's reference or its setter, a
-    /// pointer through its address, any other place by a store. The
+    /// pointer through its address, a `ref` field through the handle it
+    /// stores, any other place by a store. The
     /// destination stored, or `None` for a store through a setter, which
     /// leaves no memory lvalue.
     pub(in crate::mir) fn lower_set_place(
@@ -1923,26 +1924,10 @@ impl<'a> Flatten<'a> {
                 reference: src,
             });
         } else {
-            // A checked Copyable write-through runs the referent's
-            // copy lifecycle before the store, so the written value
-            // owns its storage instead of sharing the source's.
-            let src = if holds_reference
-                && value.adjustments().iter().any(|adjustment| {
-                    matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
-                    )
-                }) {
-                let copied = self.fresh(place.location(), None);
-                self.emit(MirInstr::CopyValue {
-                    dest: copied,
-                    value: src,
-                    constructor: None,
-                });
-                copied
-            } else {
-                src
-            };
+            if self.place_is_ref_field(&p) {
+                self.write_field_referent(place, p.clone(), src);
+                return Some(StoredDestination::Place(p));
+            }
             let pointee_root =
                 (!p.is_whole_root() && self.pointer_valued_slot(p.root)).then_some(p.root);
             self.emit(MirInstr::Store {
@@ -2196,12 +2181,31 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// Lower the receiver and index arguments of the nominal subscript
-    /// store `target` and select its setter, running `between` before the
-    /// setter's setup reads: current Mojo evaluates the receiver first, then
-    /// indices and bounds from left to right, and a place index is read at
-    /// the setter's setup, after its sibling operands. `None` when `target`
-    /// stores through no checked setter.
+    /// Write `src` to the value the `ref` field `place` refers to, as
+    /// upstream loads the field's `!lit.ref` and stores through it: a
+    /// `place.load` of the handle the field's slot stores, the destruction
+    /// of the referent it replaces, and a `ref.write` through the handle.
+    fn write_field_referent(&mut self, site: Node<'a>, place: MirPlace, src: Reg) {
+        let referent = match place.ty.as_ref().map(Ty::kind) {
+            Some(TyKind::Ref(reference)) => reference.referent.clone(),
+            _ => Ty::error(),
+        };
+        let handle = self.fresh_typed(
+            site.location(),
+            Some(place.root),
+            place.ty.clone().unwrap_or_else(Ty::error),
+        );
+        self.emit(MirInstr::LoadPlace {
+            dest: handle,
+            place,
+        });
+        self.destroy_pointee(site, handle, &referent);
+        self.emit(MirInstr::WriteRef {
+            reference: handle,
+            value: src,
+        });
+    }
+
     /// Destroy the `element` value the handle `handle` addresses, before an
     /// assignment at `site` writes through it: the handle names no owner
     /// place drop elaboration could destroy, so the assignment destroys its
@@ -2223,6 +2227,12 @@ impl<'a> Flatten<'a> {
         });
     }
 
+    /// Lower the receiver and index arguments of the nominal subscript
+    /// store `target` and select its setter, running `between` before the
+    /// setter's setup reads: current Mojo evaluates the receiver first, then
+    /// indices and bounds from left to right, and a place index is read at
+    /// the setter's setup, after its sibling operands. `None` when `target`
+    /// stores through no checked setter.
     fn lower_subscript_setter<R>(
         &mut self,
         target: Node<'a>,

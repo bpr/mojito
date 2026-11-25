@@ -509,6 +509,39 @@ fn verifier_requires_a_ref_field_load_to_load_its_stored_handle() {
 }
 
 #[test]
+fn verifier_requires_a_ref_field_store_to_store_a_handle() {
+    // A write of a `ref` field's referent is the field's `place.load` of
+    // its handle and a `ref.write` through it; a `place.store` of the
+    // referent's value into the field's place is rejected.
+    let source = "@fieldwise_init\nstruct H[o: MutOrigin]:\n    var r: ref[Self.o] Int\n\ndef main():\n    var n = 4\n    var h = H(n)\n    h.r = 7\n    print(n)\n";
+    let mut mir = lower_linked_source(source);
+    let errors = verify(&mir);
+    assert!(errors.is_empty(), "the lowered write verifies: {errors:?}");
+    let main = function_named(&mut mir, "main");
+    let mut instructions = leaf_instructions_mut(&mut main.body);
+    let at = instructions
+        .windows(2)
+        .position(|pair| match (&*pair[0], &*pair[1]) {
+            (MirInstr::LoadPlace { dest, place }, MirInstr::WriteRef { reference, .. }) => {
+                reference == dest
+                    && matches!(place.proj.last(), Some(Proj::Field(field)) if field == "r")
+            }
+            _ => false,
+        })
+        .expect("the field write is a handle load and a ref.write");
+    let (MirInstr::LoadPlace { place, .. }, MirInstr::WriteRef { value, .. }) =
+        (instructions[at].clone(), instructions[at + 1].clone())
+    else {
+        unreachable!("matched above");
+    };
+    *instructions[at + 1] = MirInstr::Store { place, src: value };
+    expect_finding(
+        &mir,
+        "Store into `ref` field place writes its stored handle",
+    );
+}
+
+#[test]
 fn verifier_checks_read_and_write_reference_capabilities() {
     let read_non_capability = function(
         block(

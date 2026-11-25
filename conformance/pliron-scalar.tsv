@@ -1956,6 +1956,7 @@ assets/extensions/ok/ref_field_nodebug_mut_argument.mojo	-	ineligible	no-scalar-
 assets/extensions/ok/ref_field_operand_origin_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_operand_passes_stored_handle.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_reborrow_read.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_referent_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_template_method_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_temporary_value_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_truth_test.mojo	-	ineligible	no-scalar-entry-shape

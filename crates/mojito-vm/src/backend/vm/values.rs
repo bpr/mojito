@@ -211,10 +211,10 @@ impl VmBackend {
         }
     }
 
-    /// Write a value through the handle a place designates. A place that
-    /// holds a reference (`holds_reference`) holds *another* handle, and the assignment reaches its referent —
-    /// the store twin of `LoadPlace`'s second dereference — rather than
-    /// overwriting the handle slot. The write can land in another frame's
+    /// Write a value through the handle a place designates. A whole `ref`
+    /// binding's slot (`holds_reference`) holds *another* handle, and the
+    /// assignment reaches its referent — the store twin of `LoadPlace`'s
+    /// read of the binding — rather than overwriting the handle slot. The write can land in another frame's
     /// storage, so handles inside the written value that root in this frame
     /// are re-rooted first or they dangle once this frame is disposed.
     pub(super) fn store_through_handle(

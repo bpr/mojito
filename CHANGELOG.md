@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An assignment to a declared `ref` field (`ih.r = 7` over `var r:
+  ref[Self.o] Int`, or `self.r = v` in a `mut self` method) now loads the
+  handle the field stores and writes the referent through it, destroying
+  the value it replaces, as upstream loads the field's `!lit.ref` and
+  stores through it (R2589). Native code printed the old referent (`4`
+  where the VM printed `7`) because it overwrote the stored handle; a
+  replaced referent's `__del__` never ran; and copying a `read` parameter
+  or a live local into a `String` field failed MIR verification. MIR text
+  1.235 splits an older artifact's such stores on read.
+
 - A type member read through a call's result (`comptime P =
   Picker.make().Chosen` over a `@staticmethod def make() -> Self`, or
   `Box[2].make().Elem`) now types the receiver and reads the member of its

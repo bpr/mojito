@@ -540,6 +540,24 @@ fn verify_reference_instruction(
         }
         MirInstr::Store { place, src } => {
             if let (Some(expected), Some(found)) = (place.ty.as_ref(), cx.reg_ty(*src)) {
+                // A store to a place ending at a declared `ref` field writes
+                // the handle its slot stores; writing the referent is a
+                // `WriteRef` through the field's loaded handle, as upstream
+                // loads the field's `!lit.ref` and stores through it.
+                if !place.proj.is_empty()
+                    && crate::mir::place_holds_reference(place, false, |ty, field| {
+                        cx.declarations.declares_ref_field(ty, field)
+                    })
+                {
+                    if !types_compatible(found, expected) {
+                        errors.push(format!(
+                            "{prefix}: Store into `ref` field place writes its stored handle \
+                             {expected}; its source is typed {found} (write the referent with a \
+                             WriteRef through the field's loaded handle)"
+                        ));
+                    }
+                    return;
+                }
                 let target = match expected.kind() {
                     TyKind::Ref(reference) => &reference.referent,
                     _ => expected,

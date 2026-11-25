@@ -200,6 +200,11 @@ impl Decoder {
         if self.minor < 233 {
             crate::mir::call_addresses::split_stored_handle_loads(&mut functions, &declarations);
         }
+        // Schema 1.235 stores only the handle a `ref` field's place is
+        // given; an older store of the referent wrote through it.
+        if self.minor < 235 {
+            crate::mir::call_addresses::split_stored_handle_stores(&mut functions, &declarations);
+        }
         if self.diagnostics.is_empty() {
             Ok((
                 MirProgram {

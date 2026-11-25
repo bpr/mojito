@@ -10291,43 +10291,6 @@ new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **R2589 A `place.store` to a `ref` field's place writes the
-  referent, where upstream loads the field's `!lit.ref` and stores through
-  it, and Pliron overwrites the stored handle instead**
-
-  Native code prints the wrong value today: `ih.r = 7; print(n)` over
-  `var r: ref[Self.o] Int` prints `4` with `--backend pliron` where the VM
-  prints `7`.
-  - Lowering's assignment (`lower_stmt.rs`, the `MirInstr::Store` arm
-    after the `holds_reference` copy) stores the referent's value into the
-    field's place.
-  - The VM writes through the stored handle (`store_through_handle` in
-    `vm/values.rs`, and the `!slot && prog.holds_reference` arm of
-    `exec.rs`'s `Store`).
-  - Pliron's `Store` arm (`lower/instr.rs`) stores to the field slot's
-    address with no read of the handle, so it overwrites the handle.
-  - The verifier's `Store` arm accepts either the referent or the handle
-    at such a place.
-  - Lower such a write as the field's `place.load` of its handle and a
-    `ref.write` through it, as R2582 lowers a read, and have the verifier
-    require a handle at a `place.store` of a `ref` field; a whole `ref`
-    binding's slot keeps writing its referent.
-  - Then drop the write-through for a projected place from the VM, and
-    split an older artifact's such stores on read
-    (`call_addresses::split_stored_handle_loads` is the template).
-  - Probe: `ih.r = 7; print(n)` prints `7` on both backends.
-  - Probe: `def setv(mut self, v: Int): self.r = v`, then
-    `ih.setv(9); print(n)`, prints `9` on both backends (`4` natively
-    today).
-  - Probe: `ih.r += 2; print(n)` prints `6` on both backends, as it does
-    today.
-  - Probe: `while fh.r: turns += 1; fh.r = turns < 3` over
-    `var r: ref[Self.o] Bool` ends with `turns == 3` and the referent
-    `False` on both backends (`1` and `True` natively today).
-  - Found while landing R2582 (2026-11-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2396 Pre-check auto-parameterization reads an origin binder by
   its `Origin` spelling, so the parser keeps its `Origin[mut=…]` special
   case**

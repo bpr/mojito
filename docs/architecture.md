@@ -2641,10 +2641,16 @@ field's `place.load`, typed as the handle its slot stores, and a `ref.read`
 of that handle, as upstream loads the field's `!lit.ref` and then loads
 through it (`Flatten::load_field_value`, `Flatten::field_load`,
 `Flatten::field_referent`); the verifier rejects a `place.load` of a `ref`
-field typed otherwise (`verify_reference_instruction`). Neither backend
-reads through a projected place's stored handle: only a whole `ref`
-binding's slot reads its referent (the VM's `load_place_value`, Pliron's
-`LoadPlace` arm and `aliased_receiver_address`). The operand is the only record of the storage a
+field typed otherwise (`verify_reference_instruction`). A write of a
+`ref` field's referent is likewise the field's `place.load` of its handle,
+the destruction of the referent it replaces, and a `ref.write` through the
+handle, as upstream loads the field's `!lit.ref` and stores through it
+(`Flatten::write_field_referent`, `lower_stmt.rs`); a `place.store` to a
+`ref` field stores the handle it is given, and the verifier rejects one
+whose source is typed otherwise. Neither backend reads or writes through a
+projected place's stored handle: only a whole `ref` binding's slot reads
+and writes its referent (the VM's `load_place_value` and `Store` arm,
+Pliron's `LoadPlace` arm and `aliased_receiver_address`). The operand is the only record of the storage a
 call names: no call-shaped instruction carries a place table beside its
 operands, as upstream's `lit.call` carries none. The inliner binds a
 parameter passed a `ref` field to the handle it stores (`place_binding`),
@@ -2757,7 +2763,10 @@ borrow of the slot and a `ref.read` of it
 (`call_addresses::split_stored_handle_forwards`), and one older than 1.233
 has each `place.load` of a `ref` field typed as its referent split into a
 load of the stored handle and a `ref.read` of it
-(`call_addresses::split_stored_handle_loads`). Every load-time upgrade reads an
+(`call_addresses::split_stored_handle_loads`), and one older than 1.235
+has each `place.store` of a referent into a `ref` field split into a load
+of the stored handle and a `ref.write` through it
+(`call_addresses::split_stored_handle_stores`). Every load-time upgrade reads an
 older call's operand places from the reader's side table
 (`mir/legacy_places.rs`, `LegacyOperandTables`), paired with the
 call-shaped instructions of each function in decode order, as an MLIR

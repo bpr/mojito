@@ -737,6 +737,26 @@ pub fn split_stored_handle_loads(
     }
 }
 
+/// Split each `place.store` of `functions`, read from an artifact written
+/// before a `ref` field's place stored only the handle it is given, that
+/// wrote through that handle: a load of the handle into a fresh register
+/// typed as the field declares it, then a `ref.write` of the stored value
+/// through it.
+///
+/// Such a store's place ends at a `ref` field and its source is typed as
+/// the referent, or not at all, rather than as the stored handle. The
+/// upgrade keeps the older meaning, which destroyed no replaced referent.
+pub fn split_stored_handle_stores(
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
+) {
+    for (_, function) in functions {
+        let mut body = std::mem::take(&mut function.body);
+        split_stored_handle_stores_in(&mut body, function, declarations);
+        function.body = body;
+    }
+}
+
 /// [`addressed_registers`] over one body, its regions included, whose
 /// registers `reg_types` types: a function's, or a body a pass spliced
 /// into one.
@@ -1501,6 +1521,54 @@ fn split_stored_handle_loads_in(
             MirInstr::ReadRef {
                 dest: value,
                 reference: handle,
+            },
+        );
+        index += 2;
+    }
+}
+
+fn split_stored_handle_stores_in(
+    block: &mut MirBlock,
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+) {
+    let mut index = 0;
+    while index < block.instrs.len() {
+        for region in instruction_regions_mut(&mut block.instrs[index]) {
+            split_stored_handle_stores_in(region, function, declarations);
+        }
+        let MirInstr::Store { place, src } = &block.instrs[index] else {
+            index += 1;
+            continue;
+        };
+        let (place, value) = (place.clone(), *src);
+        let stores_handle = function
+            .reg_types
+            .get(&value.0)
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_)));
+        let handle_ty = (!stores_handle
+            && !place.proj.is_empty()
+            && place_holds_reference(&place, false, |base, field| {
+                declarations.declares_ref_field(base, field)
+            }))
+        .then(|| place.ty.clone())
+        .flatten()
+        .filter(|handle| matches!(handle.kind(), TyKind::Ref(_)));
+        let Some(handle_ty) = handle_ty else {
+            index += 1;
+            continue;
+        };
+        let span = function.spans.0.get(&value.0).map(|(span, _)| span.clone());
+        let handle = crate::mir::fresh_register(function, handle_ty, span.as_ref());
+        block.instrs[index] = MirInstr::LoadPlace {
+            dest: handle,
+            place,
+        };
+        block.instrs.insert(
+            index + 1,
+            MirInstr::WriteRef {
+                reference: handle,
+                value,
             },
         );
         index += 2;

@@ -1398,6 +1398,20 @@ for it. A reader of an older record, or of a bare trait name, gives the
 trait that one binder. The package format moves to `mojito-package 262`
 (R2216): a trait member's recorded signature no longer holds `_Self`.
 
+Schema 1.235 gives a `place.store` to a place ending at a `ref` field one
+meaning: it stores the handle it is given into the field's slot, its source
+typed as the field declares it. Writing the referent is a `place.load` of
+the field's handle and a `ref.write` through it, as upstream loads the
+field's `!lit.ref` and stores through it, after destroying the referent it
+replaces. A whole `ref` binding's slot still writes its referent. In 1.234
+such a store whose source was typed as the referent (or untyped) wrote
+through the stored handle instead; an older artifact's such stores are split
+as it loads, into a load of the handle into a fresh register and a
+`ref.write` of the stored value through it, destroying nothing, as the
+older store did not (`call_addresses::split_stored_handle_stores`, after
+every other upgrade). The syntax is unchanged. The package format moves to
+`mojito-package 282` (R2589).
+
 Schema 1.234 spells a `Pointer`'s provenance as upstream's
 `Pointer[mut, T, origin]` arguments: the `pointer` record is
 `pointer { element, origin, mutability }` (with `address_space` as before),
