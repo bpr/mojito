@@ -97,11 +97,23 @@ impl VmBackend {
             },
         };
         bytes.view = view;
-        self.layout_size(&bytes.held)?;
-        self.layout_size(&bytes.view)?;
-        let slot = self.view_root(bytes)?;
+        self.intern_view(&prog.structs, bytes, to)
+    }
+
+    /// The pointer of type `to` to `view`'s bytes: element 0 of the
+    /// pointer root interning it ([`VmBackend::view_root`]), which a
+    /// bitcast and a decoded integer address of one view share.
+    pub(super) fn intern_view(
+        &mut self,
+        structs: &HashMap<String, StructDef>,
+        view: ByteView,
+        to: Option<&Ty>,
+    ) -> Result<Value, RuntimeError> {
+        self.layout_size(&view.held)?;
+        self.layout_size(&view.view)?;
+        let slot = self.view_root(view)?;
         Ok(address_as(
-            &prog.structs,
+            structs,
             Value::PlacePointer {
                 frame: POINTER_ROOT_FRAME,
                 slot,
@@ -161,16 +173,15 @@ impl VmBackend {
     /// The integer address of `view`: its storage's address, at the held
     /// element's stride, plus the byte it views.
     pub(super) fn view_address(&self, view: &ByteView) -> Result<i64, RuntimeError> {
-        let stride = self.layout_size(&view.held)?;
         let base = match &view.storage {
             Value::Pointer { allocation, offset } => {
-                crate::runtime::pointer_address(*allocation, *offset, stride)
+                crate::runtime::pointer_address(*allocation, *offset, self.layout_size(&view.held)?)
             }
             Value::PlacePointer {
                 frame,
                 slot,
                 projection,
-            } => self.place_address(*frame, *slot, projection, stride)?,
+            } => self.place_address(*frame, *slot, projection, &view.held)?,
             other => return Err(view_storage_error(other)),
         };
         Ok(base.wrapping_add(view.byte))
@@ -462,7 +473,7 @@ impl VmBackend {
     }
 
     /// The size of `ty` under the native layout of the program running.
-    fn layout_size(&self, ty: &Ty) -> Result<i64, RuntimeError> {
+    pub(super) fn layout_size(&self, ty: &Ty) -> Result<i64, RuntimeError> {
         self.layout_cx()?
             .layout_of(ty)
             .map(|layout| layout.size as i64)
@@ -886,7 +897,7 @@ impl VmBackend {
                 frame,
                 slot,
                 projection,
-            } => self.place_address(*frame, *slot, projection, self.layout_size(pointee)?),
+            } => self.place_address(*frame, *slot, projection, pointee),
             Value::Int(address) => Ok(*address),
             Value::UInt(address) => Ok(*address as i64),
             other => Err(unsupported(&format!(
@@ -896,19 +907,18 @@ impl VmBackend {
         }
     }
 
-    /// The pointer of type `ty` whose integer address is `address`, or the
-    /// integer itself when it names no storage the VM holds: the raw
-    /// address a typed read of `ty` decodes later
-    /// ([`VmBackend::read_typed`]).
+    /// The pointer of type `ty` whose integer address is `address`
+    /// ([`VmBackend::decode_address`]), or the integer itself when it names
+    /// a byte view, whose root a read cannot intern, or no storage the VM
+    /// holds: the raw address a typed read of `ty` or a `pointer.convert`
+    /// decodes later ([`VmBackend::read_typed`]).
     fn address_value(&self, address: i64, ty: &Ty, pointee: &Ty) -> Value {
-        let Some(layout) = &self.layout else {
-            return Value::Int(address);
-        };
-        self.layout_size(pointee)
-            .and_then(|stride| self.address_pointer_at(address, stride, pointee))
-            .map_or(Value::Int(address), |pointer| {
+        match (&self.layout, self.decode_address(address, pointee)) {
+            (Some(layout), Decoded::Pointer(pointer)) => {
                 address_as(&layout.structs, pointer, Some(ty))
-            })
+            }
+            _ => Value::Int(address),
+        }
     }
 
     /// The storage a view of the address `source` reads: a heap pointer,
@@ -1373,6 +1383,26 @@ mod tests {
         assert_eq!(
             encode(&vm, &value, &padded),
             [255, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn integer_address_of_a_field_decodes_to_a_view_of_its_place() {
+        let vm = vm(&[("Pair", vec![("a", Ty::int()), ("b", Ty::int())])]);
+        let pair = Ty::new(TyKind::Struct("Pair".to_string(), Vec::new()));
+        let address = vm.place_address(3, 2, &[], &pair).unwrap();
+        assert_eq!(
+            vm.decode_address(address + 8, &Ty::int()),
+            Decoded::View(ByteView {
+                storage: Value::PlacePointer {
+                    frame: 3,
+                    slot: 2,
+                    projection: Vec::new(),
+                },
+                held: pair,
+                view: Ty::int(),
+                byte: 8,
+            })
         );
     }
 

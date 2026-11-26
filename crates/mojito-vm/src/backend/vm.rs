@@ -119,7 +119,7 @@ pub struct VmBackend {
     place_allocations: RefCell<HashMap<references::HandleParts, u64>>,
     /// The place each synthetic allocation id addresses, by id less
     /// `PLACE_ALLOCATION_BASE`: the inverse of `place_allocations`, which
-    /// [`VmBackend::address_pointer`] decodes an integer address through.
+    /// [`VmBackend::decode_address`] decodes an integer address through.
     place_addresses: RefCell<Vec<PlaceAddress>>,
     /// The slot of [`POINTER_ROOT_FRAME`] holding each byte view a
     /// `pop.pointer.bitcast` made ([`VmBackend::view_root`]), interned so a
@@ -212,9 +212,18 @@ impl VmBackend {
         Ok(())
     }
 
-    /// Allocate `n` uninitialized slots in the heap arena, returning a
-    /// pointer to the base. A negative/absurd count is a runtime error.
-    fn heap_alloc(&mut self, n: i64, alignment: i64) -> Result<Value, RuntimeError> {
+    /// Allocate `n` uninitialized slots of `element` values in the heap
+    /// arena, returning a pointer to the base. A negative/absurd count is a
+    /// runtime error. `element` is the type upstream's allocation result
+    /// `!kgen.pointer<T>` carries, which an integer address inside the
+    /// allocation decodes against ([`VmBackend::decode_address`]); `None`
+    /// is opaque storage.
+    fn heap_alloc(
+        &mut self,
+        n: i64,
+        alignment: i64,
+        element: Option<&Ty>,
+    ) -> Result<Value, RuntimeError> {
         if n < 0 {
             return Err(RuntimeError::TypeError(
                 "vm: Pointer allocation count must be non-negative".to_string(),
@@ -230,6 +239,7 @@ impl VmBackend {
             never_written: vec![true; n as usize],
             alignment: alignment as usize,
             live: true,
+            element: element.map(crate::runtime::bitcast_form),
         });
         Ok(Value::Pointer {
             allocation: self.heap.len() as u64,
@@ -594,12 +604,18 @@ impl VmBackend {
     }
 
     /// The integer address of the place pointer `(frame, slot, projection)`
-    /// to an element `stride` bytes wide: upstream's `pop.pointer_to_index`
-    /// of the one `!kgen.pointer` value it is. A pointer into an interned
-    /// heap element takes that heap pointer's address; any other place takes
-    /// a synthetic allocation, unique to its storage and disjoint from the
-    /// heap's, and a trailing element index is its offset, so pointers into
-    /// one array keep their byte distance.
+    /// to a `pointee` element: upstream's `pop.pointer_to_index` of the one
+    /// `!kgen.pointer` value it is. A pointer into an interned heap element
+    /// takes that heap pointer's address; any other place takes a synthetic
+    /// allocation, unique to its storage and disjoint from the heap's, and
+    /// a trailing element index is its offset, so pointers into one array
+    /// keep their byte distance.
+    ///
+    /// The synthetic allocation records `pointee` as its element type, which
+    /// [`VmBackend::decode_address`] decodes against. A place and its
+    /// pointee (`[..]` and `[.., Deref]`), and a place and an element index
+    /// into it (`[..]` and `[.., Index(i)]`), share one allocation, so the
+    /// pointer that mints it first fixes its element type and tail.
     ///
     /// A pointer into a byte view's root ([`VmBackend::view_root`]) takes
     /// the address of the view's storage plus the byte it views.
@@ -608,11 +624,12 @@ impl VmBackend {
         frame: u64,
         slot: usize,
         projection: &[RefProjection],
-        stride: i64,
+        pointee: &Ty,
     ) -> Result<i64, RuntimeError> {
         if let Some(view) = self.view_at(frame, slot) {
             return self.view_address(&self.view_projection(view, projection)?);
         }
+        let stride = self.layout_size(pointee)?;
         let (base, index) = match projection.split_last() {
             Some((RefProjection::Index(index), base)) => (base, *index as i64),
             Some((RefProjection::Deref, base)) => (base, 0),
@@ -642,89 +659,115 @@ impl VmBackend {
                         Some(RefProjection::Deref) => PlaceTail::Deref,
                         _ => PlaceTail::Whole,
                     },
+                    element: crate::runtime::bitcast_form(pointee),
                 });
                 PLACE_ALLOCATION_BASE + next
             });
         Ok(crate::runtime::pointer_address(allocation, index, stride))
     }
 
-    /// The pointer to `pointee` elements whose integer address is
-    /// `address`: upstream's `pop.index_to_pointer`, the inverse of
+    /// What the integer address `address` names to a `pointee` access:
+    /// upstream's `pop.index_to_pointer`, the inverse of
     /// [`VmBackend::place_address`] and `runtime::pointer_address`. The
     /// high word names a heap allocation, a place's synthetic allocation,
     /// or none (a raw address, at which the VM holds no storage), and the
-    /// low word the element offset's byte distance.
+    /// low word a byte distance into it.
     ///
-    /// A place's address decodes to the projection it was first minted
-    /// from: `place_address` gives a place and its pointee (`[..]` and
-    /// `[.., Deref]`) one address, so the place minted first is the one
-    /// read back.
-    fn address_pointer(
-        &self,
-        prog: &Prog,
-        address: i64,
-        pointee: &Ty,
-    ) -> Result<Value, RuntimeError> {
-        let stride = self.element_stride(prog, pointee)?;
-        self.address_pointer_at(address, stride, pointee)
-    }
-
-    /// [`VmBackend::address_pointer`] of `pointee` elements `stride` bytes
-    /// wide.
-    fn address_pointer_at(
-        &self,
-        address: i64,
-        stride: i64,
-        pointee: &Ty,
-    ) -> Result<Value, RuntimeError> {
+    /// The distance names an element of the storage's recorded element
+    /// type and a byte within it, and the result is the pointer
+    /// `pop.pointer.bitcast` gives of that element's pointer: the element
+    /// pointer itself when the byte is 0 and `pointee` is a
+    /// [`Retype::Plain`] retype of the element, and otherwise a byte view
+    /// of the element at the byte ([`VmBackend::intern_view`]), as native
+    /// code reads the bytes at any address. A place whose tail is not an
+    /// element index holds one element, so its whole distance is the byte.
+    ///
+    /// Storage of no recorded or laid-out element type (opaque heap
+    /// storage, an unknown heap id, allocation 0) decodes at `pointee`'s own
+    /// stride, and a place id naming no place the VM minted is
+    /// [`Decoded::Raw`].
+    fn decode_address(&self, address: i64, pointee: &Ty) -> Decoded {
         let allocation = (address as u64) >> 32;
         let distance = i64::from(address as u32);
-        let undecodable = || {
-            RuntimeError::Unsupported(format!(
-                "vm: the integer address {address:#x} names no `{pointee}` element the VM holds"
-            ))
-        };
-        let offset = match stride {
-            0 => 0,
-            stride if distance % stride == 0 => distance / stride,
-            _ => return Err(undecodable()),
-        };
-        if allocation < PLACE_ALLOCATION_BASE {
-            return Ok(Value::Pointer { allocation, offset });
-        }
-        let place = usize::try_from(allocation - PLACE_ALLOCATION_BASE)
-            .ok()
-            .and_then(|index| self.place_addresses.borrow().get(index).cloned())
-            .ok_or_else(undecodable)?;
-        let mut projection = place.base.clone();
-        match (place.tail, offset) {
-            (PlaceTail::Index, offset) => {
-                projection.push(RefProjection::Index(
-                    usize::try_from(offset).map_err(|_| undecodable())?,
-                ));
+        let storage = if allocation < PLACE_ALLOCATION_BASE {
+            AddressedStorage::Heap(allocation)
+        } else {
+            match usize::try_from(allocation - PLACE_ALLOCATION_BASE)
+                .ok()
+                .and_then(|index| self.place_addresses.borrow().get(index).cloned())
+            {
+                Some(place) => AddressedStorage::Place(place),
+                None => return Decoded::Raw,
             }
-            (PlaceTail::Deref, 0) => projection.push(RefProjection::Deref),
-            (PlaceTail::Whole, 0) => {}
-            _ => return Err(undecodable()),
+        };
+        let held = match &storage {
+            AddressedStorage::Heap(allocation) => allocation
+                .checked_sub(1)
+                .and_then(|index| self.heap.get(usize::try_from(index).ok()?))
+                .and_then(|region| region.element.clone()),
+            AddressedStorage::Place(place) => Some(place.element.clone()),
+        };
+        if let Some(decoded) =
+            held.and_then(|held| self.decode_in(&storage, held, distance, pointee))
+        {
+            return decoded;
         }
-        Ok(Value::PlacePointer {
-            frame: place.frame,
-            slot: place.slot,
-            projection,
-        })
+        match self.layout_size(pointee) {
+            Ok(0) => storage.element(0),
+            Ok(stride) if distance % stride == 0 => storage.element(distance / stride),
+            _ => None,
+        }
+        .map_or(Decoded::Raw, Decoded::Pointer)
+    }
+
+    /// [`VmBackend::decode_address`] of a `pointee` access `distance` bytes
+    /// into `storage` of `held` elements, or `None` when either type has
+    /// no byte layout to decode against.
+    fn decode_in(
+        &self,
+        storage: &AddressedStorage,
+        held: Ty,
+        distance: i64,
+        pointee: &Ty,
+    ) -> Option<Decoded> {
+        let size = self.layout_size(&held).ok().filter(|size| *size > 0)?;
+        let (index, byte) = match storage {
+            AddressedStorage::Place(place) if !matches!(place.tail, PlaceTail::Index) => {
+                (0, distance)
+            }
+            _ => (distance / size, distance % size),
+        };
+        let element = storage.element(index)?;
+        let view = crate::runtime::bitcast_form(pointee);
+        if byte == 0
+            && crate::runtime::pointee_retype(&held, &view) == crate::runtime::Retype::Plain
+        {
+            return Some(Decoded::Pointer(element));
+        }
+        self.layout_size(&view)
+            .ok()
+            .filter(|size| *size > 0)
+            .map(|_| {
+                Decoded::View(crate::runtime::ByteView {
+                    storage: element,
+                    held,
+                    view,
+                    byte,
+                })
+            })
     }
 
     /// The value a typed access at `ty` reads from memory holding `value`:
     /// an integer held under a `Pointer` or `!kgen.pointer` access decodes to the pointer whose
-    /// address it is ([`VmBackend::address_pointer`]), as upstream's
+    /// address it is ([`VmBackend::decode_held_address`]), as upstream's
     /// `Pointer(unsafe_from_address=)` reads an `Int` as a pointer, and any
     /// other value reads as `runtime::read_at` reads it. An integer naming no
     /// storage the VM holds stays the integer: upstream holds a pointer's
     /// address as plain bits (an inline `String`'s text overwrites its
-    /// pointer word), and the VM refuses such a pointer only where an access
-    /// dereferences it.
+    /// pointer word), and the VM refuses such a pointer only where a
+    /// reference is formed from it (`pointer.convert`).
     fn read_typed(
-        &self,
+        &mut self,
         prog: &Prog,
         value: Value,
         ty: Option<&Ty>,
@@ -739,9 +782,26 @@ impl VmBackend {
             .and_then(crate::runtime::address_pointee);
         match address.zip(pointee) {
             Some((address, pointee)) => Ok(self
-                .address_pointer(prog, address, pointee)
-                .map_or(value, |pointer| address_as(&prog.structs, pointer, ty))),
+                .decode_held_address(prog, address, pointee, ty)?
+                .unwrap_or(value)),
             _ => crate::runtime::read_at(value, ty),
+        }
+    }
+
+    /// The pointer of type `ty` to `pointee` whose integer address is
+    /// `address` ([`VmBackend::decode_address`]), a byte view's interned
+    /// root included, or `None` when it names no storage the VM holds.
+    fn decode_held_address(
+        &mut self,
+        prog: &Prog,
+        address: i64,
+        pointee: &Ty,
+        ty: Option<&Ty>,
+    ) -> Result<Option<Value>, RuntimeError> {
+        match self.decode_address(address, pointee) {
+            Decoded::Pointer(pointer) => Ok(Some(address_as(&prog.structs, pointer, ty))),
+            Decoded::View(view) => self.intern_view(&prog.structs, view, ty).map(Some),
+            Decoded::Raw => Ok(None),
         }
     }
 
@@ -766,21 +826,6 @@ impl VmBackend {
                 "vm: the integer address of a `{pointee}` pointer: {error}"
             ))
         })
-    }
-
-    /// [`VmBackend::element_stride`] of the pointee a `Pointer.__int__`
-    /// receiver of type `receiver` addresses.
-    fn receiver_stride(&self, prog: &Prog, receiver: Option<&Ty>) -> Result<i64, RuntimeError> {
-        let pointee = receiver
-            .map(peel_references)
-            .and_then(crate::runtime::address_pointee)
-            .ok_or_else(|| {
-                RuntimeError::TypeError(format!(
-                    "Pointer.__int__ reads a receiver of no pointer type ({})",
-                    receiver.map_or_else(|| "untyped".to_string(), ToString::to_string)
-                ))
-            })?;
-        self.element_stride(prog, pointee)
     }
 
     /// Move `value` into compile-time memory, which is never destroyed, and
@@ -1197,6 +1242,24 @@ fn pointer_valued(structs: &HashMap<String, StructDef>, ty: &Ty) -> bool {
 /// upstream's `lit.ref.to_pointer` and `lit.ref.from_pointer` retype one
 /// address between `!kgen.pointer` and `!lit.ref`. A conversion between two
 /// references is the identity.
+/// The pointee a `Pointer.__int__` receiver of type `receiver` addresses.
+fn receiver_pointee(receiver: Option<&Ty>) -> Result<&Ty, RuntimeError> {
+    receiver
+        .map(peel_references)
+        .and_then(crate::runtime::address_pointee)
+        .ok_or_else(|| {
+            RuntimeError::TypeError(format!(
+                "Pointer.__int__ reads a receiver of no pointer type ({})",
+                receiver.map_or_else(|| "untyped".to_string(), ToString::to_string)
+            ))
+        })
+}
+
+/// The type of a byte (`UInt8`), which a byte buffer holds.
+fn byte_ty() -> Ty {
+    mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::UInt8, 1)
+}
+
 fn address_as(structs: &HashMap<String, StructDef>, value: Value, ty: Option<&Ty>) -> Value {
     match (value, ty) {
         (
@@ -1901,6 +1964,10 @@ struct HeapAllocation {
     #[allow(dead_code)]
     alignment: usize,
     live: bool,
+    /// The type of each slot's value, in its `runtime::bitcast_form`:
+    /// what an integer address into the allocation decodes against. A
+    /// free keeps it.
+    element: Option<Ty>,
 }
 
 struct ReturnContinuation {
@@ -2207,13 +2274,15 @@ use regions::{RegionCursor, Transfer};
 
 /// The place a synthetic allocation id addresses
 /// ([`VmBackend::place_address`]): its frame, slot, and projection up to
-/// the element its address's offset counts.
+/// the element its address's offset counts, and that element's type in its
+/// `runtime::bitcast_form`.
 #[derive(Debug, Clone)]
 struct PlaceAddress {
     frame: u64,
     slot: usize,
     base: Vec<RefProjection>,
     tail: PlaceTail,
+    element: Ty,
 }
 
 /// How the place an allocation id was first minted from ends past its
@@ -2224,6 +2293,56 @@ enum PlaceTail {
     Index,
     Deref,
     Whole,
+}
+
+/// The storage an integer address's high word names
+/// ([`VmBackend::decode_address`]): a heap allocation, allocation 0 and
+/// unknown ids included, or a minted place.
+enum AddressedStorage {
+    Heap(u64),
+    Place(PlaceAddress),
+}
+
+impl AddressedStorage {
+    /// The pointer to element `index` of the storage, or `None` past a
+    /// place that holds one element.
+    fn element(&self, index: i64) -> Option<Value> {
+        match self {
+            Self::Heap(allocation) => Some(Value::Pointer {
+                allocation: *allocation,
+                offset: index,
+            }),
+            Self::Place(place) => {
+                let mut projection = place.base.clone();
+                match (place.tail, index) {
+                    (PlaceTail::Index, index) => {
+                        projection.push(RefProjection::Index(usize::try_from(index).ok()?));
+                    }
+                    (PlaceTail::Deref, 0) => projection.push(RefProjection::Deref),
+                    (PlaceTail::Whole, 0) => {}
+                    _ => return None,
+                }
+                Some(Value::PlacePointer {
+                    frame: place.frame,
+                    slot: place.slot,
+                    projection,
+                })
+            }
+        }
+    }
+}
+
+/// What an integer address names to a typed access
+/// ([`VmBackend::decode_address`]).
+#[derive(Debug, PartialEq)]
+enum Decoded {
+    /// A typed pointer to the storage element.
+    Pointer(Value),
+    /// Bytes of storage of another layout, which a pointer reaches through
+    /// an interned view root.
+    View(crate::runtime::ByteView),
+    /// No storage the VM holds.
+    Raw,
 }
 
 #[cfg(test)]
@@ -2365,54 +2484,95 @@ mod pointer_storage_tests {
     fn integer_address_decodes_to_the_pointer_it_was_read_from() {
         let mut vm = VmBackend::new();
         let prog = empty_program();
+        vm.configure(&prog);
         let int = Ty::int();
-        let decode = |vm: &VmBackend, address| vm.address_pointer(&prog, address, &int).unwrap();
-        let place = vm.place_address(3, 2, &[], 8).unwrap();
+        let decode = |vm: &VmBackend, address| vm.decode_address(address, &int);
+        let place = vm.place_address(3, 2, &[], &int).unwrap();
         assert_eq!(
             decode(&vm, place),
-            Value::PlacePointer {
+            Decoded::Pointer(Value::PlacePointer {
                 frame: 3,
                 slot: 2,
                 projection: Vec::new()
-            }
+            })
         );
         let element = vm
-            .place_address(3, 4, &[RefProjection::Index(2)], 8)
+            .place_address(3, 4, &[RefProjection::Index(2)], &int)
             .unwrap();
         assert_eq!(
             decode(&vm, element),
-            Value::PlacePointer {
+            Decoded::Pointer(Value::PlacePointer {
                 frame: 3,
                 slot: 4,
                 projection: vec![RefProjection::Index(2)]
-            }
+            })
         );
-        let Value::Pointer { allocation, .. } = vm.heap_alloc(3, 8).expect("allocation") else {
+        let Value::Pointer { allocation, .. } =
+            vm.heap_alloc(3, 8, Some(&int)).expect("allocation")
+        else {
             unreachable!("heap allocator returns a pointer")
         };
         assert_eq!(
             decode(&vm, crate::runtime::pointer_address(allocation, 1, 8)),
-            Value::Pointer {
+            Decoded::Pointer(Value::Pointer {
                 allocation,
                 offset: 1
-            }
+            })
         );
-        let raw = decode(&vm, 4096);
         assert_eq!(
-            raw,
-            Value::Pointer {
+            decode(&vm, 4096),
+            Decoded::Pointer(Value::Pointer {
                 allocation: 0,
                 offset: 512
-            }
+            })
         );
         assert_eq!(crate::runtime::pointer_address(0, 512, 8), 4096);
-        assert!(vm.address_pointer(&prog, 4097, &int).is_err());
+        assert_eq!(decode(&vm, 4097), Decoded::Raw);
+    }
+
+    #[test]
+    fn integer_address_inside_an_element_decodes_to_a_byte_view() {
+        let mut vm = VmBackend::new();
+        let prog = empty_program();
+        vm.configure(&prog);
+        let (int, byte) = (Ty::int(), byte_ty());
+        let uint32 = mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::UInt32, 1);
+        let Value::Pointer { allocation, .. } =
+            vm.heap_alloc(2, 8, Some(&int)).expect("allocation")
+        else {
+            unreachable!("heap allocator returns a pointer")
+        };
+        let base = crate::runtime::pointer_address(allocation, 0, 8);
+        let view = |offset, held: &Ty, view: &Ty, byte| {
+            Decoded::View(crate::runtime::ByteView {
+                storage: Value::Pointer { allocation, offset },
+                held: held.clone(),
+                view: view.clone(),
+                byte,
+            })
+        };
+        assert_eq!(vm.decode_address(base + 1, &byte), view(0, &int, &byte, 1));
+        assert_eq!(
+            vm.decode_address(base + 8, &uint32),
+            view(1, &int, &uint32, 0)
+        );
+    }
+
+    #[test]
+    fn integer_address_of_no_storage_is_raw() {
+        let mut vm = VmBackend::new();
+        let prog = empty_program();
+        vm.configure(&prog);
+        let int = Ty::int();
+        let place = vm.place_address(3, 2, &[], &int).unwrap();
+        assert_eq!(vm.decode_address(place + (1 << 32), &int), Decoded::Raw);
     }
 
     #[test]
     fn undecodable_integer_read_as_a_pointer_stays_its_bits() {
-        let vm = VmBackend::new();
+        let mut vm = VmBackend::new();
         let prog = empty_program();
+        vm.configure(&prog);
         let pointer = Ty::kgen_pointer(Ty::int(), mojito_types::types::AddressSpaceSlot::GENERIC);
         let text = 0x6867_6665_6463_6261;
         assert_eq!(
@@ -2425,7 +2585,7 @@ mod pointer_storage_tests {
     #[test]
     fn frozen_pointer_round_trip_preserves_holes_offsets_and_independence() {
         let mut vm = VmBackend::default();
-        let source = vm.heap_alloc(3, 8).expect("allocation");
+        let source = vm.heap_alloc(3, 8, None).expect("allocation");
         let Value::Pointer { allocation, .. } = source else {
             unreachable!("heap allocator returns a pointer")
         };
@@ -2551,7 +2711,7 @@ mod pointer_storage_tests {
                 offset: 0
             }
         );
-        let empty = vm.heap_alloc(0, 8).expect("empty allocation");
+        let empty = vm.heap_alloc(0, 8, None).expect("empty allocation");
         assert_eq!(
             freeze(&vm, empty).expect("empty"),
             CtValue::Pointer {
@@ -2559,7 +2719,7 @@ mod pointer_storage_tests {
                 offset: 0
             }
         );
-        let cycle = vm.heap_alloc(1, 8).expect("allocation");
+        let cycle = vm.heap_alloc(1, 8, None).expect("allocation");
         let Value::Pointer { allocation, .. } = cycle else {
             unreachable!("heap allocator returns a pointer")
         };
@@ -2575,7 +2735,8 @@ mod pointer_storage_tests {
     #[test]
     fn take_and_destroy_restore_uninitialized_heap_storage() {
         let mut vm = VmBackend::default();
-        let Value::Pointer { allocation, offset } = vm.heap_alloc(1, 8).expect("allocation") else {
+        let Value::Pointer { allocation, offset } = vm.heap_alloc(1, 8, None).expect("allocation")
+        else {
             panic!("allocation did not return a pointer");
         };
 
@@ -2602,7 +2763,8 @@ mod pointer_storage_tests {
     #[test]
     fn never_written_heap_storage_is_destroyable_and_forwards_on_take() {
         let mut vm = VmBackend::default();
-        let Value::Pointer { allocation, offset } = vm.heap_alloc(2, 8).expect("allocation") else {
+        let Value::Pointer { allocation, offset } = vm.heap_alloc(2, 8, None).expect("allocation")
+        else {
             panic!("allocation did not return a pointer");
         };
         // Never written: a read traps, a destroy is a no-op, a take yields

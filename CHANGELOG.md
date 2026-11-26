@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An integer address now decodes against the storage it lands in on the
+  VM, as at the pin and natively (R2609): `Pointer(unsafe_from_address=)`
+  at a byte inside a heap element, or at a pointee of another layout than
+  the storage's, reads and writes the storage's bytes. A `Byte` at
+  `Int(p) + 1` over an `Int` buffer read the buffer's next `Int` before,
+  and an `Int` at `Int(Pointer(to=s)) + 8` read back the address itself. A
+  reference formed from an address naming no storage the VM holds is now
+  refused instead of reading the integer.
+
 - A byte written through a `Pointer.unsafe_bitcast` byte view now reads
   back as written on the VM, as at the pin and natively (R2608): a
   struct's padding, a `Bool` byte's high bits until a typed store of the

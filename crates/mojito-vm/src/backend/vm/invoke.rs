@@ -243,7 +243,7 @@ impl VmBackend {
                 "__int__" if args.is_empty() => Ok(Value::Int(crate::runtime::pointer_address(
                     *allocation,
                     *offset,
-                    self.receiver_stride(prog, receiver_ty)?,
+                    self.element_stride(prog, receiver_pointee(receiver_ty)?)?,
                 ))),
                 _ => Err(RuntimeError::Unsupported(format!(
                     "vm: Pointer has no method '{method}'"
@@ -253,12 +253,12 @@ impl VmBackend {
                 frame,
                 slot,
                 projection,
-            } if method == "__int__" && args.is_empty() => {
-                let stride = self.receiver_stride(prog, receiver_ty)?;
-                Ok(Value::Int(
-                    self.place_address(*frame, *slot, projection, stride)?,
-                ))
-            }
+            } if method == "__int__" && args.is_empty() => Ok(Value::Int(self.place_address(
+                *frame,
+                *slot,
+                projection,
+                receiver_pointee(receiver_ty)?,
+            )?)),
             _ if let Some(name) = &declared_owner => {
                 let method_argc = args.len();
                 let source_fname = format!("{name}.{method}");

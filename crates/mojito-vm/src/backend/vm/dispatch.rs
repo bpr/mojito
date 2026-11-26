@@ -6,13 +6,15 @@ use super::*;
 use mojito_types::types::TyKind;
 
 /// The checked types a named call carries: the compile-time arguments a
-/// builtin reads (`external_call`'s callee), its argument types, and the
-/// struct its result declares, which a constructor call builds.
+/// builtin reads (`external_call`'s callee), its argument types, the
+/// struct its result declares, which a constructor call builds, and its
+/// result type, whose pointee an allocation records.
 #[derive(Default)]
 pub(super) struct CallTypes<'a> {
     pub(super) instantiated: &'a [mojito_types::types::TyArg],
     pub(super) arg_types: &'a [Option<mojito_types::types::Ty>],
     pub(super) constructed: Option<&'a str>,
+    pub(super) result: Option<&'a Ty>,
 }
 
 impl VmBackend {
@@ -295,6 +297,7 @@ impl VmBackend {
             instantiated,
             arg_types,
             constructed,
+            result,
         } = *types;
         // Built-ins take positional arguments only, and user functions handle
         // keywords through their signatures below. Struct constructors get a
@@ -477,11 +480,15 @@ impl VmBackend {
                     line => Ok(line),
                 }
             }
-            // `Pointer[T].alloc(n)` — reserve `n` slots in the heap arena and
-            // return a pointer to the base (the element type is erased).
+            // `Pointer[T].alloc(n)` — reserve `n` slots of `T` in the heap
+            // arena and return a pointer to the base.
             "Pointer.alloc" => {
                 let n = crate::runtime::value_as_index(&arg1(name, args)?)?;
-                self.heap_alloc(n, std::mem::align_of::<Value>() as i64)
+                self.heap_alloc(
+                    n,
+                    std::mem::align_of::<Value>() as i64,
+                    result.and_then(crate::runtime::address_pointee),
+                )
             }
             "Pointer.alloc_aligned" => {
                 if args.len() != 2 {
@@ -493,7 +500,11 @@ impl VmBackend {
                 }
                 let n = crate::runtime::value_as_index(&args[0])?;
                 let alignment = crate::runtime::value_as_index(&args[1])?;
-                self.heap_alloc(n, alignment)
+                self.heap_alloc(
+                    n,
+                    alignment,
+                    result.and_then(crate::runtime::address_pointee),
+                )
             }
             "Pointer.unsafe_dangling" => {
                 if !args.is_empty() {

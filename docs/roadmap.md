@@ -8043,6 +8043,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: `Int(Pointer(to=t[1])) - Int(Pointer(to=t[0]))` over `var t =
     (Int(1), Int8(2), Int(3))` prints `8` at the pin and `1` on the VM,
     since the trailing tuple index scales by its own element's size.
+  - Probe: `Int(Pointer(to=h[].b)) - Int(h)` over `h = unsafe_alloc[Pair](2)`
+    prints `8` at the pin and `4611685958297845760` on the VM: a field
+    place reached through a heap pointer root takes its own synthetic id
+    too, so its address names no byte of the heap element.
   - Found while landing R2403 (2026-11-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -12171,7 +12175,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R2035 (a pointer operand) and R221 (`unsafe_bitcast`, for
     `gather` and `scatter`).
   - The VM reads a `SIMD[.int, size]` as addresses lane by lane through
-    `VmBackend::address_pointer`, the decode `Pointer(unsafe_from_address=)`
+    `VmBackend::decode_address`, the decode `Pointer(unsafe_from_address=)`
     reads through.
   - Model: Opus, Not Planned.
 
@@ -13753,31 +13757,6 @@ residue found inside a task moves to the task that owns its fix.
   - Workaround: recurse through a non-generic helper.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R2609 An integer address decodes only at the reading pointee's
-  stride, never to a byte view of storage of another layout**
-
-  Problem: `VmBackend::address_pointer_at` turns an address into an element
-  index at the pointee's own stride, so an address between the storage's
-  own elements names no element, or the wrong one.
-  - Cause: a heap allocation records no element type, and a place's
-    address names its slot, so the decode cannot tell that the storage
-    holds values of another size. Native code reads the bytes at any
-    address.
-  - Probe: `Pointer[Byte, MutAnyOrigin](unsafe_from_address=Int(b.unsafe_offset(1)))[]`,
-    with `b` a `Byte` view of an `Int` heap buffer holding `0x0102`, prints
-    `1` at the pin and natively, and `5` (the buffer's next `Int`) on the
-    VM. This one is silently wrong.
-  - Probe: `Pointer[Int, origin_of(s)](unsafe_from_address=Int(bp.unsafe_offset(8)))[]`,
-    with `bp` a `Byte` view of `s = Pair(1, 2)`, prints `2` at the pin and
-    natively, and the VM refuses it: "the integer address … names no `Int`
-    element the VM holds".
-  - The lever: record each allocation's element type, and decode an
-    address that falls inside storage of another layout to a byte view of
-    it (`VmBackend::pointer_bitcast`'s roots).
-  - Found while landing R2602 (2026-11-25).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R2619 The VM's byte views have no arm for a `Tuple`, so a pointer
   view of one is refused**

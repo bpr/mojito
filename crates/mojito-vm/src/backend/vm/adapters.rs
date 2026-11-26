@@ -202,7 +202,7 @@ impl VmBackend {
                     None => 0,
                     Some(slots) => {
                         let Value::Pointer { allocation, .. } =
-                            self.heap_alloc(slots.len() as i64, 8)?
+                            self.heap_alloc(slots.len() as i64, 8, Some(element))?
                         else {
                             return Err(RuntimeError::Unsupported(
                                 "allocation did not produce a pointer".to_string(),

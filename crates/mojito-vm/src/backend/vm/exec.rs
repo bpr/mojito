@@ -674,13 +674,35 @@ impl VmBackend {
                     crate::runtime::builtin_convert(*target, regs[value.0 as usize].clone())?;
             }
             // A `Pointer`, its `!kgen.pointer`, and a `!lit.ref` are one
-            // address.
+            // address. One still held as its integer decodes to the storage
+            // it names, and a reference to no storage the VM holds is
+            // refused: upstream's `lit.ref.from_pointer` would form a
+            // reference to unmapped memory.
             MirInstr::PointerConvert { dest, value } => {
-                regs[dest.0 as usize] = address_as(
-                    &prog.structs,
-                    regs[value.0 as usize].clone(),
-                    prog.mir.functions[function].1.reg_types.get(&dest.0),
-                );
+                let ty = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                let value = regs[value.0 as usize].clone();
+                let address = match value {
+                    Value::Int(address) => Some(address),
+                    Value::UInt(address) => Some(address as i64),
+                    _ => None,
+                };
+                regs[dest.0 as usize] = match address
+                    .zip(ty.and_then(crate::runtime::address_pointee))
+                {
+                    Some((address, pointee)) => {
+                        match self.decode_held_address(prog, address, pointee, ty)? {
+                            Some(pointer) => pointer,
+                            None if ty.is_some_and(|ty| matches!(ty.kind(), TyKind::Ref(_))) => {
+                                return Err(RuntimeError::Unsupported(format!(
+                                    "vm: the integer address {address:#x} names no storage the \
+                                     VM holds"
+                                )));
+                            }
+                            None => value,
+                        }
+                    }
+                    None => address_as(&prog.structs, value, ty),
+                };
             }
             // The address is unchanged; a typed access through it reads the
             // held value at the access's type (`runtime::read_at`), or the
@@ -780,24 +802,21 @@ impl VmBackend {
                 fastmath: _,
             } => {
                 let operand = operands.first();
-                let stride = |vm: &Self| {
-                    operand
-                        .and_then(|operand| {
-                            prog.mir.functions[function].1.reg_types.get(&operand.0)
-                        })
-                        .and_then(crate::runtime::address_pointee)
-                        .ok_or_else(|| {
-                            RuntimeError::TypeError(
-                                "'pop.pointer_to_index' reads an operand of no pointer type"
-                                    .to_string(),
-                            )
-                        })
-                        .and_then(|pointee| vm.element_stride(prog, pointee))
-                };
+                let pointee = operand
+                    .and_then(|operand| prog.mir.functions[function].1.reg_types.get(&operand.0))
+                    .and_then(crate::runtime::address_pointee)
+                    .ok_or_else(|| {
+                        RuntimeError::TypeError(
+                            "'pop.pointer_to_index' reads an operand of no pointer type"
+                                .to_string(),
+                        )
+                    });
                 let address = match operand.map(|operand| &regs[operand.0 as usize]) {
-                    Some(Value::Pointer { allocation, offset }) => {
-                        crate::runtime::pointer_address(*allocation, *offset, stride(self)?)
-                    }
+                    Some(Value::Pointer { allocation, offset }) => crate::runtime::pointer_address(
+                        *allocation,
+                        *offset,
+                        self.element_stride(prog, pointee?)?,
+                    ),
                     Some(
                         Value::PlacePointer {
                             frame,
@@ -809,11 +828,9 @@ impl VmBackend {
                             slot,
                             projection,
                         },
-                    ) => {
-                        let (frame, slot, projection) = (*frame, *slot, projection.clone());
-                        let stride = stride(self)?;
-                        self.place_address(frame, slot, &projection, stride)?
-                    }
+                    ) => self.place_address(*frame, *slot, projection, pointee?)?,
+                    Some(Value::Int(address)) => *address,
+                    Some(Value::UInt(address)) => *address as i64,
                     other => {
                         return Err(RuntimeError::TypeError(format!(
                             "'pop.pointer_to_index' reads an address, not {}",
@@ -1138,6 +1155,7 @@ impl VmBackend {
                             instantiated: instantiated_args,
                             arg_types: &arg_types,
                             constructed,
+                            result: prog.mir.functions[function].1.reg_types.get(&dest.0),
                         },
                     );
                     self.restore_caller_mirror(stack_base, vars)?;

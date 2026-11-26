@@ -812,7 +812,7 @@ impl VmBackend {
         if let Some(allocation) = self.static_param_lists.get(&key) {
             return Ok(*allocation);
         }
-        let pointer = self.heap_alloc(values.len() as i64, 1)?;
+        let pointer = self.heap_alloc(values.len() as i64, 1, Some(element))?;
         let Value::Pointer { allocation, .. } = pointer else {
             unreachable!("heap_alloc returns a pointer");
         };
@@ -829,7 +829,7 @@ impl VmBackend {
     /// as width-1 `UInt8` scalars; returns its allocation id (offset 0 is the
     /// first byte).
     fn alloc_utf8_bytes(&mut self, bytes: &[u8], capacity: usize) -> Result<u64, RuntimeError> {
-        let pointer = self.heap_alloc(capacity as i64, 1)?;
+        let pointer = self.heap_alloc(capacity as i64, 1, Some(&byte_ty()))?;
         let Value::Pointer { allocation, .. } = pointer else {
             unreachable!("heap_alloc returns a pointer");
         };

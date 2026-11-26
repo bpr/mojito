@@ -899,24 +899,37 @@ pub fn pointer_retype(
             "vm: pointer.bitcast requires Pointer operands".to_string(),
         ));
     };
-    let pointer_view = bitcast_pointee(&from)
-        .zip(bitcast_pointee(&to))
+    Ok(pointee_retype(&from, &to))
+}
+
+/// [`pointer_retype`] of a pointer to `from` elements to a pointer to `to`
+/// elements, both in their [`bitcast_form`].
+pub fn pointee_retype(from: &mojito_types::types::Ty, to: &mojito_types::types::Ty) -> Retype {
+    let pointer_view = bitcast_pointee(from)
+        .zip(bitcast_pointee(to))
         .is_some_and(|(from, to)| same_held_or_reinterpreted(&from, &to));
-    Ok(if same_held_or_reinterpreted(&from, &to) || pointer_view {
+    if same_held_or_reinterpreted(from, to) || pointer_view {
         Retype::Plain
     } else {
         Retype::View
-    })
+    }
 }
 
-/// The pointee of a pointer type a `pop.pointer.bitcast` retypes, as the
-/// VM holds it ([`held_pointee`], [`held_address`]) with its origins erased.
+/// The pointee of a pointer type a `pop.pointer.bitcast` retypes, in its
+/// [`bitcast_form`].
 pub fn bitcast_pointee(ty: &mojito_types::types::Ty) -> Option<mojito_types::types::Ty> {
     match ty.kind() {
         mojito_types::types::TyKind::KgenPointer { element, .. } => Some(element),
         kind => kind.pointer_layout().map(|(element, _)| element),
     }
-    .map(|pointee| held_address(&mojito_types::types::erase_origins(&held_pointee(pointee))))
+    .map(bitcast_form)
+}
+
+/// The pointee `pointee` as the VM holds it under a pointer
+/// ([`held_pointee`], [`held_address`]), with its origins erased: the form
+/// a byte view and a storage's element type are compared in.
+pub fn bitcast_form(pointee: &mojito_types::types::Ty) -> mojito_types::types::Ty {
+    held_address(&mojito_types::types::erase_origins(&held_pointee(pointee)))
 }
 
 /// The dtype and lane count of a register scalar or vector type whose bits

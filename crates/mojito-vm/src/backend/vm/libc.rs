@@ -421,8 +421,8 @@ impl VmBackend {
                 name: entry.file_name().as_bytes().to_vec(),
             });
         }
-        let identity = self.heap_alloc(1, 8)?;
-        let buffer = self.heap_alloc(DIRENT_SIZE, 8)?;
+        let identity = self.heap_alloc(1, 8, None)?;
+        let buffer = self.heap_alloc(DIRENT_SIZE, 8, Some(&byte_ty()))?;
         let (
             Value::Pointer { allocation, .. },
             Value::Pointer {
@@ -589,7 +589,7 @@ impl VmBackend {
     /// A fresh byte allocation holding `bytes` plus a NUL terminator, as the
     /// pointer results of `strerror`/`getenv` (libc-owned, never freed).
     fn alloc_c_string(&mut self, bytes: &[u8]) -> Result<Value, RuntimeError> {
-        let pointer = self.heap_alloc(bytes.len() as i64 + 1, 1)?;
+        let pointer = self.heap_alloc(bytes.len() as i64 + 1, 1, Some(&byte_ty()))?;
         let mut image = bytes.to_vec();
         image.push(0);
         self.write_bytes(&pointer, &image)?;
@@ -611,7 +611,11 @@ impl VmBackend {
                 offset: 0,
             });
         }
-        let pointer = self.heap_alloc(1, 4)?;
+        let pointer = self.heap_alloc(
+            1,
+            4,
+            Some(&mojito_types::types::canonical_simd_ty(Dtype::Int32, 1)),
+        )?;
         if let Value::Pointer { allocation, .. } = pointer {
             self.host.errno = Some(allocation);
             let (region, slot) = self.heap_index(allocation, 0, 0)?;
