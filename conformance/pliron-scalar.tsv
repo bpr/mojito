@@ -67,6 +67,8 @@ assets/ok/associated_trait_self_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/associated_type_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/associated_value_self_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/associated_value_type_name_read.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/atomic_byte_view.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/atomic_scalar_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/augmented_bitwise_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/augmented_shift_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/augmented_store_copies_nothing.mojo	-	ineligible	no-scalar-entry-shape
@@ -1094,6 +1096,7 @@ assets/ok/pointer_address_counts_bytes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_address_space_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_address_space_inferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_address_space_shared.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_alias_keyword_hole.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_aliases_declared.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_augmented_literal_offset.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_bound_copy.mojo	-	ineligible	no-scalar-entry-shape
@@ -1902,6 +1905,7 @@ assets/ok/where_reads_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_refined_bound_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_refined_bound_requirement_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_repeated_clauses.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/where_type_equality_value_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/while.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_enter_only.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/with_exit_error_swallow.mojo	-	ineligible	no-scalar-entry-shape

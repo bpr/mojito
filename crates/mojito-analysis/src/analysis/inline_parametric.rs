@@ -5774,6 +5774,15 @@ fn fold_parameter_constants(block: &mut MirBlock, reg_types: &std::collections::
                 has_side_effect,
                 ..
             } => vec![intrinsic, has_side_effect],
+            MirInstr::Atomic {
+                ordering,
+                failure_ordering,
+                syncscope,
+                ..
+            } => std::iter::once(ordering)
+                .chain(failure_ordering.as_mut())
+                .chain(syncscope.as_mut())
+                .collect(),
             other => other.fastmath_mut().into_iter().collect(),
         };
         for k in constants {

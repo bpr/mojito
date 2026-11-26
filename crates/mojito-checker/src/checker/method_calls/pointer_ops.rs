@@ -4,7 +4,8 @@
 //! `lit.ref.from_pointer` between a `!lit.ref` and a `!kgen.pointer`,
 //! `pop.pointer.bitcast`, `pop.offset`, `pop.pointer_to_index`, and the
 //! `pop.load` and `pop.store` of a register-passable element, typed as
-//! their MLIR verifiers type them, with the attributes they take.
+//! their MLIR verifiers type them, with the attributes they take. A load or
+//! store carrying an `ordering` is atomic (`atomic_ops.rs`).
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -151,7 +152,12 @@ impl Checker {
             }
             PointerOp::Store => {
                 let element = pointer_element(1)?;
-                if !same_element(&operands[0], &element) {
+                // An atomic store writes a vector's storage through a
+                // pointer to the vector, which is that storage in MLIR.
+                let stores_storage = attribute("ordering").is_some()
+                    && mojito_types::types::storage_ty(&operands[0])
+                        == mojito_types::types::storage_ty(&element);
+                if !stores_storage && !same_element(&operands[0], &element) {
                     return Err(invalid(format!(
                         "operand #0 of type '{}' is not the element of '{}'",
                         operands[0], operands[1]
@@ -173,6 +179,30 @@ impl Checker {
         if let Some(value) = attribute("isVolatile") {
             let volatile = self.memory_attribute(name, "isVolatile", "__mlir_i1__", value)?;
             self.require_not_volatile(span, name, &volatile)?;
+        }
+        // A load or store carrying an `ordering` is atomic.
+        let syncscope = attribute("syncscope")
+            .map(|value| self.syncscope_attribute(name, value))
+            .transpose()?;
+        if let Some(ordering) = attribute("ordering") {
+            let ordering = self.atomic_ordering_attribute(name, "ordering", ordering)?;
+            let atomic = if op == PointerOp::Load {
+                mojito_types::mlir::AtomicOp::Load
+            } else {
+                mojito_types::mlir::AtomicOp::Store
+            };
+            self.record_atomic_op(span, atomic, ordering, None, syncscope)?;
+            return Ok(result);
+        }
+        if syncscope.is_some() {
+            let kind = if op == PointerOp::Load {
+                "load"
+            } else {
+                "store"
+            };
+            return Err(invalid(format!(
+                "'{name}' op cannot specify syncscope without an atomic {kind}"
+            )));
         }
         self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::MlirPointerOp { op },

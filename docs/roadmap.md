@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2614**.
+Next free ID: **R2615**.
 
 ## Ordered Work
 
@@ -2451,7 +2451,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     declared and bound parameter types, and an unbound `_` slot carries
     none; the argument's own type carries the origin.
   - Cause: `auto_parameterize` (`Declared::bind`) declares upstream's
-    per-call origin binder for `Pointer`'s unbound origin only (R2419's
+    per-call origin binder for `Pointer`'s unbound origin and a parametric
+    alias applying `Pointer` (`MutPointer`, `ImmPointer`) only (R2419's
     gate on `POINTER_TYPE_NAME`); every other struct's origin slot reaches
     the checker as `_`. The fix removes the gate.
   - Removing it makes `AHasher._update_with_bytes` over `Span[Byte, _]`
@@ -3884,6 +3885,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     compile-time Int constant: not an associated comptime expression":
     `std.sys.info` imports `std.string`. The flag spells the width `64`;
     restore upstream's `bit_width_of[DType.int]()` when this lands.
+  - Probe: within one module, a struct method's parameter default naming
+    a module constant (`def load[o: O = _D]()` beside `comptime _D =
+    O.B`) fails with "unknown type '_D'", and `comptime _D = O(5)` with
+    "not a compile-time Int constant": struct method signatures register
+    before the walk binds the constant. A free function above the
+    constant fails the same way.
+  - Probe: `std/atomic/atomic.mojo`'s `Atomic` methods default their
+    orderings to `_DEFAULT_MEMORY_ORDERING` and
+    `CurrentPlugin.default_atomic_ordering` (through
+    `_DEFAULT_ARITHMETIC_ORDERING`); the bundled module spells
+    `Ordering.SEQUENTIAL` in their place, since the first is a module
+    constant and the second reads `std._plugin` while it is loading
+    ("not a compile-time Int constant: unsupported associated comptime
+    member access"). Restore upstream's defaults when this lands.
   - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -11770,6 +11785,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R791 (2026-10-14).
   - `from std.math import max` in `builtin/builtin_slice.mojo` and
     `os/path/path.mojo` packages, so `std.math` links ahead of them.
+  - Probe: `std/atomic/atomic.mojo` imports `StaticString` from
+    `std.string` and `ImmPointer` and `MutPointer` from
+    `std.memory.pointer`, which upstream's reads from the prelude: the
+    module is on the `std._plugin` import cycle. Drop the imports when
+    this lands.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -13314,8 +13334,8 @@ residue found inside a task moves to the task that owns its fix.
   - The bundled `String._is_unique` is `_is_ref_counted`, and its copy
     constructor copies the bytes.
   - The count is read through a bitcast of the byte buffer to
-    `Atomic[Int]`, a byte view of the buffer, and the bundled library has
-    no `std.atomic`.
+    `Atomic[Int]`, a byte view of the buffer, which runs on both backends
+    (`assets/ok/atomic_byte_view.mojo`).
   - Upstream also sets `FLAG_HAS_NUL_TERMINATOR` for a literal-built
     String, so `as_c_string_span` need not reallocate one. The bundled
     `as_c_string_slice` copies a static string out to write its NUL.
@@ -13329,19 +13349,20 @@ residue found inside a task moves to the task that owns its fix.
     (`Atomic`).
   - Model: Fable, Not Planned.
 
-- [ ] **R2611 `std.atomic` is not bundled**
+- [ ] **R2614 `std.memory._poison` is not bundled**
 
-  Problem: `from std.atomic import Atomic` fails to import, where the pin's
-  `Atomic[dtype]` holds a value updated by `pop.atomic` ops.
-  - Port upstream's `std/atomic` with `load`, `store`, `fetch_add`, and
-    `fetch_sub`, and lower its `pop.atomic.rmw` and `pop.load`/`pop.store`
-    atomic forms on both backends.
-  - Probe: `buf.unsafe_bitcast[Atomic[Int]]().unsafe_write(Atomic[Int](1))`
-    over a 16-byte `Byte` buffer, then `fetch_add(1)` and `load()` through
-    the view, prints `2` at the pin.
-  - Found while landing R2602 (2026-11-25).
+  Problem: upstream's `_check_not_poison`, which `Atomic.load` calls on a
+  float result, is missing, so the bundled `std/atomic/atomic.mojo` omits
+  that call and its import.
+  - Upstream's `std/memory/_poison.mojo` checks a value against the debug
+    allocator's poison pattern under `MOJO_STDLIB_SIMD_UNINIT_CHECK`.
+  - Port the module with its define, restore the call and import in
+    `std/atomic/atomic.mojo`, and drop the header's omission line.
+  - Probe: `from std.memory._poison import _check_not_poison` fails to
+    import.
+  - Found while landing R2611 (2026-11-25).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1121 `Tuple` elements need not be `Movable`**
 

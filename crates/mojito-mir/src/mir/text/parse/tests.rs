@@ -1484,6 +1484,43 @@ fn instruction_families_reprint_byte_identically() {
                 "#pop.fmf<contract>".into(),
             ))),
         },
+        MirInstr::Atomic {
+            dest: Reg(35),
+            op: mojito_types::mlir::AtomicOp::Rmw(mojito_types::mlir::AtomicBinOp::Add),
+            reference: Some(Reg(1)),
+            operands: vec![Reg(2)],
+            ordering: Const::Value(mojito_types::ct::CtValue::MlirAttr(
+                "#pop.atomic_ordering<seq_cst>".into(),
+            )),
+            failure_ordering: None,
+            syncscope: Some(Const::Value(mojito_types::ct::CtValue::KgenString(
+                String::new(),
+            ))),
+        },
+        MirInstr::Atomic {
+            dest: Reg(35),
+            op: mojito_types::mlir::AtomicOp::Cmpxchg { weak: true },
+            reference: Some(Reg(1)),
+            operands: vec![Reg(2), Reg(3)],
+            ordering: Const::Value(mojito_types::ct::CtValue::MlirAttr(
+                "#pop.atomic_ordering<acquire>".into(),
+            )),
+            failure_ordering: Some(Const::Value(mojito_types::ct::CtValue::MlirAttr(
+                "#pop.atomic_ordering<monotonic>".into(),
+            ))),
+            syncscope: None,
+        },
+        MirInstr::Atomic {
+            dest: Reg(35),
+            op: mojito_types::mlir::AtomicOp::Fence,
+            reference: None,
+            operands: Vec::new(),
+            ordering: Const::Value(mojito_types::ct::CtValue::MlirAttr(
+                "#pop.atomic_ordering<acq_rel>".into(),
+            )),
+            failure_ordering: None,
+            syncscope: None,
+        },
         MirInstr::IsRunInComptimeInterpreter { dest: Reg(35) },
         MirInstr::SourceLoc {
             dest: Reg(35),

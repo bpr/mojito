@@ -114,9 +114,8 @@ pub(super) fn verify_instruction(
         MirInstr::ArrayGep { dest, array, index } => {
             verify_array_gep(&cx, *dest, *array, *index, errors);
         }
-        MirInstr::CallLlvmIntrinsic { args, spread, .. } => {
-            verify_llvm_intrinsic(&cx, args, *spread, errors);
-        }
+        MirInstr::CallLlvmIntrinsic { .. } => verify_llvm_intrinsic(&cx, instruction, errors),
+        MirInstr::Atomic { .. } => verify_atomic(&cx, instruction, errors),
         MirInstr::MaterializeLiteral { .. }
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::ConstructType { .. }
@@ -1437,16 +1436,17 @@ fn verify_pop(
 
 /// An LLVM intrinsic call's spread names one of its operands, and that
 /// operand is a heterogeneous collector (a tuple once the pack is bound).
-fn verify_llvm_intrinsic(
-    cx: &InstrCx<'_>,
-    args: &[Reg],
-    spread: Option<usize>,
-    errors: &mut Vec<String>,
-) {
+fn verify_llvm_intrinsic(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<String>) {
     let prefix = cx.prefix;
-    let Some(position) = spread else {
+    let MirInstr::CallLlvmIntrinsic {
+        args,
+        spread: Some(position),
+        ..
+    } = instruction
+    else {
         return;
     };
+    let position = *position;
     let Some(pack) = args.get(position) else {
         errors.push(format!(
             "{prefix}: llvm.intrinsic spreads operand {position} of {}",
@@ -1460,6 +1460,96 @@ fn verify_llvm_intrinsic(
     {
         errors.push(format!(
             "{prefix}: llvm.intrinsic spreads the non-pack {found}"
+        ));
+    }
+}
+
+/// An atomic op addresses its element through a reference capability (a
+/// writable one but for a load), and its value operands and result are
+/// that element, a vector's storage counting as the vector: a cmpxchg's
+/// result is the element beside the stored flag, and a store's and a
+/// fence's is `NoneType`. A fence addresses nothing.
+fn verify_atomic(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<String>) {
+    use mojito_types::mlir::AtomicOp;
+    let MirInstr::Atomic {
+        dest,
+        op,
+        reference,
+        operands,
+        ..
+    } = instruction
+    else {
+        return;
+    };
+    let (dest, op, reference) = (*dest, *op, *reference);
+    let prefix = cx.prefix;
+    let name = op.name();
+    if operands.len() != op.value_arity() {
+        errors.push(format!(
+            "{prefix}: atomic '{name}' takes {} value operand(s), got {}",
+            op.value_arity(),
+            operands.len()
+        ));
+    }
+    let element = match (op, reference) {
+        (AtomicOp::Fence, None) => None,
+        (AtomicOp::Fence, Some(_)) => {
+            errors.push(format!("{prefix}: atomic 'pop.fence' addresses nothing"));
+            return;
+        }
+        (_, None) => {
+            errors.push(format!("{prefix}: atomic '{name}' takes an address"));
+            return;
+        }
+        (_, Some(reference)) => {
+            let Some(source) = cx.reg_ty(reference) else {
+                return;
+            };
+            let Some(capability) = reference_capability(source) else {
+                errors.push(format!(
+                    "{prefix}: atomic '{name}' address has non-reference-capability type {source}"
+                ));
+                return;
+            };
+            if op != AtomicOp::Load && !capability.permission.allows_write() {
+                errors.push(format!(
+                    "{prefix}: atomic '{name}' address of type {source} is immutable"
+                ));
+            }
+            Some(capability.target.clone())
+        }
+    };
+    let held = |ty: &Ty| {
+        element.as_ref().is_some_and(|element| {
+            types_compatible(ty, element)
+                || mojito_types::types::storage_ty(ty) == mojito_types::types::storage_ty(element)
+        })
+    };
+    for operand in operands {
+        if let Some(found) = cx.reg_ty(*operand)
+            && !held(found)
+        {
+            errors.push(format!(
+                "{prefix}: atomic '{name}' operand type {found} is not the addressed element"
+            ));
+        }
+    }
+    let Some(result) = cx.reg_ty(dest) else {
+        return;
+    };
+    let fits = match (op, result.kind()) {
+        (AtomicOp::Store | AtomicOp::Fence, kind) => {
+            kind.is_none_type() || matches!(kind, mojito_types::types::TyKind::None)
+        }
+        (AtomicOp::Cmpxchg { .. }, mojito_types::types::TyKind::Tuple(elements)) => {
+            matches!(elements.as_slice(), [value, _] if held(value))
+        }
+        (AtomicOp::Cmpxchg { .. }, _) => false,
+        (AtomicOp::Load | AtomicOp::Rmw(_), _) => held(result),
+    };
+    if !fits {
+        errors.push(format!(
+            "{prefix}: atomic '{name}' result type {result} does not fit the op"
         ));
     }
 }

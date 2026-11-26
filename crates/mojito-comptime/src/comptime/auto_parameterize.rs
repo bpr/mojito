@@ -20,7 +20,7 @@ use super::*;
 /// A parameter is unbound when the struct is spelled bare (`x: List`, every
 /// one of its parameters, a type pack as a pack binder), as `_` (`List[_]`,
 /// `Pair[n=_]`), or under `...` (`Pair[Int, ...]`, each remaining
-/// positional one). A module alias over a partially bound struct
+/// one, keyword-only ones included). A module alias over a partially bound struct
 /// (`comptime I32 = SIMD[DType.int32, _]`, the prelude's `Scalar`)
 /// spelled bare stands for its struct with its holes. A module alias with
 /// compile-time parameters spelled bare (`comptime Lane[dt: DType] =
@@ -50,6 +50,9 @@ struct Declared<'a> {
     /// Each module alias with compile-time parameters, with its parameters
     /// as declared.
     parametric_aliases: HashMap<String, Vec<TypeParam>>,
+    /// Each module alias with compile-time parameters whose body applies
+    /// `Pointer` (`comptime MutPointer[…] = Pointer[T, origin, …]`).
+    pointer_aliases: HashSet<String>,
     /// Every other name the program declares, which hides a package struct.
     others: HashSet<String>,
     /// Each module alias whose body applies a struct with a hole, as the
@@ -66,6 +69,7 @@ impl<'a> Declared<'a> {
         let mut declared = Self {
             structs: HashMap::new(),
             parametric_aliases: HashMap::new(),
+            pointer_aliases: HashSet::new(),
             others: HashSet::new(),
             partial_aliases: HashMap::new(),
             generator_aliases: HashMap::new(),
@@ -103,6 +107,11 @@ impl<'a> Declared<'a> {
                         declared
                             .parametric_aliases
                             .insert(name.clone(), type_params.clone());
+                        if value.bracket_application().is_some_and(|(applied, _)| {
+                            applied == mojito_types::types::POINTER_TYPE_NAME
+                        }) {
+                            declared.pointer_aliases.insert(name.clone());
+                        }
                     }
                     declared.others.insert(name.clone());
                 }
@@ -115,16 +124,43 @@ impl<'a> Declared<'a> {
         declared
     }
 
-    /// The parameters struct `name` declares, unless another declaration
-    /// of the program hides it.
+    /// The parameters struct or parametric module alias `name` declares:
+    /// the program's own, or, unless another declaration of the program
+    /// hides it, the `installed` package's (`ImmPointer`).
     fn parameters(&self, name: &str) -> Option<&[TypeParam]> {
-        if let Some(parameters) = self.structs.get(name) {
+        if let Some(parameters) = self
+            .structs
+            .get(name)
+            .or_else(|| self.parametric_aliases.get(name))
+        {
             return Some(parameters);
         }
         if self.others.contains(name) {
             return None;
         }
-        self.installed?.struct_parameters(name)
+        let installed = self.installed?;
+        installed
+            .struct_parameters(name)
+            .or_else(|| installed.parametric_alias_parameters(name))
+    }
+
+    /// Whether `name` is a module alias with compile-time parameters whose
+    /// body applies `Pointer`: the program's own, or, unless another
+    /// declaration of the program hides it, the `installed` package's
+    /// (`MutPointer`).
+    fn is_pointer_alias(&self, name: &str) -> bool {
+        if self.pointer_aliases.contains(name) {
+            return true;
+        }
+        if self.structs.contains_key(name) || self.others.contains(name) {
+            return false;
+        }
+        self.installed.is_some_and(|installed| {
+            installed.parametric_alias_parameters(name).is_some()
+                && installed
+                    .alias_application(name)
+                    .is_some_and(|(applied, _)| applied == mojito_types::types::POINTER_TYPE_NAME)
+        })
     }
 
     /// The struct whose generator the alias `name` names: the program's own
@@ -151,7 +187,14 @@ impl<'a> Declared<'a> {
         if self.structs.contains_key(name) || self.others.contains(name) {
             return None;
         }
-        let (applied, args) = self.installed?.alias_application(name)?;
+        // An alias with compile-time parameters of its own
+        // (`comptime MutPointer[T, origin: MutOrigin, …] = Pointer[…]`)
+        // binds them, as the program's own does ([`Self::parameters`]).
+        let installed = self.installed?;
+        if installed.parametric_alias_parameters(name).is_some() {
+            return None;
+        }
+        let (applied, args) = installed.alias_application(name)?;
         args.iter()
             .any(|argument| hole(argument).is_some())
             .then_some((applied, args))
@@ -279,10 +322,7 @@ impl<'a> Declared<'a> {
             .map_or((name, args), |(applied, alias_args)| {
                 (applied.as_str(), alias_args.as_slice())
             });
-        let declared = match self.parametric_aliases.get(name) {
-            Some(parameters) if args.is_empty() => parameters,
-            _ => self.parameters(name)?,
-        };
+        let declared = self.parameters(name)?;
         // A pack takes every remaining positional argument, so only a bare
         // struct leaves it unbound.
         if !args.is_empty()
@@ -295,10 +335,12 @@ impl<'a> Declared<'a> {
         let slots = Slots::of(declared, args)?;
         // `Pointer` is the one struct whose `_` origin the checker would
         // otherwise read as a distinct unsafe-any provenance rather than an
-        // unbound slot, so its origin binds per call as upstream's does.
-        // Every other struct's origin, and a pointer alias's, still reaches
-        // the checker as `_` (R1156).
-        let binds_origin = alias.is_none() && name == mojito_types::types::POINTER_TYPE_NAME;
+        // unbound slot, so its origin binds per call as upstream's does,
+        // and so does that of a parametric alias applying it
+        // (`MutPointer[T, _]`). Every other struct's origin, and a partial
+        // pointer alias's, still reaches the checker as `_` (R1156).
+        let binds_origin = alias.is_none()
+            && (name == mojito_types::types::POINTER_TYPE_NAME || self.is_pointer_alias(name));
         let declared_binders = binders.len();
         let mut arguments: HashMap<String, ParamArg> = HashMap::new();
         let mut positional = Vec::new();
@@ -471,8 +513,13 @@ impl Slots {
                     };
                 }
                 positional @ ParamArg::Value(_) => match hole(positional) {
+                    // `...` leaves every remaining parameter unbound, a
+                    // keyword-only one (`Pointer`'s `address_space`) too.
                     Some(Unbound::Rest) => {
-                        for index in positions.by_ref() {
+                        let keywords = declared.iter().enumerate().filter(|(_, parameter)| {
+                            parameter.keyword_only && !parameter.infer_only
+                        });
+                        for index in positions.by_ref().chain(keywords.map(|(index, _)| index)) {
                             if matches!(slots[index], Slot::Absent) {
                                 slots[index] = Slot::Unbound;
                             }

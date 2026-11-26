@@ -718,6 +718,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.atomic` is bundled, as at the pin (R2611): `Atomic[T, *, scope]`
+  with `load`, `store`, `fetch_add`, `fetch_sub`, `+=`, `-=`,
+  `compare_exchange` (strong and weak), `max`, and `min`, `Ordering`, and
+  `fence`, on both backends. Their atomic `pop` ops are MIR's new `atomic`
+  instruction (schema 1.236, package format 283), whose orderings each
+  instance closes; an ordering an op refuses is rejected at instantiation
+  with the pin's verifier text. An `Atomic[Int]` written into a byte
+  buffer updates through the buffer's view.
+
+- A `kgen.struct.extract` takes its `index` as upstream spells it,
+  ``__mlir_attr.`1:index` ``, as well as `Int.__mlir_index__()`.
+
+### Added
+
 - A `comptime` bound to a conditional whose arms are types is the type its
   condition selects, as at the pin (R2542): `comptime T = Int if True else
   String` then `var x: T = 3` runs, at module scope, as a struct member, and
@@ -2201,6 +2215,25 @@ to evolve under the `0.x` compatibility rules.
   script helpers moved to `scripts/tierlib.py`.
 
 ### Fixed
+
+- A keyword `_` (`address_space=_`) or a `...` on an applied parametric
+  alias leaves the parameter unbound, as on its struct (R2611):
+  `ImmPointer[Int, _, address_space=_]` and `MutPointer[Int, ...]` no
+  longer report "cannot infer type parameter 'address_space'", an
+  installed alias binds its own parameters as a program's does, a
+  `MutPointer`'s origin binder keeps its `MutOrigin`, so its pointee is
+  writable, and `...` unbinds a keyword-only parameter too.
+
+- A `where (T == Scalar[dtype])` clause is judged at the call's arguments
+  (R2611): it was reported as lacking evidence, and its false case is now
+  the pin's violated constraint.
+
+- A struct parameter's default that an `@implicit` constructor of a later
+  struct converts (`scope: StaticString = ""` in a module the check reaches
+  before `StaticString`'s) converts once the constructor classifies, and a
+  struct whose method signatures name an alias still waiting for another
+  struct's initializers (std's `ImmPointer`) registers them once the alias
+  does (R2611).
 
 - A type pack's bound is checked against each collected element's
   materialized type, as a lone parameter's is (R2598): `def g[*Ts:

@@ -181,6 +181,7 @@ and `comptime.for`, and the VM rejects one that survives as unsupported.
 | `ref.make` | `MakeRef` | Materialize or extend a verified frame/slot reference handle |
 | `ref.read` | `ReadRef` | Read through a runtime reference handle |
 | `ref.write` | `WriteRef` | Write through a runtime reference handle |
+| `atomic` | `Atomic` | An atomic load, store, read-modify-write, compare-exchange, or fence through a runtime reference handle; one thread runs, so the ordering and scope order nothing observable, and the comptime interpreter refuses it |
 | `lifetime.keep_alive` | `KeepAlive` | Extend an owner's MIR live range without copying it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one |
 | `ownership.mark_initialized` | `MarkInitialized` | Mark a place initialized without writing it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one. A struct or tuple slot gets its unwritten storage where an instruction first stores into, reads, addresses, or passes it by address |
 | `ownership.mark_destroyed` | `MarkDestroyed` | End a place's value without destroying it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one |

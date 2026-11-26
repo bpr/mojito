@@ -505,6 +505,7 @@ pub(super) fn interior_reference_uses(
         | MirInstr::PointerBitcast { .. }
         | MirInstr::Pop { .. }
         | MirInstr::CallLlvmIntrinsic { .. }
+        | MirInstr::Atomic { .. }
         | MirInstr::ReadRef { .. }
         | MirInstr::CopyValue { .. }
         | MirInstr::Rebind { .. }

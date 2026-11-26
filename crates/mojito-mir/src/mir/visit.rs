@@ -447,6 +447,16 @@ macro_rules! type_visitor {
                     visitor.visit_constant(intrinsic)?;
                     visitor.visit_constant(has_side_effect)
                 }
+                I::Atomic {
+                    ordering,
+                    failure_ordering,
+                    syncscope,
+                    ..
+                } => {
+                    visitor.visit_constant(ordering)?;
+                    $helpers::visit_opt_constant(visitor, opt_ref!($($m)? failure_ordering))?;
+                    $helpers::visit_opt_constant(visitor, opt_ref!($($m)? syncscope))
+                }
                 I::ArrayGet { index, .. }
                 | I::ArrayReplace { index, .. }
                 | I::SourceLoc {

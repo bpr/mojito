@@ -566,6 +566,19 @@ impl Decoder {
                     .ok()
                     .and_then(|found| self.option_uint(found)),
             }),
+            "atomic" => Some(MirInstr::Atomic {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                op: self.req(value, fields, "op", Self::atomic_op)?,
+                reference: self.req(value, fields, "reference", |d, v| Some(d.option_reg(v)))?,
+                operands: self.req(value, fields, "operands", |d, v| Some(d.regs(v)))?,
+                ordering: self.req(value, fields, "ordering", Self::constant)?,
+                failure_ordering: self.req(value, fields, "failure_ordering", |d, v| {
+                    Some(d.option_constant(v))
+                })?,
+                syncscope: self.req(value, fields, "syncscope", |d, v| {
+                    Some(d.option_constant(v))
+                })?,
+            }),
             "var.use" => Some(MirInstr::UseVar {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 var: self.req(value, fields, "var", Self::var)?,

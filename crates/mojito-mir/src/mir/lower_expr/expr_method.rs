@@ -27,6 +27,9 @@ impl<'a> Flatten<'a> {
         if let Some(op) = Self::checked_mlir_op(call) {
             return self.lower_mlir_op(call, op, args);
         }
+        if let Some(atomic) = Self::checked_atomic_op(call) {
+            return self.lower_atomic_op(call, atomic, args);
+        }
         if let Some(op) = Self::checked_pointer_op(call) {
             return self.lower_pointer_op(call, op, args);
         }

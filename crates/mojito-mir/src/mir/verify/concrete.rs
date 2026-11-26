@@ -303,6 +303,7 @@ fn concrete_block(
         reference_read(&head, function, instruction, errors);
         bitcast_width(&head, function, instruction, errors);
         concrete_llvm_intrinsic(&head, function, declarations, instruction, errors);
+        concrete_atomic(&head, instruction, errors);
     }
     if matches!(
         block.term,
@@ -510,6 +511,56 @@ fn bitcast_width(
             source_dtype.name(),
             dtype.name()
         ));
+    }
+}
+
+/// An atomic op as elaborated MIR carries it: its orderings closed
+/// `#pop.atomic_ordering<…>` attributes the op takes
+/// ([`mojito_types::mlir::AtomicOp::ordering_error`]) and its scope a
+/// closed `!kgen.string`.
+fn concrete_atomic(head: &str, instruction: &MirInstr, errors: &mut Vec<String>) {
+    use mojito_types::ct::CtValue;
+    use mojito_types::mlir::AtomicOrdering;
+    let MirInstr::Atomic {
+        op,
+        ordering,
+        failure_ordering,
+        syncscope,
+        ..
+    } = instruction
+    else {
+        return;
+    };
+    let closed = |constant: &Const| match constant {
+        Const::Value(CtValue::MlirAttr(attribute)) => AtomicOrdering::parse(attribute),
+        _ => None,
+    };
+    let Some(success) = closed(ordering) else {
+        errors.push(format!(
+            "{head} keeps the ordering `{ordering:?}` of '{}' in elaborated MIR",
+            op.name()
+        ));
+        return;
+    };
+    let failure = failure_ordering.as_ref().map(closed);
+    if let (Some(constant), Some(None)) = (failure_ordering, failure) {
+        errors.push(format!(
+            "{head} keeps the failure ordering `{constant:?}` of '{}' in elaborated MIR",
+            op.name()
+        ));
+        return;
+    }
+    let failure = failure.flatten();
+    if let Some(scope) = syncscope
+        && !matches!(scope, Const::Value(CtValue::KgenString(_)))
+    {
+        errors.push(format!(
+            "{head} keeps the scope `{scope:?}` of '{}' in elaborated MIR",
+            op.name()
+        ));
+    }
+    if let Some(reason) = op.ordering_error(success, failure, syncscope.is_some()) {
+        errors.push(format!("{head}: {reason}"));
     }
 }
 
@@ -1110,6 +1161,44 @@ mod tests {
         assert!(keeps_symbolic(&found, "subscript parameter"), "{found:?}");
         let found = concrete_findings_of(subscript(Ty::int(), foreign_param()));
         assert!(keeps_symbolic(&found, "subscript contract"), "{found:?}");
+    }
+
+    /// An atomic op's ordering is a closed attribute the op takes.
+    #[test]
+    fn concrete_atomic_orderings_are_closed_and_taken() {
+        use mojito_types::ct::CtValue;
+        let load = |ordering: &str| MirInstr::Atomic {
+            dest: Reg(0),
+            op: mojito_types::mlir::AtomicOp::Load,
+            reference: Some(Reg(1)),
+            operands: Vec::new(),
+            ordering: Const::Value(CtValue::MlirAttr(format!(
+                "#pop.atomic_ordering<{ordering}>"
+            ))),
+            failure_ordering: None,
+            syncscope: Some(Const::Value(CtValue::KgenString(String::new()))),
+        };
+        let atomic = |found: &[String]| {
+            found
+                .iter()
+                .filter(|finding| finding.contains("ordering"))
+                .count()
+        };
+        assert_eq!(atomic(&concrete_findings_of(load("acquire"))), 0);
+        let found = concrete_findings_of(load("release"));
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.contains("invalid atomic ordering 'release'")),
+            "{found:?}"
+        );
+        let found = concrete_findings_of(load("weak"));
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.contains("keeps the ordering")),
+            "{found:?}"
+        );
     }
 
     /// An instantiated value argument is closed in an instance.

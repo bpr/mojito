@@ -2,15 +2,15 @@
 # `DefaultPlugin`, `DefaultPluginHooks`, and `PluginHooks` with the hooks
 # whose types are bundled (`unary_math_fn`, `binary_math_fn`,
 # `supports_float64`, `flushes_subnormals`, `lowers_subvector_intrinsics`,
-# `has_generic_address_space`, `address_space_fn`, and
-# `_handles_debug_assert`), verbatim.
+# `has_generic_address_space`, `default_atomic_ordering`,
+# `atomic_float_minmax_via_int`, `supports_atomic_rmw`, `address_space_fn`,
+# and `_handles_debug_assert`), verbatim.
 # `StaticString` imports from `std.string`, as the bundled modules on the
 # `std.sys.info` import cycle spell it.
 # Omitted, with the imports only they use:
 # - `reduce_generator_fn`, with `_ReduceGeneratorPluginHookFnType`:
 #   `std.utils.coord.Coord` is not bundled (roadmap
 #   R1702);
-# - `default_atomic_ordering`: `std.atomic` is not bundled;
 # - `stack_allocation_fn` and `unsafe_dangling_fn`: their hook types are
 #   not bundled;
 # - `print_emit_fn`: `std.io`'s `_PrintEmitPluginHookFnType` is not
@@ -18,6 +18,7 @@
 # - the `@staticmethod` hooks `abort_fn` and `debug_assert_emit_fn`
 #   (R1698).
 
+from std.atomic import Ordering
 from std.collections import OptionalReg
 
 from std.math.math import (
@@ -147,6 +148,34 @@ trait PluginHooks:
     rebuilt from an integer address does not reach threadgroup memory. Where
     this is `False`, the stdlib keeps the typed pointer instead of
     round-tripping it through an integer.
+    """
+
+    comptime default_atomic_ordering: Ordering = Ordering.SEQUENTIAL
+    """The ordering `Atomic` read-modify-write and compare-exchange
+    operations use when the caller does not name one.
+
+    A target whose backend rejects sequentially consistent atomics, such as
+    Metal, sets this to the strongest ordering it lowers. Loads, stores, and
+    fences default to `Ordering.SEQUENTIAL` regardless.
+    """
+
+    comptime atomic_float_minmax_via_int: Bool = False
+    """Whether `Atomic.max` and `Atomic.min` on floating-point values use
+    integer atomics.
+
+    Where it is `True`, `Atomic.max` with a non-negative operand is a signed
+    integer atomic max on the value's bits, and with a negative operand an
+    unsigned integer atomic min; `Atomic.min` swaps the two. Each update is
+    then one integer atomic instruction. Where it is `False`, the
+    floating-point read-modify-write goes to the backend, which may expand it
+    into a compare-exchange loop.
+    """
+
+    comptime supports_atomic_rmw[dtype: DType]: Bool = True
+    """Whether the backend lowers `Atomic` read-modify-write and
+    compare-exchange operations on `dtype`.
+
+    Metal, for example, only lowers them on 32-bit types.
     """
 
     comptime address_space_fn[name: StaticString]: OptionalReg[

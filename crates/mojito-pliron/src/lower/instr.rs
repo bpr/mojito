@@ -305,6 +305,22 @@ impl FnLowering<'_> {
                     *dest,
                 )),
             },
+            MirInstr::Atomic {
+                dest,
+                op,
+                reference,
+                operands,
+                ordering,
+                failure_ordering,
+                syncscope,
+            } => self.lower_atomic(
+                ctx,
+                *dest,
+                *op,
+                *reference,
+                operands,
+                (ordering, failure_ordering.as_ref(), syncscope.as_ref()),
+            ),
             MirInstr::UnOp { op, dest, a, .. } => self.lower_unop(ctx, *op, *dest, *a),
             MirInstr::BinOp {
                 op,

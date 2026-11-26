@@ -372,6 +372,19 @@ impl InstalledInterfaces {
             .map(|(_, info)| info.source_params.as_slice())
     }
 
+    /// The compile-time parameters the reached module alias `name`
+    /// declares, as its source spells them (`comptime ImmPointer[T:
+    /// AnyType, …] = …`); `None` for an alias without parameters. Decodes
+    /// its declaration's record on first use.
+    pub fn parametric_alias_parameters(&self, name: &str) -> Option<&[mojito_ast::ast::TypeParam]> {
+        let aliases = &self.declaration(Table::Aliases, name)?.aliases;
+        let position = aliases
+            .binary_search_by(|(alias, _)| alias.as_str().cmp(name))
+            .ok()?;
+        let parameters = aliases[position].1.source_params.as_slice();
+        (!parameters.is_empty()).then_some(parameters)
+    }
+
     /// The reached part of the package, whose declarations answer a name
     /// the program's own overload sets miss.
     pub fn package_scope(&self) -> mojito_checked::package::PackageScope {

@@ -3691,6 +3691,10 @@ enum BodyResult {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ComptimeAlias {
     decls: Vec<ParamDecl>,
+    /// The declared parameter spelling, read only by a package's pre-check
+    /// auto-parameterization
+    /// (`InstalledInterfaces::parametric_alias_parameters`).
+    source_params: Vec<mojito_ast::ast::TypeParam>,
     body: AliasBody,
     /// The declaration's parameter expression as written: the value a read
     /// through a zero-parameter type alias is spelled over

@@ -68,6 +68,8 @@ assets/ok/associated_trait_self_element.mojo	main	exe-differential	sanitized
 assets/ok/associated_type_return.mojo	main	exe-differential	sanitized
 assets/ok/associated_value_self_read.mojo	main	exe-differential	sanitized
 assets/ok/associated_value_type_name_read.mojo	main	exe-differential	sanitized
+assets/ok/atomic_byte_view.mojo	main	exe-differential	sanitized
+assets/ok/atomic_scalar_ops.mojo	main	exe-differential	sanitized
 assets/ok/augmented_bitwise_assignment.mojo	main	exe-differential	sanitized
 assets/ok/augmented_shift_assignment.mojo	main	exe-differential	sanitized
 assets/ok/augmented_store_copies_nothing.mojo	main	exe-differential	sanitized
@@ -1095,6 +1097,7 @@ assets/ok/pointer_address_counts_bytes.mojo	main	exe-differential	sanitized
 assets/ok/pointer_address_space_generic.mojo	main	exe-differential	sanitized
 assets/ok/pointer_address_space_inferred.mojo	main	exe-differential	sanitized
 assets/ok/pointer_address_space_shared.mojo	main	exe-differential	sanitized
+assets/ok/pointer_alias_keyword_hole.mojo	main	exe-differential	sanitized
 assets/ok/pointer_aliases_declared.mojo	main	exe-differential	sanitized
 assets/ok/pointer_augmented_literal_offset.mojo	main	exe-differential	sanitized
 assets/ok/pointer_bound_copy.mojo	main	exe-differential	sanitized
@@ -1903,6 +1906,7 @@ assets/ok/where_reads_arguments.mojo	main	exe-differential	sanitized
 assets/ok/where_refined_bound_members.mojo	main	exe-differential	sanitized
 assets/ok/where_refined_bound_requirement_order.mojo	main	exe-differential	sanitized
 assets/ok/where_repeated_clauses.mojo	main	exe-differential	sanitized
+assets/ok/where_type_equality_value_argument.mojo	main	exe-differential	sanitized
 assets/ok/while.mojo	main	exe-differential	sanitized
 assets/ok/with_enter_only.mojo	main	exe-differential	sanitized
 assets/ok/with_exit_error_swallow.mojo	main	exe-differential	sanitized

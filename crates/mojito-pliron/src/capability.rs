@@ -175,6 +175,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "a call of the LLVM intrinsic itself for the `LlvmIntrinsic` subset, over SIMD or Bool registers or a register pack's literal struct; a name outside the subset rejects",
     ),
     (
+        "atomic",
+        CapabilityStatus::Partial,
+        "LLVM's atomic load, store, atomicrmw, cmpxchg, and fence over an integer, float, or pointer element; `unordered` lowers monotonic and a weak cmpxchg strong; an element of another type rejects",
+    ),
+    (
         "is_run_in_comptime_interpreter",
         CapabilityStatus::Supported,
         "the constant `false`: compiled code never runs in the comptime interpreter",

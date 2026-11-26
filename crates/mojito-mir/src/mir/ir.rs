@@ -929,6 +929,16 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             out.push(dest);
             out.extend(elems.iter_mut());
         }
+        MirInstr::Atomic {
+            dest,
+            reference,
+            operands,
+            ..
+        } => {
+            out.push(dest);
+            out.extend(reference.iter_mut());
+            out.extend(operands.iter_mut());
+        }
         MirInstr::MakeVariant { dest, value, .. } => out.extend([dest, value]),
         MirInstr::VariantIs { dest, variant, .. }
         | MirInstr::VariantTag { dest, variant }
@@ -2215,6 +2225,27 @@ pub enum MirInstr {
         args: Vec<Reg>,
         spread: Option<usize>,
     },
+    /// An atomic access, as `std.atomic` spells it: a `pop.load` or
+    /// `pop.store` carrying an `ordering`, `pop.atomic.rmw`,
+    /// `pop.atomic.cmpxchg`, or `pop.fence` (`mlir::AtomicOp`).
+    /// `reference` is the address as an untracked `!lit.ref` to the
+    /// element, absent for a fence; `operands` are a store's value, an
+    /// rmw's operand, or a cmpxchg's expected and desired values. `dest` is
+    /// a load's value, an rmw's replaced value, a cmpxchg's
+    /// `(value, !kgen.scalar<bool>)` literal struct, or `NoneType`.
+    /// `ordering` (a cmpxchg's success ordering) and `failure_ordering`
+    /// are `#pop.atomic_ordering<…>` attributes and `syncscope` a
+    /// `!kgen.string`: parameter constants in a template, closed ones the
+    /// op takes (`AtomicOp::ordering_error`) in concrete MIR.
+    Atomic {
+        dest: Reg,
+        op: mojito_types::mlir::AtomicOp,
+        reference: Option<Reg>,
+        operands: Vec<Reg>,
+        ordering: Const,
+        failure_ordering: Option<Const>,
+        syncscope: Option<Const>,
+    },
     /// Upstream's `kgen.is_run_in_comptime_interpreter`: a `Bool` that is
     /// `True` while the comptime interpreter runs the function and `False`
     /// in the compiled program. The VM answers it per run, under CTFE fuel or
@@ -3322,7 +3353,8 @@ impl MirInstr {
             | Self::Unsupported(_)
             | Self::GetIter { .. }
             | Self::HasNext { .. }
-            | Self::Next { .. } => false,
+            | Self::Next { .. }
+            | Self::Atomic { .. } => false,
         }
     }
 

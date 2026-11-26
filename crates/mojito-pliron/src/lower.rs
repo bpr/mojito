@@ -188,6 +188,7 @@ pub struct ModuleShared {
 
 mod abi;
 mod arith;
+mod atomics;
 mod binops;
 mod builtins;
 mod calls;

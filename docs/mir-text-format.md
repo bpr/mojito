@@ -1412,6 +1412,21 @@ older store did not (`call_addresses::split_stored_handle_stores`, after
 every other upgrade). The syntax is unchanged. The package format moves to
 `mojito-package 282` (R2589).
 
+Schema 1.236 adds `atomic { dest, op, reference, operands, ordering,
+failure_ordering, syncscope }`, `std.atomic`'s atomic `pop` ops (R2611): a
+`pop.load` or `pop.store` carrying an `ordering`, `pop.atomic.rmw`,
+`pop.atomic.cmpxchg`, and `pop.fence`. `op` is `load`, `store`,
+`rmw.xchg`, `rmw.add`, `rmw.sub`, `rmw.max`, `rmw.min`, `cmpxchg`,
+`cmpxchg.weak`, or `fence`; `reference` is the address as an untracked
+`ref`, `absent` for a fence; `operands` are a store's value, an rmw's
+operand, or a cmpxchg's expected and desired values. `ordering` (a
+cmpxchg's success ordering) and `failure_ordering` are
+`#pop.atomic_ordering<…>` attribute constants and `syncscope` a
+`!kgen.string` one: `param(...)` in a template, closed in concrete MIR,
+where the op must take them. The package format moves to `mojito-package
+283`: a module alias's record keeps its declared parameter spelling, which a
+program's auto-parameterization reads.
+
 Schema 1.234 spells a `Pointer`'s provenance as upstream's
 `Pointer[mut, T, origin]` arguments: the `pointer` record is
 `pointer { element, origin, mutability }` (with `address_space` as before),
@@ -2909,6 +2924,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bitcast` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `pop.simd.shuffle` `lane_attribute { value: <param_expr> }` (schema 1.142), which elaboration closes (schema 1.26; schema 1.149 removes `lane_shuffle` and `lane_join`, schema 1.150 `lane_slice`); schema 1.181: `simd.cast` adds an optional `fastmath` constant, a `pop.cast`'s `fastmathFlags`, which LLVM lowering drops |
 | `Select` | `select { dest, condition, on_true, on_false }` (schema 1.125): upstream's `pop.select`, `on_true` where the one-lane `bool` `condition` is set, else `on_false`; both cases are of `dest`'s trivially register-passable type |
 | `SimdSelect` / `SimdExtract` / `SimdInsert` / `SimdReduce` | `simd.select { dest, mask, on_true, on_false }` / `simd.extract { dest, value, index }` / `simd.insert { dest, value, element, index }` / `simd.reduce { dest, value, op }` (schema 1.120): upstream's `pop.simd.select`, `extractelement`, `insertelement`, and `reduce_and`/`reduce_or` (`op` is `and` or `or`); a lane is a width-one vector of the vector's dtype, and an index outside the lanes traps |
+| `Atomic` | `atomic { dest, op: load\|store\|rmw.<op>\|cmpxchg\|cmpxchg.weak\|fence, reference: option<%rR>, operands: [%rA, …], ordering: <const>, failure_ordering: option<const>, syncscope: option<const> }` (schema 1.236): `std.atomic`'s atomic `pop` ops through an untracked `ref` to the element; the orderings are `#pop.atomic_ordering<…>` constants and the scope a `!kgen.string`, each a `param(...)` in a template |
 | `CallLlvmIntrinsic` | `llvm.intrinsic { dest, intrinsic, has_side_effect, args: [%rA, …], spread: option<N> }` (schema 1.121): upstream's `pop.call_llvm_intrinsic`; `intrinsic` is a `!kgen.string` constant and `has_side_effect` a `Bool` constant, each a `value(...)` or, in a template, a `param(...)`; `spread` names a heterogeneous collector operand the elaborator replaces by its elements; the call is pure when `has_side_effect` is `false` |
 | `Try` | `try { label: tryN, error: option<$vN>, results: [%rN...], body, handler_arguments: [%rN...], handler, else_arguments: [%rN...], orelse }` — `lit.try` after `lowerTryFinally`: `label` names it for the raises in its body (schema 1.92; before, a `try` named nothing and held `finalbody` and `cleanup`, see *Compatibility*); `error` is its error slot, `lit.try`'s `$err`, which each raise naming it stores into and its handler reads (schema 1.107; before, the handler record's `error_var` bound the error); `results` are the op's, `handler_arguments` the handler's, which every raise naming it defines, and `else_arguments` the `else`'s, which the body's `try.yield` defines (schema 1.93) |
 | `DeclareVar` | `var.declare` (schema 1.50: a `var x: T` slot's declaration point; no def, no use, a no-op on both backends, counted as a def site by region locality; unlike the lifetime markers it survives `lower-lit`, as upstream lowers `lit.var.decl` to an allocation) |

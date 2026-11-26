@@ -37,6 +37,14 @@ impl Decoder {
         })
     }
 
+    pub(super) fn atomic_op(&mut self, value: &Value) -> Option<mojito_types::mlir::AtomicOp> {
+        let atom = self.atom(value)?.to_string();
+        mojito_types::mlir::AtomicOp::parse_mnemonic(&atom).or_else(|| {
+            self.error(value.span, format!("unknown atomic op `{atom}`"));
+            None
+        })
+    }
+
     pub(super) fn simd_reduction(
         &mut self,
         value: &Value,
@@ -542,6 +550,11 @@ impl Decoder {
 
     pub(super) fn option_reg(&mut self, value: &Value) -> Option<Reg> {
         self.option_value(Some(value)).and_then(|v| self.reg(v))
+    }
+
+    pub(super) fn option_constant(&mut self, value: &Value) -> Option<Const> {
+        self.option_value(Some(value))
+            .and_then(|v| self.constant(v))
     }
 
     pub(super) fn option_var(&mut self, value: &Value) -> Option<u32> {

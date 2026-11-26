@@ -128,6 +128,14 @@ point, as upstream's toolchain does.
   `pop.string.address`, and `#kgen.param.identical`. An application is
   the declared struct, which holds nothing at run time and is built by
   its declared `__init__`. The prelude exports it.
+- `std/atomic/` — upstream's `std.atomic` package: `Ordering`, `fence`,
+  and `Atomic[T, *, scope]` with its read-modify-write, compare-exchange,
+  and min/max operations over the atomic `pop` ops. The module's header
+  lists its departures: the omitted `_check_not_poison` call
+  (`std.memory._poison` is not bundled, R2614), the explicit imports of
+  the prelude names it reads (R894), and `Atomic`'s ordering defaults
+  spelled as `Ordering.SEQUENTIAL` (R592). `std._plugin`'s
+  `PluginHooks` declares the three atomic hooks it reads.
 - `std/memory/unsafe.mojo` — upstream's `bitcast` and `pack_bits` over
   `pop.bitcast`, re-exported by `std.memory`.
 - `std/memory/pointer.mojo` — upstream's `struct Pointer` and its aliases

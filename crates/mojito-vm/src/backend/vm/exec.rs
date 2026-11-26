@@ -446,6 +446,99 @@ impl VmBackend {
                 let handle = regs[reference.0 as usize].clone();
                 self.write_reference(&handle, frame_id, vars, regs[value.0 as usize].clone())?;
             }
+            // One thread runs, so an access's ordering and scope order
+            // nothing it can observe. The comptime interpreter runs no
+            // atomic op, as the pin's does not.
+            MirInstr::Atomic {
+                dest,
+                op,
+                reference,
+                operands,
+                ..
+            } => {
+                use mojito_types::mlir::{AtomicBinOp, AtomicOp};
+                if self.ctfe_fuel.is_some() {
+                    return Err(RuntimeError::Unsupported(format!(
+                        "the comptime interpreter does not run '{}'",
+                        op.name()
+                    )));
+                }
+                let operand = |index: usize| regs[operands[index].0 as usize].clone();
+                let handle = reference.map(|reference| regs[reference.0 as usize].clone());
+                let dest_ty = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                let held = |vm: &mut Self, handle: &Value| -> Result<Value, RuntimeError> {
+                    let value = vm.read_reference(handle, frame_id, vars)?;
+                    let ty = match (op, dest_ty.map(Ty::kind)) {
+                        (AtomicOp::Cmpxchg { .. }, Some(TyKind::Tuple(elements))) => {
+                            elements.first()
+                        }
+                        _ => dest_ty,
+                    };
+                    vm.read_typed(prog, value, ty)
+                };
+                regs[dest.0 as usize] = match (op, handle) {
+                    (AtomicOp::Fence, _) => Value::None,
+                    (AtomicOp::Load, Some(handle)) => held(self, &handle)?,
+                    (AtomicOp::Store, Some(handle)) => {
+                        self.write_reference(&handle, frame_id, vars, operand(0))?;
+                        Value::None
+                    }
+                    (AtomicOp::Rmw(bin_op), Some(handle)) => {
+                        let old = held(self, &handle)?;
+                        let new = match bin_op {
+                            AtomicBinOp::Xchg => operand(0),
+                            AtomicBinOp::Add | AtomicBinOp::Sub => {
+                                let infix = if *bin_op == AtomicBinOp::Add {
+                                    mojito_ast::ast::InfixOp::Add
+                                } else {
+                                    mojito_ast::ast::InfixOp::Sub
+                                };
+                                self.apply_binop(prog, infix, old.clone(), operand(0), None)?
+                            }
+                            AtomicBinOp::Max | AtomicBinOp::Min => {
+                                let pop = if *bin_op == AtomicBinOp::Max {
+                                    mojito_types::mlir::PopOp::Max
+                                } else {
+                                    mojito_types::mlir::PopOp::Min
+                                };
+                                crate::runtime::pop_op(pop, &[old.clone(), operand(0)])?
+                            }
+                        };
+                        self.write_reference(&handle, frame_id, vars, new)?;
+                        old
+                    }
+                    (AtomicOp::Cmpxchg { .. }, Some(handle)) => {
+                        let old = held(self, &handle)?;
+                        let expected = operand(0);
+                        let stored = match (&old, &expected) {
+                            (
+                                Value::Simd { dtype, lanes },
+                                Value::Simd {
+                                    dtype: other_dtype,
+                                    lanes: other_lanes,
+                                },
+                            ) => dtype == other_dtype && lanes == other_lanes,
+                            _ => crate::runtime::values_equal(&old, &expected)?,
+                        };
+                        if stored {
+                            self.write_reference(&handle, frame_id, vars, operand(1))?;
+                        }
+                        Value::Tuple(vec![
+                            old,
+                            Value::Simd {
+                                dtype: mojito_ast::ast::Dtype::Bool,
+                                lanes: crate::runtime::SimdLanes::Bool(vec![stored]),
+                            },
+                        ])
+                    }
+                    (_, None) => {
+                        return Err(RuntimeError::TypeError(format!(
+                            "'{}' takes an address",
+                            op.name()
+                        )));
+                    }
+                };
+            }
             MirInstr::MakeClosure {
                 dest,
                 function: target,

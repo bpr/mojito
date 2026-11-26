@@ -369,6 +369,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::InvalidateInteriors { .. } => "InvalidateInteriors",
         MirInstr::MakeRef { .. } => "MakeRef",
         MirInstr::ReadRef { .. } => "ReadRef",
+        MirInstr::Atomic { .. } => "Atomic",
         MirInstr::CopyValue { .. } => "CopyValue",
         MirInstr::Rebind { .. } => "Rebind",
         MirInstr::WriteRef { .. } => "WriteRef",

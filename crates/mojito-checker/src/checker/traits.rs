@@ -814,6 +814,17 @@ impl Checker {
                 decls
             }
         };
+        // A default a struct's `@implicit` constructor converts (`scope:
+        // StaticString = ""`) converts once the constructor classifies,
+        // which a struct declared later in the check has not yet.
+        if decls.iter().any(unconverted_struct_default)
+            && !self
+                .shells_awaiting_defaults
+                .iter()
+                .any(|shell| shell == name)
+        {
+            self.shells_awaiting_defaults.push(name.to_string());
+        }
         self.generic_parameters.borrow_mut().insert(
             mojito_checked::checked::GenericSite::Struct {
                 module: declaration.module.clone(),
@@ -1002,6 +1013,9 @@ impl Checker {
                     continue;
                 }
             };
+            if !report && decls.iter().any(unconverted_struct_default) {
+                self.shells_awaiting_defaults.push(name.clone());
+            }
             self.generic_parameters.borrow_mut().insert(
                 mojito_checked::checked::GenericSite::Struct {
                     module: declaration.module.clone(),
@@ -5119,4 +5133,22 @@ fn opt_out_reason(
         .iter()
         .filter(|(entry, _)| entry.identifier() == Some(trait_name))
         .find_map(|(_, condition)| condition.never_condition_reason().map(str::to_string))
+}
+
+/// Whether `decl` is a value parameter whose default is a value of another
+/// type than its declared struct type, which an `@implicit` constructor
+/// converts once it classifies.
+fn unconverted_struct_default(decl: &ParamDecl) -> bool {
+    let ParamDecl::Value {
+        ty,
+        default: Some(default),
+        ..
+    } = decl
+    else {
+        return false;
+    };
+    matches!(ty.kind(), TyKind::Struct(..))
+        && default.meta().as_value().is_some_and(|found| {
+            mojito_types::types::erase_origins(found) != mojito_types::types::erase_origins(ty)
+        })
 }

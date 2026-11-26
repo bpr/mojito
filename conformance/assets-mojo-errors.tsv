@@ -33,9 +33,15 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1345
+# swept-count	1352
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/atomic_bool_has_no_load.mojo	compile-reject	agree	error: no matching method in call to 'load'
+assets/type_error/atomic_fence_relaxed_ordering.mojo	compile-reject	agree	error: 'pop.fence' op can be given only acquire, release, acq_rel, and seq_cst orderings
+assets/type_error/atomic_load_not_atomic_syncscope.mojo	compile-reject	agree	error: 'pop.load' op cannot specify syncscope without an atomic load
+assets/type_error/atomic_load_release_ordering.mojo	compile-reject	agree	error: 'pop.load' op invalid atomic ordering 'release' for load operation. Valid orderings are: unordered, monotonic, acquire, seq_cst
+assets/type_error/atomic_rmw_unordered_ordering.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
+assets/type_error/atomic_store_acquire_ordering.mojo	compile-reject	agree	error: 'pop.store' op invalid atomic ordering 'acquire' for store operation. Valid orderings are: unordered, monotonic, release, seq_cst
 assets/type_error/construction_bracket_fixed_mutability_rejects_immutable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_field_pointer_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/construction_struct_tail_field_not_owner_origin.mojo	compile-reject	agree	error: no matching function in initialization
@@ -1370,6 +1376,7 @@ assets/type_error/where_on_inherited_trait_default.mojo	compile-reject	agree	err
 assets/type_error/where_on_trait_method.mojo	compile-reject	agree	error: 'where' clauses on trait methods are not supported
 assets/type_error/where_reads_argument_violated.mojo	compile-reject	agree	error: invalid call to 'doubled': violated constraint
 assets/type_error/where_repeated_second_fails.mojo	compile-reject	agree	error: invalid call to 'pick': violated constraint
+assets/type_error/where_type_equality_value_argument_violated.mojo	compile-reject	agree	error: invalid call to 'over_dtype': violated constraint
 assets/type_error/where_unknown_name.mojo	compile-reject	agree	error: use of unknown declaration 'm'
 assets/type_error/where_violated_sole_candidate.mojo	compile-reject	agree	error: invalid call to 'show': violated constraint
 assets/type_error/with_consuming_enter_and_exit.mojo	compile-reject	agree	error: context manager of type 'Both' defines a consuming __enter__ method as well as an __exit__ method; either remove 'var' from its '__enter__' method or remove the '__exit__' method

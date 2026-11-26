@@ -7,6 +7,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+mod atomic_ops;
 mod builtin_types;
 mod call_contract;
 mod intrinsic_receivers;

@@ -631,6 +631,16 @@ impl RewriteTypes for SemanticAdjustment {
             Self::MlirOp { op: _, fastmath } => {
                 fastmath.rewrite_types(rewrite);
             }
+            Self::MlirAtomicOp {
+                op: _,
+                ordering,
+                failure_ordering,
+                syncscope,
+            } => {
+                ordering.rewrite_types(rewrite);
+                failure_ordering.rewrite_types(rewrite);
+                syncscope.rewrite_types(rewrite);
+            }
             Self::PopArrayGet { index } => {
                 index.rewrite_types(rewrite);
             }

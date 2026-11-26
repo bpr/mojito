@@ -6896,7 +6896,17 @@ impl Checker {
         match operand {
             ConstraintOperand::Param(param) => environment.get(param).cloned(),
             ConstraintOperand::Value(value) => Some(TyArg::Val(value.clone())),
-            ConstraintOperand::Type(ty) => Some(TyArg::Ty(ty.clone())),
+            // A type over the clause's binders is the type at their
+            // arguments (`Scalar[dtype]` at `dtype = DType.int` is `Int`).
+            ConstraintOperand::Type(ty) => Some(TyArg::Ty(
+                mojito_types::types::replace_parameters(
+                    &self.param_context,
+                    ty,
+                    &self.constraint_bindings(environment),
+                    0,
+                )
+                .unwrap_or_else(|_| ty.clone()),
+            )),
             ConstraintOperand::PackLength(list) => {
                 match self.constraint_value(list, environment)? {
                     TyArg::Val(list) => type_list(&list),
@@ -6908,17 +6918,7 @@ impl Checker {
             // stays symbolic is returned residual.
             ConstraintOperand::Expr(expression) => {
                 let context = &self.param_context;
-                let mut bindings = mojito_types::param_expr::ParamBindings::new();
-                for (id, argument) in &environment.bound {
-                    if let TyArg::Val(value) = argument
-                        && let Ok(value) = context.constant(value.clone())
-                    {
-                        match id.owner.strip_prefix(UNBOUND_BINDER_PREFIX) {
-                            Some(erased) => bindings.bind_name(erased, value),
-                            None => bindings.bind(id.clone(), value),
-                        }
-                    }
-                }
+                let bindings = self.constraint_bindings(environment);
                 // As for a type argument, an opaque atom stays unfolded: the
                 // pin finds no evidence for `n // -2 == -4` even at `n = 7`
                 // (`assets/type_error/param_expr_where_unfolded_atom.mojo`).
@@ -6936,6 +6936,31 @@ impl Checker {
                 })
             }
         }
+    }
+
+    /// The replacement bindings of a constraint's environment: each bound
+    /// value binder's constant, by identity or, for an erased binder, by
+    /// name, and each bound type binder's type.
+    fn constraint_bindings(
+        &self,
+        environment: &ConstraintEnvironment<'_>,
+    ) -> mojito_types::param_expr::ParamBindings {
+        let mut bindings = mojito_types::param_expr::ParamBindings::new();
+        for (id, argument) in &environment.bound {
+            match argument {
+                TyArg::Val(value) => {
+                    if let Ok(value) = self.param_context.constant(value.clone()) {
+                        match id.owner.strip_prefix(UNBOUND_BINDER_PREFIX) {
+                            Some(erased) => bindings.bind_name(erased, value),
+                            None => bindings.bind(id.clone(), value),
+                        }
+                    }
+                }
+                TyArg::Ty(ty) => bindings.bind_type(id.clone(), ty.clone()),
+                TyArg::Origin(_) => {}
+            }
+        }
+        bindings
     }
 
     /// Evaluate a `TypeList` per-element predicate against one concrete

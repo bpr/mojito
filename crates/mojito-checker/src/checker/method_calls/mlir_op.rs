@@ -11,7 +11,7 @@
 //! `lit.ref.pack.extract` of an element reference of a reference pack,
 //! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the
 //! `pop.array` ops of `pop_array_ops.rs`, the pointer ops of
-//! `pointer_ops.rs`, the
+//! `pointer_ops.rs`, the atomic ops of `atomic_ops.rs`, the
 //! `pop` and `index` ops of `pop_ops.rs` with its `pop.simd.shuffle`, and the LLVM
 //! intrinsic call and `llvm.intr.trap` of `llvm_intrinsic.rs`.
 
@@ -36,7 +36,8 @@ impl Checker {
     /// source location ([`Self::infer_kgen_source_loc_op`]), a language
     /// version component ([`Self::infer_mojo_version_op`]), a
     /// KGEN string read ([`Self::infer_string_op`]), a pointer op
-    /// ([`Self::infer_pointer_op`]), a lane gather
+    /// ([`Self::infer_pointer_op`]), an atomic op
+    /// ([`Self::infer_atomic_op`]), a lane gather
     /// ([`Self::infer_simd_shuffle_op`]), or a
     /// `pop` or `index` op ([`Self::infer_pop_op`]). The
     /// statement's checked record is `SemanticAdjustment::MarkInitialized`
@@ -75,6 +76,14 @@ impl Checker {
         }
         if method == SOURCE_LOC {
             return self.infer_kgen_source_loc_op(span, method, call);
+        }
+        if matches!(
+            method,
+            super::atomic_ops::ATOMIC_RMW
+                | super::atomic_ops::ATOMIC_CMPXCHG
+                | super::atomic_ops::FENCE
+        ) {
+            return self.infer_atomic_op(span, method, call);
         }
         if let Some(op) = mojito_types::mlir::PointerOp::parse(method) {
             return self.infer_pointer_op(span, op, call);
@@ -272,24 +281,39 @@ impl Checker {
                 }
             }
         }
-        let index = match index {
-            Some(mojito_ast::ast::ParamArg::Value(Expr {
-                kind:
-                    ExprKind::MethodCall {
-                        object,
-                        method,
-                        args,
-                        kwargs,
-                    },
-                ..
-            })) if method == "__mlir_index__" && args.is_empty() && kwargs.is_empty() => object,
-            Some(_) => {
+        // An `index` attribute literal (``__mlir_attr.`1:index` ``) is the
+        // `Int` it spells.
+        let literal = match index {
+            Some(attribute @ mojito_ast::ast::ParamArg::Value(expression)) => {
+                super::pop_ops::mlir_attribute(attribute)
+                    .and_then(|attribute| attribute.strip_suffix(":index"))
+                    .and_then(|digits| mojito_common::literal::IntLiteral::parse_radix(digits, 10))
+                    .map(|value| Expr::new(ExprKind::Int(value), expression.span))
+            }
+            _ => None,
+        };
+        let index = match (index, literal.as_ref()) {
+            (_, Some(literal)) => literal,
+            (
+                Some(mojito_ast::ast::ParamArg::Value(Expr {
+                    kind:
+                        ExprKind::MethodCall {
+                            object,
+                            method,
+                            args,
+                            kwargs,
+                        },
+                    ..
+                })),
+                None,
+            ) if method == "__mlir_index__" && args.is_empty() && kwargs.is_empty() => object,
+            (Some(_), None) => {
                 return Err(TypeError::Unsupported(format!(
                     "'{name}' takes its 'index' attribute as a compile-time \
                      'Int.__mlir_index__()'"
                 )));
             }
-            None => return Err(invalid("op requires attribute 'index'")),
+            (None, None) => return Err(invalid("op requires attribute 'index'")),
         };
         let [operand] = args else {
             return Err(invalid(&format!(
@@ -320,7 +344,11 @@ impl Checker {
             }
         };
         let built = self.compile_dependent_ct_expr(index)?;
-        if !built.meta().as_value().is_some_and(|ty| ty.is_int()) {
+        if !built
+            .meta()
+            .as_value()
+            .is_some_and(|ty| ty.is_int() || ty.kind().is_int_literal())
+        {
             return Err(invalid("attribute 'index' takes a compile-time 'Int'"));
         }
         let element = self.tuple_storage_element(&elements.iter().collect::<Vec<_>>(), index)?;

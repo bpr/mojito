@@ -1250,6 +1250,19 @@ pub enum SemanticAdjustment {
     MlirPointerOp {
         op: mojito_types::mlir::PointerOp,
     },
+    /// An atomic `__mlir_op` (``__mlir_op.`pop.atomic.rmw`[…](p, v)``, or a
+    /// `pop.load` or `pop.store` carrying an `ordering`), as `std.atomic`
+    /// spells them. `ordering` is the op's `ordering` (a cmpxchg's
+    /// `success_ordering`), `failure_ordering` a cmpxchg's, and `syncscope`
+    /// the `!kgen.string` scope: each a closed attribute or a template's
+    /// parameter expression the elaborator closes per instance. MIR keeps
+    /// it as `MirInstr::Atomic` through the address.
+    MlirAtomicOp {
+        op: mojito_types::mlir::AtomicOp,
+        ordering: mojito_types::param_expr::ParamExpr,
+        failure_ordering: Option<mojito_types::param_expr::ParamExpr>,
+        syncscope: Option<mojito_types::param_expr::ParamExpr>,
+    },
     /// The `comptime assert` of the builtin `SIMD` dunder or constructor
     /// this node applies (`__lt__`'s `Self.length == 1`, or the implicit
     /// `Bool` to `SIMD[DType.bool, n]` conversion's), judged per reached

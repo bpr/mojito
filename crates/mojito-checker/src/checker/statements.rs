@@ -325,27 +325,34 @@ impl Checker {
             &mut constructing_structs,
         )?;
         // A signature may read a method of any struct this loop registers,
-        // declared before or after it.
-        let ready: Vec<StructDeclaration<'_>> = stmts
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| {
-                !parked_conformers.contains(index) && !constructing_structs.contains(index)
-            })
-            .filter_map(|(_, statement)| struct_declaration(statement))
-            .collect();
-        self.begin_method_registration(&ready)?;
-        let registered = ready.iter().try_for_each(|declaration| {
-            self.check_struct_method_signatures_among(declaration, &ready)?;
-            self.retry_deferred_traits(
-                stmts,
-                &mut deferred_traits,
-                &mut waiting_conformers,
-                &mut constructing_structs,
-            )
+        // declared before or after it. A struct whose method signatures
+        // name an alias still waiting for initializers (`ImmPointer`, whose
+        // `address_space` defaults to `AddressSpace`'s constructed
+        // `.GENERIC`) registers them once the others' have let the alias
+        // register.
+        let (ready, awaiting_aliases) = signature_rounds(stmts, &constructing_aliases, |index| {
+            parked_conformers.contains(&index) || constructing_structs.contains(&index)
         });
-        self.end_method_registration(&ready);
-        registered?;
+        for (peers, after_aliases) in [(&ready, false), (&awaiting_aliases, true)] {
+            if peers.is_empty() {
+                continue;
+            }
+            if after_aliases {
+                self.settle_constructing_aliases(stmts, &mut constructing_aliases, false)?;
+            }
+            self.begin_method_registration(peers)?;
+            let registered = peers.iter().try_for_each(|declaration| {
+                self.check_struct_method_signatures_among(declaration, peers)?;
+                self.retry_deferred_traits(
+                    stmts,
+                    &mut deferred_traits,
+                    &mut waiting_conformers,
+                    &mut constructing_structs,
+                )
+            });
+            self.end_method_registration(peers);
+            registered?;
+        }
         // An alias constructing a struct of this program
         // (`AHasher[SIMD[DType.uint64, 4](0)]`) registers once that struct's
         // initializers have, and so do the shell defaults naming it.
@@ -4918,6 +4925,7 @@ impl Checker {
             name.to_string(),
             ComptimeAlias {
                 decls,
+                source_params: type_params.to_vec(),
                 body,
                 value: value.clone(),
                 predicate_value,
@@ -5300,5 +5308,62 @@ fn closure_call_method(
             .as_ref()
             .map(|_| func.params.len() + usize::from(func.variadic.is_some())),
         ..MethodSig::intrinsic(func.params.clone(), func.ret.clone())
+    })
+}
+
+/// The structs of `stmts` whose method signatures register first, and
+/// those whose signatures name one of the `constructing` aliases, which
+/// register once the first round lets the aliases register. A struct
+/// `skipped` names by index registers elsewhere.
+fn signature_rounds<'a>(
+    stmts: &'a [Stmt],
+    constructing: &[usize],
+    skipped: impl Fn(usize) -> bool,
+) -> (Vec<StructDeclaration<'a>>, Vec<StructDeclaration<'a>>) {
+    let constructing_names: HashSet<&str> = constructing
+        .iter()
+        .filter_map(|index| match &stmts[*index].kind {
+            StmtKind::Comptime { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    stmts
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !skipped(*index))
+        .filter_map(|(_, statement)| struct_declaration(statement))
+        .partition(|declaration| {
+            !method_signature_names(declaration)
+                .any(|name| constructing_names.contains(name.as_str()))
+        })
+}
+
+/// Every name the method signatures of `declaration` read: its methods'
+/// compile-time parameters, parameter annotations and defaults, receiver
+/// and result annotations, raised types, and `where` clauses.
+fn method_signature_names<'a>(
+    declaration: &'a StructDeclaration<'_>,
+) -> impl Iterator<Item = String> + 'a {
+    declaration.methods.iter().flat_map(|method| {
+        let type_params = method.type_params.iter().flat_map(|param| {
+            param
+                .bounds
+                .iter()
+                .chain(&param.value_type)
+                .chain(&param.default)
+                .chain(&param.callable_bound)
+        });
+        let params = method
+            .params
+            .iter()
+            .flat_map(|param| std::iter::once(&param.ty).chain(&param.default));
+        type_params
+            .chain(params)
+            .chain(&method.self_type)
+            .chain(&method.raises_type)
+            .chain(&method.ret)
+            .chain(&method.where_clauses)
+            .flat_map(names_read)
+            .collect::<Vec<_>>()
     })
 }

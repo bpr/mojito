@@ -10,8 +10,9 @@
 //! `pop.array.gep`, lowered to `array.repeat`, `array.get`,
 //! `array.replace`, and `array.gep`, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
-//! and `Int`, lowered to `builtin.cast`, and the pointer ops over a
-//! `!kgen.pointer` or a `!lit.ref`, lowered onto the address instructions.
+//! and `Int`, lowered to `builtin.cast`, the pointer ops over a
+//! `!kgen.pointer` or a `!lit.ref`, lowered onto the address instructions,
+//! and the atomic ops, lowered to `atomic` through the address.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -228,6 +229,94 @@ impl<'a> Flatten<'a> {
             }
             _ => unreachable!("a checked `{}` takes {} operand(s)", op.name(), op.arity()),
         }
+    }
+
+    /// The atomic op the checker recorded on `call`, if it is an atomic
+    /// `__mlir_op`, with its ordering and scope attributes.
+    pub(super) fn checked_atomic_op(call: Node<'a>) -> Option<CheckedAtomicOp<'a>> {
+        call.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::MlirAtomicOp {
+                    op,
+                    ordering,
+                    failure_ordering,
+                    syncscope,
+                } => Some(CheckedAtomicOp {
+                    op: *op,
+                    ordering,
+                    failure_ordering: failure_ordering.as_ref(),
+                    syncscope: syncscope.as_ref(),
+                }),
+                _ => None,
+            })
+    }
+
+    /// Lower the checked atomic op `atomic` over `args` to `atomic`: its
+    /// `!kgen.pointer` operand (a store's second, every other op's first)
+    /// retyped to an untracked `!lit.ref` to the element, as `pop.load`'s
+    /// `ref.read` reads it, beside the op's value operands. A closed
+    /// attribute is a value constant; a template's stays a parameter
+    /// constant the elaborator closes.
+    pub(super) fn lower_atomic_op(
+        &mut self,
+        call: Node<'a>,
+        atomic: CheckedAtomicOp<'_>,
+        args: &[Node<'a>],
+    ) -> Reg {
+        use mojito_types::mlir::AtomicOp;
+        use mojito_types::origin::{Mutability, Origin, RefTy};
+        let ty = call.ty().expect("a checked `__mlir_op` has a type");
+        let location = call.location();
+        let mut operands: Vec<Reg> = args.iter().map(|argument| self.expr(*argument)).collect();
+        let pointer = match atomic.op {
+            AtomicOp::Fence => None,
+            AtomicOp::Store => Some(operands.remove(1)),
+            _ => Some(operands.remove(0)),
+        };
+        let reference = pointer.map(|pointer| {
+            let Some(TyKind::KgenPointer {
+                element,
+                address_space,
+            }) = self.f.reg_types.get(&pointer.0).map(Ty::kind)
+            else {
+                unreachable!("a checked atomic op addresses a `!kgen.pointer`")
+            };
+            let mutability = if atomic.op == AtomicOp::Load {
+                Mutability::Immutable
+            } else {
+                Mutability::Mutable
+            };
+            let handle_ty = Ty::from(TyKind::Ref(RefTy {
+                referent: element.clone(),
+                origin: Origin::Untracked {
+                    mutable: mutability == Mutability::Mutable,
+                },
+                mutability,
+                address_space: address_space.clone(),
+            }));
+            let handle = self.fresh_typed(location.clone(), None, handle_ty);
+            self.emit(MirInstr::PointerConvert {
+                dest: handle,
+                value: pointer,
+            });
+            handle
+        });
+        let constant = |value: &ParamExpr| match value.as_constant() {
+            Some(closed) => Const::Value(closed.clone()),
+            None => Const::Param(value.clone()),
+        };
+        let dest = self.fresh_typed(location, None, ty);
+        self.emit(MirInstr::Atomic {
+            dest,
+            op: atomic.op,
+            reference,
+            operands,
+            ordering: constant(atomic.ordering),
+            failure_ordering: atomic.failure_ordering.map(constant),
+            syncscope: atomic.syncscope.map(constant),
+        });
+        dest
     }
 
     /// Lower the checked `kgen.source_loc` `call` to `kgen.source_loc`,
@@ -570,4 +659,14 @@ pub(super) struct CheckedLlvmIntrinsic {
     intrinsic: ParamExpr,
     has_side_effect: ParamExpr,
     spread: Option<usize>,
+}
+
+/// An atomic op the checker recorded: the op and its ordering, failure
+/// ordering, and scope attributes, closed or parameter expressions.
+#[derive(Clone, Copy)]
+pub(super) struct CheckedAtomicOp<'a> {
+    op: mojito_types::mlir::AtomicOp,
+    ordering: &'a ParamExpr,
+    failure_ordering: Option<&'a ParamExpr>,
+    syncscope: Option<&'a ParamExpr>,
 }

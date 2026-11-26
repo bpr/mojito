@@ -764,7 +764,9 @@ impl PointerOp {
 
     /// The attributes the op holds, each paired with whether its verifier
     /// requires it: `_type` names a result type, `name` a `!lit.ref`'s
-    /// debug name, `alignment` an `index`, and the memory flags an `i1`.
+    /// debug name, `alignment` an `index`, the memory flags an `i1`, and
+    /// an atomic access's `ordering` and `syncscope` its
+    /// `#pop.atomic_ordering<…>` and `!kgen.string`.
     pub const fn attributes(self) -> &'static [(&'static str, bool)] {
         match self {
             Self::LitRefFromPointer => &[("_type", true), ("name", true)],
@@ -774,13 +776,236 @@ impl PointerOp {
                 ("isInvariant", true),
                 ("isNonTemporal", true),
                 ("isVolatile", true),
+                ("ordering", false),
+                ("syncscope", false),
             ],
             Self::Store => &[
                 ("alignment", false),
                 ("isNonTemporal", true),
                 ("isVolatile", true),
+                ("ordering", false),
+                ("syncscope", false),
             ],
             Self::LitRefToPointer | Self::Offset | Self::PointerToIndex => &[],
+        }
+    }
+}
+
+/// A `#pop.atomic_ordering<…>` attribute: the memory ordering of an
+/// atomic `pop` op, upstream's `Ordering.__mlir_attr()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum AtomicOrdering {
+    NotAtomic,
+    Unordered,
+    Monotonic,
+    Acquire,
+    Release,
+    AcqRel,
+    SeqCst,
+}
+
+impl AtomicOrdering {
+    /// Every ordering, weakest first.
+    pub const ALL: [Self; 7] = [
+        Self::NotAtomic,
+        Self::Unordered,
+        Self::Monotonic,
+        Self::Acquire,
+        Self::Release,
+        Self::AcqRel,
+        Self::SeqCst,
+    ];
+
+    /// The ordering the attribute `#pop.atomic_ordering<mnemonic>` names.
+    pub fn parse(attribute: &str) -> Option<Self> {
+        let mnemonic = attribute
+            .strip_prefix(ATOMIC_ORDERING_ATTRIBUTE_PREFIX)?
+            .strip_suffix('>')?;
+        Self::ALL
+            .into_iter()
+            .find(|ordering| ordering.mnemonic() == mnemonic)
+    }
+
+    /// The attribute's mnemonic (`seq_cst`).
+    pub const fn mnemonic(self) -> &'static str {
+        match self {
+            Self::NotAtomic => "not_atomic",
+            Self::Unordered => "unordered",
+            Self::Monotonic => "monotonic",
+            Self::Acquire => "acquire",
+            Self::Release => "release",
+            Self::AcqRel => "acq_rel",
+            Self::SeqCst => "seq_cst",
+        }
+    }
+}
+
+/// The spelling every `#pop.atomic_ordering<…>` attribute starts with.
+pub const ATOMIC_ORDERING_ATTRIBUTE_PREFIX: &str = "#pop.atomic_ordering<";
+
+/// A `pop.atomic.rmw`'s `bin_op` attribute (`#pop.bin_op<add>`): how the
+/// op combines the held value with its operand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum AtomicBinOp {
+    Xchg,
+    Add,
+    Sub,
+    Max,
+    Min,
+}
+
+impl AtomicBinOp {
+    /// Every combination, in declaration order.
+    pub const ALL: [Self; 5] = [Self::Xchg, Self::Add, Self::Sub, Self::Max, Self::Min];
+
+    /// The combination the attribute `#pop.bin_op<mnemonic>` names.
+    pub fn parse(attribute: &str) -> Option<Self> {
+        let mnemonic = attribute.strip_prefix("#pop.bin_op<")?.strip_suffix('>')?;
+        Self::ALL.into_iter().find(|op| op.mnemonic() == mnemonic)
+    }
+
+    /// The attribute's mnemonic (`add`).
+    pub const fn mnemonic(self) -> &'static str {
+        match self {
+            Self::Xchg => "xchg",
+            Self::Add => "add",
+            Self::Sub => "sub",
+            Self::Max => "max",
+            Self::Min => "min",
+        }
+    }
+}
+
+/// One of upstream's atomic `pop` ops, which `std.atomic` is written in.
+///
+/// They are a `pop.load` or `pop.store` carrying an `ordering`,
+/// `pop.atomic.rmw`, `pop.atomic.cmpxchg` (strong, or `weak` and allowed
+/// to fail spuriously), and `pop.fence`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum AtomicOp {
+    Load,
+    Store,
+    Rmw(AtomicBinOp),
+    Cmpxchg { weak: bool },
+    Fence,
+}
+
+impl AtomicOp {
+    /// The upstream spelling of this operation.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Load => "pop.load",
+            Self::Store => "pop.store",
+            Self::Rmw(_) => "pop.atomic.rmw",
+            Self::Cmpxchg { .. } => "pop.atomic.cmpxchg",
+            Self::Fence => "pop.fence",
+        }
+    }
+
+    /// The MIR text mnemonic (`rmw.add`, `cmpxchg.weak`).
+    pub fn mnemonic(self) -> String {
+        match self {
+            Self::Load => "load".to_string(),
+            Self::Store => "store".to_string(),
+            Self::Rmw(op) => format!("rmw.{}", op.mnemonic()),
+            Self::Cmpxchg { weak: false } => "cmpxchg".to_string(),
+            Self::Cmpxchg { weak: true } => "cmpxchg.weak".to_string(),
+            Self::Fence => "fence".to_string(),
+        }
+    }
+
+    /// The op the MIR text mnemonic `mnemonic` names.
+    pub fn parse_mnemonic(mnemonic: &str) -> Option<Self> {
+        Some(match mnemonic {
+            "load" => Self::Load,
+            "store" => Self::Store,
+            "cmpxchg" => Self::Cmpxchg { weak: false },
+            "cmpxchg.weak" => Self::Cmpxchg { weak: true },
+            "fence" => Self::Fence,
+            _ => Self::Rmw(
+                AtomicBinOp::ALL
+                    .into_iter()
+                    .find(|op| mnemonic.strip_prefix("rmw.") == Some(op.mnemonic()))?,
+            ),
+        })
+    }
+
+    /// The number of value operands the op takes beside its address: a
+    /// store's value, an rmw's operand, and a cmpxchg's expected and
+    /// desired values.
+    pub const fn value_arity(self) -> usize {
+        match self {
+            Self::Load | Self::Fence => 0,
+            Self::Store | Self::Rmw(_) => 1,
+            Self::Cmpxchg { .. } => 2,
+        }
+    }
+
+    /// Why the op refuses `ordering` (a cmpxchg's success ordering) with a
+    /// cmpxchg's `failure` ordering, or `None` when it takes them. A load
+    /// or store at `not_atomic` is a plain access, which takes no
+    /// `syncscope`. The load, store, and fence rules are upstream's
+    /// verifiers'; the rmw and cmpxchg rules are LLVM's, which the pin
+    /// reaches only in translation.
+    pub fn ordering_error(
+        self,
+        ordering: AtomicOrdering,
+        failure: Option<AtomicOrdering>,
+        syncscope: bool,
+    ) -> Option<String> {
+        use AtomicOrdering::{AcqRel, Acquire, Monotonic, NotAtomic, Release, SeqCst, Unordered};
+        let name = self.name();
+        match self {
+            Self::Load | Self::Store => {
+                let (kind, valid, invalid) = if self == Self::Load {
+                    (
+                        "load",
+                        "unordered, monotonic, acquire, seq_cst",
+                        [Release, AcqRel],
+                    )
+                } else {
+                    (
+                        "store",
+                        "unordered, monotonic, release, seq_cst",
+                        [Acquire, AcqRel],
+                    )
+                };
+                if ordering == NotAtomic {
+                    return syncscope.then(|| {
+                        format!("'{name}' op cannot specify syncscope without an atomic {kind}")
+                    });
+                }
+                invalid.contains(&ordering).then(|| {
+                    format!(
+                        "'{name}' op invalid atomic ordering '{}' for {kind} operation. Valid \
+                         orderings are: {valid}",
+                        ordering.mnemonic()
+                    )
+                })
+            }
+            Self::Fence => (!matches!(ordering, Acquire | Release | AcqRel | SeqCst)).then(|| {
+                format!(
+                    "'{name}' op can be given only acquire, release, acq_rel, and seq_cst \
+                     orderings"
+                )
+            }),
+            Self::Rmw(_) => match ordering {
+                NotAtomic => Some("atomicrmw instructions must be atomic.".to_string()),
+                Unordered => Some("atomicrmw instructions cannot be unordered.".to_string()),
+                _ => None,
+            },
+            Self::Cmpxchg { .. } => {
+                let failure = failure.unwrap_or(Monotonic);
+                if ordering == NotAtomic || failure == NotAtomic {
+                    Some("cmpxchg instructions must be atomic.".to_string())
+                } else if ordering == Unordered || failure == Unordered {
+                    Some("cmpxchg instructions cannot be unordered.".to_string())
+                } else if matches!(failure, Release | AcqRel) {
+                    Some("cmpxchg failure ordering cannot include release semantics".to_string())
+                } else {
+                    None
+                }
+            }
         }
     }
 }
@@ -1059,5 +1284,72 @@ mod tests {
             Some(2.0)
         );
         assert_eq!(pop_bool_lane(PopOp::Max, true, false), Some(true));
+    }
+
+    #[test]
+    fn atomic_orderings_parse_from_their_attributes() {
+        for ordering in AtomicOrdering::ALL {
+            let attribute = format!("#pop.atomic_ordering<{}>", ordering.mnemonic());
+            assert_eq!(AtomicOrdering::parse(&attribute), Some(ordering));
+        }
+        assert_eq!(AtomicOrdering::parse("#pop.atomic_ordering<weak>"), None);
+        assert_eq!(
+            AtomicBinOp::parse("#pop.bin_op<max>"),
+            Some(AtomicBinOp::Max)
+        );
+        assert_eq!(AtomicBinOp::parse("#pop.bin_op<mul>"), None);
+        for op in [
+            AtomicOp::Load,
+            AtomicOp::Store,
+            AtomicOp::Rmw(AtomicBinOp::Sub),
+            AtomicOp::Cmpxchg { weak: true },
+            AtomicOp::Fence,
+        ] {
+            assert_eq!(AtomicOp::parse_mnemonic(&op.mnemonic()), Some(op));
+        }
+    }
+
+    #[test]
+    fn atomic_ordering_rules_follow_the_verifiers() {
+        use AtomicOrdering::{AcqRel, Acquire, Monotonic, NotAtomic, Release, SeqCst, Unordered};
+        let error = |op: AtomicOp, ordering, failure| op.ordering_error(ordering, failure, true);
+        assert_eq!(
+            error(AtomicOp::Load, Release, None).as_deref(),
+            Some(
+                "'pop.load' op invalid atomic ordering 'release' for load operation. Valid \
+                 orderings are: unordered, monotonic, acquire, seq_cst"
+            )
+        );
+        assert_eq!(
+            error(AtomicOp::Store, Acquire, None).as_deref(),
+            Some(
+                "'pop.store' op invalid atomic ordering 'acquire' for store operation. Valid \
+                 orderings are: unordered, monotonic, release, seq_cst"
+            )
+        );
+        assert_eq!(
+            error(AtomicOp::Load, NotAtomic, None).as_deref(),
+            Some("'pop.load' op cannot specify syncscope without an atomic load")
+        );
+        assert_eq!(AtomicOp::Load.ordering_error(NotAtomic, None, false), None);
+        assert!(error(AtomicOp::Fence, Monotonic, None).is_some());
+        assert_eq!(error(AtomicOp::Fence, AcqRel, None), None);
+        let rmw = AtomicOp::Rmw(AtomicBinOp::Add);
+        assert_eq!(
+            error(rmw, Unordered, None).as_deref(),
+            Some("atomicrmw instructions cannot be unordered.")
+        );
+        assert_eq!(
+            error(rmw, NotAtomic, None).as_deref(),
+            Some("atomicrmw instructions must be atomic.")
+        );
+        assert_eq!(error(rmw, Monotonic, None), None);
+        let cmpxchg = AtomicOp::Cmpxchg { weak: false };
+        assert_eq!(
+            error(cmpxchg, SeqCst, Some(Release)).as_deref(),
+            Some("cmpxchg failure ordering cannot include release semantics")
+        );
+        assert_eq!(error(cmpxchg, SeqCst, Some(Acquire)), None);
+        assert!(error(cmpxchg, NotAtomic, Some(Monotonic)).is_some());
     }
 }

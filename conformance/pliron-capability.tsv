@@ -27,6 +27,7 @@ instruction	scalar.cast	partial	numeric, Bool, width-1 SIMD, and literal operand
 instruction	pointer.convert	supported	a `Pointer`, its `!kgen.pointer`, and a `!lit.ref` are one `ptr`; the copy is the identity
 instruction	pop	partial	upstream's `pop` lane ops over SIMD or `index` registers (VM-exact per lane), `!kgen.string` reads, and `!kgen.dtype` code conversions; a `pop` over another register type, or an op bool lanes do not define, rejects
 instruction	llvm.intrinsic	partial	a call of the LLVM intrinsic itself for the `LlvmIntrinsic` subset, over SIMD or Bool registers or a register pack's literal struct; a name outside the subset rejects
+instruction	atomic	partial	LLVM's atomic load, store, atomicrmw, cmpxchg, and fence over an integer, float, or pointer element; `unordered` lowers monotonic and a weak cmpxchg strong; an element of another type rejects
 instruction	is_run_in_comptime_interpreter	supported	the constant `false`: compiled code never runs in the comptime interpreter
 instruction	kgen.source_loc	unsupported	`source_locations` folds every site to its constants after inlining; one that survives rejects
 instruction	var.use	supported	copy/move/borrow

@@ -1080,6 +1080,29 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ),
             ],
         ),
+        MirInstr::Atomic {
+            dest,
+            op,
+            reference,
+            operands,
+            ordering,
+            failure_ordering,
+            syncscope,
+        } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("op", op.mnemonic()),
+                ("reference", option(reference.map(reg_value))),
+                ("operands", regs(operands)),
+                ("ordering", const_value(ordering)),
+                (
+                    "failure_ordering",
+                    option(failure_ordering.as_ref().map(const_value)),
+                ),
+                ("syncscope", option(syncscope.as_ref().map(const_value))),
+            ],
+        ),
         MirInstr::UseVar {
             dest,
             var,

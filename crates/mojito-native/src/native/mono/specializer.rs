@@ -2302,6 +2302,9 @@ impl<'a> Specializer<'a> {
             if let Some(fastmath) = instruction.fastmath_mut() {
                 self.close_fastmath(template, fastmath, bindings, reached)?;
             }
+            if let MirInstr::Atomic { .. } = &instruction {
+                self.close_atomic(template, &mut instruction, bindings, reached)?;
+            }
             if let MirInstr::CallLlvmIntrinsic { .. } = &instruction {
                 self.close_llvm_intrinsic(
                     template,
@@ -2399,6 +2402,68 @@ impl<'a> Specializer<'a> {
             }),
             _ => Ok(()),
         }
+    }
+
+    /// Close an atomic op's ordering, failure ordering, and scope for the
+    /// instance, as upstream's elaboration closes the properties, and,
+    /// once it is reached, reject an ordering the op refuses
+    /// ([`mojito_types::mlir::AtomicOp::ordering_error`]), as the pin's
+    /// verifier rejects the reached op.
+    fn close_atomic(
+        &mut self,
+        template: &str,
+        instruction: &mut MirInstr,
+        bindings: &Bindings,
+        reached: bool,
+    ) -> Result<(), MonoError> {
+        use mojito_types::mlir::AtomicOrdering;
+        let MirInstr::Atomic {
+            op,
+            ordering,
+            failure_ordering,
+            syncscope,
+            ..
+        } = instruction
+        else {
+            return Ok(());
+        };
+        for constant in std::iter::once(&mut *ordering)
+            .chain(failure_ordering.as_mut())
+            .chain(syncscope.as_mut())
+        {
+            if let Const::Param(value) = constant {
+                let value = self.applied(template, value, bindings)?;
+                match symbolic::eval_reached_ct(&value, bindings) {
+                    Ok(closed) => *constant = Const::Value(closed),
+                    Err(error) if error.kind == MonoErrorKind::Instantiation => {
+                        return Err(error);
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        if !reached {
+            return Ok(());
+        }
+        let closed = |constant: &Const| match constant {
+            Const::Value(CtValue::MlirAttr(attribute)) => AtomicOrdering::parse(attribute),
+            _ => None,
+        };
+        let failure = failure_ordering.as_ref().map(closed);
+        let reason = match (closed(ordering), failure) {
+            (None, _) | (_, Some(None)) => Some(format!(
+                "Invalid attribute `ordering` in property conversion: {ordering:?}"
+            )),
+            (Some(success), failure) => {
+                op.ordering_error(success, failure.flatten(), syncscope.is_some())
+            }
+        };
+        reason.map_or(Ok(()), |reason| {
+            Err(MonoError {
+                kind: MonoErrorKind::Instantiation,
+                ..self.error(Some(template), reason)
+            })
+        })
     }
 
     fn close_llvm_intrinsic(

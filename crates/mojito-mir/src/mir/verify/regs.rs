@@ -25,6 +25,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::PointerBitcast { dest, .. }
         | MirInstr::Pop { dest, .. }
         | MirInstr::CallLlvmIntrinsic { dest, .. }
+        | MirInstr::Atomic { dest, .. }
         | MirInstr::StoreToMem { dest, .. }
         | MirInstr::UseVar { dest, .. }
         | MirInstr::MovePlace { dest, .. }
@@ -155,6 +156,14 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         }
         | MirInstr::ArrayReplace { array, value, .. } => out.extend([*array, *value]),
         MirInstr::ArrayGep { array, index, .. } => out.extend([*array, *index]),
+        MirInstr::Atomic {
+            reference,
+            operands,
+            ..
+        } => {
+            out.extend(reference.iter().copied());
+            out.extend(operands.iter().copied());
+        }
         MirInstr::UnOp { a, .. } => out.push(*a),
         MirInstr::BinOp { a, b, .. } => out.extend([*a, *b]),
         MirInstr::Store { place: p, src } => {
