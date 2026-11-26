@@ -46,7 +46,7 @@ impl Checker {
                 args,
                 span,
             )?;
-        } else if let TyKind::Param { .. } = obj_ty.kind() {
+        } else if matches!(obj_ty.kind(), TyKind::Param { .. }) || obj_ty.kind().is_conditional() {
             let bounds = self.refined_bound(obj_ty).unwrap_or_default();
             // Abstract trait dispatch has no concrete body: replay the union
             // of effects over every conforming implementation of the method

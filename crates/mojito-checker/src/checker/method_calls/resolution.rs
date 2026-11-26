@@ -50,7 +50,7 @@ impl Checker {
             struct_ty if let Some((sname, targs)) = struct_ty.as_non_pointer_struct() => {
                 self.resolve_struct_method(site, sname, targs, availability_failure)
             }
-            TyKind::Param { .. } | TyKind::Assoc { .. } => {
+            _ if super::super::operators::is_bound_archetype(site.obj_ty) => {
                 self.resolve_bound_method(site, availability_failure)
             }
             _ => match self.declared_receiver_member(site.obj_ty, site.method) {

@@ -313,6 +313,7 @@ assets/ok/conditional_member_availability.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/conditional_member_trivial_value_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_parameter_type_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_parameter_type_conformance.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/conditional_parameter_type_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_register_passable_result_owned.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conformance_module_qualified.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conforms_to_condition_generic_def.mojo	-	ineligible	no-scalar-entry-shape

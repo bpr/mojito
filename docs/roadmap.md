@@ -10172,28 +10172,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2601 A method or operator on a conditional type finds no trait
-  member in its generic body**
-
-  `x.copy()` in `def g[n: Int](x: Int if n > 0 else Float64)` fails with
-  "type 'Int if 0 < n else Float64' has no method 'copy'", where the pin
-  resolves it through `Copyable`, which both arms conform to, and prints
-  `3` for `g[1](3)`.
-  - Cause: method resolution (`resolve_method` in
-    `checker/method_calls/resolution.rs`) reaches a trait's requirements
-    only through `refined_bound` on a `Param` or `Assoc` receiver, and a
-    `Dependent` `Cond` receiver has no bound list.
-  - The conditional's bound is the traits both arms conform to
-    (`Checker::conformance` already answers each one); the dispatch then
-    records it as a refined bound, as a downcast receiver does.
-  - Probe: `var z = x.copy()` then `print(z)`, as above.
-  - Probe: `print(x == x)` fails with "operator '==' is not defined for
-    Int if 0 < n else Float64 and …", where the pin prints `True`
-    through `Equatable`.
-  - Found while landing R2597 (2026-11-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.

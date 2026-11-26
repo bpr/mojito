@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A method or operator on a parameter typed by a conditional type (`x:
+  Int if n > 0 else Float64`) now resolves, inside its generic body,
+  through the traits both arms conform to, as at the pin (R2601):
+  `x.copy()`, `x == x`, `x < x`, `if x:`, and `abs(x)` no longer fail
+  with "has no method 'copy'" or "operator '==' is not defined", and
+  each dispatches to the arm a call selects.
+
 - A `SIMD[DType.bool, n]` in memory now packs its lanes one bit each,
   lane 0 the low bit, natively as at the pin (R2610): a mask loads and
   stores as its `<n x i1>`, where it stored a byte per lane, so

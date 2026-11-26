@@ -108,6 +108,25 @@ impl DependentType {
         }
     }
 
+    /// The arms of a conditional type (`Int if n > 0 else Float64`) whose
+    /// condition is still open, when this type is one.
+    pub fn conditional_arms(&self) -> Option<(Ty, Ty)> {
+        let Self::Parameter(expr) = self;
+        match expr.kind() {
+            ParamKind::Op {
+                op: crate::param_expr::ParamOp::Cond,
+                operands,
+            } => match operands.as_slice() {
+                [_, then_ty, else_ty] => Some((
+                    Self::resolve(then_ty.clone()),
+                    Self::resolve(else_ty.clone()),
+                )),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// The pack and index this type is an element of, when the pack is
     /// still a parameter.
     pub fn pack_element(&self) -> Option<(&ParamExpr, &ParamExpr)> {
@@ -1853,6 +1872,12 @@ impl TyKind {
     /// Whether this is a numeric literal's type.
     pub fn is_numeric_literal(&self) -> bool {
         self.numeric_literal_slot().is_some()
+    }
+
+    /// Whether this is a conditional type whose condition is still open
+    /// ([`DependentType::conditional_arms`]).
+    pub fn is_conditional(&self) -> bool {
+        matches!(self, Self::Dependent(dependent) if dependent.conditional_arms().is_some())
     }
 
     /// The value of an integer literal whose type carries it.

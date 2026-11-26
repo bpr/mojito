@@ -56,14 +56,16 @@ pub(super) fn common_numeric(a: &Ty, b: &Ty) -> Option<Ty> {
 /// Type inference for compiler-known builtin free functions
 /// (`print`, `len`, `range`, conversions, …). Moved from `checker.rs`.
 impl Checker {
-    /// Whether `ty` is an opaque type parameter conforming to the named trait
-    /// `bound`, by a bound that is or refines it, or an assumed conformance.
+    /// Whether `ty` is an opaque type parameter, or a conditional type whose
+    /// condition is still open, conforming to the named trait `bound`, by a
+    /// bound that is or refines it, an assumed conformance, or both arms'.
     /// The numeric-operation traits (`Absable`/`Roundable`/
     /// `Intable`/`Floatable`/`Boolable`/`DivModable`) gate a corresponding
     /// built-in or operator on an opaque `T` this way: the concrete type's
     /// implementation runs after type erasure.
     pub(super) fn param_has_bound(&self, ty: &Ty, bound: &str) -> bool {
-        matches!(ty.kind(), TyKind::Param { .. }) && self.conforms_to(ty, bound)
+        (matches!(ty.kind(), TyKind::Param { .. }) || ty.kind().is_conditional())
+            && self.conforms_to(ty, bound)
     }
 
     /// Whether the type parameter `ty` is `Equatable` by its bounds or an

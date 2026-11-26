@@ -1247,14 +1247,14 @@ impl Checker {
         }
     }
 
-    /// Whether `ty` is a type parameter one of whose bounds requires the
+    /// Whether `ty` is a type parameter (or a conditional type) one of whose bounds requires the
     /// in-place dunder of `op`, which `x OP= y` then dispatches through the
     /// bound as the call `x.__iadd__(y)` would. A parameter whose bounds do
     /// not keeps the builtin operator path.
     pub(super) fn bound_inplace_operator(&self, ty: &Ty, op: InfixOp) -> bool {
         let Some(bounds) = self
             .refined_bound(ty)
-            .filter(|_| matches!(ty.kind(), TyKind::Param { .. }))
+            .filter(|_| matches!(ty.kind(), TyKind::Param { .. }) || ty.kind().is_conditional())
         else {
             return false;
         };

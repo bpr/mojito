@@ -2944,19 +2944,12 @@ impl Checker {
             // A conditional type (`Int if n > 0 else Float64`) whose
             // condition is still open conforms as both its arms agree.
             TyKind::Dependent(dependent)
-                if let ParamKind::Op {
-                    op: ParamOp::Cond,
-                    operands,
-                } = dependent.expr().kind()
-                    && let [_, then_ty, else_ty] = operands.as_slice() =>
+                if let Some((then_ty, else_ty)) = dependent.conditional_arms() =>
             {
-                let arm = |arm: &ParamExpr| {
-                    self.conformance(
-                        &mojito_types::types::DependentType::resolve(arm.clone()),
-                        tr,
-                    )
-                };
-                match (arm(then_ty), arm(else_ty)) {
+                match (
+                    self.conformance(&then_ty, tr),
+                    self.conformance(&else_ty, tr),
+                ) {
                     (left, right) if left == right => left,
                     _ => Conformance::Unknown,
                 }
@@ -4410,7 +4403,9 @@ impl Checker {
     /// (`getTraitBoundFromAssumptions`, `mergeOriginalAndRefinedBounds`),
     /// or an associated projection's (`C.IteratorType[o]`, nested
     /// `C.IteratorType[o].Element`) as the trait declaring it in its base's
-    /// refined bound requires them. `None` for a type that is no archetype.
+    /// refined bound requires them, or a conditional type's (`Int if n > 0
+    /// else Float64`) as every trait both its arms conform to. `None` for a
+    /// type that is no archetype.
     pub(super) fn refined_bound(&self, ty: &Ty) -> Option<Vec<String>> {
         match ty.kind() {
             TyKind::Param { bounds, .. } => {
@@ -4426,6 +4421,23 @@ impl Checker {
             }
             TyKind::Assoc { base, name, .. } => {
                 self.lookup_trait_assoc_type(&self.refined_bound(base)?, name)
+            }
+            // A conditional type whose condition is still open is the
+            // archetype of every trait both its arms conform to, the join
+            // of their metatypes.
+            kind if kind.is_conditional() => {
+                let proven: Vec<&str> = self
+                    .traits
+                    .keys()
+                    .chain(
+                        mojito_types::conformance::COMPILER_TRAITS
+                            .iter()
+                            .copied()
+                            .filter(|tr| !self.traits.contains_key(tr)),
+                    )
+                    .filter(|tr| *tr != TYPE_OF_ALL_TYPES && self.conforms_to(ty, tr))
+                    .collect();
+                Some(self.canonical_trait_set(&proven))
             }
             _ => None,
         }

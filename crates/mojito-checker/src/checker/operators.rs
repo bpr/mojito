@@ -36,6 +36,13 @@ impl CommonType {
     }
 }
 
+/// Whether `ty` is an archetype whose methods its bounds' requirements
+/// declare ([`Checker::refined_bound`]): a type parameter, an associated
+/// projection of one, or a conditional type whose condition is still open.
+pub(super) fn is_bound_archetype(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Param { .. } | TyKind::Assoc { .. }) || ty.kind().is_conditional()
+}
+
 impl Checker {
     pub(super) fn infer_prefix(
         &self,
@@ -1415,12 +1422,6 @@ impl Checker {
 /// Whether both operands are numeric literals.
 fn numeric_literals(lt: &Ty, rt: &Ty) -> bool {
     lt.kind().is_numeric_literal() && rt.kind().is_numeric_literal()
-}
-
-/// Whether `ty` is an archetype whose methods its bounds' requirements
-/// declare: a type parameter or an associated projection of one.
-fn is_bound_archetype(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::Param { .. } | TyKind::Assoc { .. })
 }
 
 /// The error an infix operator its operands do not define reports. A KGEN
