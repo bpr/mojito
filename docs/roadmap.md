@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2625**.
+Next free ID: **R2631**.
 
 ## Ordered Work
 
@@ -56,77 +56,179 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R2166 With the pre-elaboration pipeline off, an omitted
-  argument a body never reads still evaluates its default**
+Upstream's elaborator also never infers a binding: each call names its
+callee with the complete parameter application, which it substitutes.
+R2625–R2630 stage that, in
+[`docs/call-application-plan.md`](call-application-plan.md), one entry per
+slice.
 
-  With `MOJITO_PRE_ELABORATION=0`,
-  `assets/ok/unused_argument_instances.mojo` prints `side` for
-  `fside()`, where the pin and the default pipeline print nothing.
-  - Upstream's `RemoveUnusedParams` drops the parameter before any call
-    materializes its default, and the switch turns that pass off with
-    the rest of the pipeline, so a default with an effect runs.
-  - Lever: decide whether the default's evaluation is semantics the
-    driver owes at every setting, as R2158 made `@always_inline`
-    mandatory, and run the removal (or skip the default) regardless.
-  - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0`.
-  - Found while landing R2158.
+- [ ] **R2625 A `Some[Trait]` parameter declares no binder, so its readers
+  find it by name**
+
+  A `Some[Trait]` parameter's type is a binder absent from its
+  declaration's `param_decls`. Upstream desugars it to an inferred
+  parameter of that declaration.
+  - Four readers recognize it by spelling, `starts_with("Some[")`:
+    `native/mono/unify.rs` (twice), `analysis/inline_parametric.rs`, and
+    `checker/annotations.rs`.
+  - Declare the binder in the declaration's own list, inferred, and let
+    each reader use the declared binder.
+  - Slice B1a of `docs/call-application-plan.md`.
+  - Probe: the `Some[…]` fixtures under `assets/ok` print as before, and
+    the search above finds nothing.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Opus, Planned.
 
-- [ ] **R2167 With the pre-elaboration pipeline off, nothing promotes
-  an inlined constructor's slot, so a native `immarg` operand is a load**
+- [ ] **R2626 A call's recorded application leaves out origins and their
+  `mut` binders**
+
+  The checker records a call's solved compile-time arguments over the
+  callee's argument view, which drops every origin binder and every
+  origin's `mut=` binder. So the elaborator infers them from places.
+  - Upstream's `kgen.call` carries them in the call's list
+    (`kgen.call @lifetime_lower<:origin<true> #lit.any.origin>`,
+    `Mojo/test/kgen/lit-dialect/lit-attrs.mlir:58`).
+  - Record the whole declared list in the `generic_instantiation`,
+    `method_instantiation`, and `bound_instantiation` facts and in
+    `ConversionInstantiatedArguments`. Copy it into `Call` / `MethodCall`
+    `instantiated_args`, and bump the MIR text schema.
+  - The elaborator binds origins and `mut` from the record. Unification
+    stays as a fallback until R2628.
+  - Slice B1b of `docs/call-application-plan.md`.
+  - Probe: R2440's two fixtures with `MOJITO_PRE_ELABORATION=0`.
+  - Depends on R2625 (the `Some` binders must be declared to be recorded).
+  - Model: Fable, Planned.
+
+- [ ] **R2627 A call MIR synthesizes carries no compile-time application,
+  and the verifier allows it**
+
+  About 30 sites build a `Call` with empty `instantiated_args`: drops,
+  copies, register ends, iteration, defaults, and canonicalization
+  rewrites. The elaborator infers the callee's bindings for each one.
+  - Sites first: make `mir::verify` (`verify/calls.rs`) reject a call to a
+    generic callee whose application is not one argument per declared
+    binder, closed or open only over the caller's binders. Then run
+    `scripts/smoke --suites` for the site list and fix every site.
+  - Each site builds the application from what it already knows (the
+    dropped or copied type, the iterator's instance, the default's callee).
+  - Slice B1c of `docs/call-application-plan.md`.
+  - Depends on R2626 (the checker's calls must already be complete).
+  - Model: Fable, Planned.
+
+- [ ] **R2628 The elaborator infers a call's bindings by unifying types
+  instead of substituting the call's record**
+
+  `Specializer::infer_call` (`native/mono/infer.rs`) skips every recorded
+  argument still open over the caller's binders, unifies argument, result,
+  pack, and keyword types instead, and rebuilds the instance's identity
+  from what it found. Upstream's elaborator substitutes the call's
+  parameter list under the enclosing instance.
+  - When the two answers disagree, elaboration fails with "conflicting
+    solutions" (R2440). When the identities differ, one instance gets two
+    spellings (R2167's `Pointer` bullet).
+  - Substitute the record under the caller's bindings, including an open
+    one. Delete the unification of call operands, the sugar-argument
+    pushes, and the "conflicting solutions" errors.
+  - Slice B2 of `docs/call-application-plan.md`.
+  - Probe: R2440's fixtures with `MOJITO_PRE_ELABORATION=0`, and
+    `scripts/instantiation-report --check` for instance growth.
+  - Depends on R2627 (every call must carry a record).
+  - Model: Fable, Planned.
+
+- [ ] **R2629 A call may record no operand conventions, and the loan check
+  then reads the callee's declaration**
+
+  `Call::conventions` and `MethodCall::conventions` are empty when the
+  call records no checked binding. Upstream's call carries each operand's
+  convention in its callee's type.
+  - Sites first: make the verifier require one convention per operand,
+    list the sites, fix them all, and delete the loan check's fallback.
+  - Slice B3a of `docs/call-application-plan.md`.
+  - Depends on R2627 (the same synthesized-call sites).
+  - Model: Opus, Planned.
+
+- [ ] **R2630 Keyword operands reach the elaborator, the VM, and Pliron**
+
+  `Call`, `MethodCall`, and `CallIndirect` keep `kwargs` after lowering,
+  and each consumer matches them to parameter slots
+  (`mojito_ast::call::match_call_slots`). Upstream's calls are positional
+  after sema.
+  - `mir::call_defaults::fill_omitted_arguments` already binds each call
+    against its declaration. Have it also place each keyword operand in
+    its parameter's position and build a `**kwargs` collector.
+  - Delete `kwargs` from the three instructions and the call matcher's
+    uses below lowering, and bump the MIR text schema.
+  - Slice B3b of `docs/call-application-plan.md`.
+  - Depends on R2628 (the elaborator must stop binding by slot) and R2629.
+  - Model: Fable, Planned.
+
+- [ ] **R2167 With the pre-elaboration pipeline off, an intrinsic's
+  immediate operand reaches Pliron as a load of a slot**
 
   With `MOJITO_PRE_ELABORATION=0`,
   `assets/ok/simd_slice_insert_split_interleave.mojo` runs on the VM but
   fails LLVM verification natively ("immarg operand has non-immediate
-  parameter"), where the pin and the default pipeline run it.
-  - `SIMD.insert` passes `Int64(offset)` to `llvm.vector.insert`; only
-    `MANDATORY_PIPELINE` (`lower-arg-conventions`, `always-inline`) runs
-    after elaboration, so the inlined constructor's result stays a stack
-    slot and reaches the intrinsic as a `load`.
-  - Upstream's LLVM lowering always sees the immediate: decide which
-    promotion (`mem-2-reg`, `canonicalize`) the driver owes at every
-    setting, as R2158 made `@always_inline` mandatory, and run it.
+  parameter"), where a fresh `mojo run -O0` at the pin runs it.
+  - Every subvector intrinsic in the fixture fails the same way: nine
+    `llvm.vector.extract` / `llvm.vector.insert` calls, each taking its
+    index as `load i64, ptr …`. The index is `Int64(offset)`, passed
+    through `llvm_intrinsic[…](self, value, Int64(offset))`
+    (`stdlib/std/simd.mojo`).
+  - The pin's evidence: a fresh `mojo build -O0 --emit llvm` of the fixture
+    stores all three `llvm_intrinsic` arguments into slots
+    (`store i64 2, ptr %178`), but its intrinsic call takes the values
+    themselves (`… <2 x i32> %261, i64 2)`). So the pin binds an inlined
+    callee's register-passable arguments as values, and at `-O0` the slots
+    are only debug shadows. Mojito reads the argument back out of its slot.
+  - Lever: find where Mojito's pipeline-off build routes the operand
+    through memory, either `always-inline`'s splice of `llvm_intrinsic` or
+    its operand pack. Bind the operand as its value there, as the pin does.
+  - Ruled out on 2026-11-26: appending the pin's guaranteed `SROA`,
+    `Mem2Reg`, and `Canonicalizer` after `always-inline` in
+    `MANDATORY_PIPELINE` leaves the load. So does running the pin's
+    every-level pre-elaboration passes (`EliminateDeadSymbols`,
+    `InlineParametric`) over the program, though the bundled package is
+    precompiled without them. The pin's levels are recorded in
+    `docs/pre-elaboration-optimization-plan.md` §What Mojo does.
+  - Also seen: `Mem2Reg` directly after `lower-arg-conventions`, as the
+    pin runs it at every level, makes concrete MIR fail to verify. One
+    `Pointer` instance is spelled two ways (`Span$mono$Vfalse$TPointer$UInt8`
+    bound to a slot of `Span$mono$Vfalse$TPointer$Vfalse$UInt8`). That is
+    the elaborator rebuilding an instance's identity from unified bindings,
+    which `docs/call-application-plan.md` removes. Do not add that pass
+    here.
   - Probe: the fixture above with `MOJITO_PRE_ELABORATION=0` and
-    `--backend pliron`.
+    `--backend pliron`, or `mojito compile --backend pliron --emit ll`,
+    whose verifier error lists each failing call.
+  - A pin probe must compile a fresh copy of the source: `mojo` caches
+    compilations.
   - Found while landing R2160.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2440 With the pre-elaboration pipeline off, the VM rejects a
-  bundled `Pointer` initializer's omitted argument**
+- [ ] **R2440 With the pre-elaboration pipeline off, the elaborator
+  finds two solutions for a `Pointer` initializer's `mut`**
 
-  With `MOJITO_PRE_ELABORATION=0`, even `print(1)` fails with "vm backend
-  does not support default/keyword/variadic arguments yet (call passed 1
-  args to 2-parameter function 'Pointer.__init__$ov$LitRef…')", where the
-  default pipeline prints `1`.
-  - Every `pre_elaboration::*` corpus trial fails the same way, 161 of
-    them in the `scripts/focused` list, since the standard library's
-    printing builds a `Pointer` through its `_mlir_value=` initializer.
-  - Probe: on 2026-11-21 the same trials stop earlier, at elaboration:
-    "in `VariadicList.__deinit__`: unsupported monomorphizing
-    `Pointer.unsafe_mut_cast` return: expected `Pointer[target_mut, T,
-    address_space]`, found `Pointer[UInt8, origin#1]`"
-    (`pre_elaboration::pliron_closure_env`).
-  - Probe: on 2026-11-22 `pre_elaboration::lit_ref_of_reference_result`
-    and `pre_elaboration::lit_ref_struct_field_initializer` stop at
-    elaboration: "unsupported monomorphizing `Pointer.__init__$ov$LitRef…`:
-    conflicting solutions for `mut`".
-  - Probe: on 2026-11-22, before and after R2511, `scripts/focused`
-    fails `pre_elaboration::{ctfe_dict_set_result,
-    comptime_for_borrowing_iterator, simd_symbolic_surface,
-    bool_declared_members}` at elaboration: a CTFE call of
-    `Pointer.__getitem__` "produced" its pointee value (`Simd { … }`,
-    `Int(0)`) where a reference result is expected.
-  - The bundled `Pointer` initializers run their declared bodies, and
-    the call omits a defaulted argument that only the pipeline's passes
-    fill or remove.
-  - Lever: fill the omitted default at the call before lowering, as the
-    pipeline-on build ends up doing, so the switch changes no behavior.
-  - Probe: `scripts/focused --filter lambda_hof`, or any program run
-    with the variable set.
+  With `MOJITO_PRE_ELABORATION=0`,
+  `assets/ok/lit_ref_of_reference_result.mojo` and
+  `assets/ok/lit_ref_struct_field_initializer.mojo` stop at elaboration
+  with "unsupported monomorphizing
+  `Pointer.__init__$ov$Ref$T$AnyType$asaddress$u5F$space$kw$_mlir_value`:
+  conflicting solutions for `mut`: `false` … and `true`", where the
+  pipeline-on run prints the fixture's output.
+  - The elaborator re-solves the callee's bindings by unifying types
+    (`native/mono/unify.rs`) instead of reading the check's. With the
+    pipeline on, the inliner splices the call away first.
+  - It is the acceptance probe of `docs/call-application-plan.md`: once
+    every call records its full parameter application and the elaborator
+    substitutes it, the conflict cannot arise.
+  - On 2026-11-26 `print(1)` and the entry's other former probes
+    (`lambda_hof`, `ctfe_dict_set_result`, `comptime_for_borrowing_iterator`,
+    `simd_symbolic_surface`, `bool_declared_members`, `pliron_closure_env`)
+    print the same with the pipeline on and off.
+  - Probe: the two fixtures above with `MOJITO_PRE_ELABORATION=0`.
   - Found while landing R2428 (2026-11-20).
-  - Depends on nothing.
+  - Depends on R2626 (the record) and R2628 (substitution).
   - Model: Opus, Not Planned.
 
 - [ ] **R1731 A callee with a callable compile-time parameter, or a

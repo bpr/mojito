@@ -469,21 +469,13 @@ const fn on_off(run: bool) -> &'static str {
     if run { "on" } else { "off" }
 }
 
-/// The fixtures the pre-elaboration pipeline itself decides, as upstream's
-/// always runs: without it, a run differs or does not elaborate by design,
-/// so only the run with it is checked.
+/// The fixtures the pre-elaboration pipeline itself decides: the pin's
+/// output for each differs between `mojo run -O0` and `mojo run`, since it
+/// runs `RemoveUnusedParams` only at `-O2` and above, so only the run with
+/// the pipeline is checked.
 const PIPELINE_DECIDES: &[&str] = &[
     // `RemoveUnusedParams` drops an unused argument's default, which prints.
     "unused_argument_instances",
-    // `RemoveUnusedParams` removes a forwarded parameter, so `10 // n` at
-    // `n == 0` is never elaborated.
-    "forwarded_parameter_instances",
-    // `RemoveUnusedParams` removes a callable parameter no body calls, so a
-    // capturing closure is never bound as a compile-time value.
-    "unread_callable_parameter_instances",
-    // `inline-parametric` folds the bound's witness, which closes the
-    // element of the method's own pack the requirement reads.
-    "trait_requirement_indexes_own_pack",
     // `RemoveUnusedParams` drops an unread `NoneType` default, so its failing
     // constraint is never elaborated.
     "parameter_default_none_application",

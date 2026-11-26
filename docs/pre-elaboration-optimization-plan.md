@@ -40,6 +40,27 @@ ElaborateGenerators
 'kgen.func' Pipelines: SROA, Mem2Reg, SCCP, Canonicalizer, CSEPass
 ```
 
+That tree is the default level. The pin's pipeline builder
+(`Mojo/lib/Compiler/Pipeline/Pipeline.cpp`, `buildGenerateLibraryPipeline`
+and `buildFirstOptPipeline`) gates the passes by optimization level:
+
+- At every level: `EliminateDeadSymbols`, one `InlineParametric`
+  (`nodebugOnly`) before elaboration, and after it `LowerArgConventions`,
+  `Mem2Reg`, `AutomaticInline`, and the guaranteed `SROA`, `Mem2Reg`, and
+  `Canonicalizer`.
+- At `-O1` and above: the generator `SROA`/`Mem2Reg`/`SCCP`/`Canonicalizer`
+  rounds and the second `InlineParametric`.
+- At `-O2` and above: `RemoveUnusedParams`.
+
+So `MOJITO_PRE_ELABORATION=0` is not the pin's `-O0`: the switch also drops
+the one `InlineParametric` and the post-elaboration promotions the pin
+always runs. A default that only `RemoveUnusedParams` keeps from being
+evaluated is evaluated at the pin's `-O0` too (`unused_argument_instances`
+prints `side`), so that difference is the pin's, not a defect. A pin probe
+of compile-time output must compile a fresh copy of the source: `mojo run`
+reuses a cached compilation, and a cached run prints nothing at compile
+time.
+
 So `SCCP` is always followed by a `Canonicalizer`: MLIR's `SCCP` replaces
 values it proves constant but never rewrites a terminator, and the
 `Canonicalizer` keeps the arm of an `hlcf.if` whose condition is now static

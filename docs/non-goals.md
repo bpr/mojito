@@ -255,6 +255,20 @@ one whose type is still a parameter, goes by address (`imm_mem`) until
 - Reopen only if a pin dump shows its IR generation emitting `imm_mem` for
   a concrete register-passable `read`.
 
+### An unused argument's default runs with the pipeline off
+
+With `MOJITO_PRE_ELABORATION=0`, a call that omits an argument its callee
+never reads still evaluates the default, so
+`assets/ok/unused_argument_instances.mojo` prints `side` (R2166). The pin
+does the same at `-O0`, because it runs `RemoveUnusedParams` only at `-O2`
+and above (`docs/pre-elaboration-optimization-plan.md` §What Mojo does).
+The `pre_elaboration::*` differential checks only the pipeline-on run of
+that fixture (`PIPELINE_DECIDES` in `tests/corpus_test.rs`).
+
+- Reopen only if the pin starts running `RemoveUnusedParams` at every
+  level, so that a fresh `mojo run -O0` of the fixture stops printing
+  `side`.
+
 ### Native SIMD: signed-zero min/max is unspecified
 
 Float `reduce_min` / `reduce_max` fold through `llvm.minnum` / `llvm.maxnum`,
