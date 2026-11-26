@@ -1,7 +1,7 @@
 //! The profile-to-pipeline table: the single owner of native optimization
 //! policy. Both profiles share the pliron cleanup stage (per-function
-//! mem2reg, dead block arguments, then DCE, run between module
-//! verifications by `compile`);
+//! punned-slot pinning, mem2reg, dead block arguments, then DCE, run
+//! between module verifications by `compile`);
 //! profiles diverge only at the LLVM stage, where `release` runs the pinned
 //! `default<O1>` pipeline through an external `opt` over emitted bitcode
 //! (pliron-llvm 0.17 keeps its raw `LLVMModuleRef` private, so the
@@ -10,8 +10,9 @@
 //! change and must update the snapshot tests below.
 
 use pliron::basic_block::BasicBlock;
-use pliron::builtin::op_interfaces::BranchOpInterface;
+use pliron::builtin::op_interfaces::{BranchOpInterface, OneResultInterface};
 use pliron::builtin::ops::ModuleOp;
+use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::graph::dominance::DomInfo;
 use pliron::irbuild::IRStatus;
@@ -21,7 +22,10 @@ use pliron::operation::Operation;
 use pliron::opts::dce::BlockArgRemoval;
 use pliron::pass::{AnalysisManager, NestedOpsPass, OpPass, Pass, PassResult, Passes};
 use pliron::printable::Printable;
+use pliron::r#type::{TypeHandle, Typed};
 use pliron::value::Value;
+use pliron_llvm::op_interfaces::PointerTypeResult;
+use pliron_llvm::ops::{AllocaOp, GepIndex, GetElementPtrOp, LoadOp, StoreOp};
 
 use super::{OptLevel, PlironError, PlironErrorKind};
 
@@ -53,6 +57,7 @@ impl Pipeline {
     ) -> Result<(), PlironError> {
         let mut module_passes = OpPass::<ModuleOp, Passes>::default();
         let mut per_func = Passes::default();
+        per_func.add_pass(OpPass::<pliron_llvm::ops::FuncOp, PinPunnedSlots>::default());
         per_func.add_pass(OpPass::<
             pliron_llvm::ops::FuncOp,
             pliron::opts::mem2reg::Mem2RegPass,
@@ -130,6 +135,62 @@ impl Pipeline {
     }
 }
 
+/// Keep each stack slot that a load or store accesses at a type other
+/// than its own in memory, as LLVM's `isAllocaPromotable` keeps it.
+///
+/// pliron-llvm 0.20.0's `LoadOp` and `StoreOp` report a promotable use
+/// whatever their access type, so its mem2reg forwards an `i64` stored
+/// into a slot to a `ptr` load from it — upstream's
+/// `Pointer(to=address).unsafe_bitcast[Pointer[...]]()[]`, an `Int` slot
+/// read as a pointer. Each such access addresses the slot through a
+/// zero-offset GEP instead, which is no promotable use, so the slot stays
+/// an alloca and the access reads or writes its bytes.
+#[derive(Default)]
+struct PinPunnedSlots;
+
+impl Pass for PinPunnedSlots {
+    fn name(&self) -> &'static str {
+        "pin-punned-slots"
+    }
+
+    fn run(
+        &mut self,
+        op: Ptr<Operation>,
+        ctx: &mut Context,
+        _analyses: &mut AnalysisManager,
+    ) -> pliron::result::Result<PassResult> {
+        let mut result = PassResult::default();
+        for alloca in allocas(op, ctx) {
+            let slot = alloca.get_result(ctx);
+            let element = alloca.result_pointee_type(ctx);
+            let punned: Vec<(Ptr<Operation>, usize)> = slot
+                .uses(ctx)
+                .into_iter()
+                .filter_map(|r#use| {
+                    let user = r#use.user_op();
+                    let index = r#use.find_index(ctx);
+                    let access = access_type(user, index, ctx)?;
+                    (access != element).then_some((user, index))
+                })
+                .collect();
+            if punned.is_empty() {
+                continue;
+            }
+            let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+            let view = GetElementPtrOp::new(ctx, slot, vec![GepIndex::Constant(0)], i8_ty);
+            view.get_operation()
+                .insert_after(ctx, alloca.get_operation());
+            let address = view.get_result(ctx);
+            for (user, index) in punned {
+                Operation::replace_operand(user, ctx, index, address);
+            }
+            result.ir_changed = IRStatus::Changed;
+        }
+        result.set_preserved::<DomInfo>();
+        Ok(result)
+    }
+}
+
 /// Erase each block argument nothing reads, to a fixpoint, as pliron's
 /// `DCEPass` would, before that pass runs.
 ///
@@ -168,6 +229,32 @@ impl Pass for EraseDeadBlockArgs {
         result.set_preserved::<DomInfo>();
         Ok(result)
     }
+}
+
+/// The `alloca`s in `op`'s regions.
+fn allocas(op: Ptr<Operation>, ctx: &Context) -> Vec<AllocaOp> {
+    op.deref(ctx)
+        .regions()
+        .flat_map(|region| region.deref(ctx).iter(ctx).collect::<Vec<_>>())
+        .flat_map(|block| block.deref(ctx).iter(ctx).collect::<Vec<_>>())
+        .filter_map(|op| Operation::get_op::<AllocaOp>(op, ctx))
+        .collect()
+}
+
+/// The type `user` reads or writes through its operand `index` when that
+/// operand is the address of a load or store, as mem2reg promotes one.
+fn access_type(user: Ptr<Operation>, index: usize, ctx: &Context) -> Option<TypeHandle> {
+    if let Some(load) = Operation::get_op::<LoadOp>(user, ctx) {
+        return (index == 0).then(|| load.get_operation().deref(ctx).get_type(0));
+    }
+    let store = Operation::get_op::<StoreOp>(user, ctx)?;
+    (index == 1).then(|| {
+        store
+            .get_operation()
+            .deref(ctx)
+            .get_operand(0)
+            .get_type(ctx)
+    })
 }
 
 /// The block arguments of `op`'s regions nothing reads that DCE may erase:
@@ -220,7 +307,12 @@ fn erase_block_arg(arg: Value, ctx: &mut Context) {
 /// [`Pipeline::describe`]. Kept adjacent to [`Pipeline::run_pliron_passes`],
 /// which constructs exactly this sequence.
 #[cfg(test)]
-const PLIRON_FUNCTION_PASSES: &[&str] = &["mem2reg", "erase-dead-block-args", "dce"];
+const PLIRON_FUNCTION_PASSES: &[&str] = &[
+    "pin-punned-slots",
+    "mem2reg",
+    "erase-dead-block-args",
+    "dce",
+];
 
 #[cfg(test)]
 mod tests {
@@ -419,7 +511,7 @@ mod tests {
     fn pliron_pipeline_snapshot_o0() {
         expect![[r"
             profile: O0
-            pliron function passes: mem2reg, erase-dead-block-args, dce
+            pliron function passes: pin-punned-slots, mem2reg, erase-dead-block-args, dce
             llvm opt pipeline: (none)
         "]]
         .assert_eq(&Pipeline::for_profile(OptLevel::O0).describe());
@@ -429,7 +521,7 @@ mod tests {
     fn pliron_pipeline_snapshot_release() {
         expect![[r"
             profile: release (alias: 1)
-            pliron function passes: mem2reg, erase-dead-block-args, dce
+            pliron function passes: pin-punned-slots, mem2reg, erase-dead-block-args, dce
             llvm opt pipeline: default<O1>
             opt argv template: opt -passes=default<O1> <bitcode> -o <bitcode>
         "]]

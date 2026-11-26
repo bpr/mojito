@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2619**.
+Next free ID: **R2621**.
 
 ## Ordered Work
 
@@ -1060,31 +1060,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Probe: `scripts/smoke --suites` reports the failure on master before
     R2321 landed.
   - Found while landing R2321 (2026-11-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2606 A pointer `Pointer(unsafe_from_address=)` builds fails LLVM
-  verification when its address is read or its pointee stored**
-
-  Natively, `Int(p)` of, or `p[] = v` through, a local `p` the declared
-  `unsafe_from_address=` initializer builds fails with "IR verification
-  failed … Expected operand type llvm.ptr, but found builtin.integer". A
-  read `p[]` runs, and the pin runs all three.
-  - The body is `self = Pointer(to=unsafe_from_address).unsafe_bitcast[type_of(self)]()[]`,
-    an `Int` slot read as a pointer.
-  - Probe: `print(Int(Pointer[Int, MutAnyOrigin](unsafe_from_address=4096)))`
-    prints `4096` at the pin and on the VM. Once fixed, it makes an
-    `assets/ok` fixture.
-  - Probe: `var p = Pointer[Int, origin_of(x)](unsafe_from_address=Int(Pointer(to=x)))`,
-    then `p[] = 7` and `print(x)`, prints `7` at the pin and on the VM;
-    add it to `assets/ok/pointer_unsafe_from_address.mojo` once fixed.
-  - Probe: a pointer stored through a `Pointer[Pointer[Int, o]]` view of
-    an `Int` slot (`Pointer(to=slot).unsafe_bitcast[Pointer[Int, origin_of(x)]]()[] = q`),
-    then `print(slot == Int(q))` and the pointer read back, prints `True`
-    and `7` at the pin and on the VM, and fails natively with "Op has
-    different operand types". Add it to
-    `assets/ok/pointer_unsafe_bitcast_layout.mojo` once fixed.
-  - Found while landing R2201 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13802,6 +13777,53 @@ residue found inside a task moves to the task that owns its fix.
   - Found while landing R2602 (2026-11-25).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2619 The VM's byte views have no arm for a `Tuple`, so a pointer
+  view of one is refused**
+
+  Problem: a typed read or write through a `Pointer.unsafe_bitcast` of a
+  tuple's address fails on the VM with "a byte view of `Tuple[Int, Int]`,
+  which the VM holds no bytes of", where the pin and native code read the
+  tuple's bytes.
+  - Cause: `VmBackend::aggregate` (`crates/mojito-vm/src/backend/vm/views.rs`)
+    lays out a struct and a `!pop.array`, but no `TyKind::Tuple`, which the
+    VM holds as a `Value::Tuple` of its elements, so neither the byte
+    codec (`encode_bytes`/`decode_bytes`) nor `leaves` can split it.
+  - Probe: `var t = (1, 2)`, then `print(Pointer(to=t).unsafe_bitcast[Int]()[] == 1)`,
+    prints `True` at the pin and natively, and the VM refuses it.
+  - Lever: an `Aggregate` arm for a tuple, its element offsets from
+    `LayoutCx::struct_layout` over the element types, and an
+    `Index` projection per element in `leaves`.
+  - Found while landing R2606 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2620 On the VM a pointer dereferenced straight through a
+  temporary pointer view reads `0`**
+
+  Problem: `view[][]`, a pointer read through a `Pointer[Pointer[T, o]]`
+  view of an `Int` slot and dereferenced in the same expression, reads `0`
+  on the VM, where the pin and native code read the pointee.
+  - Probe: `var x = 7; var q = Pointer(to=x); var slot = Int(q)`, then
+    `print(Pointer(to=slot).unsafe_bitcast[Pointer[Int, origin_of(x)]]()[][])`,
+    prints `7` at the pin and natively, and `0` on the VM. Reading the
+    pointer into a local first (`var back = …[]`, then `back[]`) prints
+    `7`, and so does the same chain when the function also names such a
+    view in a local.
+  - Probe: `Pointer(to=p).unsafe_bitcast[Int]()[] = Int(Pointer(to=y))`,
+    over `var p = Pointer(to=x)` and `var y = 9`, then `print(p[])`, prints
+    `9` at the pin and natively, and `0` on the VM. With the address taken
+    from a local `var qy = Pointer(to=y)` it prints `9`.
+  - Cause: not yet isolated. Both shapes decode an integer address into
+    a pointer (`VmBackend::address_value`,
+    `crates/mojito-vm/src/backend/vm/views.rs`) for a pointer that lives
+    only as a temporary of the statement; trace which frame and slot the
+    decoded `Value::PlacePointer` names against the pointer it encodes.
+  - Add the chained read to `pointer_in_int_slot` in
+    `assets/ok/pointer_unsafe_bitcast_layout.mojo` once fixed.
+  - Found while landing R2606 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R2202 `pop.string.address` gives a `Byte` pointer, where the pin's
   gives a `!kgen.pointer<scalar<si8>>`**

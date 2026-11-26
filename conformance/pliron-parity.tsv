@@ -1186,6 +1186,7 @@ assets/ok/pointer_unsafe_bitcast.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_bitcast_layout.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_bitcast_reinterpret.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_from_address.mojo	main	exe-differential	sanitized
+assets/ok/pointer_unsafe_from_address_literal.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_mut_cast.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_vocabulary.mojo	main	exe-differential	sanitized
 assets/ok/pointer_write_declared.mojo	main	exe-differential	sanitized

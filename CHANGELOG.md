@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Natively, a local read or written at a type other than its own now
+  reads and writes its bytes, as at the pin (R2606): `Int(p)` of, and
+  `p[] = v` through, a pointer `Pointer(unsafe_from_address=)` builds, a
+  pointer stored into an `Int` slot through a pointer view, and a local
+  `Int` read as `Float64` or a byte failed LLVM verification. pliron-llvm
+  0.20.0's mem2reg forwarded the slot's stored value to the access
+  whatever its type; a new `pin-punned-slots` pass ahead of it keeps such
+  a slot in memory, as LLVM's own mem2reg does.
+
 - A copy of a heap `String` now shares its buffer under an atomic
   reference count, as at the pin (R2604): `h.copy().unsafe_ptr() ==
   h.unsafe_ptr()`, a mutation of either copy reallocates first, and the

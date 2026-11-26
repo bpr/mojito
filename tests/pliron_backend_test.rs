@@ -399,6 +399,33 @@ def main():
     }
 }
 
+/// A local slot a load or store accesses at a type other than its own stays
+/// in memory, as LLVM's mem2reg keeps it: the `Int` slot upstream's
+/// `Pointer(unsafe_from_address=)` reads as a pointer is loaded as one, and
+/// a pointer stored through a `Pointer` view of an `Int` slot reads back as
+/// that slot's `Int`, where forwarding the stored value would mistype both.
+#[test]
+fn punned_slot_access_reads_its_bytes() {
+    const PUNNED: &str = r"
+def main():
+    print(Int(Pointer[Int, MutAnyOrigin](unsafe_from_address=4096)))
+    var x = 7
+    var q = Pointer(to=x)
+    var slot = 0
+    Pointer(to=slot).unsafe_bitcast[Pointer[Int, origin_of(x)]]()[] = q
+    print(slot == Int(q))
+";
+    let module = native_compile(PUNNED, &["main"]);
+    let ir = module.llvm_ir(OptLevel::O0).expect("LLVM conversion");
+    let main = llvm_function(&ir, "@mj_main(");
+    for needle in ["load ptr, ptr", "store ptr"] {
+        assert!(
+            main.contains(needle),
+            "a punned slot access is no `{needle}`:\n{main}"
+        );
+    }
+}
+
 /// An empty register-passable value passed by value is no physical
 /// parameter, and returned is `void`, as upstream lowers an empty
 /// register-passable `!kgen.struct` to a type holding no bits. A memory-only

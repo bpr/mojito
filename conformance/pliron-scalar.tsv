@@ -1185,6 +1185,7 @@ assets/ok/pointer_unsafe_bitcast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_bitcast_layout.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_bitcast_reinterpret.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_from_address.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_unsafe_from_address_literal.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_mut_cast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_write_declared.mojo	-	ineligible	no-scalar-entry-shape

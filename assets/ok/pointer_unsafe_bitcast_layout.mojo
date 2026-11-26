@@ -3,7 +3,8 @@
 # address, as upstream's `pop.pointer.bitcast` and a typed load or store do:
 # a struct's words read as bytes, a byte buffer's bytes read and written as
 # wider values and as a struct, a `Bool` byte read as `UInt8`, a pointer read
-# as its `Int` address, and a struct's bytes printed as text.
+# as its `Int` address, a pointer stored into an `Int` slot, a local read
+# and written at another scalar type, and a struct's bytes printed as text.
 from std.memory.alloc import unsafe_alloc
 
 
@@ -40,6 +41,40 @@ def pointer_words():
     var x = 5
     var p = Pointer(to=x)
     print(Pointer(to=p).unsafe_bitcast[Int]()[] == Int(p))
+
+
+def pointer_in_int_slot():
+    var x = 7
+    var q = Pointer(to=x)
+    var slot = 0
+    Pointer(to=slot).unsafe_bitcast[Pointer[Int, origin_of(x)]]()[] = q
+    print(slot == Int(q))
+    var back = Pointer(to=slot).unsafe_bitcast[Pointer[Int, origin_of(x)]]()[]
+    print(back[])
+
+
+def scalar_puns():
+    var a = 4607182418800017408
+    var f = Pointer(to=a).unsafe_bitcast[Float64]()[]
+    var one: Float64 = 1.0
+    var i = Pointer(to=one).unsafe_bitcast[Int]()[]
+    var w = 0
+    Pointer(to=w).unsafe_bitcast[Float64]()[] = 1.0
+    print(f == 1.0, i == a, w == a)
+    var h = 0x0102
+    var low = Pointer(to=h).unsafe_bitcast[UInt8]()[]
+    Pointer(to=h).unsafe_bitcast[UInt8]()[] = 9
+    var t = True
+    var tb = Pointer(to=t).unsafe_bitcast[UInt8]()[]
+    print(low == 2, h == 0x0109, tb == 1)
+    var bits: Int32 = 1065353216
+    var g = Pointer(to=bits).unsafe_bitcast[Float32]()[]
+    var pair = 0x0000000200000001
+    var lanes = Pointer(to=pair).unsafe_bitcast[SIMD[DType.int32, 2]]()[]
+    var x = 5
+    var p = Pointer(to=x)
+    var address = Pointer(to=p).unsafe_bitcast[Int]()[]
+    print(g == 1.0, lanes[1] == 2, address == Int(p))
 
 
 def struct_bytes():
@@ -115,6 +150,8 @@ def struct_text():
 def main():
     bool_bytes()
     pointer_words()
+    pointer_in_int_slot()
+    scalar_puns()
     struct_bytes()
     buffer_words()
     buffer_struct()

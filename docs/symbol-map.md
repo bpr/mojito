@@ -2247,8 +2247,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   IR/bitcode/object/exe via clang `--target`, runtime-archive discovery and
   linking, plus the `opt`-subprocess release pipeline),
   `backend/pliron/pipeline.rs` (the profile-to-pipeline table owning
-  optimization policy: the shared pliron cleanup stage, mem2reg, the
-  private `EraseDeadBlockArgs` that clears dead block arguments before DCE
+  optimization policy: the shared pliron cleanup stage, the private
+  `PinPunnedSlots` that keeps a slot a load or store accesses at another
+  type in memory before pliron-llvm 0.20.0's mem2reg would forward its
+  stored value regardless, mem2reg, the private `EraseDeadBlockArgs` that clears dead block arguments before DCE
   around pliron 0.20.0's double erasure (R1265), and DCE, and each
   profile's LLVM pipeline selection, snapshot-pinned),
   `backend/pliron/toolchain.rs` (`ResolvedToolchain`: PATH-resolved
