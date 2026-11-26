@@ -475,7 +475,7 @@ impl VmBackend {
                 .map(|(_, value)| value)
         };
         let (Some(Value::Pointer { allocation, offset }), Some(Value::Int(size))) =
-            (field("data"), field("size"))
+            (field(STRING_POINTER_FIELD), field(STRING_LENGTH_FIELD))
         else {
             return Err(RuntimeError::TypeError(
                 "vm: nominal String value is missing its byte buffer".to_string(),
@@ -568,26 +568,28 @@ impl VmBackend {
             .and_then(|(_, message)| self.nominal_string_text(message))
     }
 
-    /// Fill a nominal `String` skeleton from a literal's UTF-8 bytes: one
-    /// heap allocation holding width-1 `UInt8` scalars, sized exactly.
+    /// Fill a nominal `String` skeleton from a literal's UTF-8 bytes as the
+    /// library's owned form: a heap buffer of the length rounded up to 8
+    /// bytes, its capacity in 8-byte units flagged `FLAG_IS_REF_COUNTED`.
     pub(super) fn materialize_string_struct(
         &mut self,
         skeleton: Value,
         literal: &str,
     ) -> Result<Value, RuntimeError> {
         let bytes = literal.as_bytes();
-        let allocation = self.alloc_utf8_bytes(bytes)?;
+        let units = bytes.len().div_ceil(8);
+        let allocation = self.alloc_utf8_bytes(bytes, units * 8)?;
         let Value::Struct { name, mut fields } = skeleton else {
             unreachable!("string construction starts from a struct skeleton");
         };
         for (field, slot) in &mut fields {
             *slot = match field.as_str() {
-                "data" => Value::Pointer {
+                STRING_POINTER_FIELD => Value::Pointer {
                     allocation,
                     offset: 0,
                 },
-                "size" => Value::Int(bytes.len() as i64),
-                "cap" => Value::Int(bytes.len() as i64),
+                STRING_LENGTH_FIELD => Value::Int(bytes.len() as i64),
+                STRING_CAPACITY_FIELD => Value::Int(units as i64 | STRING_FLAG_IS_REF_COUNTED),
                 other => unreachable!("unexpected String field '{other}'"),
             };
         }
@@ -781,10 +783,11 @@ impl VmBackend {
         Ok(allocation)
     }
 
-    /// One heap allocation holding `bytes` as width-1 `UInt8` scalars, sized
-    /// exactly; returns its allocation id (offset 0 is the first byte).
-    fn alloc_utf8_bytes(&mut self, bytes: &[u8]) -> Result<u64, RuntimeError> {
-        let pointer = self.heap_alloc(bytes.len() as i64, 1)?;
+    /// One heap allocation of `capacity` slots whose first ones hold `bytes`
+    /// as width-1 `UInt8` scalars; returns its allocation id (offset 0 is the
+    /// first byte).
+    fn alloc_utf8_bytes(&mut self, bytes: &[u8], capacity: usize) -> Result<u64, RuntimeError> {
+        let pointer = self.heap_alloc(capacity as i64, 1)?;
         let Value::Pointer { allocation, .. } = pointer else {
             unreachable!("heap_alloc returns a pointer");
         };
@@ -840,3 +843,12 @@ fn is_empty_value(value: &Value) -> bool {
 
 /// The message field of upstream's `Error`.
 const ERROR_MESSAGE_FIELD: &str = "_error";
+
+/// The fields of the library `String`, upstream's names.
+const STRING_POINTER_FIELD: &str = "_ptr_or_data";
+const STRING_LENGTH_FIELD: &str = "_len_or_data";
+const STRING_CAPACITY_FIELD: &str = "_capacity_or_data";
+
+/// Mirrors the library's `String.FLAG_IS_REF_COUNTED`: set in the capacity
+/// field of a `String` that owns its heap buffer.
+const STRING_FLAG_IS_REF_COUNTED: i64 = 1 << 62;

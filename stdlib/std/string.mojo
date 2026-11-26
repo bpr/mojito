@@ -1,8 +1,9 @@
-# A self-hosted UTF-8 String.  `data` owns `size` initialized bytes in a
-# `cap`-byte allocation.  Construction from a literal is the compiler's
-# literal-to-struct bridge (the byte buffer is filled from the literal's
-# UTF-8 bytes at the call); every other operation is ordinary library code
-# over the byte buffer.  Slicing and the result APIs (`find`/`rfind`/
+# A self-hosted UTF-8 String in upstream's declared form: `_ptr_or_data`
+# holds `_len_or_data` initialized bytes, either a literal's static bytes
+# (no allocation, never freed or written) or a heap buffer the String owns,
+# whose capacity `_capacity_or_data` carries beside `FLAG_IS_REF_COUNTED`.
+# Every mutation goes through `unsafe_ptr_mut`, which copies a static string
+# out first.  Slicing and the result APIs (`find`/`rfind`/
 # `startswith`/`endswith`/`split`) work in byte offsets, like `byte_length`.
 #
 # `s[codepoint=i]` yields a `Codepoint` value carrying both the decoded
@@ -154,7 +155,7 @@ def _has_upper_mapping(
 
 def _append_scalar(mut out: String, scalar: Int):
     var text = Codepoint._encode_utf8(scalar)
-    out._append_bytes_of(text, 0, text.size)
+    out._append_bytes_of(text, 0, text.byte_length())
 
 
 # Append the uppercase mapping of `scalar` (the `width` bytes of `src` at
@@ -203,14 +204,14 @@ def _str_to_base_error(base: Int, str: String) -> String:
 def atol(str: String, base: Int = 10) raises -> Int:
     if base != 0 and (base < 2 or base > 36):
         raise Error("Base must be >= 2 and <= 36, or 0.")
-    var str_len = str.size
+    var str_len = str.byte_length()
     var start = 0
-    while start < str_len and str._is_posix_space_byte(Int(str.data[start])):
+    while start < str_len and str._is_posix_space_byte(Int(str._ptr_or_data[start])):
         start += 1
     if start >= str_len:
         raise Error(_str_to_base_error(base, str))
     var is_negative = False
-    var first = Int(str.data[start])
+    var first = Int(str._ptr_or_data[start])
     if first == 43 or first == 45:
         is_negative = first == 45
         start += 1
@@ -221,8 +222,8 @@ def atol(str: String, base: Int = 10) raises -> Int:
     if base == 0:
         if start == str_len - 1:
             real_base = 10
-        elif Int(str.data[start]) == 48:
-            var second = Int(str.data[start + 1])
+        elif Int(str._ptr_or_data[start]) == 48:
+            var second = Int(str._ptr_or_data[start + 1])
             if second == 98 or second == 66:
                 real_base = 2
                 start += 2
@@ -240,7 +241,7 @@ def atol(str: String, base: Int = 10) raises -> Int:
                 var was_underscore = False
                 var i = start + 1
                 while i < str_len:
-                    var b = Int(str.data[i])
+                    var b = Int(str._ptr_or_data[i])
                     if b == 95:
                         if was_underscore:
                             raise Error(_str_to_base_error(base, str))
@@ -251,12 +252,12 @@ def atol(str: String, base: Int = 10) raises -> Int:
                         was_underscore = False
                     i += 1
                 real_base = 10
-        elif Int(str.data[start]) >= 49 and Int(str.data[start]) <= 57:
+        elif Int(str._ptr_or_data[start]) >= 49 and Int(str._ptr_or_data[start]) <= 57:
             real_base = 10
         else:
             raise Error(_str_to_base_error(base, str))
-    elif start + 1 < str_len and Int(str.data[start]) == 48:
-        var second = Int(str.data[start + 1])
+    elif start + 1 < str_len and Int(str._ptr_or_data[start]) == 48:
+        var second = Int(str._ptr_or_data[start + 1])
         if (base == 2 and (second == 98 or second == 66)) or (
             base == 8 and (second == 111 or second == 79)
         ) or (base == 16 and (second == 120 or second == 88)):
@@ -271,7 +272,7 @@ def atol(str: String, base: Int = 10) raises -> Int:
     var trailing = str_len
     var was_underscore = not (has_prefix and (real_base == 2 or real_base == 8 or real_base == 16))
     while pos < str_len:
-        var b = Int(str.data[pos])
+        var b = Int(str._ptr_or_data[pos])
         if b == 95:
             if was_underscore:
                 raise Error(_str_to_base_error(base, str))
@@ -308,7 +309,7 @@ def atol(str: String, base: Int = 10) raises -> Int:
     if was_underscore or not found_digit:
         raise Error(_str_to_base_error(base, str))
     while trailing < str_len:
-        if not str._is_posix_space_byte(Int(str.data[trailing])):
+        if not str._is_posix_space_byte(Int(str._ptr_or_data[trailing])):
             raise Error(_str_to_base_error(base, str))
         trailing += 1
     return result
@@ -585,7 +586,7 @@ def _atof_lemire(significand: UInt64, q: Int) -> Float64:
 
 
 def atof(str: String) raises -> Float64:
-    if str.size == 0 or (str.size == 1 and Int(str.data[0]) == 46):
+    if str.byte_length() == 0 or (str.byte_length() == 1 and Int(str._ptr_or_data[0]) == 46):
         raise Error(_float_error(str))
     var whole = StringSpan(str)
     var trimmed = whole.strip()
@@ -689,39 +690,62 @@ struct String(
     Writable,
     Writer,
 ):
-    var data: Pointer[Byte, MutUntrackedOrigin]
-    var size: Int
-    var cap: Int
+    # Fields: the declared form of upstream's `String`. A buffer this String
+    # owns has `FLAG_IS_REF_COUNTED` set in `_capacity_or_data`, whose low
+    # bits hold its capacity in 8-byte units; with the flag clear the String
+    # is static, pointing at a literal's bytes it never frees or writes.
+    # Upstream's inline (SSO) form, which clobbers these fields with the
+    # string data, is not modeled.
+    var _ptr_or_data: Pointer[Byte, MutUntrackedOrigin]
+    var _len_or_data: Int
+    var _capacity_or_data: Int
 
-    # Copies the literal's static bytes into an owned buffer. `@implicit` lets
-    # a literal convert wherever the nominal String is expected.
+    # When FLAG_IS_REF_COUNTED is set, the string owns a mutable heap buffer.
+    # Upstream spells the width `bit_width_of[DType.int]()`; importing
+    # `std.sys.info`, which imports this module, stops packaging (R592).
+    comptime FLAG_IS_REF_COUNTED = 1 << (64 - 2)
+
     @inline(.nodebug)
-    @implicit
-    def __init__(out self, data: StringLiteral, /):
-        self.size = data.byte_length()
-        self.cap = self.size if self.size > 0 else 1
-        self.data = unsafe_alloc[Byte](self.cap)
-        var copied = external_call["memcpy", Pointer[UInt8, MutUntrackedOrigin]](
-            self.data, data.ptr(), UInt(self.size)
-        )
+    def __deinit__(deinit self):
+        self._drop_ref()
 
-    # Upstream's `StaticString` constructor. Upstream's borrows the static
-    # bytes without allocating; this `String` owns its buffer, so it copies.
+    # An empty static string over the empty literal's bytes; the first
+    # mutation allocates.
+    @inline(.nodebug)
+    def __init__(out self):
+        self = Self("")
+
+    @inline(.nodebug)
+    def __init__(out self, *, capacity_bytes: Int):
+        if capacity_bytes <= 0:
+            self = Self()
+        else:
+            self._capacity_or_data = (capacity_bytes + 7) >> 3
+            self._ptr_or_data = Self._alloc(self._capacity_or_data << 3)
+            self._len_or_data = 0
+            self._set_ref_counted()
+
+    # Does not allocate: the String refers to the span's static bytes.
     @inline(.nodebug)
     @implicit
     def __init__(out self, data: StaticString, /):
-        self.size = data.byte_length()
-        self.cap = self.size if self.size > 0 else 1
-        self.data = unsafe_alloc[Byte](self.cap)
-        var copied = external_call["memcpy", Pointer[UInt8, MutUntrackedOrigin]](
-            self.data, data._data, UInt(self.size)
-        )
+        self._len_or_data = data._size
+        self._ptr_or_data = data._data.unsafe_mut_cast[True]().unsafe_origin_cast[
+            MutUntrackedOrigin
+        ]()
+        self._capacity_or_data = 0
 
+    # Does not allocate: the String refers to the literal's static bytes.
+    # `@implicit` lets a literal convert wherever the nominal String is
+    # expected.
     @inline(.nodebug)
-    def __init__(out self):
-        self.size = 0
-        self.cap = 1
-        self.data = unsafe_alloc[Byte](self.cap)
+    @implicit
+    def __init__(out self, data: StringLiteral, /):
+        self._len_or_data = data.byte_length()
+        self._ptr_or_data = data.ptr().unsafe_mut_cast[True]().unsafe_origin_cast[
+            MutUntrackedOrigin
+        ]()
+        self._capacity_or_data = 0
 
     # Upstream's sequence of `Writable` arguments. Its body sizes the buffer
     # first; this writes through `VariadicPack._write_to` alone.
@@ -731,99 +755,143 @@ struct String(
         self = String()
         args._write_to(self, end=end, sep=sep)
 
-    # 2026-08 stabilization: pre-sized construction. Capacity is a real byte
-    # buffer here (the VM's literal/copy bridges manage their own storage).
-    @inline(.nodebug)
-    def __init__(out self, *, capacity_bytes: Int):
-        self.size = 0
-        self.cap = capacity_bytes if capacity_bytes > 0 else 1
-        self.data = unsafe_alloc[Byte](self.cap)
-
     # Length without initialization: the caller writes every byte in
     # `[0, length)` through `unsafe_ptr_mut()` before the text is read.
     @inline(.nodebug)
     def __init__(out self, *, unsafe_uninit_length: Int):
-        self.size = unsafe_uninit_length
-        self.cap = unsafe_uninit_length if unsafe_uninit_length > 0 else 1
-        self.data = unsafe_alloc[Byte](self.cap)
+        self = Self(capacity_bytes=unsafe_uninit_length)
+        self._set_byte_length(unsafe_uninit_length)
 
     # Upstream's constructor from a NUL-terminated UTF-8 pointer (a C string
     # a libc call returned): the bytes up to the terminator are copied.
     def __init__(out self, *, unsafe_from_utf8_ptr: Pointer[UInt8, _]):
-        self.size = Int(external_call["strlen", UInt](unsafe_from_utf8_ptr))
-        self.cap = self.size if self.size > 0 else 1
-        self.data = unsafe_alloc[Byte](self.cap)
+        var length = Int(external_call["strlen", UInt](unsafe_from_utf8_ptr))
+        self = Self(unsafe_uninit_length=length)
         # The source is usually C-owned memory (a `getenv`/`readdir`/`strerror`
         # result), so the bytes are copied by libc rather than read through
         # the provenance-guarded pointer loads.
         var copied = external_call["memcpy", Pointer[UInt8, MutUntrackedOrigin]](
-            self.data, unsafe_from_utf8_ptr, UInt(self.size)
+            self._ptr_or_data, unsafe_from_utf8_ptr, UInt(length)
         )
 
     # Upstream's validating constructor from UTF-8 bytes (a file read).
     def __init__(out self, *, from_utf8: Span[UInt8, _]) raises:
         if not _is_valid_utf8(from_utf8):
             raise Error("Cannot construct a String from invalid UTF-8 data")
-        self.size = len(from_utf8)
-        self.cap = self.size if self.size > 0 else 1
-        self.data = unsafe_alloc[Byte](self.cap)
+        var length = len(from_utf8)
+        self = Self(unsafe_uninit_length=length)
         var i = 0
-        while i < self.size:
-            self.data[i] = from_utf8[i]
+        while i < length:
+            self._ptr_or_data[i] = from_utf8[i]
             i += 1
 
+    # A static string stays static. Upstream shares an owned buffer under a
+    # reference count; this String copies it into a buffer of the same
+    # capacity.
     @inline(.nodebug)
     def __init__(out self, *, copy: Self):
-        self.size = copy.size
-        self.cap = copy.cap
-        self.data = unsafe_alloc[Byte](self.cap)
-        var i = 0
-        while i < copy.size:
-            self.data[i] = copy.data[i]
-            i += 1
+        self._ptr_or_data = copy._ptr_or_data
+        self._len_or_data = copy._len_or_data
+        self._capacity_or_data = copy._capacity_or_data
+        if self._is_ref_counted():
+            self._ptr_or_data = Self._alloc(copy.capacity_bytes())
+            var i = 0
+            while i < copy._len_or_data:
+                self._ptr_or_data[i] = copy._ptr_or_data[i]
+                i += 1
 
     def copy(self) -> Self:
         return String(copy: self)
 
     def __init__(out self, *, deinit move: Self):
-        self.size = move.size
-        self.cap = move.cap
-        self.data = move.data^
+        self._ptr_or_data = move._ptr_or_data
+        self._len_or_data = move._len_or_data
+        self._capacity_or_data = move._capacity_or_data
 
     @inline(.nodebug)
-    def __deinit__(deinit self):
-        self.data.unsafe_free()
+    def capacity_bytes(self) -> Int:
+        if not self._is_ref_counted():
+            return self._len_or_data
+        return self._capacity_or_data << 3
+
+    @inline(.nodebug)
+    def _set_ref_counted(mut self):
+        self._capacity_or_data |= Self.FLAG_IS_REF_COUNTED
+
+    @inline(.nodebug)
+    def _is_ref_counted(self) -> Bool:
+        return Bool(UInt64(self._capacity_or_data) & UInt64(Self.FLAG_IS_REF_COUNTED))
+
+    # An owned buffer has no other reference (no shared buffers yet).
+    @inline(.nodebug)
+    def _is_unique(mut self) -> Bool:
+        return self._is_ref_counted()
+
+    @inline(.nodebug)
+    def _drop_ref(mut self):
+        if self._is_ref_counted():
+            self._ptr_or_data.unsafe_free()
+
+    @staticmethod
+    def _alloc(capacity: Int) -> Pointer[Byte, MutUntrackedOrigin]:
+        return unsafe_alloc[Byte](capacity)
 
     # 2026-08 stabilization: reserve at least the requested capacity; a
     # current capacity at or above it is a no-op.
     def reserve_bytes(mut self, new_capacity_bytes: Int, /):
-        if new_capacity_bytes <= self.cap:
+        if new_capacity_bytes <= self.capacity_bytes():
             return
-        var new_data = unsafe_alloc[Byte](new_capacity_bytes)
+        self._realloc_mutable(new_capacity_bytes)
+
+    # Moves the bytes into a new buffer that only this string owns. Growth at
+    # least doubles the capacity to avoid O(n^2) appends. A call that only
+    # un-shares the buffer keeps the capacity.
+    def _realloc_mutable(mut self, capacity: Int):
+        var byte_len = self.byte_length()
+        var old_capacity = self.capacity_bytes()
+        var target = old_capacity
+        if capacity > old_capacity:
+            target = old_capacity * 2
+            if target < capacity:
+                target = capacity
+        var new_capacity = (target + 7) >> 3
+        var new_ptr = Self._alloc(new_capacity << 3)
         var i = 0
-        while i < self.size:
-            # Move rather than read: a never-written byte (an
-            # `unsafe_uninit_length` slot) forwards its state instead of
-            # trapping on the VM.
-            new_data[i] = self.data.unsafe_offset(i).unsafe_take_pointee()
-            i += 1
-        self.data.unsafe_free()
-        self.data = new_data
-        self.cap = new_capacity_bytes
+        if self._is_ref_counted():
+            while i < byte_len:
+                # Move rather than read: a never-written byte (an
+                # `unsafe_uninit_length` slot) forwards its state instead of
+                # trapping on the VM.
+                new_ptr[i] = self._ptr_or_data.unsafe_offset(i).unsafe_take_pointee()
+                i += 1
+        else:
+            while i < byte_len:
+                new_ptr[i] = self._ptr_or_data[i]
+                i += 1
+        self._drop_ref()
+        self._len_or_data = byte_len
+        self._ptr_or_data = new_ptr
+        self._capacity_or_data = new_capacity
+        self._set_ref_counted()
 
     # No `__len__`: a UTF-8 length is ambiguous (upstream `@unavailable`);
     # spell the unit — `byte_length()`, `len(s.codepoints())`, or
     # `len(s.graphemes())`.
     def byte_length(self) -> Int:
-        return self.size
+        return self._len_or_data
+
+    # The caller guarantees the buffer holds `new_len` initialized bytes.
+    def _set_byte_length(mut self, new_len: Int):
+        self._len_or_data = new_len
 
     @inline(.nodebug)
     def __eq__(self, other: Self) -> Bool:
-        if self.size != other.size:
+        var length = self.byte_length()
+        if length != other.byte_length():
             return False
         var i = 0
-        while i < self.size:
-            if Int(self.data[i]) != Int(other.data[i]):
+        while i < length:
+            if Int(self._ptr_or_data[i]) != Int(other._ptr_or_data[i]):
                 return False
             i += 1
         return True
@@ -836,11 +904,12 @@ struct String(
     # selects this overload by the right operand's type.
     @inline(.nodebug)
     def __eq__(self, other: StringSpan) -> Bool:
-        if self.size != other._size:
+        var length = self.byte_length()
+        if length != other._size:
             return False
         var i = 0
-        while i < self.size:
-            if Int(self.data[i]) != Int(other._data[i]):
+        while i < length:
+            if Int(self._ptr_or_data[i]) != Int(other._data[i]):
                 return False
             i += 1
         return True
@@ -851,17 +920,17 @@ struct String(
 
     @inline(.nodebug)
     def __lt__(self, other: Self) -> Bool:
-        var shared = self.size
-        if other.size < shared:
-            shared = other.size
+        var shared = self.byte_length()
+        if other.byte_length() < shared:
+            shared = other.byte_length()
         var i = 0
         while i < shared:
-            if Int(self.data[i]) < Int(other.data[i]):
+            if Int(self._ptr_or_data[i]) < Int(other._ptr_or_data[i]):
                 return True
-            if Int(other.data[i]) < Int(self.data[i]):
+            if Int(other._ptr_or_data[i]) < Int(self._ptr_or_data[i]):
                 return False
             i += 1
-        return self.size < other.size
+        return self.byte_length() < other.byte_length()
 
     def __le__(self, other: Self) -> Bool:
         return not (other < self)
@@ -877,13 +946,14 @@ struct String(
         var lhs_len = len(lhs)
         var rhs_len = len(rhs)
         var result = String(unsafe_uninit_length=lhs_len + rhs_len)
+        var result_ptr = result.unsafe_ptr_mut()
         var i = 0
         while i < lhs_len:
-            result.data[i] = lhs[i]
+            result_ptr[i] = lhs[i]
             i += 1
         var j = 0
         while j < rhs_len:
-            result.data[lhs_len + j] = rhs[j]
+            result_ptr[lhs_len + j] = rhs[j]
             j += 1
         return result^
 
@@ -893,24 +963,27 @@ struct String(
     def __radd__(self, other: StringSlice[_]) -> String:
         return Self._add(other.as_bytes(), self.as_bytes())
 
-    def __iadd__(mut self, other: StringSpan):
-        var data = unsafe_alloc[Byte](self.size + other._size)
+    # Appends in place while the buffer has room; growth goes through
+    # `unsafe_ptr_mut`, which reallocates only a static or full buffer.
+    def _iadd(mut self, other: Span[Byte, _]):
+        var other_len = len(other)
+        if other_len == 0:
+            return
+        var old_len = self.byte_length()
+        var new_len = old_len + other_len
+        var dest = self.unsafe_ptr_mut(new_len).unsafe_offset(old_len)
         var i = 0
-        while i < self.size:
-            data[i] = self.data[i]
+        while i < other_len:
+            dest[i] = other[i]
             i += 1
-        var j = 0
-        while j < other._size:
-            data[self.size + j] = other._data[j]
-            j += 1
-        self.data.unsafe_free()
-        self.data = data
-        self.size = self.size + other._size
-        self.cap = self.size
+        self._set_byte_length(new_len)
+
+    def __iadd__(mut self, other: StringSpan):
+        self._iadd(other.as_bytes())
 
     @inline(.nodebug)
     def __bool__(self) -> Bool:
-        return self.size > 0
+        return self.byte_length() > 0
 
     def __mul__(self, n: Int) -> String:
         return StringSpan(self) * n
@@ -918,7 +991,7 @@ struct String(
     # `Writer` conformance: `s.write(a, b, ...)` appends each argument's
     # written text to this buffer (amortized doubling growth).
     def write_string(mut self, string: StringSpan):
-        self._append_bytes_of(string, 0, string.byte_length())
+        self._iadd(string.as_bytes())
 
     def write[*Ts: Writable](mut self, *args: *Ts):
         comptime for i in range(args.__len__()):
@@ -963,7 +1036,7 @@ struct String(
         var i = 0
         while i < len(elems):
             if i > 0:
-                result._append_bytes_of(self, 0, self.size)
+                result._append_bytes_of(self, 0, self.byte_length())
             result.write(elems[i])
             i += 1
         return result^
@@ -1028,23 +1101,24 @@ struct String(
     # `unsafe_ptr`, whose `Pointer[Byte, origin_of(self)]` R1155 stages).
     @__unsafe_nested_origins_read_only
     def as_bytes(ref self) -> Span[Byte, origin_of(self)]:
-        return Span[Byte, origin_of(self)](unsafe_ptr=self.unsafe_ptr(), length=self.size)
+        return Span[Byte, origin_of(self)](unsafe_ptr=self.unsafe_ptr(), length=self.byte_length())
 
     @inline(.nodebug)
     def unsafe_ptr(ref self) -> Pointer[Byte, origin_of(self)._get_owned_interior["bytes"]]:
-        return self.data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
+        return self._ptr_or_data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
 
-    # Upstream's mutable byte pointer: reserves `capacity` bytes first (0 is
-    # no growth) so the caller may write through the returned pointer.
+    # Upstream's mutable byte pointer to a buffer this String alone owns,
+    # holding at least `capacity` bytes (0 is no growth), so the caller may
+    # write through it: a static string is copied out first.
     def unsafe_ptr_mut(
         mut self, capacity: Int = 0
     ) -> Pointer[Byte, origin_of(self)._get_owned_interior["bytes"]]:
-        self.reserve_bytes(capacity)
-        return self.data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
-
-    @inline(.nodebug)
-    def capacity_bytes(self) -> Int:
-        return self.cap
+        var new_cap = self.capacity_bytes()
+        if capacity > new_cap:
+            new_cap = capacity
+        if not self._is_unique() or new_cap > self.capacity_bytes():
+            self._realloc_mutable(new_cap)
+        return self._ptr_or_data.unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
 
     # Upstream's C-string view: writes a NUL terminator past the text (the
     # byte is not part of the string and every mutation may overwrite it, so
@@ -1052,8 +1126,9 @@ struct String(
     # `c_char` bytes.
     @inline(.always)
     def as_c_string_slice(mut self) -> CStringSlice[origin_of(self)]:
-        self.reserve_bytes(self.size + 1)
-        self.data[self.size] = 0
+        var length = self.byte_length()
+        var ptr = self.unsafe_ptr_mut(capacity=length + 1)
+        ptr[length] = 0
         return CStringSlice(self)
 
     # `os.PathLike`: a String is its own filesystem path.
@@ -1066,11 +1141,12 @@ struct String(
     def resize(mut self, length: Int, fill_byte: UInt8 = 0):
         if Int(fill_byte) >= 128:
             _mojito_abort("Fill byte is the start of a multi-byte character.")
-        if length > self.size:
-            self.reserve_bytes(length)
-            var i = self.size
+        var old_len = self.byte_length()
+        if length > old_len:
+            var ptr = self.unsafe_ptr_mut(length)
+            var i = old_len
             while i < length:
-                self.data[i] = fill_byte
+                ptr[i] = fill_byte
                 i += 1
         elif not self._is_codepoint_boundary(length):
             var message = String()
@@ -1078,14 +1154,14 @@ struct String(
                 "String shrunk to length ", length, " which does not lie on a codepoint boundary."
             )
             _mojito_abort(message)
-        self.size = length
+        self._set_byte_length(length)
 
     # Grow leaving the new bytes uninitialized (written through
     # `unsafe_ptr_mut()`), or shrink to a codepoint boundary.
     def resize(mut self, *, unsafe_uninit_length: Int):
-        if unsafe_uninit_length > self.size:
+        if unsafe_uninit_length > self.capacity_bytes():
             self.reserve_bytes(unsafe_uninit_length)
-        elif not self._is_codepoint_boundary(unsafe_uninit_length):
+        elif unsafe_uninit_length < self.byte_length() and not self._is_codepoint_boundary(unsafe_uninit_length):
             var message = String()
             message.write(
                 "String shrunk to length ",
@@ -1093,10 +1169,10 @@ struct String(
                 " which does not lie on a codepoint boundary.",
             )
             _mojito_abort(message)
-        self.size = unsafe_uninit_length
+        self._set_byte_length(unsafe_uninit_length)
 
     def append(mut self, codepoint: Codepoint):
-        self._append_bytes_of(codepoint._text, 0, codepoint._text.size)
+        self._iadd(codepoint._text.as_bytes())
 
     # Numeric parsing through the free `atol`/`atof` (`Int(s)` / `Float64(s)`).
     def __int__(self) raises -> Int:
@@ -1145,21 +1221,14 @@ struct String(
     def removesuffix(self, suffix: StringSpan, /) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         return StringSpan(self).removesuffix(suffix)
 
-    # Append `count` bytes of `src` from byte offset `start`, doubling the
-    # capacity when the buffer is full. The result builders on `StringSpan`
-    # accumulate into a String through this.
+    # Append `count` bytes of `src` from byte offset `start` through
+    # `_iadd`. The result builders on `StringSpan` accumulate into a String
+    # through this.
     def _append_bytes_of(mut self, src: StringSpan, start: Int, count: Int):
-        var needed = self.size + count
-        if needed > self.cap:
-            var new_cap = self.cap * 2
-            if new_cap < needed:
-                new_cap = needed
-            self.reserve_bytes(new_cap)
-        var i = 0
-        while i < count:
-            self.data[self.size + i] = src._data[start + i]
-            i += 1
-        self.size = needed
+        var view = src
+        view._data = view._data.unsafe_offset(start)
+        view._size = count
+        self._iadd(view.as_bytes())
 
     # A borrowed view over bytes `[start, end)` of this buffer.
     def _byte_view(self, start: Int, end: Int) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
@@ -1187,9 +1256,9 @@ struct String(
     def __getitem__(self, *, byte: Int) raises -> Byte:
         if byte < 0:
             raise Error("String byte index out of range")
-        if byte >= self.size:
+        if byte >= self.byte_length():
             raise Error("String byte index out of range")
-        return self.data[byte]
+        return self._ptr_or_data[byte]
 
     # Codepoint and grapheme indexing and counting live on the view;
     # counting never raises (upstream), indexing raises on a bad index.
@@ -1250,8 +1319,8 @@ struct String(
     @inline(.always)
     def __getitem__(ref self, *, byte: ContiguousSlice) -> StringSpan[origin_of(self)._get_owned_interior["bytes"]]:
         var start = byte.start.or_else(0)
-        var end = byte.end.or_else(self.size)
-        check_slice_bounds(start, end, self.size)
+        var end = byte.end.or_else(self.byte_length())
+        check_slice_bounds(start, end, self.byte_length())
         if not self._is_codepoint_boundary(start):
             _mojito_abort("String byte slice endpoint is not a codepoint boundary")
         if not self._is_codepoint_boundary(end):
@@ -1278,22 +1347,19 @@ struct String(
     # Whether `offset` falls between UTF-8 sequences (or at either buffer
     # end): a continuation byte marks an interior position.
     def _is_codepoint_boundary(self, offset: Int) -> Bool:
-        if offset == 0 or offset == self.size:
+        if offset == 0 or offset == self.byte_length():
             return True
-        var b = Int(self.data[offset])
+        var b = Int(self._ptr_or_data[offset])
         if b < 128:
             return True
         return b >= 192
 
     def _with_bytes(self, start: Int, count: Int) -> Self:
-        var result = String("")
-        result.data.unsafe_free()
-        result.data = unsafe_alloc[Byte](count)
-        result.size = count
-        result.cap = count
+        var result = String(unsafe_uninit_length=count)
+        var dest = result.unsafe_ptr_mut()
         var i = 0
         while i < count:
-            result.data[i] = self.data[start + i]
+            dest[i] = self._ptr_or_data[start + i]
             i += 1
         return result^
 
@@ -1306,8 +1372,8 @@ struct String(
         var out = String("'")
         var run_start = 0
         var i = 0
-        while i < self.size:
-            var b = Int(self.data[i])
+        while i < self.byte_length():
+            var b = Int(self._ptr_or_data[i])
             if b == 92 or b == 39 or b == 10 or b == 9 or b == 13:
                 out._append_bytes_of(self, run_start, i - run_start)
                 if b == 92:
@@ -1322,7 +1388,7 @@ struct String(
                     out._append_bytes_of("\\r", 0, 2)
                 run_start = i + 1
             i += 1
-        out._append_bytes_of(self, run_start, self.size - run_start)
+        out._append_bytes_of(self, run_start, self.byte_length() - run_start)
         out._append_bytes_of("'", 0, 1)
         writer.write(out)
 
@@ -1370,34 +1436,29 @@ struct Codepoint(Comparable, ImplicitlyCopyable, Intable, Movable, Writable):
     # each.
     @staticmethod
     def _encode_utf8(scalar: Int) -> String:
-        var result = String("")
-        result.data.unsafe_free()
+        var width = 4
         if scalar < 0x80:
-            result.data = unsafe_alloc[Byte](1)
-            result.size = 1
-            result.cap = 1
-            result.data[0] = Byte(scalar)
+            width = 1
         elif scalar < 0x800:
-            result.data = unsafe_alloc[Byte](2)
-            result.size = 2
-            result.cap = 2
-            result.data[0] = Byte(192 + scalar // 64)
-            result.data[1] = Byte(128 + scalar % 64)
+            width = 2
         elif scalar < 0x10000:
-            result.data = unsafe_alloc[Byte](3)
-            result.size = 3
-            result.cap = 3
-            result.data[0] = Byte(224 + scalar // 4096)
-            result.data[1] = Byte(128 + (scalar // 64) % 64)
-            result.data[2] = Byte(128 + scalar % 64)
+            width = 3
+        var result = String(unsafe_uninit_length=width)
+        var dest = result.unsafe_ptr_mut()
+        if width == 1:
+            dest[0] = Byte(scalar)
+        elif width == 2:
+            dest[0] = Byte(192 + scalar // 64)
+            dest[1] = Byte(128 + scalar % 64)
+        elif width == 3:
+            dest[0] = Byte(224 + scalar // 4096)
+            dest[1] = Byte(128 + (scalar // 64) % 64)
+            dest[2] = Byte(128 + scalar % 64)
         else:
-            result.data = unsafe_alloc[Byte](4)
-            result.size = 4
-            result.cap = 4
-            result.data[0] = Byte(240 + scalar // 262144)
-            result.data[1] = Byte(128 + (scalar // 4096) % 64)
-            result.data[2] = Byte(128 + (scalar // 64) % 64)
-            result.data[3] = Byte(128 + scalar % 64)
+            dest[0] = Byte(240 + scalar // 262144)
+            dest[1] = Byte(128 + (scalar // 4096) % 64)
+            dest[2] = Byte(128 + (scalar // 64) % 64)
+            dest[3] = Byte(128 + scalar % 64)
         return result^
 
     @inline(.always)
@@ -1511,10 +1572,10 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
 
     @implicit
     def __init__(out self, ref [Self.origin] src: String):
-        self._data = src.data.unsafe_origin_cast[
+        self._data = src._ptr_or_data.unsafe_origin_cast[
             origin._get_owned_interior["bytes"]
         ]()
-        self._size = src.size
+        self._size = src.byte_length()
 
     # Upstream's implicit immutable view of any string span (upstream:
     # `other: StringSpan, out self: StringSpan[ImmOrigin(other.origin)]`).
@@ -1609,11 +1670,11 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return True
 
     def __eq__(self, rhs: String) -> Bool:
-        if self._size != rhs.size:
+        if self._size != rhs.byte_length():
             return False
         var i = 0
         while i < self._size:
-            if Int(self._data[i]) != Int(rhs.data[i]):
+            if Int(self._data[i]) != Int(rhs._ptr_or_data[i]):
                 return False
             i += 1
         return True
@@ -1948,14 +2009,11 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         return GraphemeSliceIter[ImmOrigin(Self.origin)](self)
 
     def to_string(self) -> String:
-        var result = String("")
-        result.data.unsafe_free()
-        result.data = unsafe_alloc[Byte](self._size)
-        result.size = self._size
-        result.cap = self._size
+        var result = String(unsafe_uninit_length=self._size)
+        var dest = result.unsafe_ptr_mut()
         var i = 0
         while i < self._size:
-            result.data[i] = self._data[i]
+            dest[i] = self._data[i]
             i += 1
         return result^
 
@@ -2174,7 +2232,7 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
             result._append_bytes_of(fillchar, 0, 1)
             i += 1
         result._append_bytes_of(self, 0, self._size)
-        while result.size < width:
+        while result.byte_length() < width:
             result._append_bytes_of(fillchar, 0, 1)
         return result^
 
@@ -2890,7 +2948,7 @@ struct CStringSlice[mut: Bool, //, origin: Origin[mut=mut]](
     var _data: Pointer[Byte, Self.origin._get_owned_interior["bytes"]]
 
     def __init__(out self, ref [Self.origin] src: String):
-        self._data = src.data.unsafe_origin_cast[
+        self._data = src._ptr_or_data.unsafe_origin_cast[
             origin._get_owned_interior["bytes"]
         ]()
 

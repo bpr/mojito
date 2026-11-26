@@ -54,6 +54,11 @@ use std::sync::Mutex;
 /// caller-owned buffer, and trap category 14 identifies Variant tag mismatch.
 pub const ABI_VERSION: u32 = 7;
 
+/// Set in an [`MjString`]'s `cap` field when the string owns `data`; the
+/// field's other bits are then the buffer's capacity in 8-byte units.
+/// Mirrors the library `String.FLAG_IS_REF_COUNTED`.
+pub const MJ_STRING_FLAG_IS_REF_COUNTED: i64 = 1 << 62;
+
 /// Trap categories understood by [`mjrt_trap`]. Values match the backend's
 /// trap numbering; the process exit code is `64 + category`.
 pub const TRAP_DIV_MOD_ZERO: u32 = 1;
@@ -91,8 +96,12 @@ pub struct MjStrDesc {
     pub len: u64,
 }
 
-/// The nominal `String` representation: `size` initialized bytes of UTF-8 in a
-/// `cap`-byte allocation obtained from [`mjrt_alloc`].
+/// The nominal `String` representation: `size` initialized bytes of UTF-8 at
+/// `data`.
+///
+/// With [`MJ_STRING_FLAG_IS_REF_COUNTED`] set in `cap`, `data` is an
+/// owned [`mjrt_alloc`] allocation of `(cap & !flag) * 8` bytes; without it
+/// the string is static, over bytes it never frees or writes.
 #[repr(C)]
 pub struct MjString {
     pub data: *mut u8,
@@ -558,8 +567,10 @@ pub unsafe extern "C" fn mjrt_trace(kind: u32, data: *const u8, len: u64) {
 /// Reads one line from stdin for the `input()` builtin, writing an
 /// [`MjString`] into `out`.
 ///
-/// `data` is a fresh [`mjrt_alloc`] allocation the caller owns, with `size ==
-/// cap ==` the line length after stripping the trailing `\n` (then `\r`).
+/// The string is owned: `data` is a fresh [`mjrt_alloc`] allocation of the
+/// line length rounded up to 8 bytes, which the caller owns, `cap` its 8-byte
+/// units flagged [`MJ_STRING_FLAG_IS_REF_COUNTED`], and `size` the line
+/// length after stripping the trailing `\n` (then `\r`).
 ///
 /// EOF yields size 0 with a valid header-only allocation, so every result is
 /// uniformly freeable and noninteractive runs never block. A read error traps
@@ -581,13 +592,14 @@ pub unsafe extern "C" fn mjrt_read_line(out: *mut u8) {
         }
     }
     let len = line.len();
-    let data = unsafe { mjrt_alloc(len as u64, 1) };
+    let units = len.div_ceil(8);
+    let data = unsafe { mjrt_alloc((units * 8) as u64, 1) };
     unsafe {
         std::ptr::copy_nonoverlapping(line.as_ptr(), data, len);
         out.cast::<MjString>().write_unaligned(MjString {
             data,
             size: len as i64,
-            cap: len as i64,
+            cap: units as i64 | MJ_STRING_FLAG_IS_REF_COUNTED,
         });
     }
 }

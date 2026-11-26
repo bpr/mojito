@@ -21,6 +21,13 @@ use crate::target::NativeTarget;
 /// inspectable data symbol [`ABI_VERSION_SYMBOL`].
 pub const MJRT_ABI_VERSION: u32 = 7;
 
+/// The flag the library `String` sets in an `MjString`'s `cap` field when
+/// it owns `data` (upstream's `String.FLAG_IS_REF_COUNTED`).
+///
+/// The field's other bits are then the buffer's capacity in 8-byte units. A
+/// `cap` without it is a static string over bytes no String frees or writes.
+pub const MJ_STRING_FLAG_IS_REF_COUNTED: i64 = 1 << 62;
+
 /// The exported `u32` data symbol carrying the runtime's ABI version.
 pub const ABI_VERSION_SYMBOL: &str = "mjrt_abi_version";
 
@@ -257,10 +264,11 @@ pub const RT_SYMBOLS: &[RtSig] = &[
         noreturn: false,
         since: 4,
         ownership: "borrows out (>= 24 writable bytes, caller-owned) and \
-                    writes an MjString whose data is a fresh mjrt_alloc \
-                    allocation the caller owns (size == cap == line length, \
-                    trailing \\n then \\r stripped); EOF yields size 0 with a \
-                    valid header-only allocation",
+                    writes an owned MjString: data is a fresh mjrt_alloc \
+                    allocation of size rounded up to 8 bytes the caller owns, \
+                    cap its 8-byte units flagged MJ_STRING_FLAG_IS_REF_COUNTED, \
+                    size the line length (trailing \\n then \\r stripped); EOF \
+                    yields size 0 with a valid header-only allocation",
         failure: "traps (stdin-failure) on a read error; EOF is not an error",
     },
 ];

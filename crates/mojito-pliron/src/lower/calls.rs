@@ -393,7 +393,7 @@ impl FnLowering<'_> {
                             dest,
                         ));
                     };
-                    self.default_argument_value(ctx, &default, &expected, owned, name, dest)?
+                    self.default_argument_value(ctx, &default, &expected, name, dest)?
                 }
             };
             lowered.push(value);
@@ -409,7 +409,6 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         default: &CheckedConst,
         expected: &LowerTy,
-        owned: bool,
         callee: &str,
         dest: Reg,
     ) -> Result<Value, PlironError> {
@@ -421,7 +420,7 @@ impl FnLowering<'_> {
             && let Some(text) = string_default_text(default)
         {
             if mojito_symbol::symbol::is_stdlib_string_struct(struct_name) {
-                return Ok(self.string_default_argument(ctx, text, owned, dest));
+                return Ok(self.string_default_argument(ctx, text, dest));
             }
             if mojito_symbol::symbol::is_stdlib_string_span_struct(struct_name) {
                 return Ok(self.string_span_default_argument(ctx, text, dest));
@@ -507,7 +506,6 @@ impl FnLowering<'_> {
         // Parameter 0 is the `out self` storage; the recorded literal fills the
         // single remaining slot. A zero-sized one (`NoneType`) has no operand.
         let params = signature.params.clone();
-        let owned_params = signature.owned_params.clone();
         let filled: Vec<usize> = (1..params.len())
             .filter(|index| params[*index].has_slot(false))
             .collect();
@@ -522,9 +520,7 @@ impl FnLowering<'_> {
         let storage = self.entry_alloca(ctx, layout.size, layout.align);
         let mut operands = vec![storage];
         for index in filled {
-            let owned = owned_params.get(index).copied().unwrap_or(false);
-            let value =
-                self.default_argument_value(ctx, arg, &params[index], owned, target, dest)?;
+            let value = self.default_argument_value(ctx, arg, &params[index], target, dest)?;
             operands.push(value);
         }
         self.emit_bound_call(ctx, dest, target, operands)?;
@@ -532,25 +528,15 @@ impl FnLowering<'_> {
     }
 
     /// The omitted-argument value of a `String` parameter whose default is a
-    /// literal: the nominal 24-byte struct over the interned text (borrowed
-    /// slot) or over a fresh heap copy the callee owns (owned slot).
-    fn string_default_argument(
-        &mut self,
-        ctx: &mut Context,
-        text: &str,
-        owned: bool,
-        dest: Reg,
-    ) -> Value {
+    /// literal: the static nominal String over the interned text, as the
+    /// library's literal constructor builds it, whichever the slot's
+    /// convention (an owned callee's destructor frees nothing).
+    fn string_default_argument(&mut self, ctx: &mut Context, text: &str, dest: Reg) -> Value {
         let global = self.shared.intern_string(ctx, text.as_bytes());
-        let mut data = self.global_address(ctx, &global, dest);
+        let data = self.global_address(ctx, &global, dest);
         let len = self.uint_constant(ctx, text.len() as u64);
-        if owned {
-            let copy = self.emit_alloc(ctx, len, 1, dest);
-            self.mem_copy_dynamic(ctx, copy, data, len, dest);
-            data = copy;
-        }
         let storage = self.entry_alloca(ctx, 24, 8);
-        self.store_string_fields(ctx, storage, data, len, len, dest);
+        self.store_static_string(ctx, storage, data, len, dest);
         storage
     }
 

@@ -305,7 +305,7 @@ impl FnLowering<'_> {
 
     /// Clone the value at `src_ptr` into `dst` — the VM's `clone_value`: a
     /// struct with a compiled `__copyinit__` runs it, the nominal String and
-    /// the built-in error duplicate their buffers, and any other aggregate is
+    /// the built-in error copy as [`Self::copy_string_into`], and any other aggregate is
     /// a byte copy whose fields with copy work of their own are then cloned in
     /// place, recursively. The caller owns `dst`; nothing is registered here.
     pub(super) fn fork_value_into(
@@ -317,21 +317,13 @@ impl FnLowering<'_> {
         src_ptr: Value,
         span: Reg,
     ) -> Result<(), PlironError> {
-        if let Some((name, _)) = ty.kind().as_non_simd_struct()
-            && mojito_symbol::symbol::is_stdlib_string_struct(name)
+        if ty.kind().is_error()
+            || ty
+                .kind()
+                .as_non_simd_struct()
+                .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
         {
-            let (src_data, src_size) = self.string_parts(ctx, src_ptr, span);
-            let src_cap = self.string_cap(ctx, src_ptr, span);
-            let new_data = self.emit_alloc(ctx, src_cap, 1, span);
-            self.mem_copy_dynamic(ctx, new_data, src_data, src_size, span);
-            self.store_string_fields(ctx, dst, new_data, src_size, src_cap, span);
-            return Ok(());
-        }
-        if ty.kind().is_error() {
-            let (src_data, src_size) = self.string_parts(ctx, src_ptr, span);
-            let new_data = self.emit_alloc(ctx, src_size, 1, span);
-            self.mem_copy_dynamic(ctx, new_data, src_data, src_size, span);
-            self.store_string_fields(ctx, dst, new_data, src_size, src_size, span);
+            self.copy_string_into(ctx, dst, src_ptr, span);
             return Ok(());
         }
         if let Some((name, _)) = ty.kind().as_non_simd_struct()

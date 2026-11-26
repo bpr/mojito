@@ -56,23 +56,16 @@ impl FnLowering<'_> {
                 self.emit_free(ctx, data.get_result(ctx));
                 Ok(())
             }
-            // A String's buffer and an error's message buffer both sit at
-            // offset 0 (MjString/MjError agree on the data-first layout).
+            // An error is its message String (MjError is one MjString).
             kind if kind.is_error() => {
-                let handle = ScalarTy::PTR.handle(ctx);
-                let data = LoadOp::new(ctx, ptr, handle);
-                self.append(ctx, data.get_operation(), None);
-                self.emit_free(ctx, data.get_result(ctx));
+                self.emit_string_buffer_release(ctx, ptr);
                 Ok(())
             }
             struct_ty
                 if let Some((name, _)) = struct_ty.as_non_simd_struct()
                     && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
-                let handle = ScalarTy::PTR.handle(ctx);
-                let data = LoadOp::new(ctx, ptr, handle);
-                self.append(ctx, data.get_operation(), None);
-                self.emit_free(ctx, data.get_result(ctx));
+                self.emit_string_buffer_release(ctx, ptr);
                 Ok(())
             }
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
@@ -169,6 +162,123 @@ impl FnLowering<'_> {
         let cap = LoadOp::new(ctx, cap_address, i64_handle);
         self.append(ctx, cap.get_operation(), Some(dest));
         cap.get_result(ctx)
+    }
+
+    /// Free the buffer of the nominal String (or the message of the
+    /// `MjError`) at `ptr` when the String owns it, as the library's
+    /// `_drop_ref`: a static String's capacity field lacks
+    /// `FLAG_IS_REF_COUNTED`, and `mjrt_free` of null is a no-op.
+    pub(super) fn emit_string_buffer_release(&mut self, ctx: &mut Context, ptr: Value) {
+        let ptr_handle = ScalarTy::PTR.handle(ctx);
+        let data = LoadOp::new(ctx, ptr, ptr_handle);
+        self.append(ctx, data.get_operation(), None);
+        let field_address = self.gep_byte_unspanned(ctx, ptr, 16);
+        let i64_handle = ScalarTy::Int.handle(ctx);
+        let field = LoadOp::new(ctx, field_address, i64_handle);
+        self.append(ctx, field.get_operation(), None);
+        let owned = self.string_owns_buffer(ctx, field.get_result(ctx), None);
+        let null = ZeroOp::new(ctx, ptr_handle);
+        self.append(ctx, null.get_operation(), None);
+        let target = SelectOp::new(ctx, owned, data.get_result(ctx), null.get_result(ctx));
+        self.append(ctx, target.get_operation(), None);
+        self.emit_free(ctx, target.get_result(ctx));
+    }
+
+    /// Copy the nominal String (or `MjError` message) at `src_ptr` into
+    /// `dst` as the library's `__init__(copy:)` does: a static String shares
+    /// its bytes, and an owned one copies them into a fresh buffer of the same
+    /// capacity. A static source allocates zero bytes (the runtime's
+    /// sentinel) and copies none.
+    pub(super) fn copy_string_into(
+        &mut self,
+        ctx: &mut Context,
+        dst: Value,
+        src_ptr: Value,
+        span: Reg,
+    ) {
+        let (src_data, src_size) = self.string_parts(ctx, src_ptr, span);
+        let field = self.string_cap(ctx, src_ptr, span);
+        let owned = self.string_owns_buffer(ctx, field, Some(span));
+        // The shift drops the flag bits, leaving the capacity in bytes.
+        let three = self.int_constant(ctx, 3);
+        let capacity = ShlOp::new_with_overflow_flag(ctx, field, three, no_overflow_flags());
+        self.append(ctx, capacity.get_operation(), Some(span));
+        let zero = self.int_constant(ctx, 0);
+        let alloc_bytes = SelectOp::new(ctx, owned, capacity.get_result(ctx), zero);
+        self.append(ctx, alloc_bytes.get_operation(), Some(span));
+        let new_data = self.emit_alloc(ctx, alloc_bytes.get_result(ctx), 1, span);
+        let count = SelectOp::new(ctx, owned, src_size, zero);
+        self.append(ctx, count.get_operation(), Some(span));
+        self.mem_copy_dynamic(ctx, new_data, src_data, count.get_result(ctx), span);
+        let data = SelectOp::new(ctx, owned, new_data, src_data);
+        self.append(ctx, data.get_operation(), Some(span));
+        self.store_string_fields(ctx, dst, data.get_result(ctx), src_size, field, span);
+    }
+
+    /// Store the static form of a nominal String over the `len` bytes at
+    /// `data`, which no String frees or writes: a capacity field of 0.
+    pub(super) fn store_static_string(
+        &mut self,
+        ctx: &mut Context,
+        storage: Value,
+        data: Value,
+        len: Value,
+        dest: Reg,
+    ) {
+        let field = self.int_constant(ctx, 0);
+        self.store_string_fields(ctx, storage, data, len, field, dest);
+    }
+
+    /// Store an owned nominal String holding a copy of the `len` bytes at
+    /// `src`, as the library's `_alloc` builds one: a fresh buffer of `len`
+    /// rounded up to 8 bytes, whose 8-byte units, flagged
+    /// `FLAG_IS_REF_COUNTED`, are the capacity field.
+    pub(super) fn store_owned_string_copy(
+        &mut self,
+        ctx: &mut Context,
+        storage: Value,
+        src: Value,
+        len: Value,
+        dest: Reg,
+    ) {
+        let seven = self.int_constant(ctx, 7);
+        let rounded = AddOp::new_with_overflow_flag(ctx, len, seven, no_overflow_flags());
+        self.append(ctx, rounded.get_operation(), Some(dest));
+        let three = self.int_constant(ctx, 3);
+        let units = LShrOp::new(ctx, rounded.get_result(ctx), three);
+        self.append(ctx, units.get_operation(), Some(dest));
+        let bytes =
+            ShlOp::new_with_overflow_flag(ctx, units.get_result(ctx), three, no_overflow_flags());
+        self.append(ctx, bytes.get_operation(), Some(dest));
+        let data = self.emit_alloc(ctx, bytes.get_result(ctx), 1, dest);
+        self.mem_copy_dynamic(ctx, data, src, len, dest);
+        let flag = self.int_constant(
+            ctx,
+            mojito_native::native::rt_abi::MJ_STRING_FLAG_IS_REF_COUNTED,
+        );
+        let field = OrOp::new(ctx, units.get_result(ctx), flag);
+        self.append(ctx, field.get_operation(), Some(dest));
+        self.store_string_fields(ctx, storage, data, len, field.get_result(ctx), dest);
+    }
+
+    /// Whether the nominal-String capacity `field` marks an owned buffer
+    /// (`FLAG_IS_REF_COUNTED` set), as an `i1`.
+    pub(super) fn string_owns_buffer(
+        &mut self,
+        ctx: &mut Context,
+        field: Value,
+        dest: Option<Reg>,
+    ) -> Value {
+        let flag = self.int_constant(
+            ctx,
+            mojito_native::native::rt_abi::MJ_STRING_FLAG_IS_REF_COUNTED,
+        );
+        let masked = AndOp::new(ctx, field, flag);
+        self.append(ctx, masked.get_operation(), dest);
+        let zero = self.int_constant(ctx, 0);
+        let owned = ICmpOp::new(ctx, ICmpPredicateAttr::NE, masked.get_result(ctx), zero);
+        self.append(ctx, owned.get_operation(), dest);
+        owned.get_result(ctx)
     }
 
     /// Store `{data, size, cap}` into nominal-String storage.

@@ -94,10 +94,11 @@ impl FnLowering<'_> {
     }
 
     /// Materialize the register a `raise` names as an owned `MjError` in
-    /// `storage`: a compile-time or borrowed message copies into a fresh
-    /// allocation, an owned runtime string or a String register MIR owns
-    /// (which the raise consumes) transfers its allocation, any other nominal
-    /// String copies its bytes, and an error value moves.
+    /// `storage`: a compile-time message is a static String over its
+    /// interned bytes, a runtime string copies into an owned buffer (freeing
+    /// one the raise consumes), a String register MIR owns (which the raise
+    /// consumes) moves, any other nominal String copies its bytes, and an
+    /// error value moves.
     pub(super) fn store_error_into(
         &mut self,
         ctx: &mut Context,
@@ -105,26 +106,14 @@ impl FnLowering<'_> {
         src: Reg,
     ) -> Result<(), PlironError> {
         if let Some(descriptor) = self.str_runtime.get(&src.0).copied() {
-            let data = if descriptor.owned {
-                descriptor.data
-            } else {
-                let data = self.emit_alloc(ctx, descriptor.len, 1, src);
-                self.mem_copy_dynamic(ctx, data, descriptor.data, descriptor.len, src);
-                data
-            };
-            self.store_string_fields(ctx, storage, data, descriptor.len, descriptor.len, src);
+            self.store_owned_string_copy(ctx, storage, descriptor.data, descriptor.len, src);
+            if descriptor.owned {
+                self.emit_free(ctx, descriptor.data);
+            }
             return Ok(());
         }
         if let Some(bytes) = self.string_constant(src) {
-            let len = bytes.len() as u64;
-            let len_value = self.uint_constant(ctx, len);
-            let data = self.emit_alloc(ctx, len_value, 1, src);
-            if len > 0 {
-                let global = self.shared.intern_string(ctx, &bytes);
-                let literal = self.global_address(ctx, &global, src);
-                self.mem_copy(ctx, data, literal, len, src);
-            }
-            self.store_string_fields(ctx, storage, data, len_value, len_value, src);
+            self.store_static_message(ctx, storage, &bytes, src);
             return Ok(());
         }
         match self.func.reg_types.get(&src.0).map(Ty::kind) {
@@ -134,16 +123,14 @@ impl FnLowering<'_> {
             {
                 let ptr = self.reg_ptr(ctx, src)?;
                 if self.mir_owned.contains(&src.0) {
-                    // An owned register the raise consumes transfers its
-                    // whole allocation.
+                    // An owned register the raise consumes moves, static or
+                    // owning its buffer.
                     let (data, size) = self.string_parts(ctx, ptr, src);
                     let cap = self.string_cap(ctx, ptr, src);
                     self.store_string_fields(ctx, storage, data, size, cap, src);
                 } else {
                     let (data, size) = self.string_parts(ctx, ptr, src);
-                    let copy = self.emit_alloc(ctx, size, 1, src);
-                    self.mem_copy_dynamic(ctx, copy, data, size, src);
-                    self.store_string_fields(ctx, storage, copy, size, size, src);
+                    self.store_owned_string_copy(ctx, storage, data, size, src);
                 }
                 Ok(())
             }
@@ -164,13 +151,7 @@ impl FnLowering<'_> {
                         .is_ok_and(|layout| layout.size == 0) =>
             {
                 let message = format!("{name}()").into_bytes();
-                let len = message.len() as u64;
-                let len_value = self.uint_constant(ctx, len);
-                let data = self.emit_alloc(ctx, len_value, 1, src);
-                let global = self.shared.intern_string(ctx, &message);
-                let literal = self.global_address(ctx, &global, src);
-                self.mem_copy(ctx, data, literal, len, src);
-                self.store_string_fields(ctx, storage, data, len_value, len_value, src);
+                self.store_static_message(ctx, storage, &message, src);
                 Ok(())
             }
             _ => Err(self.unsupported_reg(format!("raised value in register %r{}", src.0), src)),
@@ -371,5 +352,14 @@ impl FnLowering<'_> {
                     None,
                 )
             })
+    }
+
+    /// Store a compile-time `message` as the static String over its interned
+    /// bytes, as the library's literal constructor builds one.
+    fn store_static_message(&mut self, ctx: &mut Context, storage: Value, message: &[u8], at: Reg) {
+        let global = self.shared.intern_string(ctx, message);
+        let data = self.global_address(ctx, &global, at);
+        let len = self.uint_constant(ctx, message.len() as u64);
+        self.store_static_string(ctx, storage, data, len, at);
     }
 }

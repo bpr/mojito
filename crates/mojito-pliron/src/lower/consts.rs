@@ -475,12 +475,12 @@ impl FnLowering<'_> {
             (CtValue::Str(text), TyKind::Struct(name, _))
                 if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
+                // The static form over the interned bytes, as the library's
+                // literal constructor builds it.
                 let global = self.shared.intern_string(ctx, text.as_bytes());
                 let source = self.global_address(ctx, &global, dest);
                 let length = self.uint_constant(ctx, text.len() as u64);
-                let data = self.emit_alloc(ctx, length, 1, dest);
-                self.mem_copy_dynamic(ctx, data, source, length, dest);
-                self.store_string_fields(ctx, address, data, length, length, dest);
+                self.store_static_string(ctx, address, source, length, dest);
                 return Ok(());
             }
             // A function's symbol is the two-word callable a bare function

@@ -279,25 +279,38 @@ Rules:
   list of them is a private constant global `mjklist_<n>` of descriptors
   over the interned bytes.
 - The **nominal `String`** is its declared stdlib fields laid out by the
-  ordinary aggregate rules — `{ data: *mut u8, size: i64, cap: i64 }` (24/8),
-  the runtime's `MjString`. `data` is `size` initialized bytes of UTF-8 in a
-  `cap`-byte allocation obtained from `mjrt_alloc`.
+  ordinary aggregate rules — upstream's `{ _ptr_or_data: *mut u8,
+  _len_or_data: i64, _capacity_or_data: i64 }` (24/8), the runtime's
+  `MjString { data, size, cap }`. `data` holds `size` initialized bytes of
+  UTF-8 in one of two forms, told apart by `cap`:
+  - **owned**: `cap` has `MJ_STRING_FLAG_IS_REF_COUNTED` (bit 62,
+    upstream's `FLAG_IS_REF_COUNTED`) set and its other bits are the
+    capacity in 8-byte units; `data` is an `mjrt_alloc` allocation of that
+    many bytes, which the String frees;
+  - **static**: the flag is clear (`cap == 0`); `data` points at bytes the
+    String neither frees nor writes, such as an interned literal, and the
+    capacity reads as `size`. A mutation copies the bytes into an owned
+    buffer first.
 - A literal's `byte_length()` and `ptr()` read the descriptor: the interned
   constant's address and length for a compile-time literal, or a runtime
   descriptor's `data`/`len`. Every String and `StringSpan` constructor,
-  including the literal ones, compiles from its stdlib body: `String(literal)`
-  allocates `len` bytes and `memcpy`s from `ptr()`, and `StringSpan(literal)`
-  is the ordinary 16/8 aggregate `{ _data: *const u8, _size: i64 }` whose
-  `_data` is `ptr()`. A view owns no heap, so no release runs;
-  `mjrt_pointer_status` classifies the constant pool address as live.
-  `String.__deinit__` compiles from its real MIR (`Pointer.unsafe_free()`
-  lowers to `mjrt_free`).
+  including the literal ones, compiles from its stdlib body:
+  `String(literal)` is the static form over `ptr()` and allocates nothing,
+  and `StringSpan(literal)` is the ordinary 16/8 aggregate
+  `{ _data: *const u8, _size: i64 }` whose `_data` is `ptr()`. A view owns
+  no heap, so no release runs; `mjrt_pointer_status` classifies the
+  constant pool address as live. `String.__deinit__` compiles from its real
+  MIR, freeing an owned buffer only (`Pointer.unsafe_free()` lowers to
+  `mjrt_free`). A String the backend builds itself — a compile-time String
+  constant, a literal default or argument, a raised literal message — is
+  static over the interned bytes; a copy of runtime text is owned over a
+  buffer of its length rounded up to 8 bytes.
 
 ### Errors and exceptional control flow
 
 - The built-in error value is `MjError { message: MjString }` (24/8): the
-  message is `size` initialized bytes of UTF-8 in a `cap`-byte `mjrt_alloc`
-  allocation, owned by whoever holds the `MjError`.
+  message is a nominal `String` in either form above, owned by whoever holds
+  the `MjError`, whose release frees an owned message buffer only.
 - A `raises` function compiles as `void f(outcome*, params...)`: one
   prepended **outcome out-pointer** (caller-allocated, replacing the plain
   sret slot when the return type is an aggregate — a function never receives
@@ -487,7 +500,7 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | `mjrt_unhandled_error(data, len) -> !` | Borrows the raised UTF-8 message; reports `unhandled error: <message>` on stderr and exits `64 + 5`; runs no destructors. |
 | `mjrt_abort(data, len) -> !` | Borrows the abort's UTF-8 message; reports `abort: <message>` on stderr and exits `64 + 7`; runs no destructors. |
 | `mjrt_trace(kind, data, len)` | Borrows the UTF-8 payload; reports one ordered lifecycle event (`mjtrace <kind> <payload>`) on stderr. Emitted only by trace-instrumented builds, never by default emission; write errors are ignored so tracing cannot perturb behavior. Kinds: 1 drop, 2 consume, 3 cleanup, 4 raise, 5 catch. |
-| `mjrt_read_line(out)` | Borrows `out` (≥ 24 bytes) and writes an `MjString` whose `data` is a fresh caller-owned `mjrt_alloc` allocation (`size == cap ==` line length, trailing `\n` then `\r` stripped). EOF yields size 0 with a valid header-only allocation (uniformly freeable, never blocks noninteractive runs); a read error traps (category 6). |
+| `mjrt_read_line(out)` | Borrows `out` (≥ 24 bytes) and writes an owned `MjString`: `data` is a fresh caller-owned `mjrt_alloc` allocation of the line length rounded up to 8 bytes, `cap` its 8-byte units flagged `MJ_STRING_FLAG_IS_REF_COUNTED`, and `size` the line length (trailing `\n` then `\r` stripped). EOF yields size 0 with a valid header-only allocation (uniformly freeable, never blocks noninteractive runs); a read error traps (category 6). |
 
 Trap categories (shared with the backend's `TrapCategory` codes and exit
 codes `64 + category`): 1 div/mod by zero (exit 65), 2 `**` exponent range

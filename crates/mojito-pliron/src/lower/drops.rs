@@ -203,12 +203,9 @@ impl<'a> FnLowering<'a> {
     ) -> Result<(), PlironError> {
         match ty.kind() {
             // The library `Error` is its message `String`, laid out as the
-            // runtime's `MjError`: dropping it frees the message buffer.
+            // runtime's `MjError`: dropping it frees an owned message buffer.
             kind if kind.is_error() => {
-                let handle = ScalarTy::PTR.handle(ctx);
-                let data = LoadOp::new(ctx, ptr, handle);
-                self.append(ctx, data.get_operation(), None);
-                self.emit_free(ctx, data.get_result(ctx));
+                self.emit_string_buffer_release(ctx, ptr);
                 Ok(())
             }
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {

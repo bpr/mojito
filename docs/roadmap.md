@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2602**.
+Next free ID: **R2606**.
 
 ## Ordered Work
 
@@ -1395,6 +1395,24 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2605 The native backend copies a `String` itself instead of running
+  the library's copy constructor**
+
+  Problem: `copy_named_aggregate` (`crates/mojito-pliron/src/lower/pointers.rs`)
+  drops the nominal `String`'s `__init__(copy:)` and copies through
+  `copy_string_into` (`release.rs`), a second copy policy beside the
+  library's, where the VM runs the library constructor.
+  - AGENTS invariant 5: backends consume MIR rather than rediscover
+    language rules, so the copy should be the compiled constructor call.
+  - The bypass also reaches `fork_value_into` and the String-copy
+    reachability rules in `crates/mojito-pliron/src/lib.rs`
+    (`is_stdlib_string_type` and the copy-constructor edges near it).
+  - Probe: a `String.__init__(copy:)` body edit (a `print` in it) shows on
+    the VM and not natively.
+  - Found while landing R2600 (2026-11-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R18 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
@@ -1451,6 +1469,12 @@ change that needs a new `MJRT_ABI_VERSION`.
     next power of two of its 12-byte store size.
   - The fix aligns a multi-lane `SIMD` as its LLVM vector, which moves
     every struct layout holding one.
+  - R2600 changed `mjrt_read_line`'s contract without a version bump: its
+    `MjString` is now the library's owned form, `cap` the buffer's 8-byte
+    units flagged `MJ_STRING_FLAG_IS_REF_COUNTED` over a buffer rounded up
+    to 8 bytes (`docs/native-abi.md` §The runtime library).
+  - An older runtime's `cap == size` reads as a static String, which is
+    never freed. The bump records that rule change too.
   - A later task that needs an ABI bump joins this entry rather than
     getting its own.
   - The signature classification changes the native calling convention itself,
@@ -3826,6 +3850,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     imports `List`, whose `List(iterable)` imports `rebind_var`. The module
     imports `std.memory.memory` instead; restore upstream's import when
     this lands.
+  - Probe: `stdlib/std/string.mojo` importing `std.sys.info.bit_width_of`
+    for `String.FLAG_IS_REF_COUNTED` stops packaging with "not a
+    compile-time Int constant: not an associated comptime expression":
+    `std.sys.info` imports `std.string`. The flag spells the width `64`;
+    restore upstream's `bit_width_of[DType.int]()` when this lands.
   - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -13203,21 +13232,55 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2600 `String` keeps no inline storage, so a view over a short
-  string dangles at an append the pin's survives**
+- [ ] **R2603 `String` has no inline (SSO) form, so a short string reallocates
+  where the pin's writes in place**
 
-  Problem: `for g in s: s += "!"; print(g)` over `var s = String("abc")`
+  Problem: `var s = String("ab") + "c"` then `for g in s: s += "!!!"; print(g)`
   prints `a`, `b`, `c` at the pin and traps in the VM with "use after
-  Pointer deallocation".
-  - Upstream's `String` holds up to `INLINE_CAPACITY` bytes inline
-    (`FLAG_IS_INLINE`), so appending to a short string writes in place and
-    a grapheme view over its bytes stays valid.
-  - The bundled `String` (`stdlib/std/string.mojo`) is `data`, `size`, and
-    `cap` over a heap buffer, so every growth reallocates.
-  - The loop's view names `origin_of(s)`, which excludes nothing, so the
-    program is accepted, as at the pin.
-  - Found while landing R1160 (2026-11-25).
-  - Depends on nothing.
+  Pointer deallocation" after `a`.
+  - Upstream's `String` holds up to `INLINE_CAPACITY` (23) bytes inside its
+    own three words (`FLAG_IS_INLINE`, `_inline_string`, the inline length
+    in the capacity field's top byte), so growth to 23 bytes never moves the
+    bytes a view reads.
+  - The bundled `String` (`stdlib/std/string.mojo`) has the static and owned
+    forms only, so the `+` result's 8-byte buffer reallocates at the second
+    append.
+  - The inline bytes are read through `Pointer(to=self).unsafe_bitcast[Byte]()`,
+    which the VM refuses (R2602).
+  - Probe: `String().capacity_bytes()` and `String(capacity_bytes=4).capacity_bytes()`
+    print `23 23` at the pin and `0 8` here.
+  - Probe: `String("abc")` grown to 21 bytes has capacity 23 at the pin and
+    24 here.
+  - The native bridges that build an owned String
+    (`store_owned_string_copy`, `copy_string_into`,
+    `emit_string_buffer_release` in `crates/mojito-pliron/src/lower/release.rs`)
+    and the VM's `materialize_string_struct` build the pin's inline form for
+    a short text once it exists.
+  - Found while landing R2600 (2026-11-25).
+  - Depends on R2602 (the VM's byte view of a struct).
+  - Model: Fable, Not Planned.
+
+- [ ] **R2604 `String` copies its heap buffer, where the pin's copy shares it
+  under a reference count**
+
+  Problem: `h.copy()` of a 26-byte heap `String` has the same `unsafe_ptr()`
+  as `h` at the pin and a different one here.
+  - Upstream's owned buffer carries an `Atomic[Int]` count at
+    `-REF_COUNT_SIZE` (`_alloc`, `_add_ref`, `_drop_ref`, `_is_unique`),
+    and `__init__(copy:)` shares the buffer, so a mutation of either copy
+    reallocates first.
+  - The bundled `String._is_unique` is `_is_ref_counted`, and its copy
+    constructor copies the bytes.
+  - The count is read through a bitcast of the byte buffer to
+    `Atomic[Int]`, which the VM refuses (R2602).
+  - Upstream also sets `FLAG_HAS_NUL_TERMINATOR` for a literal-built
+    String, so `as_c_string_span` need not reallocate one. The bundled
+    `as_c_string_slice` copies a static string out to write its NUL.
+  - The native owned-String bridges in `crates/mojito-pliron/src/lower/release.rs`
+    and `mjrt_read_line` must allocate the count header too.
+  - Found while landing R2600 (2026-11-25).
+  - Depends on R2602 (the VM's view of the count) and R2605 (the native
+    copy must run the library constructor that bumps the count).
   - Model: Fable, Not Planned.
 
 - [ ] **R1121 `Tuple` elements need not be `Movable`**
@@ -13596,6 +13659,28 @@ residue found inside a task moves to the task that owns its fix.
     `!kgen.pointer`s of different elements is refused the same way.
   - Found while landing R221 (2026-11-14).
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2602 The VM cannot view a value's storage at another layout**
+
+  Problem: the VM holds one typed `Value` per heap or frame slot, so a
+  `Pointer.unsafe_bitcast` that views a struct's words as bytes, or bytes as
+  a wider value, has nothing to read.
+  - R2201's lever reinterprets a scalar of one bit width as another of the
+    same width, and keeps refusing layouts that differ. This is the
+    differing-layout case.
+  - Native code runs every such view, as at the pin.
+  - Probe: upstream's inline `String` reads its bytes through
+    `Pointer(to=self).unsafe_bitcast[Byte]()` over the
+    `{Pointer, Int, Int}` struct (R2603).
+  - Probe: upstream's heap `String` keeps its reference count in the eight
+    bytes before its data, read through `unsafe_bitcast[Atomic[Int]]()` of
+    the byte buffer (R2604).
+  - The lever is a byte-addressed view of a slot range: reading or writing
+    a `Byte` through a struct view splits or rebuilds the field's value,
+    and a wider read through a byte buffer assembles its bytes.
+  - Found while landing R2600 (2026-11-25).
+  - Depends on R2201 (the same-width retype it extends).
   - Model: Fable, Not Planned.
 
 - [ ] **R2202 `pop.string.address` gives a `Byte` pointer, where the pin's

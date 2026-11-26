@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled `String` now has upstream's declared fields
+  (`_ptr_or_data`, `_len_or_data`, `_capacity_or_data`) and two of its
+  forms, as at the pin (R2600): a String built from a literal or a
+  `StaticString` refers to the literal's static bytes without allocating,
+  and an owned buffer carries `FLAG_IS_REF_COUNTED` with its capacity in
+  8-byte units. `+=` and the writers append in place within the capacity
+  and grow by doubling, rounded up to 8 bytes, so a grapheme view over
+  `String("abc")` survives `s += "!"` in the loop instead of trapping with
+  "use after Pointer deallocation", and `capacity_bytes()` matches the pin
+  for literals, `String(capacity_bytes=100)` (104), and growth. Upstream's
+  inline form (R2603) and shared buffers (R2604) are not modeled yet.
+
 - A reference returned through an origin binder now names the origin
   the selected getter's result has, and a return contract over a
   binder's owned interior keeps that interior, as at the pin (R2599,

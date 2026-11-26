@@ -157,8 +157,10 @@ impl FnLowering<'_> {
     /// Materialize a literal-shaped register as a nominal String for a
     /// String-typed parameter slot. The register's storage becomes the
     /// materialized struct (its first 16 bytes still read as the literal
-    /// descriptor): an owned parameter takes a fresh copy of the bytes,
-    /// which the callee destroys, and a borrowed one views them in place.
+    /// descriptor): a compile-time literal, or any text a borrowed parameter
+    /// views in place, is the static String the library's literal
+    /// constructor builds, and an owned parameter of runtime text takes an
+    /// owned copy of the bytes, which the callee destroys.
     pub(super) fn materialize_string_argument(
         &mut self,
         ctx: &mut Context,
@@ -166,14 +168,13 @@ impl FnLowering<'_> {
         owned: bool,
         dest: Reg,
     ) -> Result<Value, PlironError> {
-        let (mut data, len) = self.writer_argument_text(ctx, reg, false, dest)?;
-        if owned {
-            let copy = self.emit_alloc(ctx, len, 1, dest);
-            self.mem_copy_dynamic(ctx, copy, data, len, dest);
-            data = copy;
-        }
+        let (data, len) = self.writer_argument_text(ctx, reg, false, dest)?;
         let storage = self.entry_alloca(ctx, 24, 8);
-        self.store_string_fields(ctx, storage, data, len, len, dest);
+        if owned && !self.is_string_constant(reg) {
+            self.store_owned_string_copy(ctx, storage, data, len, dest);
+        } else {
+            self.store_static_string(ctx, storage, data, len, dest);
+        }
         self.cache_lazy(reg, storage);
         Ok(storage)
     }

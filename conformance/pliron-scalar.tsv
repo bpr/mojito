@@ -1456,6 +1456,7 @@ assets/ok/string_span_implicit_temporary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_span_literal.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_span_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_view_equality.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/string_view_survives_append.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/string_writable_sequence.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/stropping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_application_type_member_comparison.mojo	-	ineligible	no-scalar-entry-shape

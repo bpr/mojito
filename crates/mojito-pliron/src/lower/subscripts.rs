@@ -156,7 +156,7 @@ impl FnLowering<'_> {
                         ));
                     };
                     let default = default.clone();
-                    self.default_argument_value(ctx, &default, &expected, owned, &resolved, anchor)?
+                    self.default_argument_value(ctx, &default, &expected, &resolved, anchor)?
                 }
             };
             operands.push(value);

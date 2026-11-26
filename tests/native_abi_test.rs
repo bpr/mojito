@@ -152,6 +152,10 @@ fn runtime_type_layouts_match_the_contract_table() {
 #[test]
 fn abi_version_and_shared_constants_agree() {
     assert_eq!(mojito_runtime::ABI_VERSION, rt_abi::MJRT_ABI_VERSION);
+    assert_eq!(
+        mojito_runtime::MJ_STRING_FLAG_IS_REF_COUNTED,
+        rt_abi::MJ_STRING_FLAG_IS_REF_COUNTED
+    );
     assert_eq!(mojito_runtime::TRAP_DIV_MOD_ZERO, rt_abi::TRAP_DIV_MOD_ZERO);
     assert_eq!(mojito_runtime::TRAP_POW_EXPONENT, rt_abi::TRAP_POW_EXPONENT);
     assert_eq!(
