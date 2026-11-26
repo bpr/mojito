@@ -152,7 +152,7 @@ impl VmBackend {
         current: FrameId,
         current_variables: &[Value],
     ) -> Result<Value, RuntimeError> {
-        let size = self.layout_size(&view.view)?;
+        let size = self.access_size(&view.view)?;
         let mut bytes = vec![0; size as usize];
         for (index, leaf) in self.covered_leaves(view, size)? {
             let value =
@@ -178,7 +178,7 @@ impl VmBackend {
         current: FrameId,
         current_variables: &mut [Value],
     ) -> Result<(), RuntimeError> {
-        let size = self.layout_size(&view.view)?;
+        let size = self.access_size(&view.view)?;
         let mut bytes = vec![0; size as usize];
         self.encode_bytes(value, &view.view, &mut bytes)?;
         for (index, leaf) in self.covered_leaves(view, size)? {
@@ -369,6 +369,17 @@ impl VmBackend {
             .layout_of(ty)
             .map(|layout| layout.size as i64)
             .map_err(|error| unsupported(&format!("`{ty}` has no layout: {error}")))
+    }
+
+    /// The bytes a typed read or write at `ty` accesses, LLVM's store size
+    /// of the type the pin loads and stores: a `bool` vector's `<N x i1>`
+    /// packs into its leading `ceil(N / 8)` bytes and leaves the rest of
+    /// its layout untouched, and every other type accesses its whole size.
+    fn access_size(&self, ty: &Ty) -> Result<i64, RuntimeError> {
+        match crate::runtime::lane_shape(ty) {
+            Some((Dtype::Bool, width)) => Ok(width.div_ceil(8) as i64),
+            _ => self.layout_size(ty),
+        }
     }
 
     /// The layout context of the program running.

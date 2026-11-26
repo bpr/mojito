@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `SIMD[DType.bool, n]` in memory now packs its lanes one bit each,
+  lane 0 the low bit, natively as at the pin (R2610): a mask loads and
+  stores as its `<n x i1>`, where it stored a byte per lane, so
+  `Pointer(to=v).unsafe_bitcast[UInt8]()[]` over `(True, False, True,
+  True)` reads `13`, not `1`. On the VM, a typed read or write at a `bool`
+  vector through a byte view now touches only its leading `ceil(n / 8)`
+  bytes, so a view of a lone `UInt8` as `SIMD[DType.bool, 4]` no longer
+  traps.
+
 - Natively, a local read or written at a type other than its own now
   reads and writes its bytes, as at the pin (R2606): `Int(p)` of, and
   `p[] = v` through, a pointer `Pointer(unsafe_from_address=)` builds, a

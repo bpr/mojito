@@ -581,10 +581,11 @@ impl FnLowering<'_> {
         alloca.get_result(ctx)
     }
 
-    /// [`Self::entry_typed_alloca`] with an explicit alignment — a
-    /// multi-lane SIMD slot is typed at its storage vector but aligned like
-    /// one lane (the `LayoutCx` contract), not at the vector's preferred
-    /// alignment.
+    /// `count` elements of [`Self::entry_typed_alloca`]'s storage with an
+    /// explicit alignment — a multi-lane SIMD slot is typed at its vector
+    /// but aligned like one lane (the `LayoutCx` contract), not at the
+    /// vector's preferred alignment, and a `bool` one counts enough packed
+    /// vectors to span its layout size.
     #[allow(
         clippy::needless_pass_by_ref_mut,
         reason = "Op construction mutates the context"
@@ -593,11 +594,12 @@ impl FnLowering<'_> {
         &mut self,
         ctx: &mut Context,
         handle: TypeHandle,
+        count: u64,
         align: u64,
     ) -> Value {
         let entry = self.entry.expect("lowering is inside a function");
         let i64_int = IntegerType::get(ctx, 64, Signedness::Signless);
-        let attr = IntegerAttr::new(i64_int, APInt::from_u64(1, bw(64)));
+        let attr = IntegerAttr::new(i64_int, APInt::from_u64(count, bw(64)));
         let count = ConstantOp::new(ctx, Box::new(attr));
         let alloca = AllocaOp::new(ctx, handle, count.get_result(ctx), 0);
         alloca.set_alignment(ctx, align as u32);

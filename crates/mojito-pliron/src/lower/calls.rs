@@ -463,7 +463,7 @@ impl FnLowering<'_> {
                         self.checked_const_value(ctx, default, ScalarTy::of_dtype(dtype), dest)?;
                     let vector = self.simd_splat_value(ctx, lane, width, dest);
                     let storage = self.simd_storage_slot(ctx, dtype, width);
-                    self.simd_store_vector_to(ctx, storage, dtype, width, vector, dest);
+                    self.simd_store_vector_to(ctx, storage, dtype, vector, dest);
                     Ok(storage)
                 }
                 _ => Err(self.unsupported_reg(

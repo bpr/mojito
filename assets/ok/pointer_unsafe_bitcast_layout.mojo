@@ -2,7 +2,8 @@
 # another layout reads or writes the bytes the native layout puts at the
 # address, as upstream's `pop.pointer.bitcast` and a typed load or store do:
 # a struct's words read as bytes, a byte buffer's bytes read and written as
-# wider values and as a struct, a `Bool` byte read as `UInt8`, a pointer read
+# wider values and as a struct, a `Bool` byte read as `UInt8`, a `bool`
+# vector's lanes read and written as the bits the pin packs, a pointer read
 # as its `Int` address, a pointer stored into an `Int` slot, a local read
 # and written at another scalar type, and a struct's bytes printed as text.
 from std.memory.alloc import unsafe_alloc
@@ -35,6 +36,19 @@ def bool_bytes():
     var u: UInt8 = 0
     Pointer(to=u).unsafe_bitcast[Bool]()[] = True
     print(u)
+    var v = SIMD[DType.bool, 4](True, False, True, True)
+    var lanes = SIMD[DType.bool, 16](fill=True)
+    print(
+        Pointer(to=v).unsafe_bitcast[UInt8]()[],
+        Pointer(to=lanes).unsafe_bitcast[UInt16]()[],
+    )
+    var w: UInt32 = 6
+    print(Pointer(to=w).unsafe_bitcast[SIMD[DType.bool, 4]]()[])
+    var m: UInt8 = 0
+    Pointer(to=m).unsafe_bitcast[SIMD[DType.bool, 4]]()[] = SIMD[DType.bool, 4](
+        False, True, False, True
+    )
+    print(m)
 
 
 def pointer_words():

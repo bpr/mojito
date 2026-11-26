@@ -246,12 +246,15 @@ Rules:
   same layout over its case payload types, its tag the case index; upstream
   sizes that tag `u8`/`u16`/`u32` by case count (`docs/notes/enums.md`).
 - `SIMD[dtype, width]` with `width > 1` is a contiguous scalar aggregate of
-  `width` lanes (one byte per `bool` lane), aligned like one lane. Width-one
-  SIMD aliases retain their scalar ABI. This storage form is the only
-  ABI-visible representation: the Pliron backend computes on multi-lane
-  values as LLVM fixed vectors in SSA, so its vector loads and stores declare
-  the lane alignment and `bool` lanes convert between `<N x i1>` compute and
-  byte-per-lane storage at that boundary.
+  `width` lanes (sized one byte per `bool` lane, as the pin's `size_of`
+  is), aligned like one lane. Width-one SIMD aliases retain their scalar
+  ABI. This storage form is the only ABI-visible representation: the
+  Pliron backend computes on multi-lane values as LLVM fixed vectors in
+  SSA, so its vector loads and stores declare the lane alignment. A `bool`
+  vector loads and stores as the `<N x i1>` it computes as, which LLVM
+  packs one bit per lane, lane 0 the low bit, into the leading
+  `ceil(N / 8)` bytes, as the pin's does; the rest of its storage is
+  padding no access reads.
 - A **retained callable** (`TyKind::Func`) is the two-word value
   `{ invoke: ptr, env: ptr }` (16/8). `invoke` is a backend-interned thunk
   (`mjthunk_<n>`, outside the `mj_` mangle image); `env` points at the

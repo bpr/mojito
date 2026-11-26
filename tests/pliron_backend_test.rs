@@ -544,10 +544,10 @@ def write_bool(mut v: SIMD[DType.bool, 4], i: Int, x: Bool):
         &["write_int", "write_float", "write_bool"],
     );
     let ir = module.llvm_ir(OptLevel::O0).expect("LLVM conversion");
-    for (name, lane, storage_lane, alignment) in [
-        ("write_int", "i32", "i32", 4),
-        ("write_float", "float", "float", 4),
-        ("write_bool", "i1", "i8", 1),
+    for (name, lane, alignment) in [
+        ("write_int", "i32", 4),
+        ("write_float", "float", 4),
+        ("write_bool", "i1", 1),
     ] {
         let symbol = format!("@{}(", module.mangled_name(name).expect("entry symbol"));
         let body = llvm_function(&ir, &symbol);
@@ -564,7 +564,7 @@ def write_bool(mut v: SIMD[DType.bool, 4], i: Int, x: Bool):
             "{name}: vector, value, and index must be runtime operands:\n{body}"
         );
         for operation in ["load", "store"] {
-            let needle = format!("{operation} <4 x {storage_lane}>");
+            let needle = format!("{operation} <4 x {lane}>");
             let accesses: Vec<_> = body.lines().filter(|line| line.contains(&needle)).collect();
             assert!(!accesses.is_empty(), "{name}: missing {needle}:\n{body}");
             let align = format!(", align {alignment}");
@@ -576,18 +576,13 @@ def write_bool(mut v: SIMD[DType.bool, 4], i: Int, x: Bool):
             );
         }
         assert!(
-            !body.contains(&format!("store {storage_lane} ")),
+            !body.contains(&format!("store {lane} ")),
             "{name}: lane writes must store the updated vector:\n{body}"
         );
-        if lane == "i1" {
-            assert!(
-                body.contains("icmp ne <4 x i8>")
-                    && body.lines().any(|line| {
-                        line.contains("zext <4 x i1>") && line.contains("to <4 x i8>")
-                    }),
-                "Bool masks must cross byte-per-lane storage explicitly:\n{body}"
-            );
-        }
+        assert!(
+            !body.contains("x i8>"),
+            "{name}: Bool masks rest in memory as their packed `<4 x i1>`, as the pin's do:\n{body}"
+        );
     }
 }
 
@@ -1439,10 +1434,10 @@ mod native_abi_cross_checks {
                             .collect();
                         self.strukt(&fields)
                     }
-                    // Multi-lane SIMD storage is an *array* of lanes (lane
-                    // alignment, byte-per-lane Bool), never an LLVM vector
-                    // type: the backend computes in vectors but stores in
-                    // this shape.
+                    // Multi-lane SIMD storage is sized and aligned as an
+                    // *array* of lanes (lane alignment, a byte per Bool
+                    // lane, whose values pack as bits into the leading
+                    // bytes), never an LLVM vector type's own layout.
                     kind if kind.is_simd() => {
                         let (dtype, width) =
                             simd_shape(ty).expect("a layout test names a concrete SIMD type");

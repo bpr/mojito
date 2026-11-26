@@ -4,9 +4,10 @@
 //! Multi-lane values compute as LLVM fixed vectors (`<N x lane>`) in SSA and
 //! rest in lane-aligned storage between operations: the storage and call ABI
 //! stay the `LayoutCx` aggregate (`docs/native-abi.md`), so every vector
-//! load and store declares the *lane* alignment, Bool lanes convert between
-//! `<N x i1>` compute and byte-per-lane storage at that boundary, and
-//! width-one aliases stay scalars. A value's storage is touched at its base
+//! load and store declares the *lane* alignment, Bool lanes load and store
+//! as the `<N x i1>` they compute as, which LLVM packs one bit per lane into
+//! the storage's leading bytes as the pin's does, and width-one aliases stay
+//! scalars. A value's storage is touched at its base
 //! only by whole-vector typed loads and stores — pliron's mem2reg forwards
 //! a store to a load at the same pointer without comparing their types — so
 //! a lane read extracts from the loaded vector and a lane write inserts into
@@ -882,9 +883,7 @@ impl FnLowering<'_> {
             composed.layout.align.max(1),
         );
         for (index, (element, offset)) in elements.iter().zip(&composed.offsets).enumerate() {
-            let Some((dtype, width)) = simd_dims(element)
-                .and_then(|(dtype, width)| Some((dtype, usize::try_from(width).ok()?)))
-            else {
+            let Some((dtype, _)) = simd_dims(element) else {
                 return Err(self.unsupported_reg(
                     format!("an LLVM intrinsic struct element of type `{element}`"),
                     dest,
@@ -900,7 +899,7 @@ impl FnLowering<'_> {
                 self.gep_byte(ctx, storage, *offset, dest)
             };
             let element = extract.get_result(ctx);
-            self.simd_store_vector_to(ctx, address, dtype, width, element, dest);
+            self.simd_store_vector_to(ctx, address, dtype, element, dest);
         }
         self.reg_values.insert(dest.0, storage);
         Ok(())
@@ -943,8 +942,7 @@ impl FnLowering<'_> {
     }
 
     /// A multi-lane register's storage as its compute vector: one vector
-    /// load at the lane alignment; Bool lanes load as bytes and compare
-    /// non-zero into `<N x i1>`.
+    /// load at the lane alignment (Bool lanes as their packed `<N x i1>`).
     pub(super) fn simd_load_vector(
         &mut self,
         ctx: &mut Context,
@@ -965,23 +963,16 @@ impl FnLowering<'_> {
         width: usize,
         dest: Reg,
     ) -> Value {
-        let storage_ty = self.simd_storage_ty(ctx, dtype, width);
+        let vector_ty = self.simd_vector_ty(ctx, dtype, width);
         let align = self.simd_lane_layout(dtype).align as u32;
-        let load = LoadOp::new(ctx, ptr, storage_ty);
+        let load = LoadOp::new(ctx, ptr, vector_ty);
         load.set_alignment(ctx, align);
         self.append(ctx, load.get_operation(), Some(dest));
-        let value = load.get_result(ctx);
-        if dtype != Dtype::Bool {
-            return value;
-        }
-        let zero = self.lane_constant(ctx, Dtype::UInt8, 0, Some(width), dest);
-        let set = ICmpOp::new(ctx, ICmpPredicateAttr::NE, value, zero);
-        self.append(ctx, set.get_operation(), Some(dest));
-        set.get_result(ctx)
+        load.get_result(ctx)
     }
 
     /// Store a compute vector into fresh lane-aligned storage and define
-    /// `dest` as that storage (Bool lanes widen to bytes first). Nothing
+    /// `dest` as that storage. Nothing
     /// else may store through this slot at its base: mem2reg forwards a
     /// same-pointer store to a load without comparing their types.
     pub(super) fn simd_store_vector(
@@ -993,44 +984,42 @@ impl FnLowering<'_> {
         value: Value,
     ) {
         let storage = self.simd_storage_slot(ctx, dtype, width);
-        self.simd_store_vector_to(ctx, storage, dtype, width, value, dest);
+        self.simd_store_vector_to(ctx, storage, dtype, value, dest);
         self.reg_values.insert(dest.0, storage);
     }
 
-    /// Fresh storage for a multi-lane value: typed at its storage vector so
+    /// Fresh storage for a multi-lane value: typed at its vector so
     /// whole-value accesses stay promotable, aligned like one lane so the
-    /// slot keeps the `LayoutCx` shape.
+    /// slot keeps the `LayoutCx` shape. A Bool vector packs into fewer
+    /// bytes than its layout's byte per lane, so its slot counts enough
+    /// vectors to span that size, which a byte copy of the value moves.
     pub(super) fn simd_storage_slot(
         &mut self,
         ctx: &mut Context,
         dtype: Dtype,
         width: usize,
     ) -> Value {
-        let storage_ty = self.simd_storage_ty(ctx, dtype, width);
+        let vector_ty = self.simd_vector_ty(ctx, dtype, width);
         let lane = self.simd_lane_layout(dtype);
-        self.entry_typed_alloca_aligned(ctx, storage_ty, lane.align)
+        let count = if dtype == Dtype::Bool {
+            width.div_ceil(width.div_ceil(8)) as u64
+        } else {
+            1
+        };
+        self.entry_typed_alloca_aligned(ctx, vector_ty, count, lane.align)
     }
 
-    /// Store a compute vector into the lane-aligned storage at `ptr` (Bool
-    /// lanes widen to bytes first) — [`simd_load_vector_from`]'s counterpart.
+    /// Store a compute vector into the lane-aligned storage at `ptr` —
+    /// [`simd_load_vector_from`]'s counterpart.
     pub(super) fn simd_store_vector_to(
         &mut self,
         ctx: &mut Context,
         ptr: Value,
         dtype: Dtype,
-        width: usize,
         value: Value,
         anchor: Reg,
     ) {
-        let storage_ty = self.simd_storage_ty(ctx, dtype, width);
         let lane = self.simd_lane_layout(dtype);
-        let value = if dtype == Dtype::Bool {
-            let widened = ZExtOp::new_with_nneg(ctx, value, storage_ty, false);
-            self.append(ctx, widened.get_operation(), Some(anchor));
-            widened.get_result(ctx)
-        } else {
-            value
-        };
         let store = StoreOp::new(ctx, value, ptr);
         store.set_alignment(ctx, lane.align as u32);
         self.append(ctx, store.get_operation(), Some(anchor));
@@ -1039,8 +1028,6 @@ impl FnLowering<'_> {
     /// Move a whole multi-lane value between two lane-aligned storages as
     /// one typed vector load and store — `mem_copy`'s promotable
     /// counterpart, since a `memcpy` is a non-promotable use of both slots.
-    /// Bool lanes copy as bytes: a copy moves storage, so it must not round
-    /// trip through the `<N x i1>` compute mask.
     pub(super) fn simd_copy_storage(
         &mut self,
         ctx: &mut Context,
@@ -1050,9 +1037,9 @@ impl FnLowering<'_> {
         width: usize,
         anchor: Reg,
     ) {
-        let storage_ty = self.simd_storage_ty(ctx, dtype, width);
+        let vector_ty = self.simd_vector_ty(ctx, dtype, width);
         let align = self.simd_lane_layout(dtype).align as u32;
-        let load = LoadOp::new(ctx, src, storage_ty);
+        let load = LoadOp::new(ctx, src, vector_ty);
         load.set_alignment(ctx, align);
         self.append(ctx, load.get_operation(), Some(anchor));
         let store = StoreOp::new(ctx, load.get_result(ctx), dest);
@@ -1123,24 +1110,6 @@ impl FnLowering<'_> {
             self.convert_lane(ctx, source, lane_ty, value, dest)?
         };
         Ok(self.simd_splat_value(ctx, lane, width, dest))
-    }
-
-    /// The byte-per-lane storage type of a multi-lane value.
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
-    #[allow(
-        clippy::needless_pass_by_ref_mut,
-        reason = "Op construction mutates the context"
-    )]
-    fn simd_storage_ty(&mut self, ctx: &Context, dtype: Dtype, width: usize) -> TypeHandle {
-        let lane: TypeHandle = if dtype == Dtype::Bool {
-            IntegerType::get(ctx, 8, Signedness::Signless).into()
-        } else {
-            ScalarTy::of_dtype(dtype).handle(ctx)
-        };
-        VectorType::get(ctx, lane, width as u32, VectorTypeKind::Fixed).into()
     }
 
     fn simd_lane_layout(&self, dtype: Dtype) -> Layout {

@@ -1063,21 +1063,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2610 Natively a `SIMD[DType.bool, n]` in memory holds a byte per
-  lane, where the pin packs its lanes as bits**
-
-  Problem: `Pointer(to=v).unsafe_bitcast[UInt8]()` over
-  `v = SIMD[DType.bool, 4](True, False, True, True)` reads the bytes
-  `13 …` at the pin and on the VM, and `1 0 1 1` natively.
-  - `size_of[SIMD[DType.bool, 4]]()` is `4` at both, so `lane_layout` is
-    right. The store writes each lane to its own byte, where the pin's
-    LLVM `<4 x i1>` store packs them into the first byte.
-  - Add the multi-lane `bool` line to
-    `assets/ok/pointer_unsafe_bitcast_layout.mojo` once fixed.
-  - Found while landing R2602 (2026-11-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R2434 A reference MIR forms over a place drops the place's address
   space**
 
