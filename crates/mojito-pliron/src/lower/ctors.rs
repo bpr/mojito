@@ -111,12 +111,6 @@ impl FnLowering<'_> {
         place: &MirPlace,
     ) -> Result<(), PlironError> {
         let place = place.clone();
-        if matches!(place.proj.last(), Some(Proj::UninitPayload)) {
-            let mut storage_place = place.clone();
-            storage_place.proj.pop();
-            let (storage, _) = self.place_address(ctx, &storage_place, dest)?;
-            self.guard_uninit_present(ctx, storage, TrapCategory::UninitRead, dest)?;
-        }
         let (address, ty) = self.place_address(ctx, &place, dest)?;
         // A bare slot that holds an address by declaration (a `ref`
         // binding, a by-address parameter) re-borrows: its slot stores a

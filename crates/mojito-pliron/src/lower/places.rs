@@ -295,25 +295,19 @@ impl FnLowering<'_> {
                     address = self.offset_address(ctx, address, layout.payload_offset);
                     ty = selected;
                 }
+                // The payload is the storage's own bytes (upstream's
+                // `!pop.array<1, T>`). Stores through it overwrite raw: the
+                // old payload leaks by design, exactly the VM's
+                // `unsafe_write`.
                 Proj::UninitPayload => {
-                    let Some(element) = mojito_types::types::uninit_storage_element(&ty).cloned()
-                    else {
-                        return Err(self.unsupported_reg(
-                            format!("uninit-payload projection on `{ty}`"),
-                            dest,
-                        ));
-                    };
-                    let fields = self
-                        .layout
-                        .uninit_storage_layout(&element)
-                        .map_err(|error| {
-                            self.unsupported_reg(format!("uninit storage ({error})"), dest)
+                    ty = mojito_types::types::uninit_storage_element(&ty)
+                        .cloned()
+                        .ok_or_else(|| {
+                            self.unsupported_reg(
+                                format!("uninit-payload projection on `{ty}`"),
+                                dest,
+                            )
                         })?;
-                    offset += fields.offsets[1];
-                    // Stores through the payload overwrite raw — the old
-                    // payload leaks by design, exactly the VM's
-                    // `unsafe_write`. The enclosing Store marks presence.
-                    ty = element;
                 }
                 // The elaborator erases every rebound place's step and closes
                 // every symbolic field step.

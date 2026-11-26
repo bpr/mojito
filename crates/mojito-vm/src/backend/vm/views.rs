@@ -118,6 +118,12 @@ impl VmBackend {
                     (*index as i64 * self.layout_size(element)?, element.clone())
                 }
                 (RefProjection::Field(name), _) => self.field_slot(&narrowed.view, name)?,
+                (RefProjection::UninitPayload, _)
+                    if let Some(payload) =
+                        mojito_types::types::uninit_storage_element(&narrowed.view) =>
+                {
+                    (0, payload.clone())
+                }
                 (segment, _) => return Err(view_segment(segment, &narrowed.view)),
             };
             narrowed.byte += offset;
@@ -184,10 +190,11 @@ impl VmBackend {
         for (index, leaf) in self.covered_leaves(view, size)? {
             let mut encoded = vec![0; leaf.size as usize];
             // A value the write covers in part keeps its other bytes; one
-            // never written starts as zero bytes.
+            // never written, or uninitialized storage, starts as zero bytes.
             if (leaf.offset < 0 || leaf.offset + leaf.size > size)
                 && let Ok(held) =
                     self.read_leaf(&view.storage, index, &leaf.path, current, current_variables)
+                && !matches!(held, Value::UninitStorage(None))
             {
                 self.encode_bytes(&held, &leaf.ty, &mut encoded)?;
             }
@@ -294,6 +301,12 @@ impl VmBackend {
         }
         match (self.aggregate(ty)?, value) {
             (Aggregate::Held(field), value) => self.encode_bytes(value, &field, out),
+            (Aggregate::Uninit(payload), Value::UninitStorage(Some(value))) => {
+                self.encode_bytes(value, &payload, out)
+            }
+            (Aggregate::Uninit(_), Value::UninitStorage(None)) => Err(RuntimeError::TypeError(
+                "vm: read of uninitialized MaybeUninit storage".to_string(),
+            )),
             (Aggregate::Array(element, count), Value::Tuple(items)) if items.len() == count => {
                 let stride = self.layout_size(&element)? as usize;
                 for (index, item) in items.iter().enumerate() {
@@ -337,6 +350,9 @@ impl VmBackend {
         }
         match self.aggregate(ty)? {
             Aggregate::Held(field) => self.decode_bytes(bytes, &field),
+            Aggregate::Uninit(payload) => self
+                .decode_bytes(bytes, &payload)
+                .map(|value| Value::UninitStorage(Some(Box::new(value)))),
             Aggregate::Array(element, count) => {
                 let stride = self.layout_size(&element)? as usize;
                 (0..count)
@@ -400,6 +416,9 @@ impl VmBackend {
 
     /// How a composite `ty` holds its bytes.
     fn aggregate(&self, ty: &Ty) -> Result<Aggregate, RuntimeError> {
+        if let Some(payload) = mojito_types::types::uninit_storage_element(ty) {
+            return Ok(Aggregate::Uninit(payload.clone()));
+        }
         if let TyKind::PopArray { size, element } = ty.kind() {
             let count = size
                 .known()
@@ -450,7 +469,9 @@ impl VmBackend {
                 .find(|(field, _, _)| field == name)
                 .map(|(_, ty, offset)| (offset, ty))
                 .ok_or_else(|| unsupported(&format!("`{ty}` has no field `{name}`"))),
-            Aggregate::Array(..) => Err(unsupported(&format!("`{ty}` has no field `{name}`"))),
+            Aggregate::Array(..) | Aggregate::Uninit(_) => {
+                Err(unsupported(&format!("`{ty}` has no field `{name}`")))
+            }
         }
     }
 
@@ -499,7 +520,13 @@ impl VmBackend {
         if ty_size == 0 || base + ty_size <= 0 || base >= size {
             return Ok(());
         }
-        if crate::runtime::lane_shape(ty).is_some() || address_type_pointee(ty).is_some() {
+        // Uninit storage is one held value of its payload's bytes: a write
+        // initializes the whole payload, as a store into upstream's
+        // `!pop.array<1, T>` does.
+        if crate::runtime::lane_shape(ty).is_some()
+            || address_type_pointee(ty).is_some()
+            || mojito_types::types::uninit_storage_element(ty).is_some()
+        {
             leaves.push(Leaf {
                 path: path.clone(),
                 ty: ty.clone(),
@@ -509,7 +536,9 @@ impl VmBackend {
             return Ok(());
         }
         match self.aggregate(ty)? {
-            Aggregate::Held(field) => self.leaves(&field, base, size, path, leaves),
+            Aggregate::Held(field) | Aggregate::Uninit(field) => {
+                self.leaves(&field, base, size, path, leaves)
+            }
             Aggregate::Array(element, count) => {
                 let stride = self.layout_size(&element)?;
                 for index in 0..count {
@@ -700,6 +729,9 @@ struct Leaf {
 enum Aggregate {
     /// A struct held as its one field ([`StructDef::register_field`]).
     Held(Ty),
+    /// A `__UninitStorage` of a payload, held as a [`Value::UninitStorage`]
+    /// whose payload's bytes are its own (upstream's `!pop.array<1, T>`).
+    Uninit(Ty),
     /// A `!pop.array` of `count` elements, held as a [`Value::Tuple`].
     Array(Ty, usize),
     /// A struct's fields, with their byte offsets.
@@ -1006,6 +1038,27 @@ mod tests {
         assert_eq!(
             encode(&vm, &value, &padded),
             [255, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn uninit_storage_holds_its_payload_bytes() {
+        let vm = vm(&[]);
+        let storage = Ty::new(TyKind::Struct(
+            "__UninitStorage".to_string(),
+            vec![mojito_types::types::TyArg::Ty(Ty::int())],
+        ));
+        let held = Value::UninitStorage(Some(Box::new(Value::Int(7))));
+        assert_eq!(encode(&vm, &held, &storage), [7, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            vm.decode_bytes(&[9, 0, 0, 0, 0, 0, 0, 0], &storage)
+                .unwrap(),
+            Value::UninitStorage(Some(Box::new(Value::Int(9))))
+        );
+        let mut bytes = [0; 8];
+        assert!(
+            vm.encode_bytes(&Value::UninitStorage(None), &storage, &mut bytes)
+                .is_err_and(|error| error.to_string().contains("uninitialized MaybeUninit"))
         );
     }
 

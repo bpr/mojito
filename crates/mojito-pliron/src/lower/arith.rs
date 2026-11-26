@@ -439,23 +439,6 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// Trap when an inline uninit-storage presence bit is false.
-    pub(super) fn guard_uninit_present(
-        &mut self,
-        ctx: &mut Context,
-        storage: Value,
-        category: TrapCategory,
-        span: Reg,
-    ) -> Result<(), PlironError> {
-        let i1: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-        let flag = LoadOp::new(ctx, storage, i1);
-        self.append(ctx, flag.get_operation(), Some(span));
-        let absent = self.bool_constant(ctx, false);
-        let missing = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, flag.get_result(ctx), absent);
-        self.append(ctx, missing.get_operation(), Some(span));
-        self.emit_trap_guard(ctx, missing.get_result(ctx), category, span)
-    }
-
     /// The function's trap block for `category`: `mjrt_trap(code)` (which
     /// reports on stderr and exits `64 + code`) then `unreachable`, created on
     /// first use.

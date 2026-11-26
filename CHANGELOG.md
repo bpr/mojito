@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `MaybeUninit[T]` now has `T`'s layout on both backends, as upstream's
+  `!pop.array<1, T>` does (R2607): native code no longer lays a presence
+  flag before the payload, and the VM's byte views step through the
+  payload at offset 0. `Pointer(to=x).unsafe_bitcast[MaybeUninit[Int]]()[]
+  .unsafe_assume_init()` over `x = 5` prints `5` on both, where the VM
+  refused the view and native code read the flag, and a byte-offset write
+  into an uninitialized `MaybeUninit` (upstream's `write_niche` shape)
+  initializes the bytes it covers. Reading, taking, or destroying one
+  uninitialized still traps on the VM; natively it is undefined, as at the
+  pin.
+
 - A method or operator on a parameter typed by a conditional type (`x:
   Int if n > 0 else Float64`) now resolves, inside its generic body,
   through the traits both arms conform to, as at the pin (R2601):

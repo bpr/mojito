@@ -174,8 +174,9 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// `UninitStorage`: native presence bit plus inline payload. An `init`
-    /// payload moves in raw (the VM's `mem::replace`, no `__moveinit__`).
+    /// `UninitStorage`: the payload's own storage, upstream's
+    /// `!pop.array<1, T>`, left unwritten or moved into raw (the VM's
+    /// `mem::replace`, no `__moveinit__`).
     pub(super) fn lower_uninit_storage(
         &mut self,
         ctx: &mut Context,
@@ -200,16 +201,8 @@ impl FnLowering<'_> {
             return Ok(());
         }
         let storage = self.entry_alloca(ctx, layout.size, layout.align);
-        let fields = self
-            .layout
-            .uninit_storage_layout(&element)
-            .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
-        let initialized = self.bool_constant(ctx, init.is_some());
-        let flag_store = StoreOp::new(ctx, initialized, storage);
-        self.append(ctx, flag_store.get_operation(), Some(dest));
         if let Some(src) = init {
-            let payload = self.offset_address(ctx, storage, fields.offsets[1]);
-            self.store_to(ctx, payload, &element, src)?;
+            self.store_to(ctx, storage, &element, src)?;
         }
         self.reg_values.insert(dest.0, storage);
         Ok(())
@@ -224,18 +217,8 @@ impl FnLowering<'_> {
         storage: Reg,
         element: &Ty,
     ) -> Result<(), PlironError> {
-        let ptr = self.reg_ptr(ctx, storage)?;
-        self.guard_uninit_present(ctx, ptr, TrapCategory::UninitTake, dest)?;
-        let fields = self
-            .layout
-            .uninit_storage_layout(element)
-            .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
-        let payload = self.offset_address(ctx, ptr, fields.offsets[1]);
-        self.load_moved_from(ctx, payload, element, dest)?;
-        let absent = self.bool_constant(ctx, false);
-        let clear = StoreOp::new(ctx, absent, ptr);
-        self.append(ctx, clear.get_operation(), Some(dest));
-        Ok(())
+        let payload = self.reg_ptr(ctx, storage)?;
+        self.load_moved_from(ctx, payload, element, dest)
     }
 
     /// `UninitStorageDestroy`: run `destructor`, the payload's `__deinit__`
@@ -248,13 +231,7 @@ impl FnLowering<'_> {
         element: &Ty,
         destructor: Option<&str>,
     ) -> Result<(), PlironError> {
-        let ptr = self.reg_ptr(ctx, storage)?;
-        self.guard_uninit_present(ctx, ptr, TrapCategory::UninitDestroy, dest)?;
-        let fields = self
-            .layout
-            .uninit_storage_layout(element)
-            .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
-        let payload = self.offset_address(ctx, ptr, fields.offsets[1]);
+        let payload = self.reg_ptr(ctx, storage)?;
         self.emit_drop(ctx, payload, element, destructor)?;
         self.erased.insert(dest.0);
         Ok(())

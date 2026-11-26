@@ -736,6 +736,7 @@ assets/ok/math_modf.mojo	main	exe-differential	sanitized
 assets/ok/math_module_rounding.mojo	main	exe-differential	sanitized
 assets/ok/math_operation_traits_library.mojo	main	exe-differential	sanitized
 assets/ok/math_polynomial_evaluate.mojo	main	exe-differential	sanitized
+assets/ok/maybe_uninit_pointer_views.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_predicates.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_write.mojo	main	exe-differential	sanitized
@@ -2075,9 +2076,9 @@ assets/runtime_error/list_contiguous_slice_negative.mojo	main,__toplevel__	error
 assets/runtime_error/list_contiguous_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/list_contiguous_slice_reversed.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/list_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
-assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo	main,__toplevel__	error-differential	category=UninitDestroy
-assets/runtime_error/maybe_uninit_read_uninitialized.mojo	main,__toplevel__	error-differential	category=UninitRead
-assets/runtime_error/maybe_uninit_take_uninitialized.mojo	main,__toplevel__	error-differential	category=UninitTake
+assets/runtime_error/maybe_uninit_deinit_uninitialized.mojo	main,__toplevel__	undefined	vm-category=UninitDestroy
+assets/runtime_error/maybe_uninit_read_uninitialized.mojo	main,__toplevel__	undefined	vm-category=UninitRead
+assets/runtime_error/maybe_uninit_take_uninitialized.mojo	main,__toplevel__	undefined	vm-category=UninitTake
 assets/runtime_error/nominal_string_byte_slice_boundary.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/nominal_string_byte_slice_out_of_range.mojo	main,__toplevel__	error-differential	category=Abort
 assets/runtime_error/nominal_string_codepoint_out_of_range.mojo	main,__toplevel__	error-differential	category=UnhandledError

@@ -735,6 +735,7 @@ assets/ok/math_modf.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_module_rounding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_operation_traits_library.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_polynomial_evaluate.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/maybe_uninit_pointer_views.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_predicates.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_write.mojo	-	ineligible	no-scalar-entry-shape

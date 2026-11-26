@@ -541,7 +541,11 @@ R18), 3 allocation failure (exit 67), 4 stdout failure (exit 68),
 8 dangling-pointer dereference (exit 72), 9 use after pointer deallocation
 (exit 73), 10 double free (exit 74), 11 uninitialized storage read (exit 75),
 12 uninitialized storage take (exit 76), 13 uninitialized storage destroy
-(exit 77), and 14 Variant tag mismatch (exit 78). Categories 1–2 and 8–14 reuse the VM's runtime-error category;
+(exit 77), and 14 Variant tag mismatch (exit 78). Native code emits no
+category 11–13 trap: `MaybeUninit[T]` lays out as `T`'s bytes with no
+presence flag, as upstream's `!pop.array<1, T>`, so an uninitialized
+read, take, or destroy is undefined there as at the pin, and only the VM
+diagnoses it. Categories 1–2 and 8–14 reuse the VM's runtime-error category;
 dynamic categories 5 and 7 preserve their executable stderr message.
 
 ## Mechanical checks

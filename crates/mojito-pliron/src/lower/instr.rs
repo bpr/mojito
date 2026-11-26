@@ -410,14 +410,6 @@ impl FnLowering<'_> {
                 // plain store/copy is exact.
                 let (address, ty) = self.place_address(ctx, place, *src)?;
                 self.store_to(ctx, address, &ty, *src)?;
-                if matches!(place.proj.last(), Some(Proj::UninitPayload)) {
-                    let mut storage_place = place.clone();
-                    storage_place.proj.pop();
-                    let (storage, _) = self.place_address(ctx, &storage_place, *src)?;
-                    let present = self.bool_constant(ctx, true);
-                    let flag_store = StoreOp::new(ctx, present, storage);
-                    self.append(ctx, flag_store.get_operation(), Some(*src));
-                }
                 Ok(())
             }
             MirInstr::GetField {

@@ -50,6 +50,12 @@ const UNDEFINED_RUNS: &[&str] = &[
     // the moved-out `String` again: the pin runs it to exit 0, and the
     // native run reads and frees whatever the allocator holds.
     "pointer_take_tracked_nontrivial",
+    // `MaybeUninit[T]` is `T`'s bytes with no presence flag, as upstream's
+    // `!pop.array<1, T>`: reading, taking, or destroying it uninitialized
+    // finds whatever the stack holds.
+    "maybe_uninit_deinit_uninitialized",
+    "maybe_uninit_read_uninitialized",
+    "maybe_uninit_take_uninitialized",
 ];
 
 /// The Stage 2 acceptance gate in one pass (one production compile per
@@ -533,12 +539,12 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 2054,
+            differential == 2055,
             "exe-differential coverage must cover the complete runnable inventory: {differential} != 862"
         );
         assert!(
-            errors == 34,
-            "error-differential coverage must cover every runnable runtime-error fixture: {errors} != 34"
+            errors == 31,
+            "error-differential coverage must cover every runnable runtime-error fixture: {errors} != 31"
         );
         assert!(
             excluded == 0,

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2621**.
+Next free ID: **R2624**.
 
 ## Ordered Work
 
@@ -5961,6 +5961,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R2621 A `#interp.pointer<N>` attribute is outside the
+  `__mlir_attr` subset, so upstream's `_Null` cannot be ported**
+
+  `__mlir_attr[`#interp.pointer<0> : `, Self._mlir_type]` over a
+  `!kgen.pointer<T>` type is rejected as "outside the subset", where the
+  pin folds it to the pointer constant at that address.
+  - Upstream's `_Null[type, address_space]` (`std/memory/pointer.mojo`)
+    builds its null address this way, and `Pointer`'s `write_niche` and
+    `isa_niche` (`UnsafeSingleNicheable`) view a `MaybeUninit[Self]` as a
+    `_Null`. The bundled `pointer.mojo` omits all three.
+  - Probe: `struct N[T: AnyType]` holding `var a: __mlir_type[`!kgen.pointer<`,
+    Self.T, `>`]`, initialized by `self.a = __mlir_attr[`#interp.pointer<0>
+    : `, ...]`, then `print(Int(mlir_value=__mlir_op.`pop.pointer_to_index`(
+    N[Int]().a)))`, which prints `0` at the pin.
+  - The view itself runs on both backends since R2607, over a `_Null`
+    stand-in holding a non-zero address.
+  - Found while landing R2607 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2038 Calling a function value whose variadic type pack is unbound
   stops with an internal error, where the pin rejects the call**
 
@@ -7512,6 +7532,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     AnyType] AnyType]()`, called as `sz[Pair]()` over `comptime Pair[T:
     AnyType] = Tuple[Int, Int]`, stops the same way, where the pin prints
     `16`. Over a non-generic struct body it prints its size.
+  - Probe: `size_of[MaybeUninit[Int]]()` and `align_of[MaybeUninit[Int]]()`
+    stop the same way, where the pin prints `8` and `8`: the bundled
+    `MaybeUninit` is generic, though its layout is now `T`'s.
   - Found while landing R1634 (2026-10-30).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -12514,6 +12537,49 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R2622 `MaybeUninit`'s storage is the compiler-private
+  `__UninitStorage[T]`, where upstream's is `_array: !pop.array<1, T>`
+  reached through `unsafe_ptr()`**
+
+  Upstream's `MaybeUninit` marks `self` initialized over an
+  `!pop.array<1, T>` field and runs every method through `unsafe_ptr()`,
+  `Pointer(to=self._array)` bitcast to `Pointer[T]`. The bundled one calls
+  checker-builtin `__UninitStorage` methods instead.
+  - The layout already matches: `__UninitStorage[T]` lays out as `T`
+    (R2607).
+  - Probe: a user struct spelling upstream's body (`comptime _mlir_type =
+    __mlir_type[`!pop.array<1, `, Self.T, `>`]`, `__copy_ctor_is_trivial =
+    IsTriviallyCopyable[Self.T]`) under `ImplicitlyCopyable where
+    (IsTriviallyCopyable[T] and IsTriviallyMovable[T])` fails "field
+    '_array' has type '!pop.array<1, T>', which is not ImplicitlyCopyable"
+    (`struct_implicitly_copyable_conformance_ok`, `checker/traits.rs`).
+  - A `!pop.array` element must be any `T`, a `String` or a type with a
+    `__deinit__` included. Mojito admits only trivially register-passable
+    elements today (R1676).
+  - The VM must view `Pointer[!pop.array<1, T>]` as `Pointer[T]` without
+    a byte round trip, so a payload with no byte form still works.
+  - The three `assets/runtime_error/maybe_uninit_*_uninitialized.mojo`
+    traps must keep their VM categories or change with their ledger rows.
+  - Port `zeroed()` and `unsafe_ptr()` with it.
+  - Found while landing R2607 (2026-11-26).
+  - Depends on R1676.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2623 The compiler keeps `__UninitStorage` machinery that only
+  the bundled `MaybeUninit` reaches**
+
+  Once `MaybeUninit` spells upstream's body, `__UninitStorage` and its
+  machinery have no use left, and upstream has none of it.
+  - That machinery is `Value::UninitStorage`, the `UninitStorage`,
+    `UninitStorageTake`, and `UninitStorageDestroy` MIR operations,
+    `Proj::UninitPayload`, the `SemanticAdjustment::UninitStorage*`
+    records, and their checker, analysis, VM, and Pliron sites.
+  - Delete them, and the `__UninitStorage` cases of the bundled-source
+    predicates (`checker/overload_support.rs`).
+  - Found while landing R2607 (2026-11-26).
+  - Depends on R2622.
+  - Model: Opus, Not Planned.
+
 - [ ] **R360 `TString` owns a `Tuple` of its parts, where the pin's borrows
   a pack beside its encoded literal text**
 
@@ -13427,8 +13493,6 @@ residue found inside a task moves to the task that owns its fix.
     `@staticmethod` requirements.
   - `reflect[Self].field_offset[name="_line"]()` fails as "type
     'reflect[SL]' has no method 'field_offset'".
-  - `write_niche`'s `unsafe_bitcast` of a `MaybeUninit[Self]` pointer to a
-    `_Null` one runs natively, and the VM refuses it.
   - Port `_nicheable` and the four members verbatim once those hold.
   - Found while landing R1979 (2026-11-08).
   - Depends on R942.
@@ -13667,26 +13731,6 @@ residue found inside a task moves to the task that owns its fix.
   Problem: `makedirs(head, exist_ok=...)` inside `makedirs[PathLike]` mints
   its own specialization while checking and reports it undefined.
   - Workaround: recurse through a non-generic helper.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2607 The VM holds a `MaybeUninit[T]` as a wrapper of its own, so
-  a pointer view between `T` and `MaybeUninit[T]` is refused**
-
-  Upstream's `MaybeUninit[T]` has `T`'s layout, so its pointer views
-  (`p.unsafe_bitcast[MaybeUninit[T]]()` and back) read the same bytes. The
-  bundled `MaybeUninit` is a struct over `__UninitStorage[T]`, which the VM
-  holds as `Value::UninitStorage`, so the VM's byte view of the retype
-  (`crates/mojito-vm/src/backend/vm/views.rs`) refuses the `UninitPayload`
-  step: "a UninitPayload step through a byte view of `__UninitStorage[Int]`".
-  - Native code runs these views, as at the pin.
-  - Lever: port upstream's `MaybeUninit` storage shape, so the view reads
-    `T`'s bytes as the pin does.
-  - Probe: `Pointer(to=x).unsafe_bitcast[MaybeUninit[Int]]()[].unsafe_assume_init()`
-    over `x = 5` prints `5` at the pin and is refused on the VM.
-  - Probe: `Pointer.write_niche`'s `_Null` view of a `MaybeUninit[Self]`
-    (R2055), which is also a differing layout.
-  - Found while landing R2201 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
