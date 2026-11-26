@@ -19,7 +19,7 @@ use crate::target::NativeTarget;
 /// The runtime ABI version this compiler emits against. Must equal
 /// `mojito_runtime::ABI_VERSION`; the linked runtime exports it as the
 /// inspectable data symbol [`ABI_VERSION_SYMBOL`].
-pub const MJRT_ABI_VERSION: u32 = 8;
+pub const MJRT_ABI_VERSION: u32 = 9;
 
 /// The flag the library `String` sets in an `MjString`'s `cap` field when
 /// it owns `data` (upstream's `String.FLAG_IS_REF_COUNTED`).
@@ -27,6 +27,13 @@ pub const MJRT_ABI_VERSION: u32 = 8;
 /// The field's other bits are then the buffer's capacity in 8-byte units. A
 /// `cap` without it is a static string over bytes no String frees or writes.
 pub const MJ_STRING_FLAG_IS_REF_COUNTED: i64 = 1 << 62;
+
+/// The bytes of an owned `MjString`'s reference count (upstream's
+/// `String.REF_COUNT_SIZE`).
+///
+/// The count starts the allocation and `data` points just past it. Copies of
+/// the String share the buffer, and the last one dropped frees it.
+pub const MJ_STRING_REF_COUNT_SIZE: i64 = 8;
 
 /// The flag the library `String` sets in an `MjString`'s `cap` field when
 /// it is inline (upstream's `String.FLAG_IS_INLINE`).
@@ -283,10 +290,11 @@ pub const RT_SYMBOLS: &[RtSig] = &[
                     writes an MjString of the line (trailing \\n then \\r \
                     stripped): up to MJ_STRING_INLINE_CAPACITY bytes inline \
                     (MJ_STRING_FLAG_IS_INLINE, the length in cap's top byte), \
-                    EOF the empty inline string; a longer line owned, data a \
-                    fresh mjrt_alloc allocation of size rounded up to 8 bytes \
-                    the caller owns, cap its 8-byte units flagged \
-                    MJ_STRING_FLAG_IS_REF_COUNTED",
+                    EOF the empty inline string; a longer line owned, data \
+                    MJ_STRING_REF_COUNT_SIZE bytes into a fresh mjrt_alloc \
+                    allocation the caller owns, after a reference count of 1 \
+                    and before size rounded up to 8 bytes, cap its 8-byte \
+                    units flagged MJ_STRING_FLAG_IS_REF_COUNTED",
         failure: "traps (stdin-failure) on a read error; EOF is not an error",
     },
 ];

@@ -593,9 +593,10 @@ impl VmBackend {
     /// library builds a String of that length: up to `INLINE_CAPACITY`
     /// bytes inline, in the three words' bytes under the native layout with
     /// the length in the capacity word's top byte; a longer text, or any
-    /// text when no layout is configured, in the owned form, a heap buffer
-    /// of the length rounded up to 8 bytes, its capacity in 8-byte units
-    /// flagged `FLAG_IS_REF_COUNTED`.
+    /// text when no layout is configured, in the owned form the library's
+    /// `_alloc` builds, a heap buffer holding a reference count of 1 and then
+    /// the length rounded up to 8 bytes, the pointer just past the count and
+    /// the capacity in 8-byte units flagged `FLAG_IS_REF_COUNTED`.
     pub(super) fn materialize_string_struct(
         &mut self,
         skeleton: Value,
@@ -614,12 +615,14 @@ impl VmBackend {
             return self.decode_bytes(&words, &string_struct_ty(&name));
         }
         let units = bytes.len().div_ceil(8);
-        let allocation = self.alloc_utf8_bytes(bytes, units * 8)?;
+        let mut buffer = 1i64.to_le_bytes().to_vec();
+        buffer.extend_from_slice(bytes);
+        let allocation = self.alloc_utf8_bytes(&buffer, STRING_REF_COUNT_SIZE + units * 8)?;
         for (field, slot) in &mut fields {
             *slot = match field.as_str() {
                 STRING_POINTER_FIELD => Value::Pointer {
                     allocation,
-                    offset: 0,
+                    offset: STRING_REF_COUNT_SIZE as i64,
                 },
                 STRING_LENGTH_FIELD => Value::Int(bytes.len() as i64),
                 STRING_CAPACITY_FIELD => Value::Int(units as i64 | STRING_FLAG_IS_REF_COUNTED),
@@ -885,6 +888,10 @@ const STRING_CAPACITY_FIELD: &str = "_capacity_or_data";
 /// Mirrors the library's `String.FLAG_IS_REF_COUNTED`: set in the capacity
 /// field of a `String` that owns its heap buffer.
 const STRING_FLAG_IS_REF_COUNTED: i64 = 1 << 62;
+
+/// Mirrors the library's `String.REF_COUNT_SIZE`: the bytes of the reference
+/// count that starts an owned `String`'s buffer, before its data.
+const STRING_REF_COUNT_SIZE: usize = 8;
 
 /// Mirrors the library's `String.FLAG_IS_INLINE`: set in the capacity field
 /// of a `String` whose bytes its own three words hold.

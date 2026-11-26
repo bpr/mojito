@@ -41,7 +41,10 @@ part of any native ABI, and `mojito-runtime` must never depend on the
   lifetime, and `MaybeUninit` failures. Version 7 added `mjrt_repr_string`
   and trap category 14 for a Variant tag mismatch. Version 8 added the
   inline `MjString` form (`MJ_STRING_FLAG_IS_INLINE`), which
-  `mjrt_read_line` writes for a line of up to 23 bytes.
+  `mjrt_read_line` writes for a line of up to 23 bytes. Version 9 put an
+  owned `MjString`'s 8-byte reference count (`MJ_STRING_REF_COUNT_SIZE`)
+  at the start of its allocation, before `data`, which `mjrt_read_line`
+  writes as 1 for a longer line.
 - Every linked runtime exports the inspectable `u32` data symbol
   `mjrt_abi_version` and the function `mjrt_version() -> u32`; the
   synthesized executable wrapper references `mjrt_version`, so every produced
@@ -273,7 +276,8 @@ Rules:
   reader interns it where it uses it. Interned string bytes live in private
   constant globals named `mjstr_<n>` (an underscore — pliron identifiers
   admit no `.`), numbered in deterministic first-use order and deduplicated
-  by content within a module.
+  by content within a module. Each global holds the bytes and then a NUL
+  that no length counts, so a C string view over a literal needs no copy.
 - A **`!kgen.string`** (`TyKind::KgenString`) is the borrowed descriptor
   `MjStrDesc { data: *const u8, len: u64 }` (16/8): `len` bytes of UTF-8,
   not NUL-terminated, never owned by the consumer. A constant is its
@@ -294,12 +298,22 @@ Rules:
     nothing, and its capacity reads as 23;
   - **owned**: `cap` has `MJ_STRING_FLAG_IS_REF_COUNTED` (bit 62,
     upstream's `FLAG_IS_REF_COUNTED`) set and its other bits are the
-    capacity in 8-byte units; `data` holds `size` initialized bytes of an
-    `mjrt_alloc` allocation of that many bytes, which the String frees;
-  - **static**: both flags are clear (`cap == 0`); `data` points at `size`
+    capacity in 8-byte units; `data` holds `size` initialized bytes of
+    that capacity, `MJ_STRING_REF_COUNT_SIZE` (8, upstream's
+    `REF_COUNT_SIZE`) bytes into an `mjrt_alloc` allocation whose first
+    word is the buffer's reference count. A copy shares the buffer and
+    bumps the count, a mutation of a shared buffer copies it out first, and
+    the String that drops the count to 0 frees the allocation;
+  - **static**: both flags are clear (`cap` is 0, or bit 61 alone, below);
+    `data` points at `size`
     bytes the String neither frees nor writes, such as an interned literal,
     and the capacity reads as `size`. A mutation inlines a short string and
     copies a longer one into an owned buffer first.
+  - In any form, bit 61 of `cap` (upstream's `FLAG_HAS_NUL_TERMINATOR`)
+    records that a NUL follows the data, so a C string view writes none. The library sets it for `String(literal)`,
+    since every interned constant ends in a NUL no length counts, and
+    clears it on every append and resize; a bridge reads only bits 62 and
+    63 and never sets it.
 - A literal's `byte_length()` and `ptr()` read the descriptor: the interned
   constant's address and length for a compile-time literal, or a runtime
   descriptor's `data`/`len`. Every String and `StringSpan` constructor,
@@ -309,12 +323,13 @@ Rules:
   `{ _data: *const u8, _size: i64 }` whose `_data` is `ptr()`. A view owns
   no heap, so no release runs; `mjrt_pointer_status` classifies the
   constant pool address as live. `String.__deinit__` compiles from its real
-  MIR, freeing an owned buffer only (`Pointer.unsafe_free()` lowers to
-  `mjrt_free`). A String the backend builds itself — a compile-time String
+  MIR, dropping its reference to an owned buffer only and freeing the
+  allocation at a count of 0 (`dealloc` lowers to `mjrt_free`). A String
+  the backend builds itself — a compile-time String
   constant, a literal default or argument, a raised literal message — is
   static over the interned bytes; a copy of runtime text is inline at 23
   bytes or fewer and otherwise owned over a buffer of its length rounded up
-  to 8 bytes. A bridge that reads a String's text (a raised message, the
+  to 8 bytes, after a count of 1. A bridge that reads a String's text (a raised message, the
   unhandled-error report, `abort`, a prompt) selects the inline bytes or
   `data` by the flag, branch-free.
 
@@ -322,7 +337,8 @@ Rules:
 
 - The built-in error value is `MjError { message: MjString }` (24/8): the
   message is a nominal `String` in any form above, owned by whoever holds
-  the `MjError`, whose release frees an owned message buffer only.
+  the `MjError`, whose release runs the library's `String.__deinit__` on
+  the message.
 - A `raises` function compiles as `void f(outcome*, params...)`: one
   prepended **outcome out-pointer** (caller-allocated, replacing the plain
   sret slot when the return type is an aggregate — a function never receives
@@ -337,9 +353,9 @@ Rules:
   `MjError` (a literal message copies into a fresh allocation; an owned
   runtime string or `String` buffer is stolen; a re-raise moves). A handler
   that binds the error owns it through the bound variable, whose ordinary
-  drop frees `message.data` invisibly — the built-in error has no user
-  destructor. A handler without a binder frees the message after the
-  cleanup-edge drops. Propagation byte-copies the `MjError` from the callee
+  drop runs `String.__deinit__` on the message — the built-in error has no
+  user destructor. A handler without a binder drops the message the same
+  way after the cleanup-edge drops. Propagation byte-copies the `MjError` from the callee
   outcome into the caller's own outcome error slot (ownership transfers). An
   error reaching the executable wrapper passes its message to
   `mjrt_unhandled_error(data, len)` — `unhandled error: <message>` on
@@ -512,7 +528,7 @@ failure behavior. Summary (authoritative rows in `native::rt_abi`):
 | `mjrt_unhandled_error(data, len) -> !` | Borrows the raised UTF-8 message; reports `unhandled error: <message>` on stderr and exits `64 + 5`; runs no destructors. |
 | `mjrt_abort(data, len) -> !` | Borrows the abort's UTF-8 message; reports `abort: <message>` on stderr and exits `64 + 7`; runs no destructors. |
 | `mjrt_trace(kind, data, len)` | Borrows the UTF-8 payload; reports one ordered lifecycle event (`mjtrace <kind> <payload>`) on stderr. Emitted only by trace-instrumented builds, never by default emission; write errors are ignored so tracing cannot perturb behavior. Kinds: 1 drop, 2 consume, 3 cleanup, 4 raise, 5 catch. |
-| `mjrt_read_line(out)` | Borrows `out` (≥ 24 bytes) and writes an `MjString` of the line (trailing `\n` then `\r` stripped), as the library builds a String of its length: up to 23 bytes inline (`MJ_STRING_FLAG_IS_INLINE`, the length in `cap`'s top byte, the rest zero), a longer line owned, `data` a fresh caller-owned `mjrt_alloc` allocation of the length rounded up to 8 bytes, `cap` its 8-byte units flagged `MJ_STRING_FLAG_IS_REF_COUNTED`, and `size` the length. EOF yields the empty inline string (nothing to free, never blocks noninteractive runs); a read error traps (category 6). |
+| `mjrt_read_line(out)` | Borrows `out` (≥ 24 bytes) and writes an `MjString` of the line (trailing `\n` then `\r` stripped), as the library builds a String of its length: up to 23 bytes inline (`MJ_STRING_FLAG_IS_INLINE`, the length in `cap`'s top byte, the rest zero), a longer line owned, `data` 8 bytes into a fresh caller-owned `mjrt_alloc` allocation that holds a reference count of 1 and then the length rounded up to 8 bytes, `cap` its 8-byte units flagged `MJ_STRING_FLAG_IS_REF_COUNTED`, and `size` the length. EOF yields the empty inline string (nothing to free, never blocks noninteractive runs); a read error traps (category 6). |
 
 Trap categories (shared with the backend's `TrapCategory` codes and exit
 codes `64 + category`): 1 div/mod by zero (exit 65), 2 `**` exponent range

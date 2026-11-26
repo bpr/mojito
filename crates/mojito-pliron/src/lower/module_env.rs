@@ -30,9 +30,10 @@ impl ModuleShared {
 
     /// Intern `bytes` as a private constant-pool global `mjstr_<n>` —
     /// deduplicated by content and numbered in first-interning order, so
-    /// emission is deterministic — and return its symbol. The bytes are the
-    /// whole constant: UTF-8, not NUL-terminated (`MjStrDesc` carries the
-    /// length).
+    /// emission is deterministic — and return its symbol. The constant is the
+    /// bytes and then a NUL, which no length counts (`MjStrDesc` carries the
+    /// length), so a static `String` over them is NUL-terminated, as the
+    /// library's `FLAG_HAS_NUL_TERMINATOR` records for a literal.
     pub(super) fn intern_string(&mut self, ctx: &mut Context, bytes: &[u8]) -> Identifier {
         if let Some(name) = self.strings.get(bytes) {
             return name.clone();
@@ -41,9 +42,10 @@ impl ModuleShared {
             .try_into()
             .expect("constant-pool names are identifier-safe");
         let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-        let array_ty: TypeHandle = ArrayType::get(ctx, i8_ty, bytes.len() as u64).into();
+        let terminated: Vec<u8> = bytes.iter().copied().chain([0]).collect();
+        let array_ty: TypeHandle = ArrayType::get(ctx, i8_ty, terminated.len() as u64).into();
         let global = GlobalOp::new(ctx, name.clone(), array_ty);
-        global.set_initializer_value(ctx, Box::new(BytesAttr::new(bytes.to_vec())));
+        global.set_initializer_value(ctx, Box::new(BytesAttr::new(terminated)));
         global.set_attr_llvm_global_linkage(ctx, LinkageAttr::PrivateLinkage);
         self.module.append_operation(ctx, global.get_operation(), 0);
         self.strings.insert(bytes.to_vec(), name.clone());

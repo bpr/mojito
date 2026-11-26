@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2615**.
+Next free ID: **R2619**.
 
 ## Ordered Work
 
@@ -2988,6 +2988,25 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R2616 A `ref[self.p.origin]` result returning a dereference of
+  that pointer is rejected**
+
+  `def count(self) -> ref[self.p.origin] Int: return
+  self.p.unsafe_offset(8).unsafe_bitcast[Int]()[]`, over a field `var p:
+  Pointer[Byte, MutUntrackedOrigin]`, is rejected with "cannot return
+  reference with incompatible origin: the returned place lies within the
+  declared origin but is not that origin", where the pin runs it.
+  - The pointee of a pointer whose origin is the declared origin is that
+    origin's memory, not a place inside the receiver.
+  - Probe: a struct `Box` holding that field over a 16-byte `alloc`,
+    whose `main` stores `5` at offset 8, runs `b.count() += 1`, and
+    prints `b.count()`. The pin prints `6`.
+  - Probe: upstream's `String._refcount`, a `ref[self._ptr_or_data.origin]
+    Atomic[Int]` (R2615 has the restore).
+  - Found while landing R2604 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R2381 `Origin` declares no `equals` or `contains` predicate**
 
   Upstream's `Origin.equals[rhs]` and `Origin.contains[element]` are
@@ -3885,6 +3904,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     compile-time Int constant: not an associated comptime expression":
     `std.sys.info` imports `std.string`. The flag spells the width `64`;
     restore upstream's `bit_width_of[DType.int]()` when this lands.
+    `String.REF_COUNT_SIZE` likewise spells `8` for upstream's
+    `size_of[Atomic[Int]]()`.
+  - Probe: `stdlib/std/string.mojo`'s `from std.atomic import Atomic`
+    stops packaging with "'__module$std$atomic$atomic$Ordering' value has
+    no attribute 'SEQUENTIAL'" unless the prelude loads `std._plugin`
+    first: `std._plugin._trait` reads `Ordering.SEQUENTIAL` while
+    `std.atomic` is loading. Drop the prelude's leading `import
+    std._plugin` when this lands.
   - Probe: within one module, a struct method's parameter default naming
     a module constant (`def load[o: O = _D]()` beside `comptime _D =
     O.B`) fails with "unknown type '_D'", and `comptime _D = O(5)` with
@@ -3900,6 +3927,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     ("not a compile-time Int constant: unsupported associated comptime
     member access"). Restore upstream's defaults when this lands.
   - Found while landing R551 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2615 A method signature naming a struct whose parameter default
+  converts to a type of a module still loading stops packaging**
+
+  Problem: a `String` method whose signature names `Atomic[Int]` stops the
+  bundled library from packaging with "type mismatch for default for
+  parameter 'scope': expected StringSpan[false], found \"\"", where the pin
+  compiles upstream's `String`.
+  - `Atomic`'s `scope: StaticString = ""` default converts the literal
+    through `StaticString`'s initializer while `std.string`, which declares
+    `StaticString`, is still loading. The same `Atomic` in a method body
+    checks.
+  - Probe: upstream's `String._refcount(self) -> ref[self._ptr_or_data.origin]
+    Atomic[Int]` in `stdlib/std/string.mojo`. `_is_unique` and `_add_ref`
+    view the count in place instead; restore `_refcount` and their calls
+    of it when this and R2616 land.
+  - Found while landing R2604 (2026-11-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13322,33 +13368,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2604 `String` copies its heap buffer, where the pin's copy shares it
-  under a reference count**
-
-  Problem: `h.copy()` of a 26-byte heap `String` has the same `unsafe_ptr()`
-  as `h` at the pin and a different one here.
-  - Upstream's owned buffer carries an `Atomic[Int]` count at
-    `-REF_COUNT_SIZE` (`_alloc`, `_add_ref`, `_drop_ref`, `_is_unique`),
-    and `__init__(copy:)` shares the buffer, so a mutation of either copy
-    reallocates first.
-  - The bundled `String._is_unique` is `_is_ref_counted`, and its copy
-    constructor copies the bytes.
-  - The count is read through a bitcast of the byte buffer to
-    `Atomic[Int]`, a byte view of the buffer, which runs on both backends
-    (`assets/ok/atomic_byte_view.mojo`).
-  - Upstream also sets `FLAG_HAS_NUL_TERMINATOR` for a literal-built
-    String, so `as_c_string_span` need not reallocate one. The bundled
-    `as_c_string_slice` copies a static string out to write its NUL.
-  - The owned arms of the native String bridges (`store_owned_string_copy`
-    in `crates/mojito-pliron/src/lower/release.rs`) and of `mjrt_read_line`,
-    and the VM's `materialize_string_struct`, must allocate the count header
-    too; their inline arms need none.
-  - Found while landing R2600 (2026-11-25).
-  - Depends on R2602 (the VM's view of the count), R2605 (the native
-    copy must run the library constructor that bumps the count), and R2611
-    (`Atomic`).
-  - Model: Fable, Not Planned.
-
 - [ ] **R2614 `std.memory._poison` is not bundled**
 
   Problem: upstream's `_check_not_poison`, which `Atomic.load` calls on a
@@ -13655,6 +13674,11 @@ residue found inside a task moves to the task that owns its fix.
   while a nested `def` with the same parameter runs.
   - Likely cause: the lambda's hidden `def` misses the prelude qualification
     the other annotations get.
+  - Probe: an imported name fails the same way. `lambda () -> Atomic[Int]:
+    Atomic[Int](1)` passed as `unsafe_write(init_with=...)` after `from
+    std.atomic import Atomic` reports "unknown type 'Atomic'", where the pin
+    prints the count. `String._alloc` writes `Atomic[Int](1)` directly
+    instead of upstream's `init_with=` lambda; restore it when this lands.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -13804,6 +13828,12 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: `"ab".as_c_string_span()` and its deprecated
     `as_c_string_slice()` are unported for that reason, where the pin's
     `len(…)` prints `2` (found while landing R1655).
+  - Probe: `var s = String("hello"); var c = s.as_c_string_span()` prints
+    `5 True 5` at the pin for `len(c)`, whether `s.unsafe_ptr()` is
+    unchanged, and `s.capacity_bytes()`: the literal's
+    `FLAG_HAS_NUL_TERMINATOR` keeps the String static. The bundled
+    `as_c_string_slice()` does the same; add the probe as an `assets/ok`
+    fixture when the name lands (found while landing R2604).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -14241,6 +14271,9 @@ residue found inside a task moves to the task that owns its fix.
     initializer, `__len__`, and the `Sized` conformances, keeping `count=`
     as upstream's deprecated spelling.
   - Respell the corpus's `count=` uses.
+  - Probe: `String._alloc` and `_drop_ref` (`stdlib/std/string.mojo`)
+    spell `count=` where upstream's spell `length=` and
+    `_unsafe_unchecked_length=`.
   - Found at the 2026-11-01 re-pin.
   - Depends on nothing.
   - Model: Opus, Not Planned.

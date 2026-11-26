@@ -112,17 +112,14 @@ impl FnLowering<'_> {
                 self.emit_free(ctx, data.get_result(ctx));
                 Ok(())
             }
-            // An error is its message String (MjError is one MjString).
-            kind if kind.is_error() => {
-                self.emit_string_buffer_release(ctx, ptr);
-                Ok(())
-            }
+            // A String, or an `Error` (one `MjString`), runs the library
+            // destructor, which drops its reference to a shared buffer.
+            kind if kind.is_error() => self.emit_drop_value(ctx, ptr, ty),
             struct_ty
                 if let Some((name, _)) = struct_ty.as_non_simd_struct()
                     && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
-                self.emit_string_buffer_release(ctx, ptr);
-                Ok(())
+                self.emit_drop_value(ctx, ptr, ty)
             }
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 let Some(decl) = self.struct_decls.get(name.as_str()).copied() else {
@@ -225,27 +222,6 @@ impl FnLowering<'_> {
         (data.get_result(ctx), size.get_result(ctx))
     }
 
-    /// Free the buffer of the nominal String (or the message of the
-    /// `MjError`) at `ptr` when the String owns it, as the library's
-    /// `_drop_ref`: a static or inline String's capacity field lacks
-    /// `FLAG_IS_REF_COUNTED` (an inline String's first word is text, never
-    /// freed), and `mjrt_free` of null is a no-op.
-    pub(super) fn emit_string_buffer_release(&mut self, ctx: &mut Context, ptr: Value) {
-        let ptr_handle = ScalarTy::PTR.handle(ctx);
-        let data = LoadOp::new(ctx, ptr, ptr_handle);
-        self.append(ctx, data.get_operation(), None);
-        let field_address = self.gep_byte_unspanned(ctx, ptr, 16);
-        let i64_handle = ScalarTy::Int.handle(ctx);
-        let field = LoadOp::new(ctx, field_address, i64_handle);
-        self.append(ctx, field.get_operation(), None);
-        let owned = self.string_owns_buffer(ctx, field.get_result(ctx), None);
-        let null = ZeroOp::new(ctx, ptr_handle);
-        self.append(ctx, null.get_operation(), None);
-        let target = SelectOp::new(ctx, owned, data.get_result(ctx), null.get_result(ctx));
-        self.append(ctx, target.get_operation(), None);
-        self.emit_free(ctx, target.get_result(ctx));
-    }
-
     /// Store the static form of a nominal String over the `len` bytes at
     /// `data`, which no String frees or writes: a capacity field of 0.
     pub(super) fn store_static_string(
@@ -264,9 +240,10 @@ impl FnLowering<'_> {
     /// the library builds a String of that length: up to `INLINE_CAPACITY`
     /// bytes inline, in the storage's own 24 bytes with `FLAG_IS_INLINE` and
     /// the length in the capacity field's top byte; a longer text owned, as
-    /// the library's `_alloc` builds one, a fresh buffer of `len` rounded up
-    /// to 8 bytes whose 8-byte units, flagged `FLAG_IS_REF_COUNTED`, are the
-    /// capacity field.
+    /// the library's `_alloc` builds one, a fresh allocation holding a
+    /// reference count of 1 and then `len` rounded up to 8 bytes, whose
+    /// 8-byte units, flagged `FLAG_IS_REF_COUNTED`, are the capacity field,
+    /// with `data` just past the count.
     pub(super) fn store_owned_string_copy(
         &mut self,
         ctx: &mut Context,
@@ -277,7 +254,7 @@ impl FnLowering<'_> {
     ) {
         use mojito_native::native::rt_abi::{
             MJ_STRING_FLAG_IS_INLINE, MJ_STRING_FLAG_IS_REF_COUNTED, MJ_STRING_INLINE_CAPACITY,
-            MJ_STRING_INLINE_LENGTH_START,
+            MJ_STRING_INLINE_LENGTH_START, MJ_STRING_REF_COUNT_SIZE,
         };
         let region = self.region.expect("lowering is inside a function");
         let inline_block = BasicBlock::new(ctx, None, vec![]);
@@ -327,7 +304,15 @@ impl FnLowering<'_> {
         let bytes =
             ShlOp::new_with_overflow_flag(ctx, units.get_result(ctx), three, no_overflow_flags());
         self.append(ctx, bytes.get_operation(), Some(dest));
-        let data = self.emit_alloc(ctx, bytes.get_result(ctx), 1, dest);
+        let header = self.int_constant(ctx, MJ_STRING_REF_COUNT_SIZE);
+        let total =
+            AddOp::new_with_overflow_flag(ctx, bytes.get_result(ctx), header, no_overflow_flags());
+        self.append(ctx, total.get_operation(), Some(dest));
+        let base = self.emit_alloc(ctx, total.get_result(ctx), 1, dest);
+        let one = self.int_constant(ctx, 1);
+        let count = StoreOp::new(ctx, one, base);
+        self.append(ctx, count.get_operation(), Some(dest));
+        let data = self.gep_byte(ctx, base, MJ_STRING_REF_COUNT_SIZE as u64, dest);
         self.mem_copy_dynamic(ctx, data, src, len, dest);
         let flag = self.int_constant(ctx, MJ_STRING_FLAG_IS_REF_COUNTED);
         let field = OrOp::new(ctx, units.get_result(ctx), flag);
@@ -337,26 +322,6 @@ impl FnLowering<'_> {
         self.append(ctx, done.get_operation(), Some(dest));
 
         self.current = Some(join);
-    }
-
-    /// Whether the nominal-String capacity `field` marks an owned buffer
-    /// (`FLAG_IS_REF_COUNTED` set), as an `i1`.
-    pub(super) fn string_owns_buffer(
-        &mut self,
-        ctx: &mut Context,
-        field: Value,
-        dest: Option<Reg>,
-    ) -> Value {
-        let flag = self.int_constant(
-            ctx,
-            mojito_native::native::rt_abi::MJ_STRING_FLAG_IS_REF_COUNTED,
-        );
-        let masked = AndOp::new(ctx, field, flag);
-        self.append(ctx, masked.get_operation(), dest);
-        let zero = self.int_constant(ctx, 0);
-        let owned = ICmpOp::new(ctx, ICmpPredicateAttr::NE, masked.get_result(ctx), zero);
-        self.append(ctx, owned.get_operation(), dest);
-        owned.get_result(ctx)
     }
 
     /// Store `{data, size, cap}` into nominal-String storage.

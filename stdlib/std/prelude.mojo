@@ -5,6 +5,12 @@
 # in their ordinary stdlib modules so explicit imports and aliases select the
 # same declarations rather than creating a second collection universe.
 
+# Not upstream's: loading `std._plugin` first lets `std.string` import
+# `std.atomic`, whose `std._plugin` reads `Ordering.SEQUENTIAL` while
+# `std.atomic` is still loading when `std.string` loads first (R592). It
+# binds no prelude name.
+import std._plugin
+
 from std.collections.array import Array
 from std.collections.list import List
 from std.format import Writable, Writer, repr

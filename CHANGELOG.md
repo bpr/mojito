@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A copy of a heap `String` now shares its buffer under an atomic
+  reference count, as at the pin (R2604): `h.copy().unsafe_ptr() ==
+  h.unsafe_ptr()`, a mutation of either copy reallocates first, and the
+  last copy dropped frees the buffer. The count is upstream's
+  `Atomic[Int]`, `REF_COUNT_SIZE` (8) bytes before the data, which the
+  prelude makes importable from `std.string` by loading `std._plugin`
+  first (R592). The VM, `mjrt_read_line`, and the native error bridges
+  build it, a dropped `Error` runs `String.__deinit__` on its message, and
+  the runtime ABI moves to version 9. `String(literal)` now sets
+  upstream's `FLAG_HAS_NUL_TERMINATOR`, so taking its C string leaves it
+  static, and every interned native string constant ends in a NUL.
+
 - The bundled `String` now has upstream's inline (SSO) form, as at the pin
   (R2603): up to 23 bytes live in the String's own three words, with the
   length in the capacity word's top byte beside `FLAG_IS_INLINE`, so

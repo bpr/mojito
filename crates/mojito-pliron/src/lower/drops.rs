@@ -202,12 +202,6 @@ impl<'a> FnLowering<'a> {
         destructor: Option<&str>,
     ) -> Result<(), PlironError> {
         match ty.kind() {
-            // The library `Error` is its message `String`, laid out as the
-            // runtime's `MjError`: dropping it frees an owned message buffer.
-            kind if kind.is_error() => {
-                self.emit_string_buffer_release(ctx, ptr);
-                Ok(())
-            }
             struct_ty if let Some((name, _)) = struct_ty.as_non_simd_struct() => {
                 if let Some(deinit) = destructor {
                     let Some(signature) = self.signatures.get(deinit) else {

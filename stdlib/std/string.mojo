@@ -4,8 +4,10 @@
 # `FLAG_IS_INLINE`), static (`_ptr_or_data` points at a literal's
 # `_len_or_data` bytes, never freed or written), or a heap buffer the String
 # owns, whose capacity `_capacity_or_data` carries beside
-# `FLAG_IS_REF_COUNTED`. Every mutation goes through `unsafe_ptr_mut`, which
-# inlines a short static string and copies a longer one out first.  Slicing and the result APIs (`find`/`rfind`/
+# `FLAG_IS_REF_COUNTED`. An owned buffer starts with an `Atomic[Int]`
+# reference count `REF_COUNT_SIZE` bytes before the data, and a copy shares
+# the buffer. Every mutation goes through `unsafe_ptr_mut`, which inlines a
+# short static string and copies a longer or shared one out first.  Slicing and the result APIs (`find`/`rfind`/
 # `startswith`/`endswith`/`split`) work in byte offsets, like `byte_length`.
 #
 # `s[codepoint=i]` yields a `Codepoint` value carrying both the decoded
@@ -14,7 +16,9 @@
 # hand-maintained essentials classifier plus arithmetic Hangul, with GB11
 # simplified to "never break after ZWJ" and GB9b (Prepend) omitted.
 
-from std.memory.alloc import unsafe_alloc
+from std.memory.alloc import alloc, dealloc, Layout, ThinAllocation
+from std.atomic import Atomic, Ordering, fence
+from std._plugin import CurrentPlugin
 
 from std.collections.list import List
 from std.collections.optional import Optional
@@ -695,8 +699,9 @@ struct String(
     # Fields: the declared form of upstream's `String`. With `FLAG_IS_INLINE`
     # set in `_capacity_or_data` the String is inline: the fields' first
     # `INLINE_CAPACITY` bytes are its data, read through a byte view of the
-    # struct. A buffer this String owns has `FLAG_IS_REF_COUNTED` set, the
-    # low bits holding its capacity in 8-byte units; with neither flag the
+    # struct. A buffer this String owns, shared with its copies under the
+    # count before its data, has `FLAG_IS_REF_COUNTED` set, the low bits
+    # holding its capacity in 8-byte units; with neither flag the
     # String is static, pointing at a literal's bytes it never frees or
     # writes.
     var _ptr_or_data: Pointer[Byte, MutUntrackedOrigin]
@@ -708,12 +713,19 @@ struct String(
     # The bytes an inline String holds: three words less the capacity
     # word's top byte, which holds the flags and the 5-bit length.
     comptime INLINE_CAPACITY = 8 * 3 - 1
+    # When FLAG_HAS_NUL_TERMINATOR is set, the byte past the end of the
+    # string is known to be an accessible NUL terminator.
+    comptime FLAG_HAS_NUL_TERMINATOR = 1 << (64 - 3)
     # When FLAG_IS_REF_COUNTED is set, the string owns a mutable heap buffer.
     comptime FLAG_IS_REF_COUNTED = 1 << (64 - 2)
     # When FLAG_IS_INLINE is set, the fields hold the string's bytes.
     comptime FLAG_IS_INLINE = 1 << (64 - 1)
     comptime INLINE_LENGTH_START = 64 - 8
     comptime INLINE_LENGTH_MASK = 0b1_1111 << Self.INLINE_LENGTH_START
+    # The bytes of an owned buffer's `Atomic[Int]` count, stored before the
+    # data. Upstream spells it `size_of[Atomic[Int]]()`; `size_of` lives in
+    # `std.sys.info`, which imports this module (R592).
+    comptime REF_COUNT_SIZE = 8
 
     @inline(.nodebug)
     def __deinit__(deinit self):
@@ -746,9 +758,9 @@ struct String(
         ]()
         self._capacity_or_data = 0
 
-    # Does not allocate: the String refers to the literal's static bytes.
-    # `@implicit` lets a literal convert wherever the nominal String is
-    # expected.
+    # Does not allocate: the String refers to the literal's static bytes,
+    # which a NUL follows. `@implicit` lets a literal convert wherever the
+    # nominal String is expected.
     @inline(.nodebug)
     @implicit
     def __init__(out self, data: StringLiteral, /):
@@ -756,7 +768,7 @@ struct String(
         self._ptr_or_data = data.ptr().unsafe_mut_cast[True]().unsafe_origin_cast[
             MutUntrackedOrigin
         ]()
-        self._capacity_or_data = 0
+        self._capacity_or_data = Self.FLAG_HAS_NUL_TERMINATOR
 
     # Upstream's sequence of `Writable` arguments. Its body sizes the buffer
     # first; this writes through `VariadicPack._write_to` alone.
@@ -797,20 +809,14 @@ struct String(
             dest[i] = from_utf8[i]
             i += 1
 
-    # An inline string stays inline and a static one static. Upstream shares
-    # an owned buffer under a reference count; this String copies it into a
-    # buffer of the same capacity.
+    # An inline string stays inline and a static one static; an owned buffer
+    # is shared, its reference count bumped.
     @inline(.nodebug)
     def __init__(out self, *, copy: Self):
         self._ptr_or_data = copy._ptr_or_data
         self._len_or_data = copy._len_or_data
         self._capacity_or_data = copy._capacity_or_data
-        if self._is_ref_counted():
-            self._ptr_or_data = Self._alloc(copy.capacity_bytes())
-            var i = 0
-            while i < copy._len_or_data:
-                self.unsafe_ptr()[i] = copy.unsafe_ptr()[i]
-                i += 1
+        self._add_ref()
 
     def copy(self) -> Self:
         return String(copy: self)
@@ -827,6 +833,18 @@ struct String(
         if not self._is_ref_counted():
             return self._len_or_data
         return self._capacity_or_data << 3
+
+    @inline(.nodebug)
+    def _set_nul_terminated(mut self):
+        self._capacity_or_data |= Self.FLAG_HAS_NUL_TERMINATOR
+
+    @inline(.nodebug)
+    def _has_nul_terminator(self) -> Bool:
+        return Bool(UInt64(self._capacity_or_data) & UInt64(Self.FLAG_HAS_NUL_TERMINATOR))
+
+    @inline(.nodebug)
+    def _clear_nul_terminator(mut self):
+        self._capacity_or_data &= ~Self.FLAG_HAS_NUL_TERMINATOR
 
     @inline(.nodebug)
     def _is_inline(self) -> Bool:
@@ -850,19 +868,55 @@ struct String(
     def _is_ref_counted(self) -> Bool:
         return Bool(UInt64(self._capacity_or_data) & UInt64(Self.FLAG_IS_REF_COUNTED))
 
-    # An owned buffer has no other reference (no shared buffers yet).
+    # The count's helpers view it in place, where upstream's `_is_unique`
+    # and `_add_ref` read it through `_refcount()`, a
+    # `ref[self._ptr_or_data.origin] Atomic[Int]`: an `Atomic` in a String
+    # method signature stops packaging (R2615), and the origin checker
+    # rejects that return (R2616).
     @inline(.nodebug)
     def _is_unique(mut self) -> Bool:
-        return self._is_ref_counted()
+        if UInt64(self._capacity_or_data) & UInt64(Self.FLAG_IS_REF_COUNTED):
+            var refcount = self._ptr_or_data.unsafe_offset(
+                -Self.REF_COUNT_SIZE
+            ).unsafe_bitcast[Atomic[Int]]()
+            return refcount[].load[ordering=Ordering.RELAXED]() == 1
+        else:
+            return False
+
+    @inline(.nodebug)
+    def _add_ref(mut self):
+        comptime if not CurrentPlugin.supports_atomic_rmw[DType.int]:
+            # No-op where the refcount's atomics don't lower (64-bit on
+            # Metal), as upstream's.
+            return
+        if self._capacity_or_data & Self.FLAG_IS_REF_COUNTED:
+            var refcount = self._ptr_or_data.unsafe_offset(
+                -Self.REF_COUNT_SIZE
+            ).unsafe_bitcast[Atomic[Int]]()
+            _ = refcount[].fetch_add[ordering=Ordering.RELAXED](1)
 
     @inline(.nodebug)
     def _drop_ref(mut self):
-        if self._is_ref_counted():
-            self._ptr_or_data.unsafe_free()
+        comptime if not CurrentPlugin.supports_atomic_rmw[DType.int]:
+            return
+        if self._capacity_or_data & Self.FLAG_IS_REF_COUNTED:
+            var ptr = self._ptr_or_data.unsafe_offset(-Self.REF_COUNT_SIZE)
+            var refcount = ptr.unsafe_bitcast[Atomic[Int]]()
+            if refcount[].fetch_sub[ordering=.RELEASE](1) == 1:
+                fence[ordering=.ACQUIRE]()
+                dealloc(
+                    ThinAllocation(unsafe_owned_ptr=ptr).unsafe_with_layout(
+                        Layout[Byte](count=self.capacity_bytes() + Self.REF_COUNT_SIZE)
+                    )
+                )
 
     @staticmethod
     def _alloc(capacity: Int) -> Pointer[Byte, MutUntrackedOrigin]:
-        return unsafe_alloc[Byte](capacity)
+        var ptr = alloc(Layout[Byte](count=capacity + Self.REF_COUNT_SIZE)).unsafe_leak()
+        # Upstream writes it `init_with=lambda () -> Atomic[Int]:
+        # Atomic[Int](1)`, whose annotation names no import yet (R210).
+        ptr.unsafe_bitcast[Atomic[Int]]().unsafe_write(Atomic[Int](1))
+        return ptr.unsafe_offset(Self.REF_COUNT_SIZE)
 
     # 2026-08 stabilization: reserve at least the requested capacity; a
     # current capacity at or above it is a no-op.
@@ -885,11 +939,13 @@ struct String(
         var new_capacity = (target + 7) >> 3
         var new_ptr = Self._alloc(new_capacity << 3)
         var i = 0
-        if self._is_ref_counted():
+        if self._is_unique():
             while i < byte_len:
                 # Move rather than read: a never-written byte (an
                 # `unsafe_uninit_length` slot) forwards its state instead of
-                # trapping on the VM.
+                # trapping on the VM. A shared buffer's bytes were all
+                # written before it was copied, and its other owners still
+                # read them.
                 new_ptr[i] = self._ptr_or_data.unsafe_offset(i).unsafe_take_pointee()
                 i += 1
         else:
@@ -1015,6 +1071,7 @@ struct String(
             dest[i] = other[i]
             i += 1
         self._set_byte_length(new_len)
+        self._clear_nul_terminator()
 
     def __iadd__(mut self, other: StringSpan):
         self._iadd(other.as_bytes())
@@ -1170,15 +1227,17 @@ struct String(
             self._realloc_mutable(new_cap)
         return self.unsafe_ptr().unsafe_origin_cast[origin_of(self)._get_owned_interior["bytes"]]()
 
-    # Upstream's C-string view: writes a NUL terminator past the text (the
-    # byte is not part of the string and every mutation may overwrite it, so
-    # the view is taken fresh at each call site) and views the buffer as
-    # `c_char` bytes.
+    # Upstream's C-string view: writes a NUL terminator past the text unless
+    # `FLAG_HAS_NUL_TERMINATOR` records one (the byte is not part of the
+    # string and every mutation may overwrite it, so the view is taken fresh
+    # at each call site) and views the buffer as `c_char` bytes.
     @inline(.always)
     def as_c_string_slice(mut self) -> CStringSlice[origin_of(self)]:
-        var length = self.byte_length()
-        var ptr = self.unsafe_ptr_mut(capacity=length + 1)
-        ptr[length] = 0
+        if not self._has_nul_terminator():
+            var length = self.byte_length()
+            var ptr = self.unsafe_ptr_mut(capacity=length + 1)
+            ptr[length] = 0
+            self._set_nul_terminated()
         return CStringSlice(self)
 
     # `os.PathLike`: a String is its own filesystem path.
@@ -1191,6 +1250,7 @@ struct String(
     def resize(mut self, length: Int, fill_byte: UInt8 = 0):
         if Int(fill_byte) >= 128:
             _mojito_abort("Fill byte is the start of a multi-byte character.")
+        self._clear_nul_terminator()
         var old_len = self.byte_length()
         if length > old_len:
             var ptr = self.unsafe_ptr_mut(length)
@@ -1209,6 +1269,7 @@ struct String(
     # Grow leaving the new bytes uninitialized (written through
     # `unsafe_ptr_mut()`), or shrink to a codepoint boundary.
     def resize(mut self, *, unsafe_uninit_length: Int):
+        self._clear_nul_terminator()
         if unsafe_uninit_length > self.capacity_bytes():
             self.reserve_bytes(unsafe_uninit_length)
         elif unsafe_uninit_length < self.byte_length() and not self._is_codepoint_boundary(unsafe_uninit_length):

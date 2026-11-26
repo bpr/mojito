@@ -56,12 +56,22 @@ use std::sync::Mutex;
 /// Version 8: an [`MjString`] may be inline ([`MJ_STRING_FLAG_IS_INLINE`]),
 /// and [`mjrt_read_line`] writes a line of up to
 /// [`MJ_STRING_INLINE_CAPACITY`] bytes in that form.
-pub const ABI_VERSION: u32 = 8;
+///
+/// Version 9: an owned [`MjString`]'s `data` follows an
+/// [`MJ_STRING_REF_COUNT_SIZE`]-byte reference count at the start of its
+/// allocation (upstream's `String.REF_COUNT_SIZE`), and [`mjrt_read_line`]
+/// writes a longer line in that form with count 1.
+pub const ABI_VERSION: u32 = 9;
 
 /// Set in an [`MjString`]'s `cap` field when the string owns `data`; the
 /// field's other bits are then the buffer's capacity in 8-byte units.
 /// Mirrors the library `String.FLAG_IS_REF_COUNTED`.
 pub const MJ_STRING_FLAG_IS_REF_COUNTED: i64 = 1 << 62;
+
+/// The bytes of the reference count that starts an owned [`MjString`]'s
+/// allocation, `data` pointing just past it. Mirrors the library
+/// `String.REF_COUNT_SIZE`.
+pub const MJ_STRING_REF_COUNT_SIZE: usize = 8;
 
 /// Set in an [`MjString`]'s `cap` field when the string is inline.
 ///
@@ -114,8 +124,10 @@ pub struct MjStrDesc {
 /// The nominal `String` representation: `size` initialized bytes of UTF-8 at
 /// `data`.
 ///
-/// With [`MJ_STRING_FLAG_IS_REF_COUNTED`] set in `cap`, `data` is an
-/// owned [`mjrt_alloc`] allocation of `(cap & !flag) * 8` bytes; with
+/// With [`MJ_STRING_FLAG_IS_REF_COUNTED`] set in `cap`, `data` points
+/// [`MJ_STRING_REF_COUNT_SIZE`] bytes into an [`mjrt_alloc`] allocation
+/// whose first word is the buffer's reference count, followed by
+/// `(cap & !flag) * 8` bytes of capacity; with
 /// [`MJ_STRING_FLAG_IS_INLINE`] set, the three fields' own bytes hold the
 /// data and `cap`'s top byte its length; with neither, the string is static,
 /// over bytes it never frees or writes.
@@ -589,9 +601,10 @@ pub unsafe extern "C" fn mjrt_trace(kind: u32, data: *const u8, len: u64) {
 /// trailing `\n` (then `\r`) is inline: its bytes lead `out`, the rest of
 /// the 24 bytes are zero but for `cap`'s top byte, [`MJ_STRING_FLAG_IS_INLINE`]
 /// and the length. EOF yields the empty inline string, so noninteractive runs
-/// never block and allocate nothing. A longer line is owned: `data` is a
-/// fresh [`mjrt_alloc`] allocation of the length rounded up to 8 bytes, which
-/// the caller owns, `cap` its 8-byte units flagged
+/// never block and allocate nothing. A longer line is owned: `data` follows
+/// a count of 1 in a fresh [`mjrt_alloc`] allocation of
+/// [`MJ_STRING_REF_COUNT_SIZE`] bytes plus the length rounded up to 8 bytes,
+/// which the caller owns, `cap` its 8-byte units flagged
 /// [`MJ_STRING_FLAG_IS_REF_COUNTED`], and `size` the length. A read error
 /// traps with [`TRAP_STDIN_FAILURE`].
 ///
@@ -620,8 +633,10 @@ pub unsafe extern "C" fn mjrt_read_line(out: *mut u8) {
         return;
     }
     let units = len.div_ceil(8);
-    let data = unsafe { mjrt_alloc((units * 8) as u64, 1) };
+    let base = unsafe { mjrt_alloc((MJ_STRING_REF_COUNT_SIZE + units * 8) as u64, 1) };
     unsafe {
+        base.cast::<i64>().write_unaligned(1);
+        let data = base.add(MJ_STRING_REF_COUNT_SIZE);
         std::ptr::copy_nonoverlapping(line.as_ptr(), data, len);
         out.cast::<MjString>().write_unaligned(MjString {
             data,

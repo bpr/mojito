@@ -2239,7 +2239,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   inline-aware `(data, size)` reader that `FnLowering::nominal_string_parts`
   and the exe wrapper's unhandled-error report share; `string_parts` for a
   `StringSpan` or `MjStrDesc`; `store_owned_string_copy`, which builds the
-  inline or owned form by length), `lower/print.rs`'s `stored_string_parts`
+  inline or owned form by length, an owned buffer after its reference count
+  of 1; a String or `Error` the backend releases runs the library's
+  `String.__deinit__`), `lower/print.rs`'s `stored_string_parts`
   (a String or `StringSpan` register's text),
   `backend/pliron/emit.rs` (target stamping onto every LLVM module, LLVM
   IR/bitcode/object/exe via clang `--target`, runtime-archive discovery and
@@ -2358,7 +2360,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`encode_bytes`, `decode_bytes`, over `ProgramLayout`, which
   `VmBackend::configure` stashes; `values.rs`'s String bridges
   `string_struct_literal` and `materialize_string_struct` read and build an
-  inline String's words through it), and the byte runs a libc buffer reads
+  inline String's words through it, and the latter an owned buffer after
+  its reference count of 1), and the byte runs a libc buffer reads
   and writes through any pointer (`read_byte`, `read_byte_run`,
   `write_byte_run`).
 - `backend/vm/adapters.rs` owns checked-result adapters and dunder-backed
