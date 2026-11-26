@@ -886,14 +886,6 @@ fn reachable_set<'p>(
         }
         for struct_name in discovered {
             for method in ["__deinit__", "__copyinit__"] {
-                // The nominal String's copy constructor is bridged natively
-                // (its stdlib byte loop needs machinery outside this stage);
-                // its `__deinit__` compiles from real MIR and stays an edge.
-                if method == "__copyinit__"
-                    && mojito_symbol::symbol::is_stdlib_string_struct(struct_name)
-                {
-                    continue;
-                }
                 let Some(lifecycle) = structs
                     .get(struct_name)
                     .and_then(|declaration| declaration.member(method))
@@ -996,7 +988,6 @@ impl<'p> CallEdges<'p, '_> {
             // A resolved member's body is reachable; a pointer's rule
             // members resolve to no compiled function and stay intrinsics.
             MirInstr::MethodCall {
-                dest,
                 resolved: Some(resolved),
                 result_adapter,
                 ..
@@ -1007,11 +998,6 @@ impl<'p> CallEdges<'p, '_> {
                 if let Some(constructor) = result_adapter
                     .as_deref()
                     .and_then(|adapter| adapter.constructor.as_deref())
-                    && !self
-                        .function
-                        .reg_types
-                        .get(&dest.0)
-                        .is_some_and(is_stdlib_string_type)
                 {
                     self.push_named(constructor);
                 }
@@ -1083,88 +1069,37 @@ impl<'p> CallEdges<'p, '_> {
                     }
                 }
             }
-            // A copy or a `^` transfer runs the constructor it names,
-            // except the nominal String's copy constructor, which is
-            // bridged natively.
+            // A copy or a `^` transfer runs the constructor it names, and
+            // a variant payload store moves by the constructor it names.
             MirInstr::UseVar {
-                mode: mojito_mir::mir::UseMode::Move,
+                mode: mojito_mir::mir::UseMode::Move | mojito_mir::mir::UseMode::Copy,
+                constructor: Some(constructor),
+                ..
+            }
+            | MirInstr::CopyValue {
+                constructor: Some(constructor),
+                ..
+            }
+            | MirInstr::MakeVariant {
                 constructor: Some(constructor),
                 ..
             } => self.push_named(constructor),
-            MirInstr::UseVar {
-                var,
-                mode: mojito_mir::mir::UseMode::Copy,
-                constructor: Some(constructor),
-                ..
-            } if !self
-                .function
-                .var_tys
-                .get(var)
-                .is_some_and(is_stdlib_string_type) =>
-            {
-                self.push_named(constructor);
-            }
-            MirInstr::CopyValue {
-                dest,
-                constructor: Some(constructor),
-                ..
-            } if !self
-                .function
-                .reg_types
-                .get(&dest.0)
-                .is_some_and(is_stdlib_string_type) =>
-            {
-                self.push_named(constructor);
-            }
-            // A variant payload store moves by the constructor it names.
-            MirInstr::MakeVariant {
-                alternatives,
-                index,
-                constructor: Some(constructor),
-                ..
-            } if !mojito_mir::mir::variant_payload_ty(alternatives, index)
-                .is_some_and(is_stdlib_string_type) =>
-            {
-                self.push_named(constructor);
-            }
             // A variant store moves by the constructor it names and
             // drops the replaced payload by the destructor it names for
             // the active alternative.
             MirInstr::VariantSet {
-                place,
-                index,
                 constructor,
                 destructors,
                 ..
             } => {
-                if let Some(constructor) = constructor
-                    && !mojito_mir::mir::variant_place_payload_ty(
-                        place,
-                        index,
-                        &self.function.var_tys,
-                    )
-                    .is_some_and(is_stdlib_string_type)
-                {
-                    self.push_named(constructor);
-                }
-                for destructor in destructors.iter().flatten() {
-                    self.push_named(destructor);
+                for symbol in constructor.iter().chain(destructors.iter().flatten()) {
+                    self.push_named(symbol);
                 }
             }
             MirInstr::VariantReplace {
-                place,
-                input_index: index,
                 constructor: Some(constructor),
                 ..
-            } if !mojito_mir::mir::variant_place_payload_ty(
-                place,
-                index,
-                &self.function.var_tys,
-            )
-            .is_some_and(is_stdlib_string_type) =>
-            {
-                self.push_named(constructor);
-            }
+            } => self.push_named(constructor),
             _ => {}
         }
     }
@@ -1209,14 +1144,6 @@ fn collect_struct_types<'p>(
 }
 
 /// Run the pliron verifier over the whole module.
-/// Whether `ty` is the nominal String, whose copy constructor is bridged
-/// natively rather than compiled.
-fn is_stdlib_string_type(ty: &Ty) -> bool {
-    ty.kind()
-        .as_non_simd_struct()
-        .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
-}
-
 fn verify_module(context: &Context, module: ModuleOp) -> Result<(), PlironError> {
     pliron::op::verify_op(&module, context).map_err(|error| {
         if std::env::var_os("MOJITO_PLIRON_DUMP_ON_VERIFY_ERROR").is_some() {

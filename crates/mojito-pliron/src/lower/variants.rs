@@ -234,10 +234,7 @@ impl FnLowering<'_> {
             }
             LowerTy::Aggregate { layout, .. } => {
                 let source = self.reg_ptr(ctx, src)?;
-                match constructor.filter(|moveinit| {
-                    !super::pointers::is_stdlib_string(ty)
-                        && self.signatures.contains_key(*moveinit)
-                }) {
+                match constructor.filter(|moveinit| self.signatures.contains_key(*moveinit)) {
                     Some(moveinit) => {
                         self.emit_constructor_call(ctx, moveinit, address, source, anchor)?;
                     }

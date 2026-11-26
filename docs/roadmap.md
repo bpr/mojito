@@ -1395,24 +1395,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2605 The native backend copies a `String` itself instead of running
-  the library's copy constructor**
-
-  Problem: `copy_named_aggregate` (`crates/mojito-pliron/src/lower/pointers.rs`)
-  drops the nominal `String`'s `__init__(copy:)` and copies through
-  `copy_string_into` (`release.rs`), a second copy policy beside the
-  library's, where the VM runs the library constructor.
-  - AGENTS invariant 5: backends consume MIR rather than rediscover
-    language rules, so the copy should be the compiled constructor call.
-  - The bypass also reaches `fork_value_into` and the String-copy
-    reachability rules in `crates/mojito-pliron/src/lib.rs`
-    (`is_stdlib_string_type` and the copy-constructor edges near it).
-  - Probe: a `String.__init__(copy:)` body edit (a `print` in it) shows on
-    the VM and not natively.
-  - Found while landing R2600 (2026-11-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R18 Native runtime ABI bump: land every change that needs a new
   `MJRT_ABI_VERSION` together**
 
@@ -13252,8 +13234,8 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: `String("abc")` grown to 21 bytes has capacity 23 at the pin and
     24 here.
   - The native bridges that build an owned String
-    (`store_owned_string_copy`, `copy_string_into`,
-    `emit_string_buffer_release` in `crates/mojito-pliron/src/lower/release.rs`)
+    (`store_owned_string_copy` and `emit_string_buffer_release` in
+    `crates/mojito-pliron/src/lower/release.rs`)
     and the VM's `materialize_string_struct` build the pin's inline form for
     a short text once it exists.
   - Found while landing R2600 (2026-11-25).

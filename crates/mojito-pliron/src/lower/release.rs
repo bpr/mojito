@@ -184,37 +184,6 @@ impl FnLowering<'_> {
         self.emit_free(ctx, target.get_result(ctx));
     }
 
-    /// Copy the nominal String (or `MjError` message) at `src_ptr` into
-    /// `dst` as the library's `__init__(copy:)` does: a static String shares
-    /// its bytes, and an owned one copies them into a fresh buffer of the same
-    /// capacity. A static source allocates zero bytes (the runtime's
-    /// sentinel) and copies none.
-    pub(super) fn copy_string_into(
-        &mut self,
-        ctx: &mut Context,
-        dst: Value,
-        src_ptr: Value,
-        span: Reg,
-    ) {
-        let (src_data, src_size) = self.string_parts(ctx, src_ptr, span);
-        let field = self.string_cap(ctx, src_ptr, span);
-        let owned = self.string_owns_buffer(ctx, field, Some(span));
-        // The shift drops the flag bits, leaving the capacity in bytes.
-        let three = self.int_constant(ctx, 3);
-        let capacity = ShlOp::new_with_overflow_flag(ctx, field, three, no_overflow_flags());
-        self.append(ctx, capacity.get_operation(), Some(span));
-        let zero = self.int_constant(ctx, 0);
-        let alloc_bytes = SelectOp::new(ctx, owned, capacity.get_result(ctx), zero);
-        self.append(ctx, alloc_bytes.get_operation(), Some(span));
-        let new_data = self.emit_alloc(ctx, alloc_bytes.get_result(ctx), 1, span);
-        let count = SelectOp::new(ctx, owned, src_size, zero);
-        self.append(ctx, count.get_operation(), Some(span));
-        self.mem_copy_dynamic(ctx, new_data, src_data, count.get_result(ctx), span);
-        let data = SelectOp::new(ctx, owned, new_data, src_data);
-        self.append(ctx, data.get_operation(), Some(span));
-        self.store_string_fields(ctx, dst, data.get_result(ctx), src_size, field, span);
-    }
-
     /// Store the static form of a nominal String over the `len` bytes at
     /// `data`, which no String frees or writes: a capacity field of 0.
     pub(super) fn store_static_string(

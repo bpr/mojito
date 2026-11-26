@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The native backend now copies and moves a `String` by running the
+  library's `__init__(copy:)` and `__init__(deinit move:)`, as the VM does,
+  instead of its own byte-copy bridge (R2605). An edit to either
+  constructor in the bundled `String` now shows on both backends.
+
 - The bundled `String` now has upstream's declared fields
   (`_ptr_or_data`, `_len_or_data`, `_capacity_or_data`) and two of its
   forms, as at the pin (R2600): a String built from a literal or a

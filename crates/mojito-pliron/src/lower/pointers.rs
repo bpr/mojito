@@ -283,8 +283,7 @@ impl FnLowering<'_> {
 
     /// Copy the aggregate at `src_ptr` into fresh owned storage for `dest`
     /// by running `constructor`, the copy constructor the copy names; a
-    /// copy naming none, and the nominal String's, whose copy is bridged
-    /// natively, copy as [`Self::copy_aggregate`].
+    /// copy naming none copies as [`Self::copy_aggregate`].
     pub(super) fn copy_named_aggregate(
         &mut self,
         ctx: &mut Context,
@@ -294,7 +293,7 @@ impl FnLowering<'_> {
         src_ptr: Value,
         constructor: Option<&str>,
     ) -> Result<(), PlironError> {
-        let Some(copyinit) = constructor.filter(|_| !is_stdlib_string(ty)) else {
+        let Some(copyinit) = constructor else {
             return self.copy_aggregate(ctx, dest, ty, layout, src_ptr);
         };
         let storage = self.value_storage(ctx, ty, layout);
@@ -304,10 +303,10 @@ impl FnLowering<'_> {
     }
 
     /// Clone the value at `src_ptr` into `dst` — the VM's `clone_value`: a
-    /// struct with a compiled `__copyinit__` runs it, the nominal String and
-    /// the built-in error copy as [`Self::copy_string_into`], and any other aggregate is
-    /// a byte copy whose fields with copy work of their own are then cloned in
-    /// place, recursively. The caller owns `dst`; nothing is registered here.
+    /// struct with a compiled `__copyinit__` runs it, and any other aggregate
+    /// is a byte copy whose fields with copy work of their own are then
+    /// cloned in place, recursively. The caller owns `dst`; nothing is
+    /// registered here.
     pub(super) fn fork_value_into(
         &mut self,
         ctx: &mut Context,
@@ -317,15 +316,6 @@ impl FnLowering<'_> {
         src_ptr: Value,
         span: Reg,
     ) -> Result<(), PlironError> {
-        if ty.kind().is_error()
-            || ty
-                .kind()
-                .as_non_simd_struct()
-                .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
-        {
-            self.copy_string_into(ctx, dst, src_ptr, span);
-            return Ok(());
-        }
         if let Some((name, _)) = ty.kind().as_non_simd_struct()
             && self.lifecycle_symbol(name, "__copyinit__").is_some()
         {
@@ -518,12 +508,4 @@ impl FnLowering<'_> {
     pub(super) fn clone_needs_work(&self, ty: &Ty) -> bool {
         self.owns_heap(ty) || self.has_nested_lifecycle(ty, "__copyinit__")
     }
-}
-
-/// Whether `ty` is the nominal String, whose copy and move constructors are
-/// bridged natively rather than compiled.
-pub(super) fn is_stdlib_string(ty: &Ty) -> bool {
-    ty.kind()
-        .as_non_simd_struct()
-        .is_some_and(|(name, _)| mojito_symbol::symbol::is_stdlib_string_struct(name))
 }
