@@ -135,16 +135,19 @@ impl Pipeline {
     }
 }
 
-/// Keep each stack slot that a load or store accesses at a type other
-/// than its own in memory, as LLVM's `isAllocaPromotable` keeps it.
+/// Keep each stack slot whose loads and stores access it at more than one
+/// type in memory, as LLVM's `isAllocaPromotable` keeps it.
 ///
 /// pliron-llvm 0.20.0's `LoadOp` and `StoreOp` report a promotable use
 /// whatever their access type, so its mem2reg forwards an `i64` stored
 /// into a slot to a `ptr` load from it — upstream's
 /// `Pointer(to=address).unsafe_bitcast[Pointer[...]]()[]`, an `Int` slot
-/// read as a pointer. Each such access addresses the slot through a
-/// zero-offset GEP instead, which is no promotable use, so the slot stays
-/// an alloca and the access reads or writes its bytes.
+/// read as a pointer. Each access at a type other than the slot's own
+/// then addresses the slot through a zero-offset GEP, which is no
+/// promotable use, so the slot stays an alloca and the access reads or
+/// writes its bytes. A slot every access reads and writes at one type
+/// stays promotable whatever its allocated type: a byte slot only ever
+/// moved as one vector promotes to that vector.
 #[derive(Default)]
 struct PinPunnedSlots;
 
@@ -163,25 +166,30 @@ impl Pass for PinPunnedSlots {
         for alloca in allocas(op, ctx) {
             let slot = alloca.get_result(ctx);
             let element = alloca.result_pointee_type(ctx);
-            let punned: Vec<(Ptr<Operation>, usize)> = slot
+            let accesses: Vec<(Ptr<Operation>, usize, TypeHandle)> = slot
                 .uses(ctx)
                 .into_iter()
                 .filter_map(|r#use| {
                     let user = r#use.user_op();
                     let index = r#use.find_index(ctx);
-                    let access = access_type(user, index, ctx)?;
-                    (access != element).then_some((user, index))
+                    access_type(user, index, ctx).map(|access| (user, index, access))
                 })
                 .collect();
-            if punned.is_empty() {
+            if accesses
+                .iter()
+                .all(|(_, _, access)| *access == accesses[0].2)
+            {
                 continue;
             }
+            let punned = accesses
+                .into_iter()
+                .filter(|(_, _, access)| *access != element);
             let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
             let view = GetElementPtrOp::new(ctx, slot, vec![GepIndex::Constant(0)], i8_ty);
             view.get_operation()
                 .insert_after(ctx, alloca.get_operation());
             let address = view.get_result(ctx);
-            for (user, index) in punned {
+            for (user, index, _) in punned {
                 Operation::replace_operand(user, ctx, index, address);
             }
             result.ir_changed = IRStatus::Changed;

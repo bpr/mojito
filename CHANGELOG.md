@@ -14,8 +14,9 @@ to evolve under the `0.x` compatibility rules.
   pointer stored into an `Int` slot through a pointer view, and a local
   `Int` read as `Float64` or a byte failed LLVM verification. pliron-llvm
   0.20.0's mem2reg forwarded the slot's stored value to the access
-  whatever its type; a new `pin-punned-slots` pass ahead of it keeps such
-  a slot in memory, as LLVM's own mem2reg does.
+  whatever its type; a new `pin-punned-slots` pass ahead of it keeps a
+  slot accessed at more than one type in memory, as LLVM's own mem2reg
+  does, while a slot only ever moved at one type still promotes.
 
 - A copy of a heap `String` now shares its buffer under an atomic
   reference count, as at the pin (R2604): `h.copy().unsafe_ptr() ==
