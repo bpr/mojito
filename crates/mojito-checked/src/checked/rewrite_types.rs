@@ -768,6 +768,7 @@ impl RewriteTypes for CheckedTupleUnpackElement {
             ty,
             accessor: _,
             param_decls,
+            instantiated_args,
             temporary: _,
             reference,
             carries_loans: _,
@@ -775,6 +776,7 @@ impl RewriteTypes for CheckedTupleUnpackElement {
         } = self;
         ty.rewrite_types(rewrite);
         param_decls.rewrite_types(rewrite);
+        instantiated_args.rewrite_types(rewrite);
         reference.rewrite_types(rewrite);
     }
 }

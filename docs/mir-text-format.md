@@ -25,10 +25,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.214
+mojito-mir 1.237
 ```
 
-The writer emits 1.214. The reader accepts 1.0 through 1.214; *Schema 1.0*
+The writer emits 1.237. The reader accepts 1.0 through 1.237; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -1426,6 +1426,17 @@ cmpxchg's success ordering) and `failure_ordering` are
 where the op must take them. The package format moves to `mojito-package
 283`: a module alias's record keeps its declared parameter spelling, which a
 program's auto-parameterization reads.
+
+Schema 1.237 gives a `subscript_call` its accessor's application,
+`instantiated_args: [<ty_arg>...]` after `param_decls`, as a `call` and a
+`call.method` carry theirs: one argument per binder of `param_decls`, in
+the caller's binder scope (`value_arg(ct_int(1))` for `t[1]` and for each
+element a tuple destructuring reads through `Tuple.__getitem_param__`).
+It is written only when non-empty, so a call of an accessor declaring no
+binder, or one naming an instance, reads as before. A reader of an older
+artifact gives every subscript call none, which the verifier then rejects
+for a generic accessor (`verify_application`); the record is not
+upgraded. The package format moves to `mojito-package 284` (R2631).
 
 Schema 1.234 spells a `Pointer`'s provenance as upstream's
 `Pointer[mut, T, origin]` arguments: the `pointer` record is

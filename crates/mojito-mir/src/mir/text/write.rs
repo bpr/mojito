@@ -2190,41 +2190,47 @@ fn subscript_arg(value: &MirSubscriptArg) -> String {
 }
 
 fn subscript_call(value: &MirSubscriptCall) -> String {
+    let mut fields = vec![
+        ("target", symbol(&value.target)),
+        ("raises", option(value.raises.as_ref().map(raises_value))),
+        ("result_type", ty_value(&value.result_ty)),
+        (
+            "receiver_requires_place",
+            value.receiver_requires_place.to_string(),
+        ),
+        (
+            "receiver_convention",
+            option(value.receiver_convention.map(convention)),
+        ),
+        ("arguments", list(value.arguments.iter().map(call_argument))),
+        (
+            "capture_accesses",
+            list(value.capture_accesses.iter().map(capture_access)),
+        ),
+        (
+            "reference_result",
+            option(value.reference_result.as_ref().map(ref_ty)),
+        ),
+        (
+            "param_arg_regs",
+            list(value.param_arg_regs.iter().map(param_arg)),
+        ),
+        (
+            "param_decls",
+            list(value.param_decls.iter().map(param_decl)),
+        ),
+    ];
+    // The application, omitted while it is empty: an accessor declaring no
+    // binder, or a call naming an instance.
+    if !value.instantiated_args.is_empty() {
+        fields.push((
+            "instantiated_args",
+            list(value.instantiated_args.iter().map(ty_arg)),
+        ));
+    }
     record(
         "subscript_call",
-        &with_refined_bound(
-            vec![
-                ("target", symbol(&value.target)),
-                ("raises", option(value.raises.as_ref().map(raises_value))),
-                ("result_type", ty_value(&value.result_ty)),
-                (
-                    "receiver_requires_place",
-                    value.receiver_requires_place.to_string(),
-                ),
-                (
-                    "receiver_convention",
-                    option(value.receiver_convention.map(convention)),
-                ),
-                ("arguments", list(value.arguments.iter().map(call_argument))),
-                (
-                    "capture_accesses",
-                    list(value.capture_accesses.iter().map(capture_access)),
-                ),
-                (
-                    "reference_result",
-                    option(value.reference_result.as_ref().map(ref_ty)),
-                ),
-                (
-                    "param_arg_regs",
-                    list(value.param_arg_regs.iter().map(param_arg)),
-                ),
-                (
-                    "param_decls",
-                    list(value.param_decls.iter().map(param_decl)),
-                ),
-            ],
-            value.refined_bound.as_deref(),
-        ),
+        &with_refined_bound(fields, value.refined_bound.as_deref()),
     )
 }
 fn call_argument(value: &CheckedCallArgument) -> String {

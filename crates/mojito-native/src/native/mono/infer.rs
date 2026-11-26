@@ -207,6 +207,7 @@ impl Specializer<'_> {
         call.target = self.enqueue(&target, bindings, arguments)?;
         call.param_arg_regs.clear();
         call.param_decls.clear();
+        call.instantiated_args.clear();
         if !reduced {
             return Ok(None);
         }

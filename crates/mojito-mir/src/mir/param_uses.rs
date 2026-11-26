@@ -838,7 +838,7 @@ fn drop_removed_arguments<'a>(
         for region in instruction_regions_mut(instruction) {
             drop_removed_arguments(region, declarations, removed, spellings, discounted);
         }
-        if let Some(target) = drop_subscript_arguments(instruction, removed) {
+        if let Some(target) = drop_subscript_arguments(instruction, removed, spellings) {
             discounted.insert(target);
             continue;
         }
@@ -955,7 +955,9 @@ fn drop_receiver_arguments(
 }
 
 /// Drop from a subscript call in `instruction` the arguments of its
-/// accessor's removed parameters; returns the accessor when it dropped one.
+/// accessor's removed parameters, and with them, as `spellings` says, their
+/// entries in its application and parameter list, as a method call's;
+/// returns the accessor when it dropped one.
 ///
 /// An accessor that takes no runtime index (`__getitem_param__[i: Int]`)
 /// gets its index only as the parameter argument, which the pin spells as
@@ -965,6 +967,7 @@ fn drop_receiver_arguments(
 fn drop_subscript_arguments<'a>(
     instruction: &mut MirInstr,
     removed: &dyn Fn(&str) -> Option<&'a [ParamId]>,
+    spellings: Spellings,
 ) -> Option<String> {
     let (receiver, indexes, call) = match instruction {
         MirInstr::Index {
@@ -993,13 +996,18 @@ fn drop_subscript_arguments<'a>(
         .iter()
         .filter_map(|argument| argument.value)
         .collect();
-    drop_arguments(
+    let dropped = drop_arguments(
         &call.target,
         &call.param_decls,
         ids,
         &mut call.param_arg_regs,
-        None,
+        (spellings == Spellings::Drop).then_some(&mut call.instantiated_args),
     )?;
+    if spellings == Spellings::Drop {
+        for index in dropped.into_iter().rev() {
+            call.param_decls.remove(index);
+        }
+    }
     if call.arguments.is_empty() {
         let kept: Vec<Reg> = call
             .param_arg_regs

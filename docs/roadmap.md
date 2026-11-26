@@ -62,30 +62,6 @@ R2625–R2632 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
 
-- [ ] **R2631 A subscript call carries no compile-time application**
-
-  `MirSubscriptCall` has no `instantiated_args`, so a subscript accessor
-  with binders of its own reaches the elaborator unapplied, and the
-  application check (`verify_application`) skips it. Upstream's subscript
-  is a call of its accessor, which carries its parameter list.
-  - Add the field, filled from `CheckedCallContract::instantiated_args` in
-    `Flatten::mir_subscript_call_contract` (`facts.rs`) and the extraction
-    accessor in `lower_stmt.rs`. Write and read it in the MIR text, with a
-    schema bump.
-  - The rewrites `subscript_store_call` and `receiverless_subscript_call`
-    (`ir.rs`) carry it into the call they build; the elaborator clears it
-    when it resolves the accessor. Then `verify_subscript_call` calls
-    `verify_application`.
-  - Probe: `Pointer.__getitem__[I]`, `Tuple.__getitem_param__`,
-    `VariadicPack.__getitem_param__`, `StaticTuple.__getitem__` and
-    `__setitem__`, `IndexList.__getitem__`, `Array`/`List`/`Span`
-    `__getitem__[Some[Indexer]]`, and a user accessor with its own binder.
-  - Committed text to update: `tests/mir_passes/remove-unused-params/subscript.mir`
-    and `tests/mir_passes/inline-parametric/{tuple_members,tuple_members_generic,tuple_reverse_closed}.mir`.
-  - Slice B1d of `docs/call-application-plan.md`.
-  - Depends on R2626.
-  - Model: Fable, Planned.
-
 - [ ] **R2632 A call's compile-time application holds placeholder slots**
 
   The application check counts arguments, but a slot may still be
@@ -128,6 +104,12 @@ slice.
     `assets/ok/lit_ref_struct_field_initializer.mojo` with
     `MOJITO_PRE_ELABORATION=0` (a regression probe), and
     `scripts/instantiation-report --check` for instance growth.
+  - Probe: a subscript's readers still re-derive the accessor's bindings
+    from its operand registers although `MirSubscriptCall::instantiated_args`
+    now records them: `Specializer::rewrite_subscript_call`
+    (`infer_receiver_call`), `inline_parametric`'s
+    `subscript_parameter_arguments`, and `call_defaults.rs`'s subscript
+    sites, which pass `bindings_of` no application.
   - Depends on R2631 and R2632 (every call must carry a complete
     record).
   - Model: Fable, Planned.

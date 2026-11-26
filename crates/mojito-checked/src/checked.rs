@@ -1494,6 +1494,11 @@ pub struct CheckedTupleUnpackElement {
     /// The accessor's own compile-time parameters, which the element's
     /// index binds (`Tuple.__getitem_param__[index: Int]`).
     pub param_decls: Vec<mojito_types::types::ParamDecl>,
+    /// The accessor's application, one argument per binder of
+    /// `param_decls`, as [`CheckedCallContract::instantiated_args`]: the
+    /// element's index in the accessor's argument binder.
+    #[serde(default)]
+    pub instantiated_args: Vec<mojito_types::types::TyArg>,
     /// The owner of the hidden slot an unpacked temporary lives in while
     /// its elements are read through references into it.
     pub temporary: Option<mojito_types::origin::OwnerId>,

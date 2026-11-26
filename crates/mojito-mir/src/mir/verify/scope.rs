@@ -1592,6 +1592,7 @@ pub(super) mod tests {
                 reference_result: Some(reference_to(referent)),
                 param_arg_regs: Vec::new(),
                 param_decls: Vec::new(),
+                instantiated_args: Vec::new(),
                 refined_bound: None,
             })),
             intrinsic: None,

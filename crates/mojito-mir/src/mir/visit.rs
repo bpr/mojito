@@ -599,8 +599,8 @@ macro_rules! type_visitor {
             }
 
             /// A subscript call's error, result, and parameter types, its
-            /// bracket arguments, its reference result, then its
-            /// contract.
+            /// bracket arguments, its application, its reference result,
+            /// then its contract.
             pub(super) fn walk_subscript_call<V: $Visitor + ?Sized>(
                 visitor: &mut V,
                 call: &$($m)? MirSubscriptCall,
@@ -615,6 +615,7 @@ macro_rules! type_visitor {
                     visitor.visit_ty(&$($m)? argument.parameter_ty, TySite::SubscriptParameter)?;
                 }
                 visit_param_args(visitor, &$($m)? call.param_arg_regs, ParamArgSite::Subscript)?;
+                visit_ty_args(visitor, &$($m)? call.instantiated_args)?;
                 if let Some(reference) = opt_ref!($($m)? call.reference_result) {
                     visit_reference(visitor, reference)?;
                 }

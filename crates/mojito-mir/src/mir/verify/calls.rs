@@ -311,7 +311,7 @@ pub(super) fn verify_call_instruction(
 /// the whole parameter list it binds, and a call naming an instance (a
 /// callee that declares none) carries none, since an instance is its
 /// generator already applied.
-fn verify_application(
+pub(super) fn verify_application(
     prefix: &str,
     callee: &str,
     declarations: &[mojito_types::types::ParamDecl],

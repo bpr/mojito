@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A subscript call now carries its accessor's compile-time application, as
+  upstream's subscript is a call of its accessor, and the MIR verifier
+  rejects any other count (R2631). A tuple destructuring's element read
+  now records its index as `Tuple.__getitem_param__`'s argument, and
+  `remove-unused-params` still removes a binder a subscript only forwards.
+  MIR text moves to schema 1.237 and the package format to
+  `mojito-package 284`.
+
 - Every call MIR lowers or synthesizes, but a subscript's, now carries one
   compile-time argument per binder its callee declares, and the MIR
   verifier rejects any other count (R2627): constructions of a struct whose

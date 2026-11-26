@@ -370,6 +370,13 @@ impl Decoder {
             Some(d.mir_param_args(v))
         })?;
         let param_decls = self.req(value, fields, "param_decls", |d, v| Some(d.param_decls(v)))?;
+        // Schema 1.237 records the accessor's application; an older
+        // artifact carries none.
+        let instantiated_args = self
+            .field(fields, "instantiated_args")
+            .ok()
+            .map(|found| self.ty_args(found))
+            .unwrap_or_default();
         self.unknown(
             fields,
             &[
@@ -383,6 +390,7 @@ impl Decoder {
                 "reference_result",
                 "param_arg_regs",
                 "param_decls",
+                "instantiated_args",
                 "refined_bound",
             ],
         );
@@ -398,6 +406,7 @@ impl Decoder {
             reference_result,
             param_arg_regs,
             param_decls,
+            instantiated_args,
             refined_bound,
         })
     }

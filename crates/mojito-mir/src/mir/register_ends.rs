@@ -1314,6 +1314,7 @@ mod tests {
             reference_result: None,
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
+            instantiated_args: Vec::new(),
             refined_bound: None,
         };
         let set = MirInstr::MultiSet {

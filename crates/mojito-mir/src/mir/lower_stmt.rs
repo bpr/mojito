@@ -3659,6 +3659,7 @@ impl<'a> Flatten<'a> {
                     })
                     .collect(),
                 param_decls: extraction.param_decls.clone(),
+                instantiated_args: extraction.instantiated_args.clone(),
                 refined_bound: None,
             });
             let intrinsic = call

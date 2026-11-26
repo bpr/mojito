@@ -4509,9 +4509,12 @@ fn fold_witnesses(block: &mut MirBlock, function: &MirFunction, declarations: &M
                 *resolved = Some(member);
             }
             instruction => {
+                // The call's application keeps one argument per binder
+                // of the witness it now names.
                 if let Some(call) = instruction_subscript_call_mut(instruction)
                     && declaration.argument_view().len()
                         == ParamDecl::argument_view(&call.param_decls).len()
+                    && declaration.param_decls.len() == call.instantiated_args.len()
                 {
                     call.target = member;
                     mojito_mir::mir::witness_arguments(

@@ -497,7 +497,7 @@ fn self_forwards(
                 Some((
                     std::borrow::Cow::Borrowed(call.param_decls.as_slice()),
                     call.param_arg_regs.as_slice(),
-                    &[][..],
+                    call.instantiated_args.as_slice(),
                     receiver,
                 ))
             }

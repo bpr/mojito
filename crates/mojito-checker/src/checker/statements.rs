@@ -1512,6 +1512,7 @@ impl Checker {
                 ty,
                 accessor: None,
                 param_decls: Vec::new(),
+                instantiated_args: Vec::new(),
                 temporary: None,
                 reference: None,
                 carries_loans: false,
@@ -1524,9 +1525,20 @@ impl Checker {
         if let Some((name, accessor)) = self.tuple_index_accessor(vt)
             && let Some(source) = source
         {
-            for element in &mut plan {
+            for (index, element) in plan.iter_mut().enumerate() {
                 element.accessor = Some(format!("{name}.__getitem_param__"));
                 element.param_decls.clone_from(&accessor.declared);
+                // The element's index is the accessor's one argument
+                // binder's value, as the call `t[index]` applies it.
+                let index = i64::try_from(index).map_err(|_| {
+                    TypeError::InvariantViolation("tuple element index overflows Int".into())
+                })?;
+                element.instantiated_args = self.declared_call_arguments(
+                    &accessor.declared,
+                    &[TyArg::Val(CtValue::Int(index))],
+                    &HashMap::new(),
+                    None,
+                );
                 let reference = match element.ty.kind() {
                     // A reference-valued element forwards its own handle.
                     TyKind::Ref(reference) => reference.clone(),

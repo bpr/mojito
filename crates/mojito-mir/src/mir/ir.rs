@@ -487,8 +487,9 @@ pub fn dunder_method_call(
 /// the last keyword argument. Where the setter, so `declared`, collects its
 /// indexes, each with its place, the collector
 /// the store builds is the operand the call spreads, as a call building
-/// one passes it. The call takes the contract's target, error edge,
-/// receiver convention, and capture accesses.
+/// one passes it. The call takes the contract's target, compile-time
+/// parameter list and application, error edge, receiver convention, and
+/// capture accesses.
 pub fn subscript_store_call(
     instruction: &mut MirInstr,
     dest: Reg,
@@ -538,9 +539,9 @@ pub fn subscript_store_call(
         ),
         receiver_convention: call.receiver_convention,
         capture_accesses: call.capture_accesses,
-        param_arg_regs: Vec::new(),
-        param_decls: Vec::new(),
-        instantiated_args: Vec::new(),
+        param_arg_regs: call.param_arg_regs,
+        param_decls: call.param_decls,
+        instantiated_args: call.instantiated_args,
         spread,
         refined_bound: call.refined_bound.map(MirRefinedBound::boxed),
     };
@@ -554,7 +555,8 @@ pub fn subscript_store_call(
 /// call of an accessor that never reads `self` passes none. It passes the
 /// indexes the read passes, each with its place, the collector the read
 /// builds the operand it spreads, as the accessor, so `declared`, binds
-/// them, and takes the contract's error edge and capture accesses.
+/// them, and takes the contract's application, error edge, and capture
+/// accesses.
 pub fn receiverless_subscript_call(
     instruction: &mut MirInstr,
     declared: &MirFunctionDeclaration,
@@ -599,9 +601,9 @@ pub fn receiverless_subscript_call(
         args,
         kwargs,
         capture_accesses: call.capture_accesses,
-        param_arg_regs: Vec::new(),
+        param_arg_regs: call.param_arg_regs,
         receiver: None,
-        instantiated_args: Vec::new(),
+        instantiated_args: call.instantiated_args,
         spread,
     };
     true
@@ -1862,6 +1864,12 @@ pub struct MirSubscriptCall {
     pub reference_result: Option<mojito_types::origin::RefTy>,
     pub param_arg_regs: Vec<MirParamArg>,
     pub param_decls: Vec<mojito_types::types::ParamDecl>,
+    /// The accessor's compile-time arguments the checker solved, one per
+    /// binder of `param_decls`, in the caller's binder scope, as
+    /// `MirInstr::Call::instantiated_args` carries a `def`'s; empty once
+    /// the call names an instance.
+    #[serde(default)]
+    pub instantiated_args: Vec<TyArg>,
     /// See [`mojito_checked::checked::CheckedCallContract::refined_bound`].
     pub refined_bound: Option<Vec<String>>,
 }

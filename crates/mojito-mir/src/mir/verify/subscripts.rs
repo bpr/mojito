@@ -359,8 +359,18 @@ pub(super) fn verify_subscript_call(
         function,
         &call.param_decls,
         &call.param_arg_regs,
-        &[],
+        &call.instantiated_args,
         None,
+        errors,
+    );
+    // A subscript is a call of its accessor, so it applies it as any call
+    // does: `param_decls` is a declared accessor's whole list (checked
+    // below) or, for a trait dispatch, its requirement's.
+    verify_application(
+        prefix,
+        &call.target,
+        &call.param_decls,
+        &call.instantiated_args,
         errors,
     );
     match declared(declarations, &call.target) {

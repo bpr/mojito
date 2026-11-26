@@ -1088,6 +1088,7 @@ fn sample_subscript_call() -> MirSubscriptCall {
             variadic: false,
             constraints: Vec::new(),
         }],
+        instantiated_args: vec![TyArg::Ty(Ty::int())],
         refined_bound: Some(vec!["Copyable".into(), "Sh".into()]),
     }
 }
@@ -3531,6 +3532,54 @@ fn compile_time_memory_round_trips() {
         "{text}"
     );
     assert!(text.contains("ct_store_to_mem(ct_int(3))"), "{text}");
+}
+
+/// Schema 1.237 carries a subscript call's application, written only when
+/// it is non-empty; an older artifact carries none.
+#[test]
+fn subscript_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
+    let program_of = |call: MirSubscriptCall| {
+        program_with(vec![(
+            "main".into(),
+            function_with(
+                vec![Ty::int(), Ty::int()],
+                vec![MirInstr::Index {
+                    dest: Reg(1),
+                    base: Reg(0),
+                    index: Reg(0),
+                    call: Some(Box::new(call)),
+                    intrinsic: None,
+                }],
+            ),
+        )])
+    };
+    let recorded = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        match &parsed.program.functions[0].1.body.instrs[0] {
+            MirInstr::Index {
+                call: Some(call), ..
+            } => call.instantiated_args.clone(),
+            other => panic!("expected a subscript read, read {other:?}"),
+        }
+    };
+    let program = program_of(sample_subscript_call());
+    assert_reprints(&program);
+    let written = write::program(&program);
+    assert_eq!(recorded(&written), vec![TyArg::Ty(Ty::int())]);
+
+    let start = written
+        .find(", instantiated_args: [")
+        .expect("the application is written");
+    let end = start + written[start..].find(']').expect("the list closes") + 1;
+    let older = format!("{}{}", &written[..start], &written[end..]);
+    assert!(!older.contains("instantiated_args"), "{written}");
+    assert!(recorded(&older).is_empty());
+
+    let mut empty = sample_subscript_call();
+    empty.instantiated_args.clear();
+    let empty = program_of(empty);
+    assert_reprints(&empty);
+    assert!(!write::program(&empty).contains("instantiated_args"));
 }
 
 /// Schema 1.22 carries a method call's own solved compile-time arguments;

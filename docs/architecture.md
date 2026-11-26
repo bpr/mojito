@@ -2360,11 +2360,15 @@ struct parameter, before its constructor's own
 (`ParamDecl::constructor_call_arguments`). The verifier rejects a call whose
 solved arguments bind any other list (`verify_application` in
 `verify/calls.rs`, over `call`, `call.method`, a `def[...]` bound's call,
-and a checker-instantiated `call.indirect`): a call to a generic callee
+a checker-instantiated `call.indirect`, and a subscript's
+`subscript_call`): a call to a generic callee
 carries one argument per declared binder, an empty application included,
 and a call naming an instance, which declares none, carries none. The rule
 counts; an argument may still be a placeholder (`ct_deferred`,
-`origin_unbound`), and a subscript call carries no application yet. A
+`origin_unbound`). A subscript is a call of its accessor: its contract's
+application comes from the checked contract, and a tuple destructuring's
+element read records the element's index as its accessor's argument
+(`Checker::tuple_unpack_plan`). A
 display's construction records its application as the written
 construction does (`Checker::record_display_application`), a pack
 struct's copy or move restates its pack as its construction binds it, and

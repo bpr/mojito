@@ -1516,6 +1516,35 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
     expect_finding(&receiverless_declaration, "has no declared receiver");
 }
 
+/// A subscript is a call of its accessor, so it carries one compile-time
+/// argument per binder the accessor declares, and none for an accessor
+/// declaring none.
+#[test]
+fn verifier_rejects_a_subscript_call_missing_its_application() {
+    const GENERIC: &str = "struct Echo:\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n    def __getitem__[T: Intable](self, i: T) -> Int:\n        return self.x + Int(i)\n\ndef main():\n    var e = Echo(3)\n    print(e[4])\n";
+    let mut applied = lower_linked_source(GENERIC);
+    assert_eq!(first_index_call(&mut applied).instantiated_args.len(), 1);
+    let errors = verify(&applied);
+    assert!(errors.is_empty(), "{errors:?}");
+
+    let mut missing = applied;
+    first_index_call(&mut missing).instantiated_args.clear();
+    expect_finding(
+        &missing,
+        "call of 'Echo.__getitem__' carries 0 of its 1 compile-time arguments",
+    );
+
+    const NONGENERIC: &str = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(ref self, mut index: Int) -> Int:\n        index += 1\n        return self.value\n\ndef main():\n    var box = Box(40)\n    var index = 0\n    print(box[index])\n";
+    let mut extra = lower_linked_source(NONGENERIC);
+    first_index_call(&mut extra)
+        .instantiated_args
+        .push(TyArg::Ty(Ty::int()));
+    expect_finding(
+        &extra,
+        "call of instance 'Box.__getitem__' carries a compile-time application",
+    );
+}
+
 #[test]
 fn verifier_rejects_missing_nominal_subscript_contracts() {
     let source = "struct Columns:\n    var n: Int\n    def __init__(out self, start: NoneType, end: NoneType, stride: NoneType, __slice_literal__: NoneType = None):\n        self.n = 0\n\n@fieldwise_init\nstruct Access:\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n    def __getitem__(self, columns: Columns) -> Int:\n        return self.value\n    def __getitem__(self, row: Int, column: Int) -> Int:\n        return self.value\n\ndef main():\n    var access = Access(1)\n    print(access[0])\n    print(access[:])\n    print(access[0, 0])\n";
