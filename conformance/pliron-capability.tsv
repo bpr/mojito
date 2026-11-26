@@ -134,4 +134,4 @@ runtime	mjrt_unhandled_error	supported	since=v2
 runtime	mjrt_abort	supported	since=v6
 runtime	mjrt_trace	supported	since=v3
 runtime	mjrt_read_line	supported	since=v4
-runtime	mjrt_abi_version	supported	data symbol; current version 7
+runtime	mjrt_abi_version	supported	data symbol; current version 8
