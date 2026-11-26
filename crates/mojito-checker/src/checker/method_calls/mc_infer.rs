@@ -185,7 +185,7 @@ impl Checker {
     pub(super) fn infer_selected_method_call(
         &self,
         site: MethodCallSite<'_>,
-        mut resolved: MethodCallResolution,
+        resolved: MethodCallResolution,
     ) -> Result<Ty, TypeError> {
         let MethodCallSite {
             span,
@@ -208,15 +208,7 @@ impl Checker {
                 Some(resolved.param_decls.clone());
         }
         let boundary_before = self.call_boundary_snapshot(span, args, kwargs);
-        let existentials =
-            self.record_selected_method_conversions(method, &resolved, args, kwargs)?;
-        resolved.return_type = self.close_existentials(resolved.return_type, &existentials);
-        // Each anonymous `Some[Trait]` parameter is the type its argument
-        // deduced, as upstream's call binds the desugared `[T: Trait]`: the
-        // call's contract records that type, not the open binder.
-        for param in &mut resolved.param_types {
-            *param = self.close_existentials(param.clone(), &existentials);
-        }
+        self.record_selected_method_conversions(method, &resolved, args, kwargs)?;
         let call_error = resolved
             .raises
             .then(|| resolved.error.clone().unwrap_or_else(Ty::error));

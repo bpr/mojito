@@ -1406,6 +1406,8 @@ assets/ok/slice_string_native.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/some_composition_and_callable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/some_indexer_user_subscript.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/some_parameter_literal_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/some_parameter_method_nested_def_binder.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/some_parameter_nested_def_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/some_trait_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_element_implicit_string_slice_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_from_array.mojo	-	ineligible	no-scalar-entry-shape

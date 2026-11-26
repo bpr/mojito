@@ -552,7 +552,7 @@ impl Specializer<'_> {
             owner_covered,
         )?);
         arguments.extend(self.mutability_arguments(declaration, &bindings, target)?);
-        push_sugar_arguments(declaration, &bindings, &mut arguments);
+        push_owner_parameter_arguments(declaration, &bindings, &mut arguments);
         Ok((target.to_string(), bindings, arguments))
     }
 
@@ -780,7 +780,7 @@ impl Specializer<'_> {
             owner_covered,
         )?);
         arguments.extend(self.mutability_arguments(declaration, &bindings, target)?);
-        push_sugar_arguments(declaration, &bindings, &mut arguments);
+        push_owner_parameter_arguments(declaration, &bindings, &mut arguments);
         let result = substitute_ty(&declaration.ret_ty, &bindings).map_err(|e| {
             self.error(
                 Some(owner),

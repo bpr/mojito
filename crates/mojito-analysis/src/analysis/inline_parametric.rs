@@ -23,9 +23,9 @@
 //! origin is spelled at to the pointer the call passes or constructs there,
 //! through the body's references, pointers, and `!lit.ref`s alike.
 //!
-//! One run instantiates a callee once per owner type and compile-time and
-//! existential arguments: a later call binding it alike, with no callable
-//! binder bound, splices a copy of that instance.
+//! One run instantiates a callee once per owner type and compile-time
+//! arguments: a later call binding it alike, with no callable binder bound,
+//! splices a copy of that instance.
 //!
 //! A callee this pass inlines is a function, a method, a subscript's
 //! accessor, which calls it on the subscripted base, an initializer, or a
@@ -477,14 +477,13 @@ struct Inliner<'f, 'c> {
 
 /// What a callee body instantiated with no callable binding is a function
 /// of: the callee, whether its `RemoveUnusedParams` generator was the body,
-/// its owner's type, and the call's compile-time and existential arguments.
+/// its owner's type, and the call's compile-time arguments.
 #[derive(PartialEq, Eq, Hash)]
 struct InstanceKey {
     callee: String,
     reduced: bool,
     owner: Option<Ty>,
     compile_time: Vec<TyArg>,
-    existentials: Vec<(ParamRef, Ty)>,
 }
 
 /// Where an inlined call stands: its index in the caller's block, the
@@ -1421,13 +1420,6 @@ impl<'c> Inliner<'_, 'c> {
             Some(Some(Owner::Unbound)) | None => None,
             Some(None) => return None,
         };
-        let existentials = existential_arguments(
-            declaration,
-            captures.len(),
-            &matched,
-            &call,
-            &self.function.reg_types,
-        )?;
         let Instantiated {
             body: callee,
             closures,
@@ -1435,7 +1427,6 @@ impl<'c> Inliner<'_, 'c> {
             &target,
             (block, index),
             (param_arg_regs, &compile_time, capture_accesses),
-            &existentials,
             (full, reduced.as_ref(), declaration),
             owner.as_ref(),
         )?;
@@ -1474,8 +1465,7 @@ impl<'c> Inliner<'_, 'c> {
 
     /// The callee of the call at `index` of `block`, its full body or the
     /// `reduced` generator, instantiated at the call's compile-time
-    /// arguments and its `Some[Trait]` binders' `existentials`, each
-    /// callable one bound to what its register in
+    /// arguments, each callable one bound to what its register in
     /// `param_arg_regs` holds; `None` when they do not bind, or when the
     /// call's `capture_accesses` are to places neither a nested callee's
     /// captures nor a bound closure's.
@@ -1488,7 +1478,6 @@ impl<'c> Inliner<'_, 'c> {
             &[TyArg],
             &[MirCaptureAccess],
         ),
-        existentials: &[(ParamRef, Ty)],
         (full, reduced, declaration): (
             &'c MirFunction,
             Option<&MirFunction>,
@@ -1511,7 +1500,6 @@ impl<'c> Inliner<'_, 'c> {
             reduced: reduced.is_some(),
             owner: owner.map(|owner| owner.ty.clone()),
             compile_time: compile_time.to_vec(),
-            existentials: existentials.to_vec(),
         });
         let memoized = key
             .as_ref()
@@ -1525,7 +1513,6 @@ impl<'c> Inliner<'_, 'c> {
                 let arguments = Arguments {
                     compile_time,
                     callables: &callables,
-                    existentials,
                 };
                 let instantiated = match reduced {
                     Some(body) => {
@@ -3467,63 +3454,6 @@ fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool
     receiver_closed && closed_blocks(&callee.body)
 }
 
-/// The binding of each `Some[Trait]` binder `declaration`'s parameters
-/// are spelled at, which its own binders do not declare, to the type of
-/// the argument the call passes there, as upstream's call deduces the
-/// infer-only parameter automatic parameterization opens for it. A
-/// declaration's slots past its first `captured` are `matched`'s. `None`
-/// keeps the call: a binder spelled inside a parameter's type rather than
-/// as the whole of it, one with no argument, or one deduced at two types.
-fn existential_arguments(
-    declaration: &MirFunctionDeclaration,
-    captured: usize,
-    matched: &CallSlots,
-    call: &CallArguments<'_>,
-    reg_types: &HashMap<u32, Ty>,
-) -> Option<Vec<(ParamRef, Ty)>> {
-    let existential = |ty: &Ty| match ty.kind() {
-        TyKind::Param { binder, .. }
-            if binder.name.starts_with("Some[")
-                && !declaration
-                    .argument_binders()
-                    .any(|decl| *decl.id() == binder.id) =>
-        {
-            Some(binder.clone())
-        }
-        _ => None,
-    };
-    let mut existentials: Vec<(ParamRef, Ty)> = Vec::new();
-    for (position, ty) in declaration.param_types.iter().enumerate() {
-        let ty = peel_refs(ty);
-        let Some(binder) = existential(ty) else {
-            let nested =
-                mojito_types::types::mentions_open(ty, &|inner| existential(inner).is_some());
-            if nested {
-                return None;
-            }
-            continue;
-        };
-        let argument = match matched.slots.get(position.checked_sub(captured)?)? {
-            ArgSlot::Positional(source) => call.args[*source],
-            ArgSlot::Keyword(source) => call.kwargs[*source].1,
-            ArgSlot::Default => return None,
-        };
-        let actual = peel_refs(reg_types.get(&argument.0)?).clone();
-        match existentials.iter().find(|(known, _)| known.id == binder.id) {
-            Some((_, known)) if *known != actual => return None,
-            Some(_) => {}
-            None => existentials.push((binder, actual)),
-        }
-    }
-    let collectors = declaration.variadic.iter().chain(&declaration.kw_variadic);
-    for ty in collectors {
-        if mojito_types::types::mentions_open(ty, &|inner| existential(inner).is_some()) {
-            return None;
-        }
-    }
-    Some(existentials)
-}
-
 /// The places a call's by-address operands bind their parameters to
 /// ([`bound_place`]).
 fn bound_places(addresses: &[Option<&MirPlace>], caller: &MirFunction) -> Vec<Option<MirPlace>> {
@@ -4400,7 +4330,6 @@ fn instantiated<'c>(
 ) -> Option<Instantiated<'c>> {
     if owner.is_none()
         && declaration.argument_binders().next().is_none()
-        && arguments.existentials.is_empty()
         && arguments
             .mutabilities(&declaration.param_decls)
             .next()
@@ -4875,9 +4804,6 @@ struct Arguments<'a> {
     compile_time: &'a [TyArg],
     /// Per declared parameter, aligned with `compile_time`.
     callables: &'a [Option<CallableArgument>],
-    /// Each `Some[Trait]` binder of the callee's parameters, which no
-    /// declaration declares, with the type the call deduces it at.
-    existentials: &'a [(ParamRef, Ty)],
 }
 
 impl Arguments<'_> {
@@ -4989,7 +4915,6 @@ impl<'d> Instantiation<'d> {
         let decls = &declaration.argument_view();
         let covered = owner.map_or(0, |owner| restated_owner_binders(&owner.decls, decls));
         let own = &decls[covered..];
-        let existentials = arguments.existentials;
         let mutabilities: Vec<(ParamDecl, TyArg)> = arguments
             .mutabilities(&declaration.param_decls)
             .map(|(decl, argument)| (decl.clone(), argument.clone()))
@@ -5062,16 +4987,6 @@ impl<'d> Instantiation<'d> {
         }
         for (decl, argument) in &mutabilities {
             instantiation.bind(decl, argument, None);
-        }
-        for (binder, ty) in existentials {
-            instantiation.bindings.bind(
-                binder.id.clone(),
-                instantiation.context.type_shape(ty.clone()),
-            );
-            instantiation
-                .bindings
-                .bind_type(binder.id.clone(), ty.clone());
-            instantiation.types.push(binder.clone());
         }
         Some(instantiation)
     }

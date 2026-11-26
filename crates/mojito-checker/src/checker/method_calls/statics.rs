@@ -771,8 +771,7 @@ impl Checker {
             kwargs,
             None,
         );
-        let existentials =
-            self.record_selected_method_conversions(method, &selected, args, kwargs)?;
+        self.record_selected_method_conversions(method, &selected, args, kwargs)?;
         if let Some(target) = selected.lowered_name.clone() {
             self.record_at(span.clone()).overload_target = Some(target);
         }
@@ -784,7 +783,7 @@ impl Checker {
                 error,
             )?;
         }
-        Ok(self.close_existentials(selected.return_type, &existentials))
+        Ok(selected.return_type)
     }
 
     /// Solve a struct's compile-time parameters for a static-method call:

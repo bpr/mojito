@@ -291,9 +291,8 @@ pub(super) fn member_type_scope(
         .collect()
 }
 
-/// A checker-made type parameter no declaration owns: an existential
-/// `Some[Trait]`, a builtin intrinsic's signature, a probe. Its spelling is
-/// its whole identity.
+/// A checker-made type parameter no declaration owns: a builtin
+/// intrinsic's signature, a probe. Its spelling is its whole identity.
 pub(super) fn synthetic_binder(name: &str) -> ParamRef {
     ParamRef {
         id: ParamId::new(&format!("{SYNTHETIC_BINDER_PREFIX}{name}"), 0),
@@ -301,67 +300,89 @@ pub(super) fn synthetic_binder(name: &str) -> ParamRef {
     }
 }
 
-/// The binder of the existential `Some[Tr]` over the trait-valued binder
-/// `trait_param`: spelled as written, and identified by that binder, so
-/// two signatures' `Some[Tr]` over different `Tr` binders are different
-/// parameters.
+/// The binder `Some[spelling]` resolves to before a declaration owns it
+/// ([`declare_existential`]): upstream's `__SomeImpl[Trait, ...]`, whose
+/// `T` automatic parameterization has not yet made a parameter.
+pub(super) fn existential_binder(spelling: &str) -> ParamRef {
+    ParamRef {
+        id: ParamId::new(&format!("{EXISTENTIAL_BINDER_PREFIX}Some[{spelling}]"), 0),
+        name: format!("Some[{spelling}]").into(),
+    }
+}
+
+/// [`existential_binder`] for `Some[Tr]` over the trait-valued binder
+/// `trait_param`: identified by that binder, so two signatures' `Some[Tr]`
+/// over different `Tr` binders are different parameters.
 pub(super) fn trait_param_existential_binder(trait_param: &ParamRef) -> ParamRef {
     let ParamId { owner, slot } = &trait_param.id;
     ParamRef {
-        id: ParamId::new(&format!("{SYNTHETIC_BINDER_PREFIX}Some[{owner}.{slot}]"), 0),
+        id: ParamId::new(
+            &format!("{EXISTENTIAL_BINDER_PREFIX}Some[{owner}.{slot}]"),
+            0,
+        ),
         name: format!("Some[{}]", trait_param.name).into(),
     }
 }
 
-/// Whether `binder` is an existential `Some[Trait]`'s [`synthetic_binder`].
-pub(super) fn is_existential_binder(binder: &ParamRef) -> bool {
-    binder.id.owner.starts_with(SYNTHETIC_BINDER_PREFIX) && binder.name.starts_with("Some[")
-}
-
-/// The anonymous `[T: Trait]` binder upstream desugars the existential
-/// `Some[Trait]` of parameter `slot` to: one binder per parameter, so two
-/// `Some[Trait]` parameters of one trait deduce independently.
-pub(super) fn existential_slot_binder(binder: &ParamRef, slot: usize) -> ParamRef {
-    ParamRef {
-        id: ParamId::new(&binder.id.owner, slot + 1),
+/// `ty`, a parameter's whole type, with a `Some[Trait]` it spells bound
+/// by an infer-only type binder of the declaration `owner` declaring
+/// `decls`, pushed onto them: upstream's automatic parameterization of
+/// `__SomeImpl[Trait, ...]`'s `T`, so `def f(x: Some[Intable])` is `def
+/// f[T: Intable, //](x: T)`. Its slot is its position in `decls`, after
+/// every declared binder and the earlier arguments' own, so each pass over
+/// one signature mints the same binders. Any other type is kept, and one
+/// spelling `Some` below its whole type (`List[Some[Writable]]`) is
+/// refused.
+pub(super) fn declare_existential(
+    ty: Ty,
+    owner: &str,
+    decls: &mut Vec<ParamDecl>,
+) -> Result<Ty, TypeError> {
+    let unattached = |binder: &ParamRef| binder.id.owner.starts_with(EXISTENTIAL_BINDER_PREFIX);
+    let TyKind::Param {
+        binder,
+        bounds,
+        callable_bound,
+        trait_param,
+    } = ty.kind()
+    else {
+        let nested = mojito_types::types::mentions_open(
+            &ty,
+            &|ty| matches!(ty.kind(), TyKind::Param { binder, .. } if unattached(binder)),
+        );
+        return if nested {
+            Err(TypeError::Unsupported(format!(
+                "'Some[...]' is supported only as a parameter's whole type, not inside '{ty}'"
+            )))
+        } else {
+            Ok(ty)
+        };
+    };
+    if !unattached(binder) {
+        return Ok(ty);
+    }
+    let declared = ParamRef {
+        id: ParamId::new(&binder_owner(owner), decls.len()),
         name: binder.name.clone(),
+    };
+    decls.push(ParamDecl::Type {
+        id: declared.id.clone(),
+        name: binder.name.to_string(),
+        bounds: bounds.clone(),
+        trait_param: trait_param.as_deref().cloned(),
+        callable_bound: callable_bound.clone(),
+        default: None,
+        infer_only: true,
+        variadic: false,
+        constraints: Vec::new(),
+    });
+    Ok(TyKind::Param {
+        binder: declared,
+        bounds: bounds.clone(),
+        callable_bound: callable_bound.clone(),
+        trait_param: trait_param.clone(),
     }
-}
-
-/// `ty` with a whole-type existential `Some[Trait]` bound by parameter
-/// `slot`'s own [`existential_slot_binder`]; any other type is kept, one
-/// that names a parameter's binder already (`type_of(writer)`) among them.
-pub(super) fn existential_at_slot(ty: Ty, slot: usize) -> Ty {
-    match ty.kind() {
-        TyKind::Param {
-            binder,
-            bounds,
-            callable_bound,
-            trait_param,
-        } if is_existential_binder(binder) && binder.id.slot == 0 => TyKind::Param {
-            binder: existential_slot_binder(binder, slot),
-            bounds: bounds.clone(),
-            callable_bound: callable_bound.clone(),
-            trait_param: trait_param.clone(),
-        }
-        .into(),
-        _ => ty,
-    }
-}
-
-/// Record in `solutions` that the existential `Some[Trait]` binder of
-/// `param` stands for `deduced`, the type its argument passes at it
-/// ([`Checker::existential_argument_ty`]), so a signature naming the
-/// parameter's type (`-> type_of(it).IteratorOwnedType`) closes over the
-/// argument's. A non-existential parameter, or one its argument did not
-/// deduce, records nothing.
-pub(super) fn bind_existential(solutions: &mut TySubst, param: &Ty, deduced: &Ty) {
-    if let TyKind::Param { binder, .. } = param.kind()
-        && is_existential_binder(binder)
-        && deduced != param
-    {
-        solutions.insert(binder.id.clone(), deduced.clone());
-    }
+    .into())
 }
 
 /// The reference to the value binder `id` spelled `name`, typed `ty`.
@@ -477,6 +498,9 @@ pub(super) fn struct_subst(decls: &[ParamDecl], targs: &[TyArg]) -> TySubst {
 
 /// The owner spelling every [`synthetic_binder`] starts with.
 const SYNTHETIC_BINDER_PREFIX: &str = "$synthetic:";
+
+/// The owner spelling every [`existential_binder`] starts with.
+const EXISTENTIAL_BINDER_PREFIX: &str = "$existential:";
 
 /// The owner spelling every [`builtin_body_binder`] starts with.
 const BUILTIN_BODY_PREFIX: &str = "$builtin:";

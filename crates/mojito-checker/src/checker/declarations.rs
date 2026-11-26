@@ -2313,11 +2313,14 @@ impl Checker {
             ));
         }
         let ret = m.ret.as_ref();
+        // The body reads each binder the method declares, its `Some[Trait]`
+        // parameters' among them ([`Self::param_tys`]).
+        let mut declared = self.classify_param_list(owner, &m.type_params)?;
         let ret_ty = self.in_signature_scope(m.has_self.then_some(self_ty), |this| {
             let generated = this.generated_declaration.get();
             this.generated_declaration
                 .set(generated || m.name.contains('$'));
-            let params = this.param_tys(&m.params);
+            let params = this.param_tys(&m.params, owner, &mut declared);
             this.generated_declaration.set(generated);
             params?;
             match &ret {
@@ -2380,7 +2383,6 @@ impl Checker {
         };
         // A default may name the method's own value parameters
         // (`x: Int = Self.n + j`), bound around the defaults as in the body.
-        let declared = self.classify_param_list(owner, &m.type_params)?;
         let method_decls = ParamDecl::argument_decls(&declared);
         self.push_scope();
         let defaults = self
@@ -2413,11 +2415,19 @@ impl Checker {
         } else {
             let start = site.as_ref().map(|(key, _)| self.enter_body_site(key));
             let enclosing = self.lifting_owner.replace(effect_key.clone());
-            let binders = self
-                .self_decls
-                .iter()
-                .chain(&method_decls)
-                .cloned()
+            // A trait member's body is nested in its trait's `_Self`, as
+            // a struct method's is in its struct's binders.
+            let trait_self = self
+                .method_site
+                .as_ref()
+                .filter(|(_, declaration)| self.traits.contains_key(declaration))
+                .map(|(_, declaration)| {
+                    mojito_checked::declaration::TraitDeclaration::self_binder(declaration)
+                });
+            let binders = trait_self
+                .into_iter()
+                .chain(self.self_decls.iter().cloned())
+                .chain(method_decls.iter().cloned())
                 .collect();
             self.enter_nested_scope(Some(effect_key.clone()), Some(binders), &m.body);
             let checked =
@@ -2480,9 +2490,8 @@ impl Checker {
         // Compile-time callable/scalar value parameters occupy named runtime
         // slots in a method body, just as they do in a generic free function.
         // Type parameters remain type-only and are available through `tparams`.
-        let declared = self.classify_param_list(owner, &m.type_params)?;
+        let mut declared = self.classify_param_list(owner, &m.type_params)?;
         self.declare_value_parameters(&declared)?;
-        let method_decls = ParamDecl::argument_decls(&declared);
         let self_writable = ref_binding_is_writable(
             m.self_convention,
             m.self_origin.as_deref(),
@@ -2522,7 +2531,7 @@ impl Checker {
             };
             self.generated_declaration.set(generated);
             self.resolving_parameter_annotation.set(false);
-            let mut pty = existential_at_slot(resolved?, index);
+            let mut pty = declare_existential(resolved?, owner, &mut declared)?;
             pty = match p.kind {
                 mojito_ast::ast::ParamKind::Variadic => {
                     mojito_types::types::variadic_collector_type(pty, p.convention)
@@ -2552,6 +2561,7 @@ impl Checker {
         if m.receiver_index >= m.params.len() {
             self.bind_method_receiver(self_ty, m, self_writable)?;
         }
+        let method_decls = ParamDecl::argument_decls(&declared);
         let constructs = m.self_convention == Some(mojito_ast::ast::ArgConvention::Out);
         let none: Ty = TyKind::None.into();
         let result = if constructs { &none } else { ret_ty };
@@ -7142,9 +7152,27 @@ impl Checker {
                     ty,
                     decl.name(),
                 )?)
-            } else if let ParamDecl::Type { id, .. } = decl
+            } else if let ParamDecl::Type {
+                id,
+                name: pname,
+                bounds,
+                ..
+            } = decl
                 && let Some(inferred) = subst.get(id)
             {
+                // An inferred binder meets its bounds as in an inferred
+                // call ([`Self::resolve_use_params`]).
+                if let Some(bound) = bounds
+                    .iter()
+                    .find(|bound| !self.conforms_to(inferred, bound))
+                {
+                    return Err(TypeError::TraitNotSatisfied {
+                        param: pname.clone(),
+                        ty: inferred.to_string(),
+                        trait_name: bound.clone(),
+                        reason: self.trait_failure_reason(inferred, bound),
+                    });
+                }
                 TyArg::Ty(inferred.clone())
             } else if !open(index)
                 && let ParamDecl::Type {

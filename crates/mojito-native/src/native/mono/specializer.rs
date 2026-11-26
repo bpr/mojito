@@ -3108,9 +3108,6 @@ impl<'a> Specializer<'a> {
         .filter_map(|name| self.declarations.get(name))
         .collect();
         enclosing.reverse();
-        for declaration in &enclosing {
-            push_existential_arguments(declaration, &bindings, &mut arguments);
-        }
         // An enclosing origin's `mut=` binder the body reads keys it too,
         // though the generator scope lists no slot for it.
         for decl in enclosing

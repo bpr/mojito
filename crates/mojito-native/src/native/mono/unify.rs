@@ -6,43 +6,20 @@ use super::*;
 use mojito_types::types::TyKind;
 use mojito_types::types::{CallableDefault, FuncTy};
 
-/// A `Some[Trait]` sugar parameter is infer-only and absent from the
-/// declaration's `param_decls`, yet each binding selects a different body
-/// (`update(value: Some[Hashable])` hashes an `Int` and a `Pair` through
-/// different leaves). Its binding joins the instance identity; the builtin
-/// string binding — the `Some[Writer]` display accumulator and the
-/// declaration-order default — keeps the unsuffixed spelling. An owner's
-/// parameter (`Self.T` in a method signature) is likewise absent from the
-/// method's `param_decls`, but when an instance-named owner
-/// (`bindings.self_instance`) already carries the binding it must not join
-/// again — only a `Some[..]` sugar binding does. A static path with no
-/// owner instance keeps every resolved binding in the identity.
-/// A pack's element type (`*values: Self.T`) selects a body the same way a
-/// parameter's does, so it joins beside the parameter types.
-pub(super) fn push_sugar_arguments(
+/// An owner's parameter (`Self.T` in a method signature) is absent from
+/// the method's `param_decls`, yet on a static path with no owner instance
+/// (`bindings.self_instance`) to carry its binding, each binding selects a
+/// different body, so it joins the instance identity. A pack's element
+/// type (`*values: Self.T`) selects a body the same way a parameter's
+/// does, so it joins beside the parameter types.
+pub(super) fn push_owner_parameter_arguments(
     declaration: &MirFunctionDeclaration,
     bindings: &Bindings,
     arguments: &mut Vec<InstanceArg>,
 ) {
-    push_bound_sugar(declaration, bindings, arguments, |binder| {
-        binder.name.starts_with("Some[") || bindings.self_instance.is_none()
-    });
-}
-
-/// Push the `Some[Trait]` sugar bindings of `declaration`, a declaration a
-/// nested body is nested in: upstream desugars each to an inferred
-/// parameter of that declaration, so it is an enclosing binder of the
-/// nested body and splits its instance as it splits the enclosing one's
-/// ([`push_sugar_arguments`]). An owner's parameter already joins through
-/// the enclosing scope's binders.
-pub(super) fn push_existential_arguments(
-    declaration: &MirFunctionDeclaration,
-    bindings: &Bindings,
-    arguments: &mut Vec<InstanceArg>,
-) {
-    push_bound_sugar(declaration, bindings, arguments, |binder| {
-        binder.name.starts_with("Some[")
-    });
+    if bindings.self_instance.is_none() {
+        push_bound_sugar(declaration, bindings, arguments);
+    }
 }
 
 pub(super) fn ordered_arguments(
@@ -1063,17 +1040,15 @@ fn resolve_callable_default(
 }
 
 /// Push the binding of each parameter type of `declaration` bound to a
-/// binder `joins` admits and its `param_decls` do not declare; a builtin
-/// string binding keeps the unsuffixed spelling.
+/// binder its `param_decls` do not declare; a builtin string binding keeps
+/// the unsuffixed spelling.
 fn push_bound_sugar(
     declaration: &MirFunctionDeclaration,
     bindings: &Bindings,
     arguments: &mut Vec<InstanceArg>,
-    joins: impl Fn(&ParamRef) -> bool,
 ) {
     for ty in declaration.param_types.iter().chain(&declaration.variadic) {
         if let TyKind::Param { binder, .. } = peel_refs(ty).kind()
-            && joins(binder)
             && !declaration
                 .argument_binders()
                 .any(|decl| *decl.id() == binder.id)

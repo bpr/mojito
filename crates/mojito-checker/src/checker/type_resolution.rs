@@ -2164,7 +2164,8 @@ impl Checker {
     }
 
     /// The anonymous type binder upstream's `Some[X]` binds its trait
-    /// parameter to: `X` evaluated to its trait value (a trait, a trait
+    /// parameter to, before a declaration owns it
+    /// ([`declare_existential`]): `X` evaluated to its trait value (a trait, a trait
     /// constant, a `&` composition) bounds it by those traits, and a
     /// function type bounds it as a callable (`Some[def(var Int)]`). A
     /// trait-valued binder (`Some[Tr]` over `Tr: type_of(Writable)`,
@@ -2201,7 +2202,7 @@ impl Checker {
             };
         Ok(Some(
             TyKind::Param {
-                binder: synthetic_binder(&format!("Some[{spelling}]")),
+                binder: existential_binder(&spelling),
                 bounds,
                 callable_bound,
                 trait_param: None,

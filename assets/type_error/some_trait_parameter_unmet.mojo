@@ -1,6 +1,6 @@
 # `Some[Tr]` checks its argument against the trait `Tr` receives, not the
 # trait `Tr` declares: `NW` is no `Writable`.
-# expect: type 'NW' for parameter 'Some[Tr]' does not conform to trait 'Writable'
+# expect: 'f' parameter 'Some[Tr]' has 'Writable' type, but value has type 'AnyStruct[NW]'
 struct NW:
     def __init__(out self):
         pass

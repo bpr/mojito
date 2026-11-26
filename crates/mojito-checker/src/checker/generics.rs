@@ -2228,7 +2228,9 @@ impl Checker {
     /// (`elt_handler: def[index: Int](var element: Self.Ts[index])`) or a
     /// callable contract names its parameters (`h: def(Scalar[Self.dtype])`),
     /// or a type parameter's callable bound names them (`FuncType:
-    /// def[w: SIMDLength](Self._T[w]) …`); `None` when no declaration does.
+    /// def[w: SIMDLength](Self._T[w]) …`), or its bound is the struct's
+    /// trait-valued binder (`t: Some[Self.Tr]`); `None` when no declaration
+    /// does.
     pub(super) fn method_decls_at_receiver(
         &self,
         signature: &MethodSig,
@@ -2276,6 +2278,10 @@ impl Checker {
                             callable_bound: Some(_),
                             ..
                         }
+                        | ParamDecl::Type {
+                            trait_param: Some(_),
+                            ..
+                        }
                         | ParamDecl::Origin {
                             mutability: OriginMutability::Binder(_),
                             ..
@@ -2318,10 +2324,26 @@ impl Checker {
                     }
                 }
                 ParamDecl::Type {
+                    bounds,
+                    trait_param,
                     default,
                     callable_bound,
                     ..
                 } => {
+                    // A binder bounded by the struct's trait-valued binder
+                    // (`Some[Self.Tr]`) is bounded by the trait the
+                    // receiver binds it to.
+                    if let Some(binder) = trait_param
+                        && let Some(TyArg::Val(CtValue::Trait(traits))) = info
+                            .params
+                            .iter()
+                            .position(|decl| decl.id() == &binder.id)
+                            .and_then(|slot| targs.get(slot))
+                    {
+                        bounds.clone_from(traits);
+                        *trait_param = None;
+                        retyped = true;
+                    }
                     for ty in callable_bound.iter_mut().chain(default.iter_mut()) {
                         let rewritten = mojito_types::types::rewrite_ty(ty, &mut rewrite)
                             .unwrap_or_else(|_| (*ty).clone());

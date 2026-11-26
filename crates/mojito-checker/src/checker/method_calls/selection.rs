@@ -71,16 +71,14 @@ impl Checker {
     /// Apply the implicit conversions selected while scoring one concrete method
     /// overload. Keyword-overflow arguments are materialized into the callee's
     /// `StringDict`, so their conversions must be recorded just like conversions
-    /// for ordinary parameter slots. Reports the type each existential
-    /// `Some[Trait]` parameter's argument deduced ([`bind_existential`]).
+    /// for ordinary parameter slots.
     pub(in crate::checker) fn record_selected_method_conversions(
         &self,
         method: &str,
         resolved: &MethodCallResolution,
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
-    ) -> Result<TySubst, TypeError> {
-        let mut existentials = TySubst::new();
+    ) -> Result<(), TypeError> {
         for (index, slot) in resolved.slots.iter().enumerate() {
             let expression = match slot {
                 ArgSlot::Positional(position) => &args[*position],
@@ -88,12 +86,8 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             if let Some(declared) = resolved.param_types.get(index) {
-                let mut actual = self.infer_with_expected(expression, declared, true)?;
-                let expected = &self.existential_argument_ty(declared, Some(expression), &actual);
-                if expected != declared {
-                    actual = self.infer_with_expected(expression, expected, true)?;
-                }
-                bind_existential(&mut existentials, declared, expected);
+                let actual = self.infer_with_expected(expression, declared, true)?;
+                let expected = declared;
                 let binds = if self.is_synthetic_slice_descriptor(expression) {
                     self.slice_literal_binding(expression, expected, true)?
                         .is_some()
@@ -151,7 +145,7 @@ impl Checker {
                 }
             }
         }
-        Ok(existentials)
+        Ok(())
     }
 
     pub(in crate::checker) fn call_boundary_snapshot(
@@ -374,11 +368,7 @@ impl Checker {
                 ArgSlot::Keyword(position) => &kwargs[*position].value,
                 ArgSlot::Default => continue,
             };
-            let mut actual = self.infer_with_expected(expression, &params[index], false)?;
-            let expected = self.existential_argument_ty(&params[index], Some(expression), &actual);
-            if expected != params[index] {
-                actual = self.infer_with_expected(expression, &expected, false)?;
-            }
+            let actual = self.infer_with_expected(expression, &params[index], false)?;
             // A slice literal binds through its parameter type's
             // `__slice_literal__` constructor, at one cost whichever type
             // that is.
@@ -388,12 +378,12 @@ impl Checker {
                     .is_some()
             } else {
                 self.has_index_normalization(expression, &params[index])
-                    || self.value_coerces(&actual, &expected)
+                    || self.value_coerces(&actual, &params[index])
             };
             if !binds
                 && (literal
                     || self
-                        .implicit_conversion_target(&actual, &expected)?
+                        .implicit_conversion_target(&actual, &params[index])?
                         .is_none())
             {
                 return Err(TypeError::TypeMismatch {
@@ -403,8 +393,6 @@ impl Checker {
                 });
             }
             if !literal {
-                // A deduced existential still ranks as the generic binder it
-                // is, below an overload declaring the argument's own type.
                 score += conversion_count(&actual, &params[index]);
             }
             simd_erasures += usize::from(

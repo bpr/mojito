@@ -526,47 +526,6 @@ impl Checker {
             .unwrap_or_else(|| default_literal(actual))
     }
 
-    /// The type an argument of type `actual` passes at a parameter typed
-    /// `param`: an existential `Some[Trait]` is the anonymous `[T: Trait]`
-    /// binder upstream desugars it to, which the argument deduces through
-    /// [`Self::deduced_ty`] (a literal materializes or defaults) when the
-    /// deduced type conforms. A `Some[def(...)]` binder deduces a function
-    /// `argument` at its inflated type, as a declared `def(...)` bound
-    /// binds it ([`Self::callable_bound_argument`]). Any other parameter,
-    /// or a deduction that does not conform, keeps `param`.
-    pub(super) fn existential_argument_ty(
-        &self,
-        param: &Ty,
-        argument: Option<&Expr>,
-        actual: &Ty,
-    ) -> Ty {
-        let TyKind::Param { binder, .. } = param.kind() else {
-            return param.clone();
-        };
-        if !is_existential_binder(binder) {
-            return param.clone();
-        }
-        let deduced = argument
-            .and_then(|argument| self.inflate_function_argument(argument, actual, param))
-            .unwrap_or_else(|| self.deduced_ty(actual));
-        if self.value_coerces(&deduced, param) {
-            deduced
-        } else {
-            param.clone()
-        }
-    }
-
-    /// `ty` with each existential binder `existentials` solves
-    /// ([`bind_existential`]) replaced by its argument's type, and the members
-    /// it then reads closed (`List[Int].IteratorOwnedType`).
-    pub(super) fn close_existentials(&self, ty: Ty, existentials: &TySubst) -> Ty {
-        if existentials.is_empty() {
-            ty
-        } else {
-            self.resolve_assoc_ty(&substitute(&ty, existentials))
-        }
-    }
-
     /// Whether a value of `ty` materializes through its target's implicit
     /// constructor (a `StringLiteral`, a user struct), rather than by the
     /// compiler's literal folding (`IntLiteral`, `FloatLiteral`).
@@ -1779,25 +1738,17 @@ impl Checker {
         // a generator, whose call binds it in the one solve.
         let declared = params.clone();
         let mut score = 0;
-        let mut existentials = mojito_types::types::TySubst::new();
         for (i, slot) in slots.iter().enumerate() {
             let arg = match slot {
                 ArgSlot::Positional(p) => &args[*p],
                 ArgSlot::Keyword(k) => &kwargs[*k].value,
                 ArgSlot::Default => continue,
             };
-            let mut arg_ty = self.infer_with_expected(arg, &params[i], true)?;
+            let arg_ty = self.infer_with_expected(arg, &params[i], true)?;
             reject_generic_function_value(name, &names[i], arg, &arg_ty, &params[i])?;
-            let expected = self.existential_argument_ty(&params[i], Some(arg), &arg_ty);
-            if expected != params[i] {
-                arg_ty = self.infer_with_expected(arg, &expected, true)?;
-            }
-            bind_existential(&mut existentials, &params[i], &expected);
-            if !self.record_implicit_conversion(arg, &arg_ty, &expected)? {
+            if !self.record_implicit_conversion(arg, &arg_ty, &params[i])? {
                 return Err(argument_mismatch(name, &names[i], &params[i], &arg_ty));
             }
-            // A deduced existential still ranks as the generic binder it is,
-            // below an overload declaring the argument's own type.
             score += conversion_count(&arg_ty, &params[i]);
             // Only a `var`/`deinit` parameter *consumes* its argument (moving the
             // value in). `read` (the default), `mut`, and `ref` all **borrow** — no
@@ -1853,10 +1804,6 @@ impl Checker {
             }
         }
 
-        // Each existential is the anonymous binder its argument deduced, so a
-        // result naming it (`type_of(it).IteratorOwnedType`) closes over the
-        // argument's type.
-        let ret = self.close_existentials(ret, &existentials);
         // Borrow check (mutable-XOR-shared), root-sensitive: within one call a
         // variable borrowed exclusively (`mut`/`ref`) or moved (`^`) may not be
         // borrowed again — mutably, shared, or moved.
@@ -2477,8 +2424,7 @@ impl Checker {
     /// bracket spells for an origin binder takes the origin it bound as its
     /// attribute. An argument the element bound of the callee's pack
     /// collector refuses is reported as such
-    /// ([`Self::collector_element_failure`]), and each existential `Some[Trait]`
-    /// pattern solves to its argument's deduced type ([`bind_existential`]).
+    /// ([`Self::collector_element_failure`]).
     pub(super) fn resolve_call_params(
         &self,
         name: &str,
@@ -2525,32 +2471,6 @@ impl Checker {
         let mut bound = self
             .resolve_explicit_use_params(name, decls, bracket, &patterns, actuals)
             .map_err(|failure| self.collector_element_failure(name, decls, failure))?;
-        // An existential over a trait-valued binder (`Some[Tr]`) deduces
-        // against the trait the call binds that binder to.
-        let symbolic = |pattern: &Ty| {
-            matches!(
-                pattern.kind(),
-                TyKind::Param {
-                    trait_param: Some(_),
-                    ..
-                }
-            )
-        };
-        let values = patterns
-            .iter()
-            .any(symbolic)
-            .then(|| DependentValues::own(&self.param_context, decls, &bound.arguments));
-        for (pattern, actual) in patterns.iter().zip(actuals) {
-            let pattern = match &values {
-                Some(values) if symbolic(pattern) => self.resolve_dependent_ty(pattern, values)?,
-                _ => pattern.clone(),
-            };
-            let deduced = self.existential_argument_ty(&pattern, None, actual);
-            if deduced == pattern {
-                self.check_existential_solution(&pattern, &bound.subst)?;
-            }
-            bind_existential(&mut bound.subst, &pattern, &deduced);
-        }
         bind_unbound_origin_attributes(
             name,
             &mut bound.attributes,
@@ -2558,39 +2478,6 @@ impl Checker {
             origins.as_ref(),
         )?;
         Ok(SolvedCall { bound, origins })
-    }
-
-    /// Reject the type the call's solve bound the existential `pattern`'s
-    /// anonymous binder to when it misses one of the binder's trait
-    /// bounds, as a declared binder's solution is checked: the argument
-    /// deduced no conforming type ([`Self::existential_argument_ty`]).
-    fn check_existential_solution(&self, pattern: &Ty, subst: &TySubst) -> Result<(), TypeError> {
-        let TyKind::Param {
-            binder,
-            bounds,
-            callable_bound: None,
-            ..
-        } = pattern.kind()
-        else {
-            return Ok(());
-        };
-        let Some(solved) = subst
-            .get(&binder.id)
-            .filter(|solved| *solved != pattern && is_existential_binder(binder))
-        else {
-            return Ok(());
-        };
-        bounds
-            .iter()
-            .find(|bound| !self.conforms_to(solved, bound))
-            .map_or(Ok(()), |bound| {
-                Err(TypeError::TraitNotSatisfied {
-                    param: binder.name.to_string(),
-                    ty: solved.to_string(),
-                    trait_name: bound.clone(),
-                    reason: self.trait_failure_reason(solved, bound),
-                })
-            })
     }
 
     /// Reject an argument binding an origin binder to an immutable origin

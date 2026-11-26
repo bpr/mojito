@@ -1,12 +1,14 @@
 # `Some[X]` binds an anonymous parameter to the trait value `X` evaluates
 # to: a `&` composition (module-qualified or not, or a trait constant)
 # bounds it by every trait, and a function type bounds it as a callable.
+# The binder is an archetype, so a local copy needs `Deinitable` in the
+# bound to be destroyed.
 import std.format as fm
 
 comptime WritableCopy = fm.Writable & Copyable
 
 
-def show(t: Some[fm.Writable & Copyable]):
+def show(t: Some[fm.Writable & Copyable & Deinitable]):
     var u = t.copy()
     print(u)
 

@@ -62,23 +62,6 @@ R2625–R2630 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
 
-- [ ] **R2625 A `Some[Trait]` parameter declares no binder, so its readers
-  find it by name**
-
-  A `Some[Trait]` parameter's type is a binder absent from its
-  declaration's `param_decls`. Upstream desugars it to an inferred
-  parameter of that declaration.
-  - Four readers recognize it by spelling, `starts_with("Some[")`:
-    `native/mono/unify.rs` (twice), `analysis/inline_parametric.rs`, and
-    `checker/annotations.rs`.
-  - Declare the binder in the declaration's own list, inferred, and let
-    each reader use the declared binder.
-  - Slice B1a of `docs/call-application-plan.md`.
-  - Probe: the `Some[…]` fixtures under `assets/ok` print as before, and
-    the search above finds nothing.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R2626 A call's recorded application leaves out origins and their
   `mut` binders**
 
@@ -6403,9 +6386,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The parser reads a `Self.X` bound as a value parameter typed by
     `Self.X`, and the checker's trait-parameter bound
     (`ParamDecl::Type::trait_param`) names only a sibling of the same list.
-  - The use-site check (`Checker::validate_trait_parameter_bounds`) reads
-    the trait from the declaration's own arguments, while this one is the
-    receiver's struct argument.
+  - The use-site check already closes such a binder at the receiver's
+    struct argument (`Checker::method_decls_at_receiver`), as the
+    `Some[Self.Tr]` binder needs; only the declaration is missing.
   - Found while landing R1167 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.

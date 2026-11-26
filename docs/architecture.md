@@ -1563,7 +1563,13 @@ without selecting an arm, unrolling a loop, stubbing a template, or minting a
 clone (pack qualification, the synthesized `copy`/`__hash__` methods, the
 automatic parameterization of each parameter an argument's struct type
 leaves unbound — bare, `_`, or `...` — into an infer-only binder of the
-declaration, SIMD alias-bound folding). The elaborator keeps every
+declaration, SIMD alias-bound folding). A `Some[Trait]` parameter, whose
+`Trait` the checker evaluates, becomes the same infer-only binder when
+the check resolves the parameter's type (`Checker::param_tys`,
+`annotations::declare_existential`): appended to the declaration's list
+after its declared binders, in argument order, so the checked signature,
+its `GenericSite` row, and MIR's `param_decls` declare it like any other
+binder. The elaborator keeps every
 `comptime if` and `comptime for` of every function body, plain or generic
 (`comptime/elab.rs:def_body`), and the one check types every body once with its declaration's
 parameters left symbolic (`checker/comptime_validation.rs`): each condition
@@ -1924,7 +1930,7 @@ second expression tree.
   with its `MethodSig::overload`, never from its body, which a packaged
   declaration does not carry. The lowered symbol spells the method's own binders
   with their bounds (`First.pick$ov$T$Copyable$Int`), a callable bound
-  (`F$Callable$def…`), and an existential `Some[Trait]` parameter
+  (`F$Callable$def…`), and a `Some[Trait]` parameter's declared binder
   (`Some$u5B$Writer$u5D$$Writer`) exactly as the checker's `TyKind::Param`
   spells a call's selected overload, so the symbol a call names is the one
   MIR declares. The checker and the elaborator

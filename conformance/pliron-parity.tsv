@@ -1407,6 +1407,8 @@ assets/ok/slice_string_native.mojo	main	exe-differential	sanitized
 assets/ok/some_composition_and_callable.mojo	main	exe-differential	sanitized
 assets/ok/some_indexer_user_subscript.mojo	main	exe-differential	sanitized
 assets/ok/some_parameter_literal_argument.mojo	main	exe-differential	sanitized
+assets/ok/some_parameter_method_nested_def_binder.mojo	main	exe-differential	sanitized
+assets/ok/some_parameter_nested_def_binder.mojo	main	exe-differential	sanitized
 assets/ok/some_trait_parameter.mojo	main	exe-differential	sanitized
 assets/ok/span_element_implicit_string_slice_conversion.mojo	main	exe-differential	sanitized
 assets/ok/span_from_array.mojo	main	exe-differential	sanitized

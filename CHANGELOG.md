@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `Some[Trait]` parameter now declares an infer-only binder of its own
+  declaration, as upstream's automatic parameterization of
+  `__SomeImpl[Trait, ...]` does (R2625), and every reader uses that
+  declared binder instead of recognizing the `Some[` spelling. A nested
+  `def` taking its own `Some[Writable]` inside a `Some`-parameter function
+  or method, which stopped with "argument 0 ... has type Int, declared
+  String", now binds apart and prints as at the pin. A local copy of a
+  `Some[Writable & Copyable]` argument is now abandoned without
+  `Deinitable`, as at the pin; a bracketed call (`f[1](x)`) now checks an
+  inferred binder's bounds, explicit `[T: Trait, //]` ones included; and
+  `Some` inside a parameter's type (`List[Some[Writable]]`) is refused.
+
 - An integer address now decodes against the storage it lands in on the
   VM, as at the pin and natively (R2609): `Pointer(unsafe_from_address=)`
   at a byte inside a heap element, or at a pointee of another layout than

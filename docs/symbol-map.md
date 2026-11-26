@@ -762,8 +762,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   spell their signatures. After the struct's spelled methods,
   `register_default_wrappers` resolves each stub's signature at the
   conformer and drops it when an own member has that signature
-  (`traits_support::same_resolved_shape`, binders compared by position and
-  an existential `Some[Trait]` as its anonymous binder), recording it in
+  (`traits_support::same_resolved_shape`, binders compared by position, a
+  `Some[Trait]` parameter's declared one among them), recording it in
   `StructInfo::provided_defaults`, which MIR carries to the struct's
   `StructDeclaration::provided_defaults` (`CheckedProgram::provided_defaults`)
   so `declared_overloads` counts it as the check's sets do; it rejects a

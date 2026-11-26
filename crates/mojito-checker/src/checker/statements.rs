@@ -4160,21 +4160,23 @@ impl Checker {
         // dependent parameter expression names (`Buf[n + 1]`), an origin
         // binder among them (`where o.mut`).
         self.push_param_scope(&decls);
-        let signature = self.def_signature_in_scope(stmt, shape, decls, unavailable, required);
+        let signature =
+            self.def_signature_in_scope(stmt, shape, (owner, decls), unavailable, required);
         self.pop_param_scope();
         signature
     }
 
     /// The part of [`Self::def_signature`] that resolves under the
     /// declaration's binders: `decls` is its whole declared list
-    /// ([`Self::classify_param_list`]), which its type and its
-    /// [`GenericSite`](mojito_checked::checked::GenericSite) row hold, and
-    /// the body reads the argument view of.
+    /// ([`Self::classify_param_list`]) under `owner`, with a binder for
+    /// each `Some[Trait]` parameter appended ([`Self::param_tys`]), which
+    /// its type and its [`GenericSite`](mojito_checked::checked::GenericSite)
+    /// row hold, and the body reads the argument view of.
     fn def_signature_in_scope(
         &mut self,
         stmt: &Stmt,
         shape: &DefShape<'_>,
-        mut decls: Vec<ParamDecl>,
+        (owner, mut decls): (&str, Vec<ParamDecl>),
         unavailable: Option<String>,
         required: Vec<bool>,
     ) -> Result<DefSignature, TypeError> {
@@ -4213,7 +4215,7 @@ impl Checker {
         let ret = ret_anno.as_ref();
         let (param_tys, ret_ty, compiled) = self.in_signature_scope(None, |this| {
             let generated = this.generated_declaration.replace(name.contains('$'));
-            let param_tys = this.param_tys(params);
+            let param_tys = this.param_tys(params, owner, &mut decls);
             this.generated_declaration.set(generated);
             let param_tys = param_tys?;
             let ret_ty = match (&ret, named_result) {
@@ -4688,15 +4690,18 @@ impl Checker {
     }
 
     /// Each parameter's type, declared in the open signature scope
-    /// ([`Self::in_signature_scope`]) as it resolves.
+    /// ([`Self::in_signature_scope`]) as it resolves. A `Some[Trait]`
+    /// parameter's binder becomes an infer-only binder of the declaration
+    /// `owner` declaring `decls`, appended to them ([`declare_existential`]).
     pub(super) fn param_tys(
         &mut self,
         params: &[mojito_ast::ast::FnParam],
+        owner: &str,
+        decls: &mut Vec<ParamDecl>,
     ) -> Result<Vec<Ty>, TypeError> {
         params
             .iter()
-            .enumerate()
-            .map(|(slot, parameter)| {
+            .map(|parameter| {
                 let annotation = &parameter.ty;
                 // The initialized-local rule for parameter annotations
                 // (pin-attested): bare infers per call, a partial application
@@ -4714,7 +4719,7 @@ impl Checker {
                     self.resolving_parameter_annotation.set(false);
                     resolved
                 };
-                let resolved = existential_at_slot(resolved?, slot);
+                let resolved = declare_existential(resolved?, owner, decls)?;
                 // A runtime value of a parametric function type is the
                 // closure a reference materializes, so its open parameters
                 // are origins alone, each call inferring them.

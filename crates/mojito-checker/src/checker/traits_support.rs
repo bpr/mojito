@@ -126,14 +126,12 @@ pub(super) fn ty_args_equal(left: &TyArg, right: &TyArg) -> bool {
 
 /// Whether resolved signatures `a` and `b` are one member of a struct's
 /// overload set: the same parameter shape with every binder compared by
-/// its position, not its spelling, and an existential parameter as the
-/// anonymous binder upstream desugars it to, so a conformer's
-/// `[W: Writer](mut writer: W)` provides a default's
-/// `(mut writer: Some[Writer])`. This is how an inherited default's stub
-/// is filtered against the struct's own members.
+/// its position, not its spelling, a `Some[Trait]` parameter's among them
+/// ([`Checker::param_tys`]), so a conformer's `[W: Writer](mut writer: W)`
+/// provides a default's `(mut writer: Some[Writer])`. This is how an
+/// inherited default's stub is filtered against the struct's own members.
 pub(super) fn same_resolved_shape(a: &MethodSig, b: &MethodSig) -> bool {
     let canonical = |sig: &MethodSig| {
-        let sig = with_existential_binders(sig);
         super::overload_support::canonical_generic_parameter_shape(
             &sig.declared,
             &sig.params,
@@ -310,7 +308,6 @@ pub(super) fn method_func_ty(
 /// satisfies a requirement spelled `def push[H: Hasher]`, since a binder's
 /// identity is its declaration's and its spelling is not part of the shape.
 fn canonical_method_shape(method: &MethodSig) -> MethodSig {
-    let method = &with_existential_binders(method);
     let decls = method.decls();
     if decls.is_empty() {
         // Origin binders compare through the types naming them, by slot, as
@@ -456,51 +453,6 @@ fn canonicalize_ref_sigs(method: &MethodSig, shape: &mut MethodSig) {
         .map(|sig| sig.as_ref().map(canonical))
         .collect();
     shape.ref_return = method.ref_return.as_ref().map(canonical);
-}
-
-/// `method` with each existential parameter (`hasher: Some[Hasher]`) bound
-/// by the anonymous type binder upstream desugars it to, after the declared
-/// ones, so `[H: Hasher](hasher: H)` is the same contract.
-fn with_existential_binders(method: &MethodSig) -> MethodSig {
-    let mut lifted = method.clone();
-    for (slot, param) in lifted.params.iter_mut().enumerate() {
-        let TyKind::Param {
-            binder,
-            bounds,
-            callable_bound,
-            trait_param,
-        } = param.kind()
-        else {
-            continue;
-        };
-        if !is_existential_binder(binder) {
-            continue;
-        }
-        let binder = existential_slot_binder(binder, slot);
-        let id = binder.id.clone();
-        let bounds = bounds.clone();
-        let callable_bound = callable_bound.clone();
-        let trait_param = trait_param.clone();
-        *param = TyKind::Param {
-            binder,
-            bounds: bounds.clone(),
-            callable_bound: callable_bound.clone(),
-            trait_param: trait_param.clone(),
-        }
-        .into();
-        lifted.declared.push(ParamDecl::Type {
-            id,
-            name: String::new(),
-            bounds,
-            trait_param: trait_param.map(|binder| *binder),
-            callable_bound,
-            default: None,
-            infer_only: false,
-            variadic: false,
-            constraints: Vec::new(),
-        });
-    }
-    lifted
 }
 
 /// A requirement's type as upstream spells it in a redefinition error.

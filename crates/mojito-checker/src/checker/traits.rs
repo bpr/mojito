@@ -627,7 +627,7 @@ impl Checker {
         m: &mojito_ast::ast::TraitMethod,
         owner: &str,
     ) -> Result<(MethodSig, Vec<Ty>), TypeError> {
-        let declared = self.classify_param_list(owner, &m.type_params)?;
+        let mut declared = self.classify_param_list(owner, &m.type_params)?;
         super::origins::validate_origin_signature(
             &declared,
             &m.params,
@@ -663,7 +663,7 @@ impl Checker {
                     param.default.as_ref().map(requirement_default)
                 })
                 .collect::<Vec<_>>();
-            let all_types = this.param_tys(&m.params)?;
+            let all_types = this.param_tys(&m.params, owner, &mut declared)?;
             let ret = match &m.ret {
                 Some(t) => this.emit_expr_type(t)?,
                 None => Ty::none(),
@@ -1806,7 +1806,8 @@ impl Checker {
                 self.push_assumptions(self.method_where_assumptions(m, &availability));
                 let receiver = self.signature_receiver(m)?;
                 let signature = self.in_signature_scope(receiver.as_ref(), |this| {
-                    let all_types = this.param_tys(&m.params)?;
+                    let mut method_decls = method_decls;
+                    let all_types = this.param_tys(&m.params, owner, &mut method_decls)?;
                     let sig = this.method_sig(m, method_decls, &all_types, availability)?;
                     this.check_method_result_origins(name, m, &all_types, receiver.as_ref())?;
                     Ok((all_types, sig))
@@ -1814,7 +1815,7 @@ impl Checker {
                 self.pop_assumptions();
                 signature
             }
-            None => self.compiled_method_signature(name, m, method_decls),
+            None => self.compiled_method_signature(name, m, (owner, method_decls)),
         };
         self.enclosing_type_params = saved_method_type_params;
         self.enclosing_param_decls = saved_method_decls;
@@ -1823,15 +1824,16 @@ impl Checker {
         signature
     }
 
-    /// [`Self::method_signature_owned_by`]'s signature with its `where`
-    /// clauses and gate compiled here: those reading none of its arguments
-    /// before its parameter types resolve, their facts assumed, and the rest
-    /// in its signature scope.
+    /// [`Self::method_signature_owned_by`]'s signature, its own binders
+    /// `method_decls` owned by `owner`, with its `where` clauses and gate
+    /// compiled here: those reading none of its arguments before its
+    /// parameter types resolve, their facts assumed, and the rest in its
+    /// signature scope.
     pub(super) fn compiled_method_signature(
         &mut self,
         name: &str,
         m: &Method,
-        method_decls: Vec<ParamDecl>,
+        (owner, method_decls): (&str, Vec<ParamDecl>),
     ) -> Result<(Vec<Ty>, MethodSig), TypeError> {
         self.method_gate(name, m)
             .and_then(|gate| self.method_clauses(m, false).map(|free| (free, gate)))
@@ -1843,7 +1845,8 @@ impl Checker {
                 self.push_assumptions(facts);
                 let receiver = self.signature_receiver(m)?;
                 let signature = self.in_signature_scope(receiver.as_ref(), |this| {
-                    let all_types = this.param_tys(&m.params)?;
+                    let mut method_decls = method_decls;
+                    let all_types = this.param_tys(&m.params, owner, &mut method_decls)?;
                     let mut clauses = free;
                     clauses.extend(this.method_clauses(m, true)?);
                     clauses.sort_by_key(|(index, _)| *index);

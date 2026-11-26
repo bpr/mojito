@@ -827,7 +827,7 @@ impl Checker {
         self.enclosing_type_params.extend(m.type_params.clone());
         self.enclosing_param_decls
             .extend(method_decls.iter().cloned());
-        let signature = self.compiled_method_signature(trait_name, m, method_decls);
+        let signature = self.compiled_method_signature(trait_name, m, (owner, method_decls));
         self.enclosing_type_params = saved_type_params;
         self.enclosing_param_decls = saved_decls;
         self.enclosing_struct_type_params.set(saved_struct_count);

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	1353
+# swept-count	1355
 assets/type_error/address_space_unknown_leading_dot.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/address_space_unknown_name.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/atomic_bool_has_no_load.mojo	compile-reject	agree	error: no matching method in call to 'load'
@@ -1182,6 +1182,8 @@ assets/type_error/size_of_target_not_compilation_target.mojo	compile-reject	agre
 assets/type_error/slice_literal_ambiguous.mojo	compile-reject	agree	error: ambiguous call to '__getitem__'
 assets/type_error/slice_two_argument_none.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/some_generic_callee_unmet.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 't' cannot be converted from 'NW' to 'T', argument type 'NW' does not conform to trait 'Writable'
+assets/type_error/some_inside_parameter_type.mojo	compile-reject	agree	error: 'List' parameter 'T' has 'AnyType' type, but value has type '__generator_type[T: Writable] Writable'
+assets/type_error/some_parameter_linear_local.mojo	compile-reject	agree	error: 'u' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/some_trait_parameter_method_unmet.mojo	compile-reject	agree	error: invalid call to 'm': value passed to 't' cannot be converted from 'NW' to 'T', argument type 'NW' does not conform to trait 'Writable'
 assets/type_error/some_trait_parameter_unmet.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 't' cannot be converted from 'NW' to 'T', argument type 'NW' does not conform to trait 'Writable'
 assets/type_error/span_implicit_return_escape.mojo	runs	subset	the pin runs it;Mojito rejects: escapes storage
