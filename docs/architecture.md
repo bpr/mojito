@@ -2332,7 +2332,9 @@ upstream's body reads it; the rest of a body's scope
 (`Checker::classify_params`, MIR's `EnclosingBinders`, `closure_uses`) is
 the argument view (`ParamDecl::argument_binders`), which leaves out the
 origin binders and their `mut=` binders, because an instance carries its
-origins as a tail and a call infers them from places. The elaborator keys
+origins as a tail (a call's recorded application holds the whole list,
+and a construction's struct prefix is the constructed instance's own
+arguments, `Checker::constructed_prefix`). The elaborator keys
 an instance on the `mut=` binders its body (or a body nested in it) reads
 beside the argument view's (`Specializer::mutability_arguments`,
 `nested_bindings`), and `remove-unused-params` removes an unread one

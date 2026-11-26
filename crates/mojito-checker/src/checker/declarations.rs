@@ -3607,10 +3607,10 @@ impl Checker {
 
     /// The arguments of a construction of `name` that solved `arguments`,
     /// the struct's argument view and then its constructor's (declared
-    /// `own`), over the constructor's whole declared list: the struct's
-    /// origin binders, and their `mut=` binders, bound to the origins the
-    /// `constructed` instance carries, as the call binds every declared
-    /// parameter.
+    /// `own`), over the constructor's whole declared list, as the call
+    /// binds every declared parameter: the struct prefix is the
+    /// `constructed` instance's own arguments
+    /// ([`Self::constructed_prefix`]), then the constructor's.
     pub(super) fn construction_arguments(
         &self,
         name: &str,
@@ -3622,18 +3622,19 @@ impl Checker {
             return arguments.to_vec();
         };
         let declared: Vec<ParamDecl> = info.params.iter().chain(own).cloned().collect();
-        self.declared_call_arguments(
+        let derived = self.declared_call_arguments(
             &declared,
             arguments,
             &Self::constructed_origins(info, name, constructed),
             None,
-        )
+        );
+        Self::constructed_prefix(info, name, constructed, derived)
     }
 
-    /// Bind the struct's origin binders, and their `mut=` binders, in the
-    /// arguments the construction at `span` recorded
-    /// ([`Self::record_construction_instantiation`]) to the origins the
-    /// `constructed` instance carries ([`Self::construction_arguments`]).
+    /// Bind the struct prefix of the arguments the construction at `span`
+    /// recorded ([`Self::record_construction_instantiation`]) to the
+    /// `constructed` instance's arguments, origins and their `mut=` binders
+    /// included ([`Self::constructed_prefix`]).
     fn bind_constructed_origins(&self, span: &SourceSpan, name: &str, constructed: &Ty) {
         let Some(info) = self.structs.get(name) else {
             return;
@@ -3655,10 +3656,50 @@ impl Checker {
             .filter(|(decl, _)| decl.is_argument_binder(decls))
             .map(|(_, argument)| argument.clone())
             .collect();
-        let bound = self.declared_call_arguments(decls, &view, &origins, None);
+        let bound = Self::constructed_prefix(
+            info,
+            name,
+            constructed,
+            self.declared_call_arguments(decls, &view, &origins, None),
+        );
         if let Some(instantiation) = self.record_at(span.clone()).generic_instantiation.as_mut() {
             instantiation.arguments.splice(..decls.len(), bound);
         }
+    }
+
+    /// `derived`, a construction's arguments over a list the struct
+    /// `info`, named `name`, prefixes, with each struct parameter's slot
+    /// the `constructed` instance's argument wherever that instance decides
+    /// it, as upstream's constructor applies the type it builds as its
+    /// struct prefix: `Pointer[mut=False, Int, o]`'s initializer is called
+    /// with `mut = False`, whatever the origin's owner allows. `derived` as
+    /// it stands when the instance spells no whole list (an erased or
+    /// pack-keyed spelling).
+    fn constructed_prefix(
+        info: &StructInfo,
+        name: &str,
+        constructed: &Ty,
+        mut derived: Vec<TyArg>,
+    ) -> Vec<TyArg> {
+        let decls = &info.params;
+        let Some((_, instance)) =
+            nominal_parts(constructed).filter(|(constructed, _)| *constructed == name)
+        else {
+            return derived;
+        };
+        if instance.len() != decls.len() || derived.len() < decls.len() {
+            return derived;
+        }
+        for (slot, argument) in derived.iter_mut().zip(instance.iter()) {
+            if !matches!(
+                argument,
+                TyArg::Val(CtValue::Deferred(_))
+                    | TyArg::Origin(mojito_types::origin::Origin::Unbound)
+            ) {
+                slot.clone_from(argument);
+            }
+        }
+        derived
     }
 
     /// The origin each origin binder of the struct `info`, named `name`,

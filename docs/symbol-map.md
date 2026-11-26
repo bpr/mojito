@@ -3942,7 +3942,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`record_generic_application`), a method call
   (`MethodInstantiation::declared`, `method_declared_arguments`), a
   construction (`record_construction_instantiation`,
-  `bind_constructed_origins`, `construction_arguments`), and a conversion
+  `bind_constructed_origins`, `construction_arguments`, whose struct
+  prefix `Checker::constructed_prefix` takes from the constructed
+  instance's own arguments wherever it decides them, its `mut=` slots
+  included), and a conversion
   (`conversion_instantiation`, its constructor's own `mut=` binders from
   the origins the source binds, `Checker::own_origin_mutabilities`);
   `ParamDecl::constructor_call_arguments` (`types.rs`) takes an instance

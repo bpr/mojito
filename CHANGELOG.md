@@ -2294,6 +2294,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A construction's recorded struct `mut=` argument is now the constructed
+  type's, as upstream's constructor applies the type it builds (R2626),
+  where it was worked out again from the origin's owner. With
+  `MOJITO_PRE_ELABORATION=0`, `Pointer(_mlir_value=r)` over an immutable
+  origin of a `var`, and a `Span` conversion to an immutable one, stopped
+  at elaboration with "conflicting solutions for `mut`"; they now run.
+
 - A keyword `_` (`address_space=_`) or a `...` on an applied parametric
   alias leaves the parameter unbound, as on its struct (R2611):
   `ImmPointer[Int, _, address_space=_]` and `MutPointer[Int, ...]` no

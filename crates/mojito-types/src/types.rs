@@ -2102,9 +2102,11 @@ impl FuncTy {
 ///
 /// `decls` is the whole declared list, in declared order, as upstream
 /// declares it: each `Origin`/`OriginSet` parameter a [`ParamDecl::Origin`]
-/// and the `Bool` binding one's `mut=` an infer-only value binder. A call,
-/// an explicit specialization, and a `#kgen.bind_params` bind the
-/// [`Self::argument_view`] by position and infer the origins from places.
+/// and the `Bool` binding one's `mut=` an infer-only value binder. An
+/// explicit specialization and a `#kgen.bind_params` bind the
+/// [`Self::argument_view`] by position; a call's recorded application holds
+/// a value for every declared parameter, origins and their `mut=` binders
+/// included, as upstream's `kgen.call` does.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GenericFuncTy {
     pub decls: Vec<ParamDecl>,
@@ -4047,10 +4049,10 @@ impl ParamDecl {
             })
     }
 
-    /// Whether an instance or a call binds this binder by its position in
-    /// the argument list: a type or value binder that is not an origin's
-    /// mutability. Instances carry their origins as a tail after these, and
-    /// calls infer them from places, until both bind the whole list in
+    /// Whether an instance or a call's argument view binds this binder by
+    /// its position in the argument list: a type or value binder that is
+    /// not an origin's mutability. Instances carry their origins as a tail
+    /// after these; a call's recorded application binds the whole list in
     /// declared order.
     pub fn is_argument_binder(&self, decls: &[Self]) -> bool {
         !self.is_origin() && !self.is_origin_mutability_binder(decls)

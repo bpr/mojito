@@ -62,26 +62,6 @@ R2625–R2630 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
 
-- [ ] **R2626 A call's recorded application leaves out origins and their
-  `mut` binders**
-
-  The checker records a call's solved compile-time arguments over the
-  callee's argument view, which drops every origin binder and every
-  origin's `mut=` binder. So the elaborator infers them from places.
-  - Upstream's `kgen.call` carries them in the call's list
-    (`kgen.call @lifetime_lower<:origin<true> #lit.any.origin>`,
-    `Mojo/test/kgen/lit-dialect/lit-attrs.mlir:58`).
-  - Record the whole declared list in the `generic_instantiation`,
-    `method_instantiation`, and `bound_instantiation` facts and in
-    `ConversionInstantiatedArguments`. Copy it into `Call` / `MethodCall`
-    `instantiated_args`, and bump the MIR text schema.
-  - The elaborator binds origins and `mut` from the record. Unification
-    stays as a fallback until R2628.
-  - Slice B1b of `docs/call-application-plan.md`.
-  - Probe: R2440's two fixtures with `MOJITO_PRE_ELABORATION=0`.
-  - Depends on R2625 (the `Some` binders must be declared to be recorded).
-  - Model: Fable, Planned.
-
 - [ ] **R2627 A call MIR synthesizes carries no compile-time application,
   and the verifier allows it**
 
@@ -107,13 +87,15 @@ slice.
   from what it found. Upstream's elaborator substitutes the call's
   parameter list under the enclosing instance.
   - When the two answers disagree, elaboration fails with "conflicting
-    solutions" (R2440). When the identities differ, one instance gets two
+    solutions". When the identities differ, one instance gets two
     spellings (R2167's `Pointer` bullet).
   - Substitute the record under the caller's bindings, including an open
     one. Delete the unification of call operands, the sugar-argument
     pushes, and the "conflicting solutions" errors.
   - Slice B2 of `docs/call-application-plan.md`.
-  - Probe: R2440's fixtures with `MOJITO_PRE_ELABORATION=0`, and
+  - Probe: `assets/ok/lit_ref_of_reference_result.mojo` and
+    `assets/ok/lit_ref_struct_field_initializer.mojo` with
+    `MOJITO_PRE_ELABORATION=0` (a regression probe), and
     `scripts/instantiation-report --check` for instance growth.
   - Depends on R2627 (every call must carry a record).
   - Model: Fable, Planned.
@@ -187,31 +169,6 @@ slice.
     compilations.
   - Found while landing R2160.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R2440 With the pre-elaboration pipeline off, the elaborator
-  finds two solutions for a `Pointer` initializer's `mut`**
-
-  With `MOJITO_PRE_ELABORATION=0`,
-  `assets/ok/lit_ref_of_reference_result.mojo` and
-  `assets/ok/lit_ref_struct_field_initializer.mojo` stop at elaboration
-  with "unsupported monomorphizing
-  `Pointer.__init__$ov$Ref$T$AnyType$asaddress$u5F$space$kw$_mlir_value`:
-  conflicting solutions for `mut`: `false` … and `true`", where the
-  pipeline-on run prints the fixture's output.
-  - The elaborator re-solves the callee's bindings by unifying types
-    (`native/mono/unify.rs`) instead of reading the check's. With the
-    pipeline on, the inliner splices the call away first.
-  - It is the acceptance probe of `docs/call-application-plan.md`: once
-    every call records its full parameter application and the elaborator
-    substitutes it, the conflict cannot arise.
-  - On 2026-11-26 `print(1)` and the entry's other former probes
-    (`lambda_hof`, `ctfe_dict_set_result`, `comptime_for_borrowing_iterator`,
-    `simd_symbolic_surface`, `bool_declared_members`, `pliron_closure_env`)
-    print the same with the pipeline on and off.
-  - Probe: the two fixtures above with `MOJITO_PRE_ELABORATION=0`.
-  - Found while landing R2428 (2026-11-20).
-  - Depends on R2626 (the record) and R2628 (substitution).
   - Model: Opus, Not Planned.
 
 - [ ] **R1731 A callee with a callable compile-time parameter, or a

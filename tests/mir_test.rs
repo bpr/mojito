@@ -3129,6 +3129,52 @@ fn calls_solve_a_value_for_every_declared_parameter() {
 }
 
 #[test]
+fn construction_records_its_constructed_instance_mutability() {
+    // A construction applies the instance it builds as its struct prefix:
+    // `Pointer(_mlir_value=h.r)` over `Holder[o: ImmOrigin]`'s reference
+    // builds `Pointer[mut=False, Int, o]`, whose `mut=` slot is `False`
+    // though the origin's owner is a `var`, while `Pointer(to=x)` builds a
+    // mutable one.
+    let source = "struct Holder[o: ImmOrigin]:\n    var r: Pointer[Int, Self.o]._mlir_lit_ref\n\n    def __init__(out self, p: Pointer[Int, Self.o]):\n        self.r = __get_mvalue_as_litref(p[])\n\n\ndef main():\n    var x = 7\n    var h = Holder(Pointer(to=x))\n    var p = Pointer(_mlir_value=h.r)\n    print(p[])\n";
+    let compiler = Compiler::default().with_snippet_module_scope();
+    let compiled = compiler
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile constructions over origin binders");
+    let main = &compiled
+        .mir()
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    let mutability = |keyword: &str| {
+        main.body
+            .instrs
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func,
+                    instantiated_args,
+                    ..
+                } if func.0.starts_with("Pointer.__init__") && func.0.contains(keyword) => {
+                    instantiated_args.first().cloned()
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the `{keyword}` construction is lowered"))
+    };
+    assert_eq!(
+        mutability("_mlir_value"),
+        mojito::types::TyArg::Val(mojito::ct::CtValue::Bool(false))
+    );
+    assert_eq!(
+        mutability("$kw$to"),
+        mojito::types::TyArg::Val(mojito::ct::CtValue::Bool(true))
+    );
+    assert_eq!(compiler.execute(&compiled).unwrap().output, "7\n");
+}
+
+#[test]
 fn inferred_generic_method_calls_retain_parameter_declarations() {
     let source = "@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias + len(options)\n\ndef main():\n    var counter = Counter(10)\n    print(counter.size(left=1, right=2))\n";
     let compiler = Compiler::default().with_snippet_module_scope();
