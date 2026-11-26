@@ -7,6 +7,7 @@ use super::*;
 use mojito_mir::mir::verify::instruction_places;
 use mojito_types::types::TyKind;
 use mojito_types::types::storage_simd;
+use views::StorageRoot;
 
 impl VmBackend {
     /// The value a `place.load` of `place` reads in the frame `frame_id` of
@@ -927,11 +928,13 @@ impl VmBackend {
                 regs[dest.0 as usize] = value;
             }
             MirInstr::DefVar { var, src, .. } if prog.error_slots[function].contains(var) => {
+                self.forget_written(StorageRoot::Frame(frame_id.0, *var as usize), &[]);
                 vars[*var as usize] = self.stage_error(regs, *src)?;
             }
             MirInstr::DefVar { var, src, .. }
                 if prog.mir.functions[function].1.error_slot == Some(*var) =>
             {
+                self.forget_written(StorageRoot::Frame(frame_id.0, *var as usize), &[]);
                 vars[*var as usize] = match self.raise(&regs[src.0 as usize]) {
                     RuntimeError::Raised(error) => error,
                     raised => return Err(raised),
@@ -949,7 +952,10 @@ impl VmBackend {
                     // A typed DefVar establishes fresh binding storage. In
                     // particular, rebinding a per-iteration reference target
                     // replaces the previous handle instead of assigning
-                    // through the referent it designated.
+                    // through the referent it designated. Fresh storage
+                    // keeps no bytes of the binding before it.
+                    let fresh = StorageRoot::Frame(frame_id.0, slot);
+                    self.forget_storage(|root| root == fresh);
                     vars[slot] = crate::runtime::coerce_checked(v, ty);
                 } else {
                     // An untyped DefVar is assignment to an established
@@ -967,6 +973,7 @@ impl VmBackend {
                         let handle = vars[slot].clone();
                         self.write_reference(&handle, frame_id, vars, assigned)?;
                     } else {
+                        self.forget_written(StorageRoot::Frame(frame_id.0, slot), &[]);
                         vars[slot] = assigned;
                     }
                 }
@@ -2190,6 +2197,7 @@ impl VmBackend {
                 if matches!(current, Value::Ref { .. }) {
                     current = self.read_reference(&current, frame_id, vars)?;
                 }
+                self.forget_written(StorageRoot::Frame(frame_id.0, *dest as usize), &[]);
                 vars[*dest as usize] = current;
             }
             MirInstr::HasNext { dest, iter } => {

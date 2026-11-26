@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2624**.
+Next free ID: **R2625**.
 
 ## Ordered Work
 
@@ -3113,6 +3113,26 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R2344 (2026-11-19).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R2624 A `Bool` field assigned through a heap pointer's
+  dereference traps on the VM**
+
+  Problem: `p[].f = False`, for `p` a `Pointer` to a heap struct with a
+  `Bool` field `f`, fails on the VM with "field access on non-struct
+  Pointer", where the pin and native code store the field.
+  - Cause: drop elaboration puts a `drop.place` of the field before the
+    `place.store`, which an `Int8` field does not get.
+  - Cause: the VM's `DropPlace` (`crates/mojito-vm/src/backend/vm/exec.rs`)
+    navigates the `ref` binding's slot as a struct, but the slot holds the
+    heap pointer the binding forwards.
+  - Probe: `arr[].f = False; print(arr[].f)` over `arr = unsafe_alloc[F](1)`
+    with `struct F { var n: Int8; var f: Bool }` prints `False` at the pin
+    and natively.
+  - Probe: `arr[1].f = True` and `var e = arr.unsafe_offset(1); e[].f =
+    False` fail the same way.
+  - Found while landing R2608 (2026-11-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
@@ -13733,32 +13753,6 @@ residue found inside a task moves to the task that owns its fix.
   - Workaround: recurse through a non-generic helper.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R2608 A write through a byte view drops the bytes the VM's typed
-  values do not keep**
-
-  Problem: the VM holds a typed value per slot, so a byte a byte view
-  writes that no held value represents is lost, where the pin's memory
-  keeps every byte.
-  - Cause: `view_write` (`crates/mojito-vm/src/backend/vm/views.rs`)
-    rebuilds each held value from its bytes, and the value cannot carry a
-    padding byte, a `Bool` byte's high bits, or a `Float32` or `Float16`
-    lane's exact NaN bits (it is held as an `f64`).
-  - Probe: a byte of 171 written at offset 1 of `struct P { var a: Int8; var b: Int }`
-    through `Pointer(to=p).unsafe_bitcast[Byte]()` reads back `171` at the
-    pin and natively, and `0` on the VM.
-  - Probe: a `Bool` field's byte set to `2` through a byte view reads back
-    `2` at the pin and `0` on the VM.
-  - Probe: the bytes `1 0 0x80 0x7F` written into a `Float32` through a
-    byte view read back as `UInt32` `2139095041` at the pin and
-    `2143289345` on the VM, a quieted NaN.
-  - Probe: `SIMD[DType.bool, 4]`'s bytes past its packed bits read `112`
-    at the pin and `0` on the VM, bytes no lane holds.
-  - The lever is bytes held beside a typed slot, or the VM's memory as
-    bytes (redesign F, `redesign.md` §8).
-  - Found while landing R2602 (2026-11-25).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R2609 An integer address decodes only at the reading pointee's
   stride, never to a byte view of storage of another layout**

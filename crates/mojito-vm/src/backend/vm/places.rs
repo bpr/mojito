@@ -49,6 +49,28 @@ pub(super) fn store_place(
     }
 }
 
+/// The reference projection reaching `place`'s storage from its root, as a
+/// write's kept bytes are forgotten by ([`VmBackend::forget_written`]): up
+/// to the first step no byte view takes, so the path names the place or
+/// storage holding it.
+pub(super) fn place_path(place: &MirPlace, regs: &[Value]) -> Vec<RefProjection> {
+    place
+        .storage()
+        .proj
+        .iter()
+        .map_while(|proj| match proj {
+            Proj::Field(name) => Some(RefProjection::Field(name.clone())),
+            Proj::ConstIndex(index) => Some(RefProjection::Index(*index)),
+            Proj::Index(reg) => value_as_index(&regs[reg.0 as usize])
+                .ok()
+                .and_then(|index| usize::try_from(index).ok())
+                .map(RefProjection::Index),
+            Proj::UninitPayload => Some(RefProjection::UninitPayload),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Read (clone) the value at a place.
 pub(super) fn load_place(
     vars: &mut [Value],

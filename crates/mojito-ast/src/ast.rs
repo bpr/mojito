@@ -692,10 +692,16 @@ impl Dtype {
     }
 
     /// Round a double-precision result to this float lane (`float16` and
-    /// `float32` round, `float64` is exact).
+    /// `float32` round, `float64` is exact). A NaN keeps the bits the lane
+    /// can hold, quiet or signaling, so a held lane is a fixed point.
     pub fn round_lane(self, value: f64) -> f64 {
+        use mojito_common::float::{
+            f16_lane_bits, f16_lane_from_bits, f32_lane_bits, f32_lane_from_bits, round_f16,
+        };
         match self {
-            Self::Float16 => mojito_common::float::round_f16(value),
+            Self::Float16 if value.is_nan() => f16_lane_from_bits(f16_lane_bits(value)),
+            Self::Float16 => round_f16(value),
+            Self::Float32 if value.is_nan() => f32_lane_from_bits(f32_lane_bits(value)),
             Self::Float32 => f64::from(value as f32),
             _ => value,
         }

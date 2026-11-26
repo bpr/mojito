@@ -373,6 +373,7 @@ impl VmBackend {
         let (frame, slot, projection) = (&frame, &slot, &projection);
         if *frame == current.0 {
             return self.write_reference_projection(
+                views::StorageRoot::Frame(*frame, *slot),
                 &mut current_variables[*slot],
                 projection,
                 value,
@@ -395,6 +396,7 @@ impl VmBackend {
             self.write_heap_projection(region, heap_slot, suffix, value)?;
             return Ok(());
         }
+        self.forget_written(views::StorageRoot::Frame(*frame, *slot), projection);
         let root = self.frame_variable_mut(*frame, *slot).ok_or_else(stale)?;
         if write_uninit_payload(root, projection, value.clone())? {
             return Ok(());
@@ -635,8 +637,12 @@ impl VmBackend {
         Ok(None)
     }
 
+    /// Write `value` at `projection` of `root`, the frame variable
+    /// `storage` names, or past the pointer boundary the projection
+    /// crosses.
     pub(super) fn write_reference_projection(
         &mut self,
+        storage: views::StorageRoot,
         root: &mut Value,
         projection: &[RefProjection],
         value: Value,
@@ -652,6 +658,7 @@ impl VmBackend {
             self.write_heap_projection(region, heap_slot, suffix, value)?;
             return Ok(());
         }
+        self.forget_written(storage, projection);
         if write_uninit_payload(root, projection, value.clone())? {
             return Ok(());
         }
@@ -690,6 +697,7 @@ impl VmBackend {
             let (next_region, next_slot) = self.heap_index(allocation, offset, index as i64)?;
             return self.write_heap_projection(next_region, next_slot, suffix, value);
         }
+        self.forget_written(views::StorageRoot::Heap(region, slot), projection);
         if write_uninit_payload(
             &mut self.heap[region].slots[slot],
             projection,

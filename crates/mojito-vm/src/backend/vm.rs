@@ -128,6 +128,10 @@ pub struct VmBackend {
     /// The struct table and field layouts of the program running, which a
     /// byte view lays its storage out by ([`VmBackend::configure`]).
     layout: Option<views::ProgramLayout>,
+    /// The bytes byte views wrote that no held value keeps, by the storage
+    /// element holding them: the padding and lossily decoded bytes the
+    /// pin's memory keeps ([`VmBackend::view_write`]).
+    retained: HashMap<views::StorageRoot, Vec<views::RetainedBytes>>,
     /// The target whose layout scales an element offset into the byte
     /// address `pop.pointer_to_index` reads ([`VmBackend::element_stride`]):
     /// the compilation's, which every layout query was folded for.
@@ -314,6 +318,10 @@ impl VmBackend {
         region.live = false;
         region.slots = Vec::new();
         region.never_written = Vec::new();
+        let freed = (allocation - 1) as usize;
+        self.forget_storage(
+            |root| matches!(root, views::StorageRoot::Heap(region, _) if region == freed),
+        );
         Ok(())
     }
 
@@ -338,6 +346,7 @@ impl VmBackend {
     /// container's reallocation forwarding a never-written slot) re-marks
     /// the slot.
     fn heap_store(&mut self, region: usize, slot: usize, value: Value) {
+        self.forget_written(views::StorageRoot::Heap(region, slot), &[]);
         let never_written = matches!(value, Value::Moved | Value::Undef);
         self.heap[region].never_written[slot] = never_written;
         let held = &mut self.heap[region].slots[slot];

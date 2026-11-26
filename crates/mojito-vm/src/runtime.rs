@@ -561,8 +561,8 @@ pub fn simd_bitcast(target: Dtype, width: usize, value: &Value) -> Result<Value,
         SimdLanes::Float(values) => values
             .iter()
             .map(|lane| match dtype {
-                Dtype::Float16 => u64::from(mojito_common::float::f16_bits(*lane)),
-                Dtype::Float32 => u64::from((*lane as f32).to_bits()),
+                Dtype::Float16 => u64::from(mojito_common::float::f16_lane_bits(*lane)),
+                Dtype::Float32 => u64::from(mojito_common::float::f32_lane_bits(*lane)),
                 _ => lane.to_bits(),
             })
             .collect(),
@@ -589,12 +589,12 @@ pub fn simd_bitcast(target: Dtype, width: usize, value: &Value) -> Result<Value,
         Dtype::Bool => SimdLanes::Bool((0..width).map(|index| read(index) != 0).collect()),
         Dtype::Float16 => SimdLanes::Float(
             (0..width)
-                .map(|index| mojito_common::float::f16_from_bits(read(index) as u16))
+                .map(|index| mojito_common::float::f16_lane_from_bits(read(index) as u16))
                 .collect(),
         ),
         Dtype::Float32 => SimdLanes::Float(
             (0..width)
-                .map(|index| f64::from(f32::from_bits(read(index) as u32)))
+                .map(|index| mojito_common::float::f32_lane_from_bits(read(index) as u32))
                 .collect(),
         ),
         Dtype::Float64 => SimdLanes::Float(
@@ -2018,7 +2018,7 @@ pub fn ctfe_float_to_int(target: Dtype, value: &Value) -> Result<(), RuntimeErro
 /// to 0 or 1, and a `bool` target takes the low bit (`trunc` to `i1`) of the
 /// integer lane or of the float lane truncated.
 pub fn simd_cast(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
-    let (_, lanes) = simd_parts(value).ok_or_else(|| {
+    let (source, lanes) = simd_parts(value).ok_or_else(|| {
         RuntimeError::TypeError(format!("cannot cast {} as a SIMD value", type_name(value)))
     })?;
     if target == Dtype::Bool {
@@ -2041,9 +2041,14 @@ pub fn simd_cast(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
                 .map(|x| wrap_lane(target, x.trunc() as i128))
                 .collect(),
         ),
-        (SimdLanes::Float(v), true) => {
-            SimdLanes::Float(v.iter().map(|x| target.round_lane(*x)).collect())
-        }
+        (SimdLanes::Float(v), true) if source == target => SimdLanes::Float(v.clone()),
+        // A conversion between float widths quiets a signaling NaN, as
+        // `fpext` and `fptrunc` do.
+        (SimdLanes::Float(v), true) => SimdLanes::Float(
+            v.iter()
+                .map(|x| target.round_lane(mojito_common::float::quiet_nan(*x)))
+                .collect(),
+        ),
         (SimdLanes::Bool(v), false) => SimdLanes::Int(v.iter().map(|x| i128::from(*x)).collect()),
         (SimdLanes::Bool(v), true) => {
             SimdLanes::Float(v.iter().map(|x| f64::from(u8::from(*x))).collect())

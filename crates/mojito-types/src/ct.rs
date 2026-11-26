@@ -133,9 +133,13 @@ impl CtLane {
             (Self::Float(bits), false) => {
                 Self::Int(wrap_lane(dtype, f64::from_bits(*bits).trunc() as i128))
             }
-            (Self::Float(bits), true) => {
-                Self::Float(dtype.round_lane(f64::from_bits(*bits)).to_bits())
-            }
+            // A lane cast converts between float widths, quieting a
+            // signaling NaN as `fpext` and `fptrunc` do.
+            (Self::Float(bits), true) => Self::Float(
+                dtype
+                    .round_lane(mojito_common::float::quiet_nan(f64::from_bits(*bits)))
+                    .to_bits(),
+            ),
             (Self::Bool(b), false) => Self::Int(i128::from(*b)),
             (Self::Bool(b), true) => Self::Float(f64::from(u8::from(*b)).to_bits()),
         }

@@ -6,6 +6,15 @@
 //! an LLVM `load` does, and a write through it rebuilds each value whose
 //! bytes it covers. Extracted from `backend/vm.rs`; see
 //! `docs/symbol-map.md`.
+//!
+//! A typed store writes its type's store bytes and leaves every other byte
+//! alone, as the pin's memory does. The bytes a view writes that no held
+//! value keeps — a struct's padding, a `bool` vector's bytes past its packed
+//! bits, and the exact bytes of a value that decodes them lossily (a `Bool`
+//! byte of `2`) — are kept beside the storage ([`VmBackend::retained`]) and
+//! read back by later views. A typed write of a value forgets its kept bytes
+//! ([`VmBackend::forget_written`]); padding stays until a view rewrites it or
+//! its storage dies.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -21,6 +30,23 @@ use mojito_types::types::TyKind;
 pub(super) struct ProgramLayout {
     pub(super) structs: Rc<HashMap<String, StructDef>>,
     pub(super) fields: Rc<StructFieldIndex>,
+}
+
+/// The storage element a kept byte belongs to: a heap slot by region and
+/// slot, or a frame variable by frame id and slot. Neither is ever reused,
+/// so an entry of dead storage is never read again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum StorageRoot {
+    Heap(usize, usize),
+    Frame(u64, usize),
+}
+
+/// Bytes a byte view wrote that the held value at `path` within a
+/// [`StorageRoot`] does not keep.
+#[derive(Debug)]
+pub(super) struct RetainedBytes {
+    path: Vec<RefProjection>,
+    kept: Kept,
 }
 
 /// A byte view's identity among the VM's pointer roots
@@ -151,7 +177,9 @@ impl VmBackend {
     }
 
     /// The value a typed read at `view.view` reads: the bytes of every held
-    /// value it covers, decoded at the view's type. Padding reads as zero.
+    /// value it covers, decoded at the view's type, with the bytes a view
+    /// wrote that no held value keeps read back. Padding never written
+    /// reads as zero.
     pub(super) fn view_read(
         &self,
         view: &ByteView,
@@ -160,15 +188,40 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         let size = self.access_size(&view.view)?;
         let mut bytes = vec![0; size as usize];
-        for (index, leaf) in self.covered_leaves(view, size)? {
-            let value =
-                self.read_leaf(&view.storage, index, &leaf.path, current, current_variables)?;
-            let mut encoded = vec![0; leaf.size as usize];
-            self.encode_bytes(&value, &leaf.ty, &mut encoded)?;
-            for (position, byte) in encoded.into_iter().enumerate() {
-                if let Some(slot) = view_byte(&mut bytes, leaf.offset + position as i64) {
-                    *slot = byte;
+        for (index, part) in self.covered_parts(view, size)? {
+            match part {
+                Part::Leaf(leaf) => {
+                    let value = self.read_leaf(
+                        &view.storage,
+                        index,
+                        &leaf.path,
+                        current,
+                        current_variables,
+                    )?;
+                    let mut encoded = vec![0; leaf.size as usize];
+                    self.encode_bytes(&value, &leaf.ty, &mut encoded)?;
+                    self.overlay_held(
+                        &view.storage,
+                        index,
+                        &leaf,
+                        &mut encoded,
+                        current,
+                        current_variables,
+                    )?;
+                    splice(&mut bytes, leaf.offset, &encoded);
                 }
+                Part::Gap(gap) if !self.retained.is_empty() => {
+                    let (root, path) =
+                        self.locate(&view.storage, index, &gap.path, current, current_variables)?;
+                    for byte in 0..gap.size {
+                        if let Some(kept) = self.kept_gap(root, &path, gap.start + byte)
+                            && let Some(slot) = view_byte(&mut bytes, gap.offset + byte)
+                        {
+                            *slot = kept;
+                        }
+                    }
+                }
+                Part::Gap(_) => {}
             }
         }
         self.decode_bytes(&bytes, &view.view)
@@ -176,7 +229,9 @@ impl VmBackend {
 
     /// Write `value` at `view.view` through `view`: each held value whose
     /// bytes it covers is rebuilt from its bytes with the written ones
-    /// spliced in, and stored back at its own type.
+    /// spliced in, and stored back at its own type. The written bytes no
+    /// rebuilt value keeps, and the padding the write covers, are kept
+    /// beside the storage ([`Self::retained`]).
     pub(super) fn view_write(
         &mut self,
         view: &ByteView,
@@ -187,33 +242,60 @@ impl VmBackend {
         let size = self.access_size(&view.view)?;
         let mut bytes = vec![0; size as usize];
         self.encode_bytes(value, &view.view, &mut bytes)?;
-        for (index, leaf) in self.covered_leaves(view, size)? {
-            let mut encoded = vec![0; leaf.size as usize];
-            // A value the write covers in part keeps its other bytes; one
-            // never written, or uninitialized storage, starts as zero bytes.
-            if (leaf.offset < 0 || leaf.offset + leaf.size > size)
-                && let Ok(held) =
-                    self.read_leaf(&view.storage, index, &leaf.path, current, current_variables)
-                && !matches!(held, Value::UninitStorage(None))
-            {
-                self.encode_bytes(&held, &leaf.ty, &mut encoded)?;
-            }
-            for (position, byte) in encoded.iter_mut().enumerate() {
-                if let Some(written) = view_byte(&mut bytes, leaf.offset + position as i64) {
-                    *byte = *written;
+        for (index, part) in self.covered_parts(view, size)? {
+            match part {
+                Part::Leaf(leaf) => {
+                    self.write_leaf_bytes(view, index, &leaf, &bytes, current, current_variables)?;
+                }
+                Part::Gap(gap) => {
+                    let written: Vec<(i64, u8)> = (0..gap.size)
+                        .filter_map(|byte| {
+                            usize::try_from(gap.offset + byte)
+                                .ok()
+                                .and_then(|position| bytes.get(position))
+                                .map(|written| (gap.start + byte, *written))
+                        })
+                        .collect();
+                    if written.is_empty() {
+                        continue;
+                    }
+                    let (root, path) =
+                        self.locate(&view.storage, index, &gap.path, current, current_variables)?;
+                    for (offset, byte) in written {
+                        self.keep(root, &path, Kept::Gap { offset, byte });
+                    }
                 }
             }
-            let rebuilt = self.decode_bytes(&encoded, &leaf.ty)?;
-            self.write_leaf(
-                &view.storage,
-                index,
-                &leaf.path,
-                rebuilt,
-                current,
-                current_variables,
-            )?;
         }
         Ok(())
+    }
+
+    /// Forget the exact bytes kept for every value a typed write of the
+    /// value at `path` within `root` replaces: the value itself, any value
+    /// within it, and any value it is part of. Padding stays.
+    pub(super) fn forget_written(&mut self, root: StorageRoot, path: &[RefProjection]) {
+        if self.retained.is_empty() {
+            return;
+        }
+        let Some(entries) = self.retained.get_mut(&root) else {
+            return;
+        };
+        let path = canonical_path(path);
+        entries.retain(|entry| {
+            !matches!(entry.kept, Kept::Held(_))
+                || !(entry.path.starts_with(&path) || path.starts_with(&entry.path))
+        });
+        if entries.is_empty() {
+            self.retained.remove(&root);
+        }
+    }
+
+    /// Forget every byte kept for the storage `dead` selects: storage just
+    /// freed, disposed, or bound afresh.
+    pub(super) fn forget_storage(&mut self, dead: impl Fn(StorageRoot) -> bool) {
+        if !self.retained.is_empty() {
+            self.retained.retain(|root, _| !dead(*root));
+        }
     }
 
     /// The `count` bytes at `pointer`, as a libc callee reads a buffer
@@ -475,9 +557,9 @@ impl VmBackend {
         }
     }
 
-    /// Every held value a `size`-byte access through `view` covers: the
-    /// element of the storage holding it, and where it sits.
-    fn covered_leaves(&self, view: &ByteView, size: i64) -> Result<Vec<(i64, Leaf)>, RuntimeError> {
+    /// Every held value and padding run a `size`-byte access through `view`
+    /// covers: the element of the storage holding it, and where it sits.
+    fn covered_parts(&self, view: &ByteView, size: i64) -> Result<Vec<(i64, Part)>, RuntimeError> {
         let stride = self.layout_size(&view.held)?;
         if stride == 0 {
             return Err(unsupported(&format!(
@@ -492,29 +574,30 @@ impl VmBackend {
         let first = view.byte.div_euclid(stride);
         let last = (view.byte + size - 1).div_euclid(stride);
         for index in first..=last {
-            let mut leaves = Vec::new();
-            self.leaves(
+            let mut parts = Vec::new();
+            self.parts(
                 &view.held,
                 index * stride - view.byte,
                 size,
                 &mut Vec::new(),
-                &mut leaves,
+                &mut parts,
             )?;
-            covered.extend(leaves.into_iter().map(|leaf| (index, leaf)));
+            covered.extend(parts.into_iter().map(|part| (index, part)));
         }
         Ok(covered)
     }
 
-    /// The held values of a `ty` value at byte `base` of a `size`-byte
-    /// access that overlap it, reached from the value by `path`. A part the
-    /// access does not overlap is never asked for its bytes.
-    fn leaves(
+    /// The held values and padding runs of a `ty` value at byte `base` of a
+    /// `size`-byte access that overlap it, reached from the value by
+    /// `path`. A part the access does not overlap is never asked for its
+    /// bytes.
+    fn parts(
         &self,
         ty: &Ty,
         base: i64,
         size: i64,
         path: &mut Vec<RefProjection>,
-        leaves: &mut Vec<Leaf>,
+        parts: &mut Vec<Part>,
     ) -> Result<(), RuntimeError> {
         let ty_size = self.layout_size(ty)?;
         if ty_size == 0 || base + ty_size <= 0 || base >= size {
@@ -522,41 +605,220 @@ impl VmBackend {
         }
         // Uninit storage is one held value of its payload's bytes: a write
         // initializes the whole payload, as a store into upstream's
-        // `!pop.array<1, T>` does.
+        // `!pop.array<1, T>` does. A value's bytes past its store size
+        // (a `bool` vector's past its packed bits) are padding.
         if crate::runtime::lane_shape(ty).is_some()
             || address_type_pointee(ty).is_some()
             || mojito_types::types::uninit_storage_element(ty).is_some()
         {
-            leaves.push(Leaf {
-                path: path.clone(),
-                ty: ty.clone(),
-                offset: base,
-                size: ty_size,
-            });
+            let access = self.access_size(ty)?;
+            if base + access > 0 && base < size {
+                parts.push(Part::Leaf(Leaf {
+                    path: path.clone(),
+                    ty: ty.clone(),
+                    offset: base,
+                    size: access,
+                }));
+            }
+            push_gap(parts, path, (base, size), access..ty_size);
             return Ok(());
         }
         match self.aggregate(ty)? {
             Aggregate::Held(field) | Aggregate::Uninit(field) => {
-                self.leaves(&field, base, size, path, leaves)
+                self.parts(&field, base, size, path, parts)
             }
             Aggregate::Array(element, count) => {
                 let stride = self.layout_size(&element)?;
                 for index in 0..count {
                     path.push(RefProjection::Index(index));
-                    self.leaves(&element, base + index as i64 * stride, size, path, leaves)?;
+                    self.parts(&element, base + index as i64 * stride, size, path, parts)?;
                     path.pop();
                 }
                 Ok(())
             }
-            Aggregate::Struct(fields) => {
+            Aggregate::Struct(mut fields) => {
+                fields.sort_by_key(|(_, _, offset)| *offset);
+                let mut end = 0;
                 for (name, field, offset) in fields {
+                    let field_size = self.layout_size(&field)?;
+                    push_gap(parts, path, (base, size), end..offset);
+                    end = end.max(offset + field_size);
                     path.push(RefProjection::Field(name));
-                    self.leaves(&field, base + offset, size, path, leaves)?;
+                    self.parts(&field, base + offset, size, path, parts)?;
                     path.pop();
                 }
+                push_gap(parts, path, (base, size), end..ty_size);
                 Ok(())
             }
         }
+    }
+
+    /// Rebuild the held value `leaf` names in element `index` of `view`'s
+    /// storage from its bytes with `written`'s spliced in, store it at its
+    /// own type, and keep its exact bytes when the stored value does not.
+    fn write_leaf_bytes(
+        &mut self,
+        view: &ByteView,
+        index: i64,
+        leaf: &Leaf,
+        written: &[u8],
+        current: FrameId,
+        current_variables: &mut [Value],
+    ) -> Result<(), RuntimeError> {
+        let mut encoded = vec![0; leaf.size as usize];
+        // A value the write covers in part keeps its other bytes; one
+        // never written, or uninitialized storage, starts as zero bytes.
+        if (leaf.offset < 0 || leaf.offset + leaf.size > written.len() as i64)
+            && let Ok(held) =
+                self.read_leaf(&view.storage, index, &leaf.path, current, current_variables)
+            && !matches!(held, Value::UninitStorage(None))
+        {
+            self.encode_bytes(&held, &leaf.ty, &mut encoded)?;
+            self.overlay_held(
+                &view.storage,
+                index,
+                leaf,
+                &mut encoded,
+                current,
+                current_variables,
+            )?;
+        }
+        for (position, byte) in encoded.iter_mut().enumerate() {
+            if let Some(written) = usize::try_from(leaf.offset + position as i64)
+                .ok()
+                .and_then(|position| written.get(position))
+            {
+                *byte = *written;
+            }
+        }
+        let rebuilt = self.decode_bytes(&encoded, &leaf.ty)?;
+        let mut kept = vec![0; encoded.len()];
+        self.encode_bytes(&rebuilt, &leaf.ty, &mut kept)?;
+        self.write_leaf(
+            &view.storage,
+            index,
+            &leaf.path,
+            rebuilt,
+            current,
+            current_variables,
+        )?;
+        if kept != encoded {
+            let (root, path) =
+                self.locate(&view.storage, index, &leaf.path, current, current_variables)?;
+            self.keep(root, &path, Kept::Held(encoded));
+        }
+        Ok(())
+    }
+
+    /// Overlay `encoded`, the bytes of the held value `leaf` names in
+    /// element `index` of `storage`, with the exact bytes a view wrote that
+    /// the value does not keep.
+    fn overlay_held(
+        &self,
+        storage: &Value,
+        index: i64,
+        leaf: &Leaf,
+        encoded: &mut [u8],
+        current: FrameId,
+        current_variables: &[Value],
+    ) -> Result<(), RuntimeError> {
+        if self.retained.is_empty() {
+            return Ok(());
+        }
+        let (root, path) = self.locate(storage, index, &leaf.path, current, current_variables)?;
+        if let Some(held) = self.retained.get(&root).and_then(|entries| {
+            entries.iter().find_map(|entry| match &entry.kept {
+                Kept::Held(bytes) if entry.path == path && bytes.len() == encoded.len() => {
+                    Some(bytes)
+                }
+                _ => None,
+            })
+        }) {
+            encoded.copy_from_slice(held);
+        }
+        Ok(())
+    }
+
+    /// The padding byte at `offset` of the value at `path` within `root`
+    /// a view kept, if one did.
+    fn kept_gap(&self, root: StorageRoot, path: &[RefProjection], offset: i64) -> Option<u8> {
+        self.retained
+            .get(&root)?
+            .iter()
+            .find_map(|entry| match entry.kept {
+                Kept::Gap { offset: at, byte } if at == offset && entry.path == path => Some(byte),
+                _ => None,
+            })
+    }
+
+    /// Keep `kept` for the value at `path` within `root`, replacing what was
+    /// kept for the same bytes.
+    fn keep(&mut self, root: StorageRoot, path: &[RefProjection], kept: Kept) {
+        let entries = self.retained.entry(root).or_default();
+        entries.retain(|entry| {
+            entry.path != path
+                || match (&entry.kept, &kept) {
+                    (Kept::Held(_), Kept::Held(_)) => false,
+                    (Kept::Gap { offset, .. }, Kept::Gap { offset: at, .. }) => offset != at,
+                    _ => true,
+                }
+        });
+        entries.push(RetainedBytes {
+            path: path.to_vec(),
+            kept,
+        });
+    }
+
+    /// The storage element and path a typed write of the value `path`
+    /// reaches in element `index` of `storage` lands at, as
+    /// [`Self::write_reference`] and [`Self::write_heap_projection`] route
+    /// it: two views of one value agree on it.
+    fn locate(
+        &self,
+        storage: &Value,
+        index: i64,
+        path: &[RefProjection],
+        current: FrameId,
+        current_variables: &[Value],
+    ) -> Result<(StorageRoot, Vec<RefProjection>), RuntimeError> {
+        if let Value::Pointer { allocation, offset } = storage {
+            let (region, slot) = self.heap_index(*allocation, *offset, index)?;
+            return self.heap_location(region, slot, path);
+        }
+        let (frame, slot, projection) = place_element_parts(storage, index, path)?;
+        let (frame, slot, projection) =
+            self.canonical_reference_parts(current, current_variables, frame, slot, projection);
+        let root = if frame == current.0 {
+            current_variables.get(slot)
+        } else {
+            self.frame_variable(frame, slot)
+        }
+        .ok_or_else(|| RuntimeError::TypeError(format!("vm: stale reference to frame {frame}")))?;
+        if let Some(boundary) = self.reference_pointer_boundary(root, &projection)? {
+            let (region, heap_slot) =
+                self.heap_index(boundary.allocation, boundary.offset, boundary.index as i64)?;
+            return self.heap_location(region, heap_slot, boundary.suffix);
+        }
+        Ok((StorageRoot::Frame(frame, slot), canonical_path(&projection)))
+    }
+
+    /// [`Self::locate`] past a heap slot: the slot itself, or the slot past
+    /// the next pointer boundary `path` crosses.
+    fn heap_location(
+        &self,
+        region: usize,
+        slot: usize,
+        path: &[RefProjection],
+    ) -> Result<(StorageRoot, Vec<RefProjection>), RuntimeError> {
+        if !path.is_empty()
+            && let Some(boundary) =
+                self.reference_pointer_boundary(&self.heap[region].slots[slot], path)?
+        {
+            let (region, slot) =
+                self.heap_index(boundary.allocation, boundary.offset, boundary.index as i64)?;
+            return self.heap_location(region, slot, boundary.suffix);
+        }
+        Ok((StorageRoot::Heap(region, slot), canonical_path(path)))
     }
 
     /// The held value `path` reaches in element `index` of `storage`.
@@ -715,12 +977,38 @@ enum ViewStorage {
     Place(u64, usize, Vec<RefProjection>),
 }
 
+/// What a byte view kept for a value ([`RetainedBytes`]).
+#[derive(Debug)]
+enum Kept {
+    /// The exact store bytes of a held value that decodes them lossily: a
+    /// `Bool` byte's high bits, a packed `bool` vector's unused bits.
+    Held(Vec<u8>),
+    /// A padding byte at `offset` within the value.
+    Gap { offset: i64, byte: u8 },
+}
+
+/// A part of a value a byte access covers.
+enum Part {
+    Leaf(Leaf),
+    Gap(Gap),
+}
+
 /// A held value a byte access covers: the projection reaching it within
-/// its storage element, its type, and its byte offset and size relative to
-/// the access.
+/// its storage element, its type, and its byte offset relative to the
+/// access and store size.
 struct Leaf {
     path: Vec<RefProjection>,
     ty: Ty,
+    offset: i64,
+    size: i64,
+}
+
+/// A run of padding a byte access covers: the projection reaching the
+/// value holding it, its byte offset within that value and relative to the
+/// access, and its size.
+struct Gap {
+    path: Vec<RefProjection>,
+    start: i64,
     offset: i64,
     size: i64,
 }
@@ -764,6 +1052,44 @@ fn view_byte(bytes: &mut [u8], position: i64) -> Option<&mut u8> {
         .and_then(|position| bytes.get_mut(position))
 }
 
+/// Push the padding at bytes `run` of the value `path` reaches, which sits
+/// at byte `base` of a `size`-byte access, when the access overlaps it.
+fn push_gap(
+    parts: &mut Vec<Part>,
+    path: &[RefProjection],
+    (base, size): (i64, i64),
+    run: std::ops::Range<i64>,
+) {
+    if run.start < run.end && base + run.end > 0 && base + run.start < size {
+        parts.push(Part::Gap(Gap {
+            path: path.to_vec(),
+            start: run.start,
+            offset: base + run.start,
+            size: run.end - run.start,
+        }));
+    }
+}
+
+/// Copy `part`, whose first byte sits at `offset` of a view's `bytes`,
+/// into the bytes the view covers.
+fn splice(bytes: &mut [u8], offset: i64, part: &[u8]) {
+    for (position, byte) in part.iter().enumerate() {
+        if let Some(slot) = view_byte(bytes, offset + position as i64) {
+            *slot = *byte;
+        }
+    }
+}
+
+/// `path` without its dereferences of a single-pointee place pointer,
+/// which are the identity ([`RefProjection::Deref`]), so every spelling of
+/// one value's path compares equal.
+fn canonical_path(path: &[RefProjection]) -> Vec<RefProjection> {
+    path.iter()
+        .filter(|segment| !matches!(segment, RefProjection::Deref))
+        .cloned()
+        .collect()
+}
+
 /// The frame, slot, and projection of a place pointer or reference.
 fn handle_parts(handle: &Value) -> Option<(u64, usize, &[RefProjection])> {
     match handle {
@@ -784,6 +1110,19 @@ fn handle_parts(handle: &Value) -> Option<(u64, usize, &[RefProjection])> {
 /// The reference to the value `path` reaches in element `index` of the
 /// place pointer `place`.
 fn place_element(place: &Value, index: i64, path: &[RefProjection]) -> Result<Value, RuntimeError> {
+    place_element_parts(place, index, path).map(|(frame, slot, projection)| Value::Ref {
+        frame,
+        slot,
+        projection,
+    })
+}
+
+/// The frame, slot, and projection of [`place_element`]'s reference.
+fn place_element_parts(
+    place: &Value,
+    index: i64,
+    path: &[RefProjection],
+) -> Result<super::references::HandleParts, RuntimeError> {
     let Value::PlacePointer {
         frame,
         slot,
@@ -793,11 +1132,7 @@ fn place_element(place: &Value, index: i64, path: &[RefProjection]) -> Result<Va
         return Err(view_storage_error(place));
     };
     projection.extend_from_slice(path);
-    Ok(Value::Ref {
-        frame,
-        slot,
-        projection,
-    })
+    Ok((frame, slot, projection))
 }
 
 /// The handle of byte `index` past the place pointer or reference
@@ -1060,6 +1395,50 @@ mod tests {
             vm.encode_bytes(&Value::UninitStorage(None), &storage, &mut bytes)
                 .is_err_and(|error| error.to_string().contains("uninitialized MaybeUninit"))
         );
+    }
+
+    /// The padding runs `parts` reports for a whole access of `ty`, as
+    /// (path, start, size).
+    fn gaps(vm: &VmBackend, ty: &Ty) -> Vec<(Vec<RefProjection>, i64, i64)> {
+        let size = vm.layout_size(ty).unwrap();
+        let mut parts = Vec::new();
+        vm.parts(ty, 0, size, &mut Vec::new(), &mut parts).unwrap();
+        parts
+            .into_iter()
+            .filter_map(|part| match part {
+                Part::Gap(gap) => Some((gap.path, gap.start, gap.size)),
+                Part::Leaf(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn padding_and_a_bool_vectors_unpacked_bytes_are_gaps() {
+        let vm = vm(&[(
+            "Padded",
+            vec![
+                ("a", vector(Dtype::Int8, 1)),
+                ("b", Ty::int()),
+                ("m", vector(Dtype::Bool, 4)),
+            ],
+        )]);
+        let padded = Ty::new(TyKind::Struct("Padded".to_string(), Vec::new()));
+        let field = |name: &str| vec![RefProjection::Field(name.to_string())];
+        assert_eq!(
+            gaps(&vm, &padded),
+            [(Vec::new(), 1, 7), (field("m"), 1, 3), (Vec::new(), 20, 4)]
+        );
+        assert!(gaps(&vm, &Ty::int()).is_empty());
+    }
+
+    #[test]
+    fn a_bool_byte_past_its_bit_decodes_lossily() {
+        let vm = vm(&[]);
+        let bool = vector(Dtype::Bool, 1);
+        let decoded = vm.decode_bytes(&[2], &bool).unwrap();
+        assert_ne!(encode(&vm, &decoded, &bool), [2]);
+        let decoded = vm.decode_bytes(&[1], &bool).unwrap();
+        assert_eq!(encode(&vm, &decoded, &bool), [1]);
     }
 
     #[test]

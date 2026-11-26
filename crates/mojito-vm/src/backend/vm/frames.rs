@@ -202,6 +202,8 @@ impl VmBackend {
         mut frame: Frame,
         value: Value,
     ) -> Result<Option<(Value, Vec<Value>)>, RuntimeError> {
+        let done = frame.id.0;
+        self.forget_storage(|root| matches!(root, views::StorageRoot::Frame(id, _) if id == done));
         if frame.id == target {
             return Ok(Some((value, frame.variables)));
         }
@@ -555,6 +557,8 @@ impl VmBackend {
         frame: Frame,
         error: Value,
     ) -> Result<(), RuntimeError> {
+        let done = frame.id.0;
+        self.forget_storage(|root| matches!(root, views::StorageRoot::Frame(id, _) if id == done));
         let continuation = frame.continuation.ok_or_else(|| {
             RuntimeError::Unsupported("vm: child frame has no return continuation".to_string())
         })?;

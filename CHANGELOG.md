@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A byte written through a `Pointer.unsafe_bitcast` byte view now reads
+  back as written on the VM, as at the pin and natively (R2608): a
+  struct's padding, a `Bool` byte's high bits until a typed store of the
+  `Bool`, and a `bool` vector's bytes past its packed lanes are kept
+  beside the typed storage. A `Float32` or `Float16` lane now holds its
+  exact bits, so a signaling NaN written through a view or a `UInt32`
+  retype survives a typed copy instead of reading back quieted.
+
 - `MaybeUninit[T]` now has `T`'s layout on both backends, as upstream's
   `!pop.array<1, T>` does (R2607): native code no longer lays a presence
   flag before the payload, and the VM's byte views step through the

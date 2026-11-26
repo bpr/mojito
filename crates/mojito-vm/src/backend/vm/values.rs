@@ -207,7 +207,13 @@ impl VmBackend {
                 };
                 self.write_reference(&reference, frame_id, vars, value)
             }
-            Target::Ordinary => store_place(vars, regs, place, value),
+            Target::Ordinary => {
+                self.forget_written(
+                    views::StorageRoot::Frame(frame_id.0, place.root as usize),
+                    &place_path(place, regs),
+                );
+                store_place(vars, regs, place, value)
+            }
         }
     }
 
