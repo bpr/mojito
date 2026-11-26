@@ -364,6 +364,12 @@ impl VmBackend {
             *slot,
             projection.clone(),
         );
+        // A byte view's root holds no value to navigate: the write rebuilds
+        // the held values its bytes cover.
+        if let Some(view) = self.view_at(frame, slot) {
+            let view = self.view_projection(view, &projection)?;
+            return self.view_write(&view, &value, current, current_variables);
+        }
         let (frame, slot, projection) = (&frame, &slot, &projection);
         if *frame == current.0 {
             return self.write_reference_projection(
@@ -414,6 +420,14 @@ impl VmBackend {
         root: &Value,
         projection: &[RefProjection],
     ) -> Result<Value, RuntimeError> {
+        // A byte view's root reads the bytes its projection selects.
+        if let Value::ByteView(view) = root {
+            return self.view_read(
+                &self.view_projection(view, projection)?,
+                current,
+                current_variables,
+            );
+        }
         let mut value = root.clone();
         for segment in projection {
             // A `ref`-typed field mid-projection stores another handle; the

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2608**.
+Next free ID: **R2612**.
 
 ## Ordered Work
 
@@ -1078,7 +1078,28 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Probe: `var p = Pointer[Int, origin_of(x)](unsafe_from_address=Int(Pointer(to=x)))`,
     then `p[] = 7` and `print(x)`, prints `7` at the pin and on the VM;
     add it to `assets/ok/pointer_unsafe_from_address.mojo` once fixed.
+  - Probe: a pointer stored through a `Pointer[Pointer[Int, o]]` view of
+    an `Int` slot (`Pointer(to=slot).unsafe_bitcast[Pointer[Int, origin_of(x)]]()[] = q`),
+    then `print(slot == Int(q))` and the pointer read back, prints `True`
+    and `7` at the pin and on the VM, and fails natively with "Op has
+    different operand types". Add it to
+    `assets/ok/pointer_unsafe_bitcast_layout.mojo` once fixed.
   - Found while landing R2201 (2026-11-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R2610 Natively a `SIMD[DType.bool, n]` in memory holds a byte per
+  lane, where the pin packs its lanes as bits**
+
+  Problem: `Pointer(to=v).unsafe_bitcast[UInt8]()` over
+  `v = SIMD[DType.bool, 4](True, False, True, True)` reads the bytes
+  `13 …` at the pin and on the VM, and `1 0 1 1` natively.
+  - `size_of[SIMD[DType.bool, 4]]()` is `4` at both, so `lane_layout` is
+    right. The store writes each lane to its own byte, where the pin's
+    LLVM `<4 x i1>` store packs them into the first byte.
+  - Add the multi-lane `bool` line to
+    `assets/ok/pointer_unsafe_bitcast_layout.mojo` once fixed.
+  - Found while landing R2602 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9825,6 +9846,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `neg_inf`, `max_finite`, and the classifiers), which spell
     `!kgen.scalar<bf16>` attributes.
   - Then move the fixture to `assets/ok` with the pin's output.
+  - The lane needs its arm in the VM's byte-view codec
+    (`encode_bytes`/`decode_bytes`, `crates/mojito-vm/src/backend/vm/views.rs`),
+    or a byte view of it stays refused.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -9842,6 +9866,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - `ct::wrap_lane` already masks the three widths, and
     `integer_dtype_bits` answers them.
   - Probe: bool width 2 fails the same way (`_uint2`).
+  - The lane needs its arm in the VM's byte-view codec
+    (`encode_bytes`/`decode_bytes`, `crates/mojito-vm/src/backend/vm/views.rs`),
+    or a byte view of it stays refused.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -9859,6 +9886,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: `SIMD[DType.bool, 128](fill=True).reduce_bit_count()` prints
     `128` at the pin.
   - Probe: `var x: UInt128 = 7` is refused the same way.
+  - The lane needs its arm in the VM's byte-view codec
+    (`encode_bytes`/`decode_bytes`, `crates/mojito-vm/src/backend/vm/views.rs`),
+    or a byte view of it stays refused.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -9872,6 +9902,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     in Pliron's constants.
   - Probe: `SIMD[DType.bool, 256](fill=True).reduce_bit_count()` prints
     `256` at the pin.
+  - The lane needs its arm in the VM's byte-view codec
+    (`encode_bytes`/`decode_bytes`, `crates/mojito-vm/src/backend/vm/views.rs`),
+    or a byte view of it stays refused.
   - Depends on R2221.
   - Model: Opus, Planned.
 
@@ -9889,6 +9922,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     message, which Mojito's guard reports before.
   - Restore `std/utils/numerics.mojo`'s `float8_*` and `float4_e2m1fn`
     arms with their `!kgen.scalar<f8…>` attributes.
+  - The lane needs its arm in the VM's byte-view codec
+    (`encode_bytes`/`decode_bytes`, `crates/mojito-vm/src/backend/vm/views.rs`),
+    or a byte view of it stays refused.
   - Depends on R2219, R2224.
   - Model: Fable, Planned.
 
@@ -13250,7 +13286,7 @@ residue found inside a task moves to the task that owns its fix.
     forms only, so the `+` result's 8-byte buffer reallocates at the second
     append.
   - The inline bytes are read through `Pointer(to=self).unsafe_bitcast[Byte]()`,
-    which the VM refuses (R2602).
+    a byte view of the struct.
   - Probe: `String().capacity_bytes()` and `String(capacity_bytes=4).capacity_bytes()`
     print `23 23` at the pin and `0 8` here.
   - Probe: `String("abc")` grown to 21 bytes has capacity 23 at the pin and
@@ -13276,15 +13312,31 @@ residue found inside a task moves to the task that owns its fix.
   - The bundled `String._is_unique` is `_is_ref_counted`, and its copy
     constructor copies the bytes.
   - The count is read through a bitcast of the byte buffer to
-    `Atomic[Int]`, which the VM refuses (R2602).
+    `Atomic[Int]`, a byte view of the buffer, and the bundled library has
+    no `std.atomic`.
   - Upstream also sets `FLAG_HAS_NUL_TERMINATOR` for a literal-built
     String, so `as_c_string_span` need not reallocate one. The bundled
     `as_c_string_slice` copies a static string out to write its NUL.
   - The native owned-String bridges in `crates/mojito-pliron/src/lower/release.rs`
     and `mjrt_read_line` must allocate the count header too.
   - Found while landing R2600 (2026-11-25).
-  - Depends on R2602 (the VM's view of the count) and R2605 (the native
-    copy must run the library constructor that bumps the count).
+  - Depends on R2602 (the VM's view of the count), R2605 (the native
+    copy must run the library constructor that bumps the count), and R2611
+    (`Atomic`).
+  - Model: Fable, Not Planned.
+
+- [ ] **R2611 `std.atomic` is not bundled**
+
+  Problem: `from std.atomic import Atomic` fails to import, where the pin's
+  `Atomic[dtype]` holds a value updated by `pop.atomic` ops.
+  - Port upstream's `std/atomic` with `load`, `store`, `fetch_add`, and
+    `fetch_sub`, and lower its `pop.atomic.rmw` and `pop.load`/`pop.store`
+    atomic forms on both backends.
+  - Probe: `buf.unsafe_bitcast[Atomic[Int]]().unsafe_write(Atomic[Int](1))`
+    over a 16-byte `Byte` buffer, then `fetch_add(1)` and `load()` through
+    the view, prints `2` at the pin.
+  - Found while landing R2602 (2026-11-25).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1121 `Tuple` elements need not be `Movable`**
@@ -13637,49 +13689,68 @@ residue found inside a task moves to the task that owns its fix.
   Upstream's `MaybeUninit[T]` has `T`'s layout, so its pointer views
   (`p.unsafe_bitcast[MaybeUninit[T]]()` and back) read the same bytes. The
   bundled `MaybeUninit` is a struct over `__UninitStorage[T]`, which the VM
-  holds as `Value::UninitStorage`, so a read through such a view meets a
-  `T` where it expects the wrapper, and `runtime::pointer_bitcast_admits`
-  refuses the retype.
+  holds as `Value::UninitStorage`, so the VM's byte view of the retype
+  (`crates/mojito-vm/src/backend/vm/views.rs`) refuses the `UninitPayload`
+  step: "a UninitPayload step through a byte view of `__UninitStorage[Int]`".
   - Native code runs these views, as at the pin.
-  - Lever: port upstream's `MaybeUninit` storage shape, then let a typed
-    access through the view wrap or unwrap the held value
-    (`runtime::read_at`, `keep_held`).
+  - Lever: port upstream's `MaybeUninit` storage shape, so the view reads
+    `T`'s bytes as the pin does.
   - Probe: `Pointer(to=x).unsafe_bitcast[MaybeUninit[Int]]()[].unsafe_assume_init()`
     over `x = 5` prints `5` at the pin and is refused on the VM.
   - Probe: `Pointer.write_niche`'s `_Null` view of a `MaybeUninit[Self]`
-    (R2055), which is also a differing layout (R2602).
+    (R2055), which is also a differing layout.
   - Found while landing R2201 (2026-11-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R2602 The VM cannot view a value's storage at another layout**
+- [ ] **R2608 A write through a byte view drops the bytes the VM's typed
+  values do not keep**
 
-  Problem: the VM holds one typed `Value` per heap or frame slot, so a
-  `Pointer.unsafe_bitcast` that views a struct's words as bytes, or bytes as
-  a wider value, has nothing to read.
-  - A typed access already reinterprets a scalar or vector of one total
-    bit width (`runtime::read_at`, `keep_held`), and
-    `runtime::pointer_bitcast_admits` refuses layouts that differ. This is
-    the differing-layout case.
-  - Native code runs every such view, as at the pin.
-  - Probe: upstream's inline `String` reads its bytes through
-    `Pointer(to=self).unsafe_bitcast[Byte]()` over the
-    `{Pointer, Int, Int}` struct (R2603).
-  - Probe: upstream's heap `String` keeps its reference count in the eight
-    bytes before its data, read through `unsafe_bitcast[Atomic[Int]]()` of
-    the byte buffer (R2604).
-  - Probe: a `bool` lane through a byte view (`Pointer(to=b).unsafe_bitcast[UInt8]()[]`
-    over `b = True`), which a vector packs as one bit and memory holds as
-    a byte; the sub-byte, 128- and 256-bit, `bfloat16`, and float8/6/4
-    dtypes the VM holds no lanes of follow it.
-  - Probe: a pointer read as an `Int`
-    (`Pointer(to=p).unsafe_bitcast[Int]()[]`), whose element stride the
-    read does not know, and an `Int` read of a slot a pointer was stored
-    into through an `Int`-to-pointer view, which `read_at` refuses.
-  - The lever is a byte-addressed view of a slot range: reading or writing
-    a `Byte` through a struct view splits or rebuilds the field's value,
-    and a wider read through a byte buffer assembles its bytes.
-  - Found while landing R2600 (2026-11-25).
+  Problem: the VM holds a typed value per slot, so a byte a byte view
+  writes that no held value represents is lost, where the pin's memory
+  keeps every byte.
+  - Cause: `view_write` (`crates/mojito-vm/src/backend/vm/views.rs`)
+    rebuilds each held value from its bytes, and the value cannot carry a
+    padding byte, a `Bool` byte's high bits, or a `Float32` or `Float16`
+    lane's exact NaN bits (it is held as an `f64`).
+  - Probe: a byte of 171 written at offset 1 of `struct P { var a: Int8; var b: Int }`
+    through `Pointer(to=p).unsafe_bitcast[Byte]()` reads back `171` at the
+    pin and natively, and `0` on the VM.
+  - Probe: a `Bool` field's byte set to `2` through a byte view reads back
+    `2` at the pin and `0` on the VM.
+  - Probe: the bytes `1 0 0x80 0x7F` written into a `Float32` through a
+    byte view read back as `UInt32` `2139095041` at the pin and
+    `2143289345` on the VM, a quieted NaN.
+  - Probe: `SIMD[DType.bool, 4]`'s bytes past its packed bits read `112`
+    at the pin and `0` on the VM, bytes no lane holds.
+  - The lever is bytes held beside a typed slot, or the VM's memory as
+    bytes (redesign F, `redesign.md` §8).
+  - Found while landing R2602 (2026-11-25).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R2609 An integer address decodes only at the reading pointee's
+  stride, never to a byte view of storage of another layout**
+
+  Problem: `VmBackend::address_pointer_at` turns an address into an element
+  index at the pointee's own stride, so an address between the storage's
+  own elements names no element, or the wrong one.
+  - Cause: a heap allocation records no element type, and a place's
+    address names its slot, so the decode cannot tell that the storage
+    holds values of another size. Native code reads the bytes at any
+    address.
+  - Probe: `Pointer[Byte, MutAnyOrigin](unsafe_from_address=Int(b.unsafe_offset(1)))[]`,
+    with `b` a `Byte` view of an `Int` heap buffer holding `0x0102`, prints
+    `1` at the pin and natively, and `5` (the buffer's next `Int`) on the
+    VM. This one is silently wrong.
+  - Probe: `Pointer[Int, origin_of(s)](unsafe_from_address=Int(bp.unsafe_offset(8)))[]`,
+    with `bp` a `Byte` view of `s = Pair(1, 2)`, prints `2` at the pin and
+    natively, and the VM refuses it: "the integer address … names no `Int`
+    element the VM holds".
+  - The lever: record each allocation's element type, and decode an
+    address that falls inside storage of another layout to a byte view of
+    it (`VmBackend::pointer_bitcast`'s roots).
+  - Found while landing R2602 (2026-11-25).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

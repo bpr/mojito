@@ -1178,6 +1178,7 @@ assets/ok/pointer_type_argument_interior_clone_binder.mojo	main	exe-differential
 assets/ok/pointer_uninit_lvalue.mojo	main	exe-differential	sanitized
 assets/ok/pointer_union_origin.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_bitcast.mojo	main	exe-differential	sanitized
+assets/ok/pointer_unsafe_bitcast_layout.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_bitcast_reinterpret.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_from_address.mojo	main	exe-differential	sanitized
 assets/ok/pointer_unsafe_mut_cast.mojo	main	exe-differential	sanitized

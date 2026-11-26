@@ -1177,6 +1177,7 @@ assets/ok/pointer_type_argument_interior_clone_binder.mojo	-	ineligible	no-scala
 assets/ok/pointer_uninit_lvalue.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_union_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_bitcast.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_unsafe_bitcast_layout.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_bitcast_reinterpret.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_from_address.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_mut_cast.mojo	-	ineligible	no-scalar-entry-shape

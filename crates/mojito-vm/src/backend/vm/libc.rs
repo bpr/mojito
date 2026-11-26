@@ -561,78 +561,29 @@ impl VmBackend {
     }
 
     fn read_c_string(&self, pointer: &Value) -> Result<Vec<u8>, RuntimeError> {
-        let Value::Pointer { allocation, offset } = pointer else {
-            return Err(RuntimeError::TypeError(
-                "vm: a C string argument must be a heap byte pointer".to_string(),
-            ));
-        };
         let mut bytes = Vec::new();
-        for index in 0.. {
-            let (region, slot) = self.heap_index(*allocation, *offset, index)?;
-            match self.heap[region].slots.get(slot) {
-                Some(Value::Simd {
-                    lanes: SimdLanes::Int(lanes),
-                    ..
-                }) if lanes.len() == 1 => {
-                    let byte = lanes[0] as u8;
-                    if byte == 0 {
-                        return Ok(bytes);
-                    }
-                    bytes.push(byte);
-                }
-                _ => {
-                    return Err(RuntimeError::TypeError(
+        loop {
+            let byte = self
+                .read_byte(pointer, bytes.len() as i64, NO_FRAME, &[])
+                .map_err(|_| {
+                    RuntimeError::TypeError(
                         "vm: external_call C string is not NUL-terminated inside its allocation"
                             .to_string(),
-                    ));
-                }
+                    )
+                })?;
+            if byte == 0 {
+                return Ok(bytes);
             }
+            bytes.push(byte);
         }
-        unreachable!()
     }
 
     fn read_bytes(&self, pointer: &Value, count: usize) -> Result<Vec<u8>, RuntimeError> {
-        let Value::Pointer { allocation, offset } = pointer else {
-            return Err(RuntimeError::TypeError(
-                "vm: a byte buffer argument must be a heap pointer".to_string(),
-            ));
-        };
-        let mut bytes = Vec::with_capacity(count);
-        for index in 0..count as i64 {
-            let (region, slot) = self.heap_index(*allocation, *offset, index)?;
-            match self.heap[region].slots.get(slot) {
-                Some(Value::Simd {
-                    lanes: SimdLanes::Int(lanes),
-                    ..
-                }) if lanes.len() == 1 => bytes.push(lanes[0] as u8),
-                other => {
-                    return Err(RuntimeError::TypeError(format!(
-                        "vm: external_call byte buffer slot is {other:?}, not a byte"
-                    )));
-                }
-            }
-        }
-        Ok(bytes)
+        self.read_byte_run(pointer, count, NO_FRAME, &[])
     }
 
     fn write_bytes(&mut self, pointer: &Value, bytes: &[u8]) -> Result<(), RuntimeError> {
-        let Value::Pointer { allocation, offset } = pointer else {
-            return Err(RuntimeError::TypeError(
-                "vm: a byte buffer argument must be a heap pointer".to_string(),
-            ));
-        };
-        for (index, byte) in bytes.iter().enumerate() {
-            let (region, slot) = self.heap_index(*allocation, *offset, index as i64)?;
-            self.heap_store(
-                region,
-                slot,
-                Value::Simd {
-                    dtype: Dtype::UInt8,
-                    lanes: SimdLanes::Int(vec![i128::from(*byte)]),
-                },
-            );
-        }
-        Ok(())
+        self.write_byte_run(pointer, bytes, NO_FRAME, &mut [])
     }
 
     /// A fresh byte allocation holding `bytes` plus a NUL terminator, as the

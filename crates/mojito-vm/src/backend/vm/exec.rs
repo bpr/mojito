@@ -589,19 +589,16 @@ impl VmBackend {
                 );
             }
             // The address is unchanged; a typed access through it reads the
-            // held value at the access's type (`runtime::read_at`). A retype
-            // no such access answers is refused here, at the bitcast.
+            // held value at the access's type (`runtime::read_at`), or the
+            // bytes of a differing layout through a byte view.
             MirInstr::PointerBitcast { dest, value } => {
                 let reg_types = &prog.mir.functions[function].1.reg_types;
-                crate::runtime::pointer_bitcast_admits(
+                regs[dest.0 as usize] = self.pointer_bitcast(
+                    prog,
+                    regs[value.0 as usize].clone(),
                     reg_types.get(&value.0),
                     reg_types.get(&dest.0),
                 )?;
-                regs[dest.0 as usize] = address_as(
-                    &prog.structs,
-                    regs[value.0 as usize].clone(),
-                    reg_types.get(&dest.0),
-                );
             }
             // An `index` and its `Int` storage are one value, as an `i1` and
             // a `!kgen.scalar<bool>` are, as LLVM's one `i1`, and an `ui8`
@@ -721,7 +718,7 @@ impl VmBackend {
                     ) => {
                         let (frame, slot, projection) = (*frame, *slot, projection.clone());
                         let stride = stride(self)?;
-                        self.place_address(frame, slot, &projection, stride)
+                        self.place_address(frame, slot, &projection, stride)?
                     }
                     other => {
                         return Err(RuntimeError::TypeError(format!(

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The VM now runs a `Pointer.unsafe_bitcast` to a pointee of another
+  layout, as the pin and native code do (R2602): the retyped pointer is a
+  byte view of the storage, and a read or write through it reads or
+  rebuilds the held values its bytes cover by the native layout. A
+  struct's words read as bytes, a byte buffer read and written as an `Int`
+  or a struct, a `Bool` read as `UInt8`, and a pointer read as its `Int`
+  address now run instead of being refused, and a libc buffer (`memcpy`,
+  `write`) may be such a view or a frame byte array. A padding byte
+  written through a view still reads back as zero (R2608), and an integer
+  address decodes only at the reading pointee's stride (R2609).
+
 - The VM now runs a `Pointer.unsafe_bitcast` to a scalar or vector of
   another dtype and one bit width, as the pin and native code do (R2201):
   a read through the retyped pointer reinterprets the held bits and a

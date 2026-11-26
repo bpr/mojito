@@ -28,7 +28,9 @@ use mojito_types::ct::ScalarConversion;
 use mojito_types::types::Ty;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use places::*;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 /// A verified concrete fragment prepared for compile-time calls, its struct
 /// and signature registries built once for every call into it.
@@ -114,11 +116,18 @@ pub struct VmBackend {
     /// The synthetic allocation id each place a place pointer addresses
     /// takes when its integer address is read ([`VmBackend::place_address`]),
     /// by frame, slot, and the projection up to its element index.
-    place_allocations: HashMap<(u64, usize, Vec<RefProjection>), u64>,
+    place_allocations: RefCell<HashMap<references::HandleParts, u64>>,
     /// The place each synthetic allocation id addresses, by id less
     /// `PLACE_ALLOCATION_BASE`: the inverse of `place_allocations`, which
     /// [`VmBackend::address_pointer`] decodes an integer address through.
-    place_addresses: Vec<PlaceAddress>,
+    place_addresses: RefCell<Vec<PlaceAddress>>,
+    /// The slot of [`POINTER_ROOT_FRAME`] holding each byte view a
+    /// `pop.pointer.bitcast` made ([`VmBackend::view_root`]), interned so a
+    /// bitcast in a loop reuses its root.
+    view_root_slots: HashMap<views::ViewKey, usize>,
+    /// The struct table and field layouts of the program running, which a
+    /// byte view lays its storage out by ([`VmBackend::configure`]).
+    layout: Option<views::ProgramLayout>,
     /// The target whose layout scales an element offset into the byte
     /// address `pop.pointer_to_index` reads ([`VmBackend::element_stride`]):
     /// the compilation's, which every layout query was folded for.
@@ -175,11 +184,17 @@ impl VmBackend {
         }
     }
 
-    fn configure_lifecycle(&mut self, prog: &Prog) {
+    /// Configure this VM for running `prog`: its lifecycle paths and the
+    /// layout its byte views read storage by.
+    fn configure(&mut self, prog: &Prog) {
         // A program with no lifecycle copy/move methods uses the default (raw clone /
         // slot transfer) path everywhere — so non-lifecycle programs are unchanged.
         self.has_copyinit = prog.owns_member("__copyinit__");
         self.has_moveinit = prog.owns_member("__moveinit__");
+        self.layout = Some(views::ProgramLayout {
+            structs: Rc::clone(&prog.structs),
+            fields: Rc::clone(&prog.layout_structs),
+        });
     }
 
     fn burn_ctfe(&mut self) -> Result<(), RuntimeError> {
@@ -479,7 +494,7 @@ impl VmBackend {
         fuel: usize,
     ) -> Result<(Value, usize), RuntimeError> {
         let prog = &program.0;
-        self.configure_lifecycle(prog);
+        self.configure(prog);
         let index = prog
             .index_of(name)
             .ok_or_else(|| RuntimeError::UndefinedVariable(name.to_string()))?;
@@ -576,13 +591,19 @@ impl VmBackend {
     /// a synthetic allocation, unique to its storage and disjoint from the
     /// heap's, and a trailing element index is its offset, so pointers into
     /// one array keep their byte distance.
+    ///
+    /// A pointer into a byte view's root ([`VmBackend::view_root`]) takes
+    /// the address of the view's storage plus the byte it views.
     pub(super) fn place_address(
-        &mut self,
+        &self,
         frame: u64,
         slot: usize,
         projection: &[RefProjection],
         stride: i64,
-    ) -> i64 {
+    ) -> Result<i64, RuntimeError> {
+        if let Some(view) = self.view_at(frame, slot) {
+            return self.view_address(&self.view_projection(view, projection)?);
+        }
         let (base, index) = match projection.split_last() {
             Some((RefProjection::Index(index), base)) => (base, *index as i64),
             Some((RefProjection::Deref, base)) => (base, 0),
@@ -592,18 +613,18 @@ impl VmBackend {
             && base.is_empty()
             && let Some(Value::Pointer { allocation, offset }) = self.pointer_roots.get(slot)
         {
-            return crate::runtime::pointer_address(
+            return Ok(crate::runtime::pointer_address(
                 *allocation,
                 offset.wrapping_add(index),
                 stride,
-            );
+            ));
         }
-        let next = self.place_allocations.len() as u64;
-        let allocation = *self
-            .place_allocations
+        let mut allocations = self.place_allocations.borrow_mut();
+        let next = allocations.len() as u64;
+        let allocation = *allocations
             .entry((frame, slot, base.to_vec()))
             .or_insert_with(|| {
-                self.place_addresses.push(PlaceAddress {
+                self.place_addresses.borrow_mut().push(PlaceAddress {
                     frame,
                     slot,
                     base: base.to_vec(),
@@ -615,7 +636,7 @@ impl VmBackend {
                 });
                 PLACE_ALLOCATION_BASE + next
             });
-        crate::runtime::pointer_address(allocation, index, stride)
+        Ok(crate::runtime::pointer_address(allocation, index, stride))
     }
 
     /// The pointer to `pointee` elements whose integer address is
@@ -636,6 +657,17 @@ impl VmBackend {
         pointee: &Ty,
     ) -> Result<Value, RuntimeError> {
         let stride = self.element_stride(prog, pointee)?;
+        self.address_pointer_at(address, stride, pointee)
+    }
+
+    /// [`VmBackend::address_pointer`] of `pointee` elements `stride` bytes
+    /// wide.
+    fn address_pointer_at(
+        &self,
+        address: i64,
+        stride: i64,
+        pointee: &Ty,
+    ) -> Result<Value, RuntimeError> {
         let allocation = (address as u64) >> 32;
         let distance = i64::from(address as u32);
         let undecodable = || {
@@ -653,7 +685,7 @@ impl VmBackend {
         }
         let place = usize::try_from(allocation - PLACE_ALLOCATION_BASE)
             .ok()
-            .and_then(|index| self.place_addresses.get(index))
+            .and_then(|index| self.place_addresses.borrow().get(index).cloned())
             .ok_or_else(undecodable)?;
         let mut projection = place.base.clone();
         match (place.tail, offset) {
@@ -1002,7 +1034,7 @@ impl VmBackend {
 
 impl VmBackend {
     fn run_prog(&mut self, prog: &Prog) -> Result<(), RuntimeError> {
-        self.configure_lifecycle(prog);
+        self.configure(prog);
         // Run module initialization, then `main()`. Capture the top-level frame's
         // user variables (skipping synthetic `$…` temporaries) as the global
         // bindings.
@@ -1062,7 +1094,7 @@ pub(super) fn symbolic_field_step() -> RuntimeError {
 /// `&Prog` beside the mutable output.
 struct Prog {
     mir: MirProgram,
-    structs: HashMap<String, StructDef>,
+    structs: Rc<HashMap<String, StructDef>>,
     sigs: HashMap<String, FnSig>,
     /// Per function, the error slots of its `try`s: a store into one is a
     /// raise's, staging the error as the raise stages it
@@ -1078,7 +1110,7 @@ struct Prog {
     address_params: Vec<Vec<bool>>,
     /// Every struct's field types, which [`VmBackend::element_stride`]
     /// lays a pointee out over.
-    layout_structs: mojito_native_core::layout::StructFieldIndex,
+    layout_structs: Rc<mojito_native_core::layout::StructFieldIndex>,
 }
 
 /// What an initializer's `out self` receiver enters as ([`Prog::constructed`]).
@@ -1239,9 +1271,9 @@ impl Prog {
             hold_register_fields(&structs, &mut function.body);
         }
         Self {
-            structs,
+            structs: Rc::new(structs),
             sigs: build_sigs(&mir.declarations),
-            layout_structs: mojito_mir::mir::struct_field_index(&mir.declarations),
+            layout_structs: Rc::new(mojito_mir::mir::struct_field_index(&mir.declarations)),
             mir,
             error_slots,
             addressed,
@@ -2302,12 +2334,12 @@ mod pointer_storage_tests {
                 declarations: mojito_mir::mir::MirDeclarations::default(),
                 invariant_errors: Vec::new(),
             },
-            structs: HashMap::new(),
+            structs: Rc::default(),
             sigs: HashMap::new(),
             error_slots: Vec::new(),
             addressed: Vec::new(),
             address_params: Vec::new(),
-            layout_structs: mojito_native_core::layout::StructFieldIndex::default(),
+            layout_structs: Rc::default(),
         }
     }
 
@@ -2323,7 +2355,7 @@ mod pointer_storage_tests {
         let prog = empty_program();
         let int = Ty::int();
         let decode = |vm: &VmBackend, address| vm.address_pointer(&prog, address, &int).unwrap();
-        let place = vm.place_address(3, 2, &[], 8);
+        let place = vm.place_address(3, 2, &[], 8).unwrap();
         assert_eq!(
             decode(&vm, place),
             Value::PlacePointer {
@@ -2332,7 +2364,9 @@ mod pointer_storage_tests {
                 projection: Vec::new()
             }
         );
-        let element = vm.place_address(3, 4, &[RefProjection::Index(2)], 8);
+        let element = vm
+            .place_address(3, 4, &[RefProjection::Index(2)], 8)
+            .unwrap();
         assert_eq!(
             decode(&vm, element),
             Value::PlacePointer {
@@ -2685,3 +2719,4 @@ use dispatch::CallTypes;
 mod invoke;
 mod libc;
 mod values;
+mod views;

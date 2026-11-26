@@ -256,7 +256,7 @@ impl VmBackend {
             } if method == "__int__" && args.is_empty() => {
                 let stride = self.receiver_stride(prog, receiver_ty)?;
                 Ok(Value::Int(
-                    self.place_address(*frame, *slot, projection, stride),
+                    self.place_address(*frame, *slot, projection, stride)?,
                 ))
             }
             _ if let Some(name) = &declared_owner => {
