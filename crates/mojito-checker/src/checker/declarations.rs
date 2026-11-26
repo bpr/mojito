@@ -3289,7 +3289,7 @@ impl Checker {
     /// the own whole list, its origin binders bound as the call's one solve
     /// bound them. The struct's origin binders are left for the constructed
     /// type to bind ([`Self::bind_constructed_origins`]).
-    fn record_construction_instantiation(
+    pub(super) fn record_construction_instantiation(
         &self,
         span: &SourceSpan,
         name: &str,
@@ -3297,7 +3297,12 @@ impl Checker {
         own: &[ParamDecl],
         (arguments, own_declared): (&[TyArg], &[TyArg]),
     ) {
-        if arguments.is_empty() && own_declared.is_empty() {
+        let struct_params = self
+            .structs
+            .get(name)
+            .map(|info| info.params.as_slice())
+            .unwrap_or_default();
+        if struct_params.is_empty() && own.is_empty() {
             return;
         }
         let (decls, param_args) = bracket;
@@ -3307,11 +3312,6 @@ impl Checker {
                 decls, param_args, arguments,
             ),
         );
-        let struct_params = self
-            .structs
-            .get(name)
-            .map(|info| info.params.as_slice())
-            .unwrap_or_default();
         let struct_view = ParamDecl::argument_binders(struct_params).count();
         let arguments = match arguments.split_at_checked(struct_view) {
             Some((struct_arguments, _)) if own_declared.len() == own.len() => self

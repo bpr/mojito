@@ -246,6 +246,11 @@ pub struct CheckedCallContract {
     pub parameter_arguments: Vec<CheckedCallParameter>,
     /// The selected callee's whole declared list, origin binders in place.
     pub param_decls: Vec<mojito_types::types::ParamDecl>,
+    /// The solved arguments over `param_decls`, one per declared binder, in
+    /// the caller's binder scope, as a MIR call's `instantiated_args`: the
+    /// application the call carries. Empty when the callee declares none.
+    #[serde(default)]
+    pub instantiated_args: Vec<mojito_types::types::TyArg>,
     pub boundary: CheckedCallBoundary,
     /// The bound a call through an archetype receiver was selected by when
     /// it differs from what the receiver's type spells: a type parameter

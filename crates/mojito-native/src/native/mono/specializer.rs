@@ -1107,6 +1107,7 @@ impl<'a> Specializer<'a> {
             &mut function,
             &|instance| self.template_declaration(instance),
             &|ty, field| self.source.declarations.declares_ref_field(ty, field),
+            false,
         );
         ensure_concrete_function(&key.template, &name, &function)?;
         self.output_positions

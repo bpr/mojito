@@ -404,6 +404,7 @@ pub fn inline_calls(
             function,
             &|name| declarations.function(name),
             &|ty, field| declarations.declares_ref_field(ty, field),
+            true,
         );
         record_lowered_callees(function, callees);
     }

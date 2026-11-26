@@ -524,7 +524,7 @@ impl<'a> Flatten<'a> {
                     },
                 ],
                 receiver: None,
-                instantiated_args: Vec::new(),
+                instantiated_args: node.instantiated_args(),
                 spread: None,
             });
             return d;
@@ -606,7 +606,7 @@ impl<'a> Flatten<'a> {
                 capture_accesses: Vec::new(),
                 param_arg_regs: Vec::new(),
                 receiver: None,
-                instantiated_args: Vec::new(),
+                instantiated_args: node.instantiated_args(),
                 spread: None,
             });
             return dest;

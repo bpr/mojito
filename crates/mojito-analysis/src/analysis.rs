@@ -235,6 +235,7 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
                     &mut f,
                     &|name| prog.declarations.function(name),
                     &|ty, field| prog.declarations.declares_ref_field(ty, field),
+                    true,
                 );
                 f
             } else {
@@ -302,6 +303,7 @@ pub fn elaborate_drops_function(
         &mut elaborated,
         &|name| declarations.function(name),
         &|ty, field| declarations.declares_ref_field(ty, field),
+        true,
     );
     elaborated
 }

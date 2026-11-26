@@ -1626,6 +1626,14 @@ each origin binder's slot `origin_unbound` and each `mut=` binder's
 deferred. The package format moves to `mojito-package 233`, a call's
 recorded instantiation holding the whole list (R2350).
 
+The same schema's verifier also rejects an empty `instantiated_args` on a
+`call`, `call.method`, or `call.indirect` whose callee declares parameters,
+and a non-empty one on a call naming an instance, which declares none
+(R2627): a call carries its callee's application, and an instance is its
+generator already applied. A subscript call still carries none. Text that
+leaves a generic callee's application out is rejected, not upgraded; no
+schema bump was needed, since the field was already written.
+
 Schema 1.204 gives every call its callee's whole declared parameter list,
 origin binders and their `mut=` binders in place, as upstream's call op
 holds one attribute per declared parameter: a `call.method`'s,

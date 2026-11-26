@@ -618,13 +618,6 @@ pub(super) fn verify_param_arguments(
                 | mojito_types::types::ParamDecl::Value { variadic: true, .. }
         )
     };
-    if !instantiated.is_empty() && instantiated.len() != declarations.len() {
-        errors.push(format!(
-            "{prefix}: the call's {} solved argument(s) do not bind its callee's {} declared parameter(s)",
-            instantiated.len(),
-            declarations.len()
-        ));
-    }
     let context = mojito_types::param_expr::ParamContext::detached();
     let mut bindings = mojito_types::param_expr::ParamBindings::new();
     if let Some((owner_decls, owner_arguments)) = owner {

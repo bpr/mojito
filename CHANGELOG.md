@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every call MIR lowers or synthesizes, but a subscript's, now carries one
+  compile-time argument per binder its callee declares, and the MIR
+  verifier rejects any other count (R2627): constructions of a struct whose
+  binders are all origins or infer-only (`StringSpan`, `Origin`, user
+  views), tuple and `Array` displays, in-place operators, pack-struct
+  copies and moves, the `**kwargs` collector's insert, and a `String`
+  materialized from a literal carried none before. A call naming an
+  elaborated instance now carries none, where its copies and moves
+  restated the template's arguments.
+
 - A `Some[Trait]` parameter now declares an infer-only binder of its own
   declaration, as upstream's automatic parameterization of
   `__SomeImpl[Trait, ...]` does (R2625), and every reader uses that

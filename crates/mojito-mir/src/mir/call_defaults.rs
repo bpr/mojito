@@ -896,7 +896,14 @@ fn build_keyword_collector(
         .unwrap_or_default();
     for &index in &collected {
         let (keyword, value) = site.kwargs[index].clone();
-        let key = fresh_register(function, Ty::string_literal_of(&keyword), location);
+        let key_ty = Ty::string_literal_of(&keyword);
+        // The key's binder is its literal type's text.
+        let instantiated_args = key_ty
+            .kind()
+            .as_non_simd_struct()
+            .map(|(_, text)| text.clone())
+            .unwrap_or_default();
+        let key = fresh_register(function, key_ty, location);
         prelude.push(MirInstr::Const {
             dest: key,
             k: Const::Str(keyword),
@@ -928,7 +935,7 @@ fn build_keyword_collector(
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: insert_decls.clone(),
-            instantiated_args: Vec::new(),
+            instantiated_args,
             spread: None,
             refined_bound: None,
         });

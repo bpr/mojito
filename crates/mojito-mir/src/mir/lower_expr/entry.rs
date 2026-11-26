@@ -677,15 +677,21 @@ impl<'a> Flatten<'a> {
     /// `String`, so the wrap is re-emitted here: the materialized slot must
     /// hold the struct the constructor lends.
     fn nominal_string_view_source(&mut self, e: Node<'a>, value: Reg, target: &str) -> Reg {
-        if !self
+        let Some(literal) = self
             .f
             .reg_types
             .get(&value.0)
-            .is_some_and(Ty::is_string_literal)
-            || !mojito_symbol::symbol::single_nominal_string_ctor(target)
-        {
+            .filter(|ty| ty.is_string_literal())
+            .filter(|_| mojito_symbol::symbol::single_nominal_string_ctor(target))
+        else {
             return value;
-        }
+        };
+        // The wrap's one binder is the literal type's text.
+        let instantiated_args = literal
+            .kind()
+            .as_non_simd_struct()
+            .map(|(_, text)| text.clone())
+            .unwrap_or_default();
         let nominal = self.fresh_typed(
             e.location(),
             None,
@@ -705,7 +711,7 @@ impl<'a> Flatten<'a> {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
-            instantiated_args: Vec::new(),
+            instantiated_args,
             spread: None,
         });
         nominal

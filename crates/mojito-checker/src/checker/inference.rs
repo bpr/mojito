@@ -2576,6 +2576,9 @@ impl Checker {
             (self.collector_constructor(name), None)
         };
         if record {
+            if let Some(constructor) = &constructor {
+                self.record_display_application(&display.source_span(), target, constructor);
+            }
             self.set_collection_construction(
                 display.source_span(),
                 target,
@@ -2682,6 +2685,38 @@ impl Checker {
                     )
                 })
             })
+    }
+
+    /// Record the compile-time application the construction of `target` by
+    /// `constructor` a display at `span` lowers as carries, as the written
+    /// construction (`Tuple(a, b)`, `Array[T, n](a, b, __list_literal__=None)`)
+    /// records it: the constructed instance's arguments as the struct
+    /// prefix, then the constructor's own.
+    fn record_display_application(&self, span: &SourceSpan, target: &Ty, constructor: &str) {
+        let Some((name, arguments)) = target.kind().as_non_pointer_struct() else {
+            return;
+        };
+        let Some(info) = self.structs.get(name) else {
+            return;
+        };
+        let self_ty = self.self_instance_ty(name);
+        let Some(sig) = info.methods.get("__init__").and_then(|sigs| {
+            sigs.iter().find(|sig| {
+                method_lowered_name(name, "__init__", sig, self_ty.as_ref()) == constructor
+            })
+        }) else {
+            return;
+        };
+        let view = info.view_arguments(arguments);
+        let struct_arguments =
+            super::comptime_validation::positional_pack_arguments(&info.decls(), &view);
+        self.record_construction_instantiation(
+            span,
+            name,
+            (&info.params, &[]),
+            &sig.declared,
+            (&struct_arguments, &[]),
+        );
     }
 
     /// Set span's `ConstructCollection` to build `target` by `constructor`
@@ -2810,6 +2845,7 @@ impl Checker {
                     method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
                 },
             );
+        self.record_display_application(&span, target, &constructor);
         // A re-inference of the same display keeps the owner a
         // temporary-receiver materialization already minted on it.
         let mut record = self.record_at(span);

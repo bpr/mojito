@@ -266,6 +266,7 @@ impl RewriteTypes for CheckedCallContract {
             reference_result,
             parameter_arguments: _,
             param_decls,
+            instantiated_args,
             boundary,
             refined_bound: _,
         } = self;
@@ -274,6 +275,7 @@ impl RewriteTypes for CheckedCallContract {
         arguments.rewrite_types(rewrite);
         reference_result.rewrite_types(rewrite);
         param_decls.rewrite_types(rewrite);
+        instantiated_args.rewrite_types(rewrite);
         boundary.rewrite_types(rewrite);
     }
 }

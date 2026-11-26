@@ -48,13 +48,25 @@ pub type DeclaresRefField<'d> = dyn Fn(&Ty, &str) -> bool + 'd;
 /// of the source and the call, or the call alone for a register copy.
 /// `declares_ref_field` names the fields whose storage is a reference, so
 /// a copy of a value loaded through one passes the stored handle.
+/// `applied` says whether the constructors the uses name are generators,
+/// as in parametric MIR, whose call carries the copied type's arguments
+/// for the struct parameters it restates, or instances, as the elaborator
+/// names them, whose call carries none: an instance is its generator
+/// already applied.
 pub fn lower_copies_and_moves(
     function: &mut MirFunction,
     declarations: &FunctionDeclarations<'_>,
     declares_ref_field: &DeclaresRefField<'_>,
+    applied: bool,
 ) {
     let mut blocks = std::mem::take(&mut function.body);
-    lower_blocks(&mut blocks, function, declarations, declares_ref_field);
+    lower_blocks(
+        &mut blocks,
+        function,
+        declarations,
+        declares_ref_field,
+        applied,
+    );
     function.body = blocks;
 }
 
@@ -63,6 +75,7 @@ fn lower_blocks(
     function: &mut MirFunction,
     declarations: &FunctionDeclarations<'_>,
     declares_ref_field: &DeclaresRefField<'_>,
+    applied: bool,
 ) {
     let spread: HashSet<u32> = block
         .instrs
@@ -86,7 +99,7 @@ fn lower_blocks(
     let mut loaded = HashMap::new();
     for mut instruction in std::mem::take(&mut block.instrs) {
         for region in instruction_regions_mut(&mut instruction) {
-            lower_blocks(region, function, declarations, declares_ref_field);
+            lower_blocks(region, function, declarations, declares_ref_field, applied);
         }
         let kept = matches!(&instruction,
             MirInstr::UseVar { dest, .. } if spread.contains(&dest.0));
@@ -94,6 +107,7 @@ fn lower_blocks(
             read_through: &read_through,
             loaded: &loaded,
             declares_ref_field,
+            applied,
         };
         let call = (!kept)
             .then(|| call_of(&instruction, function, declarations, &sources))
@@ -165,8 +179,12 @@ fn call_of(
             mode: mode @ (UseMode::Copy | UseMode::Move),
             constructor: Some(constructor),
         } => {
-            let argument =
-                constructor_argument(constructor, declarations, function.var_tys.get(var)?)?;
+            let argument = constructor_argument(
+                constructor,
+                declarations,
+                function.var_tys.get(var)?,
+                sources.applied,
+            )?;
             let ty = function.var_tys.get(var)?.clone();
             let (source, read) = if *mode == UseMode::Copy {
                 let place = MirPlace::root(*var, Some(ty));
@@ -205,8 +223,12 @@ fn call_of(
             value,
             constructor: Some(constructor),
         } => {
-            let argument =
-                constructor_argument(constructor, declarations, function.reg_types.get(&value.0)?)?;
+            let argument = constructor_argument(
+                constructor,
+                declarations,
+                function.reg_types.get(&value.0)?,
+                sources.applied,
+            )?;
             if let Some((place, load)) = sources.loaded.get(&value.0)
                 && let Some(storage) = place.ty.clone()
             {
@@ -274,11 +296,12 @@ fn call_of(
 /// parameters the declaration restates. `None` for a constructor whose
 /// declaration is not at hand, which raises, or which takes anything else,
 /// or for a `ty` that applies fewer arguments than it restates, whose use
-/// stays a use.
+/// stays a use. An instance constructor (`applied` false) restates none.
 fn constructor_argument(
     symbol: &str,
     declarations: &FunctionDeclarations<'_>,
     ty: &Ty,
+    applied: bool,
 ) -> Option<ConstructorArgument> {
     let declaration = declarations(symbol)?;
     let initializer = declaration.has_receiver
@@ -289,7 +312,11 @@ fn constructor_argument(
     let [name] = declaration.param_names.as_slice() else {
         return None;
     };
-    let struct_arguments = restated_arguments(&declaration.param_decls, ty)?;
+    let struct_arguments = if applied {
+        restated_arguments(&declaration.param_decls, ty)?
+    } else {
+        Vec::new()
+    };
     initializer.then(|| ConstructorArgument {
         name: name.clone(),
         keyword: declaration.keyword_only == Some(0),
@@ -299,11 +326,12 @@ fn constructor_argument(
 
 /// The arguments of the value type `ty` for the struct parameters `decls`
 /// a constructor restates, a value for every one, origins and their
-/// `mut=` values in place, as the instance holds them. A type argument spreading a pack
-/// (`Tuple[*Ts.reverse()]`) is a list of types, not one: a constructor
-/// restating a pack takes none, its owner's type binding them, unless it
-/// also restates a value parameter the call must then carry. `None` when
-/// `ty` applies too few.
+/// `mut=` values in place, as the instance holds them. A pack struct
+/// applied element by element (`Tuple[Int, Bool]`) binds its pack to the
+/// list of those types and the pack's visible binder to its `TypeList`
+/// ([`mojito_types::types::declared_pack_arguments`]), as its
+/// construction does; one restating a value parameter besides its pack
+/// takes none here. `None` when `ty` applies too few.
 fn restated_arguments(decls: &[ParamDecl], ty: &Ty) -> Option<Vec<TyArg>> {
     let variadic = |decl: &ParamDecl| {
         matches!(
@@ -311,16 +339,27 @@ fn restated_arguments(decls: &[ParamDecl], ty: &Ty) -> Option<Vec<TyArg>> {
             ParamDecl::Type { variadic: true, .. } | ParamDecl::Value { variadic: true, .. }
         )
     };
-    if decls.iter().any(variadic) {
-        return ParamDecl::argument_binders(decls)
+    let (name, arguments) = ty.kind().as_non_simd_struct()?;
+    if decls.iter().any(variadic)
+        && !ParamDecl::argument_binders(decls)
             .all(|decl| variadic(decl) || matches!(decl, ParamDecl::Type { .. }))
-            .then(Vec::new);
+    {
+        return None;
     }
-    let arguments: Vec<TyArg> = match ty.kind() {
-        struct_ty if let Some((_, arguments)) = struct_ty.as_non_simd_struct() => arguments.clone(),
-        _ => Vec::new(),
-    };
-    (arguments.len() == decls.len()).then_some(arguments)
+    let arguments = mojito_types::types::declared_pack_arguments(name, decls, arguments);
+    (arguments.len() == decls.len()).then(|| {
+        arguments
+            .iter()
+            .map(|argument| match argument {
+                // A pack bound to a list computed from packs still open
+                // (`Tuple[*Ts.reverse()]`) is that list's value.
+                TyArg::Ty(ty) if let Some(list) = mojito_types::types::list_spread(ty) => {
+                    TyArg::Val(mojito_types::ct::CtValue::Expr(list.clone()))
+                }
+                argument => argument.clone(),
+            })
+            .collect()
+    })
 }
 
 /// Whether `instruction` only reads, so a referent read or a place loaded
@@ -418,6 +457,7 @@ struct Sources<'s> {
     read_through: &'s HashMap<u32, Reg>,
     loaded: &'s HashMap<u32, (MirPlace, usize)>,
     declares_ref_field: &'s DeclaresRefField<'s>,
+    applied: bool,
 }
 
 /// A use lowered to its constructor's call: after the source's read, if

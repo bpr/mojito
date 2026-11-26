@@ -1633,7 +1633,7 @@ impl<'a> Flatten<'a> {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: contract.param_decls.clone(),
-            instantiated_args: Vec::new(),
+            instantiated_args: contract.instantiated_args.clone(),
             spread: None,
             refined_bound: contract.refined_bound.clone().map(MirRefinedBound::boxed),
         });

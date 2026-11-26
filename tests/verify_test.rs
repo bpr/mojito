@@ -4027,7 +4027,7 @@ fn verifier_checks_a_generic_def_bound_requirement_call() {
     assert!(
         apply_findings(&uninstantiated)
             .iter()
-            .any(|error| error.contains("bound carries no instantiation")),
+            .any(|error| error.contains("carries 0 of its 1 compile-time arguments")),
         "{:?}",
         apply_findings(&uninstantiated)
     );

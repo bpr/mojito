@@ -131,6 +131,11 @@ impl Checker {
                 reference_result,
                 parameter_arguments,
                 param_decls: resolved.param_decls.clone(),
+                instantiated_args: resolved
+                    .declared_instantiation
+                    .clone()
+                    .or_else(|| resolved.instantiation.clone())
+                    .unwrap_or_default(),
                 boundary,
                 refined_bound: resolved.refined_bound.clone(),
             }));

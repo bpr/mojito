@@ -79,6 +79,13 @@ pub(super) fn verify_call_instruction(
                     kwargs,
                 );
                 verify_direct_call(cx, declaration, args, kwargs, parameters.as_deref(), errors);
+                verify_application(
+                    prefix,
+                    callee,
+                    &declaration.param_decls,
+                    instantiated_args,
+                    errors,
+                );
                 let owner = receiver
                     .as_ref()
                     .and_then(|receiver| owner_arguments(cx.declarations, receiver));
@@ -232,6 +239,13 @@ pub(super) fn verify_call_instruction(
                         declaration.lowered_name
                     ));
                 }
+                verify_application(
+                    prefix,
+                    callee,
+                    &declaration.param_decls,
+                    instantiated_args,
+                    errors,
+                );
                 let owner = cx
                     .reg_ty(*recv)
                     .and_then(|receiver| owner_arguments(cx.declarations, receiver));
@@ -290,6 +304,32 @@ pub(super) fn verify_call_instruction(
         MirInstr::CallIndirect { .. } => verify_indirect_call(cx, instruction, errors),
         _ => {}
     }
+}
+
+/// A call applies its callee: it carries one compile-time argument per
+/// binder the callee declares, as upstream's call of a generator carries
+/// the whole parameter list it binds, and a call naming an instance (a
+/// callee that declares none) carries none, since an instance is its
+/// generator already applied.
+fn verify_application(
+    prefix: &str,
+    callee: &str,
+    declarations: &[mojito_types::types::ParamDecl],
+    instantiated: &[mojito_types::types::TyArg],
+    errors: &mut Vec<String>,
+) {
+    if instantiated.len() == declarations.len() {
+        return;
+    }
+    errors.push(if declarations.is_empty() {
+        format!("{prefix}: call of instance '{callee}' carries a compile-time application")
+    } else {
+        format!(
+            "{prefix}: call of '{callee}' carries {} of its {} compile-time arguments",
+            instantiated.len(),
+            declarations.len()
+        )
+    });
 }
 
 /// The receiver's parameter declarations beside its arguments (a struct's
@@ -1216,11 +1256,8 @@ fn verify_bound_call(
                 None,
                 errors,
             );
-            if instantiated_args.is_empty() {
-                errors.push(format!(
-                    "{prefix}: a call through a generic `def[...]` bound carries no instantiation"
-                ));
-            } else {
+            verify_application(prefix, callee, decls, instantiated_args, errors);
+            if !instantiated_args.is_empty() {
                 match instantiate_generic_callable_contract(contract, instantiated_args) {
                     Ok(signature) => instantiated = Some(signature),
                     Err(reason) => errors.push(format!(
@@ -1372,6 +1409,10 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             None,
             errors,
         );
+        if instantiated_contract.is_some() {
+            let callee = resolved.as_deref().unwrap_or("a generic callable");
+            verify_application(prefix, callee, checked_decls, instantiated_args, errors);
+        }
     } else if !param_decls.is_empty() {
         errors.push(format!(
             "{prefix}: nongeneric indirect call carries compile-time parameter metadata"
@@ -1556,4 +1597,54 @@ fn owner_instance_param_types(
         (found_name == owner && *arguments == own && *found != own).then_some(found)
     })?;
     mojito_types::types::struct_instance_types(decls, instance, &declaration.param_types)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mojito_types::param_expr::ParamId;
+    use mojito_types::types::{ParamDecl, TyArg};
+
+    fn generic() -> Vec<ParamDecl> {
+        vec![ParamDecl::Type {
+            id: ParamId::new("g", 0),
+            name: "T".into(),
+            bounds: Vec::new(),
+            trait_param: None,
+            callable_bound: None,
+            default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        }]
+    }
+
+    fn findings(declarations: &[ParamDecl], instantiated: &[TyArg]) -> Vec<String> {
+        let mut errors = Vec::new();
+        verify_application("f", "g", declarations, instantiated, &mut errors);
+        errors
+    }
+
+    /// A call to a generic callee carries its whole application.
+    #[test]
+    fn application_rejects_an_empty_application_to_a_generic_callee() {
+        assert_eq!(
+            findings(&generic(), &[]),
+            ["f: call of 'g' carries 0 of its 1 compile-time arguments"]
+        );
+    }
+
+    #[test]
+    fn application_accepts_a_complete_application() {
+        assert!(findings(&generic(), &[TyArg::Ty(Ty::int())]).is_empty());
+    }
+
+    /// An instance is its generator already applied: its call carries none.
+    #[test]
+    fn application_rejects_an_application_to_an_instance() {
+        assert_eq!(
+            findings(&[], &[TyArg::Ty(Ty::int())]),
+            ["f: call of instance 'g' carries a compile-time application"]
+        );
+    }
 }

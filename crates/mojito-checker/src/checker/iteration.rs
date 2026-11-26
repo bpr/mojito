@@ -307,26 +307,19 @@ impl Checker {
         Some(yielded)
     }
 
-    /// Convert a `StringLiteral` iterable into the nominal String temporary:
-    /// current Mojo's literal iteration yields grapheme-cluster `StringSpan`
-    /// views, so the literal takes the same owned-temporary path as any
-    /// other unplaced String source. Seams without the linked stdlib struct
-    /// keep the literal (and reject downstream).
+    /// Materialize a `StringLiteral` iterable as its nominal `String`
+    /// temporary ([`Self::materialize_at`]), the conversion carrying the
+    /// literal's text as its constructor's argument: current Mojo's literal
+    /// iteration yields grapheme-cluster `StringSpan` views, so the literal
+    /// takes the same owned-temporary path as any other unplaced String
+    /// source. Seams without the linked stdlib struct keep the literal (and
+    /// reject downstream).
     pub(super) fn convert_literal_iterable(&self, iter: &Expr, iter_ty: Ty) -> Ty {
         if !iter_ty.is_string_literal() {
             return iter_ty;
         }
-        let nominal = Ty::new(TyKind::Struct(
-            mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-            Vec::new(),
-        ));
-        match self.implicit_conversion_target(&iter_ty, &nominal) {
-            Ok(Some((target, _))) => {
-                self.record_at(iter.source_span()).implicit_conversion = Some(target);
-                nominal
-            }
-            _ => iter_ty,
-        }
+        self.materialize_at(&iter_ty, iter.source_span())
+            .unwrap_or(iter_ty)
     }
 
     /// Resolve a loop's complete iterator protocol.  In particular, owned

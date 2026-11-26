@@ -3101,7 +3101,7 @@ fn calls_solve_a_value_for_every_declared_parameter() {
     assert!(
         errors
             .iter()
-            .any(|error| error.contains("solved argument(s) do not bind its callee's")),
+            .any(|error| error.contains("of its 3 compile-time arguments")),
         "{errors:?}"
     );
     // An artifact before schema 1.205 writes that view, which the reader

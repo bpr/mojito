@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R2631**.
+Next free ID: **R2633**.
 
 ## Ordered Work
 
@@ -58,24 +58,55 @@ which names the upstream pass each one follows. Each is measured by the
 
 Upstream's elaborator also never infers a binding: each call names its
 callee with the complete parameter application, which it substitutes.
-R2625–R2630 stage that, in
+R2625–R2632 stage that, in
 [`docs/call-application-plan.md`](call-application-plan.md), one entry per
 slice.
 
-- [ ] **R2627 A call MIR synthesizes carries no compile-time application,
-  and the verifier allows it**
+- [ ] **R2631 A subscript call carries no compile-time application**
 
-  About 30 sites build a `Call` with empty `instantiated_args`: drops,
-  copies, register ends, iteration, defaults, and canonicalization
-  rewrites. The elaborator infers the callee's bindings for each one.
-  - Sites first: make `mir::verify` (`verify/calls.rs`) reject a call to a
-    generic callee whose application is not one argument per declared
-    binder, closed or open only over the caller's binders. Then run
-    `scripts/smoke --suites` for the site list and fix every site.
-  - Each site builds the application from what it already knows (the
-    dropped or copied type, the iterator's instance, the default's callee).
-  - Slice B1c of `docs/call-application-plan.md`.
-  - Depends on R2626 (the checker's calls must already be complete).
+  `MirSubscriptCall` has no `instantiated_args`, so a subscript accessor
+  with binders of its own reaches the elaborator unapplied, and the
+  application check (`verify_application`) skips it. Upstream's subscript
+  is a call of its accessor, which carries its parameter list.
+  - Add the field, filled from `CheckedCallContract::instantiated_args` in
+    `Flatten::mir_subscript_call_contract` (`facts.rs`) and the extraction
+    accessor in `lower_stmt.rs`. Write and read it in the MIR text, with a
+    schema bump.
+  - The rewrites `subscript_store_call` and `receiverless_subscript_call`
+    (`ir.rs`) carry it into the call they build; the elaborator clears it
+    when it resolves the accessor. Then `verify_subscript_call` calls
+    `verify_application`.
+  - Probe: `Pointer.__getitem__[I]`, `Tuple.__getitem_param__`,
+    `VariadicPack.__getitem_param__`, `StaticTuple.__getitem__` and
+    `__setitem__`, `IndexList.__getitem__`, `Array`/`List`/`Span`
+    `__getitem__[Some[Indexer]]`, and a user accessor with its own binder.
+  - Committed text to update: `tests/mir_passes/remove-unused-params/subscript.mir`
+    and `tests/mir_passes/inline-parametric/{tuple_members,tuple_members_generic,tuple_reverse_closed}.mir`.
+  - Slice B1d of `docs/call-application-plan.md`.
+  - Depends on R2626.
+  - Model: Fable, Planned.
+
+- [ ] **R2632 A call's compile-time application holds placeholder slots**
+
+  The application check counts arguments, but a slot may still be
+  `ct_deferred` or `origin_unbound`, which is neither closed nor open over
+  the caller's binders, so the elaborator cannot substitute it. Upstream's
+  call holds a solved attribute for every declared parameter.
+  - Make the verifier reject a placeholder in a call's application, then
+    fix the checker paths that write one. Probe the stdlib build first to
+    size it, and split by checker path if it is more than one session.
+  - Probe: an implicit conversion to `StringSpan` from a `StringLiteral`
+    (`mut`, `origin`, `$value_lit`), from a `String`, and from a
+    `StringSpan` (`other_origin`).
+  - Probe: `VariadicList.__init__`'s `origin`, and `String.__init__`'s
+    `$value_data` on a conversion.
+  - Probe: each std iterator's `__iter__` construction (`iterable_mut` on
+    `_ListIter`, `_DictKeyIter`, …), and `Span` and `Pointer`
+    constructions.
+  - Probe: `ParamDecl::constructor_call_arguments` pads unspelled own
+    parameters with placeholders.
+  - Slice B1e of `docs/call-application-plan.md`.
+  - Depends on R2626.
   - Model: Fable, Planned.
 
 - [ ] **R2628 The elaborator infers a call's bindings by unifying types
@@ -97,7 +128,8 @@ slice.
     `assets/ok/lit_ref_struct_field_initializer.mojo` with
     `MOJITO_PRE_ELABORATION=0` (a regression probe), and
     `scripts/instantiation-report --check` for instance growth.
-  - Depends on R2627 (every call must carry a record).
+  - Depends on R2631 and R2632 (every call must carry a complete
+    record).
   - Model: Fable, Planned.
 
 - [ ] **R2629 A call may record no operand conventions, and the loan check

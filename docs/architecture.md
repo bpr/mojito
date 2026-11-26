@@ -2358,7 +2358,18 @@ the caller's binders decide as a read of that binder, and a call MIR
 synthesizes from an instance type takes that instance's arguments, one per
 struct parameter, before its constructor's own
 (`ParamDecl::constructor_call_arguments`). The verifier rejects a call whose
-solved arguments bind any other list (`verify_param_arguments`), and each
+solved arguments bind any other list (`verify_application` in
+`verify/calls.rs`, over `call`, `call.method`, a `def[...]` bound's call,
+and a checker-instantiated `call.indirect`): a call to a generic callee
+carries one argument per declared binder, an empty application included,
+and a call naming an instance, which declares none, carries none. The rule
+counts; an argument may still be a placeholder (`ct_deferred`,
+`origin_unbound`), and a subscript call carries no application yet. A
+display's construction records its application as the written
+construction does (`Checker::record_display_application`), a pack
+struct's copy or move restates its pack as its construction binds it, and
+a checked method-call contract carries its application
+(`CheckedCallContract::instantiated_args`). Each
 reader indexes a declared slot directly; a reader keyed by the argument
 view (a nested body's generator scope) takes the view's solutions
 (`ParamDecl::argument_view_arguments`). The shared `CtValue` model carries integers, booleans,
@@ -6968,7 +6979,10 @@ parameter leaves the caller's instance key
 (`assets/ok/fieldwise_constructor_instances.mojo`).
 
 A named copy or move is then the call upstream's copy/move insertion
-leaves (`mir::lower_copies_and_moves`, `mir/copy_calls.rs`): a `var.use
+leaves (`mir::lower_copies_and_moves`, `mir/copy_calls.rs`; its `applied`
+argument says whether the named constructors are generators, whose call
+carries the copied type's arguments, or the elaborator's instances, whose
+call carries none): a `var.use
 copy` becomes a `ref.make` of the slot and a `Call` of the named
 `__copyinit__` passing it as the constructor's borrowed argument, the
 shape `S(copy=x)` lowers to; a `var.use move` becomes a forwarding
